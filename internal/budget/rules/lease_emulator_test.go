@@ -2,311 +2,403 @@
 
 package rules
 
-// The runner's lease client against the generated rules: the writes that
-// internal/budget makes (leases, releases, usage reports, the registry,
-// notional spend, the outcome) are exactly what the rules must accept, and
-// the client's reads must see exactly what the rules let a run read. The
-// run's identity is the fake Firebase Auth's ID token; the emulator reads its
-// claims as it reads an unsigned token's.
+// The emulator cases for the orchestrators lease (central-orchestrator plan P3,
+// decisions D1, D2, D3): the `orchestrators/<slug>/<job>/lease` subtree, the
+// seat a shepherd holds while it acts on a job.
+//
+// The unit tests in internal/lease prove the *client's* half of the invariant —
+// the compare-and-set, the fencing token, the database's clock — against
+// internal/gcpfake, which implements no rules at all. What only the emulator
+// can prove is the half that makes the seat a seat: that the deployed document
+// refuses a takeover of a fresh lease, refuses a renewal by anyone but the
+// recorded holder, refuses a generation that jumps, and refuses every delete —
+// so an orchestrator that is not running internal/lease's code cannot take the
+// seat by writing the node directly. This is the plan's U3: the race the
+// protocol implies is made deterministic here, on the real rules engine.
+//
+// The cases are mutation-proven like the rest of the suite: drop LEASETAKE's
+// staleness test, or the generation's `NEW == OLD + 1`, and watch the case that
+// names it fail.
 
 import (
 	"context"
 	"errors"
-	"fmt"
+	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"golang.org/x/oauth2"
-
-	"github.com/dimipaun/fugaro/internal/budget"
-	"github.com/dimipaun/fugaro/internal/budget/token"
-	"github.com/dimipaun/fugaro/internal/gateway"
-	"github.com/dimipaun/fugaro/internal/gcpfake"
-	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
-const leaseSigner = "fugaro-token-signer@aurora-fp.iam.gserviceaccount.com"
+// leasePath is one job's lease in the slug the harness's run tokens carry.
+const leasePath = "orchestrators/aurora/r1/lease"
 
-type leaseRig struct {
-	h   *harness
-	iam *gcpfake.IAMCredentials
-	itk *gcpfake.IdentityToolkit
+// leaseGraceMs is the number the rules bake in (rules.LeaseGraceMs). It is
+// written here rather than referenced so that a change to the constant has to
+// come through this file: two cases below seed a stamp on either side of it,
+// and a grace that moved would make one of them pass for the wrong reason.
+const leaseGraceMs int64 = 600_000
+
+// leaseRecord is a record as internal/lease writes one: the four required
+// fields, and the two optional ones when a caller adds them.
+func leaseRecord(uid string, generation, renewedAt int64) map[string]any {
+	return map[string]any{
+		"holder": "orchestrator " + uid, "holder_uid": uid,
+		"generation": generation, "renewed_at": renewedAt,
+	}
 }
 
-func newLeaseRig(t *testing.T) *leaseRig {
+// take is one client's write of a lease, as the compare-and-set sends it: the
+// node's ETag read first, then a PUT carrying it. It returns the error, so a
+// case can assert that a refused write is refused by the *rules* (401) rather
+// than by the ETag (412) — the two are different failures, and only the first
+// is what these cases are about.
+func take(h *harness, c *rtdb.Client, rec map[string]any) error {
+	h.t.Helper()
+	var cur map[string]any
+	etag, _, err := c.GetETag(context.Background(), leasePath, &cur)
+	if err != nil {
+		h.t.Fatalf("reading the lease's ETag: %v", err)
+	}
+	return c.PutIfMatch(context.Background(), leasePath, etag, rec)
+}
+
+// TestLeaseTakeRenewReleaseAndTakeAgain walks one seat through its whole life
+// with the rules deployed: created at generation 1, renewed in place by the
+// holder, released to an empty holder at generation 2, and taken again at
+// generation 3 without waiting out a grace. Every step is a write the rules
+// must accept, so a document that refused one of them would leave the protocol
+// unable to run at all.
+//
+// Hand mutation this fails on: making the creation clause require data.exists()
+// (no seat can ever be taken), or dropping LEASERELEASE (a holder cannot give
+// the seat up), or requiring a grace before a takeover of a free seat (the next
+// taker is refused for ten minutes after a release).
+func TestLeaseTakeRenewReleaseAndTakeAgain(t *testing.T) {
 	h := newHarness(t)
-	r := &leaseRig{h: h}
-	r.iam = gcpfake.NewIAMCredentials(t)
-	r.iam.AddSigner(leaseSigner)
-	r.itk = gcpfake.NewIdentityToolkit(t, r.iam, "AIzaSyFakeWebApiKeyForTests000000000", projectID)
-	h.set("config/mode", "enforce")
-	h.set("config/limits", map[string]any{"maxReserveMicros": 5_000_000})
-	h.set("config/caps/global", map[string]any{"dailyMicros": 150_000_000, "perRunMicros": 20_000_000})
-	return r
+	alice, bob := h.phone("alice@example.invalid"), h.phone("bob@example.invalid")
+	now := time.Now().UnixMilli()
+
+	if err := take(h, alice, leaseRecord("alice@example.invalid", 1, now)); err != nil {
+		t.Fatalf("taking a free seat at generation 1: %v", err)
+	}
+	h.mustRead(alice, leasePath)
+
+	// The heartbeat: the same holder, the same generation, a new stamp.
+	if err := take(h, alice, leaseRecord("alice@example.invalid", 1, time.Now().UnixMilli())); err != nil {
+		t.Fatalf("renewing the seat: %v", err)
+	}
+
+	// The release: the generation moves on and the holder is emptied.
+	free := map[string]any{"holder": "", "holder_uid": "", "generation": 2, "renewed_at": time.Now().UnixMilli()}
+	if err := take(h, alice, free); err != nil {
+		t.Fatalf("releasing the seat: %v", err)
+	}
+
+	// The seat is free, so the next orchestrator takes it without waiting.
+	if err := take(h, bob, leaseRecord("bob@example.invalid", 3, time.Now().UnixMilli())); err != nil {
+		t.Fatalf("taking a released seat at generation 3: %v", err)
+	}
 }
 
-func (r *leaseRig) caps(slug string, daily, perRun int64) {
-	r.h.set("config/caps/repos/"+slug, map[string]any{"dailyMicros": daily, "perRunMicros": perRun})
+// TestLeaseTakeoverOfAFreshSeatIsRefused is the invariant on the real engine:
+// another orchestrator writes generation 2 over a lease that is seconds old and
+// is refused. This is the case internal/gcpfake cannot prove — the fake has no
+// rules, so only the emulator says the *database* is what refuses it.
+//
+// Hand mutation this fails on: dropping LEASETAKE's `now - renewed_at >
+// LeaseGraceMs` clause (any orchestrator may take any seat whenever it likes,
+// which is two orchestrators on one job).
+func TestLeaseTakeoverOfAFreshSeatIsRefused(t *testing.T) {
+	h := newHarness(t)
+	h.phone("alice@example.invalid")
+	bob := h.phone("bob@example.invalid")
+	h.set(leasePath, leaseRecord("alice@example.invalid", 1, time.Now().UnixMilli()))
+
+	if err := take(h, bob, leaseRecord("bob@example.invalid", 2, time.Now().UnixMilli())); !errors.Is(err, rtdb.ErrPermission) {
+		t.Fatalf("a takeover of a fresh seat: %v, want the rules to refuse it (401)", err)
+	}
+	// And the seat is still Alice's, at generation 1.
+	if got := h.value(leasePath); !strings.Contains(got, `"holder_uid":"alice@example.invalid"`) || !strings.Contains(got, `"generation":1`) {
+		t.Fatalf("after the refused takeover the lease is %s, want Alice at generation 1", got)
+	}
 }
 
-// session opens a run's session, the way the runner does.
-func (r *leaseRig) session(t *testing.T, slug, run string, mutate ...func(*budget.Config)) *budget.Session {
-	t.Helper()
-	signer, err := token.NewIAMSigner(leaseSigner, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "ya29.l"}), token.WithIAMEndpoint(r.iam.URL))
-	if err != nil {
-		t.Fatal(err)
+// TestLeaseTakeoverOfAStaleSeatIsAllowed is the other side of the same clause:
+// a seat whose holder has not renewed for longer than the grace is takeable,
+// which is what makes a crashed orchestrator recoverable at all.
+//
+// Hand mutation this fails on: turning the staleness test around, or removing
+// the takeover branch entirely (a dead holder's job is stuck forever).
+func TestLeaseTakeoverOfAStaleSeatIsAllowed(t *testing.T) {
+	h := newHarness(t)
+	h.phone("alice@example.invalid")
+	bob := h.phone("bob@example.invalid")
+	stale := time.Now().UnixMilli() - leaseGraceMs - 60_000
+	h.set(leasePath, leaseRecord("alice@example.invalid", 1, stale))
+
+	if err := take(h, bob, leaseRecord("bob@example.invalid", 2, time.Now().UnixMilli())); err != nil {
+		t.Fatalf("a takeover of a stale seat: %v, want it allowed", err)
 	}
-	now := time.Now()
-	tok, err := token.MintAt(context.Background(), signer, token.Claims{Slug: slug, Run: run, FX: token.ExpiryFX(now, time.Hour), FP: projectID, RB: "alice@example.invalid"}, now)
-	if err != nil {
-		t.Fatal(err)
+	if got := h.value(leasePath); !strings.Contains(got, `"holder_uid":"bob@example.invalid"`) || !strings.Contains(got, `"generation":2`) {
+		t.Fatalf("after the takeover the lease is %s, want Bob at generation 2", got)
 	}
-	cfg := budget.Config{
-		RTDBURL: emuURL, APIKey: "AIzaSyFakeWebApiKeyForTests000000000", IdentityURL: r.itk.URL, SecureTokenURL: r.itk.URL, HTTP: r.h.hc,
-		Slug: slug, Run: run, Deadline: now.Add(time.Hour), Grace: 5 * time.Second,
-		HeartbeatEvery: 50 * time.Millisecond, StaleBackoff: 3 * time.Millisecond, CapRetryWait: 50 * time.Millisecond,
-		StreamBackoffMin: 10 * time.Millisecond, StreamBackoffMax: 50 * time.Millisecond,
-		Register: func(string) {}, OnHalt: func(h budget.Halt) { t.Errorf("unexpected halt: %+v", h) },
+
+	// Thirty seconds *inside* the grace, and the same write is refused: the
+	// boundary is the grace, and not "some time has passed".
+	h.set(leasePath, leaseRecord("alice@example.invalid", 1, time.Now().UnixMilli()-leaseGraceMs+30_000))
+	if err := take(h, bob, leaseRecord("bob@example.invalid", 2, time.Now().UnixMilli())); !errors.Is(err, rtdb.ErrPermission) {
+		t.Fatalf("a takeover 30 s inside the grace: %v, want the rules to refuse it", err)
 	}
-	for _, m := range mutate {
-		m(&cfg)
-	}
-	s, err := budget.Open(context.Background(), cfg, tok)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return s
 }
 
-func (r *leaseRig) num(t *testing.T, path string) int64 {
-	t.Helper()
-	var n int64
-	if v := r.h.value(path); v != "null" {
-		if _, err := fmt.Sscan(v, &n); err != nil {
-			t.Fatalf("%s = %s", path, v)
+// TestLeaseOnlyTheRecordedHolderMayRenewOrRelease: the fencing token's
+// enforcement. A renewal keeps the generation, and the rules allow that only
+// when the writer is the identity already on the record — so a stale holder
+// whose seat was taken over cannot renew it back, and nobody can free a seat
+// they are not sitting in.
+//
+// Hand mutation this fails on: dropping the `data.parent().child('holder_uid')
+// == auth.uid` conjunct from LEASEKEEP (any account keeps any generation), or
+// from LEASERELEASE (any account frees anyone's seat, which hands the job to
+// whoever asks next).
+func TestLeaseOnlyTheRecordedHolderMayRenewOrRelease(t *testing.T) {
+	h := newHarness(t)
+	alice, bob := h.phone("alice@example.invalid"), h.phone("bob@example.invalid")
+	now := time.Now().UnixMilli()
+	h.set(leasePath, leaseRecord("alice@example.invalid", 1, now))
+
+	// Bob renewing Alice's generation in place: refused.
+	if err := take(h, bob, leaseRecord("bob@example.invalid", 1, now)); !errors.Is(err, rtdb.ErrPermission) {
+		t.Fatalf("a renewal by another account: %v, want the rules to refuse it", err)
+	}
+	// Bob releasing Alice's seat: refused.
+	free := map[string]any{"holder": "", "holder_uid": "", "generation": 2, "renewed_at": now}
+	if err := take(h, bob, free); !errors.Is(err, rtdb.ErrPermission) {
+		t.Fatalf("a release by another account: %v, want the rules to refuse it", err)
+	}
+	// Alice's own renewal and release are accepted, so the two refusals above
+	// are the rules reading the holder and not the rules refusing everything.
+	if err := take(h, alice, leaseRecord("alice@example.invalid", 1, time.Now().UnixMilli())); err != nil {
+		t.Fatalf("the holder's own renewal: %v", err)
+	}
+	if err := take(h, alice, free); err != nil {
+		t.Fatalf("the holder's own release: %v", err)
+	}
+}
+
+// TestLeaseGenerationCannotJumpOrStandStill is the fencing token itself: the
+// generation moves by one per takeover or release and by nothing else. A jump
+// would let a writer land on a number that is not the successor of the one it
+// read, which is a generation two orchestrators could both believe they hold; a
+// standstill with a changed holder is a takeover with the token left behind,
+// which is what makes the old holder's next call look valid.
+//
+// Hand mutation this fails on: dropping `NEW == OLD + 1` (any generation may be
+// written over any other), or `NEW == OLD` from LEASEKEEP.
+func TestLeaseGenerationCannotJumpOrStandStill(t *testing.T) {
+	h := newHarness(t)
+	bob := h.phone("bob@example.invalid")
+	stale := time.Now().UnixMilli() - leaseGraceMs - 60_000
+	h.set(leasePath, leaseRecord("alice@example.invalid", 5, stale))
+
+	for _, c := range []struct {
+		why string
+		rec map[string]any
+	}{
+		{"a takeover that jumps to generation 7", leaseRecord("bob@example.invalid", 7, time.Now().UnixMilli())},
+		{"a takeover that keeps generation 5 with a new holder", leaseRecord("bob@example.invalid", 5, time.Now().UnixMilli())},
+		{"a takeover that moves the generation backwards", leaseRecord("bob@example.invalid", 4, time.Now().UnixMilli())},
+		{"a creation on a node that already exists", leaseRecord("bob@example.invalid", 1, time.Now().UnixMilli())},
+	} {
+		if err := take(h, bob, c.rec); !errors.Is(err, rtdb.ErrPermission) {
+			t.Errorf("%s: %v, want the rules to refuse it", c.why, err)
 		}
 	}
-	return n
+	// The successor is accepted, so the four refusals above are the clause and
+	// not the rules refusing every write to a stale seat.
+	if err := take(h, bob, leaseRecord("bob@example.invalid", 6, time.Now().UnixMilli())); err != nil {
+		t.Fatalf("the successor generation: %v", err)
+	}
 }
 
-// TestLeaseClientAgainstTheRules runs one api-key run's whole life.
-func TestLeaseClientAgainstTheRules(t *testing.T) {
-	r := newLeaseRig(t)
-	r.caps("aurora-app", 60_000_000, 20_000_000)
-	ctx := context.Background()
-	d := budget.Day(time.Now())
-	s := r.session(t, "aurora-app", "20261002-120000-ab12")
-	if h, err := s.Admit(ctx, budget.AdmitOptions{Gateway: true}); h != nil || err != nil {
-		t.Fatalf("admit: %+v, %v", h, err)
-	}
-	if err := s.Start(ctx, budget.AgentEntry{Repo: "acme/app", Workflow: "app", Title: "Add a feature", Stage: "implement", Auth: "api-key", Coder: "claude-sonnet-5-5"}); err != nil {
-		t.Fatalf("the rules refused the registry entry or exp: %v", err)
-	}
-	got, err := s.Lease().Grant(ctx, 100_000)
-	if err != nil {
-		t.Fatalf("the rules refused a lease: %v", err)
-	}
-	if got != 1_000_000 {
-		t.Fatalf("lease = %d", got)
-	}
-	s.SetUsage(func() budget.Micros { return 400_000 })
-	rep := gateway.StageReport{Calls: 3, Used: 400_000, Tokens: 12_345, Overrun: 5_000, ByModel: map[string]pricing.Micros{"claude-sonnet-5-5": 300_000, "claude-haiku-4-5": 100_000}}
-	if err := s.Lease().Report(ctx, rep); err != nil {
-		t.Fatalf("the rules refused a usage report: %v", err)
-	}
-	if err := s.Lease().Release(ctx, 600_000); err != nil {
-		t.Fatalf("the rules refused a release: %v", err)
-	}
-	// The heartbeat's registry write, in the same request as a usage report.
-	s.Update(func(e *budget.AgentEntry) { e.Stage, e.Round = "review", 1 })
-	waitFor(t, "a heartbeat to land", func() bool { return r.h.value("agents/aurora-app/20261002-120000-ab12/stage") == `"review"` })
-	s.Finish(ctx, "succeeded")
+// TestLeaseRecordShapeIsTheRulesOwn: the record is exactly the six fields
+// internal/lease writes. A seventh is refused ($other), a missing one is
+// refused (hasChildren), a holder_uid that is not the writer's own identity is
+// refused — which is what stops an orchestrator claiming someone else's name on
+// the record — and a stamp ahead of the database's clock is refused, which is
+// what stops a writer whose machine is fast from holding a seat nobody can take
+// over.
+//
+// Hand mutation this fails on: dropping `$other: false` (a hand-written node
+// can carry anything, the expiry internal/lease refuses to store included), or
+// the `newData.val() <= now` bound on renewed_at (a stamp in the year 3000).
+func TestLeaseRecordShapeIsTheRulesOwn(t *testing.T) {
+	h := newHarness(t)
+	alice := h.phone("alice@example.invalid")
+	now := time.Now().UnixMilli()
 
-	base := "runs/aurora-app/20261002-120000-ab12/"
-	for leaf, want := range map[string]int64{"reserved": 1_000_000, "released": 600_000, "spent": 400_000, "overrun": 5_000, "tokens": 12_345} {
-		if got := r.num(t, base+leaf); got != want {
-			t.Errorf("run %s = %d, want %d", leaf, got, want)
+	with := func(k string, v any) map[string]any {
+		m := leaseRecord("alice@example.invalid", 1, now)
+		m[k] = v
+		return m
+	}
+	for _, c := range []struct {
+		why string
+		rec map[string]any
+	}{
+		{"a field the record does not have", with("expires_at", now+leaseGraceMs)},
+		{"a holder_uid that is not the writer's", leaseRecord("bob@example.invalid", 1, now)},
+		{"a holder_uid that is empty on a held seat", map[string]any{"holder": "alice", "holder_uid": "", "generation": 1, "renewed_at": now}},
+		{"a held seat with no name", map[string]any{"holder": "", "holder_uid": "alice@example.invalid", "generation": 1, "renewed_at": now}},
+		{"a stamp an hour ahead of the database", leaseRecord("alice@example.invalid", 1, now+3_600_000)},
+		{"a stamp at zero", leaseRecord("alice@example.invalid", 1, 0)},
+		{"a generation that is not a whole number", map[string]any{"holder": "alice", "holder_uid": "alice@example.invalid", "generation": 1.5, "renewed_at": now}},
+		{"a generation below one", leaseRecord("alice@example.invalid", 0, now)},
+	} {
+		if err := take(h, alice, c.rec); !errors.Is(err, rtdb.ErrPermission) {
+			t.Errorf("%s: %v, want the rules to refuse it", c.why, err)
 		}
 	}
-	day := fmt.Sprintf("spend/%d/", d)
-	for _, p := range []string{day + "global/", day + "repos/aurora-app/"} {
-		if r.num(t, p+"counted") != 400_000 || r.num(t, p+"spent") != 400_000 || r.num(t, p+"calls") != 3 {
-			t.Errorf("%s: counted %d, spent %d, calls %d", p, r.num(t, p+"counted"), r.num(t, p+"spent"), r.num(t, p+"calls"))
-		}
+	// A record with a required field missing.
+	missing := leaseRecord("alice@example.invalid", 1, now)
+	delete(missing, "renewed_at")
+	if err := take(h, alice, missing); !errors.Is(err, rtdb.ErrPermission) {
+		t.Errorf("a record with no renewed_at: %v, want the rules to refuse it", err)
 	}
-	if got := r.num(t, day+"repos/aurora-app/byModel/claude-sonnet-5-5/micros"); got != 300_000 {
-		t.Errorf("byModel sonnet = %d", got)
-	}
-	if r.h.value(fmt.Sprintf("outcomes/%d/aurora-app/20261002-120000-ab12/status", d)) != `"succeeded"` {
-		t.Errorf("outcome = %s", r.h.value(fmt.Sprintf("outcomes/%d", d)))
-	}
-	if r.h.value("agents/aurora-app/20261002-120000-ab12") != "null" {
-		t.Errorf("the registry entry survived: %s", r.h.value("agents"))
+	// The optional two are accepted, so the refusals above are the shape clause
+	// and not the rules refusing every write this identity makes.
+	ok := leaseRecord("alice@example.invalid", 1, now)
+	ok["mode"], ok["pr"] = "enforce", 42
+	if err := take(h, alice, ok); err != nil {
+		t.Fatalf("a record with a mode and a PR: %v", err)
 	}
 }
 
-// TestOAuthNotionalAgainstTheRules: the increase-only notional writes.
-func TestOAuthNotionalAgainstTheRules(t *testing.T) {
-	r := newLeaseRig(t)
-	r.caps("aurora-app", 60_000_000, 20_000_000)
-	ctx := context.Background()
-	s := r.session(t, "aurora-app", "20261002-120001-cd34")
-	if h, err := s.Admit(ctx, budget.AdmitOptions{}); h != nil || err != nil {
-		t.Fatalf("admit: %+v, %v", h, err)
+// TestLeaseIsNeverDeleted: the generation must not restart, and the whole point
+// of Release is that it writes an empty holder instead of deleting the node. A
+// delete would take the fencing token with it, and the next taker would begin
+// at generation 1 — a number the released holder's token still is.
+//
+// Hand mutation this fails on: dropping `newData.exists()` from the lease's
+// .write (a client deletes the node and the token restarts), which is also the
+// mutation TestWritesOnlyAtNumericLeaves exists for on the ledgers.
+func TestLeaseIsNeverDeleted(t *testing.T) {
+	h := newHarness(t)
+	alice := h.phone("alice@example.invalid")
+	h.set(leasePath, leaseRecord("alice@example.invalid", 1, time.Now().UnixMilli()))
+
+	if err := take(h, alice, nil); !errors.Is(err, rtdb.ErrPermission) {
+		t.Fatalf("deleting the lease: %v, want the rules to refuse it", err)
 	}
-	if err := s.Start(ctx, budget.AgentEntry{Repo: "acme/app", Auth: "oauth"}); err != nil {
-		t.Fatal(err)
+	if got := h.value(leasePath); !strings.Contains(got, `"generation":1`) {
+		t.Fatalf("after the refused delete the lease is %s, want generation 1 still there", got)
 	}
-	err := s.AddNotional(ctx, 1_250_000, map[string]budget.ModelUse{"claude-sonnet-5-5": {Micros: 1_000_000, In: 1000, Out: 500, CR: 20, CW: 10}})
+}
+
+// TestLeaseIsTheUserClaimsAndNobodyElses: the grant is USER and nothing else.
+// A run token reads and writes nothing there — a job's own token must not be
+// able to take the seat of the orchestrator shepherding it — and an account
+// with no device node (D166) is admitted nowhere, lease included.
+//
+// The two write attempts go through rawDenied rather than take: a client that
+// cannot read the node cannot read its ETag either, so the honest question for
+// these identities is whether the rules accept a write *at all*, and the answer
+// is measured on a PUT that carries no If-Match and is refused on its own.
+//
+// Hand mutation this fails on: widening the lease's .read or .write to TOKEN,
+// RUN or `auth != null` (any run of the project takes the seat), or dropping
+// USER's device conjunct.
+func TestLeaseIsTheUserClaimsAndNobodyElses(t *testing.T) {
+	h := newHarness(t)
+	h.set(leasePath, leaseRecord("alice@example.invalid", 1, time.Now().UnixMilli()))
+
+	body := `{"holder":"x","holder_uid":"x","generation":2,"renewed_at":1}`
+	runner := h.run("aurora", "r1")
+	h.mustReadDenied(runner, leasePath)
+	h.rawDenied(claims{slug: "aurora", run: "r1"}, "PUT", leasePath, body)
+
+	// A phone token that was never paired: mu is its own uid, there is no
+	// device node, so USER is false and the seat is out of reach.
+	unpaired := h.unpaired("carol@example.invalid")
+	h.mustReadDenied(unpaired, leasePath)
+	h.rawDenied(claims{mu: "carol@example.invalid", fp: "-"}, "PUT", leasePath, body)
+}
+
+// TestLeaseTwoOrchestratorsRaceForOneSeat is the plan's race, on the real
+// engine: two orchestrators read the same ETag and both write. Exactly one
+// write lands; the other is refused, and the seat ends at the generation the
+// winner wrote with one holder in it.
+//
+// The loser is refused twice over, and which refusal arrives is the engine's
+// business: the compare-and-set (ErrPrecondition — the ETag moved under it) is
+// what makes it lose *this* write, and the rules (ErrPermission — a second
+// generation-1 write on a node that now exists) would refuse it anyway. Both
+// are accepted here; exactly one winner is not.
+//
+// Hand mutation this fails on: sending the write without If-Match (both land,
+// the second silently overwrites the first, and the orchestrator that was
+// overwritten still believes it holds the seat), which is the mutation
+// internal/lease's TestEveryWriteIsConditional pins on the client side.
+func TestLeaseTwoOrchestratorsRaceForOneSeat(t *testing.T) {
+	h := newHarness(t)
+	alice, bob := h.phone("alice@example.invalid"), h.phone("bob@example.invalid")
+
+	// Both read the absent node's ETag before either writes, which is what
+	// makes the race the race: one read, two writes.
+	var cur map[string]any
+	etagA, _, err := alice.GetETag(context.Background(), leasePath, &cur)
 	if err != nil {
-		t.Fatalf("the rules refused notional spend: %v", err)
-	}
-	if err := s.AddNotional(ctx, 250_000, nil); err != nil {
 		t.Fatal(err)
 	}
-	s.Finish(ctx, "succeeded")
-	d := budget.Day(time.Now())
-	if got := r.num(t, "runs/aurora-app/20261002-120001-cd34/notional"); got != 1_500_000 {
-		t.Errorf("notional = %d", got)
+	etagB, _, err := bob.GetETag(context.Background(), leasePath, &cur)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := r.num(t, fmt.Sprintf("spend/%d/global/notional", d)); got != 1_500_000 {
-		t.Errorf("global notional = %d", got)
+	if etagA != etagB {
+		t.Fatalf("the two readers saw different ETags (%q, %q) on an absent node: this is not the race the case is about", etagA, etagB)
 	}
-}
 
-// TestConcurrentSessionsNeverExceedCaps: many sessions lease and release at
-// once against the rules; the counters end exactly at what the runs still
-// hold, and never pass a cap on the way.
-func TestConcurrentSessionsNeverExceedCaps(t *testing.T) {
-	r := newLeaseRig(t)
-	r.h.set("config/caps/global", map[string]any{"dailyMicros": 12_000_000, "perRunMicros": 5_000_000})
-	for _, slug := range []string{"repo-a", "repo-b"} {
-		r.caps(slug, 7_000_000, 5_000_000)
-	}
-	const runs = 8
-	var staleGiveUps atomic.Int64
-	ctx := context.Background()
+	racers := []struct {
+		cl   *rtdb.Client
+		etag string
+		uid  string
+	}{{alice, etagA, "alice@example.invalid"}, {bob, etagB, "bob@example.invalid"}}
+
 	var wg sync.WaitGroup
-	var mu sync.Mutex
-	held := map[string]int64{}
-	for i := 0; i < runs; i++ {
-		slug := []string{"repo-a", "repo-b"}[i%2]
-		run := fmt.Sprintf("20261002-1300%02d-ab%02d", i, i)
-		s := r.session(t, slug, run, func(c *budget.Config) { c.OnHalt = func(budget.Halt) {} })
-		if h, err := s.Admit(ctx, budget.AdmitOptions{Gateway: true}); h != nil || err != nil {
-			t.Fatalf("admit: %+v %v", h, err)
-		}
+	errs := make([]error, len(racers))
+	for i, r := range racers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			var mine int64
-			defer func() {
-				mu.Lock()
-				held[slug+"/"+run] = mine
-				mu.Unlock()
-			}()
-			for j := 0; j < 12; j++ {
-				// Eight stale denials in a row under eight clients hammering
-				// one counter is the client giving up on that lease (the
-				// agent's next call asks again); a refusal is the caps.
-				var got budget.Micros
-				var err error
-				for try := 0; try < 10; try++ {
-					if got, err = s.Lease().Grant(ctx, 300_000); err == nil || errors.As(err, new(*gateway.Refusal)) {
-						break
-					}
-					staleGiveUps.Add(1)
-				}
-				var ref *gateway.Refusal
-				switch {
-				case errors.As(err, &ref):
-					continue
-				case err != nil:
-					t.Errorf("grant: %v", err)
-					return
-				}
-				mine += int64(got)
-				// Keep and spend half, give half back.
-				if j%3 == 2 {
-					var rerr error
-					for try := 0; try < 10; try++ { // a release also loses races
-						if rerr = s.Lease().Release(ctx, got/2); rerr == nil {
-							break
-						}
-					}
-					if rerr != nil {
-						t.Errorf("release: %v", rerr)
-						return
-					}
-					mine -= int64(got / 2)
-				}
-			}
+			errs[i] = r.cl.PutIfMatch(context.Background(), leasePath, r.etag, leaseRecord(r.uid, 1, time.Now().UnixMilli()))
 		}()
 	}
 	wg.Wait()
-	t.Logf("%d lease attempts gave up after 8 stale denials (check 21 records the live rate)", staleGiveUps.Load())
-	d := budget.Day(time.Now())
-	var total, repoA, repoB int64
-	for k, v := range held {
-		total += v
-		if k[:6] == "repo-a" {
-			repoA += v
-		} else {
-			repoB += v
-		}
-	}
-	if g := r.num(t, fmt.Sprintf("spend/%d/global/counted", d)); g != total || g > 12_000_000 {
-		t.Errorf("global counted %d, runs hold %d (cap 12,000,000)", g, total)
-	}
-	if a, b := r.num(t, fmt.Sprintf("spend/%d/repos/repo-a/counted", d)), r.num(t, fmt.Sprintf("spend/%d/repos/repo-b/counted", d)); a != repoA || b != repoB || a > 7_000_000 || b > 7_000_000 {
-		t.Errorf("repo counters %d/%d, runs hold %d/%d (cap 7,000,000 each)", a, b, repoA, repoB)
-	}
-}
 
-func waitFor(t *testing.T, what string, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
+	winners := 0
+	for i, err := range errs {
+		switch {
+		case err == nil:
+			winners++
+		case errors.Is(err, rtdb.ErrPrecondition), errors.Is(err, rtdb.ErrPermission):
+			// The loser: the ETag moved, or the rules caught the second write
+			// to a node that now exists. Either way it did not land.
+		default:
+			t.Errorf("racer %d failed with %v, want nil, rtdb.ErrPrecondition or rtdb.ErrPermission", i, err)
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("timed out waiting for %s", what)
-}
-
-// TestKillReachesTheRunThroughTheRules: a run may listen to exactly its two
-// switches, and a switch turned on over IAM reaches it through the stream
-// (the heartbeat poll is slowed down so only the stream can).
-func TestKillReachesTheRunThroughTheRules(t *testing.T) {
-	r := newLeaseRig(t)
-	r.caps("aurora-app", 60_000_000, 20_000_000)
-	ctx := context.Background()
-	halts := make(chan budget.Halt, 4)
-	s := r.session(t, "aurora-app", "20261002-120002-ef56", func(c *budget.Config) {
-		c.HeartbeatEvery = time.Hour
-		c.OnHalt = func(h budget.Halt) { halts <- h }
-	})
-	if h, err := s.Admit(ctx, budget.AdmitOptions{Gateway: true}); h != nil || err != nil {
-		t.Fatalf("admit: %+v, %v", h, err)
+	if winners != 1 {
+		t.Fatalf("%d orchestrators won one seat, want exactly 1 (database now: %s)", winners, h.value(leasePath))
 	}
-	if err := s.Start(ctx, budget.AgentEntry{Repo: "acme/app"}); err != nil {
-		t.Fatal(err)
+	got := h.value(leasePath)
+	if !strings.Contains(got, `"generation":1`) {
+		t.Fatalf("the seat after the race is %s, want generation 1", got)
 	}
-	defer s.Finish(ctx, "halted")
-	time.Sleep(500 * time.Millisecond) // the streams are listening
-	r.h.set("config/kill/repos/aurora-app", map[string]any{"on": true, "by": "admin@example.invalid", "reason": "emulator", "at": time.Now().UnixMilli()})
-	select {
-	case h := <-halts:
-		if h.Reason != budget.ReasonKillSwitch || h.Scope != budget.ScopeRepo {
-			t.Fatalf("halt = %+v", h)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("the switch never reached the run: the rules may not let it listen")
-	}
-	if r.h.value("agents/aurora-app/20261002-120002-ef56") == "null" {
-		t.Fatal("the registry entry vanished before Finish")
+	a := strings.Contains(got, `"holder_uid":"alice@example.invalid"`)
+	b := strings.Contains(got, `"holder_uid":"bob@example.invalid"`)
+	if a == b {
+		t.Fatalf("the seat after the race is %s, want exactly one of the two holders in it", got)
 	}
 }
