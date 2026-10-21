@@ -1268,6 +1268,36 @@ func TestDoctorReportsBroken(t *testing.T) {
 	}
 }
 
+// TestDoctorCredsBrokenReadFailure: the marks read can fail — the deployed
+// rules can refuse it, the database can be down, or the subtree can carry a
+// node this release does not model — and doctor must say so. An empty result
+// and a failed read are the same output to an operator, and only one of them
+// is a fact; the branch that reports the failure is also the one an error
+// returning nil would silently delete, because "no broken account" passes every
+// test that only ever seeds a mark that reads.
+func TestDoctorCredsBrokenReadFailure(t *testing.T) {
+	_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+	// A broken mark that a read WOULD have found: the check's silence below is
+	// the refusal, not an empty subtree.
+	db.Set(credsMarkPath("acme-personal"), map[string]any{
+		"state": "broken", "since": time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano)})
+	db.DenyRead("creds")
+
+	c, ok := doctorChecksByID(t)["creds-broken"]
+	if !ok {
+		t.Fatal("doctor reported nothing for a marks read that failed: an empty result reads exactly like 'no admitted account is broken'")
+	}
+	if c.Severity != "info" {
+		t.Errorf("severity = %q, want info (a read that did not answer is not a finding about the installation)", c.Severity)
+	}
+	if !strings.Contains(c.Problem, "could not be read") {
+		t.Errorf("problem does not say the read failed: %q", c.Problem)
+	}
+	if c.Fix == "" {
+		t.Error("fix is empty: doctor's shape for a read that did not answer is a note with a remedy")
+	}
+}
+
 // TestDoctorRefusesAnotherProjectsDatabase: every check doctorPolicyChecks
 // makes reads the budget database as this project's own — the published
 // policy, the rules markers and the credential marks — so a budget.rtdb_url
