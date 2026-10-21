@@ -3,7 +3,9 @@ package infra
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"maps"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -135,6 +137,178 @@ type InstallationSpec struct {
 	// tfvars as before the variable existed and plans without the scoped
 	// deployer role and its binding (InstallOptions.ManagedDeployerScoped).
 	ManagedDeployerScoped bool `json:"managed_deployer_scoped,omitempty"`
+	// CredentialsService is the installation's credentials service (D146,
+	// D147), left out until an owner runs init's credentials stage (C1.20) —
+	// which is the only writer, and the only thing that can set it. Left out
+	// rather than written as null, so an installation that has not opted in
+	// writes exactly the tfvars it wrote before the variable existed, and the
+	// module creates nothing for an absent one.
+	CredentialsService *CredentialsServiceSpec `json:"credentials_service,omitempty"`
+}
+
+// CredentialsServiceSpec is the installation root's var.credentials_service
+// (D146): the service's own account and Cloud Run service, the image it runs,
+// and the ONE bundle container its account reads. It is not the outputs'
+// CredentialsService (spec.go), which is what a repository root reads back:
+// that object carries the name and the region, and this one carries what the
+// module needs to create them.
+//
+// The whole opt-in is this one object: the module's five resources are gated
+// on it, and one accessor grant on the one bundle container is its whole reach
+// in Secret Manager (Q6, Global Constraint 12). Nothing else about the
+// installation changes; what changes in the repository roots is that their
+// jobs stop mounting a model credential (C1.20, internal/infra/spec.go's
+// dropModelMounts).
+type CredentialsServiceSpec struct {
+	AccountID string `json:"account_id"`
+	Service   string `json:"service"`
+	Image     string `json:"image"`
+	// BundleSecret is the bundle container's Secret Manager ID, which the
+	// loader derives from the project the same way (gcp.ProjectSecretID of
+	// the logical name CredentialsBundleName): the module creates the
+	// container under this ID and grants the account on it, and the service
+	// reads it back by its own derivation, so the two never drift.
+	BundleSecret string `json:"bundle_secret"`
+}
+
+// The credentials service's singletons. The account is what reads the bundle,
+// and nothing else is granted actAs on it (modules/installation/credentials.tf);
+// the Cloud Run service's name is the name every job's invoker grant and the
+// repository roots' CredentialsService output carry.
+const (
+	CredentialsAccountID = "fugaro-credentials"
+	// CredentialsServiceName is the Cloud Run service's name. It may start
+	// with fugaro-: that prefix is reserved by the *job* listings (HistoryJob),
+	// and a Cloud Run service is not one of them.
+	CredentialsServiceName = "fugaro-credentials"
+	// CredentialsBundleName is the logical name of the one bundle secret —
+	// the document every credential the service holds lives in (Q6). It is a
+	// name of the platform's: no workflow may declare it and no `fugaro
+	// secrets set` stores a value under it, because the service's document is
+	// written by `fugaro creds set NAME` alone (C1.11, C1.25).
+	CredentialsBundleName = "creds-bundle"
+)
+
+// credsImageRE is the image form the module's own validation admits
+// (deploy/terraform/gcp/modules/installation/variables.tf): an image
+// reference ending in an @sha256: digest of its own, never a bare tag. A tag
+// is refused at plan time for a security reason rather than a preference —
+// the service runs as the account that reads every credential in the bundle,
+// and every operator holds roles/artifactregistry.writer on the registry the
+// image comes from, so a mutable tag would let an operator push the code that
+// the next owner apply runs as that account (D145: operators add, never
+// read). Refused here too, so the stage that fills it fails before it writes
+// a tfvars rather than in the plan.
+var credsImageRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/@:-]*@sha256:[0-9a-f]{64}$`)
+
+// Credentials is the credentials service's spec for lc: the names the module
+// uses, the bundle container the loader also derives, and the image the
+// caller verified. The image must be pinned by digest (credsImageRE) — this
+// is the check the stage's own test walks the tag form through, and it is the
+// same rule the Terraform variable states, so a tfvars this function returns
+// is never one the plan refuses for its image.
+func Credentials(lc *localcfg.Config, image string) (CredentialsServiceSpec, error) {
+	if !credsImageRE.MatchString(image) {
+		return CredentialsServiceSpec{}, userErr("the credentials service's image %q must be pinned by digest (ending in @sha256: and 64 lower-case hex digits): a tag is mutable, and this service reads every model credential the installation holds", image)
+	}
+	return CredentialsServiceSpec{
+		AccountID:    CredentialsAccountID,
+		Service:      CredentialsServiceName,
+		Image:        image,
+		BundleSecret: gcp.ProjectSecretID(lc.Name, CredentialsBundleName),
+	}, nil
+}
+
+// SetCredentialsService returns the installation root's tfvars vars — as
+// InstallationVars wrote them — with credentials_service set to svc, and
+// every other entry byte-for-byte what it was.
+//
+// It is a read-modify-write of the ONE key and never a rebuild of the
+// document, because the tfvars that are on disk when the credentials stage
+// runs are not what InstallationVars(spec) would produce: the run that wrote
+// them had run discovery, so they carry the module's project_secrets (the
+// live project-wide containers), adopt_legacy_registry and the run's imports
+// — values only that run's discovery knew. Rewriting the document from the
+// stage's own spec would plan the destruction of every project secret the
+// discovery had found.
+func SetCredentialsService(vars []byte, svc CredentialsServiceSpec) ([]byte, error) {
+	raw, err := json.Marshal(svc)
+	if err != nil {
+		return nil, err
+	}
+	return setVarsKey(vars, "credentials_service", raw)
+}
+
+// CarriedCredentialsService returns vars with the credentials_service entry
+// that the workdir's PREVIOUS tfvars carried, when vars carry none of their
+// own.
+//
+// prev is those tfvars — infra.Workdir.PrevVars, which PrepareWorkdir read
+// before it rebuilt the tree, or infra.ReadWorkdirVars — and nil when the
+// workdir held none. It is handed over as bytes rather than read from a path
+// here on purpose: the caller's workdir has already been prepared, so the file
+// is gone, and a read at this point would answer "nothing to carry" for an
+// installation that has opted in (the bug C1.20's review found).
+//
+// The variable is the credentials stage's alone (C1.20), and every ordinary
+// run of init rewrites the tfvars from its spec — which never sets the key.
+// Carried forward exactly as it was, present or absent, an installation that
+// has opted in keeps the service across an ordinary run's rewrite; without
+// that, the next plain `fugaro init` would plan the service, its account and
+// its grant away (a plan the bundle container's prevent_destroy refuses,
+// so the run fails rather than applies anything). An installation that never
+// opted in carries no key and is unchanged, and the runbook's opt-out — the
+// owner deleting the key by hand — is respected for the same reason: the
+// entry is taken as it is found.
+func CarriedCredentialsService(vars, prev []byte) ([]byte, error) {
+	if prev == nil {
+		return vars, nil // no workdir held one: nothing to carry
+	}
+	previous, err := varsDoc(prev)
+	if err != nil {
+		// A tfvars that cannot be read is not a reason to write a plan that
+		// drops the service: fail rather than carry nothing forward.
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	svc, ok := previous["credentials_service"]
+	if !ok || svc == nil {
+		return vars, nil
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	doc["credentials_service"] = svc
+	return sortedJSON(doc)
+}
+
+// varsDoc decodes an installation tfvars document, keeping numbers as
+// json.Number so that encoding it again writes the same digits.
+func varsDoc(vars []byte) (map[string]any, error) {
+	dec := json.NewDecoder(bytes.NewReader(vars))
+	dec.UseNumber()
+	var doc map[string]any
+	if err := dec.Decode(&doc); err != nil {
+		return nil, err
+	}
+	return doc, nil
+}
+
+// setVarsKey returns the tfvars document vars with key set to the raw JSON
+// value raw, every other entry unchanged, in sortedJSON's own bytes.
+func setVarsKey(vars []byte, key string, raw json.RawMessage) ([]byte, error) {
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, err
+	}
+	var val any
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&val); err != nil {
+		return nil, err
+	}
+	doc[key] = val
+	return sortedJSON(doc)
 }
 
 // InstallationNames are the installation's singleton names.
@@ -228,6 +402,12 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 	}
 	s.ProjectJobs = jobs
 	s.ManagedDeployerScoped = o.ManagedDeployerScoped
+	// CredentialsService is deliberately NOT set from the options: the opt-in
+	// is the credentials stage's alone (C1.20), and that stage never comes
+	// through here — it read-modify-writes the one key of the document the
+	// installation stage wrote (infra.SetCredentialsService), because a
+	// document rebuilt from a spec would drop the discovery's project_secrets
+	// and plan their destruction.
 	if o.NoLogIsolation {
 		s.LogIsolation = new(false)
 	}

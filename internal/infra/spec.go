@@ -612,6 +612,15 @@ type SecretMount struct{ Logical, Env string }
 func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w config.Workflow, lc *localcfg.Config, repo string) ([]SecretMount, error) {
 	out := []SecretMount{{gitSecret, config.ReservedSecrets[gitSecret]}}
 	switch cfg.Agent.Auth {
+	case "cascade":
+		// The cascade mounts no model credential at all (D143, D146): the
+		// credentials service hands the run one at call time, through the
+		// in-runner gateway and the run's own identity (C1.19), so there is
+		// no tier-A token and no tier-B key in this job's environment — and
+		// the job's account holds no accessor on either
+		// (modules/workflow/sa.tf, D145). Stated as a case of its own rather
+		// than left to fall past the switch: the empty body is the decision.
+		// TestCascadeMountsNoOAuthToken holds it.
 	case "oauth":
 		out = append(out, SecretMount{config.ClaudeAccountSecret(token), config.ReservedSecrets["claude-oauth-token"]})
 	case "api-key":
@@ -791,6 +800,15 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 		}
 		ws.SecretEnv[m.Env] = m.Logical
 		ws.SecretIDs[m.Logical] = gcp.SecretID(slug, m.Logical)
+	}
+	// An installation that has opted in to the credentials service holds
+	// every model credential itself (D146, D147), so its jobs mount none of
+	// them: modules/workflow/sa.tf drops each job account's accessor, and a
+	// mount left behind would fail the job's own deploy. The containers stay
+	// declared — see dropModelMounts — so nothing here plans a secret's
+	// destruction.
+	if c.inst.CredentialsService != nil {
+		dropModelMounts(&ws)
 	}
 	ws.BuildSecrets = []string{c.gitSecret}
 	for _, s := range w.Secrets {

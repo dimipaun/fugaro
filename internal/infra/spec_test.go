@@ -2408,6 +2408,162 @@ func TestRepoAddressesDropServiceHeldSecretsWhenTheServiceIsOn(t *testing.T) {
 	}
 }
 
+// TestNoModelMountsWithService is the mount half of the opt-in
+// (docs/credentials-service, D146, D147; C1.20). The addresses test above pins
+// which IAM records move; this one pins what the JOB is given, which is the
+// half that decides whether a deploy succeeds at all: modules/workflow/sa.tf
+// takes the job account's accessor off each model credential, and Cloud Run
+// checks the mounting account's read access on every secret handed to a job, so
+// a job that still MOUNTED the token would be refused to deploy.
+//
+// The shape of the drop is what the test is really for, in the two forms the
+// installation distinguishes (oauth: the shared subscription token, once per
+// Claude account; api-key: the Anthropic key and a provider's key):
+//
+//   - the MOUNT goes — no SecretEnv entry names a model credential
+//     (config.IsModelSecretEnv), and FUGARO_SECRET_ENVS, which is how the job
+//     knows what to redact from its logs, stops naming them with it;
+//   - the CONTAINER stays — rs.Secrets, the repository root's own
+//     google_secret_manager_secret.this, is the same map before and after. It
+//     carries prevent_destroy and may still hold the value the installation
+//     used before it opted in, so dropping it from the spec would plan its
+//     destruction (which prevent_destroy refuses, failing the whole plan) and
+//     make Retirements report a live container as retired;
+//   - everything that is not a model credential is untouched: the git
+//     credential and the workflow's own secrets stay mounted.
+//
+// The mutation is the dropModelMounts call in repoCtx.workflow: without it the
+// service-on spec mounts the model credentials exactly like the service-off
+// one, and every clause below fails.
+func TestNoModelMountsWithService(t *testing.T) {
+	svc := &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+	for _, tc := range []struct {
+		name string
+		in   Inputs
+	}{
+		{name: "oauth", in: repoRootInputs(t, repoRootOAuthAgent)},
+		{name: "api-key", in: repoRootCredentialsAPIKeyInputs(t)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			off := tc.in
+			off.Installation.CredentialsService = nil
+			offSpec, err := Repo(off)
+			if err != nil {
+				t.Fatal(err)
+			}
+			on := tc.in
+			on.Installation.CredentialsService = svc
+			onSpec, err := Repo(on)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The fixture's premise: with the service off the job really does
+			// mount a model credential, or the assertions below pass vacuously.
+			offWS := offSpec.Workflows["web"]
+			mounted := func(ws WorkflowSpec) []string {
+				var out []string
+				for env, logical := range ws.SecretEnv {
+					if config.IsModelSecretEnv(env) {
+						out = append(out, env+"="+logical)
+					}
+				}
+				slices.Sort(out)
+				return out
+			}
+			if offMounted := mounted(offWS); len(offMounted) == 0 {
+				t.Fatal("the fixture mounts no model credential with the service off: the test would be vacuous")
+			}
+			onWS := onSpec.Workflows["web"]
+			if onMounted := mounted(onWS); len(onMounted) != 0 {
+				t.Errorf("with the credentials service on, the job still mounts %v: the service holds those credentials and the job account has no accessor left on them (D145, D146), so Cloud Run would refuse to deploy the job", onMounted)
+			}
+			// The redaction list follows the mounts: it is built from them, and
+			// a name left in it that is not mounted is a redaction the runner
+			// would apply to nothing.
+			if got, want := onWS.Env[runner.SecretEnvsVar], redactionEnvs(onWS.SecretEnv); got != want {
+				t.Errorf("%s = %q with the service on, want %q, the mounts that remain", runner.SecretEnvsVar, got, want)
+			}
+			for _, env := range config.ModelSecretEnvs {
+				if strings.Contains(onWS.Env[runner.SecretEnvsVar], env) {
+					t.Errorf("%s still redacts %s, which the job no longer mounts", runner.SecretEnvsVar, env)
+				}
+			}
+			// The containers: identical maps, so nothing plans a secret's
+			// destruction and nothing is reported as retired.
+			if !maps.Equal(offSpec.Secrets, onSpec.Secrets) {
+				t.Errorf("the secret containers moved with the mount: with the service off %v, on %v. Only the mount goes: the container carries prevent_destroy and may still hold the value the installation used before it opted in, so dropping it would plan a destruction the root refuses and report a live container as retired", offSpec.Secrets, onSpec.Secrets)
+			}
+			if _, ok := onWS.SecretEnv["NPM_TOKEN"]; !ok {
+				t.Errorf("the workflow's own secret is no longer mounted with the service on: %v", onWS.SecretEnv)
+			}
+			if _, ok := onWS.SecretEnv[config.ReservedSecrets["github-app-key"]]; !ok {
+				t.Errorf("the git credential is no longer mounted with the service on: %v", onWS.SecretEnv)
+			}
+		})
+	}
+}
+
+// TestCascadeMountsNoOAuthToken: a `cascade` workflow mounts no model
+// credential in any case, the service on or off (docs/credentials-service,
+// D143; C1.20). The cascade's first tier is the shared subscription OAuth
+// token, and the whole point of the mode is that the job holds NEITHER tier —
+// the service supplies one at call time through the run's gateway — so the
+// SecretMounts switch has a `cascade` case of its own and maps it to no model
+// mount at all. It is the one auth whose mounts do not depend on whether the
+// installation opted in, which is why it is pinned separately from the drop
+// above.
+//
+// The oauth fixture beside it is the premise: it mounts the same token, so a
+// cascade case that fell through to oauth's would be caught here. The mutation
+// is deleting the `case "cascade":` arm of SecretMounts' switch.
+func TestCascadeMountsNoOAuthToken(t *testing.T) {
+	w := config.Workflow{Secrets: []config.Secret{{Name: "npm-token", Env: "NPM_TOKEN"}}}
+	mounts := func(auth string) []SecretMount {
+		t.Helper()
+		ms, err := SecretMounts("bitbucket-token", &config.Config{Agent: config.Agent{Auth: auth}}, "app", config.DefaultClaudeAccount, w, &localcfg.Config{}, "acme/app")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ms
+	}
+	oauth := mounts("oauth")
+	if !slices.ContainsFunc(oauth, func(m SecretMount) bool { return m.Logical == config.ClaudeAccountSecret(config.DefaultClaudeAccount) }) {
+		t.Fatalf("the oauth mounts %v name no Claude token: the premise of this test is gone", oauth)
+	}
+	cascade := mounts(config.AuthCascade)
+	var want []SecretMount
+	for _, m := range oauth {
+		if config.IsModelSecretEnv(m.Env) {
+			continue
+		}
+		want = append(want, m)
+	}
+	if !slices.Equal(cascade, want) {
+		t.Errorf("a cascade workflow mounts %v, want %v: the cascade's token is the service's, never the job's", cascade, want)
+	}
+	for _, m := range cascade {
+		if config.IsModelSecretEnv(m.Env) {
+			t.Errorf("a cascade workflow mounts %s (%s), a model credential: the cascade decides which credential carries a call and the service supplies it (D143)", m.Env, m.Logical)
+		}
+	}
+	// And through the whole spec, where the job's env and its secret
+	// containers are built from those mounts: the cascade token reaches
+	// neither.
+	rs := repoRootSpec(t, `agent: { auth: `+config.AuthCascade+` }`)
+	ws := rs.Workflows["web"]
+	for env, logical := range ws.SecretEnv {
+		if config.IsModelSecretEnv(env) {
+			t.Errorf("a cascade spec mounts %s=%s", env, logical)
+		}
+	}
+	if _, ok := rs.Secrets[config.ClaudeAccountSecret(config.DefaultClaudeAccount)]; ok {
+		t.Errorf("a cascade spec declares the token's container: %v", rs.Secrets)
+	}
+	if strings.Contains(ws.Env[runner.SecretEnvsVar], "CLAUDE_CODE_OAUTH_TOKEN") {
+		t.Errorf("%s still redacts the token: %q", runner.SecretEnvsVar, ws.Env[runner.SecretEnvsVar])
+	}
+}
+
 // moduleResources are the resource blocks the repository's own modules
 // declare, as "type.name", for the modules a repository root includes.
 //
