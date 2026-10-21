@@ -635,6 +635,123 @@ function drawingOf(svg) {
     .join(';')
 }
 
+/** The commands a straight-edged outline is drawn with, and the only ones read here. */
+const OUTLINE_COMMANDS = 'MmLlHhVvZz'
+
+/**
+ * The corners of a drawing that is one closed outline of straight edges — a single `<path>`
+ * drawn through points and closed with `Z`, with nothing else in the drawing — or `null` when
+ * it is anything else: several shapes, several subpaths, a curve, or an outline left open.
+ *
+ * Only such a drawing is read as a mark whose corners are the whole of it, which is what the
+ * symmetry rule below is about. The rest of the set is not read here and needs no exemption:
+ * the shield and the team are drawn with curves, and the arrows are four separate strokes
+ * that never close, so a drawing this function refuses to read is a drawing the rule has
+ * nothing to say about rather than one it lets pass.
+ */
+function outlineOf(drawing) {
+  const quoted = /^path d=("(?:[^"\\]|\\.)*")$/.exec(drawing)
+  if (quoted === null) return null
+  const d = JSON.parse(quoted[1])
+  const points = []
+  let at = null
+  let moved = false
+  let closed = false
+  for (const [, letter, args] of d.matchAll(/([A-Za-z])([^A-Za-z]*)/g)) {
+    if (!OUTLINE_COMMANDS.includes(letter)) return null
+    const rest = args.replace(/[\s,]/g, '')
+    const numbers = args.match(/-?\d*\.?\d+(?:e-?\d+)?/gi) ?? []
+    if (rest.replace(/-?\d*\.?\d+(?:e-?\d+)?/gi, '') !== '') return null
+    const values = numbers.map(Number)
+    if (values.some((value) => !Number.isFinite(value))) return null
+    const relative = letter === letter.toLowerCase()
+    const move = (point) => {
+      at = point
+      points.push(point)
+      return point
+    }
+    const step = (x, y) => move(relative ? [at[0] + x, at[1] + y] : [x, y])
+    if (letter === 'Z' || letter === 'z') {
+      if (values.length !== 0 || at === null) return null
+      closed = true
+      continue
+    }
+    if (letter === 'M' || letter === 'm') {
+      // A second `M` opens a second subpath, which is a drawing of more than one outline.
+      if (moved || values.length < 2 || values.length % 2 !== 0) return null
+      moved = true
+      // A path's first `m` is absolute whatever its case — there is no current corner for it
+      // to be relative to.
+      if (at === null) move([values[0], values[1]])
+      else step(values[0], values[1])
+      for (let i = 2; i < values.length; i += 2) step(values[i], values[i + 1])
+      continue
+    }
+    if (!moved || at === null) return null
+    if (letter === 'L' || letter === 'l') {
+      if (values.length < 2 || values.length % 2 !== 0) return null
+      for (let i = 0; i < values.length; i += 2) step(values[i], values[i + 1])
+    } else if (letter === 'H' || letter === 'h') {
+      if (values.length === 0) return null
+      // A horizontal step keeps the corner's own y — the one `at` is carrying — and a
+      // vertical one keeps its x, which is the whole of what those two commands mean.
+      for (const value of values) move([relative ? at[0] + value : value, at[1]])
+    } else {
+      if (values.length === 0) return null
+      for (const value of values) move([at[0], relative ? at[1] + value : value])
+    }
+  }
+  if (!closed || !moved || points.length < 3) return null
+  // `Z` closes back onto the first corner, so the outline is the points as they stand.
+  return points
+}
+
+/**
+ * What a mark drawn as one closed outline of straight edges has to be, as the lines a reader
+ * of this file sees. The owner's feedback of 2026-10-21: "icon for 'The newest tools and
+ * models, ready to use' is asymmetrical (fix the icon's drawing so it is visually
+ * symmetric)". The glyph under that point is a four-point star, and a star is a symmetric
+ * mark — its corners mirrored onto themselves about both of the lines through its middle, and
+ * that middle the middle of the 24×24 box the icon set draws in, which is where every other
+ * glyph of the set sits. The drawing that shipped had the north-west notch left as a straight
+ * edge from the west point to the north one, so one corner of seven had nothing opposite it,
+ * and the whole mark sat a unit above the middle of the box; a reader sees both as the mark
+ * leaning, which is what the feedback is about.
+ *
+ * The rule is written over the drawing rather than over the star by name, so it is a fact
+ * about the shape a glyph is and not a description of today's markup: it reads every glyph of
+ * the set that is drawn as one closed outline, and today that is the star alone. An empty list
+ * is a glyph that is symmetric about both lines and centred in the box, or one this rule has
+ * nothing to say about.
+ */
+export function glyphSymmetryFailures(drawing, where) {
+  const points = outlineOf(drawing)
+  if (points === null) return []
+  const round = (value) => Math.round(value * 1e4) / 1e4
+  const xs = points.map(([x]) => x)
+  const ys = points.map(([, y]) => y)
+  const middle = [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2]
+  const corners = new Set(points.map(([x, y]) => `${round(x)},${round(y)}`))
+  const out = []
+  for (const [axis, mirrored] of [
+    ['vertical', points.map(([x, y]) => [2 * middle[0] - x, y])],
+    ['horizontal', points.map(([x, y]) => [x, 2 * middle[1] - y])],
+  ]) {
+    const absent = mirrored.filter(([x, y]) => !corners.has(`${round(x)},${round(y)}`))
+    if (absent.length > 0) {
+      out.push(
+        `${where}: its glyph is drawn as one closed outline of straight edges and is not symmetric about the ${axis} line through its middle — ${absent.length} of its ${points.length} corners have no corner opposite them (${absent.map(([x, y]) => `(${round(x)}, ${round(y)})`).join(', ')}), so the mark reads as a shape drawn lopsided rather than as the mark the icon set draws: the owner's feedback of 2026-10-21 asks for the drawing to be visually symmetric, with its meaning, its stroke and the set's size kept as they are`,
+      )
+    }
+  }
+  if (round(middle[0]) !== 12 || round(middle[1]) !== 12) {
+    out.push(
+      `${where}: its glyph's middle is (${round(middle[0])}, ${round(middle[1])}) and the icon set draws every glyph about the middle of the 24×24 box, (12, 12) — a mark symmetric in itself and sitting off the middle of its box is the same lean the owner's feedback of 2026-10-21 is about, seen from the other side (the box is the component's, \`viewBox="0 0 24 24"\`)`,
+    )
+  }
+  return out
+}
+
 /**
  * The ways an `<svg>` could pull something in from outside itself, which is what an inline
  * icon may never do: an attribute that names another document, or an element whose whole job
@@ -731,6 +848,13 @@ function benefitsOf(html) {
  *     the defect this round is about. The four glyphs are also held to being four: four points
  *     drawn with one picture is one icon used four times, and the picture then says nothing
  *     about the point under it.
+ *   - **the drawing is a mark the eye reads as symmetric, and it sits on the middle of its
+ *     box.** The owner's feedback of 2026-10-21: the icon under "The newest tools and models,
+ *     ready to use" is asymmetrical. A glyph drawn as one closed outline of straight edges is
+ *     held to being mirrored onto itself about both lines through its own middle, and to that
+ *     middle being the middle of the 24×24 box the set draws in — the rule is
+ *     `glyphSymmetryFailures` below, written over the drawing rather than over the star by
+ *     name, and a glyph drawn with curves or in several strokes is not read by it.
  *
  * Written as a function over a benefits section and the README's reasons so a fixture can
  * prove it refuses.
@@ -815,6 +939,7 @@ export function benefitFailures(benefits, reasons) {
         `${where}: its icon references something outside itself (${icon.reference}), and an icon of this site is inline SVG drawn with the page's own tokens — an icon font, an image file, a <use href> or an inline style is another thing a reader's browser has to fetch, or a colour the palette does not carry (the owner's feedback of 2026-10-19; Global Constraints 4 and 8)`,
       )
     }
+    out.push(...glyphSymmetryFailures(icon.drawing, where))
   }
 
   // Four points, four pictures: a glyph repeated under two points is one icon used twice, and
@@ -1001,6 +1126,63 @@ test('the benefits refusals fire on a missing icon, a second one, a named glyph 
     /draw 4 icon\(s\) with 1 distinct picture\(s\)/,
     'four points drawn with one glyph between them are not refused',
   )
+})
+
+test('the benefit icon symmetry refusal fires on the glyph the owner saw and on a glyph off the middle of its box', () => {
+  // The owner's feedback of 2026-10-21: "icon for 'The newest tools and models, ready to use'
+  // is asymmetrical". The glyph is a four-point star drawn as one closed outline of straight
+  // edges, and the drawing that shipped had the north-west notch left as a straight edge from
+  // the west point to the north one, with the whole mark a unit above the middle of the box.
+  // Both are planted here alone beside the fixture section that keeps the rule — the fixture's
+  // four glyphs are open outlines, which the rule has nothing to say about, so the two
+  // refusals below are about the planted drawing and not about the fixture.
+  const reasons = readmeReasons()
+  const good = reasons.map((reason) => ({ name: reason.name, line: firstSentence(reason.paragraph) }))
+  const refusal = (items) => benefitFailures(benefitsOf(benefitsPage(items)), reasons).join('\n')
+  assert.deepEqual(benefitFailures(benefitsOf(benefitsPage(good)), reasons), [], 'the fixture section is not the README\'s own, so the two refusals below prove nothing')
+
+  const plant = (path) => good.map((item, index) => (index === 0 ? { ...item, icon: iconMarkup(`<path d="${path}"></path>`) } : item))
+
+  // The star as it shipped: seven corners, one of them with nothing opposite it, and its
+  // middle at (12, 11).
+  const shipped = plant('M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11Z')
+  assert.match(
+    refusal(shipped),
+    /not symmetric about the vertical line through its middle — 1 of its 7 corners have no corner opposite them \(\(9\.8, 8\.8\)\)/,
+    'the glyph the owner saw — three notches and a straight edge — is not refused',
+  )
+  assert.match(
+    refusal(shipped),
+    /its glyph's middle is \(12, 11\)/,
+    'a mark symmetric in itself and sitting off the middle of its box is not refused',
+  )
+
+  // The same defect from the other side: a star with all four notches and every corner
+  // mirrored, moved a unit up and to the left. Symmetric, and still not the set's glyph.
+  assert.doesNotMatch(
+    refusal(plant('M11 2l2.2 5.8L19 10l-5.8 2.2L11 18l-2.2-5.8L3 10l5.8-2.2Z')),
+    /not symmetric/,
+    'a symmetric star is refused for asymmetry',
+  )
+  assert.match(
+    refusal(plant('M11 2l2.2 5.8L19 10l-5.8 2.2L11 18l-2.2-5.8L3 10l5.8-2.2Z')),
+    /its glyph's middle is \(11, 10\)/,
+    'a star drawn off the middle of the box is not refused',
+  )
+
+  // The two glyphs the rule must not touch: one drawn with curves, and one drawn as separate
+  // strokes. Both are asymmetric or off the middle or both, and neither is a mark the rule
+  // reads — a refusal here would be this file refusing the icon set's own style.
+  for (const [what, path] of [
+    ['curves', 'M12 3l7 3v6c0 4-3.5 6.5-7 8-3.5-1.5-7-4-7-8V6Z'],
+    ['separate strokes', 'M11 13L19 5M13 5h6v6M13 11L5 19M11 19H5v-6'],
+  ]) {
+    assert.deepEqual(
+      glyphSymmetryFailures(`path d=${JSON.stringify(path)}`, 'benefit 1 of the benefits'),
+      [],
+      `a glyph drawn with ${what} is read by the symmetry rule, which is the icon set's own drawing being refused`,
+    )
+  }
 })
 
 /** The first sentence of a paragraph, for the fixture above: markdown markers taken out. */

@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **1,387,679 bytes in a checkout with no tags** and to **1,387,679 bytes with the
+  commit builds to **1,400,486 bytes in a checkout with no tags** and to **1,400,486 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -719,6 +719,26 @@ added or removed without this sentence moving fails there:
     `test/console-screens.mjs` holds the four rows to the files' own headers and to the
     manifest's `alt` texts, and the two figures above are re-derived in this commit, from the
     gate's own build.
+  - **The four-point star under "The newest tools and models, ready to use" is drawn symmetric**
+    (the owner's feedback of 2026-10-21: "icon for 'The newest tools and models, ready to use' is
+    asymmetrical"). The glyph is the same four points, the same four notches, the same 16-unit
+    span and the same 2-unit `currentColor` stroke: the drawing gains the north-west notch it was
+    missing — a `l5.8-2.2` where the outline ran straight from the west point to the north one,
+    which is the whole of why a reader saw a star leaning — and moves onto the middle of its
+    24×24 box, where every other glyph of the set sits. That is **8 bytes** onto the homepage's
+    markup and so onto the site figure, with the page weight and the script where they were and no
+    page's words moved. **The site figure is re-derived here**, and it is re-derived by more than
+    those 8: the build the gates make is **1,400,478 bytes across 28 files** on the branch this
+    round starts from, **12,799** above the 1,387,679 this list stated, which is the
+    `cli-reference` rewrites of the CLI rounds (#789, #832) landing content after the screenshots
+    round's own re-derivation. So the 12,799 and the 8 are paid in one commit, the way the
+    screenshots round paid the 90,041 before it — D192's exact derivation runs only under
+    `FUGARO_DERIVE_BUDGETS=1`, which CI does not set, so a figure here lags the build it names
+    until a round that moves those bytes re-derives it, and this is that round. The count of files
+    in `dist/` stays **28**. `test/home.mjs` carries the rule the drawing is now held to — a glyph
+    drawn as one closed outline of straight edges is symmetric about both of the lines through its
+    own middle and that middle is the middle of the box — planted against the star as it shipped,
+    so the fix and the check that would have caught it arrive together.
 
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
@@ -746,7 +766,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,498,995 bytes. Three times 499,665: the heaviest page, the
     console page, at 399,732 bytes (its HTML, the four screenshots it renders, and the files
     it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 5,203,797 bytes. Three times 1,734,599 (every file in `dist/`, 1,387,679
+  - **Whole site:** 5,251,824 bytes. Three times 1,750,608 (every file in `dist/`, 1,400,486
     bytes across 28 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
