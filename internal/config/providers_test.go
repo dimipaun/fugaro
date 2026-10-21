@@ -393,3 +393,64 @@ func TestTheSecretNameRuleIsOneRule(t *testing.T) {
 		}
 	}
 }
+
+// TestModelSecretEnvsAreTheReservedOnes: the variables a model credential is
+// mounted as are the reserved names themselves, never a second spelling of
+// them. A rename of a reserved key that left ModelSecretEnvs behind would
+// make the credentials service's job-account rule (modules/workflow/sa.tf)
+// drop the accessor for a variable no job has, while the renamed one kept it.
+//
+// The mutation is ModelSecretEnvs built from a literal instead of
+// ReservedSecrets: the two then part as soon as a reserved key is renamed.
+func TestModelSecretEnvsAreTheReservedOnes(t *testing.T) {
+	want := map[string]string{ClaudeOAuthToken: "CLAUDE_CODE_OAUTH_TOKEN", AnthropicSecret: "ANTHROPIC_API_KEY"}
+	if len(ModelSecretEnvs) != len(want) {
+		t.Fatalf("ModelSecretEnvs = %v, want the two reserved model credentials", ModelSecretEnvs)
+	}
+	for _, env := range ModelSecretEnvs {
+		found := ""
+		for _, logical := range []string{ClaudeOAuthToken, AnthropicSecret} {
+			if ReservedSecrets[logical] == env {
+				found = logical
+			}
+		}
+		if found == "" {
+			t.Errorf("ModelSecretEnvs holds %q, which no reserved model credential maps to", env)
+			continue
+		}
+		if env != want[found] {
+			t.Errorf("ReservedSecrets[%s] = %q, want %q", found, env, want[found])
+		}
+	}
+}
+
+// TestIsModelSecretEnv is the predicate the credentials service's rule is
+// written from (C1.18): the two reserved model variables and every provider
+// key's namespace, and nothing else — the git credentials are deliberately
+// out (D145: Bitbucket is untouched, the GitHub App key moves only in C2.3),
+// so a job keeps their accessor.
+//
+// The mutation is IsProviderKeyEnv's prefix read case-sensitively, or a third
+// name added to ModelSecretEnvs: either one drops an accessor from a job that
+// still mounts the secret, or keeps one for a secret the service holds.
+func TestIsModelSecretEnv(t *testing.T) {
+	for _, tc := range []struct {
+		env  string
+		want bool
+	}{
+		{"CLAUDE_CODE_OAUTH_TOKEN", true},
+		{"ANTHROPIC_API_KEY", true},
+		{ProviderKeyEnv("openrouter-api-key"), true},
+		{ProviderKeyEnvPrefix + "OPENROUTER_API_KEY", true},
+		{"FUGARO_PROVIDER_KEY", false},           // the prefix alone is not a key
+		{"FUGARO_BITBUCKET_TOKEN", false},        // D145: the git credential stays
+		{"FUGARO_GITHUB_APP_PRIVATE_KEY", false}, // ... and so does the App key
+		{"FUGARO_BITBUCKET_TOKEN ", false},       // no trailing space is trimmed into a match
+		{"SANDBOX_PROBE", false},
+		{"", false},
+	} {
+		if got := IsModelSecretEnv(tc.env); got != tc.want {
+			t.Errorf("IsModelSecretEnv(%q) = %v, want %v", tc.env, got, tc.want)
+		}
+	}
+}

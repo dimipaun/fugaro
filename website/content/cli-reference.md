@@ -994,8 +994,23 @@ This command has no subcommands.
 List the Fugaro installations this machine has
 
 List the project configs under $XDG_CONFIG_HOME/fugaro/projects (else
-~/.config/fugaro/projects), with the GCP project and region of each and what
-is known about its published shared config.
+~/.config/fugaro/projects), with the GCP project and region of each, what
+is known about its published shared config, and the checkouts of its
+repositories this machine remembers.
+
+The checkouts are remembered by the commands that run in one and are
+not reads the desktop console spawns (fugaro init --repo, fugaro run,
+fugaro validate, fugaro backends and the rest of them), in a machine-local
+state file beside the project configs. The commands the console's spawn
+allow-list covers never record: fugaro doctor and fugaro accounts ls
+resolve a checkout too, but a read writes nothing, whoever runs it — the
+command cannot tell who spawned it. Every path is re-validated on this
+read: a path that
+was moved or deleted, that is no longer a git checkout, or whose
+fugaro.yaml no longer names this project and this repository is reported
+with "valid": false and a reason, and is never silently dropped. The
+paths are local state: they are never published to the runs bucket, to
+the shared config or to any log.
 
 This is a local read: it opens no bucket and needs no project selected, so it
 works outside a checkout and with no config at all (an empty list).

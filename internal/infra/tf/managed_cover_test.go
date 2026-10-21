@@ -94,6 +94,11 @@ func TestManagedAllowedTypesGolden(t *testing.T) {
 	}
 	wantDropped := []string{
 		"google_billing_budget",
+		// The credentials service (C1.18): Fugaro's own infrastructure, applied
+		// by the owner-run installation root (D146), and a type the deployer
+		// holds no run.services.* permission for.
+		"google_cloud_run_v2_service",
+		"google_cloud_run_v2_service_iam_member",
 		// main's compute module's network (the compute backend, excluded from
 		// 0.9.0), dropped on the merge of main into next-0.8.5 as the
 		// fail-closed default.

@@ -65,7 +65,15 @@ func NewRootCmd() *cobra.Command {
 		// carry it. cmd/fugaro/main.go instead calls WarnUpdateAvailable
 		// itself, after ExecuteContextC returns, whether or not it errored.
 		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
-			cmd.SetContext(withCheckoutParseCache(cmd.Context()))
+			ctx := cmd.Context()
+			// A command the desktop console spawns as a read changes nothing
+			// on this machine, so it does not write the remembered checkouts
+			// either (see consoleReadPaths in project.go). Marked here, once
+			// per command, from the command's own path.
+			if consoleReadPaths[cmd.CommandPath()] {
+				ctx = withConsoleRead(ctx)
+			}
+			cmd.SetContext(withCheckoutParseCache(ctx))
 			warnStaleSkills(cmd)
 			disabled := updateCheckDisabled(cmd)
 			cmd.SetContext(withUpdateCheckDisabled(cmd.Context(), disabled))
