@@ -70,19 +70,21 @@ Once a day, list the last 24 hours of runs (`fugaro runs ls --since 24h`) and re
 
 Take each of those through `fugaro diagnose RUN` for the cost and the halt, then `fugaro logs RUN`, and look for:
 
-- **the review stage costing far more than implement.** The log lines `[implement] model call`, `[review] model call` and `[fix] model call` are one line per model call that stage's agent made; the snippet below counts them. A review making many times implement's calls for a small change has read too much, and often the wrong diff base (below).
-- **sub-agent fan-outs** — `tool Agent:` lines, each a sub-agent the stage spawned, with its own calls on top of the stage's.
+- **the review stage costing far more than implement.** Where a run's calls go through the gateway, each model call is one log line carrying its stage — `[implement] model call`, `[review] model call`, `[fix] model call`, and `[review_first] model call` for the cheaper first-line review — and the snippet below counts them. A review making many times implement's calls for a small change has read too much, and often the wrong diff base (below).
+- **sub-agent fan-outs** — `tool Agent:` lines, each a sub-agent the stage spawned, with its own calls on top of the stage's. These are the agent's own output, so they are there on every run.
 - **the wrong diff base** — the review's own `git diff origin/<base>...HEAD` naming a base the pull request does not target (the long-lived-branch section above is about those runs).
 - **repeated identical commands**, a resumed session re-reading the whole repository, rounds that end at the same cap, and a relaunch that redoes work already landed.
 
 Write each lesson where the next run will read it — the project's `CLAUDE.md` or its agent instructions — and fix the cause it names: the task's brief, the configuration, or the product itself.
+
+The `model call` lines are the gateway's, so a run only has them with the budget on and an API key or vertex credential; an `oauth` run's calls never reach it and log none of them. Read those runs by the agent's own lines instead, one `result` line per agent run, tagged with its stage: `[implement/agent]`, `[review/agent]`, `[review_first/agent]` and `[fix/agent]`.
 
 This counts a run's calls without changing anything: `fugaro logs` only reads, and so does `grep -c`.
 
 ```bash
 RUN=<run>
 fugaro logs "$RUN" | grep -c '\[implement\] model call'
-fugaro logs "$RUN" | grep -c '\[review\] model call'
+fugaro logs "$RUN" | grep -cE '\[review(_first)?\] model call'
 fugaro logs "$RUN" | grep -c '\[fix\] model call'
 fugaro logs "$RUN" | grep -c 'tool Agent:'
 ```

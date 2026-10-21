@@ -37,7 +37,7 @@ Keep it in one run when pieces edit the same files, share a new interface, or th
 
 ## A batch onto one long-lived branch
 
-When the pieces all land on one integration branch, every run's review pays for that branch's divergence from main, so a batch of fifteen onto a branch far ahead of main reads that distance fifteen times. Merge main into the branch before the batch so it starts from as little divergence as possible, and launch each run with `--ref BRANCH` (the `working` skill's long-lived-branch section).
+When the pieces all land on one integration branch whose own `fugaro.yaml` still names main, every run's review pays for that branch's divergence from main, so a batch of fifteen onto a branch far ahead of main reads that distance fifteen times. Merge main into the branch before the batch so it starts from as little divergence as possible, and launch each run with `--ref BRANCH` (the `working` skill's long-lived-branch section; a branch whose file names itself gets its pull requests against the branch, and its reviews read only the change itself).
 
 ## Redundant attempts for a hard task
 
