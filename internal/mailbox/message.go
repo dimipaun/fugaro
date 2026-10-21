@@ -16,6 +16,28 @@
 // adds — so a decoder that keeps only the fields it knows would sign different
 // bytes than the phone did. That is why a message is a Record (a decoded JSON
 // object) first and a Message second.
+//
+// **What a validated value is safe FOR.** Four values the schema accepts may be
+// handed to a program or used as a segment of a path: a merge's
+// `action.head_sha` (40 or 64 lowercase hex characters), `action.target.pr` (an
+// integer of at least one), and `action.target.run` and `action.target.repo`,
+// whose alphabets exclude a leading flag character, every shell metacharacter
+// and every path that is not a name — a run id's first character is
+// alphanumeric, `_` or `:`, and each half of a repository begins with an
+// alphanumeric or `_`, so neither `--force` nor `..` is a run and neither is a
+// repository. Every OTHER value the schema accepts may be `-`-leading, may be
+// `.` or `..`, may carry `*`, `?`, `\`, quotes or a format character (U+202E, a
+// zero-width space, a byte-order mark), or may be a single space. An id and a
+// boot are database keys and nothing more: an id may be a space, or begin with
+// `--`, or carry a metacharacter, and an agent id is drawn from
+// [A-Za-z0-9._:-], which admits `--force` and `..`. A sender, a body, an option
+// and an advertised name are wider still. All of that is deliberate — these are
+// strings a phone speaks, not arguments a program reads — so no identity and no
+// key may be passed to a program as argv or used as a path segment: a task that
+// must name a file after an id encodes it first (T4's ledger), and no task may
+// hand an agent id, a boot or a key to a command (T5 and T6).
+// TestTheDocSaysWhichValuesAreNotArgvSafe pins this paragraph, both halves of
+// it: what the four fields refuse, and what the rest accept.
 package mailbox
 
 import (
@@ -638,17 +660,33 @@ type Agent struct {
 //
 // It mirrors shared/mailbox-schema's validateMessage field for field and in the
 // same order, so that a value the module refuses is refused here with the same
-// code and the same field at fault: the field set first (the field set is the
-// version), then the five required fields, then each field's own rules, then
-// the (kind, field) table and the action record. A nil Record is the one
-// refusal the type cannot express, and it is refused not-an-object.
+// code, and with the same field at fault whenever one field is at fault: the
+// field set first (the field set is the version), then the five required
+// fields, then each field's own rules, then the (kind, field) table and the
+// action record. A nil Record is the one refusal the type cannot express, and
+// it is refused not-an-object.
+//
+// The one place the two ends need not spell the same field is a record carrying
+// MORE than one field the schema does not name. The code is unknown-field on
+// both sides, and a caller branching on the code is therefore answered
+// identically — but which of the several is named is each side's own order. The
+// module walks Object.keys, which is insertion order for a JS object (with
+// integer-like keys first); a Go map has no insertion order to walk, so this
+// side walks byte order instead, because a deterministic answer beats one that
+// changes between runs. TestTwoUnknownFieldsAreNamedInByteOrder pins that, and
+// the four shared vectors with an unknown field all carry exactly one, which is
+// why the difference is invisible in the replay.
 func ValidateMessage(r Record) (*Message, *Refusal) {
 	if r == nil {
 		return nil, refuse(CodeNotAnObject, "")
 	}
 	// Unknown first: a field that is not in the set is refused before any of
 	// its neighbours is judged. The keys are visited in byte order rather than
-	// in the map's own order, so naming the field at fault is deterministic.
+	// in the map's own order, so naming the field at fault is deterministic --
+	// and the field is the only part of this refusal that need not match the
+	// module's answer: with several unknown fields the module names the one
+	// insertion order reaches first, and both sides still answer unknown-field
+	// (the doc above).
 	for _, key := range sortedKeys(r) {
 		if !contains(Fields, key) {
 			return nil, refuse(CodeUnknownField, key)
