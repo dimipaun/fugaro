@@ -355,31 +355,30 @@ func (r *initRepoRig) fugaroInitTyped(t *testing.T, typed string, args ...string
 	return r.fugaroInitIn(t, tty, args...)
 }
 
-// convergeDoor is the door of the converge a run's args belong to, and it is
-// what these tests run instead of the retired word: since W1.2 (task W1.2 of
+// convergeCmd is the command every run below invokes, and it is what these
+// tests run instead of the retired word: since W1.2 (task W1.2 of
 // docs/setup-wizard/implementation-plan.md) `fugaro init` is a hidden tombstone
-// that applies nothing and exits 1, so every run below would be that refusal
-// and this package would be red — and the refusal-only test would pass
-// vacuously, since it asserts nothing but exit 1.
+// that applies nothing and exits 1, so a run that still named it would be that
+// refusal and this package would be red.
 //
-// The converge `init` used to be is two commands over one engine. `fugaro
-// setup` is the front door and the default here: it is the door that creates,
-// so it takes every flag a run below passes. `fugaro update` is the
-// re-converge of an installation that already exists, and it is the door that
-// takes --forget — the one flag the two do not share, because setup refuses it
-// by name (a first run has nothing to unwind). A --forget run that named setup
-// would be refused for the flag instead of doing what the test means.
+// The converge `init` used to be is two commands over one engine: `fugaro
+// setup`, the first run, which creates, and `fugaro update`, the re-converge of
+// an installation that already exists, which creates nothing. `update` is the
+// door these tests are about. Every rig below starts from an installation
+// newInitRepoRig has already applied — the state bucket's
+// installation/default.tfstate and the local config the converge left — so what
+// each run exercises is a re-converge, which is update's own contract ("the
+// re-converge of an installation ... or, with --repo, for the repository of the
+// checkout at PATH"), and it is the door W5.2 renames this file and its tests
+// after (`internal/e2e/update_test.go`, `TestUpdate*`). W5.2 keeps
+// `TestInitRepoBuildsThenDeploys` and `TestInitRepoBuildNeedsConfirmation` as
+// the only candidates for `TestSetup*`, and that split is the owner's to call
+// with W1.3; all 27 run under this one word until then.
 //
-// W5.2 renames this file and these tests for what they exercise
-// (`update_test.go`, `TestUpdate*`) and is where the split between the two
-// doors is the owner's to call. The command word is here, and only the command
-// word: every assertion below stays as it is.
-func convergeDoor(args []string) string {
-	if slices.Contains(args, "--forget") {
-		return "update"
-	}
-	return "setup"
-}
+// The word is one constant in one place because it is one decision: W5.2 moves
+// it here and nothing else in the file moves with it. Every assertion below
+// stays as it is.
+const convergeCmd = "update"
 
 func (r *initRepoRig) fugaroInitIn(t *testing.T, stdin *os.File, args ...string) cliResult {
 	t.Helper()
@@ -397,7 +396,7 @@ func (r *initRepoRig) fugaroInitIn(t *testing.T, stdin *os.File, args ...string)
 	if slices.Contains(args, "--repo") && !slices.Contains(args, "--print-vars") && !slices.Contains(args, "--plan-only") && !slices.Contains(args, "--forget") && !slices.Contains(args, "--onboard-repo") {
 		args = append(slices.Clone(args), "--onboard-repo", r.repo)
 	}
-	cmd := exec.CommandContext(ctx, r.fugaro, append([]string{convergeDoor(args)}, args...)...)
+	cmd := exec.CommandContext(ctx, r.fugaro, append([]string{convergeCmd}, args...)...)
 	cmd.Dir = r.dir
 	cmd.Env = hermeticEnv(env)
 	if stdin != nil {
