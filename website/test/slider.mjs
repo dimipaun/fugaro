@@ -119,9 +119,16 @@ function lengthPx(value, css) {
  *
  * The two forms a width is written in are read as one list: `min-width: 48rem` and `width>=48rem`
  * are the same bound, and a query carrying both forms carries both bounds.
+ *
+ * **An `@supports` condition holds.** It is not a question about the width — it is asked of the
+ * browser — and this reading is taken in a browser that answers it: the block's no-script state
+ * is written inside `@supports selector(:has(*))` (the component says why there), and a reading
+ * that treated the condition as not holding would report a block that opens empty on every
+ * browser, which is the opposite of what it does.
  */
 function appliesAt(conditions, width) {
   for (const condition of conditions) {
+    if (/^@supports\b/i.test(condition)) continue
     const at = /@media([^{]*)/i.exec(condition)
     if (!at) return false
     const bounds = [
@@ -164,6 +171,33 @@ function declaredAt(css, width, names, property) {
 function shows(declarations) {
   const display = declarations.get('display')
   return display !== undefined && display !== 'none'
+}
+
+/**
+ * A selector list split at its **top-level** commas: the commas inside `:has(…)`, `:not(…)` and
+ * `:is(…)` are part of one selector, not separators between two. `main:has(> .hero, >
+ * [data-security-page])` is one selector and not two, and a reading that cut it in half would
+ * report a `:has()` selector beside one that has none where there is only the one selector.
+ */
+function selectorParts(selector) {
+  const parts = []
+  let depth = 0
+  let quote = ''
+  let start = 0
+  for (let i = 0; i < selector.length; i += 1) {
+    const c = selector[i]
+    if (quote) {
+      if (c === quote) quote = ''
+    } else if (c === '"' || c === "'") quote = c
+    else if (c === '(') depth += 1
+    else if (c === ')') depth -= 1
+    else if (c === ',' && depth === 0) {
+      parts.push(selector.slice(start, i).trim())
+      start = i + 1
+    }
+  }
+  parts.push(selector.slice(start).trim())
+  return parts.filter(Boolean)
 }
 
 /**
@@ -492,6 +526,26 @@ export function sliderFailures(css, html) {
     }
   }
 
+  // A selector list is not forgiving. One selector a browser cannot read makes the whole rule
+  // invalid, so a rule carrying a `:has()` selector beside one that has none is a rule that
+  // hides the panel a dot opens — and the panel the script's own name points at — from every
+  // browser too old to answer `:has()`. The block has exactly one selector that asks for it, the
+  // one that shows the first panel while the fragment names none, and the component keeps it
+  // inside an `@supports selector(:has(*))` rule of its own for this reason. Writing it as a
+  // sibling of the rule above is not enough: the build merges adjacent rules that carry the same
+  // declaration, and `display: block` is what both of them say — the built stylesheet put all
+  // five selectors back into one rule when that was tried. This reads the artifact, so it holds
+  // whichever way the component is written.
+  for (const rule of cssRules(css)) {
+    if (rule.selector === undefined) continue
+    const parts = selectorParts(rule.selector)
+    const asking = parts.filter((part) => /:has\(/.test(part))
+    if (asking.length === 0 || asking.length === parts.length) continue
+    out.push(
+      `\`${rule.selector}\` carries ${asking.length} selector(s) asking for \`:has()\` beside ${parts.length - asking.length} that do not, and a selector list is not forgiving: a browser too old to answer \`:has()\` drops the whole rule, and every panel those other selectors show goes with it. The \`:has()\` selector belongs in an \`@supports selector(:has(*))\` rule of its own`,
+    )
+  }
+
   return out
 }
 
@@ -627,10 +681,16 @@ function stubPage(html, { hash = '', hidden = false, calm = false, script = SCRI
   const wrapped = new Map()
   const timers = []
   const queries = []
+  const media = []
   const hashWrites = []
   const windowListeners = new Map()
   const state = { activeElement: null }
   let shown = !hidden
+  // The reader's system preference is not fixed: `setCalm` below is that reader turning reduced
+  // motion on (or off) under a page that has already loaded, which a browser reports to the lists
+  // subscribed to *that* query as a `change` — and the pointer's own list hears nothing, because
+  // the pointer did not move.
+  let reduced = calm
 
   // Compound selectors joined by descendant spaces, in a comma list: `tag`, `.class`,
   // `[attr]` — the selectors the site's script writes, and a refusal for anything else. The
@@ -788,7 +848,23 @@ function stubPage(html, { hash = '', hidden = false, calm = false, script = SCRI
     // it here would be reading the menu with half a DOM.
     matchMedia(query) {
       queries.push(query)
-      return { media: query, matches: query === CALM_QUERY ? calm : false, addEventListener: () => {}, addListener: () => {} }
+      const listeners = []
+      const list = {
+        media: query,
+        get matches() {
+          return query === CALM_QUERY ? reduced : false
+        },
+        addEventListener(type, handler) {
+          if (type === 'change') listeners.push(handler)
+        },
+        // The name a MediaQueryList had for the same subscription before `addEventListener`
+        // reached it. A browser old enough to need this one still reports the change.
+        addListener(handler) {
+          listeners.push(handler)
+        },
+      }
+      media.push({ query, list, listeners })
+      return list
     },
     setTimeout(handler, ms) {
       const timer = { handler, ms, cancelled: false }
@@ -859,6 +935,18 @@ function stubPage(html, { hash = '', hidden = false, calm = false, script = SCRI
       shown = true
       document.dispatch('visibilitychange', { type: 'visibilitychange' })
     },
+    /** Every list the page asked the browser for, with what it subscribed to each one: a case
+     *  below reads whether the block watched the reduced-motion answer at all. */
+    media,
+    /** The reader turning reduced motion on (or off) without reloading, which a browser reports
+     *  to the lists subscribed to that query as a `change` carrying the new answer. */
+    setCalm(value) {
+      reduced = value
+      for (const one of media) {
+        if (one.query !== CALM_QUERY) continue
+        for (const handler of one.listeners) handler({ type: 'change', media: one.query, matches: value })
+      }
+    },
   }
 }
 
@@ -909,7 +997,28 @@ const CASES = [
       page.focusOut(null)
       assert.ok(page.pending().some((timer) => timer.ms === CLOCK_MS), 'the clock did not start again when the focus left the block')
     },
-    plant: ['held = true', 'held = false'],
+    // The block's own `over = true` and not the console slider's, which is written `over = true;
+    // settle()` on one line earlier in the file: a plant that matched that one would edit a
+    // slider this case never touches, and the case would pass with its own line still standing.
+    plant: ['      over = true\n', '      over = false\n'],
+  },
+  {
+    name: 'the pointer’s hold and the focus’s hold are separate, and neither one lets go of the other',
+    options: {},
+    check(page) {
+      page.enter()
+      page.focusIn(page.dots[1])
+      page.leave()
+      assert.equal(page.pending().length, 0, 'the pointer leaving the block started the clock again while the keyboard’s focus was still inside it: a reader tabbing through the dots has the slide move under them the moment a resting pointer drifts off the block')
+      page.enter()
+      page.focusOut(null)
+      assert.equal(page.pending().length, 0, 'the focus leaving the block started the clock again while the pointer was still over it: a reader reading with the pointer resting on the block has the slide move under them')
+      page.leave()
+      assert.ok(page.pending().some((timer) => timer.ms === CLOCK_MS), 'the clock did not start again once the reader had left the block both ways: a block that stops for good the first time a pointer crosses it is a block that stopped')
+    },
+    // The defect this case exists for: one flag for both readers, so the pointer's leaving clears
+    // the focus's hold as well.
+    plant: ['      over = false\n      arm()\n', '      over = false\n      inside = false\n      arm()\n'],
   },
   {
     name: 'a page nobody is shown runs no clock, and starts one when it is shown again',
@@ -920,7 +1029,7 @@ const CASES = [
       page.reveal()
       assert.ok(page.pending().some((timer) => timer.ms === CLOCK_MS), 'the clock did not start when the page was shown again: a reader who comes back to the tab is a reader who wants the slider')
     },
-    plant: ['held || !pageShown() || calm()', 'held || calm()'],
+    plant: ['over || inside || !pageShown() || calm()', 'over || inside || calm()'],
   },
   {
     name: 'a reader who asked for less motion gets no clock, and every control still works',
@@ -933,7 +1042,34 @@ const CASES = [
       page.click(page.on)
       assert.equal(page.active(), 'easy', 'less motion took the step controls with it')
     },
-    plant: ['held || !pageShown() || calm()', 'held || !pageShown()'],
+    plant: ['over || inside || !pageShown() || calm()', 'over || inside || !pageShown()'],
+  },
+  {
+    name: 'a reader who turns less motion on without reloading gets no more of the clock',
+    options: {},
+    check(page) {
+      assert.ok(
+        page.media.some((one) => one.query === CALM_QUERY && one.listeners.length > 0),
+        'the block never subscribed to the reduced-motion answer: a visitor can turn the setting on under a page that has already loaded, and a query read once and never watched only ever answers about the load',
+      )
+      assert.ok(page.pending().some((timer) => timer.ms === CLOCK_MS), 'the block armed no clock to stop: this case is about a running slider settling, and there is nothing running to settle')
+      page.setCalm(true)
+      assert.equal(page.pending().length, 0, 'the reader turned reduced motion on and the block kept its clock: the slide it was standing on moves on anyway, which is the one thing they asked it not to do')
+      page.click(page.dots[2])
+      assert.equal(page.active(), 'see', 'the block stopped working rather than stopping moving on its own')
+      assert.equal(page.pending().length, 0, 'a reader who asked for less motion got the clock back the moment they chose a slide themselves')
+      page.setCalm(false)
+      assert.ok(page.pending().some((timer) => timer.ms === CLOCK_MS), 'the reader turned reduced motion off again and the block stayed still: a slider that never resumes is a slider that stopped')
+    },
+    // The subscription and not the reading of the answer: with the block never watching the
+    // query, `calm()` still answers about the load and every other assertion in this case — the
+    // clock it gets back when the reader chooses a slide themselves — still holds.
+    // Both names of the subscription: the stub answers `addListener` as well as
+    // `addEventListener`, so a plant that silenced only the first would leave the case standing.
+    plant: [
+      "      if (motion.addEventListener) motion.addEventListener('change', arm)\n      else if (motion.addListener) motion.addListener(arm)\n",
+      "      if (false) motion.addEventListener('change', arm)\n      else if (false) motion.addListener(arm)\n",
+    ],
   },
   {
     name: 'the dots, the two step controls and the arrow keys move the block, and the address is left alone',
@@ -1146,7 +1282,12 @@ test('every refusal the slider reading makes fires on the defect it names', () =
     ],
     [
       'no rule showing the slide the page opens on',
-      css.replace(/,\s*\.home-slider\[data-astro-cid-\w+\]:not\(\[data-active\]\):not\(:has\(\.panel:target\)\) #home-panel-easy\[data-astro-cid-\w+\]/, ''),
+      // The panel's own `@supports` rule, named in full: the block has two of them, and taking
+      // the first would edit the dot's mark and leave this rule standing.
+      css.replace(
+        /@supports selector\(:has\(\*\)\)\{\.home-slider\[data-astro-cid-\w+\]:not\(\[data-active\]\):not\(:has\(\.panel:target\)\) #home-panel-easy\[data-astro-cid-\w+\]\{display:block\}\}/,
+        '',
+      ),
       html,
       /no rule shows #home-panel-easy while no panel is targeted/,
     ],
@@ -1170,7 +1311,7 @@ test('every refusal the slider reading makes fires on the defect it names', () =
     ],
     [
       'no rule marking the dot the script calls current',
-      css.replace(/,\s*\.slider-dot\[data-astro-cid-\w+\]\[aria-current=true\]:before/, ''),
+      css.replace(/\.slider-dot\[data-astro-cid-\w+\]\[aria-current=true\]:before\{[^}]*\}/, ''),
       html,
       /no rule marks the dot the script calls the current one/,
     ],
@@ -1228,6 +1369,12 @@ test('every refusal the slider reading makes fires on the defect it names', () =
       css.replace(/(\.step-line\[data-astro-cid-\w+\]\{)/, '$1white-space:nowrap;'),
       html,
       /a line that cannot break/,
+    ],
+    [
+      'a `:has()` selector standing in a list beside selectors that have none',
+      `${css}\n.home-slider[data-astro-cid-d3mmljir]:not([data-active]) .panel[data-astro-cid-d3mmljir]:target,.home-slider[data-astro-cid-d3mmljir]:not([data-active]):not(:has(.panel:target)) #home-panel-easy[data-astro-cid-d3mmljir]{display:block}`,
+      html,
+      /a browser too old to answer `:has\(\)` drops the whole rule/,
     ],
   ]
   for (const [what, plantedCss, plantedHtml, expected] of cases) {

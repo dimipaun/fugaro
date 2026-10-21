@@ -341,8 +341,7 @@ a.skip-link:focus {
     gap: var(--space-3xs) var(--space-2xs);
   }
 
-  .site-nav-group > details > summary,
-  .site-nav-home > a {
+  .site-nav-group > details > summary {
     padding-inline: var(--space-2xs);
   }
 
@@ -387,12 +386,25 @@ a.skip-link:focus {
 /* The menu's first item, the way home (the owner's feedback of 2026-10-21: "I think we need a
  * 'Home' as the first menu"). It is a link where the three items beside it are `<details>`
  * disclosures, and it is drawn in the same box a link inside a list is — the rule above gives
- * it the 44 px height, the muted colour and the small label — with the padding of the labels it
- * shares the header's row with: the phone's 4 px, which the wide block below opens to 8 px
- * beside the labels' own. It is a link and not a group, so it has no summary, no list and no
- * disclosure state: Home is one page. */
+ * it the 44 px height, the muted colour and the small label — with the inline padding of the
+ * labels it shares the header's row with: the phone's 4 px, which the wide rule below opens to
+ * 8 px beside the labels' own. It is a link and not a group, so it has no summary, no list and
+ * no disclosure state: Home is one page. */
 .site-nav-home > a {
   padding-inline: var(--space-3xs);
+}
+
+/* The wide viewport's 8 px, and it is here rather than in the wide block above because of the
+ * order a browser reads this file in: `.site-nav a` above sets the whole `padding` shorthand on
+ * every link in the menu, and at this rule's specificity — one class and one type, the same as
+ * `.site-nav a` — the later rule wins. A `padding-inline` written up in the wide block would be
+ * read first and then overwritten by that shorthand, which is exactly what it was: 4 px at every
+ * width while the three labels beside it opened to 8 px, the opposite of what the rule above
+ * says. `website/test/base-styles.mjs` holds the two declarations to this order. */
+@media (min-width: 48rem) {
+  .site-nav-home > a {
+    padding-inline: var(--space-2xs);
+  }
 }
 
 .site-nav a:focus-visible {

@@ -263,6 +263,52 @@ export function navLayoutFailures(css, rel = '') {
   if (!has('.site-nav-group ul', /^right:0$/)) {
     fail("a group's dropdown opens from its group's left edge, so the last group's list runs past the viewport between the breakpoint and the page's maximum width and gives the page a sideways scroll")
   }
+
+  // The menu's Home link carries the inline padding of the labels it shares the header's row
+  // with, at both widths — and the wide declaration is read **after** the phone's. Both halves
+  // are load-bearing, and the second is the one that is easy to get wrong: `.site-nav a` sets the
+  // whole `padding` shorthand on every link in the menu, and `.site-nav-home > a` is one class
+  // and one type, the same specificity, so the last rule read wins. A `padding-inline` written
+  // into the wide block *above* the base rule — which is where the three labels' own wide
+  // padding lives — is read first and then overwritten by that shorthand, and the link keeps its
+  // phone padding at every width while the labels beside it open to 8 px. That is exactly what
+  // this rule did until the review of 2026-10-21 caught it, and nothing held either declaration.
+  const inlinePadding = (body) => {
+    const own = /(?:^|;)padding-inline:([^;]+)/.exec(`;${body}`)
+    if (own) return own[1].trim()
+    const all = /(?:^|;)padding:([^;]+)/.exec(`;${body}`)
+    if (!all) return null
+    const parts = all[1].trim().split(/\s+/)
+    return parts.length === 1 ? parts[0] : parts[1]
+  }
+  const homeRules = cssRules(css)
+    .map((one, at) => ({ at, wide: (one.conditions ?? []).some((c) => /48rem/.test(c)), body: one.body ?? '', selector: one.selector }))
+    .filter((one) => one.selector === '.site-nav-home>a')
+  const summaryRules = cssRules(css)
+    .map((one) => ({ wide: (one.conditions ?? []).some((c) => /48rem/.test(c)), body: one.body ?? '', selector: one.selector }))
+    .filter((one) => one.selector === '.site-nav-group>details>summary')
+  const labelAt = (isWide) => inlinePadding(summaryRules.find((one) => one.wide === isWide)?.body ?? '')
+  if (homeRules.length === 0) {
+    fail("the stylesheet gives the menu's Home link no padding of its own, so it is drawn with the 8 px a link inside a group's list gets and stands wider than the labels beside it in the header's row")
+  }
+  for (const isWide of [false, true]) {
+    const where = isWide ? 'at a wide viewport' : 'at a phone'
+    const home = homeRules.filter((one) => one.wide === isWide).at(-1)
+    if (home === undefined) {
+      fail(`the menu's Home link carries no inline padding ${where}, so it falls back to the whole \`padding\` shorthand \`.site-nav a\` sets and stands at a different width from the labels beside it in the header's row`)
+      continue
+    }
+    const mine = inlinePadding(home.body)
+    const label = labelAt(isWide)
+    if (mine !== label) {
+      fail(`the menu's Home link is drawn with an inline padding of ${JSON.stringify(mine)} ${where} where the three labels beside it in the header's row get ${JSON.stringify(label)}: the row is measured as one row of four items at one spacing, and a link that disagrees with the labels it shares it with is the fourth item at a width nobody measured`)
+    }
+  }
+  const homeBase = homeRules.find((one) => !one.wide)
+  const homeWide = homeRules.find((one) => one.wide)
+  if (homeBase !== undefined && homeWide !== undefined && homeWide.at < homeBase.at) {
+    fail("the wide viewport's inline padding for the menu's Home link is declared before the phone's, and `.site-nav a` above both sets the whole `padding` shorthand: at one class and one type the last rule read wins, so the wide declaration is dead code and the link keeps its phone padding at every width while the labels beside it open to 8 px")
+  }
   return out
 }
 
@@ -2138,6 +2184,16 @@ const ABOUT_WIDTH = /(?:min-width|max-width|width\s*[<>]=?)\s*:?\s*[\d.]+(?:rem|
     if (!/\.panel(?![\w-])|#home-panel-/.test(rule.selector)) continue
     const display = declarations(rule)['display']
     if (display === undefined || !rule.query) continue
+    // **One at-rule is let through, and it is not a band.** `@supports selector(:has(*))` is not
+    // a question about the viewport or about the reader's settings: it asks the browser whether
+    // it can read the one selector that says "while no panel is targeted", and the rule inside it
+    // is the block's own no-script state — the first panel, which is what the tabs and the
+    // fragment already show. It is written that way because a selector list is not forgiving: a
+    // browser that cannot answer `:has()` would drop a list carrying it, and take the panels the
+    // other selectors in that list show down with it (the review of 2026-10-21). Every other
+    // at-rule — a width, `prefers-reduced-motion`, anything else — is still refused below, in
+    // both of the two shapes this read has always refused.
+    if (rule.query === '@supports selector(:has(*))') continue
     out.push(
       ABOUT_WIDTH.test(rule.query)
         ? `the slider's panels are given \`display: ${display}\` inside \`${rule.query}\`, a query about the viewport's width, and the panel a reader is shown is the one the fragment names at every width: a query here is a band in which a tab does nothing, or a panel appears without the reader asking for it (the retired band gate, review round 3 item 3e; the owner's ruling of 2026-10-20)`

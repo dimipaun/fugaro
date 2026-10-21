@@ -498,11 +498,24 @@ if (
      The first four selectors stand down the moment the script writes `data-active` on the root,
      and that is not a tidy-up: a reader who arrived on `#home-panel-see` and then let the block
      advance would otherwise see two dots marked — the fragment's, which does not move, and the
-     script's, which does. */
-  .home-slider:not([data-active]):not(:has(.panel:target)) .slider-dot[href='#home-panel-easy']::before,
-  .home-slider:not([data-active]):has(#home-panel-easy:target) .slider-dot[href='#home-panel-easy']::before,
-  .home-slider:not([data-active]):has(#home-panel-benefits:target) .slider-dot[href='#home-panel-benefits']::before,
-  .home-slider:not([data-active]):has(#home-panel-see:target) .slider-dot[href='#home-panel-see']::before,
+     script's, which does.
+
+     **They are in an `@supports selector(:has(*))` rule of their own, and the script's own
+     selector is not.** All four of them ask for `:has()`, and a selector list is not forgiving:
+     beside `.slider-dot[aria-current='true']` a browser too old to answer `:has()` would drop the
+     rule and take the script's mark down with it, which is the dot a reader who lets the block
+     advance follows. The same reason, and the same fix, as the first panel's rule below;
+     `website/test/slider.mjs` reads the built stylesheet for both. */
+  @supports selector(:has(*)) {
+    .home-slider:not([data-active]):not(:has(.panel:target)) .slider-dot[href='#home-panel-easy']::before,
+    .home-slider:not([data-active]):has(#home-panel-easy:target) .slider-dot[href='#home-panel-easy']::before,
+    .home-slider:not([data-active]):has(#home-panel-benefits:target) .slider-dot[href='#home-panel-benefits']::before,
+    .home-slider:not([data-active]):has(#home-panel-see:target) .slider-dot[href='#home-panel-see']::before {
+      border-color: var(--accent);
+      background: var(--accent);
+    }
+  }
+
   .slider-dot[aria-current='true']::before {
     border-color: var(--accent);
     background: var(--accent);
@@ -527,21 +540,40 @@ if (
   }
 
   /* The script's state: one rule per slide, so the name the script writes on the root and the
-     panel it shows are one name rather than two that have to agree. */
+     panel it shows are one name rather than two that have to agree.
+
+     The no-script `:target` rule is in this list rather than beside the `:has()` rule below it,
+     and that placement is load-bearing: a selector list is not forgiving, so one selector a
+     browser cannot read takes the whole rule down with it. Neither of the four names `:has()`, so
+     a browser too old to answer `:has()` still shows the panel a dot opens — and it still shows
+     the panel the script's own name points at, which a list carrying the `:has()` selector would
+     have taken down with it. */
   .home-slider[data-active='easy'] #home-panel-easy,
   .home-slider[data-active='benefits'] #home-panel-benefits,
-  .home-slider[data-active='see'] #home-panel-see {
+  .home-slider[data-active='see'] #home-panel-see,
+  .home-slider:not([data-active]) .panel:target {
     display: block;
   }
 
-  /* The no-script state: the panel the fragment names, and — while it names none — the first
-     one, because a reader who has clicked nothing is reading the first thing the block has to
-     say. Both stand down while the script is driving, and both carry the same declaration,
-     which is deliberate: the built stylesheet merges adjacent rules that agree, and the reading
-     in `website/test/slider.mjs` expects to find the two selectors in one rule. */
-  .home-slider:not([data-active]) .panel:target,
-  .home-slider:not([data-active]):not(:has(.panel:target)) #home-panel-easy {
-    display: block;
+  /* The no-script state's other half: the first panel, while the fragment names none — a reader
+     who has clicked nothing is reading the first thing the block has to say. It stands down while
+     the script is driving.
+
+     **It is inside `@supports selector(:has(*))` rather than beside the rule above, and that
+     nesting is load-bearing.** It is the one selector in the block that asks for `:has()`, and a
+     selector list is not forgiving: one selector a browser cannot read takes the whole rule down
+     with it. Written as a sibling of the rule above it is not safe either, because the build
+     merges adjacent rules that carry the same declaration — `display: block` is what both rules
+     say, and the built stylesheet put all five selectors back into one rule when this was tried,
+     which is the defect again with a smaller diff. An at-rule cannot be merged into its sibling,
+     so a browser too old to answer `:has()` drops this rule and nothing else: what such a reader
+     loses is the panel shown before they touch a dot, and never the panel every dot opens, and
+     never the panel the script's own name points at. `website/test/slider.mjs` reads the built
+     stylesheet for exactly that: no rule may carry a `:has()` selector beside one that has none. */
+  @supports selector(:has(*)) {
+    .home-slider:not([data-active]):not(:has(.panel:target)) #home-panel-easy {
+      display: block;
+    }
   }
 
   /* The panel's own box: the panel tone, the hairline border and the larger radius, with the

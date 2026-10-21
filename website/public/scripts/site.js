@@ -1013,14 +1013,20 @@
     return document.hidden === false
   }
 
-  /** Whether the reader has asked for less motion, where the browser can be asked at all. The
-   *  query is the console slider's own `LESS_MOTION`, read the same way by both sliders: the
-   *  block still slides when the reader chooses a slide — that is motion they asked for by
-   *  clicking — and nothing moves on its own. */
+  // The reader's own answer on less motion, where the browser can be asked at all: the query is
+  // the console slider's own `LESS_MOTION`, which both sliders read. It is asked by the first
+  // block that is in a position to consult it — `watchMotion()` below is what asks, and it asks
+  // only of a page that is being shown — and it is kept here rather than per block, because the
+  // answer is the page's and not a block's. A browser with no `matchMedia` to ask cannot answer,
+  // and no answer reads as "no": the block moves, as it does everywhere else in this file, and no
+  // clock is held back by a question nobody could put.
+  var motion = null
+
+  /** Whether the reader has asked for less motion, as that query last answered. The block still
+   *  slides when the reader chooses a slide — that is motion they asked for by clicking — and
+   *  nothing moves on its own. */
   function calm() {
-    if (typeof window.matchMedia !== 'function') return false
-    var answer = window.matchMedia(LESS_MOTION)
-    return !!(answer && answer.matches)
+    return !!(motion && motion.matches)
   }
 
   /**
@@ -1046,10 +1052,13 @@
     var on = block.querySelector(SLIDER_NEXT)
     var at = 0
     var timer = null
-    // Whether the reader is in the block: a pointer over it or the keyboard's focus inside it.
-    // Held rather than counted, because a pointer that arrives twice and leaves once is still
-    // one reader in one place.
-    var held = false
+    // The two ways a reader is in the block, and they are two flags rather than one: a pointer
+    // over the block and the keyboard's focus inside it are different readers, and one flag for
+    // both would let the pointer's leaving release a hold the focus is still keeping — a reader
+    // tabbing through the dots would have the slide move under them the moment a resting pointer
+    // drifted off the block — and the focus's leaving release the pointer's.
+    var over = false
+    var inside = false
 
     /** A slide's own name: the panel's `data-slider-slide` and the dot's, one name. */
     function nameOf(slide) {
@@ -1068,17 +1077,41 @@
       timer = null
     }
 
-    /** Whether the block should be still. Held first and the page's own visibility second, so a
-     *  reader standing in the block — and a page nobody is shown — cost no media query and no
-     *  timer at all. */
+    /** Whether the block should be still. Either hold first and the page's own visibility
+     *  second, so a reader standing in the block — and a page nobody is shown — cost no media
+     *  query and no timer at all. */
     function still() {
-      return held || !pageShown() || calm()
+      return over || inside || !pageShown() || calm()
+    }
+
+    // Whether this block has subscribed to the reduced-motion answer yet.
+    var watching = false
+
+    /** Ask the reader's system about less motion, once for the page and once for this block, and
+     *  subscribe this block's clock to the answer — a visitor can turn the setting on without
+     *  reloading, and a query read at load alone would give them one more advance before the
+     *  block settled.
+     *
+     *  **It asks nothing of a page that is not being shown**, which is why it is called from
+     *  `arm()` and not from the wiring below: a document that cannot answer whether it is shown —
+     *  the stub DOMs that run this file without a `document.hidden` — is a document this asks
+     *  nothing of, and those gates keep the one query they were written for. A block on a tab
+     *  that starts hidden subscribes the moment the tab comes back, because `visibilitychange`
+     *  arms the clock again and this runs first. */
+    function watchMotion() {
+      if (watching || !pageShown()) return
+      watching = true
+      if (!motion && typeof window.matchMedia === 'function') motion = window.matchMedia(LESS_MOTION)
+      if (!motion) return
+      if (motion.addEventListener) motion.addEventListener('change', arm)
+      else if (motion.addListener) motion.addListener(arm)
     }
 
     /** Put the clock back, from whatever the block's state is now. Called after every change:
      *  the reader's own step restarts the six seconds rather than racing them. */
     function arm() {
       stop()
+      watchMotion()
       if (still()) return
       timer = window.setTimeout(function () {
         timer = null
@@ -1157,24 +1190,26 @@
       keys(on)
     }
 
-    // The reader is in the block: the pointer is over it, or the keyboard's focus is inside
-    // it. Both hold the clock, and both let it go when they leave — a focus that moves from
-    // one dot to the next never leaves the block, which is what `contains` answers.
+    // The reader is in the block: the pointer is over it, or the keyboard's focus is inside it.
+    // Each holds the clock and each lets go of its own hold and no other — a pointer that leaves
+    // while the focus is still in the block leaves the block held, and a focus that leaves under
+    // a resting pointer does the same — and a focus that moves from one dot to the next never
+    // leaves the block at all, which is what `contains` answers.
     block.addEventListener('pointerenter', function () {
-      held = true
+      over = true
       arm()
     })
     block.addEventListener('pointerleave', function () {
-      held = false
+      over = false
       arm()
     })
     block.addEventListener('focusin', function () {
-      held = true
+      inside = true
       arm()
     })
     block.addEventListener('focusout', function (event) {
       if (event && event.relatedTarget && typeof block.contains === 'function' && block.contains(event.relatedTarget)) return
-      held = false
+      inside = false
       arm()
     })
 

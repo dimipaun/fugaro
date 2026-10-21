@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **1,429,917 bytes in a checkout with no tags** and to **1,429,917 bytes with the
+  commit builds to **1,432,910 bytes in a checkout with no tags** and to **1,432,910 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -821,8 +821,60 @@ added or removed without this sentence moving fails there:
     against the built homepage in a stub DOM — with each case planted against the line of the
     script it reads.
 
-  - **JavaScript per page:** 239,721 bytes. Three times 79,907: the one script the site ships,
-    `public/scripts/site.js` (63,925 bytes), plus 25 %. What the file carries is the copy
+  - **The homepage slider's review round** (the review of the round above, 2026-10-21) is five
+    corrections to that one block, and **the whole move is the block's own**: the script's bytes
+    and the stylesheet's, with no page's markup rewritten and no page's words moved. `site.js`
+    goes 63,925 → **66,189 bytes** (+2,264); the page weight 425,277 → **427,596** and the site
+    figure 1,429,917 → **1,432,910** — the script's 2,264 once each, plus **55 bytes of
+    stylesheet onto every one of the 11 pages** (605 in all), so the console page's HTML goes
+    31,819 → **31,874** and the homepage's 50,629 → **50,808**, its own extra 124 being the
+    block's own stylesheet. No file was added or removed, so the count of files in `dist/` stays
+    **28** and the count of pages **11**. The five are:
+    - **The Home link's padding at the wide width.** The rule setting the link's inline padding
+      stood *below* the wide block at the same specificity, so the wide block's 8 px was dead
+      code and Home kept its phone 4 px at every width while the three labels beside it in the
+      same row opened to 8 — the opposite of what the rule's own comment said. The 8 px is in a
+      media block after the base rule now, and `test/base-styles.mjs` holds the link's inline
+      padding to the labels' own at both widths **and** the order of the two declarations, so a
+      wide rule written back above the base one is refused rather than counted as present.
+    - **The pointer's hold and the keyboard's hold are two flags, not one.** A single `held`
+      boolean meant `pointerleave` re-armed the clock while the focus was still inside the block,
+      and `focusout` did the same under a resting pointer: a reader who clicked a dot and moved
+      the pointer off the block lost the panel they chose after six seconds. They are `over` and
+      `inside` now, each releasing its own hold and no other, and a focus that moves from one dot
+      to the next never leaves the block at all. `test/slider.mjs` gained the mixed ordering —
+      pointer away under a focus, focus away under a pointer — which the round it replaces tested
+      each hold in isolation and could not see.
+    - **The reduced-motion query is watched, not sampled.** `calm()` re-read the query on every
+      `arm()` but never subscribed to `change`, so a reader who turned less motion on while the
+      block sat idle got one more advance before it settled — where the console slider and the
+      menu both watch their queries already. Each block subscribes once, on its first arm, and
+      only where the page is being shown, which is what keeps a stub that cannot answer
+      `document.hidden` from being asked anything. `test/slider.mjs`'s stub answers a query's
+      listeners now, and the new case turns less motion on and off under a running clock.
+    - **A `:has()` selector no longer stands in a list beside plain ones.** The no-script
+      first-panel rule listed a `:target` selector beside a `:has()` selector, and a selector
+      list is not forgiving: a browser too old to answer `:has()` drops the whole rule — and
+      because the build merges rules that carry identical declarations, the three *scripted*
+      panel rules had been merged into that same rule, so such a browser lost the working slider
+      too and not only the no-script state. The `:has()` selectors are in
+      `@supports selector(:has(*))` rules of their own; **a plain split in the source is not
+      enough**, because the minifier merges the two halves straight back, which is why the
+      at-rule boundary is the fix. The same defect stood in the rule that marks the current dot,
+      found by the new gate rather than by the review. `test/slider.mjs` now refuses any rule
+      whose selector list mixes the two.
+    - **The design record's specificity.** `docs/website/redesign/README.md` claimed the
+      `:target` selector and the script's own rule were both (1,2,0) and the earlier would win.
+      They are (0,4,0) and (1,2,0): the script's rule wins on the id whatever the order, and the
+      `:not([data-active])` scoping is load-bearing for the reason the record gave — without it a
+      still-targeted panel and the script's panel would both be displayed — rather than because
+      of the order. The record's clock bullet and its `still()` reading are rewritten with it.
+    `test/base-styles.mjs`'s band gate reads the new `@supports` rule through one narrow
+    exemption, for that query string alone: a capability gate is not a width band, and every
+    other at-rule is refused there as before.
+
+  - **JavaScript per page:** 248,211 bytes. Three times 82,737: the one script the site ships,
+    `public/scripts/site.js` (66,189 bytes), plus 25 %. What the file carries is the copy
     control, the menu, the consent gate and **both of the site's sliders** — the console page's,
     which the feedback-B round above added, and the homepage's, which the feedback-A round above
     it added.
@@ -839,7 +891,8 @@ added or removed without this sentence moving fails there:
     `scroll-behavior: smooth`) and a first reading taken from the track rather than from the
     first slide. `test/console-screens.mjs` runs the file in `test/lib/dom.mjs`'s stub browser
     to hold that half, and refuses a planted defect in each part of it. **The homepage's half is
-    the feedback-A round's 13,211 bytes, and it is the last this file has gained**:
+    the feedback-A round's 13,211 bytes, and the review round below is the last this file has
+    gained**:
     `test/slider.mjs` runs the same file against the built homepage in a stub DOM of its own, to
     hold the clock, the wrap, the two holds and the mark on the dot, each case planted against
     the line of the script it reads. **The two halves share the four names they have to agree on
@@ -868,10 +921,10 @@ added or removed without this sentence moving fails there:
     and the menu still has a second level Tab has to be able to enter. Every page loads the
     file once, so it is the whole of a page's JavaScript, and the test keeps a case that says
     so over the built artifact.
-  - **Page weight per page:** 1,594,791 bytes. Three times 531,597: the heaviest page, the
-    console page, at 425,277 bytes (its HTML, the four screenshots it renders, and the files
+  - **Page weight per page:** 1,603,485 bytes. Three times 534,495: the heaviest page, the
+    console page, at 427,596 bytes (its HTML, the four screenshots it renders, and the files
     it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 5,362,191 bytes. Three times 1,787,397 (every file in `dist/`, 1,429,917
+  - **Whole site:** 5,373,414 bytes. Three times 1,791,138 (every file in `dist/`, 1,432,910
     bytes across 28 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 

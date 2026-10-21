@@ -1446,25 +1446,36 @@ what it says — and the strip of tabs is the one part of it that is gone.
   visible by the markup is a button that does nothing for a reader whose browser runs no script
   (D183's "no broken control"), so the site's one script is what reveals them.
 - **The script drives the block, and the stylesheet stands the no-script state down while it
-  does.** `public/scripts/site.js` gains a `slider()` section: it finds the block by
-  `[data-slider]`, writes the name of the slide on screen to the block's `data-active`, and the
-  stylesheet's `.home-slider[data-active='easy'] #home-panel-easy`-style rules are what show the
-  panel it belongs to. The no-script rules — the `:target` one and the one that shows the first
-  panel while nothing is targeted — are scoped `.home-slider:not([data-active])`, and that
-  scoping is load-bearing rather than tidiness: a reader who arrived on `#home-panel-see` and
-  then let the block advance would otherwise have **two** panels shown at once, because the
-  `:target` selector and the script's own rule are both (1,2,0) and the earlier one would win.
-  The script also marks the dot of the slide on screen with `aria-current="true"`, which the
-  stylesheet draws in the accent — the mark a reader has instead of a text label.
+  does.** `public/scripts/site.js` gains a `panels()` section (it is `panels(block)` since the
+  console page's slider took the name `slider()` in the feedback-B round; see the note on the two
+  sliders being one file): it finds the block by `[data-slider]`, writes the name of the slide on
+  screen to the block's `data-active`, and the stylesheet's
+  `.home-slider[data-active='easy'] #home-panel-easy`-style rules are what show the panel it
+  belongs to. The no-script rules — the `:target` one and the one that shows the first panel
+  while nothing is targeted — are scoped `.home-slider:not([data-active])`, and that scoping is
+  load-bearing rather than tidiness: a reader who arrived on `#home-panel-see` and then let the
+  block advance would otherwise have **two** panels shown at once. The reason is not the order
+  the two rules are written in — the `:target` selector is (0,4,0), one class and three
+  class-level parts, where the script's own rule is (1,2,0), and it wins on the id whatever the
+  order — it is that both rules would be in force at once, each naming a different panel and each
+  saying `display: block`. The script also marks the dot of the slide on screen with
+  `aria-current="true"`, which the stylesheet draws in the accent — the mark a reader has instead
+  of a text label.
 - **The clock, and the four things that stop it.** The block advances every six seconds
   (`AUTO_MS = 6000`, the six seconds both of the site's sliders stand a slide for, declared once
   with the console page's slider) and wraps from the third slide back to the first. It is held
   while the pointer is over the block or the keyboard's focus is inside it (a reader who is
-  reading must not have the slide move under them), it does not run while the page is not being
-  shown at all
-  (`document.hidden`), and it does not run for a reader whose system asks for less motion
-  (`prefers-reduced-motion: reduce`) — for that reader the dots, the two controls and the arrow
-  keys all still work, because what they asked for is that nothing move **on its own**. A click
+  reading must not have the slide move under them) — **two holds and not one**, because a pointer
+  leaving the block and a focus leaving it are different readers: one flag for both would let a
+  resting pointer's drifting off the block start the clock under a reader who is tabbing through
+  the dots, and let the focus's leaving start it under a reader whose pointer is resting on a
+  control. It does not run while the page is not being shown at all (`document.hidden`), and it
+  does not run for a reader whose system asks for less motion (`prefers-reduced-motion: reduce`)
+  — for that reader the dots, the two controls and the arrow keys all still work, because what
+  they asked for is that nothing move **on its own**. That query is asked once and **watched**,
+  the way the console slider's and the menu's own queries are, because a visitor can turn the
+  setting on without reloading: a query read only at load would give that reader one more
+  advance before the block settled. A click
   on a dot is `preventDefault`ed: with the script running the block's state is its own, and an
   address that kept the fragment would send the reader back to that slide on a reload. The script
   never writes to the address. Arrow keys work on the dots and on the two controls, and every
@@ -1473,10 +1484,10 @@ what it says — and the strip of tabs is the one part of it that is gone.
   `website/test/copy.mjs`, `website/test/consent.mjs` and `website/test/nav-hover.mjs` each run
   the real `site.js` against the built homepage, and none of them is a browser: they have no
   `document.hidden` and two of them have no `matchMedia`. So `still()` reads
-  `held || !pageShown() || calm()`, and `pageShown()` is `document.hidden === false` — a document
-  that cannot answer is a document no clock is started in, which is both the correct reading of a
-  browser that does not answer and the reason those three gates keep their timer and query
-  assertions unchanged. `website/test/consent.mjs`'s two selector maps did have to learn the
+  `over || inside || !pageShown() || calm()`, and `pageShown()` is `document.hidden === false` —
+  a document that cannot answer is a document no clock is started in, which is both the correct
+  reading of a browser that does not answer and the reason those three gates keep their timer and
+  query assertions unchanged. `website/test/consent.mjs`'s two selector maps did have to learn the
   block: that stub refuses a selector it does not read rather than matching nothing, so the five
   `data-slider` attributes are written into it, and the file's own comment says why.
 - **What the gates read now.** `website/test/slider.mjs` is rewritten around the slider, and its
@@ -1508,6 +1519,15 @@ what it says — and the strip of tabs is the one part of it that is gone.
   homepage's own words go 468 → **461**, because a dot is a circle with no text in it: the three
   labels the tabs showed are now the dots' names, which a screen reader reads and the page does
   not draw.
+- **The review round's bytes.** The block's review (2026-10-21) moved the three figures again and
+  again by the block's own bytes alone: `site.js` 63,925 → **66,189** (+2,264), the page weight
+  425,277 → **427,596** and the site figure 1,429,917 → **1,432,910** — the script's 2,264 once
+  each, plus **55 bytes of stylesheet onto every one of the 11 pages** (605 in all), of which the
+  homepage's own stylesheet is 124 more. No page's markup was rewritten and no page's words
+  moved, so the count of files in `dist/` stays **28** and the count of pages **11**. The five
+  corrections are in `website/README.md`'s round above this one; two of them changed what this
+  record itself says, and both are corrected in place here: the clock's holds are two and not
+  one, and the specificity the `:not([data-active])` scoping is defended by.
 - **The two sliders are one script file, and they share four names and nothing else.** The
   console page's slider (#841) landed on `main` while this round was open, so
   `public/scripts/site.js` carries both: **one query** for `[data-slider]` in `start()`, and every
