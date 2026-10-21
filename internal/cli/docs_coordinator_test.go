@@ -2798,6 +2798,7 @@ func coordinatorCheckPlanDirectories(t *testing.T, plan string) int {
 	// audited non-citations. A token that is neither is a directory citation in
 	// a shape no check reads, which is the failure the two regexps being written
 	// differently is what makes visible.
+	unread := map[string]bool{}
 	for _, token := range coordinatorPlanDirCensusRE.FindAllStringSubmatch(plan, -1) {
 		if coordinatorPlanDirectoryRE.MatchString(token[0]) {
 			continue
@@ -2805,7 +2806,15 @@ func coordinatorCheckPlanDirectories(t *testing.T, plan string) int {
 		if slices.Contains(coordinatorPlanDirCensusExceptions, token[1]) {
 			continue
 		}
-		t.Errorf("%s holds %q, a token that ends in a slash and is matched by no directory check: the document has grown a shape the checks do not know, so that citation is checked by nothing", coordinatorPlan, token[0])
+		unread[token[0]] = true
+	}
+	shapes := make([]string, 0, len(unread))
+	for token := range unread {
+		shapes = append(shapes, token)
+	}
+	sort.Strings(shapes)
+	for _, token := range shapes {
+		t.Errorf("%s holds %s, a token that ends in a slash and is matched by no directory check: the document has grown a shape the checks do not know, so that citation is checked by nothing", coordinatorPlan, token)
 	}
 	for _, want := range coordinatorPlanDirCensusExceptions {
 		if !strings.Contains(plan, "`"+want+"`") {
