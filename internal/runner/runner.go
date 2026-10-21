@@ -1309,17 +1309,8 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// follow-up takes is measured against (diffbase.go, diffBase). For
 		// a pull request retargeted since the run before it (main ->
 		// integration-0.9.6) that is not the ref this follow-up read its
-		// configuration from, so `origin/<base>` may be a ref the checkout
-		// does not have yet. Fetched here, with the run's own credentials,
-		// before the prefetch reads it. A failure is a warning, not a
-		// bootstrap error — the ref may already be there, and the review
-		// stage's own reads are what would fail, loudly, if it is not.
-		if base := r.diffBase(); base != r.spec.Ref {
-			if err := r.repo.FetchBase(ctx, base); err != nil {
-				r.d.Log.Warn("fetching the pull request's base branch failed; the review stage's diff may not be readable",
-					"base", base, "err", r.redact(err.Error()))
-			}
-		}
+		// configuration from. It is fetched below, with every other base the
+		// run diffs against, once the review heads are resolved.
 	}
 	// A job that runs without a derived image installs the repository's
 	// mise tools itself (provision.go, design generic-tool.md §2, G4): the
@@ -1335,6 +1326,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 			return err
 		}
 	}
+	// Every branch this run's diffs are measured against, brought in with
+	// the run's own credentials (diffbase.go, fetchDiffBases): a first run's
+	// --ref, which a clone job's --single-branch clone does not carry as a
+	// remote-tracking ref at all, a follow-up's retargeted pull request base,
+	// and each reviewed pull request's own base. Here, where all three are
+	// resolved — the last of them by checkReviewPRs just above — and before
+	// the prefetch reads them.
+	r.fetchDiffBases(ctx)
 	// A follow-up's and a review run's agent has no git credentials of its
 	// own, and a blobless clone fetches file contents lazily through
 	// origin: the runner brings in what the agent's own git will read while

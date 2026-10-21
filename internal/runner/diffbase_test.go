@@ -108,6 +108,84 @@ func TestFirstRunReviewDiffsAgainstItsRefNotTheConfiguredBase(t *testing.T) {
 	}
 }
 
+// TestFirstRunFetchesTheBaseItDiffsAgainst: the base of a first run's diff is
+// the ref it was cut from (diffBase), and a clone job's clone carries the
+// remote's default branch alone (gitops.CloneBlobless fetches
+// --single-branch), so a run started from another branch names an
+// `origin/<ref>` the checkout does not have. CheckoutNewBranch brings that
+// ref in as FETCH_HEAD, never as a remote-tracking ref. Unfetched, the review
+// prompt's range resolves to nothing: the reviewer's own `git diff
+// origin/<ref>...HEAD` fails with "unknown revision", the input the runner
+// builds for it is empty, and the stage can still return a verdict on no diff
+// at all.
+//
+// Mutation (run, restore): drop r.fetchDiffBases from bootstrap — the ref
+// below does not resolve in the checkout and the review prompt carries no
+// built input.
+func TestFirstRunFetchesTheBaseItDiffsAgainst(t *testing.T) {
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: integrationBranch, Workflow: "app", Task: "Add a feature"}
+	h := newHarness(t, cloneYAML, spec)
+	bloblessRemote(t, h)
+	h.cloneJob(t)
+	addBaseBranch(t, h, integrationBranch)
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustReady(t, rec, err)
+	// The reviewer's own git reads this ref: it has to be in the checkout,
+	// resolved to the branch the run was cut from.
+	got := testutil.Git(t, h.deps.WorkDir, "rev-parse", "--verify", "refs/remotes/origin/"+integrationBranch)
+	if want := testutil.Git(t, h.remote, "rev-parse", "refs/heads/"+integrationBranch); got != want {
+		t.Fatalf("origin/%s is at %s, want the branch's own tip %s", integrationBranch, got, want)
+	}
+	prompt := reviewPromptOf(t, h.agent.calls)
+	if !strings.Contains(prompt, "git diff origin/"+integrationBranch+"...HEAD:") {
+		t.Fatalf("the review stage was handed no diff against the ref the run was cut from:\n%s", prompt)
+	}
+}
+
+// TestReviewModeFetchesTheReviewedPRsBase: review mode's diff base is the base
+// the reviewed pull request targets now, which is neither the run's own --ref
+// (main, whose configuration the run is read from) nor the remote's default
+// branch — and a clone job's --single-branch clone holds the default branch
+// only. Unfetched, every one of review mode's per-head prefetches fails as a
+// warning, the input build fails with it, and the reviewer's diff command
+// names a ref that does not exist. The non-clone case is covered by
+// TestReviewModeDiffsAgainstTheReviewedPRsBase, where a full clone already has
+// every branch and a missing fetch never shows.
+//
+// Mutation (run, restore): drop r.fetchDiffBases from bootstrap — the ref
+// below does not resolve and the review prompt carries no built input.
+func TestReviewModeFetchesTheReviewedPRsBase(t *testing.T) {
+	h := newHarness(t, cloneYAML, reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	bloblessRemote(t, h)
+	h.cloneJob(t)
+	addBaseBranch(t, h, integrationBranch)
+	pushReviewBranch(t, h, "someone-elses-change", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(h, 7, "someone-elses-change", "")
+	// The pull request targets the integration branch: the fake's own state
+	// is in memory here (no Path), so it is set on the provider directly.
+	h.provider.State.PRs[0].Spec.Base = integrationBranch
+	rec, err := h.run(t, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReviewed {
+		t.Fatalf("rec = %+v", rec)
+	}
+	got := testutil.Git(t, h.deps.WorkDir, "rev-parse", "--verify", "refs/remotes/origin/"+integrationBranch)
+	if want := testutil.Git(t, h.remote, "rev-parse", "refs/heads/"+integrationBranch); got != want {
+		t.Fatalf("origin/%s is at %s, want the branch's own tip %s", integrationBranch, got, want)
+	}
+	prompt := reviewPromptOf(t, h.agent.calls)
+	if !strings.Contains(prompt, "git diff origin/"+integrationBranch+"...HEAD:") {
+		t.Fatalf("the reviewed pull request's base was not fetched: the review stage was handed no diff against it:\n%s", prompt)
+	}
+}
+
 // TestFollowUpReviewDiffsAgainstThePRsCurrentBase is case (b): the pull
 // request was retargeted (main -> integration-0.9.6) after the first run,
 // and the follow-up's own ref is the previous run's base — main. The diff

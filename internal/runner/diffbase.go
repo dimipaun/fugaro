@@ -115,6 +115,64 @@ func (r *run) reviewBase(h reviewHead) string {
 	return r.refBase()
 }
 
+// fetchDiffBases brings in origin/<base> for every base this run's diffs are
+// measured against (diffRanges), with the run's own credentials, before the
+// prefetch reads it.
+//
+// It is not a nicety: `origin/<base>` has to resolve in the checkout for the
+// review prompt's range, the review input built over it and the reviewer's own
+// `git diff origin/<base>...HEAD` to work at all. A clone job's clone is
+// `--single-branch` of the remote's default branch (gitops.CloneBlobless), so
+// a base that is not that branch is a ref the checkout simply does not have:
+// a first run whose --ref is an integration branch would otherwise name
+// origin/<that branch> in its review prompt while nothing here ever fetched
+// it (CheckoutNewBranch brings spec.Ref in as FETCH_HEAD, not as a
+// remote-tracking ref — this is the first-run half of the same hole the
+// follow-up path had), and a review run's per-head base is neither spec.Ref
+// nor the default branch at all. A missing ref there is not a quiet
+// degradation: the input build fails, the reviewer is handed no diff and can
+// still return a verdict.
+//
+// The base bootstrap already fetched is skipped: a first run's configuration
+// base (runner.go fetches cfg.Git.BaseBranch before the lock, and the
+// checkpoint scan needs origin/<base> from that same fetch) and the ref a
+// follow-up or a review run read its configuration from (readBaseConfig's own
+// fetch of origin/<ref>). Everything else is fetched once per run even when
+// the checkout already holds the ref, the same as that first-run fetch does:
+// a baked job's clone may hold a base that has since moved on.
+//
+// A failure is a warning, never a bootstrap error, the same shape as the
+// prefetch below it: the ref may already be there (the fetch only refreshes
+// it), the failure is not something a later stage can do anything about, and
+// the stage that cannot read the range says so itself.
+func (r *run) fetchDiffBases(ctx context.Context) {
+	if r.repo == nil || r.spec == nil {
+		return
+	}
+	seen := map[string]bool{r.alreadyFetchedBase(): true}
+	for _, rng := range r.diffRanges() {
+		if seen[rng.base] {
+			continue
+		}
+		seen[rng.base] = true
+		if err := r.repo.FetchBase(ctx, rng.base); err != nil {
+			r.d.Log.Warn("fetching the branch the diff is measured against failed; the review stage's diff may not be readable",
+				"base", rng.base, "err", r.redact(err.Error()))
+		}
+	}
+}
+
+// alreadyFetchedBase is the one base bootstrap has fetched by the time
+// fetchDiffBases runs, so it is not asked for a second time: the
+// configuration's base for a first run, and for a follow-up or a review run
+// the ref whose configuration was read (readBaseConfig).
+func (r *run) alreadyFetchedBase() string {
+	if r.follow != nil || r.review {
+		return r.spec.Ref
+	}
+	return r.cfg.Git.BaseBranch
+}
+
 // diffSize measures the range rng (`base...head`, as the prompt spells it)
 // through the checkout's own git: how many files it changes and how many
 // lines it adds or removes. A binary file (numstat's "-" counts) is a file
