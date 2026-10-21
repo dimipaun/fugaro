@@ -1510,10 +1510,11 @@ run "credentials_service_on_job" {
 # key and a provider key (independent security review of the implementation,
 # m1). The run above mounts only the OAuth token, so the drop's second clause —
 # the FUGARO_PROVIDER_KEY_* prefix — was exercised by nothing: deleting it from
-# is_model_secret_env left every Go test and every terraform test green, and a
-# provider key would have kept the job's accessor on an installation that opted
-# in precisely to take it away. Here the workflow mounts both, and the
-# assertion is that neither survives while the workflow's own secret does.
+# the local then named is_model_secret_env (is_service_held since C2.3) left
+# every Go test and every terraform test green, and a provider key would have
+# kept the job's accessor on an installation that opted in precisely to take it
+# away. Here the workflow mounts both, and the assertion is that neither
+# survives while the workflow's own secret does.
 run "credentials_service_on_provider_keys" {
   command = plan
 
@@ -1671,6 +1672,11 @@ run "credentials_service_on_github_app_key" {
   assert {
     condition     = length(google_cloud_run_v2_service_iam_member.credentials) == 1
     error_message = "the job account still gains its one invoker grant on the service in this shape too"
+  }
+  assert {
+    condition = length([for e in google_cloud_run_v2_job.this[0].template[0].template[0].containers[0].env : e
+    if length(e.value_source) > 0 && e.name == "FUGARO_GITHUB_APP_PRIVATE_KEY"]) == 1
+    error_message = "C2.3 drops the accessor and not the mount: the App key is still mounted here, and C2.2 is the task that removes it (the opt-in must not be turned on between the two)"
   }
 }
 
