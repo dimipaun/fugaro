@@ -93,6 +93,43 @@ func TestBothDoorsTakeTheSharedFlags(t *testing.T) {
 	}
 }
 
+// TestAForeignFlagIsHiddenFromItsDoorsHelp: the flag a door refuses is
+// *declared* on it — so a run that passes one gets the door's sentence naming
+// the door that owns it, and not cobra's bare "unknown flag" — and hidden, so
+// neither the help nor the flag list offers a flag the door will not take.
+// Both halves matter and they pull in opposite directions: without the
+// declaration the refusal cannot name anything, and without the hiding
+// `fugaro update --help` advertises --create-project on the command that
+// refuses it.
+func TestAForeignFlagIsHiddenFromItsDoorsHelp(t *testing.T) {
+	for _, tc := range []struct{ door, flag string }{
+		{"setup", "forget"},
+		{"update", "create-project"},
+		{"update", "link-billing"},
+		{"update", "provision-batch"},
+	} {
+		t.Run(tc.door+" --"+tc.flag, func(t *testing.T) {
+			cmd := doorCommands[tc.door]()
+			f := cmd.Flags().Lookup(tc.flag)
+			if f == nil {
+				t.Fatalf("fugaro %s declares no --%s: the refusal would be cobra's, which names no door", tc.door, tc.flag)
+			}
+			if !f.Hidden {
+				t.Errorf("fugaro %s's --%s is not hidden, and the door refuses it", tc.door, tc.flag)
+			}
+			// The flag list, not the whole help: a line that *is* the flag is
+			// the offer, where a mention of it inside another flag's usage
+			// text is not (--non-interactive's says what it does "with
+			// --forget and --config-only").
+			for _, line := range strings.Split(cmd.Flags().FlagUsages(), "\n") {
+				if strings.HasPrefix(strings.TrimSpace(line), "--"+tc.flag+" ") {
+					t.Errorf("fugaro %s's flag list offers --%s, which it refuses:\n%s", tc.door, tc.flag, strings.TrimSpace(line))
+				}
+			}
+		})
+	}
+}
+
 // TestSetupRefusesAnUpdateOnlyFlag: a flag that only makes sense once an
 // installation exists is `fugaro update`'s, and `fugaro setup` — the first
 // run — refuses it by name rather than ignoring it. `--forget` is that flag:
