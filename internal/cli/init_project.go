@@ -396,7 +396,7 @@ func (s *projectStage) credentialNote() string {
 
 func (s *projectStage) declined(what string) error {
 	return &initflow.NeedsYouError{Left: initflow.Left{Stage: initflow.Project, Kind: initflow.LeftPrompt,
-		Text: "not confirmed (" + what + " was not typed): rerun " + selfCommand() + " init in your own terminal window and type it, nothing further was done"}}
+		Text: "not confirmed (" + what + " was not typed): rerun " + selfCommand() + " " + s.e.r.o.doorName() + " in your own terminal window and type it, nothing further was done"}}
 }
 
 func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
