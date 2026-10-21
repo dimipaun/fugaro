@@ -1009,7 +1009,7 @@ added or removed without this sentence moving fails there:
   secret, an endpoint pointed elsewhere, a source naming the host, a third contact route, an
   address, a `/terms` link — and watches the named refusal come back. The word ceiling's own derivation — the
   privacy statement's own count plus 25 %, the number `website/README.md` states, and every
-  other page of the site still inside D188's 250 — is `budget.mjs`'s, beside the reader that
+  other page of the site still inside D188's 500 — is `budget.mjs`'s, beside the reader that
   measures it and the byte figures it is a sibling of.
 - `test/stacking.mjs` — the header paints above the page's blocks (the owner's reading of
   2026-10-19: "How it works: menu hidden by the blocks on mobile"). `tokens.css` names the
@@ -1208,7 +1208,8 @@ Started to it in **both** states: the shipped one, read off the built page, and 
 one, read off a build of a copy with the flag flipped. That second case also runs the budget gate over the flag-on build
 (`FUGARO_GATES_DIST`), because rendering the console's block costs words and Getting Started
 was at the ceiling D188 set when the console shipped — 250 words then, 300 since the owner's feedback
-of 2026-10-19 moved it (above) — and the owner's flip has to be the whole change and may not be the
+of 2026-10-19 moved it, 500 since the bold redesign of 2026-10-20 moved it again (above) — and the
+owner's flip has to be the whole change and may not be the
 change that breaks the ceiling. A data file that says the console has shipped while the flag says it
 has not stops the build, naming both files: they are one fact.
 
