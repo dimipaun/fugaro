@@ -311,8 +311,21 @@ function summaryOf(entry: Entry): string {
   /* A code span inside the card is drawn on the ground rather than on the surface it is
      already sitting on (the card is the surface, `base.css`): the same tone the page's own
      ground is, so a command in a release note still reads as a chip rather than as a word in
-     the mono face. `--text` on `--ground` is a pair the contrast check computes. */
-  .release-notes code {
+     the mono face. `--text` on `--ground` is a pair the contrast check computes.
+
+     **`:global()` around the element, because the notes arrive through `set:html`.** The
+     release file's lines are markup this component did not write (`inline()` above renders
+     them), and Astro appends the component's `data-astro-cid-…` to **every** compound of a
+     scoped selector: `.release-notes code` was built as `.release-notes[cid] code[cid]`, and
+     a `<code>` a release note carries has no `cid` for the second compound to match. The rule
+     was dead — every chip in the notes kept `base.css`'s own `--surface`, which is the card's
+     own tone, so the one thing this rule exists for did not happen — and it read as a rule
+     that was there. `:global()` opts the chip's own compound out of the scoping and leaves
+     `.release-notes` scoped to this component, so the rule reaches the chips of this page and
+     nothing else on the site; `website/test/changelog-page.mjs` now reads whether the rule
+     can reach a chip rather than whether a rule with those fragments exists, and refuses one
+     that cannot. */
+  .release-notes :global(code) {
     background: var(--ground);
   }
 </style>

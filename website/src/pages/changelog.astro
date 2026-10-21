@@ -93,15 +93,20 @@ const repository = loadSite().facts.repository
 
 <style>
   /* The page's head, in the page's own stylesheet: the headline, the room under it and the
-     boards' background behind it. The room above it is `main`'s own padding, which every page
-     of the site gets, and the gutter is `main`'s too — this block adds only the step between
-     the headline and the first card, and it is a step of the spacing scale rather than a
-     number. `position: relative` and `overflow: hidden` are what the glow layer needs
-     (`base.css`, section 2c). */
+     boards' background behind it. **The room above it is `main`'s own padding and nothing
+     else** — the top of the block is `0`, so this page's headline sits at the offset every
+     other page's headline sits at (`main` is `--space-lg` there and `--space-xl` from 48 rem
+     up, `base.css`), and the gutter is `main`'s too. Only the step between the headline and
+     the first card is this block's, and it is a step of the spacing scale rather than a
+     number. The pages whose first block is a full container of its own — the home page's hero,
+     the security document — drop `main`'s padding instead (`main:has(> .hero, >
+     [data-security-page])`); this head is not one of those, so it keeps `main`'s padding and
+     adds no second one on top of it. `position: relative` and `overflow: hidden` are what the
+     glow layer needs (`base.css`, section 2c). */
   .changelog-head {
     position: relative;
     overflow: hidden;
-    padding-block: var(--space-lg) var(--space-2xl);
+    padding-block: 0 var(--space-2xl);
   }
 
   /* The headline paints above the glow: a positioned box paints after a static one, and the

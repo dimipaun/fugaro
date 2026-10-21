@@ -2,7 +2,7 @@
 //
 // The page is a rendering of `docs/releases/vX.Y.Z.md` and of `website/data/release-summaries.yaml`,
 // and of nothing else, so the source of truth of every assertion below is **those two files** —
-// read here, never the generator's own output and never a git tag (D100, finding 44). Seven
+// read here, never the generator's own output and never a git tag (D100, finding 44). Six
 // things are checked:
 //
 //   1. **The page's release set equals the directory's, in both directions.** A release
@@ -30,16 +30,25 @@
 //      `website/design-ref/HomeV3.dc.html` — to this page, which has no board of its own).
 //      The page's own look is a fact about the artifact like any other, and it is the one
 //      thing the cases above cannot see: they read the page's text, and the redesign moved
-//      no word of it. So the last three cases read the built HTML and the stylesheet inlined
-//      in it — the display scale's headline with its word in the accent's gradient, one card
-//      per release spaced by a step of the spacing scale, and the hierarchy inside a card —
-//      and each one plants the defect it is about, because a look nothing refuses is a look
-//      that drifts back with the next edit. **So does the place that look opens in**: the
-//      fourth look case holds the page's head to the boards' background — the grid and the two
-//      soft glows `base.css` draws once (`.hero-glow`, which the home page's hero opens with),
-//      which this page opens with rather than with a drawing of its own — to that layer being
-//      behind the headline rather than over it, and to the layer being decoration, so the
-//      background of the page's own name is not read out to somebody using a screen reader.
+//      no word of it. So five cases read the built HTML and the stylesheet inlined in it —
+//      the display scale's headline with its word in the accent's gradient, one card per
+//      release spaced by a step of the spacing scale, the hierarchy inside a card, the
+//      boards' background behind the page's head (the grid and the two soft glows `base.css`
+//      draws once, `.hero-glow`, which the home page's hero opens with), and the code chips
+//      a release note is full of.
+//
+//      **The chips are the case that shows what the other four cannot.** A rule can be in
+//      the stylesheet, name the right elements and paint nothing, and a case that asks
+//      whether a rule with those fragments exists answers yes: the notes arrive through
+//      `set:html`, Astro's scope attribute never reaches the markup a release file wrote, and
+//      the scoped `.release-notes code` this page shipped was built as a selector no chip
+//      could match — every chip kept `base.css`'s own `--surface`, the card's own tone, and
+//      four readings passed it green. So that case reads **reachability**: the rule is
+//      matched against the chips the page actually rendered, and a rule that can reach none
+//      of them is refused by name. The case after it plants the defect — it rewrites the
+//      built rule into exactly the shape Astro builds for a scoped one — and shows the
+//      refusal firing, because a look nothing refuses is a look that drifts back with the
+//      next edit.
 //
 // **How it builds, and why the copy's plugin version is lowered.** A page is observable only
 // as HTML, so this file builds the site — in a **copy of the repository in a temp directory**,
@@ -64,6 +73,7 @@ import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { cssDeclarations, cssRules, parse, walk } from './lib/html.mjs'
 import { READ_UNDER_PLUGIN, linkNodeModules } from './lib/build.mjs'
 
 // website/test/changelog-page.mjs -> website/test -> website.
@@ -485,6 +495,155 @@ function elementText(html) {
   return decodeEntities(html.replace(/<[^>]*>/g, '')).replace(/\s+/g, ' ').trim()
 }
 
+// ---- a rule, read against the elements the page rendered ---------------------------------
+//
+// **A rule is in force only where its selector can reach an element the page rendered**, and
+// that is a fact about the built artifact rather than about the source. Astro appends a
+// component's `data-astro-cid-…` to **every** compound of a scoped selector, so the source's
+// `.release-notes code` is built as `.release-notes[cid] code[cid]` — and the `<code>`
+// elements a release note carries arrive through `set:html`, which the scope attribute never
+// reaches. The rule was dead: every chip in the notes kept `base.css`'s own `--surface`,
+// which is the card's own tone, and the case that named it passed, because it asked whether a
+// rule with those fragments existed and never whether the rule could match anything. A
+// selector that names a scope no element carries is the same defect `base-styles.mjs` reads on
+// the homepage's blocks (its review round 6), read here for the chip rule.
+
+/** The classes an element carries, as the markup writes them. */
+function classesOf(el) {
+  return (el.attrs?.get('class') ?? '').split(/\s+/).filter(Boolean)
+}
+
+/** An element's ancestors, nearest first, up to the document. */
+function ancestorsOf(el) {
+  const out = []
+  for (let node = el.parent; node !== null && node !== undefined; node = node.parent) out.push(node)
+  return out
+}
+
+/** One compound selector — the part between two combinators — read into what it requires. */
+function compoundOf(part) {
+  return {
+    name: /^[a-zA-Z][\w-]*/.exec(part)?.[0] ?? null,
+    classes: [...part.matchAll(/\.([A-Za-z_][-\w]*)/g)].map((match) => match[1]),
+    attrs: [...part.matchAll(/\[([^\]]*)\]/g)].map((match) => match[1]),
+  }
+}
+
+/**
+ * A complex selector as its compounds, each with the combinator before it (`null` for the
+ * first). The two combinators a scoped Astro selector writes are the ones read — a descendant
+ * (whitespace) and a child (`>`) — and a combinator inside `()` or `[]` is not the selector's
+ * own. The other two (`+`, `~`) are read as part of a compound and so as matching nothing:
+ * this page and `base.css` write none, and a reader that guessed would be worse than one that
+ * refuses.
+ */
+function selectorChain(selector) {
+  const parts = []
+  let buffer = ''
+  let depth = 0
+  let combinator = null
+  const flush = () => {
+    if (buffer.trim() !== '') parts.push({ combinator, part: buffer.trim() })
+    buffer = ''
+  }
+  for (const ch of selector) {
+    if (ch === '(' || ch === '[') depth += 1
+    else if (ch === ')' || ch === ']') depth -= 1
+    if (depth === 0 && (ch === '>' || /\s/.test(ch))) {
+      if (buffer.trim() !== '') {
+        flush()
+        combinator = ' '
+      }
+      if (ch === '>') combinator = '>'
+      continue
+    }
+    buffer += ch
+  }
+  flush()
+  return parts
+}
+
+/**
+ * True when one compound selector requires nothing of `el` that `el` is not: the element name
+ * it names, the classes it names, and each attribute selector it carries (presence, or `=` a
+ * value). A pseudo-class is not evaluated and is read as matching — the safe direction for a
+ * reading that asks whether a selector can match at all, and the defect it is here for is the
+ * scope attribute, which it reads exactly.
+ */
+function compoundMatches(part, el) {
+  const { name, classes, attrs } = compoundOf(part)
+  if (name !== null && name !== el.name) return false
+  const own = classesOf(el)
+  if (!classes.every((klass) => own.includes(klass))) return false
+  return attrs.every((spec) => {
+    const eq = spec.indexOf('=')
+    if (eq === -1) return el.attrs.has(spec.trim())
+    const value = spec.slice(eq + 1).trim().replace(/^["']|["']$/g, '')
+    return el.attrs.get(spec.slice(0, eq).trim()) === value
+  })
+}
+
+/** True when one complex selector — not a list of them — can match `el`. */
+function matches(selector, el) {
+  const chain = selectorChain(selector)
+  if (chain.length === 0) return false
+  const at = (index, node) => {
+    if (node === null || node === undefined || node.name === undefined) return false
+    if (!compoundMatches(chain[index].part, node)) return false
+    if (index === 0) return true
+    if (chain[index].combinator === '>') return at(index - 1, node.parent)
+    for (let parent = node.parent; parent !== null && parent !== undefined; parent = parent.parent) {
+      if (at(index - 1, parent)) return true
+    }
+    return false
+  }
+  return at(chain.length - 1, el)
+}
+
+/** The subject of a complex selector: the compound that decides which element the rule styles. */
+function subjectOf(selector) {
+  return compoundOf(selectorChain(selector).at(-1)?.part ?? '')
+}
+
+/**
+ * The notes' code chips and the rule that paints them on the ground, as the sentences for the
+ * ways that rule cannot reach a chip — `[]` when the chips are painted by a rule that can
+ * match them.
+ *
+ * The chips are the `<code>` elements the page rendered inside a `.release-notes` block, and
+ * the rule is the one the page's own stylesheet declares with a `code` subject and a
+ * `background: var(--ground)` — the chip's own tone, which is the whole point of the rule. A
+ * rule that reaches none of the chips is refused by name, with the scope it requires and the
+ * scopes the chips carry, because the two are one line apart in the built stylesheet and the
+ * fix is to make the rule reachable (`:global()`), not to move the chips.
+ */
+function chipFailures(css, html) {
+  const doc = parse(html)
+  const chips = [...walk(doc)].filter(
+    (el) => el.name === 'code' && ancestorsOf(el).some((ancestor) => classesOf(ancestor).includes('release-notes')),
+  )
+  if (chips.length === 0) {
+    return ['the page renders no code chip inside the notes: a release note is full of them, and the rule this case reads is about the chips a reader sees in one']
+  }
+  const scopes = [...new Set(chips.flatMap((chip) => [...chip.attrs.keys()].filter((name) => name.startsWith('data-astro-cid-'))))]
+  const painting = cssRules(css).filter(
+    (rule) =>
+      rule.selector.split(',').some((part) => subjectOf(part).name === 'code') &&
+      cssDeclarations(rule.body).some(
+        ([property, value]) => /^background(-color)?$/.test(property) && value.replace(/\s+/g, '') === 'var(--ground)',
+      ),
+  )
+  if (painting.length === 0) {
+    return ['no rule of the page’s stylesheet paints a code chip on the ground: the card is `--surface` and `base.css` paints a chip `--surface` too, so a chip with no rule of its own is a chip a reader cannot see']
+  }
+  return painting
+    .filter((rule) => !rule.selector.split(',').some((part) => chips.some((chip) => matches(part, chip))))
+    .map((rule) => {
+      const wanted = [...new Set([...rule.selector.matchAll(/\[(data-astro-cid-[^\]]+)\]/g)].map(([, scope]) => scope))]
+      return `the notes’ code chips are painted by \`${rule.selector}\`, and no selector of that rule can match any of the ${chips.length} code chips the page renders: the rule requires ${wanted.join(', ') || 'no scope attribute'} where the chips carry ${scopes.join(', ') || 'none'}. A chip arrives through \`set:html\`, so Astro never appends the component’s scope attribute to it — and a rule the chips cannot be matched by is a rule they never get, so every chip in the notes keeps \`base.css\`’s own \`--surface\`, which is the card’s own tone: a chip the same tone as the card it sits on is a chip nobody sees`
+    })
+}
+
 // ---------------------------------------------------------------------------------------
 // The cases.
 // ---------------------------------------------------------------------------------------
@@ -808,14 +967,17 @@ test('every release is a card, and the list is spaced by a step of the scale', (
     `the room between two releases is not a step of the spacing scale (${list}): a gap written as a number is a value no other block of the site can be compared with`,
   )
 
-  // And the head gives the headline room below it, in steps of the same scale: the bold look's
-  // generous spacing is what makes the first card read as the page's second thing rather than
-  // as the next line of its title.
+  // And the head gives the headline room below it, in a step of the same scale — and **no room
+  // above it**: the top of the page is `main`'s own padding, which every page of the site
+  // opens at (`--space-lg` there and `--space-xl` from 48 rem up, `base.css`), so a head that
+  // pads its own top sets this page's headline a step lower than every other page's. The
+  // pages whose first block is a full container of its own drop `main`'s padding instead
+  // (`main:has(> .hero, > [data-security-page])`) and this head is not one of those.
   const head = declarationsFor(css, 'the page’s head', '.changelog-head[')
   assert.match(
     head,
-    /padding-block:\s*var\(--space-[a-z0-9]+\)\s+var\(--space-[a-z0-9]+\)/,
-    `the page’s head does not space the headline with steps of the spacing scale (${head}): the room under a page’s first block is the page’s own rhythm, and it is written in the tokens every other block is written in`,
+    /padding-block:\s*0\s+var\(--space-[a-z0-9]+\)/,
+    `the page’s head does not open at zero and give the headline a step of the spacing scale below it (${head}): the room above a page’s first block is \`main\`’s own padding, so a head with a top padding of its own puts the page’s headline a step lower than every other page’s — and a head with no room under it leaves the first card reading as the next line of the title`,
   )
 })
 
@@ -866,20 +1028,13 @@ test('an entry is read in one hierarchy: the tag, the summary, then the notes', 
   )
 
   // The file's own lines under the control are the quietest tone in the card — they are the
-  // operator's detail, not what the release gives a reader — and a code span in them is drawn
-  // on the ground rather than on the surface the card already is: a chip the same tone as the
-  // card it sits on is a chip nobody sees, and every release note is full of them.
+  // operator's detail, not what the release gives a reader. The chips those lines are full of
+  // are the next case's subject, because a rule that paints them has to be able to reach them.
   const notes = declarationsFor(css, 'the notes’ own lines', '.release-notes[')
   assert.match(
     notes,
     /color:\s*var\(--text-muted\)/,
     `the notes’ own lines are not the quieter tone (${notes}): the collapsed block is the operator’s detail, and it reads below the summary that says what the release gives a reader`,
-  )
-  const chip = declarationsFor(css, 'a code span in the notes', '.release-notes[', 'code')
-  assert.match(
-    chip,
-    /background:\s*var\(--ground\)/,
-    `a code span in the notes is not drawn on the ground (${chip}): the card is the surface already, so a chip on the surface is a chip a reader cannot see`,
   )
 
   // The "not yet released" marker is the board's pill — the shape it draws a badge of one or
@@ -898,6 +1053,84 @@ test('an entry is read in one hierarchy: the tag, the summary, then the notes', 
     /color:\s*var\(--warn\)/,
     `the not-yet-released marker is not in the warning tone (${status}): the tone that means "pay attention" is the one a line saying "not yet" is read in`,
   )
+})
+
+test('the notes’ code chips are painted on the ground, by a rule that reaches them', () => {
+  const html = builtPage()
+  const css = pageCSS(html)
+
+  // A code span in a release note is a command, and a chip the same tone as the card it sits
+  // on is a chip nobody sees: the card is `--surface` (`base.css`) and `base.css` paints a
+  // chip `--surface` too, so the rule that draws one on the ground is the only thing that
+  // makes it read as a chip rather than as a word in the mono face.
+  //
+  // **What is read is reachability, not the text of a selector.** The notes arrive through
+  // `set:html`, Astro's scope attribute never reaches the markup a release file wrote, and the
+  // scoped `.release-notes code` this page shipped was built as `.release-notes[cid]
+  // code[cid]` — a selector no chip could match. The rule was in the stylesheet, named the
+  // right elements, painted nothing, and a case that asked whether a rule with those fragments
+  // existed answered yes. So the rule is matched against the chips the page rendered.
+  const failures = chipFailures(css, html)
+  assert.deepEqual(
+    failures,
+    [],
+    `the notes’ code chips are not painted by a rule that reaches them:\n  ${failures.join('\n  ')}`,
+  )
+})
+
+test('the chip reading refuses a rule that can match no chip, and passes the page’s own', () => {
+  const html = builtPage()
+  const css = pageCSS(html)
+
+  // The page's own rule for the chips, as the built stylesheet writes it: the fixture has to
+  // edit the rule the page carries rather than write one here, because the defect is the shape
+  // Astro builds a scoped selector into.
+  const rule = /\.release-notes\[[^{}]*\bcode[^{}]*\{[^{}]*\}/.exec(css)
+  assert.ok(rule, 'the changelog stylesheet carries no `.release-notes … code` rule, and the cases below are about the page’s own rule')
+  const scope = /\[(data-astro-cid-[^\]]+)\]/.exec(rule[0])
+  assert.ok(scope, `the page’s chip rule carries no scope attribute (${rule[0]}), and the plant below reproduces the scoped shape from it`)
+
+  // **The defect as it shipped**: the component's own scoped rule, which Astro builds with the
+  // scope attribute on every compound — the `code` one included, where no chip carries it.
+  const shipped = rule[0].replace(/(\s)code(\s*\{)/, `$1code[${scope[1]}]$2`)
+  assert.notEqual(shipped, rule[0], 'the plant did not change the chip rule, so the case below proves nothing about the scoped shape')
+
+  const cases = [
+    // The shape the page shipped: refused, by name, with the scope it requires and the fact
+    // that the chips carry none — which is the two lines a reader needs to fix it.
+    [
+      'the scoped rule Astro builds, which no chip can match',
+      css.replace(rule[0], shipped),
+      1,
+      [/can match any of the \d+ code chips/, /requires data-astro-cid-/, /the chips carry none/],
+    ],
+    // The other way a chip rule paints nothing: no rule at all, and the chips keep `base.css`'s
+    // `--surface`, which is the card's own tone.
+    [
+      'the chip rule taken away',
+      css.replace(rule[0], ''),
+      1,
+      [/no rule of the page’s stylesheet paints a code chip on the ground/],
+    ],
+    // The control: the page's own rule is refused not at all, so the two plants above are not
+    // passing because the reading refuses every rule it sees.
+    ['the page’s own rule', css, 0, []],
+  ]
+  for (const [what, stylesheet, count, patterns] of cases) {
+    const failures = chipFailures(stylesheet, html)
+    assert.equal(
+      failures.length,
+      count,
+      `${what}: the reading reported ${failures.length} failures where ${count} were expected:\n  ${failures.join('\n  ')}`,
+    )
+    for (const pattern of patterns) {
+      assert.match(
+        failures.join('\n'),
+        pattern,
+        `${what}: the failure does not say what it is about:\n  ${failures.join('\n  ')}`,
+      )
+    }
+  }
 })
 
 test('the page’s head carries the boards’ background, and the headline paints above it', () => {
