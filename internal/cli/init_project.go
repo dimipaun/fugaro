@@ -424,14 +424,16 @@ func (s *projectStage) declined(what string) error {
 }
 
 func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
+	if s.started {
+		// The one-project-per-run invariant first: it holds whatever the
+		// answer was, and it is the stage's own, not the run's.
+		return initflow.Outcome{}, errors.New("init creates at most one project per run: it has already acted in this run")
+	}
 	if !s.answer() {
 		// Adoption creates nothing, and asks nothing: a run that answered
 		// "adopt" has no typed confirmation to leave for anyone, whatever its
 		// terminal is.
 		return initflow.Outcome{Detail: adoptDetail}, nil
-	}
-	if s.started {
-		return initflow.Outcome{}, errors.New("init creates at most one project per run: it has already acted in this run")
 	}
 	if !env.Interactive || !s.canType() {
 		return initflow.Outcome{}, &initflow.NeedsYouError{Left: s.Left()}

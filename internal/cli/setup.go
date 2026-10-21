@@ -49,20 +49,31 @@ Credentials), so that fugaro run works; --launcher or --operator replaces that,
 an existing or adopted config is never changed by it, and with a service
 account's credentials it stops and names the two flags.
 
-On a first run in a terminal it asks, once, for the project's name, the GCP
-project's ID and the region, each with a suggestion (the name from the
-repository's owner; the ID from GOOGLE_CLOUD_PROJECT or the credentials' quota
-project, never gcloud's default project; us-east5) and writes the local config,
-so later runs ask nothing; without a terminal, or with --non-interactive,
---yes or --json, it names every missing flag in one error. Where the
-installation already exists and this machine has no local config for it,
-setup adopts it: it writes the config from the installation and applies
-nothing, and says which roles to ask an owner for. There the name is asked
-after the GCP project and the region and defaults to the installation's own
-(from the runs bucket's marker), not the directory's, and the budget section
+On a first run it asks its questions once, in this order, each with a
+suggestion Enter takes, and writes the local config, so later runs ask
+nothing: the GCP project's ID (--gcp-project; suggested from
+GOOGLE_CLOUD_PROJECT or the credentials' quota project, never gcloud's default
+project), the region (--region; us-east5), whether to create the GCP project
+or adopt one that already exists (--create-project; "create", what Enter
+takes, is a new fugaro-<name> project, and "adopt" leaves one that is already
+there exactly as it is), and the project's name (--name; from the
+repository's owner, else this directory's). Every question has its flag, so
+only the confirmations below need a terminal at all: without one, or with
+--non-interactive, --yes or --json, the run names every missing flag in one
+error — every one but the project question, whose answer it does not need. A
+run nobody can ask does not create a project (it adopts, the answer that
+changes nothing in the cloud), and --create-project is how a scripted run
+says otherwise. Where the installation already exists and this machine has no
+local config for it, setup keeps it rather than offering a second one: it
+writes the config from the installation and applies nothing, says which roles
+to ask an owner for, and says in one line that the installation is already
+set up and that it converges as fugaro update does. Its name is the
+installation's own (from the runs bucket's marker), not the directory's, and
+there is nothing left to ask. The budget section
 (rtdb_url, firebase_project, firebase_api_key, token_signer: none a secret) is
-filled from the Firebase root's outputs, read only; --name must be the
-installation's name. With several project configs, --name of a project that
+filled from the Firebase root's outputs, read only. A --name given for an
+installation that already exists must be the installation's own name. With
+several project configs, --name of a project that
 has none is a first run of that name, and a checkout whose origin repository
 exactly one project lists selects that project.
 
@@ -76,7 +87,10 @@ first, at the start, before any plan.
 
 setup runs as a converge of stages (preflight, installation, with --firebase
 the Firebase backend and the images, the secrets, the plugin wiring and the
-repository), each with its own confirmation, in order,
+repository, and on a first run the project — the one stage that may create the
+GCP project, and it does that only when the first question's answer was to
+create: an answer of "adopt" reads nothing and creates nothing), each with its
+own confirmation, in order,
 and stops at the first that fails or needs you; a rerun resumes, and one
 with nothing to do says "No changes" and exits 0. Exit codes: 0 done (or
 only planned), 1 a refusal, or a step left for you (see left_for_you in
@@ -207,7 +221,11 @@ can be refused: its refusal tells you what to do about it). A pasted private key
 secret's container, before the repository stage, with the labels
 setup --repo's Terraform adopts (fugaro, fugaro_repo, fugaro_secret).
 
---create-project --gcp-project <id> creates that GCP project and adds Firebase
+--create-project is the flag that answers the wizard's first question, and the
+only way to answer it without a terminal (a run with no terminal takes the
+other answer, adoption); the question itself decides nothing more than which
+of the two the project stage acts on. --create-project --gcp-project <id>
+creates that GCP project and adds Firebase
 to it, as you, after you type its ID at a terminal; --link-billing <account>
 then links that billing account (it may incur charges), after you type the
 account's ID. Each is its own typed confirmation, never given by --yes,

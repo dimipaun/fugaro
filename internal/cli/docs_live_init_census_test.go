@@ -145,6 +145,10 @@ var liveRoots = []string{
 	"internal",
 	"images",
 	"deploy",
+	// The console names the command in two of its files (#789's tombstone
+	// work put the mentions there): a root that names it is walked, and its
+	// files are the rename's, not the walk's to skip.
+	"console",
 }
 
 // initNameRE is what counts as naming the command: two spellings. The command
@@ -165,10 +169,11 @@ var initNameRE = regexp.MustCompile(`fugaro init|init --repo`)
 const censusRoot = "../.."
 
 // pendingRename is today's census: every file under liveRoots that names the
-// command, sorted. It is 279 files -- 114 non-test Go files, 118 test files,
-// 40 markdown files, the two goldens, and the five that fall in none of those
+// command, sorted. It is 277 files -- 114 non-test Go files, 118 test files,
+// 37 markdown files, the two goldens, and the six that fall in none of those
 // groups: the website's four (its install data, its two pages and its test
-// script) and the getting-started design board the redesign was approved from,
+// script), console/test/unit/ipc.test.ts (the console's fixture test) and the
+// getting-started design board the redesign was approved from,
 // website/design-ref/GettingStartedV4.dc.html. Read on main at `1d325928`, this
 // branch's base, it was **312** files -- 118 non-test Go files, 117 test files,
 // 34 markdown files, 29 Terraform files, the four `.tftest.hcl` fixtures beside
@@ -216,6 +221,25 @@ const censusRoot = "../.."
 // leaving it on the list is what keeps that choice visible instead of settled
 // by a walk that stopped looking.
 //
+// #789 (the tombstone: `fugaro setup` and `fugaro update` replace the retired
+// command) moved the list both ways, and this walk could not say so at the
+// time it merged: `internal/cli` did not compile until the fix that follows it
+// in this series (`retirementText`, declared twice, once by the tombstone and
+// once by this file), so the census had not run against it. Six left, all of
+// them mentions that rewrite took out: internal/cli/loop_program_test.go -- the
+// rename the paragraph above already owed, since the front door it drives is
+// `fugaro setup` now -- plugin/skills/setup/SKILL.md, its
+// reference/decisions.md and reference/transitions.md,
+// plugin/skills/working/reference/status.md, and plugin/skills_lint_test.go.
+// Four joined: internal/agent/relay_test.go, whose mention is the relay's own
+// test that the retired word is not a subcommand any more (no rename can take
+// that one out, so it is W2.6's tail rather than W2.2's); and
+// internal/cli/docs_checkout_test.go, a comment naming the bare `init --repo`
+// form. The last two are the console's, console/README.md and
+// console/test/unit/ipc.test.ts, and `console` -- which had no root of its own
+// until #789 put mentions there -- is on liveRoots now: a root that names the
+// command is walked, and the files the walk finds are the rename's to take.
+//
 // Each task that renames a string takes the file off this list in the same
 // commit, and W2.6 empties it.
 var pendingRename = []string{
@@ -223,6 +247,8 @@ var pendingRename = []string{
 	"CONTRIBUTING.md",
 	"README.md",
 	"SECURITY.md",
+	"console/README.md",
+	"console/test/unit/ipc.test.ts",
 	"docs/backends.md",
 	"docs/base-image-migration.md",
 	"docs/base-image.md",
@@ -253,6 +279,7 @@ var pendingRename = []string{
 	"docs/rigor-modes/reconciliation.md",
 	"docs/windows-cli/reconciliation.md",
 	"internal/agent/agent_test.go",
+	"internal/agent/relay_test.go",
 	"internal/backend/backend.go",
 	"internal/backend/backendtest/backendtest.go",
 	"internal/backend/gcp/live_test.go",
@@ -277,6 +304,7 @@ var pendingRename = []string{
 	"internal/cli/config_list_test.go",
 	"internal/cli/config_publish.go",
 	"internal/cli/docs_base_test.go",
+	"internal/cli/docs_checkout_test.go",
 	"internal/cli/docs_clone_workflows_test.go",
 	"internal/cli/docs_compute_backend_test.go",
 	"internal/cli/docs_managed_label_test.go",
@@ -349,7 +377,6 @@ var pendingRename = []string{
 	"internal/cli/launch_budget_test.go",
 	"internal/cli/layer_routes_overlap_test.go",
 	"internal/cli/layer_sites_test.go",
-	"internal/cli/loop_program_test.go",
 	"internal/cli/lswarn.go",
 	"internal/cli/managed_apply.go",
 	"internal/cli/managed_apply_test.go",
@@ -485,11 +512,6 @@ var pendingRename = []string{
 	"internal/runner/spend.go",
 	"plugin/readme_test.go",
 	"plugin/setup_skill_test.go",
-	"plugin/skills/setup/SKILL.md",
-	"plugin/skills/setup/reference/decisions.md",
-	"plugin/skills/setup/reference/transitions.md",
-	"plugin/skills/working/reference/status.md",
-	"plugin/skills_lint_test.go",
 	"website/README.md",
 	"website/content/cli-reference.md",
 	"website/content/security.md",
