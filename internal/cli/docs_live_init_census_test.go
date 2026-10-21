@@ -108,14 +108,20 @@ var datedRecords = []string{
 // The last four are #789's, and the test of whether they belong here rather
 // than on `pendingRename` is the class's own: the rename cannot remove the
 // mention without deleting the sentence that makes the file worth having.
-// console/test/unit/ipc.test.ts carries the console's table of CLI leaf
+// The console's test/unit/ipc.test.ts carries the console's table of CLI leaf
 // commands, where `fugaro init` is a row named `retired` -- the row is the
-// command's real name, not a spelling of it -- and console/README.md is the
-// same table's paragraph recording the 2026-10-21 split that left it a
+// command's real name, not a spelling of it -- and the console's README.md is
+// the same table's paragraph recording the 2026-10-21 split that left it a
 // tombstone. Both name the verb as the subject of a record. They sit outside
 // every live root, which is why the roots test below is the only walk that
 // would ever have seen them; a path here is exempt file by file, so a third
-// file under console/ that names the command in live text still fails it.
+// file in that directory that names the command in live text still fails it.
+//
+// The two are spelled through consoleDirName and never as the literal path,
+// which is censusOutputDirs' own rule below and docs_console_boundary_test.go's
+// reason for it: that file counts the directory's name followed by a slash
+// anywhere in a Go file, comments included, and this file names the directory
+// to step over it rather than to reach into it.
 //
 // internal/cli/testdata/init_retire.golden is deliberately NOT here, although
 // it names the command four times today: it is a transcript, not a retirement
@@ -133,10 +139,10 @@ var retirementPaths = []string{
 	"internal/cli/docs_live_init_census_test.go",
 	// The console's never-reachable table: `fugaro init` is a row of it, named
 	// `retired`, and the row holds the command's actual name.
-	"console/test/unit/ipc.test.ts",
+	consoleDirName + "/test/unit/ipc.test.ts",
 	// The same table's paragraph in the console's README, recording the split
 	// that made the row a tombstone.
-	"console/README.md",
+	consoleDirName + "/README.md",
 }
 
 // liveRoots is what the census walks. Every top-level entry that names the
@@ -239,8 +245,8 @@ const censusRoot = "../.."
 // --repo` and asserts no subcommand survives it, and
 // internal/cli/docs_checkout_test.go, whose comment names the retired word
 // docs/checkout.md still uses for `fugaro setup` and which the rename of that
-// document rewrites with it. Two more #789 wrote -- console/README.md and
-// console/test/unit/ipc.test.ts, both recording the 2026-10-21 split of the
+// document rewrites with it. Two more #789 wrote -- the console's README.md and
+// its test/unit/ipc.test.ts, both recording the 2026-10-21 split of the
 // verb and the tombstone it left -- are not listed because they cannot be
 // renamed at all: they are retirement text, and they are on `retirementPaths`
 // below instead.
@@ -1202,10 +1208,10 @@ func TestLiveInitCensusMatchesTheFrozenList(t *testing.T) {
 // remedies it offers would both be impossible for such a file -- adding it to
 // liveRoots would make the first test demand it in `pendingRename`, which is
 // to demand renaming a dated record. The exemption is not latent any more:
-// console/README.md and console/test/unit/ipc.test.ts are the console's record
-// of the retired verb (#789), they sit under a directory that is not a live
-// root, and without this check the only two remedies on offer would each be a
-// demand to rename a record. It is closed because it is the one place where the
+// the console's README.md and its test/unit/ipc.test.ts are that directory's
+// record of the retired verb (#789), they sit under a directory that is not a
+// live root, and without this check the only two remedies on offer would each
+// be a demand to rename a record. It is closed because it is the one place where the
 // file's own rule was applied to one half of the line and not the other.
 //
 // Mutation (run, restore): add a line naming the command to a file under a
