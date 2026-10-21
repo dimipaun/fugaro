@@ -36,7 +36,9 @@ package cli
 //    name no phrase and are held by no anchor.
 //  * TestDocsCoordinatorSpecIsVerbatim -- spec.md carries the spec's own title,
 //    status and eleven sections, and carries none of the reconciliation's
-//    apparatus: the two documents have not been mixed.
+//    apparatus: the two documents have not been mixed. Those are sentences, and
+//    the index's promise is about bytes, so the file is pinned by its SHA-256 as
+//    well -- the one check that fails when the file is edited anywhere else.
 //  * TestDocsCoordinatorNewDecisionsAreNumbered -- the five decisions planning
 //    found are D193-D197, written in the reconciliation's §6 as `### D<n> — ...`
 //    headings in order and with no gap, each stating its recommendation before
@@ -113,7 +115,7 @@ package cli
 //    together once -- "eleven" over twelve tests -- because a count is the claim
 //    that moves while nothing about what it counts looks wrong.
 //
-// Mutation (verified, run and restored) -- 92, one per way these documents can
+// Mutation (verified, run and restored) -- 93, one per way these documents can
 // rot, each planted and reverted. The count is a digit and not a word, and
 // there is only one of it, because TestDocsCoordinatorMutationRecordIsCounted
 // reads it and counts the list under it: one arrow per mutation, so a number
@@ -149,7 +151,13 @@ package cli
 //	  by this same file, so the sentence would deny coverage this package has.
 //	TestDocsCoordinatorSpecIsVerbatim
 //	  paste a `### Q1 — ` heading into spec.md -> fails;
-//	  delete `## 9. Long-running behaviour` -> fails.
+//	  delete `## 9. Long-running behaviour` -> fails;
+//	  change one byte of the spec's prose ("and suggests sequencing" written
+//	  "and suggest sequencing": one character, no heading touched) -> fails,
+//	  naming the digest: the two mutations above are mutations of the lines this
+//	  test names, which is all it named before this round, and the index's
+//	  promise is that the file is byte for byte the owner's. This is the P0 red
+//	  step, run against the guard as it stood: it passed.
 //	TestDocsCoordinatorNewDecisionsAreNumbered
 //	  renumber the last of the five, D197 to D198 -> fails: the
 //	  headings are read in order and held to the block the index records;
@@ -477,6 +485,8 @@ package cli
 // than presenting a fuzzy check as a complete one.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -739,7 +749,11 @@ func TestDocsCoordinatorIsWritten(t *testing.T) {
 // of its sections, in order -- and it carries none of the reconciliation's
 // apparatus. A reconciliation paragraph pasted into the spec, or a section
 // dropped from it, would leave the next reader unable to tell which of the two
-// documents is the owner's.
+// documents is the owner's. Those are sentence checks, and sentences are not
+// bytes: the index's promise is that the spec "is copied byte for byte from the
+// text the owner supplied", which no list of sentences can keep -- every check
+// above passes on a file edited anywhere outside the lines it names -- so the
+// file is pinned by its SHA-256 as well.
 func TestDocsCoordinatorSpecIsVerbatim(t *testing.T) {
 	spec := readDoc(t, coordinatorSpec)
 	for _, want := range []string{
@@ -768,6 +782,24 @@ func TestDocsCoordinatorSpecIsVerbatim(t *testing.T) {
 		if strings.Contains(spec, notWant) {
 			t.Errorf("%s carries %q, which belongs to the reconciliation: the spec is the owner's text verbatim", coordinatorSpec, notWant)
 		}
+	}
+	// "Byte for byte" is not a figure of speech, and the checks above cannot
+	// keep it: they name a title, a status line and eleven headings, so an edit
+	// to any other line of this 91-line file passes every one of them. That is
+	// the mutation the plan's P0 records as a red step -- change one byte of
+	// spec.md and the guard must fail -- and before this pin it did not: the
+	// byte was changed, and this package stayed green. So the whole file is
+	// pinned by its SHA-256, in the shape docs/voice-module pins its own spec,
+	// which carries the same promise. The checks above stay because they say
+	// *what* the spec has to say when they fail; this one says the file was
+	// touched at all. Editing spec.md means the owner's text changed, and the
+	// index's rule for a difference between the two is that the owner's copy is
+	// right and this file is the one to fix -- so an edit here comes with the
+	// owner's new text and this constant updated to it.
+	const coordinatorSpecSHA256 = "48a6b6f7545c44ae6fd07aed27c135f7ab87a938367c37962c17c44a0dab42f5"
+	sum := sha256.Sum256([]byte(spec))
+	if got := hex.EncodeToString(sum[:]); got != coordinatorSpecSHA256 {
+		t.Errorf("%s is not the text the owner supplied (sha256 %s, want %s): the index promises it is copied byte for byte, so any edit here -- one byte included -- is a difference from the owner's copy and needs the owner", coordinatorSpec, got, coordinatorSpecSHA256)
 	}
 }
 
