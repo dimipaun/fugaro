@@ -89,16 +89,19 @@
  *      the page cannot point at a document this repository does not carry.
  *   6. **The styles are global and token-only.** The rendered sections arrive through
  *      `set:html`, which Astro's scoped styles do not reach, so the block below is
- *      `is:global` and every selector is prefixed with the page's own marker attribute so it
- *      cannot reach another page. Colours come from W1.2's semantic tokens and never from a
- *      literal here.
+ *      `is:global` and **every** selector is prefixed with the page's own marker attribute so it
+ *      cannot reach another page — including the two the bold look added, which are written
+ *      `[data-security-page] .security-hero` and `[data-security-page] .security-title` and not
+ *      as bare classes. Colours come from W1.2's semantic tokens and never from a literal here.
  *   7. **The page is drawn in the site's bold look, and the look is `base.css`'s rather than
  *      this file's** (the owner's brief of 2026-10-21). The markup above wears the shared
  *      classes — the title `display-xl` with the gradient over its words, each section
  *      heading `display-md`, each of the four blocks a `card` — and what this file's style
  *      block adds is the two things that are this page's own: the rhythm the blocks are laid
- *      out in (one column, one step of the spacing scale between them) and the panel the
- *      drawing sits on. Writing the display scale or the card out again here would be a
+ *      out in (one column, one step of the spacing scale between them, and the blocks carry no
+ *      margin of their own — a flex item's margin is added to the gap, so a block that kept one
+ *      would give the same gap twice) and the panel the drawing sits on. Writing the display
+ *      scale or the card out again here would be a
  *      second copy of a shape, and a second copy is a shape that drifts from the homepage's.
  *      `website/test/security.mjs`'s `boldLookFailures` reads the classes and the rhythm back
  *      off the built page; the visual match to the owner's boards is the owner's check at the
@@ -577,7 +580,17 @@ const DIAGRAM_LIMITS = [
     box-sizing: border-box;
     /* One column of blocks, set apart by one step of the spacing scale: the redesign's rhythm
        is the scale's, so the room between two of them is comparable with the room any other
-       page gives its blocks, and the step is the page's own choice of how generous it is. */
+       page gives its blocks, and the step is the page's own choice of how generous it is.
+
+       **The gap is the only room between two blocks.** The four regions below carry no vertical
+       margin of their own — the rule each one has says `margin: 0` — because a margin on a flex
+       item is added to the gap, and a block that kept the `--space-lg` it carried while the page
+       was a plain flow would give the gap twice: the room would render at 80 px where the page
+       says one step. That is the defect `website/test/base-styles.mjs`'s `homeRhythmFailures`
+       refuses on the homepage (a block padding a gap the block above it already pads), and the
+       reading here is the same one: the room between two blocks is one step of the scale and
+       not that step plus a block's own margin. `boldLookFailures` reads it back off this
+       stylesheet, so the two rules cannot drift apart again. */
     display: flex;
     flex-direction: column;
     gap: var(--space-xl);
@@ -591,8 +604,9 @@ const DIAGRAM_LIMITS = [
   /* The title band: the page's first screen, and the box the board's glow is drawn in.
      `position: relative` and `overflow: hidden` are what the glow layer needs, and the band's
      own top padding is the room above the headline — the article carries none, so the room is
-     declared once. */
-  .security-hero {
+     declared once. Prefixed with the page's marker like every other selector here, so the block
+     cannot reach another page. */
+  [data-security-page] .security-hero {
     position: relative;
     overflow: hidden;
     padding: var(--space-2xl) 0 var(--space-sm);
@@ -602,7 +616,7 @@ const DIAGRAM_LIMITS = [
      width it is set to. `position: relative` is what paints it over the glow (a positioned box
      paints after a static one, and the glow is the band's first child), which is what the
      homepage's own hero does. */
-  .security-title {
+  [data-security-page] .security-title {
     position: relative;
     margin: 0;
     max-width: 20ch;
@@ -631,8 +645,16 @@ const DIAGRAM_LIMITS = [
   /* The pointer is the page's smallest block, so it is the card at the control's padding
      rather than at the card's: a full-height box under the reporting section would read as a
      fourth section rather than as the note it is. Its tone is the quieter one — it is a
-     sentence about where the policy lives, not policy text. */
+     sentence about where the policy lives, not policy text.
+
+     `margin: 0` is load-bearing here in a way it is not on the three sections: the pointer is a
+     `<p>`, so `base.css`'s `:where(p) { margin: 0 0 var(--space-sm) }` gives it a margin below
+     that the flex container's gap would be added to. The page does not cap this box either, for
+     the reason the reporting card states — what holds this one sentence to the measure is the
+     same site-wide `p` rule, and the page writing `max-width` here as well would be the page
+     repeating a rule `base.css` already makes for every paragraph on the site. */
   [data-security-policy].card {
+    margin: 0;
     padding: var(--space-sm) var(--space-lg);
     color: var(--text-muted);
   }
@@ -653,7 +675,7 @@ const DIAGRAM_LIMITS = [
      as the How It Works drawing (`src/components/RunDiagram.astro`). No script reads or writes
      any of this; the shapes are painted from the classes below and every colour is a token. */
   [data-security-diagram] {
-    margin: 0 0 var(--space-lg);
+    margin: 0;
   }
 
   [data-security-diagram] figure {
@@ -725,7 +747,7 @@ const DIAGRAM_LIMITS = [
   }
 
   [data-security-summary] {
-    margin: 0 0 var(--space-lg);
+    margin: 0;
   }
 
   [data-security-summary] ul {
@@ -744,9 +766,14 @@ const DIAGRAM_LIMITS = [
     color: var(--text);
   }
 
+  /* No `max-width` on the reporting card: a card is the column's width and the *prose* inside
+     it is what keeps to the measure. `base.css` already does that for every `p` on the site
+     (`:where(p, ul, ol, dl, blockquote, figcaption) { max-width: var(--measure) }`), which is
+     the same shape `.home-install-panel`'s note has — the panel spans and the note is capped.
+     Capping the box instead made this card 68 ch wide while the diagram and the summary beside
+     it spanned the column, which is two of the four blocks drawn to a different width. */
   [data-security-reporting] {
-    max-width: var(--measure);
-    margin: 0 0 var(--space-lg);
+    margin: 0;
   }
 
   [data-security-reporting] p {
@@ -764,7 +791,4 @@ const DIAGRAM_LIMITS = [
     color: var(--accent);
   }
 
-  [data-security-policy] {
-    max-width: var(--measure);
-  }
 </style>

@@ -20,7 +20,7 @@
 // request you merge": `SECURITY.md` makes neither claim, and a label the policy does not state
 // is the defect this gate exists for (D99).
 //
-// Six things are checked, and each one is the mechanical form of a sentence in the brief:
+// Seven things are checked, and each one is the mechanical form of a sentence in the brief:
 //
 //   1. **The page carries its four regions and no other text** (the brief: "Nothing else").
 //      Everything a reader sees inside the page's own `<article>` is its `h1`, the diagram,
@@ -115,7 +115,7 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { DIST, REPO, SITE, cssDeclarations, cssRules, findAll, parse, stripCSSComments, verbatimText } from './lib/html.mjs'
+import { DIST, REPO, SITE, cssDeclarations, cssRules, findAll, parse, verbatimText } from './lib/html.mjs'
 // The builds the two cases below need: a copy of the repository in a temp directory with one
 // edit planted in it, built with the site's own Astro (`buildCopy`), because the page's
 // refusals are the build's and a refusal nobody has seen fire is a refusal nobody knows the
@@ -950,6 +950,97 @@ function tokenPx(css, name) {
   return m ? Number(m[1]) * (m[2] === 'rem' ? 16 : 1) : null
 }
 
+/** A length as px: a bare zero, a token reference, or a number with a unit — or null when the
+ *  value is neither, which is a failure the caller reports rather than a zero it compares with.
+ *  `rem` and `em` are read at the 16 px root, the same root `tokenPx` and the drawing's own
+ *  geometry are read at. */
+function lengthPx(css, value) {
+  const v = value.trim()
+  if (/^0[a-z%]*$/.test(v)) return 0
+  const token = /^var\(--([a-z0-9-]+)\)$/.exec(v)
+  if (token !== null) return tokenPx(css, token[1])
+  const len = /^(-?[\d.]+)(rem|px|em)$/.exec(v)
+  return len === null ? null : Number(len[1]) * (len[2] === 'px' ? 1 : 16)
+}
+
+/** One selector's weight in the cascade, as the triple a browser compares: ids, then classes,
+ *  attributes and pseudo-classes, then type selectors. `:where(…)` counts as nothing — that is
+ *  what the wrapper is for — and it is the reason this is read at all: `base.css` gives every
+ *  paragraph a margin below through `:where(p, …)`, which is worth nothing, so the page's own
+ *  `margin: 0` on the pointer is the declaration in force and a reading without specificity
+ *  would report the site's margin as room the page had already taken away. */
+function specificity(selector) {
+  const s = selector.replace(/:where\([^)]*\)/g, '')
+  return [
+    (s.match(/#[\w-]+/g) ?? []).length,
+    (s.match(/\.[\w-]+|\[[^\]]*\]|::?[\w-]+/g) ?? []).length,
+    (s.match(/(?:^|[\s>+~,(])[a-z][\w-]*/g) ?? []).length,
+  ]
+}
+
+function compareSpec(a, b) {
+  for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return a[i] - b[i]
+  return 0
+}
+
+/** Whether a rule's selector can match the block itself. A selector is read one alternative at
+ *  a time, `:where(…)`/`:is(…)` unwrapped first (the site's prose rule is written as a wrapper
+ *  around a list of tags), and the alternative reaches the block when its subject — the last
+ *  compound, the part that says what the rule is about — names the block's marker attribute, a
+ *  class the block carries, or is a bare type selector for the block's tag. A selector with an
+ *  ancestor (`[data-security-policy] p`) is a rule about something *inside* the block and not
+ *  about the block: reading it as the block's own margin would report the room inside a card as
+ *  room between two cards. */
+function reaches(block, selector) {
+  const unwrapped = selector.replace(/:where\(([^)]*)\)|:is\(([^)]*)\)/g, ' $1 $2 ')
+  return unwrapped.split(',').some((part) => {
+    const compounds = part.trim().split(/[\s>+~]+/).filter(Boolean)
+    const subject = compounds[compounds.length - 1] ?? ''
+    // A subject that names a region is about **that** region and no other: the four blocks share
+    // the `card` class, so a reading that stopped at the class would take `[data-security-policy]
+    // .card` — the pointer's own `margin: 0` — for the summary's, and the doubled rhythm the
+    // summary carries would be measured against the pointer's declaration and pass.
+    const named = [...subject.matchAll(/\[(data-security-[\w-]+)\]/g)].map(([, name]) => name)
+    if (named.length > 0) return named.includes(block.marker)
+    if ([...classList(block.node)].some((klass) => new RegExp(`\\.${klass}(?![\\w-])`).test(subject))) return true
+    return compounds.length === 1 && subject === block.node.name
+  })
+}
+
+/** The vertical margin a block carries out of the built stylesheet, as `[edge, value]` pairs for
+ *  the edges something declares. The winner per edge is the cascade's own: the more specific
+ *  rule wins, and between two of one weight the later one does. A block nothing declares a
+ *  margin for has none of its own — which is the answer for a `<section>`, and is why the
+ *  pointer is the block that has to say `margin: 0` out loud. */
+function verticalMargin(css, block) {
+  const held = { top: null, bottom: null }
+  const offer = (edge, value, spec, order) => {
+    const now = held[edge]
+    const weight = now === null ? 1 : compareSpec(spec, now.spec)
+    if (now === null || weight > 0 || (weight === 0 && order >= now.order)) held[edge] = { value, spec, order }
+  }
+  cssRules(css).forEach((rule, index) => {
+    if (!reaches(block, rule.selector)) return
+    const spec = specificity(rule.selector)
+    let top
+    let bottom
+    for (const [property, value] of cssDeclarations(rule.body)) {
+      if (property === 'margin') {
+        const parts = value.trim().split(/\s+/)
+        top = parts[0]
+        bottom = parts.length > 2 ? parts[2] : parts[1] ?? parts[0]
+      } else if (property === 'margin-top') {
+        top = value
+      } else if (property === 'margin-bottom') {
+        bottom = value
+      }
+    }
+    if (top !== undefined) offer('top', top, spec, index)
+    if (bottom !== undefined) offer('bottom', bottom, spec, index)
+  })
+  return ['top', 'bottom'].filter((edge) => held[edge] !== null).map((edge) => [edge, held[edge].value])
+}
+
 /**
  * Every way the built page departs from the site's bold look, as the sentences a reader of
  * the failure gets. One function over one artifact, so its refusals are kept with planted
@@ -986,6 +1077,16 @@ export function boldLookFailures(dist = DIST) {
   }
   const css = pageCSS(html, dist)
 
+  // The reading is scoped to the page's own `<article>`, exactly as `securityFailures`' is: the
+  // layout draws chrome of its own around every page, and a heading the layout adds is markup
+  // this page cannot change. Reading the whole document would report the site's chrome as this
+  // page's hierarchy and demand `display-md` on a heading the page does not write.
+  const article = findAll(doc, (el) => el.attrs.has('data-security-page'))[0]
+  if (article === undefined) {
+    fail('the page carries no `data-security-page` article, so there is no page here to read the bold look off: the article is the page\'s own markup, and `securityFailures` above reports its absence (the owner\'s brief of 2026-10-21)')
+    return out
+  }
+
   // The shared shapes have to be the stylesheet's and not only the markup's: a page that names
   // a class no rule carries is a page drawn by the browser's defaults.
   for (const [selector, what] of [
@@ -1002,7 +1103,7 @@ export function boldLookFailures(dist = DIST) {
   // 1. The title: the display scale's largest step, with the accent's gradient over the whole
   //    of it. The gradient is a span inside the heading, which is how `Hero.astro` splits its
   //    headline — and the whole word and not part of it, because this page's title is one word.
-  const titles = findAll(doc, 'h1')
+  const titles = findAll(article, 'h1')
   if (titles.length !== 1) {
     fail(`the page carries ${titles.length} <h1> headings, so the bold look's headline has no one title to be drawn on: the display scale is the page's title and nothing else (the owner's brief of 2026-10-21)`)
   } else {
@@ -1023,7 +1124,7 @@ export function boldLookFailures(dist = DIST) {
   // 2. Every section heading under the title is the display scale's middle step, so the page
   //    has the board's hierarchy — the title at the top step, the sections below it — rather
   //    than three browser `h2`s.
-  const headings = findAll(doc, 'h2')
+  const headings = findAll(article, 'h2')
   if (headings.length === 0) {
     fail('the page carries no <h2>, so the hierarchy the bold look draws — a title and the sections under it — is a title over one flat block of text (the owner\'s brief of 2026-10-21)')
   }
@@ -1036,14 +1137,16 @@ export function boldLookFailures(dist = DIST) {
   // 3. The page's four blocks are the site's card — the same box the homepage's run band and
   //    "what you get" grid are drawn on. The regions are the ones `securityFailures` reads the
   //    page by, and a missing one is that gate's failure rather than this one's.
+  const blocks = []
   for (const [marker, what] of [
     ['data-security-diagram', 'the boundary diagram'],
     ['data-security-summary', "the document's summary"],
     ['data-security-reporting', "the document's reporting section"],
     ['data-security-policy', 'the pointer to the document'],
   ]) {
-    const found = findAll(doc, (el) => el.attrs.has(marker))
+    const found = findAll(article, (el) => el.attrs.has(marker))
     if (found.length !== 1) continue
+    blocks.push({ marker, what, node: found[0] })
     if (!classList(found[0]).has('card')) {
       fail(`${what} carries class ${JSON.stringify(found[0].attrs.get('class') ?? '')} and not the site's card (\`card\`): every block of the bold look is drawn on the same box — one step above the ground, a hairline border and the larger radius — so a block of this page is a card like the homepage's blocks, and not a shape of its own (the owner's brief of 2026-10-21)`)
     }
@@ -1055,8 +1158,12 @@ export function boldLookFailures(dist = DIST) {
   //    declaration is read off the page's own container rule, which is the one place the room
   //    between all four blocks is declared.
   const page = ruleFor(css, '[data-security-page]')
-  const gap = page === null ? undefined : cssDeclarations(page.body).find(([property]) => property === 'gap')?.[1]
+  const pageDecls = page === null ? [] : cssDeclarations(page.body)
+  const declared = (property) => pageDecls.find(([name]) => name === property)?.[1]
+  const display = declared('display')
+  const gap = declared('gap')
   const step = gap === undefined ? null : /^var\(--(space-[a-z0-9]+)\)$/.exec(gap)
+  const gapPx = step === null ? null : tokenPx(css, step[1])
   if (step === null) {
     fail(`the page sets the room between its blocks with ${gap === undefined ? 'no declaration this gate can read' : JSON.stringify(gap)} and not with a step of the site's spacing scale: the redesign's rhythm is the scale's — the room one block gives the next is a step, so two blocks' room is comparable — and a number here is the page inventing a rhythm of its own (the owner's brief of 2026-10-21)`)
   } else {
@@ -1066,6 +1173,41 @@ export function boldLookFailures(dist = DIST) {
       fail(`the page sets the room between its blocks at \`--${step[1]}\`, and the stylesheet does not declare that step's value, so this gate cannot measure the room the page gives its blocks (the owner's brief of 2026-10-21)`)
     } else if (px < floor) {
       fail(`the page sets the room between its blocks at \`--${step[1]}\` (${px}px) where the bold look's blocks are set apart generously: the floor is the scale's \`--space-lg\` (${floor}px), and a page whose blocks sit closer than that is the page the redesign replaced (the owner's brief of 2026-10-21)`)
+    }
+  }
+
+  // 5. And the container is one the `gap` means something in. A `gap` is room between blocks
+  //    only in a flex or a grid box, and only in the direction the blocks are laid out in: on a
+  //    block container the declaration is inert — nothing is spaced — and a page whose blocks
+  //    sit flush against each other would read as one that sets its rhythm. The reading is
+  //    here because the rule above cannot see the difference: it reads the declaration, and
+  //    this one reads whether the declaration draws anything.
+  const flexColumn = /^(column|column-reverse)$/.test(declared('flex-direction') ?? '')
+  if (display !== 'flex' && display !== 'grid') {
+    fail(`the page's container is ${display === undefined ? 'a box whose `display` the page does not declare' : JSON.stringify(display)} where the page's rhythm is a \`gap\`: a \`gap\` is room between blocks only in a flex or a grid container, and on a block container the declaration spaces nothing, so the page's blocks sit flush against each other while the page reads as one that sets the room between them (the owner's brief of 2026-10-21)`)
+  } else if (display === 'flex' && !flexColumn) {
+    fail(`the page's container is a flex row (${JSON.stringify(declared('flex-direction') ?? 'row')}) where its blocks are a column: a row lays the four blocks out side by side and turns the \`gap\` into room between columns, so the page has no vertical rhythm at all (the owner's brief of 2026-10-21)`)
+  }
+
+  // 6. And no block adds room of its own. A margin on a flex item is added to the gap, so a
+  //    block that kept the margin it carried while the page was a plain flow gives the gap
+  //    twice: the page says `--space-xl` between two blocks and a reader gets that step plus
+  //    the block's margin. This is the doubled rhythm `website/test/base-styles.mjs`'s
+  //    `homeRhythmFailures` refuses on the homepage, read the same way — the room between two
+  //    blocks is one step of the scale and not that step plus a block's own margin — and it is
+  //    the one defect the rule above cannot see, because the gap it reads is correct either
+  //    way. A block whose margin is zero is the page keeping its own rhythm; the pointer is the
+  //    one that has to say so, because it is a `<p>` and `base.css` gives every paragraph a
+  //    margin below.
+  for (const block of blocks) {
+    for (const [edge, value] of verticalMargin(css, block)) {
+      const px = lengthPx(css, value)
+      if (px === null) {
+        fail(`${block.what} carries a \`margin-${edge}\` of ${JSON.stringify(value)} this gate cannot measure, so it cannot say whether the block adds room of its own on top of the \`gap\` the container sets between blocks (the owner's brief of 2026-10-21)`)
+      } else if (px !== 0) {
+        const total = gapPx === null ? '' : `, so the room between two blocks renders at ${gapPx + px}px where the page says one step of the scale`
+        fail(`${block.what} carries a \`margin-${edge}\` of ${JSON.stringify(value)} (${px}px) of its own on top of the ${gap === undefined ? 'room the container sets between blocks' : JSON.stringify(gap)}: a margin on a flex item is added to the gap${total} — the doubled rhythm \`website/test/base-styles.mjs\`'s \`homeRhythmFailures\` refuses on the homepage, where the room between two blocks is one step of the scale and not that step plus a block's own margin (the owner's brief of 2026-10-21)`)
+      }
     }
   }
 
@@ -1598,6 +1740,49 @@ test('the bold look refusals fire on the defect each one names', (t) => {
     refusals(tight),
     /at `--space-3xs` \(\d+px\) where the bold look's blocks are set apart generously/,
     'a step of the scale below the floor is not refused, so the room the bold look gives its blocks is a taste nothing measures',
+  )
+
+  // The container the `gap` means nothing in: a page whose blocks are laid out in a block box
+  // reads as one that sets its rhythm — the declaration is right there in the stylesheet — and
+  // draws nothing. The rule above cannot see it, because it reads the declaration and not
+  // whether the declaration spaces anything.
+  const inert = planted(html, /(\[data-security-page\]\{[^}]*?)display:flex/, '$1display:block')
+  assert.match(
+    refusals(inert),
+    /is "block" where the page's rhythm is a `gap`/,
+    'a `gap` on a block container is not refused, so the page could carry the declaration that draws nothing and pass as one with a rhythm',
+  )
+
+  // And the container the `gap` is room in the wrong direction for: a flex row lays the four
+  // blocks out side by side and the `gap` becomes room between columns.
+  const row = planted(html, /(\[data-security-page\]\{[^}]*?)flex-direction:column/, '$1flex-direction:row')
+  assert.match(
+    refusals(row),
+    /is a flex row \("row"\) where its blocks are a column/,
+    'a flex row is not refused, so the page could turn its one column into a row and keep the `gap` it measures',
+  )
+
+  // **The doubled rhythm, which is the defect this half of the gate exists for.** A block that
+  // keeps the margin it carried while the page was a plain flow gives the `gap` twice: the page
+  // says `--space-xl` and a reader gets that step plus the block's `--space-lg`. This is the
+  // plant that reddens the margin rule and nothing else — the `gap` it reads is correct.
+  const doubled = planted(html, '[data-security-summary]{margin:0}', '[data-security-summary]{margin:0 0 var(--space-lg)}')
+  assert.match(
+    refusals(doubled),
+    /the document's summary carries a `margin-bottom` of "var\(--space-lg\)" \(32px\)[\s\S]*renders at 80px where the page says one step of the scale/,
+    'a block whose own margin is added to the gap is not refused, so the room between two blocks renders at 80 px where the page says one step — the doubled rhythm the homepage gate refuses',
+  )
+
+  // And the same defect arriving from `base.css` rather than from the page: the pointer is a
+  // `<p>`, so the site's own prose rule gives it a margin below the moment the page stops
+  // saying `margin: 0`. This is why the reading resolves the cascade instead of skipping it —
+  // `:where(p, …)` is worth nothing, so the page's zero is what is in force, and the plant is
+  // the page's zero taken away.
+  const unmargined = planted(html, /(\[data-security-policy\]\.card\{[^}]*?)margin:0\}/, '$1}')
+  assert.match(
+    refusals(unmargined),
+    /the pointer to the document carries a `margin-bottom` of "var\(--space-sm\)" \(16px\)/,
+    "a block whose margin comes from base.css rather than from the page is not refused, so the site's own prose rule could pad the gap behind the page's back",
   )
 })
 
