@@ -24,11 +24,7 @@ func readRepoFile(t *testing.T, rel string) string {
 
 // TestReadmeGettingStartedIsTwoSteps: the section has exactly two numbered
 // steps, `fugaro setup` and `/fugaro:setup`; the third step the skill carries
-// is one sentence, and the plugin note says where the run wires it. Step 1 is
-// the wizard (W1.2 retired the one command that was both doors into setup and
-// update), and the sentence after the skill's pull request names the step that
-// follows it: `fugaro setup` again, the run that D5 makes the one that enrols
-// a repository (its first image build is billable and typed).
+// is one sentence, and the plugin note says where setup wires it.
 func TestReadmeGettingStartedIsTwoSteps(t *testing.T) {
 	readme := readRepoFile(t, "README.md")
 	_, rest, ok := strings.Cut(readme, "\n## Getting started\n")
@@ -41,7 +37,7 @@ func TestReadmeGettingStartedIsTwoSteps(t *testing.T) {
 		t.Fatalf("Getting started has %d numbered steps, want 2: %q", len(steps), steps)
 	}
 	if !strings.Contains(steps[0], "`fugaro setup`") {
-		t.Errorf("step 1 is %q, want `fugaro setup` (the wizard: it sets the cloud side up and asks the wizard's questions)", steps[0])
+		t.Errorf("step 1 is %q, want `fugaro setup`", steps[0])
 	}
 	if !strings.Contains(steps[1], "`/fugaro:setup`") {
 		t.Errorf("step 2 is %q, want `/fugaro:setup`", steps[1])

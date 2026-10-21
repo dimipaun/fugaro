@@ -312,7 +312,7 @@ and a reserved number is never reused or renumbered.
 **Check 70 is the website redesign's, proposed as 70a–70c**
 (`docs/website/redesign/implementation-plan.md` §4 and §8, written by its parts P3,
 P5 and P6), in the same sub-lettering convention. All three are written below:
-**70a** (the mobile header on one row, the three group labels by keyboard) by **P3**, **70b**
+**70a** (the mobile header on one row, the two group labels by keyboard) by **P3**, **70b**
 (the gist above the fold) by **P5** — merged in #603, and written here after 70a and
 70c because that is the order the parts landed, not the order of the numbers — and
 **70c** (the copy control in a real browser, with a real clipboard) by **P6** — so the
@@ -362,6 +362,16 @@ picker's failure modes (the Cloud Billing API disabled on the quota project, an
 account without `billing.accounts.list`, and the three sessions that are never
 allowed to list an account at all), and Check 27's rewritten section is where
 the picker's success path is run.
+
+**Check 112 is the four zoom levels', and it is the next number free above 111** (the
+zoom-diagrams plan `docs/website/zoom-diagrams/implementation-plan.md` §3, its Part 4 — decision
+**D247** takes **112** for this work). The reading is the same shape as the one above and is taken
+the same way: the highest **written** `## Check N` section in this file, read at **`d3a2ef08`** —
+the commit this change is based on — was **111**, and a reservation is not a fact about the tree,
+so the section is **written below** rather than reserved. Its subject is the four levels as
+**stills**, which is what this tree carries: the pinned, scroll-driven zoom between them is **Part
+5** of that plan and is not in this checkout, so the one step of the section that is about the zoom
+is written and **cannot be run yet**. The check is owner-run and it is **NOT RUN**.
 
 **That is the end of the register.** The paragraph below is not another
 reservation: it introduces the check that owns 57, whose row is in the table
@@ -524,7 +534,7 @@ probe account carries predefined grants only).
 | 60 | The sealed budget token (design `budget-token-channel.md` §7 and "The check outline"): a sealed run works end to end; the `tokens/` object is ciphertext with no claim readable and nothing is left under `runs/`; where the key is and is not (the job's environment, the execution record — U2 as found — and the RunJob audit entry, recorded by length, never by value); a wrong key, a plaintext object and a sideways copy all refuse; a peer job account cannot delete a queued token; the launchers' widened `runs/`+`tokens/` condition and the job's read-only `tokens/<slug>/` grant read off the live policy | See "Check 60" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only, with Check 43's guard block re-run at every step; Restore puts back the two objects the check overwrote, removes its probe file and scratch dir, and diffs the bucket policy against step 8's. | Three or four tiny sandbox runs and executions. **USER-RUN, NOT RUN.** |
 | 69a | The site is live and honest (website plan `docs/website/implementation-plan.md`, Task W2.2; D92, D108's fourth gate): the canonical origin in `website/data/site.yaml` answers over **HTTPS** with a certificate for that host, the deployed HTML is the artifact `npm run build` produced from the commit that is checked out, and the page a stranger lands on names no unshipped feature — no player for the video, which does not exist (`features.video` is false), and every console download it offers resolving to an asset of the release its own facts name (`features.console_downloads` is true, and the console moved to `console-v0.9.0`) | See "Check 69a" below; run by you, in a browser and a terminal, against the site's own Firebase project only (never an installation's, and no `fugaro` command runs at all). The canonical origin is read out of `website/data/site.yaml` by the guard block, so it is not typed from memory, and it is the only host this check fetches: there is no second domain (owner ruling 2026-10-17), so no step here observes one. **No agent runs any step of it** | HTTPS 200 from the canonical origin with `ssl_verify_result` 0 and a certificate whose subject is that host; the deployed home page's sha256 equal to the local build's; the greps for a player printing nothing; and every console download URL the pages carry answering 200 (or a redirect to the release's own storage) with the checksum the page printed beside it. **USER-RUN, NOT RUN.** |
 | 69b | Nothing phones home (website plan Task W2.2; D93, D106, W1.11): the live page, loaded with the browser's network panel open and the cache disabled, requests **no origin outside `website/data/site.yaml`'s `allowed_hosts`** — no font, no script, no embed, no pixel — and nothing is requested from the analytics origin **before consent**; after consent exactly that one origin and no other third party appears (D93 chose Google Analytics behind the consent banner and **W3.2 has turned it on** — the measurement id is `website/data/site.yaml`'s, the gate is the site's own file, and the pass is therefore a pass about the post-consent request, not about analytics being absent) | See "Check 69b" below; run by you, in a browser, on the live site — read-only, no command that changes anything, no cloud project touched, **No agent runs any step of it** | The panel's host list holds the canonical host and, where the page links them, `github.com` and `raw.githubusercontent.com` — and nothing else; the deployed markup's absolute URLs hold no other origin; and no request to the analytics origin before consent. **USER-RUN, NOT RUN.** |
-| 70a | The mobile header fits one row, and the three group labels are the phone's menu (website redesign plan `docs/website/redesign/implementation-plan.md` §3, part P3; D182 and the amendment of 2026-10-19, RF3): at **390 × 844** — and at 375, 320 and 391 — the header is **one row** of about 77 px, with the wordmark's mark kept and its text out of the row below the breakpoint, nothing wrapped under them and no sideways scroll; the three labels are the whole menu there (**Product**, **Reference**, **Project**, each at least 44 px tall, **no `Menu` control on the page**), each opens its own panel **by tap and by keyboard**, Escape and a click outside close it, the focus goes back to the label that opened it, the three are exclusive, **an open panel is drawn above the page's blocks and not under them** (the owner's reading of 2026-10-19), the menu reaches every link with **JavaScript disabled**, and on a device whose **pointer hovers** a group's submenu opens when the pointer arrives at it and stays open while the pointer is inside it (the owner's brief of 2026-10-18, item 1) | See "Check 70a" below; run by you, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the deployed site — read-only, no cloud project touched, no `fugaro` command, and **No agent runs any step of it** | The header's measured height at each width is one row's (about 77 px, not the 177 px of three rows RF3 measured), `document.documentElement.scrollWidth` is not wider than the viewport, the wordmark's text is out of the row below its breakpoint and the mark is in it, the three labels are on the one row and each is at least 44 px tall, a label is focusable and opens its panel, Escape closes it and returns the focus, opening a second label closes the first, the open panel is drawn above a page's block rather than under it (`/how-it-works/`, where the flow's steps are positioned), every link in the three groups is reachable and follows with JavaScript off, **and on a device whose pointer hovers a group's submenu opens when the pointer arrives at it and stays open while the pointer is inside it** (the owner's brief of 2026-10-18, item 1), and at 1280 × 900 the three group labels are **drawn** in the header's one row as the three dropdowns D182 asks for, with no `Menu` control and no overlay panel, and opening a group showing its links **without changing the header's height**. **USER-RUN, NOT RUN.** |
+| 70a | The mobile header fits one row, and the group labels are the phone's menu (website redesign plan `docs/website/redesign/implementation-plan.md` §3, part P3; D182 and the amendments of 2026-10-19 and 2026-10-21, RF3): at **390 × 844** — and at 375, 320 and 391 — the header is **one row** of about 77 px, with the wordmark's mark kept and its text out of the row below the breakpoint, nothing wrapped under them and no sideways scroll; the labels are the whole menu there (**Product** and **Project** since the owner's feedback of 2026-10-21 dropped the Reference group, each at least 44 px tall, **no `Menu` control on the page**), each opens its own panel **by tap and by keyboard**, Escape and a click outside close it, the focus goes back to the label that opened it, the two are exclusive, **an open panel is drawn above the page's blocks and not under them** (the owner's reading of 2026-10-19), the menu reaches every link with **JavaScript disabled**, and on a device whose **pointer hovers** a group's submenu opens when the pointer arrives at it and stays open while the pointer is inside it (the owner's brief of 2026-10-18, item 1) | See "Check 70a" below; run by you, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the deployed site — read-only, no cloud project touched, no `fugaro` command, and **No agent runs any step of it** | The header's measured height at each width is one row's (about 77 px, not the 177 px of three rows RF3 measured), `document.documentElement.scrollWidth` is not wider than the viewport, the wordmark's text is out of the row below its breakpoint and the mark is in it, the labels are on the one row and each is at least 44 px tall, a label is focusable and opens its panel, Escape closes it and returns the focus, opening a second label closes the first, the open panel is drawn above a page's block rather than under it (`/how-it-works/`, where the flow's steps are positioned), every link in the two groups is reachable and follows with JavaScript off, **and on a device whose pointer hovers a group's submenu opens when the pointer arrives at it and stays open while the pointer is inside it** (the owner's brief of 2026-10-18, item 1), and at 1280 × 900 the group labels are **drawn** in the header's one row as the dropdowns D182 asks for, with no `Menu` control and no overlay panel, and opening a group showing its links **without changing the header's height**. **USER-RUN, NOT RUN.** |
 | 70b | The gist is above the fold (website redesign plan `docs/website/redesign/implementation-plan.md` §3 and §8, part P5; D187, D188, RF23, RF5): on the built or deployed site **every page states its main point above the fold** — the `h1`'s bottom and the lead's bottom inside the first screen at **390 × 844** — the homepage's **first screen** holds the promise and its call to action and **no command** — the page's first command (the slider's `fugaro watch` block, inside the "See it" panel) carrying its copy control **beside it in the command's own row**, Getting Started's **first command block** is fully visible at **390 × 844 and 1280 × 900**, the consent banner neither pushes the commands below the fold nor covers the first command on a first visit, the word ceilings hold (a page's lead at most **40 words**; the **privacy statement** within its own derived ceiling; and every other page at most **250 words** except `/docs/`, `/security/` and `/changelog/`), and no page carries the provenance phrases the build refuses | See "Check 70b" below; run by you, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the deployed site — read-only, no account, no cloud project touched, no `fugaro` command, and **No agent runs any step of it** | Per page, the `h1`'s and the lead's bottom under 844 at 390 × 844; the homepage's first screen's blocks in order and the page's first command (the slider's `fugaro watch` block) with its control in the command's own row; Getting Started's first command block inside the first screen at both widths; the banner's rectangle and what it covers, with the first command clear of it; every page's lead and page word counts inside the ceilings `website/README.md` states — the privacy statement's own count against the ceiling derived from it — read from the site's own gate; and none of the gate's provenance phrases on any page. **USER-RUN, NOT RUN.** |
 | 70c | Every copy control copies its own command (redesign plan §3, part P6; D183, RF13): on the built or deployed site **each kind of control** — the hero's install blocks, Getting Started's code blocks, the docs hub's rendered reference, the caps guide's usage lines and the terminal's own line — puts **that command** on a real clipboard, **by mouse and by keyboard**, the "Copied" state is announced politely and clears itself, and **nothing is shown with JavaScript off** | See "Check 70c" below; run by you, in a browser, against the **built artifact** or the deployed site — read-only, no cloud project touched, and **No agent runs any step of it** | Each control's clipboard content equals the command it sits on and nothing else — no `$` prompt, no caret, no neighbouring line, no page furniture — the copied state appears, is announced and clears, the keyboard reaches every control and the focus ring is visible on it, and with JavaScript disabled every command is still on the page with **no button rendered at all**. **USER-RUN, NOT RUN.** |
 | 81 | The deployed rules' fence (design `m9-budget-and-dashboard.md` §6.2 and §6.4; mobile plan Task P4.2a writes it, and P2.3 and P4.2 **run** it): the live half of P2.2's and P6.4's denial cases for the **signed-in user** — an account whose own uid has a device node (`config/admin/devices/<uid>`, D166, which **you** write over IAM because `fugaro pair` is P6.6 and is not built) and a token whose `mu` claim is its own uid makes **exactly two writes** (one message into its own `inbox/$msg`, carrying the `mac` and `kind` generation 3 requires; the `acked: true` once, on a message already in its own `outbox/$msg`) and reads **nothing beyond** the nodes D112's user-claim read grant sits at (`config/caps/{global,defaults,repos/$slug}`, `config/kill/{global,repos/$slug}`, `spend/$day/{global,repos/$slug,runs/$slug/$run}`, plus its own `outbox` and `heartbeat` — the grant sits on those nodes and cascades down only, so `spend/$day` and each of their parents is **not** readable); everything else is refused — another account's mailbox, a read of its own inbox, the outbox message and the heartbeat (the consumer's writes, **check 80's** half), a message with no `mac`, a second, `false` or parent-less ack, the parents of the granted nodes, the device allowlist (its own node included, which no client token may read), both pairing nodes, and every family the grant does not name (`config/limits/policyRules`, `config/mode`, `config/policy/**`, `agents/**`, `outcomes/**`, `runs/**`, `fugaro/**`) — an account with **no** device node is refused everything, its own mailbox included, and a token whose `mu` names another uid is admitted nowhere | See "Check 81" below; **you** run it, on installation `fugaro` (never `belong`), in project `fugaro-dev`, with two accounts you add by hand (D114) and custom tokens you mint yourself; every step re-runs the one guarded setup block, which reads the backend out of the project's own config (printing the project ids it found, never the key), and five nodes are seeded with your own IAM credentials (which bypass the rules and prove nothing about them): the three mailbox nodes it reads and acks, and the two device nodes. **No agent runs any step of it** | Four minted custom tokens exchanged for ID tokens (two in step 1, step 7's mismatch token and the residual's, which needs a second signer), five seeded nodes, and a set of reads and writes each of which must answer a permission denial; the tokens and the web API key are credentials and never appear in a `FACT` line or a pull request. **USER-RUN, NOT RUN.** |
@@ -532,6 +542,7 @@ probe account carries predefined grants only).
 | 89 | A signed EAS build, and the store's **internal** track (mobile plan Task P4.2a writes it, and P4.4 **runs** it; D120, C8): a build of the app at `mobile/` — its own artifact, outside the Go module (C2), at the commit whose tag it is versioned from (C6) — signed with **your** distribution credentials (EAS-managed or your own distribution certificate and upload key), and reaching the stores' internal testing tracks only; no public release is implied or made, and the submit track is read before anything is built — step 1's `jq` reads `submit.internal.android.track`, and a profile naming a public track is a stop you take there ("edit it and re-run"), not something the guard reads: the guard hard-stops on the build itself — without `mobile/eas.json` or `mobile/app.config.js` in the checkout (P4.4's), and without the store identity, which it resolves through `app.config.js` out of the two variables you export (the identity is **not** in `app.json` and never will be: the committed config carries no release identity, P3.1's boundary test, and the identity is yours). No agent runs `eas build` or `eas submit`, none touches a signing key, an App Store Connect API key or a Play service-account key, and no store credential enters an agent's environment | See "Check 89" below; **you** run it, at your own terminal, with your own Apple and Google accounts, your own signing keys and your own EAS project, from a clean checkout of the tagged commit; **no agent runs any step of it** (D120, Global Constraint 9). Its guard hard-stops today: P3.1's `mobile/app.json` and P4.4's `mobile/eas.json` and `mobile/app.config.js` are in the tree, so the file tests pass and the stop is the store identity itself — the two variables must be in your shell (or in the EAS project's environment the profile names, for the build job), and until they are, the guard stops before a build that could not reach any track | One build per platform and one submission per platform, on the internal tracks; the signing keys, the App Store Connect API key and the Play service-account key are yours, are never read by this check and are never pasted into a `FACT` line. **USER-RUN, NOT RUN.** |
 
 | 111 | The billing picker's failure modes (setup-wizard plan Task W0.3; D3 and D6): the Cloud Billing API disabled on the quota project — in D3's two cases, the quota project **being** the project set up and the quota project being **another** one — a caller without `billing.accounts.list` on a project whose API **is** enabled (so the API answers **403** rather than the disabled-API refusal), and the three sessions that never list anything at all (no TTY, `--json`, an agent session) — each asserting the guided `gcloud billing projects link` line, that **nothing was enabled**, and that **no account list appears in any output** (the one run where a list *is* expected is the `gcloud` fallback answering an API that refused) | See "Check 111" below; **you** run it at your own terminal, on installation `fugaro` (never `belong`), and **no agent runs any step of it** (an agent session is one of the five modes it observes). | Three throwaway projects of your own — `P` (the installation's), `Q` (API off) and `S` (API on) — and the ADC quota project is repointed by three of the runs. Every step is a refusal, and nothing is created, enabled or linked by the check itself. **NOT RUN.** |
+| 112 | The four zoom levels, drawn once and drawn as stills (zoom-diagrams plan §3, Part 4; D237, D244, D245, D247): the section sits on `/how-it-works/`, **under "The run, end to end" and its diagram** (D237); the four levels are four `<figure>`s in the brief's order, each named by its own `<figcaption>`, which also says which recipe the drawing is; **every entity is one `<symbol>` of one `<defs>`, drawn through `<use>`** — the job tile, the orchestrator, the developer, the console and the project — so a job tile is the same tile at every level (D244), and no level draws its own copy of one; every label of every level is a row of `website/data/zoom-levels.yaml`, held to the document it cites; the four markers are one `<nav>` of anchors with accessible names (D245), each jumping to its own level by keyboard and by pointer; the four levels and every label are in the document **with JavaScript off** (the section ships no script of its own); and the drawings are legible — labels at the palette's own contrast, nothing clipped, nothing drawn as an empty box — on a desktop and at 360, 390 x 844 and 320 (ZU4) | See "Check 112" below; **you** run it, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the live site — read-only, no account, no cloud project touched, no `fugaro` command, and **No agent runs any step of it**. The pinned scroll-driven zoom is **Part 5** and is not in this tree: that step of the section is written and cannot be run yet, and an unrun step is not a pass | One browser, a hard reload, one look at the section with script on and one with it off, and one narrow viewport. Nothing is created, enabled, linked or written. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -4428,19 +4439,22 @@ C=$(sed -n 's/^canonical_url: *//p' website/data/site.yaml)
 **Paste back:** the panel's host list per page; the origins of any request that is not the canonical one; the analytics requests with the banner's state at each of the four points above; the cookie **names** — and `Path`/`Domain`, never a value — the tag left on `/privacy/` before the withdrawal and what the list held after it; the markup's absolute URLs; and the browser and its version (the panel groups requests differently between them). **Never paste a cookie value, or any header that is not an origin.** Until this check runs, the site's runtime behaviour is **UNVERIFIED** — the build's origin lint is not the browser — and the row above stays **NOT RUN**.
 
 
-## Check 70a: the mobile header fits one row, and the three group labels are the phone's menu (the built artifact or the live site, read-only; run by you; NOT RUN)
+## Check 70a: the mobile header fits one row, and the group labels are the phone's menu (the built artifact or the live site, read-only; run by you; NOT RUN)
 
 **NOT RUN.** Written by **part P3** of the website redesign
 (`docs/website/redesign/implementation-plan.md` §3, decision D182, reconciliation finding
 RF3; **the drawer D182 also decided was retired by the owner's brief of 2026-10-19, item 1,
-and the three group labels are the phone's menu now** — the amendment at the end of that
-part), and written here rather than left to the redesign's own plan because this is the file
+and the group labels are the phone's menu now** — the amendment at the end of that
+part — and **the owner's feedback of 2026-10-21 dropped the Reference group: the labels are
+two now, *Product* and *Project***), and written here rather than left to the redesign's own
+plan because this is the file
 the owner runs live checks out of. It is the half of P3 no hermetic test can take: the tests
 in `website/test/base-styles.mjs` hold the **structure** — the header does not wrap, the
-three labels are in its row at every width, a group's list is out of that row's flow, and the
-wordmark's text leaves the row below 390 px — a browser is what measures the rendered row.
+labels are in its row at every width, a group's list is out of that row's flow, and the
+wordmark's text leaves the row below the breakpoint — a browser is what measures the rendered
+row.
 **Two briefs' acceptance lines are also here.** The owner's brief of **2026-10-19** (item 1)
-asks that the three group labels sit in the header's row with **no `Menu` button**, each one
+asks that the group labels sit in the header's row with **no `Menu` button**, each one
 opening its own panel of links on a tap, and that they fit beside the wordmark at **375 px**:
 that is a gesture and a measurement on a phone-sized viewport, and the label's 44 px target is
 a measurement too. The owner's brief of **2026-10-18** (item 1) asks that **"hovering a
@@ -4457,8 +4471,11 @@ which found exactly that: this section still described the `Menu` drawer the bri
 out (item 1), and a live check's instructions have to be about the site that exists.
 
 **As of main's commit `7731386f`** — the commit this branch merged (`0e555767`'s second parent,
-main's tip at that merge, and the commit the three-group-label rewrite above is: #656) — the header
-this section describes is the header main builds there. The commit is a **reading**, not a claim, and
+main's tip at that merge, and the commit the group-label rewrite above is: #656) — the header
+this section describes is the header main builds there. **The menu's group count is the one
+thing this reading has moved on from**: the owner's feedback of 2026-10-21 dropped the
+Reference group, so where the steps below read three labels the site draws **two** —
+*Product* and *Project* — and `website/test/base-styles.mjs` holds the two by name. The commit is a **reading**, not a claim, and
 it is the reading to repeat: every name below — the `.site-…` classes, the paths, the `…Failures`
 refusals, and the widths and queries the Method's own greps read out of the stylesheet and the layout
 — is derived from this text and held to the tree at test time (and, where the name is a class on a
@@ -4497,7 +4514,8 @@ grep -o '@media (width<=[0-9.]*rem)' website/dist/index.html | head -1
 # and `site.js` ask the same query, and `website/test/nav-hover.mjs` holds the two together).
 grep -o '@media (hover:hover) and (pointer:fine)' website/dist/index.html | head -1
 # The groups and links the menu shows, read out of the layout rather than typed: the names
-# steps 3 and 5 look for, and the nine links step 3 has to reach.
+# steps 3 and 5 look for, and the nine links step 3 has to reach. Two group labels since the
+# owner's feedback of 2026-10-21 dropped the Reference group.
 sed -n '/^const NAV_GROUPS/,/^]/p' website/src/layouts/Base.astro | grep -o "label: '[^']*'"
 # The one-row header's height, out of the stylesheet and the markup rather than typed: the
 # label's own 44 px target, the header's padding-block and its border, and the mark's declared
@@ -4527,16 +4545,19 @@ grep -n 'width="47"' website/src/layouts/Base.astro
    narrowest phone worth supporting — and then at **391**, just above the wordmark's breakpoint,
    where the row is at its tightest: one row and no sideways scroll at every one of them.
 
-   **The three labels are the whole menu at this width, and each fits.** Read them:
-   `document.querySelectorAll('.site-nav-group > details > summary')` — three, labelled
-   **Product**, **Reference** and **Project**, each at least **44 px** tall, all three on the
+   **The labels are the whole menu at this width, and each fits.** Read them:
+   `document.querySelectorAll('.site-nav-group > details > summary')` — **two** (the owner's
+   feedback of 2026-10-21 dropped the Reference group), labelled **Product** and **Project**,
+   each at least **44 px** tall, both on the
    header's one row beside the mark, and **no `Menu` control anywhere on the page**. The mark
    beside them is the layout's own image, `width="47"` by `height="32"` in `Base.astro` (read in
-   the block above), so what the three labels have to fit in at 375 px is 375 px less the mark
-   and the header's own gaps — which is why the three labels' widths at that width are numbers
+   the block above), so what the labels have to fit in at 375 px is 375 px less the mark
+   and the header's own gaps — which is why the labels' widths at that width are numbers
    this step **reads** and pastes back rather than numbers this section remembers, and why a
-   label that has pushed the row into a second line or off the right edge is the failure.
-   **FACT:** the three labels' widths and heights, and that no `Menu` control is on the page.
+   label that has pushed the row into a second line or off the right edge is the failure. The
+   row is one item narrower than the 2026-10-21 Home round measured it (the cut it put at
+   27 rem is left where it was measured), so the fit here has headroom rather than none.
+   **FACT:** the labels' widths and heights, and that no `Menu` control is on the page.
 
 2. **A label opens its own panel when the keyboard reaches it, and only one is open at a time.**
    With the viewport still narrow, Tab to the first group label (`.site-nav-group summary`):
@@ -4548,9 +4569,9 @@ grep -n 'width="47"' website/src/layouts/Base.astro
    (press it again and it opens; the keyboard's arrival is what opened it, not the key). Press
    **Escape** with the panel open: it closes and the focus is back on the label that opened it,
    and stays there — the focus the close hands back does not reopen the group. Open it again and
-   click somewhere else on the page: it closes. Open it again and then Tab to a **second** label:
-   the first closes, because the three share one `name` and the browser keeps that set exclusive
-   — one group open at a time, at every width.
+   click somewhere else on the page: it closes. Open it again and then Tab to the **other**
+   label: the first closes, because the two share one `name` and the browser keeps that set
+   exclusive — one group open at a time, at every width.
    **And an open panel is drawn above the page's blocks.** Read it on `/how-it-works/` **at the
    top of the page, with no scrolling**: the flow's first card begins a few pixels under the
    header there, so the block the open panel has to be drawn over already sits under it, and the
@@ -4565,10 +4586,12 @@ grep -n 'width="47"' website/src/layouts/Base.astro
    Enter, Escape, the outside click and the second label's focus — the header's height with a
    panel open, and whether a page's block was drawn over it.
 
-3. **Every link in the three groups is reachable.** Tab to each group's label, open it, and
-   reach each link inside it by keyboard alone, and follow one. The groups are **Product**,
-   **Reference** and **Project**, and **Privacy is not among them** — it is a footer link
-   (D182). **FACT:** the three group names as rendered, the links under each, and that Privacy
+3. **Every link in the two groups is reachable.** Tab to each group's label, open it, and
+   reach each link inside it by keyboard alone, and follow one. The groups are **Product**
+   (How it works, Getting started, Caps and costs, Console) and **Project** (Docs, Security,
+   FAQ, Community, Changelog) — nine links between them, the same nine as before the Reference
+   group was dropped — and **Privacy is not among them** — it is a footer link
+   (D182). **FACT:** the two group names as rendered, the links under each, and that Privacy
    is in the footer rather than the menu.
 
 4. **With JavaScript disabled, the menu still works.** Turn scripting off and reload at 390 ×
@@ -4581,26 +4604,27 @@ grep -n 'width="47"' website/src/layouts/Base.astro
    of it there, and Tab to a label opens nothing — and the only things missing are the two
    closes, the focus-open and the hover.
 
-5. **At 1280 × 900, the same three labels are in the header's one row, drawn there as they are
+5. **At 1280 × 900, the same labels are in the header's one row, drawn there as they are
    at every width.** Widen the viewport to 1280 × 900. The header shows the wordmark's
-   text and the mark and the three groups in **one row**, and **no `Menu` control**: there is
+   text and the mark and the two groups in **one row**, and **no `Menu` control**: there is
    none at any width now — the labels are the menu at every width, and what changes at the
    48 rem the method block reads is only where a group's list is drawn (across the header on a
    phone, a dropdown under its own label from there up). Read the groups: **they are dropdowns
-   at this width too** — three `<summary>` controls, each with its three links behind it and
+   at this width too** — two `<summary>` controls, each with its own links behind it (four
+   under *Product*, five under *Project*) and
    closed until the pointer arrives at it (step 6) or the focus lands on it (step 7) (D182's
-   "three top-level sections with dropdowns", the same two levels as the phone's menu, which is
+   "top-level sections with dropdowns", the same two levels as the phone's menu, which is
    what makes this a two-level menu rather than a row of nine links). **FACT:** the header's
-   height, the three group names, that no `Menu` control is on the page, and that the nine
+   height, the two group names, that no `Menu` control is on the page, and that the nine
    links are not printed in the row before anything is opened.
 
 6. **On a hovering pointer, the submenu opens when the pointer arrives (the owner's brief of
    2026-10-18, item 1 — the brief's acceptance line, and the reason `website/test/nav-hover.mjs`
    exists).** Still at 1280 × 900, with a mouse or a trackpad — a device that answers the
    `(hover: hover) and (pointer: fine)` query the method block reads out of the artifact.
-   Move the pointer onto **Product** and **do not click**: its three links appear under the
+   Move the pointer onto **Product** and **do not click**: its four links appear under the
    header's row immediately, and the header's height does not change (step 5's number again).
-   Move the pointer **into the list**, onto one of the three links: the submenu is still open —
+   Move the pointer **into the list**, onto one of its links: the submenu is still open —
    the pointer has not left the group, so nothing closes under it. Move the pointer **out of
    the menu altogether**, onto the page: the submenu stays open for an instant — the delay is
    about a fifth of a second, so it is the seam between the summary and the list that a reader
@@ -4618,7 +4642,7 @@ grep -n 'width="47"' website/src/layouts/Base.astro
    again after plugging it back in, without reloading: the page re-decides rather than keeping
    the answer it loaded with. Then, on the mouse again, **click** a group whose submenu is
    **closed** and whose trigger does **not** already hold the focus — click *Product* once to
-   close what the pointer opened, move the focus to *Reference*'s trigger, then click *Product*
+   close what the pointer opened, move the focus to *Project*'s trigger, then click *Product*
    again: it opens on that first press. A click moves the focus to the trigger it presses on the
    way to the click, and a group opened by that focus would be closed again by the click that
    brought it, so this press is the one that would do nothing at all. The same press on a
@@ -4643,8 +4667,7 @@ grep -n 'width="47"' website/src/layouts/Base.astro
 7. **Opening a group at 1280 × 900 shows its links and does not move the page.** Reach
    *Product* by keyboard — Tab to its summary, which opens it exactly as the pointer's arrival
    does (so the submenu may already be open by the time the key is pressed; Escape closes it
-   and the same Tab opens it again) — read the header's height again, and confirm the three
-   links are
+   and the same Tab opens it again) — read the header's height again, and confirm its links are
    visible under it; then close it with Escape and again by clicking elsewhere — and for that
    second close, first Tab *into* the open group's links so the focus is inside it, then click a
    paragraph of the page's own text: the group closes and the focus **stays on the page**, on
@@ -4663,19 +4686,20 @@ grep -n 'width="47"' website/src/layouts/Base.astro
 
 **Passes when:** the header at 390 × 844 — and at 375, at 320 and at 391 — is one row of about
 **77 px** rather than 177, with no sideways scroll, and the wordmark's text is out of the row
-below the breakpoint the method block reads while the mark stays; the three labels are the
-whole menu there — **Product**, **Reference**, **Project**, each at least 44 px tall, no `Menu`
+below the breakpoint the method block reads while the mark stays; the **two** labels are the
+whole menu there — **Product** and **Project** (the Reference group dropped by the owner's
+feedback of 2026-10-21), each at least 44 px tall, no `Menu`
 control on the page — and each opens its own panel when the keyboard reaches it or on a tap,
 toggles on **Enter** (the `<summary>`'s own control, so with the panel open by the keyboard's
 arrival Enter is what closes it), closes on Escape and on an outside click with the focus
-returned to the label, with the three kept exclusive by their shared `name`, and the open panel
+returned to the label, with the two kept exclusive by their shared `name`, and the open panel
 drawn above the page's blocks rather than under them; every link in the
-three groups is reachable by keyboard and follows,
+two groups is reachable by keyboard and follows,
 **all of that holds with JavaScript disabled**, Privacy is a footer link and not a menu item,
-and at 1280 × 900 the same three labels are in the header's one row with **no `Menu` control
-and no overlay panel**, as three dropdowns whose links are behind their summaries, opening a
+and at 1280 × 900 the same two labels are in the header's one row with **no `Menu` control
+and no overlay panel**, as two dropdowns whose links are behind their summaries, opening a
 group **without changing the header's height** and without a sideways scroll even on the last
-group — and the three labels are **drawn** at that width as they are at every width: the drawer
+group — and the two labels are **drawn** at that width as they are at every width: the drawer
 the brief of 2026-10-19 took away was the only thing a rule had to show again at a wide
 viewport, and what the 48 rem block does now is move a group's list under its label, not make
 the menu exist. **And on a device whose pointer
@@ -4697,7 +4721,7 @@ dismissed (step 7).
 **Fails when:** the header at any of the four widths is taller than one row or the document
 scrolls sideways; the wordmark's text is still in the row at 375 px (or the mark has gone out
 of it with the text); a label is under 44 px tall, or a `Menu` control is in the header at any
-width — the brief of 2026-10-19 took the single `Menu` button away, so the three labels are the
+width — the brief of 2026-10-19 took the single `Menu` button away, so the two labels are the
 whole menu there;
 a label does not open its panel — on the keyboard's arrival or on a tap — or the keyboard's
 arrival opens nothing while Tab still reaches the label (which is the script's focus-open
@@ -4707,7 +4731,7 @@ lost, or two groups are open at once; a group or a link cannot be reached or doe
 the menu stops working with scripting off (which would mean P3 made the menu depend on the
 script, where the script adds two ways to close it, the keyboard's focus-open and the
 hover-open); Privacy has moved into
-the menu; **at 1280 × 900 the three labels are not
+the menu; **at 1280 × 900 the two labels are not
 drawn** — the wordmark and nothing else in the header's row, which is what a rule that hides
 `.site-nav-groups` (or the labels themselves) produces, at any width: since the brief of
 2026-10-19 the labels are the menu at every width and no wide rule is what draws them, so a
@@ -4726,10 +4750,11 @@ dismissed it, which is what a handback that cannot tell the browser's close from
 looks like. Or, on the keyboard side of step 7, **a device that answers the hover query no
 whose menu the keyboard cannot enter** — a group whose submenu opens only when a hovering
 pointer arrives at it, which leaves the links inside it unreachable by Tab. The wide viewport's
-grouping of the nine links behind three summaries is *not* a
-failure: the dropdowns are D182's decision. The **structural** half of each of those is already
+grouping of the nine links behind two summaries is *not* a
+failure: the dropdowns are D182's decision, and the whole menu is two groups since the owner's
+feedback of 2026-10-21. The **structural** half of each of those is already
 refused by `website/test/base-styles.mjs` — `navLayoutFailures` holds the header to one row
-with the three labels in it at every width, takes a group's list out of that row's flow and
+with the two labels in it at every width, takes a group's list out of that row's flow and
 refuses a rule that hides a group's list, and `navFailures`
 holds the menu to its contract — and the keyboard's focus-open (step 2) and the hover
 behaviour's own half (step 6) are refused, without a
@@ -4741,10 +4766,10 @@ that would have caught it
 added to one of those tests where the test can see it.
 
 **Paste back:** the header's height and the document's scroll width at 390, 375, 320 and 391,
-and whether the wordmark's text was in the row or out of it at each; the three labels' widths
+and whether the wordmark's text was in the row or out of it at each; the two labels' widths
 and heights at 375, and that no `Menu` control is on the page; what Tab's arrival, Enter,
 Escape, the outside click and a second label's focus each did, and the header's height with a
-panel open; the three group names, their links, and where Privacy is; what held with
+panel open; the two group names, their links, and where Privacy is; what held with
 JavaScript disabled; at
 1280 × 900 the header's height closed **and** with a group open, the group names, and the links
 that appeared; and what the pointer's arrival, its move into the
@@ -6068,3 +6093,183 @@ assert_mode() {
 - **Re-enable the API you disabled** on `P` and on `Q` (`gcloud services enable cloudbilling.googleapis.com --project="${P:?}"` and `--project="${Q:?}"`), and **if you removed the billing role from your own account for mode 2(b), put it back** — that role is yours, not the check's. If a project was a fresh throwaway and you are done with it, delete it instead (`gcloud projects delete <that project>`): check that nothing else in your machine's config still points at it first.
 - **Remove this check's own directory** — `rm -rf /tmp/chk111`, which holds its config root (`$C`), its `vars.env`, the maimed `gcloud` wrapper, `account-names.txt`/`account-ids.txt`, and every mode's capture (mode 4's two files among them). `unset AI_AGENT` too, if you have not already.
 - **Never touch `belong`, EdgeWeb or EdgeServer**: no step here writes to them, the guard block is what makes that so, and the guided line this check is about names a project you type, never one of theirs.
+
+
+## Check 112: the four zoom levels, drawn once and drawn as stills (the built artifact or the live site, read-only; run by you; NOT RUN)
+
+**NOT RUN.** Written by **Part 4** of the zoom-diagrams plan
+(`docs/website/zoom-diagrams/implementation-plan.md` §3, decisions D237, D244, D245 and **D247**,
+which takes this number; the reconciliation's §3 is what the levels are allowed to say today), and
+written here rather than left to that plan because this is the file the owner runs live checks out
+of. It is the half of Part 4 no hermetic test can take: the tests hold the section's **shape** and
+its **words** — one `<defs>` of `<symbol>`s drawn through `<use>`, every label a row of
+`website/data/zoom-levels.yaml`, the markers and the captions — and what a browser is for is
+whether the four drawings are **legible**, whether an entity really looks the same at every level,
+and whether a marker lands where it says it lands.
+
+**What this tree carries today, and what it does not.** The section exists: `ZoomLevels.astro` is
+mounted on `/how-it-works/` **under "The run, end to end" and its diagram** (D237), it is one
+`<h2>` and one `<nav>` of four markers, and its four `<figure>`s are the levels. Its words are the
+brief's, **corrected to what the runner does**: Level 1 says the first-line review is the coder's
+own model in a new session and that the senior review is a loop bounded by `agent.review_rounds`,
+because that is what `docs/recipes.md` says and what the reconciliation's §3 found the brief's own
+sketch getting wrong. **And it is stills**: there is no animation, no timeline and no script in the
+drawing at all — the page's one script is the site's own, in the head, and it is not this section's
+— so all four levels are whole in the document before anything runs. **The pinned, scroll-driven
+zoom between the levels is Part 5 of the plan and is not in this checkout**, which is why the last
+step below is written and **cannot be run yet**: an unrun step is not a pass, and this row stays
+**NOT RUN** until both halves have been seen.
+
+**What the gates hold, and what only your eyes can.** `website/test/how-it-works.mjs` reads the
+built page and refuses a `<use>` whose target is missing, a symbol no level draws, a level that
+draws its own copy of an entity (D244's same-shape rule, planted three ways), a level kind the
+paint gate has not been taught, a label that is not a row of the data file, a row the drawing does
+not render, and a label attributed to a document that does not carry that line.
+`website/test/a11y.mjs` holds the one `<nav>` and its markers — one per level, each named, each
+pointing at the level beside it, each reachable with no positive `tabindex` — and refuses a level
+announced as one image, because a level here is a list of labelled parts and its words are the
+telling. `website/test/budget.mjs` holds the page inside its byte and word ceilings. **None of
+them reads a pixel**: whether a tile arrives as a black rectangle, whether a label is legible
+against its panel, whether the drawings fit a phone, and whether the jump lands.
+
+**Method.** One browser, one built site, one narrow viewport, no account and no cloud project.
+Either serve the artifact locally or read the deployed site; both are read-only:
+
+```bash
+# What this check needs, read out of the tree rather than remembered. It refuses to start on a
+# build that is not there, so a pass below is a pass about a page that exists.
+[ -f website/dist/index.html ] || { echo "Check 112 stopped: website/dist/ is not built — run (cd website && npm run check) first" >&2; exit 1; }
+(cd website/dist && python3 -m http.server 8080) &     # the built artifact, on localhost:8080
+# ...or, for the deployed site instead, read the canonical origin out of the site's own facts:
+sed -n 's/^canonical_url: *//p' website/data/site.yaml
+# The four levels' own ids, out of the built page rather than typed: steps 2, 5 and 6.
+grep -o 'id="level-[0-9]*"' website/dist/how-it-works/index.html
+# The markers, and where each one points: step 5.
+grep -o 'href="#level-[0-9]*"' website/dist/how-it-works/index.html
+# The five symbols the levels draw through, and the one <defs> that holds them: step 3. Each id
+# appears ONCE (it is a symbol); a second line here is a level drawing its own copy.
+grep -o 'id="zoom-[a-z]*"' website/dist/how-it-works/index.html
+# The section's own classes, so a step below names what the page has: a level, its caption, its
+# drawing, a label and a marker.
+grep -o 'class="zoom-[a-z-]*"' website/dist/how-it-works/index.html | sort -u
+# Every label of every level, out of the data file rather than remembered: the text step 4 compares
+# what the drawing prints against is these lines, and each row's `source:` is the document it cites.
+sed -n 's/^ *text: *//p' website/data/zoom-levels.yaml
+# The scripts on the page: one line, the site's own, and no other — the drawing ships none.
+grep -o '<script[^>]*>' website/dist/how-it-works/index.html
+```
+
+1. **The section is where the brief puts it, and it is the page's own block.** Open
+   `/how-it-works/` and scroll past **"The run, end to end"** and its diagram: the next block is
+   the zoom section, headed **"The four levels"** (one `<h2>`), under a `<nav>` of four markers,
+   and the page's closing band follows it. **FACT:** the heading's text, the number of markers and
+   their accessible names, and what sits above and below the section. A section that has moved
+   above the run's diagram, or into another page, is D237's decision reversed rather than a
+   drawing defect.
+
+2. **The four levels are four figures, in the brief's order, each named by its own caption.**
+   Read the four `<figcaption>`s (`.zoom-caption`): each names its level — *Inside a cloud job*,
+   *Orchestrator fans out jobs*, *The developer's view*, *The whole project* — and each caption
+   also says **which recipe the drawing is** (ZF7), because a level drawn from a recipe that exists
+   is a claim, while a level drawn from one that does not is a promise. **FACT:** the four
+   captions, verbatim and in order, and whether each level drawing matches its caption's subject.
+
+3. **Every entity is the same entity at every level** (D244's same-shape rule, seen rather than
+   read). The five symbols are in the `grep` above — the job tile, the orchestrator, the developer,
+   the console and the project — and each level draws an entity through `<use href="#zoom-…">`, so
+   the job tile at levels 1, 2, 3 and 4 must be the **same tile**: same size, same bar, same rows,
+   same paint. Look at the tile at Level 1 and at Level 2 side by side, and the orchestrator at
+   Levels 2 and 3. **FACT:** for each entity, which levels draw it and whether the copies are the
+   same shape; anything that differs is the defect this step exists for.
+
+4. **Every label is legible, inside its box, and one of the file's rows.** Read each level's
+   labels (`.zoom-label`): no text runs out of the shape or the drawing it belongs to, nothing is
+   clipped at a drawing's edge, and every string is a line of the `sed` output above — the drawing
+   says nothing the data file does not. **The palette's own contrast is the other half**: the
+   labels are the site's `--text` on `--panel`, and a label drawn in a colour the palette does not
+   carry, or a shape that arrives as a **black or empty rectangle** where the drawing should be, is
+   the defect the site hit once on 2026-10-21 and this step is written for. **FACT:** per level,
+   the labels read back, and the ground they are legible against. A label whose text differs by a
+   word from its row is a misquote (the hermetic gate refuses it by the row's name, and a browser
+   is where you see the shape it drew instead).
+
+5. **A marker jumps to its own level, by keyboard and by pointer.** The `<nav>` is the first thing
+   after the section's heading, so Tab reaches it from the top of the section: **four anchors**,
+   each with a name that says which level it is. Press **Enter** on each and read the URL: it gains
+   `#level-N`, the page scrolls so that **that level's figure and its caption** are on screen, and
+   the browser's Back returns you to where you were. Then click one with the pointer: the same
+   landing. **FACT:** the URL after each jump, and whether the level named by the marker is the one
+   on screen. A marker that lands on another level, or nowhere, is the failure; a marker whose
+   focus ring is invisible is the keyboard half of it.
+
+6. **The four levels are there with JavaScript off, and nothing about them moves on its own.**
+   Disable JavaScript for the site, hard-reload `/how-it-works/`, and read the page: **all four
+   figures, all four captions and every label are in the document, in order**, and the markers
+   still jump (they are anchors, and they need no script). Then turn script back on and watch the
+   section for a minute without touching it: **nothing animates, nothing hides itself and nothing
+   scrolls on its own** — this half is stills, and Part 4 ships no timeline. **FACT:** with script
+   off, the four captions' texts and the markers' count; with script on, that nothing in the
+   section moves by itself.
+
+7. **The drawings are legible on a phone.** Set the viewport to **360 × 800** (the width ZU4
+   measures), then to **390 × 844** and **320**, hard-reload, and read the section: each drawing
+   fits the column without a sideways scroll
+   (`document.documentElement.scrollWidth` is not wider than the viewport), the labels are drawn at
+   a size a reader can read rather than a whole desktop picture shrunk to fit, and the markers are
+   still targets a thumb can hit. **FACT:** the document's scroll width and the smallest drawn label
+   at each of the three widths, and the markers' rendered heights.
+
+8. **The pinned zoom (Part 5's, and not runnable on this tree).** The brief's "Format" bullet asks
+   that each level rests as a still, that the zoom **between** the levels is smooth as the reader
+   scrolls, that a marker jumps to its level, and that the system's reduced-motion preference turns
+   the section into stills. **This checkout has no pinned zoom and no timeline**, so there is
+   nothing here to observe today and this step is **not run** — it is written now because D247
+   takes the number and a reservation is not a fact about the tree. When Part 5 lands, this step
+   becomes: with the system's *reduce motion* preference **on**, the section shows the four levels
+   as stills and no scroll-driven motion at all; with it off, the zoom between the levels is smooth
+   (no jump, no stutter, no level skipped) and a marker still jumps; and the reduced-motion reader
+   is never shown a level that the motion alone would have revealed. **FACT**, when it can be run:
+   which preference was set, what the section did, and whether any content exists only in the
+   animated path.
+
+**Passes when:** the section is on `/how-it-works/` under the run's diagram, headed "The four
+levels"; four figures stand in the brief's order with four captions naming them and the recipe
+each is drawn from; each entity is the same shape at every level it appears at; every label is a
+line of `website/data/zoom-levels.yaml`, legible against its panel and inside its box; four named
+anchors jump to their own levels by keyboard and by pointer; the four levels and their labels are
+in the document with JavaScript off, and nothing in the section animates or hides itself with it
+on; and the drawings fit and stay readable at 360, 390 × 844 and 320.
+
+**Fails when:** the section is missing, or sits above the run's diagram, or on a page other than
+`/how-it-works/`; a level has no caption, or a caption names a level the drawing is not; an entity
+looks different at two levels, or a level draws a shape of its own (a `<rect>` where a `<use>`
+belongs) — that is D244 broken in the one place a test's message and a reader's eye agree; a label
+is missing, clipped, misquoted against its row, or drawn at a contrast a reader cannot read; a
+shape arrives as a black or empty rectangle; a marker points at another level, lands nowhere, has
+no name, or cannot be reached from the keyboard; a level or a label is missing with JavaScript off,
+or one exists only with it on; something in the section animates, hides or scrolls by itself; or a
+drawing overflows the phone's column. **What failing looks like:** the 2026-10-21 defect again —
+Astro scopes a page's stylesheet to the elements the page renders, so a generated shape drawn from
+a component's markup with a plain class arrives **unstyled**, and every shape is a black rectangle;
+and a marker list that a reader can press but that lands on the section's top rather than the level
+it names.
+
+**Paste back** (no secret, no account, nothing from any project): the browser and its version, the
+OS and the date; whether you read the built artifact or the live site, and at which commit; the
+four captions verbatim; per level, the labels you read back and any that differ from the data
+file's rows; for each entity, the levels it is drawn at and whether the shapes matched; the URL
+after each marker jump and whether the level on screen was the one named; the scroll width and the smallest label at 360, at
+390 × 844 and at 320, and any label that was too small to read there; and, for step 8, that it was not
+run — the pinned zoom is Part 5's. Until both halves have been seen, this row stays **NOT RUN**.
+
+**Restore.** Nothing is created, so there is nothing to undo: no account, no cloud project, no
+`fugaro` command, no installation and no file is touched by any step above.
+
+- **Stop the localhost server** the Method block started (`kill %1` in the shell that started it,
+  or close that shell) — that is the whole of the check's footprint on your machine.
+- **Put the browser's JavaScript and motion settings back** if you changed either for steps 6 and
+  8: they are your browser's, not the check's, and step 6 needs JavaScript on again to be about the
+  site you actually read.
+- **Never touch `belong`, EdgeWeb or EdgeServer**: no step here reads or writes a project at all,
+  and the only host this check fetches is the built artifact on localhost or the canonical origin
+  the site's own `site.yaml` names.

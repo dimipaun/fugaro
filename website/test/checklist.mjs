@@ -3,7 +3,7 @@
 //
 // The defect this file exists for: `docs/gcp-live-checklist.md`'s **Check 70a** is a list of
 // instructions a person follows in a browser, and this branch took the menu's `Menu` drawer
-// out (the owner's brief of 2026-10-19, item 1) — the three group labels are the phone's menu
+// out (the owner's brief of 2026-10-19, item 1) — the group labels are the phone's menu
 // now, in the header's one row. A check that tells the reader to read a selector the page no
 // longer has, or to run a refusal no test makes any more, is an instruction nobody can
 // follow, and the reader is left deciding whether the check or the site is wrong; the review
