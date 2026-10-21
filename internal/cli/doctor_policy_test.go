@@ -1327,6 +1327,73 @@ func TestDoctorRefusesAnotherProjectsDatabase(t *testing.T) {
 	}
 }
 
+// TestDoctorReportsAMarkStateItDoesNotRead: the marks subtree is shared with
+// every other release of Fugaro and with whatever writes it by hand, so it can
+// carry a state this one does not read — `quota_hold` here, the shape a newer
+// release's new hold would arrive in. Such a mark is a hold (creds.Usable
+// fails closed on it, and both writers refuse to replace it), so the cascade
+// routes no work to that credential and `fugaro accounts clear` refuses it:
+// nothing an operator can run on this release takes it off, which is exactly
+// the state doctor exists to name. The word is the node's own, and it is
+// printed so the operator can recognise it.
+func TestDoctorReportsAMarkStateItDoesNotRead(t *testing.T) {
+	_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+	now := time.Now().UTC().Truncate(time.Second)
+	db.Set(credsMarkPath("acme-personal"), map[string]any{
+		"state": "quota_hold", "until": now.Add(time.Hour).Format(time.RFC3339Nano)})
+
+	checks := doctorChecksByID(t)
+	c, ok := checks["creds-unknown-state"]
+	if !ok {
+		t.Fatal("doctor said nothing about a mark in a state this release does not read: the credential is held and no command here clears it")
+	}
+	if c.Severity != "warning" {
+		t.Errorf("severity = %q, want warning (a held credential of this installation; --strict must fail on it)", c.Severity)
+	}
+	if !strings.Contains(c.Problem, "acme-personal") {
+		t.Errorf("problem does not name the account: %q", c.Problem)
+	}
+	if !strings.Contains(c.Problem, "quota_hold") {
+		t.Errorf("problem does not name the state it does not read: %q", c.Problem)
+	}
+	if c.Fix == "" {
+		t.Error("fix is empty: doctor's shape for a finding is a note with a remedy")
+	}
+	// The same read answers creds-broken, and the two must not be confused:
+	// quota_hold is not a 401, so the broken finding stays away.
+	if b, ok := checks["creds-broken"]; ok {
+		t.Errorf("creds-broken reported a mark that is not broken: %+v", b)
+	}
+
+	// Every state this release reads is silent, including the empty one a
+	// never-written node carries — the finding is about the state table, not
+	// about a mark existing.
+	for _, state := range []string{"available", "exhausted", "backed_off", "broken", ""} {
+		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+		m := map[string]any{"state": state, "since": now.Format(time.RFC3339Nano),
+			"until": now.Add(time.Hour).Format(time.RFC3339Nano)}
+		if state == "" {
+			m = map[string]any{"since": now.Format(time.RFC3339Nano)}
+		}
+		db.Set(credsMarkPath("acme-personal"), m)
+		if c, ok := doctorChecksByID(t)["creds-unknown-state"]; ok {
+			t.Errorf("state %q is one this release reads, and doctor reported it: %+v", state, c)
+		}
+	}
+
+	// A state word is a value a newer release wrote, so it goes through the
+	// same sanitiser a name does before it reaches doctor's output.
+	_, db = doctorPolicyRig(t, doctorPolicy(nil), "")
+	db.Set(credsMarkPath("acme-personal"), map[string]any{"state": "hold\x1b[31m"})
+	c, ok = doctorChecksByID(t)["creds-unknown-state"]
+	if !ok {
+		t.Fatal("doctor did not report the unknown state, so the sanitiser below was never reached")
+	}
+	if strings.Contains(c.Problem, "\x1b") {
+		t.Fatalf("a raw control character reached doctor's output: %q", c.Problem)
+	}
+}
+
 // TestDoctorBrokenMarkFixRuns: the fix `fugaro doctor` prints for a broken
 // account has to be a command that runs, or --strict can never pass. The marks
 // belong to the project and claude_accounts is per-checkout (the shared config

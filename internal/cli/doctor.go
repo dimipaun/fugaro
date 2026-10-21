@@ -2526,11 +2526,16 @@ func emptyPolicyNode(raw []byte) bool {
 // Severity is warning: nothing is broken about the installation, and something
 // is broken about a credential — the same weight policy-rules-skew carries, and
 // enough for --strict to fail.
+//
+// The same read answers the other finding about that subtree, and one read is
+// what makes it two answers about one subtree rather than two network calls:
+// doctorCredsUnknownState, the marks a newer release (or a hand) wrote in a
+// state this one does not read.
 func doctorCredsBroken(ctx context.Context, db *rtdb.Client) []doctorCheck {
 	marks, err := (&creds.RTDBStore{DB: db}).Marks(ctx)
 	if err != nil {
 		return []doctorCheck{{ID: "creds-broken", Severity: "info",
-			Problem: fmt.Sprintf("the credential marks could not be read (%v), so whether any admitted account is broken is unknown", err),
+			Problem: fmt.Sprintf("the credential marks could not be read (%v), so whether any admitted account is broken, or held in a state this Fugaro does not read, is unknown", err),
 			Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"}}
 	}
 	var broken []string
@@ -2539,8 +2544,9 @@ func doctorCredsBroken(ctx context.Context, db *rtdb.Client) []doctorCheck {
 			broken = append(broken, name)
 		}
 	}
+	checks := doctorCredsUnknownState(marks)
 	if len(broken) == 0 {
-		return nil
+		return checks
 	}
 	slices.Sort(broken)
 	// A name is a database key, so it is printed through the one sanitiser
@@ -2549,7 +2555,7 @@ func doctorCredsBroken(ctx context.Context, db *rtdb.Client) []doctorCheck {
 	for i, n := range broken {
 		broken[i] = pluginwire.Printable(n)
 	}
-	return []doctorCheck{{ID: "creds-broken", Severity: "warning",
+	return append(checks, doctorCheck{ID: "creds-broken", Severity: "warning",
 		Problem: fmt.Sprintf("%d Claude account(s) are broken — the service saw a 401 on the token, and the cascade routes no work to them until an operator clears the mark: %s (a mark exists only for an account the cascade has selected, so these are accounts an admission let it use; doctor reads the marks, not every repository's admissions)", len(broken), strings.Join(broken, ", ")),
 		// The names here are the database's, and a name may come from another
 		// checkout of this project's config (claude_accounts is per-checkout
@@ -2557,7 +2563,49 @@ func doctorCredsBroken(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// a mark for, so this fix is runnable for every name above, and
 		// 'fugaro accounts ls' — which lists this repository's own names — is
 		// offered as what it is rather than as the way to find them.
-		Fix: "replace each account's token, then clear its mark: 'fugaro accounts clear NAME' (the clear takes any name the database carries a mark for; 'fugaro accounts ls' shows the state of the accounts this repository may use)"}}
+		Fix: "replace each account's token, then clear its mark: 'fugaro accounts clear NAME' (the clear takes any name the database carries a mark for; 'fugaro accounts ls' shows the state of the accounts this repository may use)"})
+}
+
+// doctorCredsUnknownState reports every mark whose state this release does not
+// read (creds.Mark.Known): a node a newer release wrote, or one written by
+// hand. Such a mark is a hold — Usable refuses a state it cannot read, which is
+// the fail-closed direction, and the writers refuse to replace it with a hold
+// of their own (creds.Exhaust, creds.ProbeFailed) — so the cascade routes no
+// work to that credential and `fugaro accounts clear` refuses it as well, which
+// means nothing an operator can run on THIS release takes the hold off.
+//
+// That is why it is a finding, and why it is doctor's: the state is visible in
+// `fugaro accounts ls` (passed through verbatim rather than rounded to
+// available) and nowhere else, and doctor said nothing about it at all. Warning
+// rather than info, for the reason creds-broken is a warning: a credential of
+// this installation is held, and --strict failing on it is the fail-closed
+// direction. The remedy is not a configuration change, so it is not an error
+// about the installation either.
+//
+// The state word is the node's own text — a value a newer release wrote — and
+// it is printed through the same sanitiser a name is: doctor's problem and fix
+// are rendered verbatim by the console.
+func doctorCredsUnknownState(marks map[string]creds.Mark) []doctorCheck {
+	var names []string
+	state := map[string]string{}
+	for name, m := range marks {
+		if m.Known() {
+			continue
+		}
+		names = append(names, name)
+		state[name] = string(m.State)
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	slices.Sort(names)
+	held := make([]string, 0, len(names))
+	for _, n := range names {
+		held = append(held, fmt.Sprintf("%s (%s)", pluginwire.Printable(n), pluginwire.Printable(state[n])))
+	}
+	return []doctorCheck{{ID: "creds-unknown-state", Severity: "warning",
+		Problem: fmt.Sprintf("%d credential mark(s) carry a state this Fugaro does not read, so the cascade routes no work to them and nothing this release offers clears them: %s. A newer release wrote them, or they were written by hand; this one refuses to read such a state as 'no hold', which is why they are held rather than available", len(held), strings.Join(held, ", ")),
+		Fix:     "upgrade Fugaro to the release that wrote the state ('fugaro upgrade'), which is what knows how to clear it; 'fugaro accounts ls' prints each mark's state word as it is stored"}}
 }
 
 // doctorCredsRules reads the credentials family's marker beside the policy

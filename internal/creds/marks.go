@@ -195,7 +195,7 @@ func (m Mark) holdInForce(now time.Time, set Settings) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// known reports whether the mark carries a state this release reads: one of the
+// Known reports whether the mark carries a state this release reads: one of the
 // four, or the empty one the zero mark and a never-written node carry.
 //
 // A state that is none of them is a node written by a newer release, or by
@@ -204,7 +204,13 @@ func (m Mark) holdInForce(now time.Time, set Settings) (time.Time, bool) {
 // direction. The writers ask the same question before they write (Exhaust,
 // ProbeFailed), so a hold this release refuses to READ is not replaced by one
 // of its own that it would then release.
-func (m Mark) known() bool {
+//
+// Known is that question as an exported predicate, for a reader outside this
+// package that has to report such a node rather than act on it: `fugaro doctor`
+// names every mark whose state this release does not read, and the command that
+// clears marks refuses one for the same reason. Neither restates the state
+// table, and neither may: a second copy is a copy that can go stale.
+func (m Mark) Known() bool {
 	switch m.State {
 	case "", StateAvailable, StateExhausted, StateBackedOff, StateBroken:
 		return true
@@ -222,7 +228,7 @@ func (m Mark) known() bool {
 // saying when it comes back — but Since moves, because the credential *was*
 // exhausted again.
 func Exhaust(prev Mark, now, reset time.Time, set Settings) Mark {
-	if !prev.known() {
+	if !prev.Known() {
 		// A state this release does not know is a hold it will not read
 		// (Usable), and this write must not be the way around that: replacing it
 		// would make the hold this release's own — a backoff, which the next
@@ -279,7 +285,7 @@ func Exhaust(prev Mark, now, reset time.Time, set Settings) Mark {
 // one it was set for — so a credential that has been backed off for hours is
 // still "least recently exhausted" after the one exhausted a minute ago.
 func ProbeFailed(prev Mark, now time.Time, set Settings) Mark {
-	if !prev.known() {
+	if !prev.Known() {
 		// The same refusal as Exhaust's, on the probe's side: a state this
 		// release does not read is a hold, and a failed probe is not the write
 		// that takes it off — it would leave a backoff of this release's making

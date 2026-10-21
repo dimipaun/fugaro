@@ -531,15 +531,21 @@ parseable JSON).
 the CLI worded them — including the "not on the `PATH` the console gives the
 CLI" class of finding the design's §3.4 rule 5 describes.
 
-**Two check ids are new in CLI 0.10.0** (credentials-service C1.21), both
-`severity: "warning"` — so both fail `--strict` and neither is an `ok: false`
+**Three check ids are new in CLI 0.10.0** (credentials-service C1.21), all
+`severity: "warning"` — so all three fail `--strict` and none is an `ok: false`
 about the installation: **`creds-broken`**, naming every Claude account the
 database's `creds/marks` marks broken (the service saw a 401), with the fix
-`fugaro accounts clear NAME`; and **`creds-rules`**, when the published policy
+`fugaro accounts clear NAME`; **`creds-unknown-state`**, naming every account
+whose mark carries a state this release does not read (a newer release's hold,
+or one written by hand) with that state word — such a mark is held (`Usable`
+fails closed) and `accounts clear` refuses it, so the remedy is
+`fugaro upgrade`; and **`creds-rules`**, when the published policy
 has the cascade switched on (`routing.claude.via: cascade`) and
 `config/limits/credsRules` is missing, unreadable, hand-edited or of another
 generation than the binary's. An unreadable `creds/` is an `info` check
-instead, so "could not read" is never rendered as "nothing is broken".
+instead, so "could not read" is never rendered as "nothing is broken"; that
+note covers both of the marks findings, which are answered by one read of the
+subtree.
 
 **Flags** (`newDoctorCmd`): `--dir` (default `.`), `--plugin`, `--strict`,
 `--json`, **`--check-github-app`** — the last of which reads the App's private
@@ -595,8 +601,7 @@ mark the service changed at the same moment is re-read rather than
 overwritten: the callback clears the mark only while its state is still the one
 the confirmation named, so a `broken` mark the service recorded while the
 operator was reading the confirmation of an `exhausted` one is refused rather
-than cleared (both are clearable, but they are two different holds). Flags:
-`--yes` (skips the typed confirmation of the project's
+than cleared (both are clearable, but they are two different holds). Flags: `--yes` (skips the typed confirmation of the project's
 name), plus the cloud flags. It prints one line naming the account and the
 state it cleared, and **no value of any kind**. A `broken` or `exhausted` mark
 is clearable; a `backed_off` one is refused (a probe clears it, C1.12) and a
