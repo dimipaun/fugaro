@@ -284,6 +284,15 @@ func (r *run) restoreSession(ctx context.Context, prev *runstore.Store, head str
 // writeSessionFile writes data as session id's file through an os.Root on
 // HOME, creating the project directory 0700 and the file 0600, and never
 // replacing a file (or following a symlink) already there.
+//
+// The modes are the POSIX half of what keeps the transcript to its owner — it
+// is redacted, but it is still this run's own turns — and they are not claimed
+// to protect it on Windows: Go's os.Chmod there sets the read-only attribute
+// and nothing else, so what keeps another local user out is the ACL of HOME.
+// **D12 (file modes) is open** in docs/windows-cli/reconciliation.md, the
+// Windows CLI gets its release in **Slice 5**, and docs/windows-cli/README.md
+// records that a Windows release must not ship without that decision. The long
+// form of this note is at the deployer credential in internal/cli/managed_apply.go.
 func (r *run) writeSessionFile(id string, data []byte) error {
 	home, rel, err := r.sessionDir()
 	if err != nil {

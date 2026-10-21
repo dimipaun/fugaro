@@ -2132,6 +2132,17 @@ func backupFile(path string, old []byte, now time.Time) (string, error) {
 // writeFileAtomic replaces path with data (mode 0600) through a rename, so
 // a failed write never leaves half a config. A symlinked path is written
 // through: its target is replaced and the link stays.
+//
+// The mode is the POSIX half of what keeps the config to its owner, and the
+// config is worth keeping: it can carry a budget's firebase_api_key (the
+// Budget block in internal/localcfg), and backupFile's copy of the same bytes
+// is 0600 for the same reason. It is not claimed to protect them on Windows:
+// Go's os.Chmod there sets the read-only attribute and nothing else, so what
+// keeps another local user out of the file is the ACL of the directory it
+// sits in. **D12 (file modes) is open** in docs/windows-cli/reconciliation.md,
+// the Windows CLI gets its release in **Slice 5**, and docs/windows-cli/README.md
+// records that a Windows release must not ship without that decision. The long
+// form of this note is at the deployer credential in internal/cli/managed_apply.go.
 func writeFileAtomic(path string, data []byte) error {
 	if target, err := filepath.EvalSymlinks(path); err == nil {
 		path = target
