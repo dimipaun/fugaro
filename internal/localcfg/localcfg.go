@@ -1168,7 +1168,7 @@ func (c *Config) PriceOverride(region string) (backend.Prices, bool) {
 func (c *Config) Warnings() []string {
 	var w []string
 	if c.Build.ServiceAccount != "" {
-		w = append(w, "build.service_account is deprecated and will be ignored: each repository's builds run as its own build account; fugaro init drops it")
+		w = append(w, "build.service_account is deprecated and will be ignored: each repository's builds run as its own build account; the converge drops it")
 	}
 	return append(w, c.notes...)
 }
