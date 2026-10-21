@@ -1,15 +1,18 @@
 # Website zoom diagrams — implementation plan
 
-Status: **plan only; nothing is implemented.** Owner: **@Dimi**. Date: **2026-10-21**.
+Status: **plan answered; Part 1 and Part 4 in progress.** Owner: **@Dimi**. Date: **2026-10-21**.
 Source: [spec.md](spec.md), the brief. This plan executes
 [reconciliation.md](reconciliation.md) — its findings `ZF1`–`ZF59`, its unverified items
 `ZU1`–`ZU5` and its decisions `D237`–`D252`. Read that document first: this one cites its
 numbers and does not restate its evidence.
 
-**The owner's ruling this plan waits on, recorded once:** every decision in the
-reconciliation's §12 is a recommendation. **A part whose decisions are unanswered does not
-start**, and the parts below are written so that the answering order is also the merging
-order. No part needs all sixteen.
+**The owner's answers, recorded once: every decision in the reconciliation's §12 was answered
+on 2026-10-21** (`D237`–`D252`; the choices stand in that section's last column and in this
+folder's README). **No part waits on an unanswered row any more**, and the parts below are
+written so that the answering order is also the merging order. The two parts in progress are
+**Part 1** and **Part 4**; Parts 2, 3 and 5 are written and unblocked. **An answer is not a
+go**: a part still starts only on the owner's go for that part, and no part needed all
+sixteen.
 
 ## 1. What this plan is for
 
@@ -59,10 +62,16 @@ before a single animation exists.
 panel becomes a slider that renders the same rows.
 
 1. **The hooks.** Rename `site.js`'s interior selectors — `SLIDER_TRACK = '.screens-track'`,
-   `SLIDER_SLIDE = '.screen'`, `SLIDER_DOT = '.screen-dot'` (`site.js:507-514`) — to
+   `SLIDER_SLIDE = '.screen'`, `SLIDER_DOT = '.screen-dot'` (`site.js:550-552`) — to
    `[data-slider-track]`, `[data-slider-slide]`, `[data-slider-dot]`, keeping `[data-slider]`
    as the door and `[data-slider-bar]`/`[data-slider-prev]`/`[data-slider-next]`/`[data-slider-counter]`
    as they are. Both components carry the hooks; the console's classes stay for styling.
+   **Half of this has shipped since the plan was written (2026-10-21, #842 merged, D250):**
+   the door and the two step controls are hooks already (`site.js:529-531`), and the
+   homepage's slider carries `data-slider-slide` and `data-slider-dot`
+   (`HomeSlider.astro:279,305`), so the three names this task still moves are the console's.
+   The task is re-read off the merged component before it is written, not against the
+   checkout the plan was measured in.
 2. **The shared component.** `ScreenshotSlider.astro` gains the three things that make it
    reusable — a `heading` prop (it hard-codes `'Screenshots'` and `console-screens` as its
    `data-slot`, `:112-116`), an id prefix, and a `caption` on the section — and keeps
@@ -71,10 +80,12 @@ panel becomes a slider that renders the same rows.
 3. **The data file.** `website/data/home-screens.yaml`, the same shape as
    `console-screens.yaml` (`version`, `screens[]` of `file`/`alt`/`caption`/`width`/`height`),
    read by a `loadHomeScreens()` in `website/src/content.ts` beside `loadConsoleScreens()`
-   (`:1011-1085`). Rows, in the brief's order: the console's own three screenshots for the
-   leading slides, then the Watch slide last.
+   (`:1011-1085`). Rows, in the brief's order and per D251's answer: **the console page's own
+   four screenshots** for the leading slides — the pictures `/console/` already renders,
+   reused rather than copied again — then the Watch slide last.
 4. **The Watch slide.** `fugaro-watch.png` moves from the plain `<img>` in
-   `HomeSlider.astro:298-302` to a row of the new file, keeping its alt text and its
+   `HomeSlider.astro:355-362` (the line as #842's merge leaves it) to a row of the new file,
+   keeping its alt text and its
    `.watch-note` caption. The `[data-slot="watch-screenshot"]` slot stays where it is, in the
    "See it" panel, and the slider renders into it.
 
@@ -114,8 +125,24 @@ terminal text is legible where it is drawn (ZU4).
 **Independently mergeable because** it changes one component, one data file and one script's
 selector names; no route is added, no nav changes and no page text changes.
 
-**Depends on** D250 (#842 must have merged, and `HomeSlider.astro` re-read), D246 (the hooks),
-D251 (the owner's slides exist), D252 (the Watch slide stays).
+**Depends on** D250 (**#842 has merged** — `3c5cc354`, in this branch's history — and
+`HomeSlider.astro` is re-read before anything is written against it), D246 (the hooks), D251
+(**answered: the console page's own four pictures**, so the slides exist and no agent commits
+one), D252 (the Watch slide stays last).
+
+**Amended 2026-10-21 (the owner's answers to D246, D250, D251, D252).** The part is in
+progress, and three of its readings move with the answers rather than with the recommendation
+the plan was written against. **D250's pull request has merged**: #842 is in this branch's
+history (`3c5cc354`), so the component this part edits is the merged one — the homepage's
+"See it" panel is still the one `<img>` and still the row this part turns into slides, but the
+block around it now carries the door and the slide and dot hooks, which is why item 1's rename
+is three console names and not six names in two components. **D251 names the slides**: they
+are the console page's own four screenshots, already committed with `MANIFEST.json` and
+`website/data/console-screens.yaml`, reused rather than re-supplied — and the phone
+screenshots are later, as the owner's files, which keeps ZF49 and ZF50 true. **D252 keeps the
+Watch slide last**, as the row above says, and **D246's hooks are the answer's** (`data-slider-*`
+with `[data-slider]` as the door). What has not changed: nothing under `website/` is touched
+by the documents this amendment is written in, and the part still starts on the owner's go.
 
 ### Part 2 — the "Why GCP" page, the FAQ entry and the nav (ZF15–ZF22, ZF52–ZF59; D238, D243, D248, D249)
 
@@ -136,10 +163,15 @@ D251 (the owner's slides exist), D252 (the Watch slide stays).
    `question: "Do I need to be on GCP?"`, an answer that is **plain text** (ZF56) and
    `more_href: /why-gcp/`, `more_label: Why GCP`. The existing `where-it-runs` entry keeps its
    own answer and gains the same link, so the two do not say the same thing twice.
-4. **The nav.** `{ href: '/why-gcp/', label: 'Why GCP' }` as the fourth Product item, after
-   "How it works" (D238), and D182's sentence in `Base.astro:126-131` amended in the same
-   commit — the layout comment and `base-styles.mjs:2636`'s failure message both say "three
-   groups of three".
+4. **The nav.** `{ href: '/why-gcp/', label: 'Why GCP' }` in the **Product** group, placed
+   **after** "How it works" (D238), and the sentence D182 left standing amended in the same
+   commit — `Base.astro:126` and `:338`, `base.css:201` and `base-styles.mjs:2755,2778` all
+   say "three groups of three" today. **The owner's later brief (PR #845, 2026-10-21) drops
+   the Reference group**, so the menu this item joins is two groups — Product (How it works,
+   Getting started, Caps and costs, Console) and Project (Docs, Security, FAQ, Community,
+   Changelog) — and "Why GCP" is placed after "How it works" in Product rather than counted
+   as its fourth item; #845 is not in this checkout, so the count gate and the sentences move
+   in the commit that lands with the menu they describe, whichever menu that is.
 5. **The framing pin.** A `wording.mjs`-style pair (D249): a banned list and a required
    sentence, each with a planted defect.
 
@@ -203,15 +235,18 @@ nav item, and changes no component and no script.
 4. **The screenshots.** A slot in the shape Part 1's component uses, rendering **no** slide
    until `website/data/mobile-screens.yaml` has a row (ZF49; the console's empty-list case is
    the precedent, `console-screens.mjs:613-637`). The owner supplies the files (D251).
-5. **The waitlist.** Per D239: if the answer is "no waitlist", the page carries the badge and
-   the copy and nothing else, and the privacy page is untouched. If the answer is one of the
-   other three doors, this task is a part of its own — it changes `firebase.json`, the origins
-   gate's CSP contract, the privacy page and its `contactFailures`, and it amends Check 69b
-   (ZU5) — and it does not ride in on this page's commit.
-6. **The nav.** `{ href: '/mobile/', label: 'Mobile' }` in the **Reference** group, beside
-   "Console", or in Product — the brief says "sister page to the console page", which reads
-   as Reference.
-7. **The live check** (D247): **113**, written and **not run** in this part — the owner opens
+5. **No waitlist** — D239's answer of 2026-10-21 is "no waitlist", so there is no fifth task
+   here at all: the page carries the badge and the copy and **nothing else**, and the privacy
+   page, `linkcheck.mjs`, the CSP's `form-action 'self'` and Check 69b are untouched. The
+   other three doors of reconciliation §6 are not taken, so none of their gate changes lands
+   (ZF32–ZF34, ZU5).
+6. **The nav.** `{ href: '/mobile/', label: 'Mobile' }` in the **Product** group, beside
+   "Console" — D238's answer and PR #845 put Console in Product and drop the Reference group,
+   so the brief's "sister page to the console page" reads as Product; Project is the
+   alternative, and the group the page joins is read off the menu the part lands in.
+7. **The live check**: **113**, written and **not run** in this part — D247's answer of
+   2026-10-21 numbers the **zoom** work (112), and 113 is the plan's own proposal for this
+   page, left for the owner to take or move. The owner opens
    the built page and the live page and confirms the badge is there, no release date is, and
    every claim is either shipped today or marked as planned. This check belongs to this part
    and not to Part 5, which may be cancelled by its own spike; a part that can ship alone
@@ -245,8 +280,11 @@ reading every line. The same three questions on the **live** page are Check 113.
 **Independently mergeable because** it adds one route and two data files and changes no
 component, no script and no existing page.
 
-**Depends on** D240 (may the page exist), D241 (what it may say), D242 (the voice sentence),
-D239 (the waitlist).
+**Depends on** D240 (may the page exist — **answered: yes, under three conditions**), D241
+(what it may say — **answered, bullet by bullet**), D242 (the voice sentence — **answered:
+on-device only**) and D239 (**answered: no waitlist**, so item 5 is a line saying what the
+page does not carry rather than a task). All four are answered 2026-10-21; the part waits on
+the owner's go.
 
 ### Part 4 — the four levels as stills, with the same shapes (ZF36–ZF43; D237, D244)
 
@@ -302,7 +340,8 @@ story the brief wants without captions.
 page that exists. It is the brief's "still" half, complete on its own.
 
 **Depends on** D237 (where it lives), D244 (the symbol rule), D245 (the markers — this part
-builds them). It does **not** depend on Part 5.
+builds them); **all three were answered as recommended on 2026-10-21**, so the part is in
+progress and waits only on the owner's go. It does **not** depend on Part 5.
 
 ### Part 5 — the pinned, scroll-driven section (ZU1; D245, D247)
 
@@ -328,7 +367,7 @@ spike, and the spike may cancel the part.**
 4. **The reduced-motion path.** A `@media (prefers-reduced-motion: reduce)` rule on the
    section that shows the four levels as stills — the same markup, no timeline — so the
    answer to the spike is not load-bearing for the reader who asks for less motion.
-5. **The live check** (D247): **112**, written and not run — the owner opens the built page
+5. **The live check** (D247, **answered 2026-10-21: 112**): **112**, written and not run — the owner opens the built page
    and the live page, scrolls it, jumps by a marker, and sets the system's reduced-motion
    preference.
 
@@ -361,7 +400,9 @@ section is legible on a phone.
 **Independently mergeable because** it changes one component and one stylesheet and adds one
 live check; Part 4's stills remain correct whether this part lands or not.
 
-**Depends on** Part 4, the spike's answer, D245 (the markers), D247 (the check number).
+**Depends on** Part 4, the spike's answer, D245 (the markers) and D247 (**answered: the check
+number is 112**). It is not in progress: the spike may cancel it, and Part 4 ships the brief's
+"still" half without it.
 
 ## 4. The live checks
 
@@ -374,7 +415,9 @@ The register's rule is that a reservation is not a fact about the tree
 | **112** | The pinned zoom section: the four levels rest as stills, the zoom between them is smooth, a marker jumps to its level, and the system's reduced-motion preference turns the section into stills | The owner, in a browser, against the built artifact and the live site. **No agent runs any step of it** |
 | **113** | The mobile page promises no date: the live page carries the badge, no release date, and every claim it makes is either shipped today or marked as planned | The owner, in a browser |
 
-Both are **proposed, not taken**. If the owner reallocates, the plan follows.
+**112 is taken** — the owner answered D247 on 2026-10-21 and it is the zoom work's number,
+written and not run. **113 is proposed, not taken**: it belongs to Part 3, which the owner has
+not been asked to number. If the owner reallocates either, the plan follows.
 
 ## 5. What moves, in one table
 
@@ -385,7 +428,7 @@ Both are **proposed, not taken**. If the owner reallocates, the plan follows.
 | `website/data/` | `home-screens.yaml` | `why-gcp.yaml`, `faq.yaml` | `mobile-claims.yaml`, `mobile-screens.yaml` | `zoom-levels.yaml` | — |
 | `website/src/pages/` | — | `why-gcp.astro` | `mobile.astro` | `how-it-works.astro` | — |
 | Routes | 11 | 12 | 13 | 13 | 13 |
-| Nav groups | 3 × 3 | 3 × 4 | 3 × 4 or 5 | — | — |
+| Nav groups | 3 × 3 | Product +1 (D238; the count and the "three groups of three" sentences move with the menu the part finds, #845) | Product or Project (the group is read off the menu) | — | — |
 | `website/README.md` figures | JS, page, site | site, route count | site, route count | page, site | page, site |
 | `website/test/budget.mjs` derivation comment | — | the page list | — | — | — |
 | `docs/website/redesign/` route prose | — | `README.md`, `capture-screenshots.mjs` | — | — | — |
@@ -394,13 +437,18 @@ Both are **proposed, not taken**. If the owner reallocates, the plan follows.
 
 ## 6. Order and the owner's go
 
-**The order is the answer order.** Part 1 waits on D250, which waits on a pull request this
-checkout cannot see (ZF51); Part 2 waits on four decisions that are all copy and nav
-questions; Part 3 waits on the waitlist question, which is the one with a privacy cost; Parts
-4 and 5 wait on D237 and D244 and are otherwise the least blocked.
+**The order was the answer order, and the answers are in (2026-10-21).** Nothing below is
+blocked on a decision any more, and what is left is the owner's go and the merge order: **Part
+1** and **Part 4** are the two in progress — Part 1 because #842 has merged (D250, ZF51) and
+Part 4 because the four levels' placement and the symbol rule are settled (D237, D244) and the
+stills can be looked at before any animation exists.
 
-If the owner wants one thing first and nothing else answered: **Part 4** needs only D237 and
-D244, ships the brief's "still" half, and is the prerequisite of Part 5.
+The remaining three are written and unblocked: **Part 2** adds a route, a data file, an FAQ
+entry and a nav item; **Part 3** is a page whose every claim is now settled (D239–D242); **Part
+5** waits on its own spike rather than on a decision, and Part 4 is the prerequisite of it.
+
+If the owner wants one thing after the two in progress: **Part 4's** dependencies are answered
+and it ships the brief's "still" half on its own.
 
 **An answered decision is not an approved plan.** Each part starts on the owner's go for that
 part, and no part waits on a decision another part needs.
@@ -413,8 +461,9 @@ part, and no part waits on a decision another part needs.
 - It does not reopen D90–D109 or D180–D192. Where the brief conflicts with them, the
   reconciliation records the conflict and §12 of it asks.
 - It does not add a dependency, an Astro integration, a sitemap or a new script file.
-- It does not change the privacy page except under one of D239's non-recommended answers, and
-  then in a part of its own.
+- It does not change the privacy page: D239's answer of 2026-10-21 is **no waitlist**, so none
+  of the three doors that would have touched it is taken, and the page's own gates
+  (`privacy.mjs`'s `contactFailures`, `linkcheck.mjs`'s `mailto:` refusal) stay as they are.
 - It does not promise a date for the phone app, and Part 3's tests refuse one.
 
 ## 8. Decision numbering
@@ -423,5 +472,6 @@ The plan's decisions are the reconciliation's `D237`–`D252` (§12 of that docu
 highest written decision under `docs/` is **D236**; the gap `D198`–`D200` is inside the
 coordinator's note and `D200` may be held; the convention is to take the first block above
 the highest allocation rather than to derive one (`docs/website/redesign/implementation-plan.md:556-569`).
-**The allocation is the owner's**, and this line of work renumbers itself if the owner takes
-the block.
+**The allocation is the owner's, and it is taken**: the sixteen answers of 2026-10-21 were
+given under `D237`–`D252`, so the block is allocated to this line of work, its records may
+cite it as allocated rather than as proposed, and nothing renumbers.

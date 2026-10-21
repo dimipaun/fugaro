@@ -1,6 +1,9 @@
 # Website zoom diagrams
 
-**Status: plan only; nothing is implemented.** Owner: **@Dimi**. Spec date: **2026-10-21**.
+**Status: plan answered; Part 1 and Part 4 in progress.** Owner: **@Dimi**. Spec date:
+**2026-10-21** — and **every decision the work raised, `D237`–`D252`, was answered by the owner
+on 2026-10-21** ("The owner's answers (2026-10-21)" below, and the last column of the
+reconciliation's §12).
 This directory is the documentation of a **third line of work on the site**, after the site
 itself ([`../README.md`](../README.md), findings `F1`–`F63`, decisions `D90`–`D109`) and the
 redesign ([`../redesign/README.md`](../redesign/README.md), findings `RF1`–`RF26`, decisions
@@ -8,18 +11,47 @@ redesign ([`../redesign/README.md`](../redesign/README.md), findings `RF1`–`RF
 `docs/plans/` for the same reason the other two are: the site is its own build, in its own
 language, on its own deploy.
 
-**No code, no schema, no config and no page has changed in this line of work.** Nothing under
-`website/` is touched by this branch. The four documents below are the whole of it, and every
-claim in them was read out of the tree at `3021f4b3` on 2026-10-21.
+**No code, no schema, no config and no page has changed in this line of work's own branch.**
+Nothing under `website/` is touched by it: the parts in progress are the plan's **Part 1** and
+**Part 4**, each in a pull request of its own, and Parts 2, 3 and 5 are written and waiting on
+the owner's go. The four documents below are the whole of it, and every claim in them was read
+out of the tree at `3021f4b3` on 2026-10-21, with one exception the answers recorded: `#842`
+has merged into this branch's history since (`3c5cc354`), so the slider the answers name is
+the merged component and not the one the readings were taken from.
 
 ## The four documents, in reading order
 
 | Document | What it is |
 |---|---|
 | [spec.md](spec.md) | **The owner's text, verbatim** — committed alone in this branch's first commit, byte for byte, before anything that answers it. It is the source document for the other three, and it is not edited when they disagree with it. |
-| [reconciliation.md](reconciliation.md) | What the brief asks for, checked against `3021f4b3`. **Fifty-nine numbered findings** classified **Wrong / Partly / Exists / Gap / Rule / Open** — six labels, one per finding, and the headings use no seventh — each citing a path and a symbol; six claim tables (§3 the job's loop, §4 "Why GCP", §5 the mobile page, §6 the waitlist, §7 the pinned zoom section, §8 the "See it" slider); **five UNVERIFIED items** (`ZU1`–`ZU5`); and **sixteen decision rows `D237`–`D252`** under "Open for the owner", each with the recommendation first. |
-| [implementation-plan.md](implementation-plan.md) | The plan that executes the reconciliation: **five parts**, each independently mergeable, each with its files, its hermetic and mutation-proven tests, a command an agent can run, and the owner's visual check. Two proposed live checks (112, 113), written and not taken. |
-| this file | The index, the status line above, and the typo record below. |
+| [reconciliation.md](reconciliation.md) | What the brief asks for, checked against `3021f4b3`. **Fifty-nine numbered findings** classified **Wrong / Partly / Exists / Gap / Rule / Open** — six labels, one per finding, and the headings use no seventh — each citing a path and a symbol; six claim tables (§3 the job's loop, §4 "Why GCP", §5 the mobile page, §6 the waitlist, §7 the pinned zoom section, §8 the "See it" slider); **five UNVERIFIED items** (`ZU1`–`ZU5`); and **sixteen decision rows `D237`–`D252`** under "Open for the owner — answered 2026-10-21", each with the recommendation first and **the owner's answer** in its last column. |
+| [implementation-plan.md](implementation-plan.md) | The plan that executes the reconciliation: **five parts**, each independently mergeable, each with its files, its hermetic and mutation-proven tests, a command an agent can run, and the owner's visual check. Two live checks: **112**, taken by the owner's answer to D247 and written and not run, and **113**, still proposed. |
+| this file | The index, the status line above, the answer list below, and the typo record. |
+
+## The owner's answers (2026-10-21)
+
+**Every one of the sixteen decisions was answered by the owner on 2026-10-21, and no answer
+went against its recommendation.** The rows keep the text they were written with — the
+recommendation, the why and the alternatives — and the choice stands beside them in the
+reconciliation's §12, whose last column is the record. The short form, one line each, and
+none of them written "(default)":
+
+- **D237** the four zoom levels are a section on `/how-it-works/`, under "The run, end to end".
+- **D238** "Why GCP" joins the **Product** menu after "How it works" — and the owner's later brief (PR #845) drops the Reference group, so the menu it lands in is Product (How it works, Getting started, Caps and costs, Console) and Project (Docs, Security, FAQ, Community, Changelog); the "three groups of three" sentence moves with it.
+- **D239** **no waitlist** — the badge and the "coming soon" copy only; the privacy page, the CSP and Check 69b are untouched.
+- **D240** a "coming soon" page is allowed, with no date, every bullet marked shipped or planned, and a preview badge.
+- **D241** the bullets are marked per the tree: **shipped** — status and spend; **planned** — the roster, switching by voice, QR pairing, the three roles, the wake word.
+- **D242** the voice bullet is **on-device only**.
+- **D243** the "Why GCP" facts live in `website/data/why-gcp.yaml`, one row per claim (`text`, `source`, `date`), held by a test.
+- **D244** the same shapes are shared SVG `<symbol>`s, drawn once and used by all four levels through `<use>`.
+- **D245** the level markers are anchor links in a `<nav>` of their own.
+- **D246** the shared slider hooks are `data-slider-track` / `data-slider-slide` / `data-slider-dot`, with `[data-slider]` as the door.
+- **D247** the zoom work takes owner check **112**, written and not run.
+- **D248** the page **must not say "disposable"**.
+- **D249** the framing rule is a banned list plus a required sentence, each with a planted defect.
+- **D250** the shared slider lands **after #842, which has merged** (`3c5cc354`).
+- **D251** the slides are the **images the Console page already uses** — its four committed screenshots — with phone screenshots later, supplied by the owner as files.
+- **D252** the Fugaro Watch slide **stays last**, with its alt text, caption and text fallback.
 
 ## The short version
 
@@ -106,17 +138,20 @@ short form, with the finding that states each in full:
 2. No new Astro integration, no dependency, no sitemap (ZF57).
 3. No image committed by an agent (ZF50).
 4. Nothing under `.github/workflows/` (ZF31).
-5. No page added without a `NAV_GROUPS` entry, and no fourth group without changing
-   `base-styles.mjs` (ZF53, ZF54).
-6. No date promised for the phone app (ZF30, D240).
+5. No page added without a `NAV_GROUPS` entry, and no group count changed without
+   `website/test/base-styles.mjs` moving with it (ZF53, ZF54; D238's answer amends the count
+   itself, and PR #845's dropped Reference group lands with that gate).
+6. No date promised for the phone app (ZF30, D240) — the answer of 2026-10-21 keeps the page
+   and keeps the rule.
 7. No sentence the tree cannot back — which is the whole of §4 and §5 of the reconciliation
    (ZF15–ZF27, ZF59).
 
 ## See also
 
 - [`../README.md`](../README.md) — the site's own first line of work, and the "everything the
-  site would say that the product cannot back today is held back" rule (`:25`) that D240 asks
-  the owner about.
+  site would say that the product cannot back today is held back" rule (`:25`) that D240 was
+  asked about, and answered on 2026-10-21 under three conditions (no date, every bullet marked,
+  a preview badge).
 - [`../redesign/README.md`](../redesign/README.md) — D182 (the nav), D183 (one script), D186
   (the provenance gate), D188 (the word ceilings), D190 (screenshots) and D192 (the byte
   budgets), all of which this line of work inherits.
