@@ -978,9 +978,6 @@ export interface ScreensFacts {
   screens: Screen[]
 }
 
-const SCREENS_FILE = 'website/data/console-screens.yaml'
-const HOME_SCREENS_FILE = 'website/data/home-screens.yaml'
-
 /** Where a screenshot's file lives under `public/`, and the site path it is served at. */
 const SCREENS_DIR = 'screenshots'
 
