@@ -210,10 +210,17 @@ type run struct {
 	// haltStage: the cancel watcher and, with the gateway, its halt
 	// callback record into them from other goroutines. Whichever of a halt
 	// and a cancel is recorded first wins (see haltNow and markCancelled).
-	mu            sync.Mutex
-	failReason    string
-	cancelled     bool
-	halt          *runstore.Halt
+	mu         sync.Mutex
+	failReason string
+	cancelled  bool
+	halt       *runstore.Halt
+	// haltDone is closed by the first halt recorded (recordHaltLocked), so a
+	// caller waiting outside a stage stops at once: the credential wait
+	// (C1.17) sleeps for a reset that may be hours away, and nothing else
+	// would end it. It is never closed twice and never nil'd after Run
+	// creates it, so it is either open (no halt) or closed (halted).
+	// Guarded by mu; created by Run.
+	haltDone      chan struct{}
 	tokens        int64                   // the stages' tokens so far, for the token cap
 	gatewayTokens int64                   // the last stage's tokens as the gateway counted them
 	haltStage     context.CancelCauseFunc // the running stage's cancel; nil between stages
@@ -257,8 +264,14 @@ type run struct {
 	cacheBase string      // the base-image part of every cache key
 	toolchain string      // the toolchain part of every cache key (toolchainHash)
 	// sessionID is the session the latest implement or fix stage's result
-	// reported: the one the next fix resumes and writeback saves.
+	// reported: the one the next fix resumes, and the one saveSession
+	// uploads as the run's session.
 	sessionID string
+	// reviewSession is the session the latest review stage ran in (C1.17,
+	// D138). It is saved too, under its own objects, and never becomes the
+	// run's session: a review runs in a session of its own, and a follow-up
+	// resumes the work, not the review of it.
+	reviewSession string
 	// follow is a follow-up's state; nil for a first run.
 	follow *followState
 	// pr is the early draft pull request's state (prflow.go).
@@ -350,8 +363,9 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		d.Log = slog.New(slog.DiscardHandler)
 	}
 	r := &run{
-		d:      d,
-		stageN: map[string]int{},
+		d:        d,
+		stageN:   map[string]int{},
+		haltDone: make(chan struct{}),
 		rec: &runstore.Record{Version: 1, RunID: d.Store.RunID(), Execution: d.Execution, Status: runstore.StatusRunning,
 			Stage: "bootstrap", Outcome: runstore.OutcomeNone, StartedAt: d.Now().UTC()},
 		// A local run has no duplicate to tell apart: its record is its own.
@@ -1760,7 +1774,11 @@ func (r *run) agentLoop(ctx context.Context) {
 // review step, since there is no cheap loop to bounce back to.
 func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, sys, sessionID string) {
 	for round := 1; round <= st.Rounds; round++ {
-		res, ok, _ := r.stage(ctx, "review", agent.Request{Prompt: reviewPrompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}, stageOpts{})
+		req := agent.Request{Prompt: reviewPrompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
+		res, ok, _ := r.stage(ctx, "review", req, stageOpts{})
+		// The review's own session is saved like a work stage's (C1.17,
+		// D138), and not made the one a fix resumes: see noteReviewSession.
+		r.noteReviewSession(req, res)
 		r.countTokens(res)
 		if !ok {
 			return
@@ -1825,7 +1843,9 @@ func (r *run) fix(ctx context.Context, v Verdict, sys, sessionID string) (string
 // go on to the senior review.
 func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sessionID string) (string, bool) {
 	for round := 1; round <= rounds; round++ {
-		res, ok, err := r.stage(ctx, "review_first", agent.Request{Prompt: reviewPrompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}, stageOpts{Skippable: true})
+		req := agent.Request{Prompt: reviewPrompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
+		res, ok, err := r.stage(ctx, "review_first", req, stageOpts{Skippable: true})
+		r.noteReviewSession(req, res)
 		r.countTokens(res)
 		sum := runstore.ReviewSummary{Round: round, Tier: runstore.TierFirst, Verdict: "none", Bounce: r.bounce}
 		var v Verdict
@@ -1904,7 +1924,71 @@ type stageOpts struct {
 // stage runs one agent stage and reports whether the loop may continue,
 // with the agent's error. The error is only for the caller to inspect: a
 // failure is already recorded, unless it is a recoveredError.
+//
+// It is stageOnce in a loop, because of the credentials cascade (C1.17,
+// D138): when the service answers its typed `exhausted_until` while a stage
+// runs, that stage did not fail — the runner waits for the reset the answer
+// names, inside the job's own timeout, and runs the very same stage again on
+// the session it had started, with --resume. The stage's own session, not
+// the run's: a review runs in a session of its own, and a wait during one
+// resumes that one.
+//
+// The loop is bounded (maxCredentialResumes): each wait is bounded by
+// waitForCredential's own check against the job's remaining time, but a
+// reset that has already passed resumes the stage at once, and a service
+// that kept answering that way would run the stage again and again with no
+// wait between. The bound ends the run named (HaltNoCredential) instead.
 func (r *run) stage(ctx context.Context, name string, req agent.Request, opts stageOpts) (agent.Result, bool, error) {
+	// resumes is how many times this stage has already been resumed on an
+	// exhausted answer, this one included.
+	resumes := 0
+	for {
+		res, ok, err := r.stageOnce(ctx, name, req, opts)
+		var ex *exhaustedError
+		if !errors.As(err, &ex) {
+			return res, ok, err
+		}
+		if resumes++; resumes > maxCredentialResumes {
+			h := runstore.Halt{Reason: runstore.HaltNoCredential, Scope: "run", At: r.d.Now().UTC(),
+				Detail: fmt.Sprintf("the credential service answered that no credential was usable %d times while stage %s ran, the last until %s; the run stopped rather than resume the stage again (see 'fugaro accounts ls' for the accounts' states)",
+					resumes, name, ex.Until.UTC().Format(time.RFC3339))}
+			r.haltNow(h)
+			return res, false, &HaltError{h}
+		}
+		// The session the ended stage ran in: what its result reported (the
+		// result event's ID, else its init event's, so a stage killed before
+		// its result still names it), or the one it was asked for when it
+		// reported none — that one is the runner's own fresh ID, and its file
+		// exists from the moment the agent started.
+		session := res.SessionID
+		if !agent.ValidSessionID(session) {
+			session = req.SessionID
+		}
+		if werr := r.waitForCredential(ctx, name, ex.Until); werr != nil {
+			return res, false, werr
+		}
+		r.d.Log.Info("the credential wait is over; resuming the stage", "stage", name, "session", session, "resume", resumes)
+		// The resumed stage is the same stage, on the same session. A
+		// further exhausted answer during it waits again, within the same
+		// bound.
+		req.SessionID, req.Resume = session, true
+	}
+}
+
+// maxCredentialResumes bounds one stage's resume loop (C1.17). The reset an
+// exhausted answer names is normally in the future, and the wait for it is
+// the whole of the runner's reaction; but an answer naming an instant that
+// has already passed resumes the stage at once, so a service that kept
+// answering that way — a stale mark, a reset that keeps moving back — would
+// run the stage again and again with no wait between, each attempt a whole
+// agent process. Three is more than the cascade needs: the service's answer
+// is already the wait-or-switch decision, and one wait covers every account
+// that is exhausted at that instant. A fourth answer ends the run named.
+const maxCredentialResumes = 3
+
+// stageOnce is one attempt at a stage: the whole of what stage did before
+// C1.17, including its own failure handling.
+func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opts stageOpts) (agent.Result, bool, error) {
 	if ctx.Err() != nil {
 		r.fail(r.stageReason(ctx, name, StageError(name, ctx, r.budget, ctx.Err())))
 		if errors.Is(context.Cause(ctx), ErrCancelled) {
@@ -2074,10 +2158,34 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 		r.save(ctx)
 		return res, false, &HaltError{*h}
 	}
+	// What the gateway saw a moment ago decides the stage before the
+	// credential service's answer does: a call the gateway refused as a
+	// violation — a model that is not pinned, a tool the policy forbids, a
+	// request shape it will not forward — is a fact about what the agent
+	// asked for, and a stage that is about to run again must not swallow it.
+	// The stage fails, named, and the resume never happens (C1.17): the
+	// refused call would simply be made again, and the record would lose the
+	// reason the run is not to continue.
 	if len(violations) > 0 {
 		r.fail("stage " + name + ": " + violations[0])
 		r.keepTail(fmt.Sprintf("%s-%d", name, n), stderrTail, transcriptTail)
 		return res, false, fmt.Errorf("stage %s: %s", name, violations[0])
+	}
+	// The credential service's typed answer (C1.17) ended this stage: it did
+	// not fail, and nothing is recorded about it — stage waits for the reset
+	// it names and resumes it. It comes after the halt check (a halt recorded
+	// first still decides) and after the violations above.
+	//
+	// A stage whose work was already done when the answer arrived is not
+	// resumed: the answer ends a stage that the exhaustion stopped, and an
+	// agent that exited with a result event and no error finished its work,
+	// so throwing that away to run the same prompt again would spend a stage
+	// on nothing. The answer changes nothing for it; the next stage gets its
+	// own.
+	var exhausted *exhaustedError
+	if errors.As(context.Cause(stageCtx), &exhausted) && (err != nil || res.IsError) {
+		r.save(ctx)
+		return res, false, exhausted
 	}
 
 	switch {
