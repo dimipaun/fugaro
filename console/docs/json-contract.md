@@ -813,6 +813,51 @@ behind **both** `rows` and `totals`; the counts are an embedded `Counts`
 **Flags** (`newRunsStatsCmd`): `--by`, `--repo`, `--all`, `--since`,
 `--max-runs`, `--all-users`, `--json`, plus the cloud flags.
 
+### 6.11 `fugaro backlog list --json` (**CLI 0.11.0**)
+
+**Command:** `internal/cli/backlog.go` `newBacklogListCmd` / `runBacklogList`.
+**Document:** `backlogListDoc`, indented (`runBacklogList`), both in
+`internal/cli/backlog.go` — cited by symbol, not by line: an indented document
+is written by one function and a line number here rots at the next insertion
+above it. This is the second command in this document the console **does not
+spawn yet**: it is the data behind the backlog screen (CLI 0.11.0), and the
+section is here so the screen that follows has a shape read off the code rather
+than assumed from a design.
+
+It is read-only, and in the strongest sense this document uses: the rows come
+from the Markdown item files under the folder `--dir` names (`docs/backlog/` by
+default), never from a network, a database, a credential or an installation,
+and `list` **writes nothing at all**. The command that writes is
+`fugaro backlog index`, and it is not in the console's set: it rewrites the
+folder's own `README.md`, which is derived state a pull request regenerates
+rather than merges (rigor modes D26–D28).
+
+| Field | Type | omitempty | Availability state |
+|---|---|---|---|
+| `dir` | string | no | the folder the items were read from, exactly as `--dir` named it (`docs/backlog` by default). The document echoes the argument rather than resolving it, so a screen can show which folder it is looking at |
+| `items` | `[]backlogRow` | no | `[]` when the folder holds no item. One row per item, in the index's own order — sorted by `id`, which is to say by the day the item was filed |
+| `open` | int | no | the open items' count: the first figure of the index's count line |
+| `closed` | int | no | the closed items' count: the second figure |
+| `dropped` | int | no | the dropped items' count: the third figure. The three are the index's own figures, so a screen's totals and the Markdown's count line cannot disagree |
+
+`backlogRow` is one item as the index lists it. The names are the index's own
+columns, so the Markdown and the document cannot drift apart about what a row
+says.
+
+| Field | Type | omitempty | Note |
+|---|---|---|---|
+| `id` | string | no | the item's id: the day it was filed (`YYYYMMDD`) and a two-digit sequence that day, so two pull requests filing at once mint two ids rather than one conflict. It is also the first two segments of the file's name, so an id resolves to a file without a lookup |
+| `title` | string | no | the filer's own words, one line. **Untrusted display text**: a filer writes it, nothing is authorised by it, and a screen renders it as text |
+| `mode` | string | no | the resolved mode the filing run ran under; `"none"` for an item a person filed by hand, which is not a mode the CLI knows — it is the absence of one |
+| `area` | string | no | the matched areas, strictest first, comma-separated; `"project"` or `"repo"` for an item about a whole layer |
+| `status` | string | no | `"open"`, `"closed"` or `"dropped"` — the three words the format allows and no fourth |
+| `filed_by` | string | no | the filing run's launcher, or the login of the person who filed it by hand. **Untrusted display text**, like `title` |
+| `filed_in` | string | no | `"run:<run id>"`, `"pr:<number>"` or `"hand"`. The third is a person's filing, which has no run and no recorded pull request behind it and says so rather than spelling a run id nobody minted |
+| `date` | string | no | the item's own `date` field, a UTC day (`YYYY-MM-DD`), never a timestamp and never a clock read at render time — so the same folder renders to the same bytes |
+| `path` | string | no | the file the row was read from, `<dir>/<id>-<slug>.md`. It is a path in the checkout the CLI was run in, not a URL: a screen must not link it as one |
+
+**Flags** (`newBacklogListCmd`): `--dir`, `--json`.
+
 ## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded

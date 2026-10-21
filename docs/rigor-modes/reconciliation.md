@@ -691,14 +691,14 @@ the row above counts the pins and not the folders they sit beside.
 | Files in `internal/runner` that mention `Severity` at all | 3 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
 | Image-skew `Since` constants | 11 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 51 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 52 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 3 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -ci repo` |
 | Fields of `gitprov.PRSpec` whose name is a repository | 0 | `sed -n '/^type PRSpec struct {/,/^}/p' internal/gitprov/gitprov.go \| grep -ci repo` |
 | Sites that narrow an installation token to one repository | 1 | `git grep -hc '"repositories": \[\]string{s.repo}' internal/gitprov/github/apptoken.go` |
 | `docs/plans` sections whose heading the deferral pattern matches | 3 | `git grep -hE '^## .*(Deferred\|[Ff]ollow-ups)' -- docs/plans \| wc -l` |
-| Item files under `docs/backlog/` | 0 | `ls docs/backlog/*.md 2>/dev/null \| wc -l` |
+| Item files under `docs/backlog/` | 2 | `ls docs/backlog/[0-9]*.md 2>/dev/null \| wc -l` |
 
 Every one of those commands prints the number in the Count column and nothing
 else on stdout, so a reader — and this folder's guard — can re-run the row rather
@@ -733,21 +733,25 @@ token is narrowed to a single repository in exactly **one** place (F42, F43) —
 which is why D29 recommends a designated repository rather than a cross-repo
 write; **3** `docs/plans` sections match the deferral headings (F46 names them,
 and names the fourth list whose lower-case heading keeps it out of the figure);
-and **0** item files exist under `docs/backlog/`, which is this
-amendment's own claim about itself: it changes documents and nothing else. A later
-slice that writes its own pin moves the pin-count row above in the same commit
-(the plan's T4.3 is the first that will). A slice that adds a top-level key, a
-scope row or a member of the project layer's `defaults:` moves the row that
-counts it in the same commit for the same reason: the figure and the command
-beside it are read together, and the command reads the tree the slice leaves
-behind — Slice 1 moved all three (10 keys, 70 scope rows, 3 `defaults:` blocks),
-which is the five-edit shape F7 and F36 price, measured.
+and **0** item files existed under `docs/backlog/`, which was that
+amendment's own claim about itself: it changed documents and nothing else. Plan
+T4.3 moved that row to the two items it filed and the pin-count row above with
+it, in its own commit, and the row's command counts the item files alone — a
+name that starts with the id's first digit — so the folder's `FORMAT.md` and
+its generated index are not items and are not counted as ones. A slice that adds
+a top-level key, a scope row or a member of the project layer's `defaults:` moves
+the row that counts it in the same commit for the same reason: the figure and the
+command beside it are read together, and the command reads the tree the slice
+leaves behind — Slice 1 moved all three (10 keys, 70 scope rows, 3 `defaults:`
+blocks), which is the five-edit shape F7 and F36 price, measured.
 
-The **51** is the convention this folder follows: there is no registry test over
+The **52** is the convention this folder follows: there is no registry test over
 `docs/`, so a folder that wants its documents pinned writes its own file, and
 this folder's is `internal/cli/docs_rigor_modes_test.go` — the fifty-first at this
 folder's own tree, and the one row in this table that this folder's own merge
-moves.
+moved; `internal/cli/docs_backlog_test.go`, which plan T4.3 wrote, is the
+fifty-second, and it is the folder's own pin on `docs/backlog/` rather than on
+this folder.
 
 ## 5. Decisions for the owner
 
