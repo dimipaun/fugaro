@@ -1304,6 +1304,22 @@ func (r *run) bootstrap(ctx context.Context) error {
 		if err := r.checkPullRequest(ctx); err != nil {
 			return err
 		}
+		// The branch the pull request targets NOW — read above, by
+		// checkPullRequest, from the provider — is the base every diff this
+		// follow-up takes is measured against (diffbase.go, diffBase). For
+		// a pull request retargeted since the run before it (main ->
+		// integration-0.9.6) that is not the ref this follow-up read its
+		// configuration from, so `origin/<base>` may be a ref the checkout
+		// does not have yet. Fetched here, with the run's own credentials,
+		// before the prefetch reads it. A failure is a warning, not a
+		// bootstrap error — the ref may already be there, and the review
+		// stage's own reads are what would fail, loudly, if it is not.
+		if base := r.diffBase(); base != r.spec.Ref {
+			if err := r.repo.FetchBase(ctx, base); err != nil {
+				r.d.Log.Warn("fetching the pull request's base branch failed; the review stage's diff may not be readable",
+					"base", base, "err", r.redact(err.Error()))
+			}
+		}
 	}
 	// A job that runs without a derived image installs the repository's
 	// mise tools itself (provision.go, design generic-tool.md §2, G4): the
@@ -1729,7 +1745,11 @@ func (r *run) agentLoop(ctx context.Context) {
 	// The prompt as it is before the input each review round adds to it
 	// (reviewPromptWithInput): the diff under review is built per round,
 	// never once here, because a fix between two rounds changes the branch.
-	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.cfg.Git.BaseBranch)
+	// The base is the run's own base of work, not the branch its
+	// configuration came from (diffbase.go, diffBase): a run started from
+	// another ref must review its own change, not the whole of that ref's
+	// divergence from the default branch.
+	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.diffBase(), r.reviewDiffSize(ctx))
 	if f := r.follow; f != nil {
 		if add := followup.ReviewAddendum(f.sel, f.nonce); add != "" {
 			reviewPrompt += "\n\n" + add

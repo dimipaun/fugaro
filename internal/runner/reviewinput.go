@@ -190,22 +190,10 @@ func reviewChanges(ctx context.Context, repo *gitops.Repo, rng string) ([]review
 	if err != nil {
 		return nil, err
 	}
-	var changes []reviewChange
-	for _, rec := range strings.Split(out, "\x00") {
-		if rec == "" {
-			continue
-		}
-		added, rest, ok := strings.Cut(rec, "\t")
-		if !ok {
-			return nil, fmt.Errorf("reading the changed files: %q carries no counts", rec)
-		}
-		_, path, ok := strings.Cut(rest, "\t")
-		if !ok {
-			return nil, fmt.Errorf("reading the changed files: %q carries no path", rec)
-		}
-		changes = append(changes, reviewChange{path: path, binary: added == "-"})
-	}
-	return changes, nil
+	// The same parse the review prompt's own size is read with (diffbase.go,
+	// parseNumstat): one numstat call, one reading of it.
+	changes, _, err := parseNumstat(out)
+	return changes, err
 }
 
 // binarySizes returns each binary path's size in bytes: the blob's size at
@@ -389,7 +377,11 @@ func (r *run) reviewInputBlock(ctx context.Context) string {
 	if r.repo == nil {
 		return ""
 	}
-	in, err := buildReviewInput(ctx, r.repo, "origin/"+r.cfg.Git.BaseBranch, "HEAD")
+	// The run's own base of work (diffbase.go, diffBase), the same range
+	// the prompt was built over. Building it against the configuration's
+	// base instead handed the reviewer the whole of another branch's
+	// divergence: 33,000 lines in run 865e, out of a $10 run cap.
+	in, err := buildReviewInput(ctx, r.repo, "origin/"+r.diffBase(), "HEAD")
 	if err != nil {
 		r.d.Log.Warn("the review input could not be built; the reviewer reads the diff itself",
 			"err", r.redact(err.Error()))
