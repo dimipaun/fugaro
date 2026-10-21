@@ -1008,18 +1008,22 @@ added or removed without this sentence moving fails there:
     and invents none: the headline is on the display scale with its word in `.gradient-text`, the
     two part headings are on the display scale, every subsection is one of the site's cards, the
     hero's glow is decoration a reader is not handed, and every look class the page names is one
-    the page's own inlined stylesheet draws — a name with no rule behind it draws nothing, and a
-    rule of the page's own is a second look. What is held is the shape of the look and not its
-    rendering: a gate cannot see a page, and the match to the owner's boards
-    (`website/design-ref/`) is the owner's check at the preview.
+    `src/styles/base.css` draws and none of them is drawn by a rule of the page's own. **The
+    shared file is read, not the built page alone**: `base.css` is inlined into every page, so the
+    page's own rules and the shared ones sit side by side in one `<style>` where nothing can tell
+    them apart, and a rule that counted either as a shape would admit the very page this rule is
+    for. A name with no rule behind it draws nothing; a rule of the page's own is a second look.
+    What is held is the shape of the look and not its rendering: a gate cannot see a page, and
+    the match to the owner's boards (`website/design-ref/`) is the owner's check at the preview.
 
   Each rule is one exported function with its own case, and each has a second case that plants
   the defect it refuses — a lost part, a part nested under the other, a dependency that collects,
   a reporter the page does not name, a page naming a reporter nothing in the tree holds, a third
   secret, an endpoint pointed elsewhere, a source naming the host, a third contact route, an
-  address, a `/terms` link, a headline off the display scale, a gradient that left the headline, a
-  part heading off the scale, a subsection outside a card, a glow a reader is handed, a look class
-  the page's stylesheet does not draw — and watches the named refusal come back. The word ceiling's own derivation — the
+  address, a `/terms` link, a page with no headline, a headline off the display scale, a gradient
+  that left the headline, a part heading off the scale, a subsection outside a card, a glow a
+  reader is handed, a look class nothing draws, a look class the page draws itself — and watches
+  the named refusal come back. The word ceiling's own derivation — the
   privacy statement's own count plus 25 %, the number `website/README.md` states, and every
   other page of the site still inside D188's 500 — is `budget.mjs`'s, beside the reader that
   measures it and the byte figures it is a sibling of.

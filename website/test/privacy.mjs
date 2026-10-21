@@ -79,8 +79,9 @@
 //      and the look is written once, in `src/styles/base.css`'s section 2c. This page wears it —
 //      the headline on the display scale with its word in the gradient, the two part headings on
 //      the display scale, every subsection in one of the site's cards — and the classes it names
-//      are shapes that stylesheet draws, so a page that grew a look of its own is refused
-//      (`lookFailures`, `shapeFailures`). What is held is the shape of the look, not its
+//      are shapes `src/styles/base.css` draws and none of them is a rule of the page's own, so a
+//      page that grew a look of its own is refused (`lookFailures`, `shapeFailures`). What is
+//      held is the shape of the look, not its
 //      rendering: a gate cannot see a page, and the match to the owner's boards is the owner's
 //      check at the preview.
 //
@@ -753,14 +754,21 @@ export function termsFailures(dist) {
 // headline is on the display scale and the word the boards put the accent on is in the
 // gradient, its two part headings are on the display scale too, every subsection under them is
 // one of the site's own cards, and the glow behind the headline is decoration a reader is not
-// handed. The second is that the names it wears are SHAPES THE SITE DRAWS: `base.css` is
-// inlined into every built page, so the page's own stylesheet is where the shared rules and the
-// page's scoped rules both end up, and a look class with no rule behind it is a name rather
-// than a look — the shape of a page that grew its own.
+// handed. The second is that the names it wears are SHAPES THE SITE DRAWS: every look class on
+// the page is one `src/styles/base.css` defines, and the page draws none of them itself. The
+// two halves are read from two places — the shared file, and what the build inlined into the
+// page — because `base.css` is inlined into every page, so the page's own scoped rules and the
+// shared ones end up side by side in one `<style>` where nothing can tell them apart. A class
+// with no rule behind it is a name rather than a look, and a rule of the page's own is a second
+// look: both are the shape of a page that grew its own.
 //
 // **What is not held is the rendering.** A gate cannot see a page, and the match to the owner's
 // boards is the owner's check at the preview; this section holds the shape of the look and says
 // so rather than pretending a string comparison is a design review.
+
+/** The file the look is written in, from the repository's root: the shared layer's section 2c,
+ *  and the only place a shape this page may name is defined. */
+export const SHARED_LOOK = 'website/src/styles/base.css'
 
 /** The display scale `base.css` defines: the headline steps the boards set. */
 export const DISPLAY = Object.freeze(['display-xl', 'display-lg', 'display-md'])
@@ -857,25 +865,40 @@ export function stylesheetsOf(html) {
     .join('\n')
 }
 
-/**
- * Every look class the page names that its own stylesheet does not draw, or []. The look is
- * written once, in `src/styles/base.css`; a class with no rule behind it is a name that draws
- * nothing, and a page whose stylesheet carries a second headline scale or a second card is a
- * page with a look of its own, which is the thing the redesign is against.
- */
-export function shapeFailures(html, css) {
-  const named = new Set()
-  for (const el of walk(parse(html))) for (const name of lookClassesOf(el)) named.add(name)
+/** The class names a stylesheet draws: every class its selectors name. */
+function drawnIn(css) {
   const drawn = new Set()
   for (const rule of cssRules(css)) {
     for (const m of rule.selector.matchAll(/\.(-?[_a-zA-Z][\w-]*)/g)) drawn.add(m[1])
   }
+  return drawn
+}
+
+/**
+ * Every look class the page names that the look does not draw, or [].
+ *
+ * **`shared` is the file the look is written in** — `src/styles/base.css` — and `own` is what
+ * the build inlined into this page, which is that file plus the page's own scoped rules. The
+ * two are read apart on purpose. Reading the built page alone would count a class as drawn by
+ * ANY rule in it, the page's own included, and a page that wrote its own `.display-xxl` — a
+ * second headline scale, which is the exact defect this rule exists for — would pass: the
+ * page's rules and the shared ones are inlined side by side in the same `<style>`, and no
+ * reader of the artifact alone can tell one from the other. So a class is a shape of the look
+ * when the shared file draws it, and a class the page draws ITSELF is refused as a second look
+ * rather than admitted as a shape.
+ */
+export function shapeFailures(html, shared, own = '') {
+  const named = new Set()
+  for (const el of walk(parse(html))) for (const name of lookClassesOf(el)) named.add(name)
+  const sharedDrawn = drawnIn(shared)
+  const ownDrawn = drawnIn(own)
   return [...named]
-    .filter((name) => !drawn.has(name))
+    .filter((name) => !sharedDrawn.has(name))
     .sort()
-    .map(
-      (name) =>
-        `the privacy page wears .${name}, which the page's own stylesheet does not draw: the look is written once, in src/styles/base.css, and a page names the shapes that file defines — a class with no rule behind it draws nothing, and a rule of the page's own is a second look (the bold redesign, website/design-ref/)`,
+    .map((name) =>
+      ownDrawn.has(name)
+        ? `the privacy page draws .${name} itself: the look is written once, in src/styles/base.css, and a headline scale or a card of the page's own is a second look rather than the site's — which is why this rule reads the shared file and not only the built page, where the two are inlined side by side (the bold redesign, website/design-ref/)`
+        : `the privacy page wears .${name}, which nothing draws: the look is written once, in src/styles/base.css, and a page names the shapes that file defines — a class with no rule behind it draws nothing (the bold redesign, website/design-ref/)`,
     )
 }
 
@@ -967,16 +990,23 @@ test("the privacy page wears the site's bold look, out of the shapes the site dr
   const failures = lookFailures(page.html)
   assert.deepEqual(failures, [], `the privacy page is not wearing the look:\n  ${failures.join('\n  ')}`)
 
-  const css = stylesheetsOf(page.html)
-  // The reader below is only worth its answer if the stylesheet it read is the whole of the
-  // look: `base.css` is inlined into every built page, so a page whose own stylesheet carries
-  // no `.card` rule is a page the shape rule would refuse rather than a page it never read.
+  // The shape rule reads two things: the file the look is written in, and what the build
+  // inlined into this page. Both are worth their answer only if they carry the look — a shared
+  // file that had lost `base.css`'s section, or a page the build inlined nothing into, would
+  // make the rule silent rather than strict.
+  const shared = repoFile(SHARED_LOOK)
   assert.match(
-    css,
+    shared,
     /\.card\s*[,{]/,
-    'the built privacy page carries no `.card` rule: the shape rule reads the stylesheet the build inlined, and a page with none inlined is a page that rule cannot say anything about',
+    `${SHARED_LOOK} carries no \`.card\` rule: the shape rule reads the file the look is written in, and a shared stylesheet without it is a rule that can say nothing about any shape`,
   )
-  const shapes = shapeFailures(page.html, css)
+  const inlined = stylesheetsOf(page.html)
+  assert.match(
+    inlined,
+    /\.card\s*[,{]/,
+    'the built privacy page carries no `.card` rule: `base.css` is inlined into every built page, so a page with none inlined is a page whose shapes did not reach the artifact',
+  )
+  const shapes = shapeFailures(page.html, shared, inlined)
   assert.deepEqual(shapes, [], shapes.join('\n'))
 })
 
@@ -1352,6 +1382,11 @@ test('a headline off the display scale, or a gradient that left the headline, is
 
   const good = SHELL(`<h1 class="display-xl"><span class="gradient-text">Privacy</span></h1>${parts}`)
   assert.deepEqual(lookFailures(good), [])
+
+  // And a page with no headline at all: the look is measured on the `h1`, so a page that lost
+  // one is refused before either rule above can say anything about a scale or a gradient.
+  const headless = SHELL(`<p>Privacy</p>${parts}`)
+  assert.match(lookFailures(headless).join('\n'), /has no h1/)
 })
 
 test('a part heading off the display scale, a subsection outside a card, and a glow a reader is handed are refused', () => {
@@ -1376,19 +1411,33 @@ test('a part heading off the display scale, a subsection outside a card, and a g
   assert.deepEqual(lookFailures(hidden), [])
 })
 
-test('a look class the page’s stylesheet does not draw is refused, and one it draws is not', () => {
-  const css = stylesheetsOf(privacyPage().html)
-  assert.deepEqual(shapeFailures(SHELL('<h1 class="display-xl"><span class="gradient-text">t</span></h1><div class="card"><h3>a</h3></div><div class="hero-glow" aria-hidden="true"></div>'), css), [])
+test('a look class nothing draws is refused, and a class the page draws itself is refused as a second look', () => {
+  // The shared file and the page are written here rather than taken from the artifact, so the
+  // premise of this case is its own: a page that grew a `display-xxl` rule fails it whichever
+  // way the site's own stylesheets move, and it fails with the named refusal rather than a
+  // count. `good` is the page the site builds, in miniature.
+  const shared =
+    '.display-xl{font-size:clamp(1rem, 7.2vw, 6.5rem)}.display-lg{font-size:clamp(1rem, 4.4vw, 4.5rem)}' +
+    '.gradient-text{background-clip:text}.card{padding:2rem}.hero-glow{position:absolute}'
+  const good = '<h1 class="display-xl"><span class="gradient-text">t</span></h1><div class="card"><h3>a</h3></div><div class="hero-glow" aria-hidden="true"></div>'
+  assert.deepEqual(shapeFailures(SHELL(good), shared, shared), [])
 
   // A step nobody defined: the class is a name, and a name draws nothing.
-  const invented = shapeFailures(SHELL('<h1 class="display-xxl">t</h1>'), css)
-  assert.equal(invented.length, 1, invented.join('\n'))
-  assert.match(invented[0], /wears \.display-xxl, which the page's own stylesheet does not draw/)
+  const undrawn = shapeFailures(SHELL('<h1 class="display-xxl">t</h1>'), shared, shared)
+  assert.equal(undrawn.length, 1, undrawn.join('\n'))
+  assert.match(undrawn[0], /wears \.display-xxl, which nothing draws/)
 
-  // And the rule is the page's own stylesheet, not the site's: a page that inlined no look
-  // refuses every shape it names, which is what the gate's control above is for.
-  const bare = shapeFailures(SHELL('<h1 class="display-xl">t</h1>'), '.display-xl{font-size:1rem}')
-  assert.deepEqual(bare, [])
-  const nothing = shapeFailures(SHELL('<h1 class="display-xl">t</h1>'), '')
+  // And the page that answers that refusal by writing the rule itself: the class is drawn, and
+  // by the page rather than by the look. This is the defect the shared file is read for — the
+  // page's own rules and the shared ones are inlined side by side, so a reader of the built
+  // page alone would count this rule as a shape and pass it.
+  const invented = shapeFailures(SHELL('<h1 class="display-xxl">t</h1>'), shared, `${shared}\n.display-xxl{font-size:9rem}`)
+  assert.equal(invented.length, 1, invented.join('\n'))
+  assert.match(invented[0], /draws \.display-xxl itself/)
+
+  // The other half of the same reading: with no shared file behind it, every shape the page
+  // names is refused, which is what makes the gate's two control assertions worth their answer.
+  const nothing = shapeFailures(SHELL('<h1 class="display-xl">t</h1>'), '', '')
   assert.equal(nothing.length, 1, nothing.join('\n'))
+  assert.match(nothing[0], /wears \.display-xl, which nothing draws/)
 })
