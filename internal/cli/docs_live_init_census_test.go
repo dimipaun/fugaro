@@ -145,10 +145,11 @@ var liveRoots = []string{
 	"internal",
 	"images",
 	"deploy",
-	// The console names the command in two of its files (#789's tombstone
-	// work put the mentions there): a root that names it is walked, and its
-	// files are the rename's, not the walk's to skip.
-	"console",
+	// The console names the command in two of its files (#789's tombstone work
+	// put the mentions there), so it is a root the walk covers. A root that
+	// names it is walked, and the files the walk finds are the rename's to
+	// take, not the walk's to skip.
+	consoleDirName,
 }
 
 // initNameRE is what counts as naming the command: two spellings. The command
@@ -169,11 +170,12 @@ var initNameRE = regexp.MustCompile(`fugaro init|init --repo`)
 const censusRoot = "../.."
 
 // pendingRename is today's census: every file under liveRoots that names the
-// command, sorted. It is 277 files -- 114 non-test Go files, 118 test files,
-// 37 markdown files, the two goldens, and the six that fall in none of those
+// command, sorted. It is 279 files -- 114 non-test Go files, 118 test files,
+// 37 markdown files, the two goldens, and the eight that fall in none of those
 // groups: the website's four (its install data, its two pages and its test
-// script), console/test/unit/ipc.test.ts (the console's fixture test) and the
-// getting-started design board the redesign was approved from,
+// script), the console's README and its fixture test (both spelled through
+// consoleDirName, like the console output paths below) and the getting-started
+// design board the redesign was approved from,
 // website/design-ref/GettingStartedV4.dc.html. Read on main at `1d325928`, this
 // branch's base, it was **312** files -- 118 non-test Go files, 117 test files,
 // 34 markdown files, 29 Terraform files, the four `.tftest.hcl` fixtures beside
@@ -235,10 +237,10 @@ const censusRoot = "../.."
 // test that the retired word is not a subcommand any more (no rename can take
 // that one out, so it is W2.6's tail rather than W2.2's); and
 // internal/cli/docs_checkout_test.go, a comment naming the bare `init --repo`
-// form. The last two are the console's, console/README.md and
-// console/test/unit/ipc.test.ts, and `console` -- which had no root of its own
-// until #789 put mentions there -- is on liveRoots now: a root that names the
-// command is walked, and the files the walk finds are the rename's to take.
+// form. The last two are the console's own README and its fixture test, and
+// `console` -- which had no root of its own until #789 put mentions there --
+// is on liveRoots now: a root that names the command is walked, and the files
+// the walk finds are the rename's to take.
 //
 // Each task that renames a string takes the file off this list in the same
 // commit, and W2.6 empties it.
@@ -247,8 +249,11 @@ var pendingRename = []string{
 	"CONTRIBUTING.md",
 	"README.md",
 	"SECURITY.md",
-	"console/README.md",
-	"console/test/unit/ipc.test.ts",
+	// The console's two, spelled through consoleDirName like the output paths
+	// below: the boundary's mention rule counts that directory's name followed
+	// by a slash anywhere in a Go file, and this file names them to walk them.
+	consoleDirName + "/README.md",
+	consoleDirName + "/test/unit/ipc.test.ts",
 	"docs/backends.md",
 	"docs/base-image-migration.md",
 	"docs/base-image.md",
