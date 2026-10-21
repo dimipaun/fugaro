@@ -272,16 +272,53 @@ func TestAUsageLimitDoesNotDiscardAnExhaustedHold(t *testing.T) {
 		t.Fatalf("the held mark's wait = %s, %v; want the reset %s", at, ok, reset)
 	}
 
-	// A reset that IS reported still replaces the hold: the upstream named a
-	// time, and this guard is about the no-reset case only.
-	if m := Exhaust(held, now.Add(time.Minute), now.Add(time.Hour), set); !m.Until.Equal(now.Add(time.Hour)) {
-		t.Fatalf("a 429 reporting a shorter reset left %+v; want the reported reset", m)
+	// A reset that is reported WHILE THE HOLD STANDS does not shorten it: the
+	// call that reported it was in flight when the four-hour reset landed, and
+	// its one-minute answer is stale (review finding N5). On this tier the
+	// window is off, so Until is the whole hold. This guard used to be about
+	// the no-reset case only, and the reset branch walked around it.
+	if m := Exhaust(held, now.Add(time.Minute), now.Add(time.Hour), set); m != held {
+		t.Fatalf("a 429 reporting a shorter reset left %+v; want the four-hour hold, %+v", m, held)
+	}
+	// A reset that lands *after* the hold is a different matter: it is the later
+	// of the two answers, and the upstream's newer word replaces the older.
+	if m := Exhaust(held, now.Add(time.Minute), now.Add(6*time.Hour), set); !m.Until.Equal(now.Add(6 * time.Hour)) {
+		t.Fatalf("a 429 reporting a reset beyond the hold left %+v; want the later reset", m)
 	}
 
 	// Once the reset has passed the credential is in rotation again, and the
 	// next no-reset 429 is a fresh exhaustion rather than a racing one.
 	if m := Exhaust(held, reset.Add(time.Minute), time.Time{}, set); m.State != StateBackedOff {
 		t.Fatalf("a no-reset 429 after the reset left %+v; want the first backoff", m)
+	}
+}
+
+// A usage limit with no reset time reported after the hold has LAPSED is a fresh
+// exhaustion — the credential is in rotation again, so the 429 is this call's own
+// and not one from before the hold — and a fresh exhaustion is dated now. The
+// date is what "least recently exhausted" orders by (D154) and what D142's
+// window is measured from, so a fresh exhaustion that kept the previous
+// exhaustion's date would put the credential at the front of the queue for the
+// window it had already served. Review finding N1: this is the one line of
+// Exhaust's no-reset path a mutation could delete with every other test green.
+func TestAFreshUsageLimitDatesTheExhaustionNow(t *testing.T) {
+	set := noWindow()
+	old := now.Add(-6 * time.Hour)
+	lapsed := Mark{State: StateExhausted, Until: now.Add(-time.Hour), Since: old}
+
+	m := Exhaust(lapsed, now, time.Time{}, set)
+	if m.State != StateBackedOff || m.Backoff != DefaultBackoffInitial {
+		t.Fatalf("a no-reset 429 after the hold left %+v; want the first backoff of %s", m, DefaultBackoffInitial)
+	}
+	if !m.Since.Equal(now) {
+		t.Fatalf("the fresh exhaustion is dated %s; want %s — the credential was exhausted again, it is not the old exhaustion still being held", m.Since, now)
+	}
+
+	// The held case, for contrast: a no-reset 429 inside a standing hold leaves
+	// the date alone, because it is the same exhaustion seen again.
+	held := Mark{State: StateExhausted, Until: now.Add(4 * time.Hour), Since: old}
+	if got := Exhaust(held, now.Add(time.Minute), time.Time{}, set); !got.Since.Equal(old) {
+		t.Fatalf("a no-reset 429 inside the hold dated the exhaustion %s; want it to stay %s", got.Since, old)
 	}
 }
 
@@ -303,6 +340,105 @@ func TestAFailedProbeDoesNotShortenAnExhaustedHold(t *testing.T) {
 	lapsed := ProbeFailed(held, held.Until.Add(time.Minute), set)
 	if lapsed.State != StateBackedOff || lapsed.Backoff != DefaultBackoffInitial {
 		t.Fatalf("a failed probe after the reset left %+v; want a backoff of %s", lapsed, DefaultBackoffInitial)
+	}
+}
+
+// A hold may only be extended by a later report, never shortened (review finding
+// N5). The tier B settings are the ones the review reproduced it on, and the
+// reason is forTier: the window is off there, so the reported reset is the whole
+// of the hold and a shorter one is a shorter hold with nothing to catch it.
+//
+// The racing call is the same call in either shape: it was in flight when the
+// hold was written, and its reset header is whatever the upstream said to it —
+// arbitrarily earlier than the one the hold was written from. What must not
+// happen is the credential coming back early, because a hold that can be
+// shortened by a call it was already holding against is a hold that cannot be
+// relied on at all.
+func TestARacingResetNeverShortensAHold(t *testing.T) {
+	set := Settings{Fallback: Auto}.forTier(TierB)
+	reset := now.Add(4 * time.Hour)
+	held := Exhaust(Mark{}, now, reset, set)
+	if held.State != StateExhausted || !held.Until.Equal(reset) {
+		t.Fatalf("a 429 reporting a four-hour reset on tier B left %+v; want exhausted until %s", held, reset)
+	}
+
+	// A minute later, a call already in flight reports a one-minute reset.
+	at := now.Add(time.Minute)
+	if m := Exhaust(held, at, at.Add(time.Minute), set); m != held {
+		t.Fatalf("a racing 429 reporting a one-minute reset left %+v; want the four-hour hold, %+v", m, held)
+	}
+	// The answer a selection gives is still the four hours: the token is not
+	// handed back while the window the upstream named is running.
+	if at, ok := held.Ready(at, set); !ok || !at.Equal(reset) {
+		t.Fatalf("the racing 429 moved the hold to %s, %v; want the reset %s", at, ok, reset)
+	}
+	if held.Usable(now.Add(time.Hour), set) {
+		t.Fatal("the token is served an hour into a four-hour hold: a racing reset shortened it")
+	}
+
+	// A report that reaches PAST the hold is the one direction a hold may move:
+	// the upstream named a later time, so the hold is the later time.
+	if m := Exhaust(held, at, now.Add(6*time.Hour), set); !m.Until.Equal(now.Add(6 * time.Hour)) {
+		t.Fatalf("a 429 reporting a later reset left %+v; want the six-hour one", m)
+	}
+
+	// And the guarded-before-it-lapses backed-off shape is the same rule: a
+	// racing reset shorter than the wait in force does not cut the wait short.
+	backed := Mark{State: StateBackedOff, Until: now.Add(15 * time.Minute), Backoff: 15 * time.Minute, Since: now}
+	if m := Exhaust(backed, now, now.Add(time.Minute), set); m != backed {
+		t.Fatalf("a racing 429 reporting a one-minute reset against a 15m wait left %+v; want the wait, %+v", m, backed)
+	}
+	// Once the wait has lapsed the credential is in rotation again, and a reset
+	// reported then is a fresh observation rather than a racing one.
+	lapsed := Exhaust(backed, now.Add(16*time.Minute), now.Add(20*time.Minute), set)
+	if lapsed.State != StateExhausted || !lapsed.Until.Equal(now.Add(20*time.Minute)) {
+		t.Fatalf("a 429 after the wait lapsed left %+v; want the reset it reported", lapsed)
+	}
+}
+
+// Exhaust dates a fresh exhaustion from the moment it happened, and that date is
+// load-bearing rather than bookkeeping: D142's window is measured from it
+// (Ready), so a token exhausted for the second time is held for the rest of the
+// window THAT exhaustion opened, not for the remains of an older one.
+//
+// Review finding N1: `m.Since = now` is what makes the date move on the no-reset
+// path, and nothing pinned it — deleting it left the mark dated from the first
+// exhaustion, whose window had already closed, so the second exhaustion was
+// worth a fifteen-minute backoff and nothing else and the control's whole point
+// (one exhaustion costs the token the rest of its window) was silently gone.
+func TestASecondExhaustionOpensAFreshWindow(t *testing.T) {
+	set := Settings{} // the policy's defaults: the control on, a five-hour window
+	const window = 5 * time.Hour
+
+	first := Exhaust(Mark{}, now, time.Time{}, set)
+	if !first.Since.Equal(now) {
+		t.Fatalf("the first exhaustion is dated %s; want %s", first.Since, now)
+	}
+	if at, ok := first.Ready(now, set); !ok || !at.Equal(now.Add(window)) {
+		t.Fatalf("the first exhaustion's hold ends at %s, %v; want the window's end %s", at, ok, now.Add(window))
+	}
+
+	// The window passes, the token is in rotation again, and it is exhausted a
+	// second time — with no reset header, which is the path whose date moves.
+	after := now.Add(window + time.Hour)
+	second := Exhaust(first, after, time.Time{}, set)
+	if !second.Since.Equal(after) {
+		t.Fatalf("the second exhaustion is dated %s; want %s: the window is measured from the exhaustion that opened it, and a date left over from the first one is a window that closed an hour ago", second.Since, after)
+	}
+	at, ok := second.Ready(after, set)
+	if !ok {
+		t.Fatal("the second exhaustion's hold has no end: it must be a window from the exhaustion just written")
+	}
+	if want := after.Add(window); !at.Equal(want) {
+		t.Fatalf("the second exhaustion's hold ends at %s; want %s — the rest of the window it just opened", at, want)
+	}
+	if second.Usable(after.Add(window-time.Minute), set) {
+		t.Fatal("the token is served inside the window the second exhaustion opened")
+	}
+	// The backoff the second exhaustion also carries is not the hold: it is due
+	// for a probe, and the window is why the answer is hours away.
+	if !second.NeedsProbe(after.Add(31 * time.Minute)) {
+		t.Fatal("the second exhaustion left no wait to probe: it is a backoff as well as an exhaustion")
 	}
 }
 

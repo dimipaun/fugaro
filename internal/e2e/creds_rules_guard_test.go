@@ -79,12 +79,16 @@ const (
 // The sandbox, hard-coded. The credentials-service plan's ruling F33 is
 // binding: "every live step is owner-run, on installation `fugaro` and a
 // sandbox repository only, never `belong`" (reconciliation.md §4 F33, D146:
-// "live checks owner-run on installation `fugaro`, sandbox repository"), and
-// `agentMarker` refuses live applies inside a coding agent. The installation,
-// the Firebase project it belongs to, that project's database host and its
-// service-account domain are constants, not environment variables: an
-// environment can aim the check at this target or be refused, and there is no
-// third answer.
+// "live checks owner-run on installation `fugaro`, sandbox repository"), and a
+// coding agent's session may not aim the check anywhere: the repository's own
+// agent-marker test (internal/agentenv) refuses an apply made from such a
+// session — while a session that aims the check nowhere skips, marker or not
+// (crSkip).
+//
+// The installation, the Firebase project it belongs to, that project's
+// database host and its service-account domain are constants, not environment
+// variables: an environment can aim the check at this target or be refused,
+// and there is no third answer.
 //
 // The host and the signer's domain are the sandbox project's, from
 // docs/gcp-live-checklist.md ("installation `fugaro`, project `fugaro-dev`,
@@ -101,7 +105,14 @@ const (
 // crSandboxRegionHost is the regional form of the same database's address
 // (https://<db>.<region>.firebasedatabase.app): the project component is
 // pinned to the sandbox's, and the region is the installation's to choose.
-var crSandboxRegionHost = regexp.MustCompile(`^` + regexp.QuoteMeta(crSandboxProject+"-default-rtdb") + `\.[a-z0-9-]+\.firebasedatabase\.app$`)
+//
+// The region is pinned to the *shape* every GCP region has — lower-case words
+// separated by single dashes, ending in the region's number (europe-west1,
+// asia-southeast1, northamerica-northeast1) — rather than to "any label": an
+// address on Google's domain whose region component is a word that is not a
+// region (a host somebody took, say) is not the sandbox's database, and the
+// pin exists to admit nothing but it (the review's N5 nit).
+var crSandboxRegionHost = regexp.MustCompile(`^` + regexp.QuoteMeta(crSandboxProject+"-default-rtdb") + `\.[a-z]+(-[a-z]+)*[0-9]+\.firebasedatabase\.app$`)
 
 // crSandboxHost reports whether host is the sandbox database's and no other.
 // A host that is not (a look-alike, another project's, a loopback name, a
@@ -123,8 +134,9 @@ func crSandboxSigner(email string) bool {
 }
 
 // crSkip is what crTargetFrom returns when nothing in the environment aims
-// this check anywhere: the test skips. An environment that does aim it at a
-// database and leaves the opt-in out is a refusal instead, never a skip.
+// this check anywhere: the test skips, whatever session it is run from. An
+// environment that does aim it at a database and leaves the opt-in out is a
+// refusal instead, never a skip; so is a coding agent's session that aims it.
 var crSkip = errors.New("the live credentials-rules check is not aimed at a database")
 
 // crTarget is the owner's aim: which installation, reached how. host, not
@@ -144,13 +156,17 @@ type crTarget struct {
 // environment: it makes no request, and an ordinary test can drive every
 // refusal below without a credential or a network.
 //
-// It refuses, before anything is reached: a coding agent's session (F33); an
-// aim at a database without the opt-in; a missing variable; any installation
-// but the sandbox's; any database host but the sandbox's; any signer that is
-// not a service account of the sandbox project; and any database URL that is
-// not a plain Firebase address — rtdb.ValidateURL is the repository's own
-// check for that, and it is what keeps the owner's credential from being sent
-// to a host that merely looks like a database.
+// An environment that aims it nowhere skips, before any of the refusals: the
+// agent marker is checked after the aim and not before, so an unaimed run from
+// an agent's session skips (review finding N2).
+//
+// It refuses, before anything is reached: a coding agent's session that aims
+// it (F33); an aim at a database without the opt-in; a missing variable; any
+// installation but the sandbox's; any database host but the sandbox's; any
+// signer that is not a service account of the sandbox project; and any
+// database URL that is not a plain Firebase address — rtdb.ValidateURL is the
+// repository's own check for that, and it is what keeps the owner's credential
+// from being sent to a host that merely looks like a database.
 func crTargetFrom(getenv func(string) string) (crTarget, error) {
 	if getenv == nil {
 		// An environment that is not there at all is the empty environment:
@@ -165,7 +181,13 @@ func crTargetFrom(getenv func(string) string) (crTarget, error) {
 		requestedBy:  strings.TrimSpace(getenv(crByVar)),
 	}
 	optIn := strings.TrimSpace(getenv(crOKVar))
-	if t.rtdbURL == "" && t.apiKey == "" && t.signer == "" && t.installation == "" && optIn == "" && !agentenv.Present(getenv) {
+	// Nothing in the environment aims this check anywhere: it skips, in
+	// whatever session it is in. An agent marker on its own is not an aim — a
+	// `go test -tags live -run TestLive` from inside an agent's or an IDE's
+	// terminal must skip like any other unaimed run, not fail, which is what
+	// this file's header promises (review finding N2). The marker is refused
+	// immediately below, once something *is* aiming the check at a database.
+	if t.rtdbURL == "" && t.apiKey == "" && t.signer == "" && t.installation == "" && optIn == "" {
 		return crTarget{}, crSkip
 	}
 	if m := agentenv.Marker(getenv); m != "" {

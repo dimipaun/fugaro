@@ -225,6 +225,21 @@ func (m Mark) Known() bool {
 // same doubling as a failed probe — the credential has now failed twice without
 // saying when it comes back — but Since moves, because the credential *was*
 // exhausted again.
+//
+// A hold already in force may only be EXTENDED by a report, never shortened
+// (review finding N5), and that is a rule about both shapes of report rather
+// than about the no-reset one. A credential that holds is not selected, so every
+// 429 arriving while it holds comes from a call that was already in flight when
+// the hold was written; those calls are re-reporting the same exhaustion, and
+// one of them naming an EARLIER reset than the hold's must not be what hands the
+// credential back early. On tier B — where D142's window is off and the hold is
+// the reported reset alone — a racing 429 reporting a one-minute reset used to
+// rewrite a four-hour hold into a one-minute one, and the project's paid key was
+// spent again inside the window the upstream had just named. So the reset branch
+// below is guarded in the same place and by the same fact as the no-reset one: a
+// report that does not reach past the hold in force leaves the mark exactly as
+// it is, and a report that does reach past it extends it, which is the only
+// direction a hold may move.
 func Exhaust(prev Mark, now, reset time.Time, set Settings) Mark {
 	if !prev.Known() {
 		// A state this release does not know is a hold it will not read
@@ -243,16 +258,10 @@ func Exhaust(prev Mark, now, reset time.Time, set Settings) Mark {
 		// second must not put a refused token back in rotation.
 		return prev
 	}
-	if !reset.IsZero() && reset.After(now) {
-		// A reset that is reported is a reset: the upstream named a time, and a
-		// named time is a better answer than any wait this package computes, so
-		// it replaces whatever hold was in force. This is also why the guard
-		// below is about the NO-reset case only.
-		return Mark{State: StateExhausted, Until: reset, Since: now}
-	}
-	if _, held := prev.holdInForce(now, set); held {
-		// A hold is already in force on this credential, and a usage limit with
-		// no reset time cannot be a fresh exhaustion of it: a credential that
+	set = set.withDefaults()
+	if at, held := prev.holdInForce(now, set); held {
+		// A hold is already in force on this credential, so a usage limit
+		// arriving now cannot be a fresh exhaustion of it: a credential that
 		// holds is not selected (Usable refuses an exhausted one whose time has
 		// not come and a backed-off one outright), so the only calls that can be
 		// answering 429 here are the ones that were already in flight when the
@@ -260,7 +269,7 @@ func Exhaust(prev Mark, now, reset time.Time, set Settings) Mark {
 		// again, and N of them must leave the state one of them left — otherwise
 		// a burst of concurrent calls doubles the wait once per call and walks
 		// the credential to its five-hour cap in a second. So the hold in force
-		// is left exactly as it is, date and all.
+		// is left as it is, date and all.
 		//
 		// Which states hold, and by which clock, is holdInForce's: an exhausted
 		// mark holds until its reset (and the window), a backed-off one until
@@ -271,7 +280,27 @@ func Exhaust(prev Mark, now, reset time.Time, set Settings) Mark {
 		// wait of fifteen minutes, and Select answered wait=15m for a credential
 		// that was four hours from coming back. The racing call is the same call
 		// in either state.
+		//
+		// The reset question is the same question with a header attached, and it
+		// is answered the same way (review finding N5): a reset reported by an
+		// in-flight call must not *shorten* the hold. On tier B, whose window is
+		// off, a 429 that reported a one-minute reset used to cut a four-hour
+		// hold to a minute — the credential back in rotation long before the
+		// reset the upstream had actually given it. A named time is still better
+		// information than the wait this package computes, so a reset landing
+		// *after* the hold's end is taken — the later of the two answers, which
+		// is the protective one — but an earlier one leaves the hold as it is.
+		// Since does not move either way: the exhaustion being reported is the
+		// one that opened this hold, not a fresh one.
+		if !reset.IsZero() && reset.After(at) {
+			return Mark{State: StateExhausted, Until: reset, Since: prev.Since}
+		}
 		return prev
+	}
+	if !reset.IsZero() && reset.After(now) {
+		// A reset that is reported is a reset: the upstream named a time, and a
+		// named time is a better answer than any wait this package computes.
+		return Mark{State: StateExhausted, Until: reset, Since: now}
 	}
 	m := ProbeFailed(prev, now, set)
 	m.Since = now
@@ -387,8 +416,10 @@ func ProbeSucceeded(prev Mark, now time.Time, set Settings) Mark {
 // Cleared is the mark the operator's clear leaves (C1.21): available, with the
 // wait in force forgotten, so the next exhaustion starts at the initial backoff
 // again. It is the operator's transition and not a probe's — a probe leaves what
-// ProbeSucceeded answers — and it is the one transition that leaves a broken
-// mark.
+// ProbeSucceeded answers — and it is the only transition in this package that
+// takes a broken mark off: Exhaust and ProbeFailed return a broken mark
+// untouched, and ProbeSucceeded is a no-op on one, so nothing a busy token
+// reports and nothing a probe answers moves a 401 anywhere.
 func Cleared() Mark { return Mark{State: StateAvailable} }
 
 // Break is the mark a 401 leaves (D139). It carries the time it was noticed

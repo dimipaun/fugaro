@@ -27,6 +27,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
@@ -242,24 +243,30 @@ func TestCredsRulesTargetSkipsOnlyWhenNothingAimsIt(t *testing.T) {
 		t.Fatalf("crTargetFrom(nil) = %v, want the skip", err)
 	}
 
-	// Every marker the repository knows, alone and in the sandbox's own
-	// environment: a coding agent's session is refused either way.
+	// Every marker the repository knows. Alone — nothing aiming the check at a
+	// database — it aims nothing itself, and the run skips: the file's header
+	// promises that `go test -tags live -run TestLive` from an agent's or an
+	// IDE's terminal skips like any other unaimed run, and a marker that made it
+	// FAIL broke that (review finding N2). Aimed at the sandbox, the same marker
+	// is refused (F33).
 	for _, marker := range agentenv.Markers {
-		for _, aimed := range []bool{false, true} {
-			env := map[string]string{marker: "1"}
-			if aimed {
-				env = crSandboxEnv()
-				env[marker] = "1"
-			}
-			var gotErr error
-			crNoNetwork(t, func() { _, gotErr = crTargetFrom(crGetenv(env)) })
-			if gotErr == nil || errors.Is(gotErr, crSkip) {
-				t.Errorf("crTargetFrom with %s set (aimed=%v) = %v, want a refusal: a check that writes to a real installation's database is the owner's, not the agent's that wrote it (F33)", marker, aimed, gotErr)
-				continue
-			}
-			if !strings.Contains(gotErr.Error(), marker) {
-				t.Errorf("crTargetFrom with %s set refused with %q, which does not name the variable to unset", marker, gotErr)
-			}
+		env := map[string]string{marker: "1"}
+		var gotErr error
+		crNoNetwork(t, func() { _, gotErr = crTargetFrom(crGetenv(env)) })
+		if !errors.Is(gotErr, crSkip) {
+			t.Errorf("crTargetFrom with %s set and nothing aiming it = %v, want the skip: an agent marker on its own is not an aim", marker, gotErr)
+		}
+
+		env = crSandboxEnv()
+		env[marker] = "1"
+		var aimedErr error
+		crNoNetwork(t, func() { _, aimedErr = crTargetFrom(crGetenv(env)) })
+		if aimedErr == nil || errors.Is(aimedErr, crSkip) {
+			t.Errorf("crTargetFrom with %s set and the sandbox aimed = %v, want a refusal: a check that writes to a real installation's database is the owner's, not the agent's that wrote it (F33)", marker, aimedErr)
+			continue
+		}
+		if !strings.Contains(aimedErr.Error(), marker) {
+			t.Errorf("crTargetFrom with %s set refused with %q, which does not name the variable to unset", marker, aimedErr)
 		}
 	}
 	// An empty value is not a set variable.
@@ -312,6 +319,8 @@ func TestCredsRulesSandboxPins(t *testing.T) {
 		crSandboxDBHost,
 		crSandboxProject + "-default-rtdb.europe-west1.firebasedatabase.app",
 		crSandboxProject + "-default-rtdb.asia-southeast1.firebasedatabase.app",
+		crSandboxProject + "-default-rtdb.us-central1.firebasedatabase.app",
+		crSandboxProject + "-default-rtdb.northamerica-northeast1.firebasedatabase.app",
 	} {
 		if !crSandboxHost(host) {
 			t.Errorf("crSandboxHost(%q) = false, want the sandbox's own address", host)
@@ -326,6 +335,17 @@ func TestCredsRulesSandboxPins(t *testing.T) {
 		crSandboxProject + "-default-rtdb2.firebaseio.com",
 		crSandboxProject + "-other-rtdb.firebaseio.com",
 		crSandboxProject + "-default-rtdb.firebasedatabase.app",
+		// The region label is a region: a word that is not one — a hostname
+		// somebody took, say — is not the sandbox's address, even though it is
+		// spelled on Google's domain. The label the check accepts is the shape
+		// every GCP region has (lower-case words, dash-separated, ending in the
+		// region's number), not "any label" (the review's N5 nit).
+		crSandboxProject + "-default-rtdb.evil.firebasedatabase.app",
+		crSandboxProject + "-default-rtdb..firebasedatabase.app",
+		crSandboxProject + "-default-rtdb.europe.firebasedatabase.app",
+		crSandboxProject + "-default-rtdb.europe-west.firebasedatabase.app",
+		crSandboxProject + "-default-rtdb.europe-west1-.firebasedatabase.app",
+		crSandboxProject + "-default-rtdb.-europe-west1.firebasedatabase.app",
 		"localhost",
 		"127.0.0.1",
 		"fugaroo-default-rtdb.firebaseio.com",
@@ -358,6 +378,39 @@ func TestCredsRulesSandboxPins(t *testing.T) {
 	} {
 		if crSandboxSigner(email) {
 			t.Errorf("crSandboxSigner(%q) = true, want a refusal: only the sandbox project's accounts may sign tokens this database honours", email)
+		}
+	}
+}
+
+// TestCredsRulesSandboxHostAgreesWithTheFirebaseOutputCheck pins the sandbox
+// constants to the repository's own rule for what a project's database is
+// (review finding N4): crSandboxDBHost, crSandboxProject and
+// crSandboxSignerDomain are hand-written strings, and a hand-written string
+// asserted only against itself would stay green if it stopped being a host and
+// a project the rest of Fugaro produces (internal/infra derives the same
+// address as `<project>-default-rtdb.firebaseio.com` and the same signer as
+// fugaro-token-signer@<project>.iam.gserviceaccount.com). The check's own
+// constants are handed to that function here, so a project ID that is not one,
+// or a host that is not that project's database, is caught where the constant
+// is changed — before the check is ever run with the owner's credential.
+func TestCredsRulesSandboxHostAgreesWithTheFirebaseOutputCheck(t *testing.T) {
+	outs := infra.FirebaseOutputs{
+		FirebaseProject: crSandboxProject,
+		TokenSigner:     infra.SignerAccountID + "@" + crSandboxSignerDomain,
+		RTDBURL:         "https://" + crSandboxDBHost,
+	}
+	if err := infra.CheckFirebaseOutputsFor(outs, crSandboxProject, false); err != nil {
+		t.Errorf("the check's sandbox constants are not the sandbox's own Firebase outputs: %v: crSandboxProject, crSandboxDBHost and crSandboxSignerDomain have to be the project, the database and the signer the rest of Fugaro derives (internal/infra.CheckFirebaseOutputsFor)", err)
+	}
+	// And the same function refuses what the pin must refuse, so the assertion
+	// above cannot be satisfied by a check that accepts anything: another
+	// project's database, and this project's database behind another host.
+	for _, bad := range []infra.FirebaseOutputs{
+		{RTDBURL: "https://belong-default-rtdb.firebaseio.com", FirebaseProject: crSandboxProject, TokenSigner: outs.TokenSigner},
+		{RTDBURL: "https://" + crSandboxProject + "-default-rtdb.evil.firebaseio.com", FirebaseProject: crSandboxProject, TokenSigner: outs.TokenSigner},
+	} {
+		if err := infra.CheckFirebaseOutputsFor(bad, crSandboxProject, false); err == nil {
+			t.Errorf("internal/infra accepted %s as the sandbox's database: this test's own pin would not mean anything", bad.RTDBURL)
 		}
 	}
 }
@@ -705,6 +758,53 @@ func crCovered(path string, written []string) bool {
 // crIsUnder reports whether path is a descendant of parent.
 func crIsUnder(path, parent string) bool {
 	return strings.HasPrefix(path, parent+"/")
+}
+
+// TestCredsRulesReadsEveryNodeUnderCreds is the reads' pin (review finding
+// N1). crCredsReads is the list the live check walks to prove a run's identity
+// reads nothing under /creds, and the live check only *counts* refusals: a
+// list shrunk to a single path would still be refused, the count would still
+// match its own length, and every test would stay green while the grant to
+// read the marks, the leases, the sticky credential or the round-robin counter
+// went untested. The pin is here, where the count cannot hide it: the list is
+// exactly every node the service writes under /creds (crCredsPaths().all())
+// plus the two parents a reader of the plan would name.
+func TestCredsRulesReadsEveryNodeUnderCreds(t *testing.T) {
+	n := crNewNames(time.Now(), budget.Day(time.Now()))
+	cp := crCredsPaths(n)
+	reads := crCredsReads(n)
+
+	want := map[string]string{
+		"creds":       "the parent a reader of the plan would name",
+		"creds/marks": "the marks parent a reader of the plan would name",
+		cp.mark1:      "a mark the seed writes",
+		cp.mark2:      "the second mark the seed writes",
+		cp.mark3:      "a mark the run itself writes (C1.9)",
+		cp.lease:      "a lease",
+		cp.current:    "this run's sticky credential",
+		cp.roundrobin: "the round-robin counter",
+	}
+
+	seen := map[string]int{}
+	for _, p := range reads {
+		seen[p]++
+		if p != "creds" && !strings.HasPrefix(p, "creds/") {
+			t.Errorf("crCredsReads names /%s, which is not under /creds: the denial is proven under /creds, not elsewhere", p)
+		}
+	}
+	for path, name := range want {
+		if seen[path] == 0 {
+			t.Errorf("crCredsReads does not read /%s (%s): a run's identity that could read it would go untested", path, name)
+		}
+	}
+	for path, times := range seen {
+		if times > 1 {
+			t.Errorf("crCredsReads names /%s %d times: a duplicated read would make the count the live check compares meaningless", path, times)
+		}
+	}
+	if len(reads) != len(want) {
+		t.Errorf("crCredsReads names %d paths, want %d: the list is exactly every node under /creds the service writes and the two parents", len(reads), len(want))
+	}
 }
 
 // TestCredsRulesCleanupDeletesOnlyTheChecksOwnNodes is the destructive half of

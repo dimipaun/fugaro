@@ -718,6 +718,15 @@ func leaseDB(n int) (*fakeDB, Run) {
 func TestTheLeaseReadSweepsTheDeadNodesItFinds(t *testing.T) {
 	const gone = DefaultLeaseResidue + 6
 	db, live := leaseDB(gone)
+	// The runs are placed, not only leased: a run holds a placement node of its
+	// own (PathCurrent), and what the sweep does to it is part of what this read
+	// promises — it deletes the dead LEASE, and a run's placement is not its to
+	// delete. Review finding: the sweep's placement was asserted with Current on
+	// a run the fixture never placed, so the assertion could not fail whatever
+	// the code did.
+	for _, id := range []string{"gone-0", "gone-5", "gone-6", "live"} {
+		db.put(PathCurrent(Run{Slug: "acme", ID: id}), a1.Name)
+	}
 	st := &RTDBStore{DB: db}
 	// The fixture holds leases and no placements, so the oldest lapsed run is
 	// placed here first: the sweep deletes leases, not placements (a lapsed
@@ -739,6 +748,20 @@ func TestTheLeaseReadSweepsTheDeadNodesItFinds(t *testing.T) {
 	}
 	if want := gone - DefaultLeaseResidue; db.deletes != want {
 		t.Fatalf("the sweep deleted %d nodes; want %d — the lapsed ones above the residue of %d", db.deletes, want, DefaultLeaseResidue)
+	}
+	// And the runs are still placed where they were, the ones it took a lease
+	// from and the one it left alike: the sweep deletes a dead LEASE and not the
+	// placement beside it. A lapsed lease is not a finished run — a run between
+	// two selections holds one, and the lease it refreshed is the only thing the
+	// sweep re-checks — so a sweep that took the placement too would move a
+	// working run off the credential it is on. A run's placement is removed
+	// where the run ends and not on this read path (the plan's own C1.9 note
+	// N4: `creds/current/*` is not swept at all).
+	for _, id := range []string{"gone-0", "gone-5", "gone-6"} {
+		r := Run{Slug: "acme", ID: id}
+		if name, found, err := st.Current(ctx, r); err != nil || !found || name != a1.Name {
+			t.Fatalf("the run %+v is on %q, found=%v, %v; want the placement %q left where it was: the sweep deletes dead leases and not placements", r, name, found, err, a1.Name)
+		}
 	}
 	// The oldest went, the newest lapsed stayed, and the live hold was never a
 	// candidate. The swept run's placement is still there: the sweep's subtree
@@ -804,6 +827,143 @@ func TestTheLeaseReadSweepsTheDeadNodesItFinds(t *testing.T) {
 	}
 	if busy.deletes != 0 {
 		t.Fatalf("the sweep deleted %d live holds", busy.deletes)
+	}
+}
+
+// The sweep's prune is BOUNDED, and the bound is what keeps the read path from
+// turning into a delete of the whole subtree the first time a project comes back
+// from a long quiet spell: a read deletes the oldest DefaultLeasePrune lapsed
+// nodes — never more, whatever the residue above DefaultLeaseResidue is — and
+// the next read takes the next ones. Each one lands under the ETag it re-read,
+// so a read that deletes eight costs eight conditional writes and not one big
+// one.
+//
+// Review finding N3: every existing case had DefaultLeaseResidue+6 lapsed nodes
+// at most, which is a prune of six — the clamp at DefaultLeasePrune was never
+// reached, so removing it, or pruning all of the lapsed nodes, went unnoticed.
+func TestTheLeaseSweepPrunesAtMostItsBound(t *testing.T) {
+	const gone = DefaultLeaseResidue + 20
+	db, live := leaseDB(gone)
+	st := &RTDBStore{DB: db}
+
+	if _, err := st.Leases(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if db.deletes != DefaultLeasePrune {
+		t.Fatalf("a read over %d lapsed leases pruned %d nodes; want the bound of %d", gone, db.deletes, DefaultLeasePrune)
+	}
+	// The oldest went, and the one just past the bound stayed: the prune is the
+	// oldest DefaultLeasePrune of the lapsed nodes and not an arbitrary eight.
+	for i := 0; i < DefaultLeasePrune; i++ {
+		r := Run{Slug: "acme", ID: "gone-" + strconv.Itoa(i)}
+		if _, ok := db.nodes[PathLease(r)]; ok {
+			t.Fatalf("the sweep left %+v: it prunes the oldest lapsed leases first", r)
+		}
+	}
+	if _, ok := db.nodes[PathLease(Run{Slug: "acme", ID: "gone-" + strconv.Itoa(DefaultLeasePrune)})]; !ok {
+		t.Fatalf("the sweep pruned past its bound of %d", DefaultLeasePrune)
+	}
+	if _, ok := db.nodes[PathLease(live)]; !ok {
+		t.Fatal("the sweep deleted a live hold")
+	}
+
+	// The next read prunes the next oldest eight: the subtree converges instead
+	// of being emptied in one read, which is the property the bound is for.
+	before := db.deletes
+	if _, err := st.Leases(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if db.deletes-before != DefaultLeasePrune {
+		t.Fatalf("the second read pruned %d nodes; want the same bound of %d", db.deletes-before, DefaultLeasePrune)
+	}
+	if _, ok := db.nodes[PathLease(Run{Slug: "acme", ID: "gone-" + strconv.Itoa(DefaultLeasePrune)})]; ok {
+		t.Fatalf("the second read left gone-%d: the sweep is the oldest first, read after read", DefaultLeasePrune)
+	}
+
+	// And it stops at the residue rather than pruning to nothing: reads keep
+	// going until at most DefaultLeaseResidue lapsed nodes are left, and then
+	// the project pays no writes at all on the read path.
+	for i := 0; i < 20; i++ {
+		if _, err := st.Leases(ctx, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lapsed := 0
+	for p := range db.nodes {
+		if p == PathLease(live) {
+			continue
+		}
+		lapsed++
+	}
+	if lapsed > DefaultLeaseResidue {
+		t.Fatalf("%d lapsed leases were left after twenty reads; want at most the residue of %d", lapsed, DefaultLeaseResidue)
+	}
+	before = db.deletes
+	if _, err := st.Leases(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if db.deletes != before {
+		t.Fatalf("a read at the residue pruned %d more nodes; want none", db.deletes-before)
+	}
+
+	// BELOW the residue the sweep does nothing at all — and it gets there
+	// without indexing a slice, which is the reason the guard is the residue
+	// rather than "anything lapsed": the prune count is lapsed-minus-residue, so
+	// it is negative for a handful of dead nodes, and a sweep that entered the
+	// loop anyway would panic the read path — every selection in the project
+	// failing closed on a project that has simply been quiet.
+	few, _ := leaseDB(DefaultLeaseResidue - 1)
+	fewst := &RTDBStore{DB: few}
+	if _, err := fewst.Leases(ctx, now); err != nil {
+		t.Fatalf("a read over %d lapsed leases failed: %v", DefaultLeaseResidue-1, err)
+	}
+	if few.deletes != 0 {
+		t.Fatalf("a read over %d lapsed leases, below the residue of %d, pruned %d nodes; want none", DefaultLeaseResidue-1, DefaultLeaseResidue, few.deletes)
+	}
+}
+
+// One read deletes at most DefaultLeasePrune lapsed nodes, however many are past
+// the residue: the sweep runs on the READ path, and a project coming back after
+// a long quiet spell must not pay for its whole backlog of dead leases in one
+// selection. The bound is what keeps the read's cost flat; without it a read
+// with a ten-thousand-node backlog would issue ten thousand deletes. Review
+// finding N3: every other test stops at residue+6 lapsed, so the clamp never
+// fired.
+func TestTheLeaseSweepDeletesAtMostOneBoundPerRead(t *testing.T) {
+	const lapsed = DefaultLeaseResidue + DefaultLeasePrune + 5
+	db, live := leaseDB(lapsed)
+
+	if _, err := (&RTDBStore{DB: db}).Leases(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if db.deletes != DefaultLeasePrune {
+		t.Fatalf("the sweep deleted %d nodes; want the bound of %d, not all %d of the lapsed ones", db.deletes, DefaultLeasePrune, lapsed-DefaultLeaseResidue)
+	}
+	// What it did delete is the oldest, in the tie-broken order (the path breaks
+	// ties, so repeated sweeps converge): gone-0 through gone-(prune-1).
+	for i := 0; i < DefaultLeasePrune; i++ {
+		r := Run{Slug: "acme", ID: "gone-" + strconv.Itoa(i)}
+		if _, ok := db.nodes[PathLease(r)]; ok {
+			t.Fatalf("the sweep left %+v; it deletes the oldest lapsed leases first", r)
+		}
+	}
+	if _, ok := db.nodes[PathLease(Run{Slug: "acme", ID: "gone-" + strconv.Itoa(DefaultLeasePrune)})]; !ok {
+		t.Fatal("the sweep deleted a lapsed lease past its per-read bound")
+	}
+	if _, ok := db.nodes[PathLease(live)]; !ok {
+		t.Fatal("the sweep deleted a live hold")
+	}
+
+	// The next read takes the next batch, so the backlog drains a bound at a time
+	// rather than being abandoned at the residue: 77 lapsed, 8 swept, leaves 69 —
+	// still over the residue, so the next read sweeps the 5 above it.
+	before := db.deletes
+	if _, err := (&RTDBStore{DB: db}).Leases(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	want := lapsed - DefaultLeaseResidue - DefaultLeasePrune
+	if db.deletes-before != want {
+		t.Fatalf("the second sweep deleted %d nodes; want the %d the residue left over", db.deletes-before, want)
 	}
 }
 

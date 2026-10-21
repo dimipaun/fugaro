@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 )
 
@@ -491,6 +492,10 @@ func TestSwitchHeaderRoundTrip(t *testing.T) {
 		// strict-decode rule).
 		"a closing brace after the record":   `{"from":"acct-one","to":"anthropic-key","reason":"exhausted"}}`,
 		"a closing bracket after the record": `{"from":"acct-one","to":"anthropic-key","reason":"exhausted"}]`,
+		// A header present with no value is not "no switch": nothing here
+		// writes one, so it is a record this code cannot read (review nit). It
+		// must be refused rather than read as an absent header.
+		"a present but empty header": "",
 	}
 	for name, raw := range malformed {
 		t.Run(name, func(t *testing.T) {
@@ -785,5 +790,102 @@ func TestRequestFromHTTPTakesOneValuePerHeader(t *testing.T) {
 		if strings.Contains(err.Error(), leak) {
 			t.Errorf("err = %q carries the caller's %q", err, leak)
 		}
+	}
+}
+
+// The structured tried list is bounded on both sides of the wire (review
+// finding N2): the message field is clipped, but the list is what the runner
+// rebuilds a halt message from, and a body that carried more entries than this
+// contract allows is one this code would never write. The reader refuses it and
+// the writer refuses to write it rather than handing the runner an unbounded
+// sentence.
+func TestRefusalTriedListIsBoundedOnBothSides(t *testing.T) {
+	reset := time.Date(2026, 10, 20, 12, 30, 45, 0, time.UTC)
+	full := func(n int) []Tried {
+		out := make([]Tried, 0, n)
+		for i := 0; i < n; i++ {
+			out = append(out, Tried{Name: fmt.Sprintf("acct-%d", i), Tier: TierA, Reason: ReasonExhausted})
+		}
+		return out
+	}
+
+	// At the bound, a writer renders and a reader accepts.
+	atBound := ExhaustedUntil{ResetAt: reset, Tried: full(maxTriedEntries)}
+	_, _, body, err := atBound.Wire(reset)
+	if err != nil {
+		t.Fatalf("Wire refused a list of exactly %d entries: %v", maxTriedEntries, err)
+	}
+	if got, ok, err := ReadExhaustedUntil(StatusExhaustedUntil, body); err != nil || !ok || len(got.Tried) != maxTriedEntries {
+		t.Fatalf("ReadExhaustedUntil at the bound = (%d entries, %v, %v), want the list", len(got.Tried), ok, err)
+	}
+
+	// One over: the writer refuses to render it and the reader refuses to read
+	// it, so neither side can carry a list the other will not.
+	over := full(maxTriedEntries + 1)
+	if _, _, _, err := (ExhaustedUntil{ResetAt: reset, Tried: over}).Wire(reset); err == nil {
+		t.Fatalf("Wire rendered %d tried entries, one over the bound", len(over))
+	}
+	overBody, err := json.Marshal(WireError{Error: ErrorExhaustedUntil, ResetAt: reset.UnixMilli(), Tried: over})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ReadExhaustedUntil(StatusExhaustedUntil, overBody); err == nil {
+		t.Fatal("ReadExhaustedUntil accepted a body one tried entry over the bound")
+	}
+	// A general refusal is held to the same rule: the reader and the writer do
+	// not disagree about a body just because its error type is not the typed
+	// answer (review finding N3).
+	if _, err := ReadWireError(StatusUnavailable, overBody); err == nil {
+		t.Fatal("ReadWireError accepted a general refusal over the tried bound")
+	}
+	w := httptest.NewRecorder()
+	WriteWireError(w, StatusUnavailable, WireError{Error: ErrorStateUnavailable, Tried: over})
+	if w.Code != StatusUnavailable || !strings.Contains(w.Body.String(), ErrorStateUnavailable) {
+		t.Fatalf("WriteWireError wrote %d %q for an over-long list; want the state_unavailable fallback", w.Code, w.Body.String())
+	}
+	// The fallback body is one the reader can read.
+	if _, err := ReadWireError(w.Code, w.Body.Bytes()); err != nil {
+		t.Fatalf("the fallback body is not readable: %v", err)
+	}
+
+	// An invalid entry on a general refusal is refused too, where before only a
+	// general refusal's message was held to anything.
+	badBody, err := json.Marshal(WireError{Error: ErrorStateUnavailable, Tried: []Tried{{Name: "acct one", Tier: TierA, Reason: ReasonExhausted}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadWireError(StatusUnavailable, badBody); err == nil {
+		t.Fatal("ReadWireError accepted a general refusal with a tried name that is not one")
+	}
+	// And a valid general refusal still writes and reads as itself.
+	okBody, err := json.Marshal(WireError{Error: ErrorUnverifiedRunIdentity, Message: "no", Tried: full(1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadWireError(StatusUnverified, okBody); err != nil {
+		t.Fatalf("ReadWireError refused a well formed general refusal: %v", err)
+	}
+	w = httptest.NewRecorder()
+	WriteWireError(w, StatusUnverified, WireError{Error: ErrorUnverifiedRunIdentity, Message: "no", Tried: full(1)})
+	got, err := ReadWireError(w.Code, w.Body.Bytes())
+	if err != nil || got.Error != ErrorUnverifiedRunIdentity {
+		t.Fatalf("WriteWireError round trip = (%v, %v), want the refusal written as itself", got, err)
+	}
+}
+
+// The job-name length this contract enforces is internal/backend/gcp's, not a
+// second copy of the number (review nit): the longest name gcp.JobName can
+// produce is exactly maxJobNameBytes, and ValidJobName accepts it. A change to
+// either side of the copy breaks this test rather than silently drifting.
+func TestMaxJobNameBytesIsTheJobNameRuleGcpProduces(t *testing.T) {
+	longest := gcp.JobName(strings.Repeat("a", 200), strings.Repeat("b", 200))
+	if len(longest) != maxJobNameBytes {
+		t.Fatalf("the longest job name gcp.JobName produces is %q (%d bytes); want exactly maxJobNameBytes (%d)", longest, len(longest), maxJobNameBytes)
+	}
+	if !ValidJobName(longest) {
+		t.Errorf("ValidJobName(%q) = false, but gcp.JobName produces it", longest)
+	}
+	if ValidJobName(longest + "a") {
+		t.Errorf("ValidJobName accepted a name one byte over the limit gcp.JobName respects")
 	}
 }

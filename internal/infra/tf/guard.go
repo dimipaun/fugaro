@@ -120,6 +120,17 @@ func guardWith(p *Plan, advice string, admits admit) error {
 		// bounded field (safetext.Field) wherever it is printed, so neither
 		// can add a line, a control or a bidi override to this refusal. An
 		// ordinary address and action are unchanged by it.
+		//
+		// The bound is safetext.FieldMax, and for the ADDRESS of an entry the
+		// owner's delete list approves (tf.Approves) it is the one part of this
+		// loop that is not paste-exact: an address longer than that is printed
+		// cut, with Field's own marker, so the entry recorded from what the
+		// refusal showed names nothing the plan carries and the delete stays
+		// refused — the fail-closed direction, and the reason the identity half
+		// of the same line is printed uncut instead (identityText) while this
+		// half is not. A managed root is the owner's own root, so the depth of
+		// addresses in it is theirs to write; the limit is recorded in
+		// docs/design/managed-projects.md §6 item 5 beside the identity's own.
 		addr, said := safetext.Field(rc.Address), safetext.Field(strings.Join(acts, ", "))
 		if len(acts) == 0 {
 			refused = append(refused, addr+" (no actions)")
