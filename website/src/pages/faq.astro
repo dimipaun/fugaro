@@ -532,10 +532,20 @@ const sourceHref = (file: string): string => `${facts.repository}/blob/${branch}
   /* The answers: one card each, two to a row once there is room for two. The grid rather
      than a plain list is what makes the six read as one block of the page — they are six
      answers to six questions, and a reader scanning for their own question sees a set rather
-     than a document. */
+     than a document.
+
+     **The track's minimum yields to the column, and that is what the `min()` is for.** A bare
+     `minmax(20rem, 1fr)` asks for a 320 px track, and at the narrowest viewport the site is
+     read at (320 px) `main`'s own gutter leaves the column 288 px — so the track would be
+     wider than the column and the answer cards would run off the right of the page, with the
+     document scrolling sideways at the one width there is least room. `min(20rem, 100%)` asks
+     for the two-column shape wherever the column holds it and for the column itself where it
+     does not, which is the phone's single column. (The site's other `auto-fit` grids ask for
+     15rem and 16rem, both under the 288 px the narrowest column has; this page's cards want
+     the wider step, so the minimum is the one that has to give way.) */
   .questions {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
     gap: var(--space-md);
   }
 
