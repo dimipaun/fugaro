@@ -76,11 +76,11 @@ deliberately, with their tests, as the owner's ruling of 2026-10-18 requires.
 The owner accepted every recommendation of D180 to D192, as written in `reconciliation.md`:
 
 - **D180** the accent is the logo's hue, `#17A8E6`, as a fourth palette file; **D181** the warning colour moves to amber `#F5A524`.
-- **D182** the menu is three groups of three (Product, Reference, Project), a drawer on mobile — **amended on 2026-10-19 by the owner's brief (item 1): the three group labels ARE the menu on a phone, and the drawer and its one toggle are retired** (see "The 2026-10-19 brief" below). What D182 decided about the *groups* stands: three groups of three, Home as the wordmark, Privacy in the footer.
+- **D182** the menu is three groups of three (Product, Reference, Project), a drawer on mobile — **amended on 2026-10-19 by the owner's brief (item 1): the three group labels ARE the menu on a phone, and the drawer and its one toggle are retired** (see "The 2026-10-19 brief" below). What D182 decided about the *groups* stood until **2026-10-21, when the owner changed them: the Reference group comes out, Console moves under Product and the rest — Docs and Changelog — under Project, so the menu is two groups** (see "The 2026-10-21 feedback: the Reference group comes out of the menu" below; the Home item of the same day's earlier feedback stays, and Privacy stays in the footer).
 - **D183** the JavaScript is one first-party file, `website/public/scripts/site.js`; no inline script, no CSP edit.
 - **D184** the homepage animation shows the README's documented sequence, held to the file at build time, captioned as the documented sequence.
 - **D185** How It Works uses the brief's four steps, each captioned by a quoted line.
-- **D186** a build gate refuses the listed provenance phrases; **D188** the lead is at most 40 words on every page and the whole page at most 250 words (not Docs, Security, Changelog) — amended 2026-10-19: the privacy statement's own ceiling is derived from its own count, and every other page stays at 250 — amended 2026-10-21: the number is 500, the bold redesign's homepage being five blocks and 468 words (the reading below).
+- **D186** a build gate refuses the listed provenance phrases; **D188** the lead is at most 40 words on every page and the whole page at most 250 words (not Docs, Security, Changelog) — amended 2026-10-19: the privacy statement's own ceiling is derived from its own count, and every other page stays at 250 — amended 2026-10-21: the number is 500, the bold redesign's homepage being five blocks and 468 words (the reading below) — amended 2026-10-21 again: the number is **600**, the 2026-10-21 brief's slider being the sixth block on that page, 563 words with the three pictures' `alt` texts it leads with (the reading below).
 - **D187** the fold is checked by the word ceiling plus one owner-run live check (70b).
 - **D189** long-page summaries are rendered from files; **D190** the design lives in the owner's tool, the repository keeps `design.md`, screenshots are regenerated and never committed; **D191** the redesign goes first; **D192** the byte budgets are re-derived in the commit that ships the script.
 
@@ -639,14 +639,20 @@ the owner's draft of 2026-10-19, the reading at the foot of this file): the pane
 the slot `[data-slot="watch-screenshot"]`, and the panel reads heading, picture, command — the block that
 was empty until the asset existed is the picture the owner took. It was `AgentChat.astro`'s slot until
 that draft folded the chat into the slider's first panel and deleted the component, and the picture moved
-with the slot. The markup declares the capture's logical size (1459 x 441, the 2x file's own ratio) so the
-box is reserved before the file arrives, `loading="lazy"` because the picture is behind the third tab and
-nothing on the first screen waits on it, and the `alt` is the gist of `fugaro-watch.txt` — the
-transcription ships as the text a reader gets when the picture does not. `website/test/home.mjs` holds all
-four (in the slot, a non-empty `alt`, the declared dimensions, and no external URL) and holds the slot to
-its place in the panel, and `website/test/base-styles.mjs`'s `watchSlotFailures` holds the sizing that
-makes it scale — a width that is a percentage of the panel it sits in and a height that follows the file's
-own ratio, refused if either becomes a pixel count (the two planted cases). The rendered page was measured
+with the slot. **Since the 2026-10-21 brief the picture is the last slide of the slider the panel
+renders** (`website/data/home-screens.yaml`, `website/src/components/ScreenshotSlider.astro`; D251,
+D252): the slot is unchanged and still `HomeSlider.astro`'s, and what is in it is the site's one
+slider component, over four rows — the console page's own three captures and this one, last. The
+row declares the capture's logical size (1459 x 441, the 2x file's own ratio) so the box is
+reserved before the file arrives, the slide is `loading="lazy"` because it is the last of the four
+and the first slide is the only eager one, and the row's `alt` is the gist of `fugaro-watch.txt` —
+the transcription ships as the text a reader gets when the picture does not. `website/test/home.mjs`
+holds the row to the data file, the data file's row to the sizes recorded here, and the built page's
+slides to the rows in the order the file names them, so the capture is last; the slot's four
+pictures are sized by the slider's own rule (`.screen-image`: a width that is a percentage of the
+slide it sits in and a height that follows the file's ratio), and `website/test/base-styles.mjs`'s
+`watchSlotFailures` reads that rule off the built page through the class the slot's own `<img>`
+elements carry, refusing a fixed width or a fixed height wherever it stands (the planted cases). The rendered page was measured
 in a headless Chromium over the built site at 1280, 768 and 375 while the picture sat in the chat's block:
 `scrollWidth` was the viewport's width at all three (no horizontal scroll, the picture being the page's own
 and nothing else overflowing), and the picture laid out at 750 x 228, 722 x 220 and 329 x 101 px — the
@@ -677,7 +683,10 @@ goes stale the way the byte budgets did before D192.
   group closes its siblings, which is the one-menu-at-a-time behaviour the toggle used to
   provide by hand. **D182's group decision is untouched** — three groups of three, Home as
   the wordmark, Privacy in the footer — and what changed is only what a phone *does* with
-  them. `site.js` loses the branch it kept for the panel (`holds()` no longer looks for a
+  them. **Amended 2026-10-21: the groups themselves changed later that day — the Reference
+  group came out, so the menu is two groups** (the day's own feedback section below); what
+  this bullet records of the phone's menu stands, and its "three labels" are the two the menu
+  now draws. `site.js` loses the branch it kept for the panel (`holds()` no longer looks for a
   sibling), and with it the only reason the script had to know where the panel was.
 - **The wordmark's text leaves the header row below 390 px, and the mark stays (item 1).**
   The owner's ruling is "hide the wordmark TEXT below about 380px (keep the logo mark)", and
@@ -886,6 +895,28 @@ changes are cited as the feedback's own.
   `figure.hero-shot` the lead reading excludes whole, the way it already excludes the block the
   first `h2` belongs to. Both changes are read off the built page by `website/test/budget.mjs`,
   which is where the numbers above come from.
+- **D188's ceiling moves again, from 500 to 600, for the 2026-10-21 brief's slider.** The brief
+  (`docs/website/zoom-diagrams/spec.md`, Part 1 of its implementation plan) asks the homepage's
+  "See it" panel for a slider of four slides: the console's own three screenshots first, the
+  `fugaro watch` capture last (D251, D252). The three that lead it are the console page's
+  pictures, so they carry the console page's own `alt` texts — one picture has one account of
+  what it shows — and an image's `alt` is text a reader reads (`website/README.md`, "Words per
+  page"). The four slides are the whole of the move: the homepage's count goes 461 → **563**,
+  and the rule is the one above, applied again: the number is the smallest round ceiling above
+  the page that carries every block its briefs require, and 563's is **600**. Still a ceiling
+  rather than a target — the next page down is How It Works at 332 words — and the lead ceiling
+  is untouched: the slider's heading and its controls are not between the homepage's `h1` and
+  its first `h2`, so the lead stays 16 words. The number is read off the built page by
+  `website/test/budget.mjs`'s `wordsCeilingFailures`, which is where every figure here comes
+  from. The three byte figures are re-derived in the same commit, as the rounds in
+  `website/README.md`'s list re-derive theirs: the site figure moves 1,437,824 → **1,447,967**,
+  and **the heaviest page of the site is the homepage now** (563,219 bytes, the four pictures it
+  fetches), where every derivation before this one named the console page or the docs hub — so
+  the page-weight ceiling is derived from the homepage here. The review round of the same pull
+  request moved the script's bytes again (the guard that keeps the shared slider's count and dots
+  on the slide its track is showing while its panel is `display: none`, the two step controls read
+  through `own()`, and the gates that run the shared slider as the homepage renders it), and the
+  three figures are re-derived from that build rather than from the round before it.
 - **The byte figures are not re-derived, and that is the owner's ruling and not an omission.**
   The owner ruled on 2026-10-20 that the three figures `website/README.md` states are re-derived
   **only when the owner asks** — `website/test/budget.mjs` runs D192's exact derivation only with
@@ -1371,7 +1402,9 @@ later reader does not have to guess them from the markup.
   reads the built homepage fails naming the corner; with the fix in place it passes.
 - **Home is the menu's first item (item 2: "I think we need a 'Home' as the first menu").**
   D182 took Home out of the menu and left the wordmark as the one link to `/`; the item is back
-  as a plain `<li class="site-nav-home"><a href="/">Home</a></li>` in front of the three groups,
+  as a plain `<li class="site-nav-home"><a href="/">Home</a></li>` in front of the groups — three
+  of them that morning, **two since the later feedback of 2026-10-21 dropped the Reference
+  group** (the section at the end of this file) —
   in the same list, at every width — the "first menu" is the first item of the one menu the site
   has, and the phone shows that menu rather than a collapsed version of it (the 2026-10-19
   amendment). **The wordmark stays the way home it has always been**, so `/` is listed twice and
@@ -1559,6 +1592,74 @@ what it says — and the strip of tabs is the one part of it that is gone.
   feel of the six seconds, whether the motion is too fast or too slow — is the owner's check**
   (70a–70c, P9, D190), and the number to move first if it is wrong is `AUTO_MS` in
   `public/scripts/site.js`.
+
+## The 2026-10-21 feedback: the Reference group comes out of the menu
+
+The owner's feedback of **2026-10-21** (a message of its own, after items 1 to 3 above) is one
+reading of the live site's menu: "**Okay, let's drop the top reference menu. We'll move the
+submenu console under product, and the rest go under Project.**" As every round here, the
+readings the feedback does not spell out are recorded, so a later reader does not have to guess
+them from the markup. **D182's group decision is amended by it, and the amendment is dated
+rather than written over the decision**: the 2026-10-18 ruling, the 2026-10-19 brief and the
+2026-10-21 readings above stand as what was decided and read then.
+
+- **The menu is two groups, and `NAV_GROUPS` is the one place that says so.** The Reference
+  group — its `<li>`, its `<details>`, its `<summary>` and its list — is gone from
+  `website/src/layouts/Base.astro`, and the three links it held were **moved rather than
+  rewritten**: Console's item into *Product*'s list, after Caps and costs, and Docs's and
+  Changelog's into *Project*'s, Docs first and Changelog last — the order the feedback's own
+  sentence gives them. *Product* holds How it works, Getting started, Caps and costs and
+  Console (four), *Project* holds Docs, Security, FAQ, Community and Changelog (five), every
+  label and every route unchanged. The division is the feedback's rather than a symmetry:
+  *Product* is the four pages about running the thing the visitor came for, *Project* the five
+  about the project itself.
+- **What did not change.** The menu's first item is still **Home** (the same day's earlier
+  feedback), drawn in front of the groups and carrying the page's one `aria-current="page"`
+  where it is the page being read; Privacy is still a footer link and not a menu item; the
+  groups still share one `name`, so opening one closes the other *with two groups as much as
+  with three* — which is the whole of the exclusivity the browser provides, and the script
+  writes nothing to keep it; both levels are still `<details>`, so the menu still opens and
+  closes with JavaScript off; and the group's list is still the `<details>`'s own child.
+  **"Why GCP" is not added here**: a later part of this line of work adds a fourth *Product*
+  item, and this round adds none — the group counts above are what the menu draws today.
+- **The gates moved with it.** `website/test/base-styles.mjs`'s `navFailures` holds **two**
+  groups, names them (*Product* and *Project*) and holds the routes each group lists, rather
+  than counting to three — the count alone was all it held until the review of this round
+  found that a renamed group left every gate green — its fixture is
+  the real two-group shape the layout writes, and the refusal case that plants a fourth menu
+  item expects the four items the two-group menu plus one makes. `website/test/nav-hover.mjs`
+  reads the two lists the menu draws — its `.site-nav-group ul` count, its phone case's opening
+  sentence, and the case where a sibling closes a group under the reader's focus all follow —
+  and `website/test/checklist.mjs` and `internal/cli/docs_website_redesign_test.go` hold check
+  70a's names to the site as before (the check itself is corrected with this round: its labels
+  are two, and its "Products, Reference, Project" is "Product, Project").
+- **The phone row is one item narrower, and its cut is left where it was measured.** The
+  2026-10-21 round above moved the wordmark's breakpoint to **432 px (27 rem)** because the row
+  carried four items (Home and three labels); with the Reference group gone it carries three
+  again, about 45 px narrower. The cut and the phone block's two spacing rules are **left as
+  measured** rather than re-tightened against a row no browser has seen: the cost is the
+  wordmark's text leaving the row a width earlier than a three-item row would need, which is
+  the safe direction of the two, and whether the row fits is the owner's check 70a either way.
+  `base.css` and `website/test/base-styles.mjs` say so beside the rules.
+- **The bytes.** The move is uniform, because the menu is inlined into every page: **110 bytes
+  off each of the 11 pages' HTML** (the removed block's own elements and their attributes; the
+  three links themselves are moved, not rewritten), **8 bytes off the script** (the two
+  comments in it
+  that counted three groups — the second one found by the review of this round, which is why
+  the figure is eight and not six), so **118 off the page weight** and **1,218 off the site
+  figure**.
+  No file was added or removed (`dist/` stays 28 files and 11 pages) and no page's words move —
+  a menu label is chrome, and D188's ceilings count `main`. **The three budget figures are left
+  where they are**, per the owner's ruling of 2026-10-20 that they are re-derived when the owner
+  asks rather than on every round; `website/README.md`'s running list records this round's move
+  the same way.
+- **The measurement, and the check that is still the owner's.** Nothing here was rendered: no
+  browser was driven for this round and this run cannot see a picture. What was read is the built
+  artifact, the stylesheet, the script and the two hermetic menu gates, with `(cd website && npm
+  run check)` green. **Whether the two-group menu reads right — the labels' row at every width,
+  the two groups' lengths, whether four and five is the split the owner wants — is the owner's
+  check** (70a, P9, D190); `Base.astro`'s `NAV_GROUPS` is the one place a label would move.
+||||||| 15dd3f20
 
 ## The owner's 2026-10-21 feedback on the security page and How It Works: one picture at two layouts, and a bullet per fact
 

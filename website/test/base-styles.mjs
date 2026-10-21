@@ -121,8 +121,8 @@ function mediaBlocks(css) {
 // that each part of it is proved by the fixture below rather than only observed on today's
 // stylesheet. It states four things, and each of them is a defect rather than a preference:
 //
-//   - **the menu is three labels in the header's one row, at every width.** The owner's brief
-//     of 2026-10-19 (item 1) took the single "Menu" toggle away, so the three group labels are
+//   - **the menu is the group labels in the header's one row, at every width.** The owner's brief
+//     of 2026-10-19 (item 1) took the single "Menu" toggle away, so the group labels are
 //     the menu at 375 px as much as at 1280: `.site-nav-groups` is a row at every width, no
 //     rule for the drawer it replaced survives, and nothing hides a group's list — a closed
 //     `<details>` is the one thing that does that, and a stylesheet that hides a list too is a
@@ -136,12 +136,15 @@ function mediaBlocks(css) {
 //     wordmark and the labels is the phone's 8 px rather than the wide layout's 32 px. Those
 //     two are what the row measures against at 320 px, and neither is decoration: with the
 //     text drawn, or with the wide gap, the row is wider than the header's content box and
-//     the page gets a sideways scroll. **The row carries the Home link as well since the
+//     the page gets a sideways scroll. **The row carried the Home link as well when the
 //     owner's feedback of 2026-10-21 put it in the menu** — a fourth item, about 45 px at
 //     this size — so the breakpoint is the wider one that item needs (the text leaves the row
-//     from about 432 px down, where the three-item row left it from 390 px down) and the row's
-//     own spacing below it is where the fourth item is paid for: the phone block takes the
-//     8 px between the wordmark and the menu to 4 and the items' own 4 px gap to none. Out of
+//     from about 432 px down, where the table's three-item row left it from 390 px down) and
+//     the row's own spacing below it is where the Home item is paid for: the phone block takes
+//     the 8 px between the wordmark and the menu to 4 and the items' own 4 px gap to none.
+//     **The same feedback then dropped the Reference group**, so the row carries three items
+//     again and the cut is left at the wider one it was measured at rather than re-tightened:
+//     it is the safe direction, and re-measuring the row is the owner's live check 70a's. Out of
 //     the row is not out of the page, though: the mark
 //     beside the text is decoration with an empty `alt`, so the text is the home link's only
 //     name and no `.site-wordmark-name` rule — in the phone block **or in the base rule above
@@ -163,7 +166,7 @@ export function navLayoutFailures(css, rel = '') {
   // The row, and the labels in it.
   if (!/\.site-header\{[^}]*flex-wrap:nowrap/.test(css)) fail('the header wraps, so the menu can become a second row')
   if (!/\.site-header\{[^}]*position:relative/.test(css)) fail("the header is not the box a phone's drawer is positioned against")
-  if (!/\.site-nav-groups\{[^}]*display:flex/.test(css)) fail("the three group labels are not laid out in the header's row")
+  if (!/\.site-nav-groups\{[^}]*display:flex/.test(css)) fail("the group labels are not laid out in the header's row")
   if (!/\.site-nav-group ul\{[^}]*position:absolute/.test(css)) {
     fail("a group's list is in the header's flow, so opening one grows the header's row and pushes the page down")
   }
@@ -206,17 +209,19 @@ export function navLayoutFailures(css, rel = '') {
   if (hidden && !/position:absolute/.test(hidden)) {
     fail("the wordmark's text is taken out of the row without being taken out of the flow, so the row is still as wide as the word")
   }
-  // And the row's own spacing below the breakpoint, which is where the fourth item — the Home
-  // link the owner's feedback of 2026-10-21 put in the menu — is paid for on the narrowest
-  // phones. A phone block that leaves the base gap between the wordmark and the menu, and the
-  // items' own 4 px, standing is the three-item row's spacing with a fourth item in it: 16 px
-  // wider than the row the three-item measurement left room for.
+  // And the row's own spacing below the breakpoint, which is where the Home item the owner's
+  // feedback of 2026-10-21 put in the menu was paid for on the narrowest phones. The row
+  // carries three items again since that day's later feedback dropped the Reference group, so
+  // the two rules are headroom rather than the whole of the payment — kept, because the cut
+  // beside them is still the wider one measured with the item in the row, and a phone block
+  // that leaves the base gap between the wordmark and the menu, and the items' own 4 px,
+  // standing is a row the measurement never saw.
   const phoneRule = (selector) => phone.map((block) => new RegExp(`\\${selector}\\{([^}]*)\\}`).exec(block.body)).find(Boolean)?.[1]
   if (phone.length && phoneRule('.site-header') === undefined) {
-    fail("the phone block leaves the header's row at the gap it has above the breakpoint, where the row carries four items (Home, since the owner's feedback of 2026-10-21) and a 320 px phone's content box has none to spare")
+    fail("the phone block leaves the header's row at the gap it has above the breakpoint, where the cut the row was measured at (27 rem, with the Home item the owner's feedback of 2026-10-21 put in it) leaves a 320 px phone's content box none to spare")
   }
   if (phone.length && phoneRule('.site-nav-groups') === undefined) {
-    fail("the phone block leaves the menu's items 4 px apart, where the row carries four of them and a 320 px phone's content box has none to spare")
+    fail("the phone block leaves the menu's items 4 px apart, and the row's cut is the wider one measured with the Home item in it, where a 320 px phone's content box has none to spare")
   }
   // **Every** `.site-wordmark-name` rule, not only the phone block's: the base rule is the one
   // that is in force at 1280 px, so a `display:none` there takes the name away at every width
@@ -269,7 +274,7 @@ export function navLayoutFailures(css, rel = '') {
   // are load-bearing, and the second is the one that is easy to get wrong: `.site-nav a` sets the
   // whole `padding` shorthand on every link in the menu, and `.site-nav-home > a` is one class
   // and one type, the same specificity, so the last rule read wins. A `padding-inline` written
-  // into the wide block *above* the base rule — which is where the three labels' own wide
+  // into the wide block *above* the base rule — which is where the labels' own wide
   // padding lives — is read first and then overwritten by that shorthand, and the link keeps its
   // phone padding at every width while the labels beside it open to 8 px. That is exactly what
   // this rule did until the review of 2026-10-21 caught it, and nothing held either declaration.
@@ -301,7 +306,7 @@ export function navLayoutFailures(css, rel = '') {
     const mine = inlinePadding(home.body)
     const label = labelAt(isWide)
     if (mine !== label) {
-      fail(`the menu's Home link is drawn with an inline padding of ${JSON.stringify(mine)} ${where} where the three labels beside it in the header's row get ${JSON.stringify(label)}: the row is measured as one row of four items at one spacing, and a link that disagrees with the labels it shares it with is the fourth item at a width nobody measured`)
+      fail(`the menu's Home link is drawn with an inline padding of ${JSON.stringify(mine)} ${where} where the labels beside it in the header's row get ${JSON.stringify(label)}: the row is measured as one row at one spacing, and a link that disagrees with the labels it shares it with is an item drawn at a width nobody measured`)
     }
   }
   const homeBase = homeRules.find((one) => !one.wide)
@@ -373,7 +378,7 @@ test('the layout rule passes on the built stylesheet, so each refusal below is t
 
 test('every layout refusal fires on the defect it names', () => {
   const cases = [
-    // The row, and the three labels in it.
+    // The row, and the labels in it.
     [
       'a header that can wrap',
       plant('flex-wrap:nowrap;display:flex;position:relative}', 'display:flex;position:relative}'),
@@ -385,7 +390,7 @@ test('every layout refusal fires on the defect it names', () => {
       /not the box a phone's drawer/,
     ],
     [
-      "the three labels stacked instead of in the header's row",
+      "the labels stacked instead of in the header's row",
       plant('.site-nav-groups{gap:var(--space-3xs);display:flex}', '.site-nav-groups{gap:var(--space-3xs)}'),
       /not laid out in the header's row/,
     ],
@@ -430,10 +435,10 @@ test('every layout refusal fires on the defect it names', () => {
       TODAY().replaceAll('(width<=27rem)', '(width<=99rem)'),
       /no phone breakpoint/,
     ],
-    // The fourth item the owner's feedback of 2026-10-21 put in the row (Home) is paid for out
-    // of the row's own spacing below the breakpoint, so both halves of that are held: the rule
-    // that takes the gap between the wordmark and the menu to the phone's 4 px, and the one
-    // that takes the items' own 4 px gap to none.
+    // The Home item the owner's feedback of 2026-10-21 put in the row was paid for out of the
+    // row's own spacing below the breakpoint, so both halves of that are held: the rule that
+    // takes the gap between the wordmark and the menu to the phone's 4 px, and the one that
+    // takes the items' own 4 px gap to none. Both stay with the wider cut.
     [
       "the row's spacing left at the gap the breakpoint found",
       plant('.site-header{gap:var(--space-3xs)}', ''),
@@ -1926,12 +1931,14 @@ test('the rhythm reading refuses a block whose rule cannot reach it', () => {
  *   - **nothing draws a box around an empty slot.** `:empty { display: none }` is what takes
  *     it out of the page while it holds nothing, and any rule that gives the slot itself a
  *     height, a padding, a border, a background or a margin is the blank rectangle coming
- *     back. Rules about what is *inside* the slot (`> img`) are the other half and are let
- *     through;
- *   - **the image that lands in it is sized already.** A rule for the slot's own `img` is here,
- *     so the later task's change is one `<img>` line in the markup and no CSS that nobody has
- *     looked at;
- *   - **and the image that landed is sized so it scales.** The screenshot is a 1459 x 441
+ *     back. Rules about what is *inside* the slot (a `>` in the selector) are the other half
+ *     and are let through;
+ *   - **the pictures that land in it are sized already.** The slot renders the site's shared
+ *     slider — the same `ScreenshotSlider.astro` the console page's slider is, since
+ *     2026-10-21 — and the rule that sizes a slide's picture is that component's own. This
+ *     reader finds it by the class the slot's own `<img>` elements carry in the built page,
+ *     so the slot's four pictures are held to the same reading whichever component draws them;
+ *   - **and the picture that landed is sized so it scales.** The screenshot is a 1459 x 441
  *     logical capture of a terminal, and the owner's brief for putting it on the page asks for
  *     the page at 1280, 768 and 375 px: a fixed width is the picture running past a phone's
  *     edge — the column is 327 px at 375 — and a fixed height is the same picture squashed into
@@ -1964,15 +1971,30 @@ export function watchSlotFailures(css, html) {
       )
     }
   }
-  const sizes = own.filter((rule) => /(^|[^\w-])img(?![\w-])/.test(rule.selector))
-  if (sizes.length === 0) {
+  // The pictures the slot renders, read from the markup rather than written here: since the
+  // slot became the shared slider it holds a `<img>` per slide, and the rule that sizes them is
+  // the slider's own (`ScreenshotSlider.astro`), which every slide of both pages' sliders
+  // shares. The classes are read from the built page, so a reading that named one would not
+  // follow the component if it renamed its own.
+  const pictures = [...walk(slot)].filter((el) => el.name === 'img')
+  const classes = [
+    ...new Set(pictures.flatMap((el) => (el.attrs.get('class') ?? '').split(/\s+/).filter(Boolean))),
+  ]
+  const sizes = allRules(css).filter((rule) =>
+    classes.some((name) => new RegExp(`\\.${name}(?![\\w-])`).test(rule.selector)),
+  )
+  if (pictures.length === 0 || sizes.length === 0) {
     out.push(
-      "no rule sizes the image that goes into the watch screenshot's slot (`.watch-shot > img`): the image is a separate task's to add, and the rule that draws it belongs beside the slot so that adding it is one line of markup (review round 3, item 3b)",
+      `no rule sizes the pictures the watch screenshot's slot renders (${
+        pictures.length === 0
+          ? 'the slot holds no image at all'
+          : `the slot's images carry ${classes.map((name) => `\`${name}\``).join(', ')} and no rule names ${classes.length === 1 ? 'it' : 'them'}`
+      }): the slot renders the site's shared slider, whose own rule is what sizes a slide's picture, and a picture nothing sizes is a picture laid out at its file's own pixels (review round 3, item 3b)`,
     )
     return out
   }
-  // The width the picture is laid out at, as the widest declaration any rule of the slot's own
-  // makes about it: a percentage of the column is one that tracks the column at every viewport.
+  // The width the picture is laid out at, as the widest declaration any of those rules makes
+  // about it: a percentage of the column is one that tracks the column at every viewport.
   const percents = sizes.flatMap((rule) => {
     const declared = declarations(rule)
     return ['width', 'max-width']
@@ -1987,7 +2009,7 @@ export function watchSlotFailures(css, html) {
       }, and the picture is a 1459 px-wide capture of a terminal: at 375 px the column it sits in is 327 px, so a width that is not a percentage of that column is the screenshot running past the phone's edge, which is the horizontal scroll the owner's brief for this asset asks the page not to have (owner spec 2026-10-18, item 5)`,
     )
   }
-  // And no rule of the slot's own gives the picture a fixed length at all — the check above
+  // And none of the slider's own rules gives the picture a fixed length at all — the check above
   // reads the declarations there are, and this one reads the ones a breakpoint could add: a
   // `width` in pixels inside a media query overrides the percentage above at exactly the
   // viewports that query answers, which is where the overflow would live.
@@ -2025,34 +2047,35 @@ test('the watch slot reserves no space until the image lands, and the image scal
   const css = pageCss(home)
   assert.deepEqual(watchSlotFailures(css, home), [], 'the watch slot as it ships breaks one of the rules the cases below are about')
 
-  // The slot's two rules, each planted: the rule that takes an empty slot out of the page, and
-  // the rule that sizes the image in it.
+  // The slot's own rule and the slider's rule that sizes the pictures in it, each planted: the
+  // one that takes an empty slot out of the page, and the one the slot's `<img>` elements are
+  // laid out by.
   const nothingPainted = css.replace(
     /\.watch-shot\[data-astro-cid-[a-z0-9]+\]:empty\{display:none\}/,
     '.watch-shot[data-astro-cid-6fbtmsuw]:empty{display:block}',
   )
   assert.notEqual(nothingPainted, css, "this fixture turns the slot's `:empty` rule into one that still draws it, and the built stylesheet no longer carries that rule")
-  const noImageRule = css.replace(/\.watch-shot\[data-astro-cid-[a-z0-9]+\]>img[^{]*\{[^}]*\}/, '')
-  assert.notEqual(noImageRule, css, "this fixture removes the rule that sizes the image in the slot, and the built stylesheet no longer carries one")
+  const noImageRule = css.replace(/\.screen-image\[data-astro-cid-[a-z0-9]+\]\{[^}]*\}/, '')
+  assert.notEqual(noImageRule, css, "this fixture removes the rule that sizes the pictures in the slot, and the built stylesheet no longer carries one")
   // And the picture's own sizing, each planted the way the defect reads on the page: a width
   // in pixels is the screenshot wider than the phone's column, and a height in pixels is the
   // same screenshot squashed into a box that is not its shape.
-  const fixedWidth = css.replace(/(\.watch-shot\[data-astro-cid-[a-z0-9]+\]>img\[[^\]]*\]\{)width:100%/, '$1width:1459px')
-  const fixedHeight = css.replace(/(\.watch-shot\[data-astro-cid-[a-z0-9]+\]>img\[[^\]]*\]\{width:100%;)height:auto/, '$1height:441px')
+  const fixedWidth = css.replace(/(\.screen-image\[data-astro-cid-[a-z0-9]+\]\{[^}]*?)width:100%/, '$1width:1459px')
+  const fixedHeight = css.replace(/(\.screen-image\[data-astro-cid-[a-z0-9]+\]\{[^}]*?)height:auto/, '$1height:441px')
   assert.notEqual(fixedWidth, css, "this fixture fixes the watch screenshot's width in pixels, and the built stylesheet no longer sizes it with a percentage")
   assert.notEqual(fixedHeight, css, "this fixture fixes the watch screenshot's height in pixels, and the built stylesheet no longer lets it follow the file's ratio")
   // The same defect one breakpoint down: the base rule still tracks the column, and a media
   // query answers a phone with a fixed width instead — the shape a "just for small screens"
   // override takes, and the one a check that read only the declarations in front of it would
   // miss.
-  const imgSelector = /(\.watch-shot\[data-astro-cid-[a-z0-9]+\]>img\[[^\]]*\])/.exec(css)?.[1]
-  assert.ok(imgSelector, "this fixture needs the rule that sizes the image in the watch slot, and the built stylesheet no longer carries one to read its selector from")
+  const imgSelector = /(\.screen-image\[data-astro-cid-[a-z0-9]+\])/.exec(css)?.[1]
+  assert.ok(imgSelector, "this fixture needs the rule that sizes the pictures in the watch slot, and the built stylesheet no longer carries one to read its selector from")
   const phoneWidth = `${css}\n@media (max-width:40rem){${imgSelector}{width:900px}}`
   const cases = [
     ['the slot left in the page while it is empty', nothingPainted, /takes the watch screenshot's slot out of the page/],
     ['the screenshot fixed in width inside a breakpoint', phoneWidth, /a length in units is a box the picture does not grow out of/],
     ['a box drawn around the empty slot', `${css}\n.watch-shot{min-height:140px}`, /gives the watch screenshot's slot a `min-height/],
-    ['the image rule removed with the slot still empty', noImageRule, /no rule sizes the image that goes into the watch screenshot's slot/],
+    ['the rule that sizes the slot\'s pictures removed', noImageRule, /no rule sizes the pictures the watch screenshot's slot renders/],
     ['the screenshot given a fixed width', fixedWidth, /the picture is a 1459 px-wide capture of a terminal/],
     ['the screenshot given a fixed height', fixedHeight, /the picture's height has to follow the file's own ratio/],
   ]
@@ -2666,11 +2689,13 @@ test('every command-block refusal fires on the defect it names', () => {
 // route being read, which since the owner's feedback of 2026-10-21 is the menu's own Home link
 // on the home page and never the wordmark, which links the same route and carries no mark of
 // its own), and once for the owner's brief of 2026-10-19 (item 1), which took the single
-// "Menu" toggle away: the three group labels are the menu, nothing stands in front of them,
+// "Menu" toggle away: the group labels are the menu, nothing stands in front of them,
 // and a group's list of links is the `<details>`'s own child, because a closed `<details>` is
 // the one thing that hides it. **The feedback of 2026-10-21 (item 2) put Home in front of the
-// three groups** — "I think we need a 'Home' as the first menu" — so the menu's list opens
-// with a link to `/` named `Home`, on every viewport, and the three groups follow it.
+// groups** — "I think we need a 'Home' as the first menu" — so the menu's list opens
+// with a link to `/` named `Home`, on every viewport, and the groups follow it. **And the same
+// day's feedback dropped the Reference group** — Console under *Product*, Docs and Changelog
+// under *Project* — so the menu is two groups, and the rule below says so.
 //
 // The wordmark's text is checked here too, beside the menu it has to share a row with: the
 // phone breakpoint takes `.site-wordmark-name` out of that row, so a wordmark whose text is
@@ -2702,12 +2727,12 @@ export function navFailures(html, rel) {
   const nav = navs[0]
   if (!(nav.attrs.get('aria-label') ?? '').trim()) fail('the section nav has an empty label: a screen reader lists landmarks by name')
 
-  // The drawer the menu replaced. A toggle standing in front of the three labels is the thing
+  // The drawer the menu replaced. A toggle standing in front of the labels is the thing
   // the owner's brief of 2026-10-19 took away, and its markup coming back — in any of the three
   // parts it was made of — is a control between the reader and a section they can already see.
   for (const gone of ['site-nav-drawer', 'site-nav-toggle', 'site-nav-panel']) {
     if (all.some((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes(gone))) {
-      fail(`the page still carries a .${gone}: the menu is the three group labels in the header's row, with no toggle in front of them`)
+      fail(`the page still carries a .${gone}: the menu is the group labels in the header's row, with no toggle in front of them`)
     }
   }
   // And nothing names a region outside the nav any more: the one `aria-controls` the menu had
@@ -2721,7 +2746,7 @@ export function navFailures(html, rel) {
     }
   }
 
-  // The menu itself: the way home and then the three groups, as a list directly in the nav.
+  // The menu itself: the way home and then the groups, as a list directly in the nav.
   // Nothing between the nav and the items is what there is to say about a narrow viewport — the
   // items are the menu.
   //
@@ -2745,19 +2770,46 @@ export function navFailures(html, rel) {
     const name = textOf(homeLink).trim()
     if (name !== 'Home') fail(`the menu's first item is named ${JSON.stringify(name)}, and the owner's feedback of 2026-10-21 names it "Home"`)
     if (home.children.some((child) => child.name === 'ul' || child.name === 'details')) {
-      fail('the menu\'s Home item holds a list or a disclosure: home is one page, and the item in front of the three groups is a link')
+      fail('the menu\'s Home item holds a list or a disclosure: home is one page, and the item in front of the groups is a link')
     }
   }
   const groups = [...walk(nav)].filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-nav-group'))
   if (items.length !== groups.length + 1) {
     fail(`the menu's list carries ${items.length} item(s): the Home link and then one item per group, which is ${groups.length + 1} for the ${groups.length} group(s) the menu draws — an item that is neither Home nor a group is a section the menu does not have (D182; the owner's feedback of 2026-10-21)`)
   }
-  if (groups.length !== 3) fail(`the menu carries ${groups.length} groups: the nav is three groups of three (D182)`)
+  // Two groups, not three: D182 wrote three, and the owner's feedback of 2026-10-21 dropped the
+  // Reference group — Console under Product, Docs and Changelog under Project.
+  if (groups.length !== 2) fail(`the menu carries ${groups.length} groups: the nav is two groups (Product and Project) since the owner's feedback of 2026-10-21 dropped the Reference group (D182)`)
+  // The count is not the contract on its own: the two groups are **named**, and each lists the
+  // routes the owner's feedback of 2026-10-21 leaves it with. A rename in `NAV_GROUPS`
+  // (Project → Company) keeps the count at two and would leave every gate green while D182's
+  // amendment, the fixture below and check 70a's steps all tell the reader to look for
+  // "Product" and "Project" — so the names and the routes are held here, with the count.
+  const GROUPS_WANTED = [
+    ['Product', ['/how-it-works/', '/getting-started/', '/caps-and-costs/', '/console/']],
+    ['Project', ['/docs/', '/security/', '/faq/', '/community/', '/changelog/']],
+  ]
+  groups.forEach((group, at) => {
+    const wanted = GROUPS_WANTED[at]
+    if (wanted === undefined) return
+    const [label, routes] = wanted
+    const details = group.children.find((el) => el.name === 'details')
+    const summary = details && details.children.find((el) => el.name === 'summary')
+    const list = details && details.children.find((el) => el.name === 'ul')
+    const drawn = summary ? textOf(summary).trim() : ''
+    if (drawn !== label) {
+      fail(`the menu's group ${at + 1} is labelled ${JSON.stringify(drawn)}, and the two groups are ${JSON.stringify(GROUPS_WANTED.map(([want]) => want))}: the owner's feedback of 2026-10-21 names them (Console under Product, the rest under Project — D182)`)
+    }
+    const hrefs = list ? [...walk(list)].filter((el) => el.name === 'a').map((el) => el.attrs.get('href') ?? '') : []
+    if (hrefs.join(' ') !== routes.join(' ')) {
+      fail(`the *${label}* group lists ${JSON.stringify(hrefs)}, and the owner's feedback of 2026-10-21 leaves it ${JSON.stringify(routes)} (D182)`)
+    }
+  })
   // One `name` across the groups makes them an exclusive set, without script: opening one
   // dropdown closes the one already open, so two never hang over each other on a wide row.
   const names = new Set(groups.flatMap((group) => group.children.filter((el) => el.name === 'details').map((el) => el.attrs.get('name') ?? '')))
   if (groups.length > 0 && (names.size !== 1 || names.has(''))) {
-    fail(`the menu's groups carry the names ${JSON.stringify([...names])}: they share one non-empty name, so opening one dropdown closes the other two`)
+    fail(`the menu's groups carry the names ${JSON.stringify([...names])}: they share one non-empty name, so opening one dropdown closes the other`)
   }
   for (const group of groups) {
     for (const item of group.children.filter((child) => child.name !== undefined)) {
@@ -2775,7 +2827,7 @@ export function navFailures(html, rel) {
       if (!list) {
         fail("a group's list of links is not inside its own <details>, so the group is drawn open wherever it appears: a closed <details> is the one thing that hides a list")
       } else if (![...walk(list)].some((el) => el.name === 'a')) {
-        fail('a group has no links: the nav is three groups of three (D182)')
+        fail("a group has no links: each of the nav's two groups (Product, Project) lists the sections it holds")
       }
     }
   }
@@ -2821,12 +2873,12 @@ test('the section nav is a labelled landmark of keyboard-reachable links, with t
 
 // ---- the refusals, kept ------------------------------------------------------------------
 
-// The three groups, as the layout writes them, so a fixture is the real shape and not a
-// smaller one the rule happens to accept.
+// The two groups, as the layout writes them (the owner's feedback of 2026-10-21 dropped the
+// Reference group: Console under *Product*, Docs and Changelog under *Project*), so a fixture
+// is the real shape and not a smaller one the rule happens to accept.
 const FIXTURE_GROUPS = [
-  ['Product', [['/how-it-works/', 'How it works'], ['/getting-started/', 'Getting started'], ['/caps-and-costs/', 'Caps and costs']]],
-  ['Reference', [['/docs/', 'Docs'], ['/console/', 'Console'], ['/changelog/', 'Changelog']]],
-  ['Project', [['/security/', 'Security'], ['/faq/', 'FAQ'], ['/community/', 'Community']]],
+  ['Product', [['/how-it-works/', 'How it works'], ['/getting-started/', 'Getting started'], ['/caps-and-costs/', 'Caps and costs'], ['/console/', 'Console']]],
+  ['Project', [['/docs/', 'Docs'], ['/security/', 'Security'], ['/faq/', 'FAQ'], ['/community/', 'Community'], ['/changelog/', 'Changelog']]],
 ]
 
 // The wordmark, as the layout writes it: the logo is decoration beside the name, and the name
@@ -2899,9 +2951,17 @@ test('every menu refusal fires on the defect it names', () => {
       /holds a list or a disclosure/,
     ],
     [
-      'a fourth item that is neither Home nor a group',
+      'an item that is neither Home nor a group',
       fixturePage({ nav: fixtureNav().replace('</ul></nav>', '<li class="site-nav-extra"><a href="/privacy/">Privacy</a></li></ul></nav>') }),
-      /the menu's list carries 5 item\(s\)/,
+      /the menu's list carries 4 item\(s\)/,
+    ],
+    // The two groups are named and hold the owner's feedback's links, so a rename and a route
+    // that leaves its group are each refused even though the count is still two.
+    ['a group renamed', fixturePage({ nav: fixtureNav().replace('<summary>Project</summary>', '<summary>Company</summary>') }), /group 2 is labelled "Company"/],
+    [
+      'a route dropped out of its group',
+      fixturePage({ nav: fixtureNav().replace('<li><a href="/changelog/">Changelog</a></li>', '') }),
+      /the \*Project\* group lists/,
     ],
     ['a group with no summary', fixturePage({ nav: fixtureNav().replace('<summary>Product</summary>', '') }), /no <summary> with words on it/],
     ['groups that are not one exclusive set', fixturePage({ nav: fixtureNav().replace('<details name="site-nav-group"><summary>Product', '<details><summary>Product') }), /share one non-empty name/],
