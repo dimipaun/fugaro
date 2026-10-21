@@ -664,13 +664,24 @@ read to answer it).
 
 Every count below is stated with the command that produces it, because a count
 without its command is a figure a later reader cannot re-derive. All commands are
-run from the repository root against the working tree of this folder's own commit,
-which differs from the base `1d325928` by this folder's four documents and its pin
-test and nothing else — so one row is the folder's own: the 48 pins are the 47
-that already exist plus `internal/cli/docs_rigor_modes_test.go`, and they are
-files rather than folders — 13 of them pin one of `docs/`'s folders and the rest
-pin a standalone document, which is why the row above counts the pins and not the
-folders they sit beside.
+run from the repository root against the working tree — and the guard,
+`internal/cli/docs_rigor_modes_test.go`, re-runs every one of them there, so a
+figure that has drifted from its command is a failing test rather than a stale
+number. At this folder's own commit, `e5211a8a` (#773) — whose own diff is this
+folder's four documents and its pin test and nothing else — one row is then the
+folder's own: the pins were **48**, the 47 the base `1d325928` (§1) already held
+plus this folder's `internal/cli/docs_rigor_modes_test.go`, and they are files
+rather than folders, 13 of them pinning one of `docs/`'s folders and the rest a
+standalone document, which is why the row above counts the pins and not the
+folders they sit beside. **The figure is 52 today, because four folders have
+written a pin since**: `internal/cli/docs_gcp_setup_test.go` (#764, the WSL
+route's Windows forms), `internal/cli/docs_setup_wizard_checks_test.go` (#771, the
+register's Check 27), `internal/cli/docs_live_init_census_test.go` (#772, the
+setup wizard's rename census) and `internal/cli/docs_windows_console_test.go`
+(#774, the Console on Windows, whose folder did not exist at `1d325928`). The four
+are named because the figure is a running total of other folders' guards: a folder
+that writes one moves this row in its own commit, and a reader who finds the row
+stale has found a merge that did not.
 
 | Construct | Count | Command |
 | --- | --- | --- |
@@ -686,7 +697,7 @@ folders they sit beside.
 | Files in `internal/runner` that mention `Severity` at all | 3 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
 | Image-skew `Since` constants | 11 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 48 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 52 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 3 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -ci repo` |
@@ -732,10 +743,11 @@ amendment's own claim about itself: it changes documents and nothing else. A lat
 slice that writes its own pin moves the pin-count row above in the same commit
 (the plan's T4.3 is the first that will).
 
-The **48** is the convention this folder follows: there is no registry test over
+The **52** is the convention this folder follows: there is no registry test over
 `docs/`, so a folder that wants its documents pinned writes its own file, and
-this folder's is `internal/cli/docs_rigor_modes_test.go` — the forty-eighth, and
-the one row in this table that the folder's own commit moves.
+this folder's is `internal/cli/docs_rigor_modes_test.go` — the forty-eighth when
+this folder's own commit wrote it, and one of the four pins the row has counted
+since. It is the row in this table that this folder's own commit moved.
 
 ## 5. Decisions for the owner
 
