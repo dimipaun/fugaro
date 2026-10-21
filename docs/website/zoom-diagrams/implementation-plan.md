@@ -39,7 +39,7 @@ before a single animation exists.
 3. **The word ceilings hold on every build.** Lead ≤ **40** words, page ≤ **949** words
    (`website/README.md:854-876`), measured by `website/test/budget.mjs`'s `wordFailures`.
 4. **Motion is gated or neutralised, and the neutraliser is universal**
-   (`website/src/layouts/Base.astro:236-246`; `website/test/a11y.mjs:568-608`). ZU1 is the
+   (`website/src/layouts/Base.astro:236-246`; `website/test/a11y.mjs:592-608`). ZU1 is the
    open question about what that rule does to a scroll timeline, and Part 5 begins with it.
 5. **No-JS is not a fallback, it is the base case.** The markup renders everything; the script
    reveals controls it emitted `hidden` (`website/src/components/ScreenshotSlider.astro:162-168`).

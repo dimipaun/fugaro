@@ -66,18 +66,19 @@ cannot view one, so the brief's visual asks are stated as constraints and left t
 `agent.review_rounds` (`internal/runner/plan.go:29` `planOf`), whose default is **2**
 (`internal/config/defaults.go:37` `DefaultReviewRounds = 2`; range 1–10,
 `internal/config/validate.go:124`). It is the final *stage*, and each round is a review
-followed by a `fix` (`runner.go:1780`). "One final review" is false at the default settings.
+followed by a `fix` (`runner.go:1781`). "One final review" is false at the default settings.
 
 It also does not wait for the cheap loop to pass. The cheap loop's verdict decides nothing:
 `runner.go:1738-1752` runs the first-line loop and then `seniorLoop` regardless, and
-`runner.go:1821-1828` reads readiness from the senior verdict alone.
+`runner.go:1821-1828` says so outright — the first-line verdict "never decides readiness: it
+is recorded with its tier, and the senior review that follows is told nothing of it".
 
 ### ZF2 — **Wrong** — "cheap coder ↔ cheap reviewer"
 
 The cheap loop's review is a review by **the coder's own model**. `internal/config/config.go:208`
 `StageRole` maps `review_first` to `RoleCoder`; only `review` is `RoleReviewer`
-(`config.go:226` `ModelFor`). `docs/recipes.md:34` says the same in words: the `first_line`
-step is "a review by the coder's model". There is no separate cheap reviewer identity to
+(`config.go:226` `ModelFor`). `docs/recipes.md:39` says the same in words: the `first_line`
+step "is a review by the coder's model in a fresh session". There is no separate cheap reviewer identity to
 draw as a second actor unless the brief means two *rounds*, which it does not.
 
 ### ZF3 — **Wrong** — "draft PR, flipped to ready only on senior pass"
@@ -106,7 +107,9 @@ not of a job.
 Bounces are `review_rounds − 1` (`docs/recipes.md:131`), so the default is exactly one — but
 only for recipes that declare `bounce: first_line` on the review step
 (`internal/recipe/recipe.go:96` `Step.Bounce`), which `standard` and `test-and-fix` do and
-`default` does not. The last senior round never bounces (`runner.go:1774`). "Then fail" is
+`default` does not. The last senior round never bounces: the loop returns before reaching the
+bounce (`runner.go:1774` returns on `round == st.Rounds`; the bounce is `runner.go:1784`).
+"Then fail" is
 right in kind: the run ends not-ready with a draft outcome (`runner.go:2386-2395`), not an
 infrastructure error.
 
@@ -125,7 +128,7 @@ job (`deploy/terraform/gcp/modules/installation/history.tf:70`).
 Everything in ZF1–ZF5 is selected by `recipes:` and `agent:` keys, not fixed by the runner.
 `docs/recipes.md` lists eight shipped recipes; `internal/recipe/recipe.go:44-46` gives three
 modes (`implement`, `review`, `artifact`), and `mode: review` never changes a pull request's
-draft state at all (`docs/recipes.md:42`). A diagram whose *caption* is a sequence is a
+draft state at all (`docs/recipes.md:44`). A diagram whose *caption* is a sequence is a
 diagram that is wrong for six of the eight recipes. The four levels may show the shape; the
 page must say which recipe it is drawing.
 
@@ -307,7 +310,8 @@ The phone's read grant is exactly four families — `config/caps`, `config/kill`
 its own mailbox — and it **denies** `agents/**`: `mobile/src/feed/paths.js:44`
 `DENIED_FAMILIES = Object.freeze(['agents', 'outcomes', 'runs', 'fugaro'])`. The heartbeat
 advertises a list but the app surfaces only a **count**, and `mobile/src/jobs/heartbeat.js:84-86`
-says the agent list "is deliberately not carried". The "agent roster" the brief names is the
+says the agent count "is deliberately **not** carried" because "no field of the list's table
+names an agent". The "agent roster" the brief names is the
 Realtime Database's `/agents/<slug>/<run>` registry (`internal/budget/model.go:74-77`), which
 the *console* and `fugaro watch` read — the phone does not.
 
@@ -328,7 +332,7 @@ Specified (`docs/mobile/functional-spec-v0.1.md:66-72,110`), decisions D163 and 
 2026-10-17 (`docs/mobile/functional-spec-reconciliation.md:160,169`), phase 6 "APPROVED
 2026-10-18 … and each still waits on the D160–D172 rows its line names"
 (`docs/mobile/implementation-plan.md:46-49`). What exists is **account** switching across
-installations (D114, `mobile/README.md:44`).
+installations (D114, `mobile/README.md:474`).
 
 ### ZF26 — **Exists, in half** — status and spend are built; the roster is not
 
@@ -429,7 +433,7 @@ gates, all of which exist to keep "nothing phones home" (Check 69b) true.
    GDPR and legal basis do not appear on it.
 3. **A Firebase function or Firestore write.** Cost: ZF34's three changes **and** it puts the
    site's own request into the same project the product uses, which is the thing D91
-   deliberately separated (the site has its own Firebase project, `docs/website/README.md:17-21`).
+   deliberately separated (the site has its own Firebase project, `docs/website/README.md:22`).
 4. **No waitlist.** The page carries the badge and the "coming soon" copy and no signup. Cost:
    the brief's "optional" is declined, and the owner collects interest through the repository,
    which is already the site's only contact route.
@@ -467,7 +471,7 @@ asks (D192 and the owner's ruling of 2026-10-20, `docs/website/redesign/README.m
 }
 ```
 
-`website/test/a11y.mjs:568-608` (`motionFailures`) requires every `animation`, `transition`
+`website/test/a11y.mjs:592-608` (`motionFailures`) requires every `animation`, `transition`
 and `scroll-behavior: smooth` a page declares to be gated on `no-preference` **or**
 neutralised by a matching `reduce` rule, and the universal rule satisfies it — which means a
 CSS scroll-driven animation **passes the gate**. Whether it also *behaves* is a different
