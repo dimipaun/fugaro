@@ -2,6 +2,7 @@ package cli
 
 import (
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"slices"
@@ -376,13 +377,23 @@ func TestDocsRigorModesFindingsDecisionsAndItemsAreNumbered(t *testing.T) {
 // every row, and running that command reproduces the count the row states. A
 // count without its command is a figure a later reader cannot re-derive, and a
 // command that no longer produces its figure is worse than no command at all:
-// it is a claim that looks checked. The other 47 rows this repository's folders
-// assert in prose; this one is the only place the figure can be re-derived by
-// the test itself, so it is re-derived.
+// it is a claim that looks checked. The pins this repository's other folders ship
+// assert what they hold in prose; this census is the one table whose figures the
+// guard re-derives by running the command beside each row.
 //
 // The commands are POSIX shell on purpose — `sed`, `grep`, `ls`, `wc` and
 // `git grep` — because that is what a reader copies out of the table, so the
 // guard runs them the way a reader would, from the repository root.
+//
+// The rows that read the repository (`git grep`) are re-derived only where that
+// root is a checkout's own top level. A tree copy — the shape
+// TestStagedLinuxFilesSurviveTheCopyIn runs this package's Docs family in — has
+// every file the census counts and no `.git` at all, so a repository-reading
+// command there answers "not a git repository" and would report a figure as
+// broken that is only un-reproducible in that tree. Those rows are counted and
+// logged instead, the rows that read the tree are still re-derived everywhere,
+// and a run that re-derived none of them is an error, so the skip cannot become
+// the whole test.
 func TestDocsRigorModesCensusStatesItsCommands(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the census's commands are POSIX shell: sed, grep, ls, wc and git grep")
@@ -392,6 +403,11 @@ func TestDocsRigorModesCensusStatesItsCommands(t *testing.T) {
 		t.Skip("bash is not on PATH")
 	}
 	recon := readDoc(t, rigorModesRecon)
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inCheckout := rigorModesIsCheckout(sh, root)
 
 	i := strings.Index(recon, rigorModesCensusHeading)
 	if i < 0 {
@@ -401,7 +417,7 @@ func TestDocsRigorModesCensusStatesItsCommands(t *testing.T) {
 	if j := strings.Index(body, "\n## 5."); j >= 0 {
 		body = body[:j]
 	}
-	rows, commands, checked := 0, 0, 0
+	rows, commands, checked, repoRows := 0, 0, 0, 0
 	for _, line := range strings.Split(body, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "|") {
@@ -436,8 +452,16 @@ func TestDocsRigorModesCensusStatesItsCommands(t *testing.T) {
 			t.Errorf("%s: census row %q carries no command inside its code span", rigorModesRecon, line)
 			continue
 		}
+		// A row that reads the repository rather than the tree is re-derived only
+		// where there is a repository to read: `git grep` in a tree copy has no
+		// index and answers "not a git repository", which is a fact about the tree
+		// the guard is running in and not about the figure the row states.
+		if !inCheckout && strings.HasPrefix(cmd, "git ") {
+			repoRows++
+			continue
+		}
 		c := exec.Command(sh, "-c", cmd)
-		c.Dir = "../.." // the census states its commands run from the repository root
+		c.Dir = root // the census states its commands run from the repository root
 		out, err := c.Output()
 		// `grep` and `git grep` exit 1 when they match nothing, which is what a
 		// row stating 0 legitimately does; the figure is the output, so only a
@@ -459,9 +483,34 @@ func TestDocsRigorModesCensusStatesItsCommands(t *testing.T) {
 	if commands != rows {
 		t.Errorf("%s: %d of %d census rows carry a command, want all of them", rigorModesRecon, commands, rows)
 	}
+	if repoRows > 0 {
+		t.Logf("%s is not a checkout's own top level: %d of the census's %d rows read the repository and were not re-derived here, and %d that read the tree were",
+			root, repoRows, rows, checked)
+	}
 	if checked == 0 {
 		t.Errorf("%s: no census command was run: the figures are the point", rigorModesRecon)
 	}
+}
+
+// rigorModesIsCheckout reports whether root is the top level of a checkout, which
+// is the one state a census row that reads the repository can be re-derived in:
+// `git grep` answers from the repository the working directory sits in, so a root
+// inside some *other* checkout would have those rows counting that checkout's
+// files rather than the tree this document is read in. The census states its
+// commands run "from the repository root", and this is what says the root is one.
+func rigorModesIsCheckout(sh, root string) bool {
+	c := exec.Command(sh, "-c", "git rev-parse --show-toplevel")
+	c.Dir = root
+	out, err := c.Output()
+	if err != nil {
+		return false
+	}
+	top, err := filepath.EvalSymlinks(strings.TrimSpace(string(out)))
+	if err != nil {
+		return false
+	}
+	here, err := filepath.EvalSymlinks(root)
+	return err == nil && top == here
 }
 
 // rigorModesCommand is the shell command inside a census row's code span, with
