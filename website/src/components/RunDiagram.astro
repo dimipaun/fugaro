@@ -670,12 +670,20 @@ const ALT =
   }
 
   /* The facts the picture does not carry: the board's panel list — the panel, the hairline and
-     the larger radius, with a hairline between two rows and none under the last. */
+     the larger radius, with a hairline between two rows and none under the last.
+
+     **Every item carries a bullet** (the owner's feedback of 2026-10-21: "can we have a bullet
+     point for each of the items?"). The board draws a mark of its own per row and this page
+     draws none, so the five facts read as one run-on paragraph; the marker is the list's own
+     and the row's typography is the board's, unchanged. It is drawn outside the item's content
+     box at the room the row's own `padding-left` (`--space-lg`, 32 px) leaves, so the bullet
+     sits inside the row rather than at the panel's edge, and its colour is the quieter tone
+     `base.css` gives every marker on the site. */
   .run-also {
     max-width: none;
     margin: 0;
     padding: 0;
-    list-style: none;
+    list-style: disc;
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-xl);
     background: var(--panel);
