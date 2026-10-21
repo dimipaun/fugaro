@@ -79,6 +79,11 @@ const repository = loadSite().facts.repository
       landmark (a banner is a `header` of the body, and `website/test/a11y.mjs` counts the
       page-level ones), so it is a box and nothing more. */}
   <header class="changelog-head">
+    {/* The boards' background: the grid and the two soft glows behind the top of a page,
+        drawn by `base.css`'s `.hero-glow` — the class the home page's hero opens with, used
+        here rather than a second drawing of the same thing. It is decoration and says so
+        (`aria-hidden`), and it paints no text. */}
+    <div class="hero-glow" aria-hidden="true"></div>
     <h1 class="changelog-title display-xl">
       <span class="gradient-text">Changelog</span>
     </h1>
@@ -87,15 +92,22 @@ const repository = loadSite().facts.repository
 </Base>
 
 <style>
-  /* The page's head, in the page's own stylesheet: the headline and the room under it. The
-     room above it is `main`'s own padding, which every page of the site gets, and the gutter
-     is `main`'s too — this block adds only the step between the headline and the first card,
-     and it is a step of the spacing scale rather than a number. */
+  /* The page's head, in the page's own stylesheet: the headline, the room under it and the
+     boards' background behind it. The room above it is `main`'s own padding, which every page
+     of the site gets, and the gutter is `main`'s too — this block adds only the step between
+     the headline and the first card, and it is a step of the spacing scale rather than a
+     number. `position: relative` and `overflow: hidden` are what the glow layer needs
+     (`base.css`, section 2c). */
   .changelog-head {
+    position: relative;
+    overflow: hidden;
     padding-block: var(--space-lg) var(--space-2xl);
   }
 
+  /* The headline paints above the glow: a positioned box paints after a static one, and the
+     glow is the head's first child (the hero's copy is positioned for the same reason). */
   .changelog-title {
+    position: relative;
     margin: 0;
     /* The headline is one word, and the display scale's balance (`text-wrap: balance`) has
        nothing to balance: it is set on one line at every width it fits, which the clamp in

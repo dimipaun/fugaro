@@ -2,7 +2,7 @@
 //
 // The page is a rendering of `docs/releases/vX.Y.Z.md` and of `website/data/release-summaries.yaml`,
 // and of nothing else, so the source of truth of every assertion below is **those two files** —
-// read here, never the generator's own output and never a git tag (D100, finding 44). Six
+// read here, never the generator's own output and never a git tag (D100, finding 44). Seven
 // things are checked:
 //
 //   1. **The page's release set equals the directory's, in both directions.** A release
@@ -34,7 +34,12 @@
 //      in it — the display scale's headline with its word in the accent's gradient, one card
 //      per release spaced by a step of the spacing scale, and the hierarchy inside a card —
 //      and each one plants the defect it is about, because a look nothing refuses is a look
-//      that drifts back with the next edit.
+//      that drifts back with the next edit. **So does the place that look opens in**: the
+//      fourth look case holds the page's head to the boards' background — the grid and the two
+//      soft glows `base.css` draws once (`.hero-glow`, which the home page's hero opens with),
+//      which this page opens with rather than with a drawing of its own — to that layer being
+//      behind the headline rather than over it, and to the layer being decoration, so the
+//      background of the page's own name is not read out to somebody using a screen reader.
 //
 // **How it builds, and why the copy's plugin version is lowered.** A page is observable only
 // as HTML, so this file builds the site — in a **copy of the repository in a temp directory**,
@@ -893,4 +898,38 @@ test('an entry is read in one hierarchy: the tag, the summary, then the notes', 
     /color:\s*var\(--warn\)/,
     `the not-yet-released marker is not in the warning tone (${status}): the tone that means "pay attention" is the one a line saying "not yet" is read in`,
   )
+})
+
+test('the page’s head carries the boards’ background, and the headline paints above it', () => {
+  const html = builtPage()
+  const css = pageCSS(html)
+
+  // The boards draw a grid and two soft glows behind the top of a page, and `base.css` writes
+  // that drawing once (`.hero-glow`) for the pages that open with it. This page opens with it
+  // rather than with a drawing of its own, and it is decoration: `aria-hidden`, and no text.
+  const glow = /<div\b[^>]*\bclass="[^"]*\bhero-glow\b[^"]*"[^>]*>/.exec(html)
+  assert.ok(
+    glow,
+    'the page’s head carries no background: the bold look opens a page with the boards’ grid and glows (`base.css`’s `.hero-glow`, which the home page’s hero opens with)',
+  )
+  assert.match(
+    glow[0],
+    /\baria-hidden="true"/,
+    `the page’s background is not marked as decoration (${glow[0]}): it is a drawing that says nothing, and a reader given it is given a picture of a grid`,
+  )
+  const head = /<header\b[^>]*\bclass="[^"]*\bchangelog-head\b[^"]*"[^>]*>([\s\S]*?)<\/header>/.exec(html)
+  assert.ok(head, 'the page carries no head element')
+  assert.ok(
+    head[1].indexOf('hero-glow') < head[1].indexOf('<h1'),
+    'the background is not the head’s first child: the layer is behind the headline, and a layer written after it is a drawing over the page’s own name',
+  )
+
+  // The two rules the layer needs, and the one the headline needs to paint above it: a
+  // positioned box paints after a static one, so a headline left static would be drawn under
+  // the glow rather than over it.
+  const headRule = declarationsFor(css, 'the page’s head', '.changelog-head[')
+  assert.match(headRule, /position:\s*relative/, `the page’s head is not a positioned box (${headRule}): the background is absolutely positioned inside it, and a glow positioned against the page is a glow across the page`)
+  assert.match(headRule, /overflow:\s*hidden/, `the page’s head does not clip its background (${headRule}): the drawing is wider than the box it belongs to`)
+  const titleRule = declarationsFor(css, 'the page’s headline', '.changelog-title[')
+  assert.match(titleRule, /position:\s*relative/, `the page’s headline is not a positioned box (${titleRule}): the background paints over a static box, so the headline would be drawn under the glow it sits on`)
 })
