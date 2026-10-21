@@ -75,12 +75,15 @@ test('a module missing any of the four methods is refused outright', () => {
 
 test('the two stores differ in exactly the way the two modules claim', async () => {
   const settings = asyncStoragePort(fakeAsyncStorage());
+  // iOS, because the port asks which platform it is: the accessibility constant
+  // it reads here is the Keychain's, and the Keychain is iOS's
+  // (`expo-secure-store.js`'s header has the Android half of that).
   const keychain = expoSecureStorePort({
     WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'THIS_DEVICE_ONLY',
     async getItemAsync() { return null; },
     async setItemAsync() {},
     async deleteItemAsync() {},
-  });
+  }, { platform: 'ios' });
   // The settings store enumerates, so a list of accounts is a read ...
   assert.equal(typeof settings.keys, 'function');
   // ... and the Keychain does not, which is why D111's item names are a fixed
