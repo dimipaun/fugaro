@@ -65,15 +65,22 @@ func readRepoFile(t *testing.T, path string) string {
 // instructions.
 func TestLiveChecksAreOneScriptTheOwnerRuns(t *testing.T) {
 	doc := readDoc(t, liveChecksDoc)
+	// What each section must say about whether the check has been run. Check 91
+	// has not been run, and says so. Check 90 HAS — the owner ran it on
+	// 2026-10-21 at head `77ff754f`, tier A viable — and its section carries
+	// that run: the register's own words for it, and the facts as the owner
+	// reported them. So the pin is the STATEMENT, not one spelling of it: a
+	// section must say which of the two it is, and "**NOT RUN.**" is what a
+	// section says when that is true.
 	for _, c := range []struct {
-		heading, run, block, appendix, steps, path string
+		heading, run, block, appendix, steps, path, status string
 	}{
-		{check90Heading, check90RunLine, "CHECK 90 RESULT", check90Appendix, "Check 90 step 1", check90Steps},
-		{check91Heading, check91RunLine, "CHECK 91 RESULT", check91Appendix, "Check 91 step 1", check91Steps},
+		{check90Heading, check90RunLine, "CHECK 90 RESULT", check90Appendix, "Check 90 step 1", check90Steps, "**RUN 2026-10-21, exit 0 — TIER A IS VIABLE.**"},
+		{check91Heading, check91RunLine, "CHECK 91 RESULT", check91Appendix, "Check 91 step 1", check91Steps, "**NOT RUN.**"},
 	} {
 		sec := registerSection(t, doc, c.heading)
 		for _, want := range []string{
-			"**NOT RUN.**",
+			c.status,
 			c.run,
 			c.block,
 			c.appendix,
