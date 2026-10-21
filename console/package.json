@@ -83,6 +83,17 @@
       "synopsis": "A desktop console for fugaro: live run monitoring and spending graphs.",
       "description": "A desktop application for watching fugaro runs: live run monitoring and spending graphs. It is strictly read-only, and the fugaro CLI is its data plane -- it has no backend, no service account and no credential of its own.",
       "maintainer": "Fugaro Console <dimipaun@users.noreply.github.com>"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Fugaro.Console-${version}-win-${arch}.${ext}"
     }
   },
   "devDependencies": {

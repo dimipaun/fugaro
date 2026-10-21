@@ -100,6 +100,7 @@ const build = manifest.build as {
   readonly electronDownload?: { readonly checksums?: Record<string, string> }
   readonly mac?: Record<string, unknown>
   readonly linux?: Record<string, unknown>
+  readonly win?: Record<string, unknown>
 }
 
 /** flips is the configuration's value per fuse, keyed by the enum, with the
@@ -651,6 +652,7 @@ describe('the packaging configuration the fuses belong to', () => {
         'npmRebuild',
         'productName',
         'publish',
+        'win',
       ].toSorted(),
     )
     for (const widening of ['asarUnpack', 'extraResources', 'extraFiles', 'mas', 'dmg', 'electronDist']) {
@@ -745,6 +747,57 @@ describe('the packaging configuration the fuses belong to', () => {
     // `build/icon.png` exists and is the 1024px source electron-builder turns
     // into the icons it installs; `icon.test.ts` reads it.
     expect(existsSync(join(CONSOLE_DIR, 'build', 'icon.png'))).toBe(true)
+  })
+
+  it('has exactly the win keys this task decided, and names its target rather than inheriting it', () => {
+    // NSIS is **named** rather than left to the default. electron-builder's
+    // default Windows target is NSIS today, and a default is a decision nobody
+    // wrote down: this build's Windows artifact is an installer, it is the one
+    // the release-time job asserts came out (exactly one `*.exe`), and the next
+    // task's README paragraph describes it by that name.
+    //
+    // The architecture is pinned the same way Linux's is -- inside the target
+    // entry, `{ target, arch }` -- and not as a separate key: electron-builder's
+    // schema for `win` carries no `arch` (it is `additionalProperties: false`,
+    // and the per-platform arch lives in `TargetConfiguration`), so
+    // `win.arch` would be a configuration the packer rejects. x64 only,
+    // matching the Linux leg and the single win32-x64 archive the checksum test
+    // pins above.
+    expect(Object.keys(build.win ?? {}).toSorted()).toEqual(['artifactName', 'target'].toSorted())
+    const windows = (build.win ?? {}) as Record<string, unknown>
+    expect(windows['target']).toEqual([{ target: 'nsis', arch: ['x64'] }])
+    // The name follows the Linux pattern, so the three legs are one shape a
+    // reader can compare: `${arch}` is electron-builder's own substitution, so
+    // a build that quietly produced another architecture would produce another
+    // name rather than a mislabelled file.
+    expect(windows['artifactName']).toBe('Fugaro.Console-${version}-win-${arch}.${ext}')
+    expect(windows['artifactName']).not.toMatch(/\s/)
+    // None of the ways to widen the bundle on this platform either, for the
+    // same reason the Linux block refuses them -- these would add files to the
+    // package, or replace the very rules the fuses depend on, from inside the
+    // platform block, where the top-level allow-list does not reach.
+    for (const widening of ['asar', 'asarUnpack', 'extraResources', 'extraFiles', 'files', 'electronDist']) {
+      expect(build.win, `build.win.${widening} must be absent`).not.toHaveProperty(widening)
+    }
+  })
+
+  it('configures no signature for Windows either: there is no Authenticode identity, and this task buys none', () => {
+    // The plan's Part B makes the Windows pack *possible*; it does not make it
+    // signed. There is no certificate, no `forceCodeSigning` that would turn
+    // its absence into a build failure, and no signing hook -- so the installer
+    // this produces is unsigned until the owner decides otherwise, and the
+    // release text says so.
+    const windows = (build.win ?? {}) as Record<string, unknown>
+    for (const signing of [
+      'cscLink',
+      'cscKeyPassword',
+      'signtoolOptions',
+      'azureSignOptions',
+      'forceCodeSigning',
+      'signAndEditExecutable',
+    ]) {
+      expect(windows, `build.win.${signing} must be absent`).not.toHaveProperty(signing)
+    }
   })
 
   it('configures no signature for Linux: the owner ruled it unsigned, and signing is the owner’s', () => {
