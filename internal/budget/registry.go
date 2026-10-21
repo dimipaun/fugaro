@@ -213,6 +213,59 @@ func (s *Session) checkNewKeys(ctx context.Context) {
 	s.log.Warn("budget: the dashboard rules predate 0.7.0, so the last action and token count are not shown; run fugaro init --firebase <firebase-project-id> to update them")
 }
 
+// checkCascadeKeys is checkNewKeys's twin for the credentials cascade's
+// children of the run's own entry — `credential` and `waiting_until` (C1.3)
+// — and it runs only after a heartbeat that carried one of them was refused
+// with a permission error.
+//
+// It tells the benign refusal from a real one the only way a run can, by
+// probing both spellings of the same entry: the entry as the heartbeat sent
+// it, then the same entry without the two children. With them refused and
+// without them accepted, the children are what the rules do not know — the
+// rules downgrade C1.3's `credsRules` marker cannot catch, because an older
+// Fugaro redeploying its own document leaves the marker at a generation it
+// does not know — and the run halts named (C1.17) instead of dropping the
+// write: a run whose credential state is silently absent is a run the
+// dashboard shows as holding no credential at all, which is worse than a
+// named failure. The write is not retried: the halt is the answer, and the
+// operator's redeploy is what changes it.
+//
+// Only a run that wrote one of the children can meet this, and only a
+// cascade run writes them: the credential's name comes from the service's
+// answer (C1.10, C1.16) and `waiting_until` from a wait the service's
+// exhausted-until started (C1.17). A non-cascade run's entry carries
+// neither, so this probe never runs for it.
+func (s *Session) checkCascadeKeys(ctx context.Context) {
+	s.mu.Lock()
+	probed := s.credsKeysProbed
+	s.credsKeysProbed = true
+	s.mu.Unlock()
+	if probed {
+		return
+	}
+	e := s.snapshotEntry()
+	if e.Credential == "" && e.WaitingUntil == 0 {
+		return
+	}
+	path := PathAgent(s.cfg.Slug, s.cfg.Run)
+	write := func(v AgentEntry) error { return s.db.Patch(ctx, "", map[string]any{path: v}) }
+	if err := write(e); err == nil {
+		// The refusal the heartbeat met is gone: a blip, or a stale race
+		// with another writer of the same entry, and not these children.
+		s.dbOK()
+		return
+	} else if !errors.Is(err, rtdb.ErrPermission) {
+		return // not a permission matter; the heartbeat reports it
+	}
+	e.Credential, e.WaitingUntil = "", 0
+	if err := write(e); err != nil {
+		// Refused without them too: the children are not the cause.
+		return
+	}
+	s.dbOK()
+	s.halt(Halt{Reason: ReasonCredsRulesDenied, Scope: ScopeRun, Detail: credsRulesDeniedDetail})
+}
+
 // snapshotEntry is the entry as the next heartbeat sends it.
 func (s *Session) snapshotEntry() AgentEntry {
 	s.mu.Lock()
@@ -236,6 +289,12 @@ func (s *Session) heartbeat(ctx context.Context) {
 	s.checkNewKeys(ctx)
 	e := s.snapshotEntry()
 	err := s.flush(ctx, map[string]any{PathAgent(s.cfg.Slug, s.cfg.Run): e}, "heartbeat")
+	if err != nil && errors.Is(err, rtdb.ErrPermission) && (e.Credential != "" || e.WaitingUntil != 0) {
+		// The bundled write carried a cascade child into the refusal: find
+		// out, with the two writes of its own, whether the deployed rules
+		// are the reason, and halt named if they are (C1.17).
+		s.checkCascadeKeys(ctx)
+	}
 	if err != nil && errors.Is(err, rtdb.ErrPermission) && (e.Action != "" || e.Tokens != 0) {
 		// The bundled write just carried action or tokens into a permission
 		// refusal: re-arm the dedicated probe so the next beat finds out,

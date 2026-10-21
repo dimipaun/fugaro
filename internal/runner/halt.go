@@ -57,8 +57,26 @@ func (r *run) recordHaltLocked(h runstore.Halt) bool {
 		return false
 	}
 	r.halt = &h
+	if r.haltDone != nil {
+		// Once, and only here: r.halt is set once, so one close is all a
+		// waiter can ever see. It wakes a caller waiting outside a stage —
+		// the credential wait (C1.17), whose sleep may be hours long and
+		// hears no halt otherwise.
+		close(r.haltDone)
+		r.haltDone = nil
+	}
 	r.failLocked((&HaltError{h}).Error())
 	return true
+}
+
+// haltCh is closed once a halt is recorded, and nil before Run creates it: a
+// caller that may have to wait outside a stage watches it to stop at once
+// (waitForCredential). It is read under r.mu, and the channel itself is never
+// replaced.
+func (r *run) haltCh() <-chan struct{} {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.haltDone
 }
 
 // cancelHaltedStage cancels the running stage with the halt as its cause,
@@ -153,6 +171,10 @@ func haltReasonText(h runstore.Halt) string {
 		return "the budget backend could not be reached for the whole grace period"
 	case runstore.HaltBudgetTokenExpired:
 		return "the run's budget token had expired"
+	case runstore.HaltNoCredential:
+		return "no credential became usable before the job's own timeout"
+	case runstore.HaltCredsRulesDenied:
+		return "the database's rules refused this run's credential state"
 	}
 	return string(h.Reason)
 }
@@ -193,6 +215,10 @@ func haltLines(rec *runstore.Record) string {
 		fmt.Fprintf(&b, "To continue: once the budget backend is reachable again, %s.\n\n", again)
 	case runstore.HaltBudgetTokenExpired:
 		b.WriteString("To continue: start the run again (the run's budget token is minted at launch and lasts an hour; a run that queues longer cannot start).\n\n")
+	case runstore.HaltNoCredential:
+		fmt.Fprintf(&b, "To continue: %s once a credential is usable again (`fugaro accounts ls` shows each admitted account's state; the project policy's `credentials` decides whether another tier may be used meanwhile).\n\n", again)
+	case runstore.HaltCredsRulesDenied:
+		fmt.Fprintf(&b, "To continue: an operator re-runs `fugaro init --firebase <firebase-project-id>` with this release, which deploys the rules the cascade's fields need, then %s.\n\n", again)
 	case runstore.HaltRunCap, runstore.HaltNoCap:
 		if rec.Budget != nil && h.Reason == runstore.HaltNoCap {
 			fmt.Fprintf(&b, "To continue: an admin sets the missing cap with `fugaro budget set`, then %s.\n\n", again)

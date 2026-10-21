@@ -51,6 +51,22 @@ const (
 	HaltTokenCap           HaltReason = "token_cap"
 	HaltBudgetUnavailable  HaltReason = "budget_unavailable"
 	HaltBudgetTokenExpired HaltReason = "budget_token_expired"
+	// HaltNoCredential is a credentials-cascade run that ran out of job: the
+	// service answered a typed "exhausted until T" (C1.10) and T is not
+	// inside what is left of the job's own timeout, so the run can wait for
+	// no credential before it must be over (C1.17). The wait-or-switch
+	// decision itself is the service's; this reason only says the reset it
+	// named fits in no job like this one.
+	HaltNoCredential HaltReason = "no_credential"
+	// HaltCredsRulesDenied is a cascade run whose write was refused by the
+	// deployed rules: the `credential` or `waiting_until` child of its own
+	// registry entry, or a by-tier counter (C1.3). It is the known gap of a
+	// rules downgrade — an older Fugaro running `fugaro init --firebase`
+	// redeployed a document without the cascade's children — so the message
+	// names the redeploy and the write is never retried (C1.17): silently
+	// dropping it would hide the run's credential from the dashboard, and
+	// retrying it forever would fill the log instead of the operator's queue.
+	HaltCredsRulesDenied HaltReason = "creds_rules_denied"
 )
 
 // Halt is why and when a run was halted.

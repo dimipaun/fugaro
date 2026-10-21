@@ -22,12 +22,15 @@ import (
 )
 
 // Claude Code keeps each session as ~/.claude/projects/<escaped
-// workdir>/<id>.jsonl. Every run saves the session of its latest implement
-// or fix stage to its prefix (session/<id>.jsonl, then
-// session/session.json), so a follow-up on its pull request can resume
-// it. The session file is written by the agent's own process, so it is
-// read and written as a regular file only, never through a symlink, and
-// redacted before upload.
+// workdir>/<id>.jsonl. Every run saves the session of its latest stage to
+// its prefix (session/<id>.jsonl, then session/session.json), so a
+// follow-up on its pull request can resume it, and so a stage the
+// credentials cascade interrupted can be resumed after its wait (C1.17,
+// D138). Review stages are sessions of their own — agentLoop gives each
+// review a fresh ID — and they are saved like the work stages: a review is
+// usually the last thing a run did. The session file is written by the
+// agent's own process, so it is read and written as a regular file only,
+// never through a symlink, and redacted before upload.
 
 // sessionSaveTimeout bounds the save Run makes when finalize fails, on a
 // context of its own.
@@ -41,21 +44,42 @@ var commitRE = regexp.MustCompile(`^[0-9a-f]{40}$`)
 // errSessionTooLarge means the session file is over MaxSessionBytes.
 var errSessionTooLarge = errors.New("session file is larger than its cap")
 
-// noteSession remembers the session a stage ran in: the one its result
-// reports (the result event's ID, else its init event's, so a stage killed
-// before its result still names it). Claude Code may report another ID
-// than the one it was asked for, and that is the one that holds the
-// conversation. A stage that reported none keeps the one it was asked to
-// resume, if any: that session existed before it ran.
+// noteSession remembers the session a stage ran in, for a work stage: the
+// one the next fix resumes and the one writeback saves.
 func (r *run) noteSession(req agent.Request, res agent.Result) {
+	if id := r.stageSession(req, res); id != "" {
+		r.sessionID, r.savedSession = id, id
+	}
+}
+
+// noteReviewSession remembers the session a review stage ran in, for the
+// save alone (C1.17, D138). A review runs in a session of its own
+// (agentLoop hands each one a fresh ID), so it is never what the next fix
+// resumes — a fix continues the work, not the review of it — but it is what
+// the run last did, and a follow-up resumes that.
+func (r *run) noteReviewSession(req agent.Request, res agent.Result) {
+	if id := r.stageSession(req, res); id != "" {
+		r.savedSession = id
+	}
+}
+
+// stageSession is the session a stage ran in: the one its result reports
+// (the result event's ID, else its init event's, so a stage killed before
+// its result still names it). Claude Code may report another ID than the one
+// it was asked for, and that is the one that holds the conversation. A stage
+// that reported none keeps the one it was asked to resume, if any: that
+// session existed before it ran.
+func (r *run) stageSession(req agent.Request, res agent.Result) string {
 	switch {
 	case res.SessionID == "" && req.Resume && agent.ValidSessionID(req.SessionID):
-		r.sessionID = req.SessionID
+		return req.SessionID
 	case res.SessionID == "":
+		return ""
 	case !agent.ValidSessionID(res.SessionID):
 		r.d.Log.Warn("the agent reported a session ID that is not a lower-case UUID; ignoring it")
+		return ""
 	default:
-		r.sessionID = res.SessionID
+		return res.SessionID
 	}
 }
 
@@ -80,15 +104,22 @@ func (r *run) sessionDir() (home, rel string, err error) {
 	return home, rel, nil
 }
 
-// saveSession uploads the session of the latest implement or fix stage.
-// Nothing here fails the run: a session that can't be saved is a
+// saveSession uploads the session of the latest stage — implement, fix or
+// review. Nothing here fails the run: a session that can't be saved is a
 // warning, and the next follow-up starts fresh.
 func (r *run) saveSession(ctx context.Context) {
-	if r.sessionID == "" {
+	// savedSession is the latest stage's; sessionID is the fallback for a
+	// run whose noteSession ran but whose review reported no session of its
+	// own (the two are equal then).
+	id := r.savedSession
+	if id == "" {
+		id = r.sessionID
+	}
+	if id == "" {
 		return
 	}
-	log := r.d.Log.With("session", r.sessionID)
-	data, err := r.readSessionFile(r.sessionID)
+	log := r.d.Log.With("session", id)
+	data, err := r.readSessionFile(id)
 	switch {
 	case errors.Is(err, errSessionTooLarge):
 		log.Warn("session too large to save; the next follow-up starts fresh", "cap_bytes", runstore.MaxSessionBytes)
@@ -115,7 +146,7 @@ func (r *run) saveSession(ctx context.Context) {
 			return
 		}
 	}
-	m := runstore.SessionMeta{Version: 1, ID: r.sessionID, HeadSHA: head, Pushed: r.rec.PushedHead != "",
+	m := runstore.SessionMeta{Version: 1, ID: id, HeadSHA: head, Pushed: r.rec.PushedHead != "",
 		WorkDir: r.d.WorkDir, Bytes: int64(len(data))}
 	if err := r.d.Store.PutSession(ctx, m, data); err != nil {
 		log.Warn("storing the session failed; the next follow-up starts fresh", "err", r.redact(err.Error()))
