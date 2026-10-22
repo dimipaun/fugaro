@@ -74,7 +74,11 @@ func (h *recordHandler) WithGroup(string) slog.Handler { return h }
 // auditLines parses what an auditor wrote: one JSON object per physical line,
 // which is what "one structured line" means here — a field carrying a newline
 // would have to open a second one, and this would see it.
-func auditLines(t *testing.T, buf *bytes.Buffer) []map[string]any {
+//
+// It takes anything with a String() rather than a buffer specifically: the
+// probe's tests write through a locked logBuf, because their audit line is
+// written from the server's goroutine while the test reads it.
+func auditLines(t *testing.T, buf interface{ String() string }) []map[string]any {
 	t.Helper()
 	return parseAuditLines(t, buf.String())
 }
