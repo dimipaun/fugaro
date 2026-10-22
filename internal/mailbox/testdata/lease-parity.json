@@ -1,0 +1,849 @@
+{
+  "module": "shared/lease/index.js",
+  "constants": {
+    "CLAIM_TTL": 600000,
+    "MAX_CLOCK_SKEW": 300000,
+    "MAX_TTL": 86400000,
+    "MAX_TIMESTAMP": 4102444800000,
+    "MAX_HOLDER_LENGTH": 256
+  },
+  "codes": {
+    "UNKNOWN_FIELD": "unknown-field",
+    "MISSING_FIELD": "missing-field",
+    "BAD_TYPE": "bad-type",
+    "BAD_HOLDER": "bad-holder",
+    "BAD_TIMESTAMP": "bad-timestamp",
+    "BAD_TTL": "bad-ttl",
+    "OVERSIZE": "oversize",
+    "UNREADABLE_CLAIM": "unreadable-claim",
+    "NOT_HOLDER": "not-holder",
+    "NO_LEASE": "no-lease",
+    "ALREADY_CLAIMED": "already-claimed"
+  },
+  "cases": [
+    {
+      "name": "an empty state holds no lease",
+      "op": "read",
+      "state": {
+        "claim": null,
+        "ttl": 600000
+      },
+      "expect": {
+        "ok": true,
+        "lease": null
+      }
+    },
+    {
+      "name": "a held lease is read back",
+      "op": "read",
+      "state": {
+        "claim": {
+          "holder": "boot-a",
+          "at": 1700000000000
+        },
+        "ttl": 600000
+      },
+      "expect": {
+        "ok": true,
+        "lease": {
+          "holder": "boot-a",
+          "at": 1700000000000
+        }
+      }
+    },
+    {
+      "name": "a claim that is not a lease is unreadable",
+      "op": "read",
+      "state": {
+        "claim": {
+          "holder": "boot-a"
+        },
+        "ttl": 600000
+      },
+      "expect": {
+        "ok": false,
+        "code": "unreadable-claim",
+        "because": "missing-field"
+      }
+    },
+    {
+      "name": "a state with no claim field is refused",
+      "op": "read",
+      "state": {
+        "ttl": 600000
+      },
+      "expect": {
+        "ok": false,
+        "code": "missing-field"
+      }
+    },
+    {
+      "name": "a state with a field the module does not define is refused",
+      "op": "read",
+      "state": {
+        "claim": null,
+        "ttl": 600000,
+        "extra": 1
+      },
+      "expect": {
+        "ok": false,
+        "code": "unknown-field"
+      }
+    },
+    {
+      "name": "a state that is not an object is refused",
+      "op": "read",
+      "state": [
+        600000
+      ],
+      "expect": {
+        "ok": false,
+        "code": "bad-type"
+      }
+    },
+    {
+      "name": "a state that is null is refused",
+      "op": "read",
+      "state": null,
+      "expect": {
+        "ok": false,
+        "code": "bad-type"
+      }
+    },
+    {
+      "name": "a zero TTL is refused",
+      "op": "read",
+      "state": {
+        "claim": null,
+        "ttl": 0
+      },
+      "expect": {
+        "ok": false,
+        "code": "bad-ttl"
+      }
+    },
+    {
+      "name": "a TTL past the ceiling is refused",
+      "op": "read",
+      "state": {
+        "claim": null,
+        "ttl": 86400001
+      },
+      "expect": {
+        "ok": false,
+        "code": "bad-ttl"
+      }
+    },
+    {
+      "name": "a TTL at the ceiling is a state",
+      "op": "read",
+      "state": {
+        "claim": null,
+        "ttl": 86400000
+      },
+      "expect": {
+        "ok": true,
+        "lease": null
+      }
+    },
+    {
+      "name": "a fractional TTL is refused",
+      "op": "read",
+      "state": {
+        "claim": null,
+        "ttl": 600000.5
+      },
+      "expect": {
+        "ok": false,
+        "code": "bad-ttl"
+      }
+    },
+    {
+      "name": "a take on an empty state holds the lease",
+      "op": "take",
+      "state": {
+        "claim": null,
+        "ttl": 600000
+      },
+      "request": {
+        "holder": "boot-a",
+        "at": 1700000000000
+      },
+      "expect": {
+        "ok": true,
+        "lease": {
+          "holder": "boot-a",
+          "at": 1700000000000
+        },
+        "state": {
+          "claim": {
+            "holder": "boot-a",
+            "at": 1700000000000
+          },
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "a take on an unreadable state is refused, never taken over",
+      "op": "take",
+      "state": {
+        "claim": {
+          "holder": "boot-a"
+        },
+        "ttl": 600000
+      },
+      "request": {
+        "holder": "boot-a",
+        "at": 1700000000000
+      },
+      "expect": {
+        "ok": false,
+        "code": "unreadable-claim",
+        "because": "missing-field"
+      }
+    },
+    {
+      "name": "a take on a state with a bad TTL is refused",
+      "op": "take",
+      "state": {
+        "claim": null,
+        "ttl": 0
+      },
+      "request": {
+        "holder": "boot-a",
+        "at": 1700000000000
+      },
+      "expect": {
+        "ok": false,
+        "code": "bad-ttl"
+      }
+    },
+    {
+      "name": "a fresh lease held by another is not taken",
+      "op": "take",
+      "state": {
+        "claim": {
+          "holder": "boot-b",
+          "at": 1700000000000
+        },
+        "ttl": 600000
+      },
+      "request": {
+        "holder": "boot-a",
+        "at": 1700000000001
+      },
+      "expect": {
+        "ok": false,
+        "code": "already-claimed",
+        "existing": {
+          "holder": "boot-b",
+          "at": 1700000000000
+        },
+        "state": {
+          "claim": {
+            "holder": "boot-b",
+            "at": 1700000000000
+          },
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "a holder cannot re-take its own fresh lease",
+      "op": "take",
+      "state": {
+        "claim": {
+          "holder": "boot-a",
+          "at": 1700000000000
+        },
+        "ttl": 600000
+      },
+      "request": {
+        "holder": "boot-a",
+        "at": 1700000000001
+      },
+      "expect": {
+        "ok": false,
+        "code": "already-claimed",
+        "existing": {
+          "holder": "boot-a",
+          "at": 1700000000000
+        },
+        "state": {
+          "claim": {
+            "holder": "boot-a",
+            "at": 1700000000000
+          },
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "a lease is fresh one millisecond before its TTL",
+      "op": "take",
+      "state": {
+        "claim": {
+          "holder": "boot-b",
+          "at": 1700000000000
+        },
+        "ttl": 600000
+      },
+      "request": {
+        "holder": "boot-a",
+        "at": 1700000599999
+      },
+      "expect": {
+        "ok": false,
+        "code": "already-claimed",
+        "existing": {
+          "holder": "boot-b",
+          "at": 1700000000000
+        },
+        "state": {
+          "claim": {
+            "holder": "boot-b",
+            "at": 1700000000000
+          },
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "a lease is stale at exactly its TTL",
+      "op": "take",
+      "state": {
+        "claim": {
+          "holder": "boot-b",
+          "at": 1700000000000
+        },
+        "ttl": 600000
+      },
+      "request": {
+        "holder": "boot-a",
+        "at": 1700000600000
+      },
+      "expect": {
+        "ok": true,
+        "lease": {
+          "holder": "boot-a",
+          "at": 1700000600000
+        },
+        "state": {
+          "claim": {
+            "holder": "boot-a",
+            "at": 1700000600000
+          },
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "a lease exactly MAX_CLOCK_SKEW ahead is fresh",
+      "op": "take",
+      "state": {
+        "claim": {
+          "holder": "boot-b",
+          "at": 1700000300000
+        },
+        "ttl": 600000
+      },
+      "request": {
+        "holder": "boot-a",
+        "at": 1700000000000
+      },
+      "expect": {
+        "ok": false,
+        "code": "already-claimed",
+        "existing": {
+          "holder": "boot-b",
+          "at": 1700000300000
+        },
+        "state": {
+          "claim": {
+            "holder": "boot-b",
+            "at": 1700000300000
+          },
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "a lease one millisecond past the skew is taken over",
+      "op": "take",
+      "state": {
+        "claim": {
+          "holder": "boot-b",
+          "at": 1700000300001
+        },
+        "ttl": 600000
+      },
+      "request": {
+        "holder": "boot-a",
+        "at": 1700000000000
+      },
+      "expect": {
+        "ok": true,
+        "lease": {
+          "holder": "boot-a",
+          "at": 1700000000000
+        },
+        "state": {
+          "claim": {
+            "holder": "boot-a",
+            "at": 1700000000000
+          },
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "a lease ahead to the ceiling cannot block a mailbox for ever",
+      "op": "take",
+      "state": {
+        "claim": {
+          "holder": "boot-b",
+          "at": 4102444800000
+        },
+        "ttl": 600000
+      },
+      "request": {
+        "holder": "boot-a",
+        "at": 1700000000000
+      },
+      "expect": {
+        "ok": true,
+        "lease": {
+          "holder": "boot-a",
+          "at": 1700000000000
+        },
+        "state": {
+          "claim": {
+            "holder": "boot-a",
+            "at": 1700000000000
+          },
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "the take instant may be the ceiling",
+      "op": "take",
+      "state": {
+        "claim": null,
+        "ttl": 600000
+      },
+      "request": {
+        "holder": "boot-a",
+        "at": 4102444800000
+      },
+      "expect": {
+        "ok": true,
+        "lease": {
+          "holder": "boot-a",
+          "at": 4102444800000
+        },
+        "state": {
+          "claim": {
+            "holder": "boot-a",
+            "at": 4102444800000
+          },
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "a zero instant is refused",
+      "op": "take",
+      "state": {
+        "claim": null,
+        "ttl": 600000
+      },
+      "request": {
+        "holder": "boot-a",
+        "at": 0
+      },
+      "expect": {
+        "ok": false,
+        "code": "bad-timestamp",
+        "state": {
+          "claim": null,
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "a negative instant is refused",
+      "op": "take",
+      "state": {
+        "claim": null,
+        "ttl": 600000
+      },
+      "request": {
+        "holder": "boot-a",
+        "at": -1
+      },
+      "expect": {
+        "ok": false,
+        "code": "bad-timestamp",
+        "state": {
+          "claim": null,
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "an instant past the ceiling is refused",
+      "op": "take",
+      "state": {
+        "claim": null,
+        "ttl": 600000
+      },
+      "request": {
+        "holder": "boot-a",
+        "at": 4102444800001
+      },
+      "expect": {
+        "ok": false,
+        "code": "bad-timestamp",
+        "state": {
+          "claim": null,
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "a fractional instant is refused",
+      "op": "take",
+      "state": {
+        "claim": null,
+        "ttl": 600000
+      },
+      "request": {
+        "holder": "boot-a",
+        "at": 1700000000000.5
+      },
+      "expect": {
+        "ok": false,
+        "code": "bad-timestamp",
+        "state": {
+          "claim": null,
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "an instant that arrives as a string is refused",
+      "op": "take",
+      "state": {
+        "claim": null,
+        "ttl": 600000
+      },
+      "request": {
+        "holder": "boot-a",
+        "at": "1700000000000"
+      },
+      "expect": {
+        "ok": false,
+        "code": "bad-timestamp",
+        "state": {
+          "claim": null,
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "a take with no holder is refused",
+      "op": "take",
+      "state": {
+        "claim": null,
+        "ttl": 600000
+      },
+      "request": {
+        "at": 1700000000000
+      },
+      "expect": {
+        "ok": false,
+        "code": "missing-field",
+        "state": {
+          "claim": null,
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "a take with no instant is refused",
+      "op": "take",
+      "state": {
+        "claim": null,
+        "ttl": 600000
+      },
+      "request": {
+        "holder": "boot-a"
+      },
+      "expect": {
+        "ok": false,
+        "code": "missing-field",
+        "state": {
+          "claim": null,
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "a take carrying a TTL of its own is refused",
+      "op": "take",
+      "state": {
+        "claim": null,
+        "ttl": 600000
+      },
+      "request": {
+        "holder": "boot-a",
+        "at": 1700000000000,
+        "ttl": 600000
+      },
+      "expect": {
+        "ok": false,
+        "code": "unknown-field",
+        "state": {
+          "claim": null,
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "a take that is not an object is refused",
+      "op": "take",
+      "state": {
+        "claim": null,
+        "ttl": 600000
+      },
+      "request": null,
+      "expect": {
+        "ok": false,
+        "code": "bad-type",
+        "state": {
+          "claim": null,
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "a blank holder is refused",
+      "op": "take",
+      "state": {
+        "claim": null,
+        "ttl": 600000
+      },
+      "request": {
+        "holder": "   ",
+        "at": 1700000000000
+      },
+      "expect": {
+        "ok": false,
+        "code": "bad-holder",
+        "state": {
+          "claim": null,
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "a padded holder is refused",
+      "op": "take",
+      "state": {
+        "claim": null,
+        "ttl": 600000
+      },
+      "request": {
+        "holder": " boot-a ",
+        "at": 1700000000000
+      },
+      "expect": {
+        "ok": false,
+        "code": "bad-holder",
+        "state": {
+          "claim": null,
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "a holder with a space inside is refused",
+      "op": "take",
+      "state": {
+        "claim": null,
+        "ttl": 600000
+      },
+      "request": {
+        "holder": "boot a",
+        "at": 1700000000000
+      },
+      "expect": {
+        "ok": false,
+        "code": "bad-holder",
+        "state": {
+          "claim": null,
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "a holder that is not in NFC is refused",
+      "op": "take",
+      "state": {
+        "claim": null,
+        "ttl": 600000
+      },
+      "request": {
+        "holder": "café",
+        "at": 1700000000000
+      },
+      "expect": {
+        "ok": false,
+        "code": "bad-holder",
+        "state": {
+          "claim": null,
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "a holder past the module’s length bound is refused",
+      "op": "take",
+      "state": {
+        "claim": null,
+        "ttl": 600000
+      },
+      "request": {
+        "holder": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "at": 1700000000000
+      },
+      "expect": {
+        "ok": false,
+        "code": "oversize",
+        "state": {
+          "claim": null,
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "a release with a blank holder is refused",
+      "op": "release",
+      "state": {
+        "claim": {
+          "holder": "boot-a",
+          "at": 1700000000000
+        },
+        "ttl": 600000
+      },
+      "request": {
+        "holder": " "
+      },
+      "expect": {
+        "ok": false,
+        "code": "bad-holder",
+        "state": {
+          "claim": {
+            "holder": "boot-a",
+            "at": 1700000000000
+          },
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "a release by the holder ends the lease",
+      "op": "release",
+      "state": {
+        "claim": {
+          "holder": "boot-a",
+          "at": 1700000000000
+        },
+        "ttl": 600000
+      },
+      "request": {
+        "holder": "boot-a"
+      },
+      "expect": {
+        "ok": true,
+        "released": {
+          "holder": "boot-a",
+          "at": 1700000000000
+        },
+        "state": {
+          "claim": null,
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "a release by another holder is refused",
+      "op": "release",
+      "state": {
+        "claim": {
+          "holder": "boot-b",
+          "at": 1700000000000
+        },
+        "ttl": 600000
+      },
+      "request": {
+        "holder": "boot-a"
+      },
+      "expect": {
+        "ok": false,
+        "code": "not-holder",
+        "state": {
+          "claim": {
+            "holder": "boot-b",
+            "at": 1700000000000
+          },
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "a release with nothing held is refused",
+      "op": "release",
+      "state": {
+        "claim": null,
+        "ttl": 600000
+      },
+      "request": {
+        "holder": "boot-a"
+      },
+      "expect": {
+        "ok": false,
+        "code": "no-lease",
+        "state": {
+          "claim": null,
+          "ttl": 600000
+        }
+      }
+    },
+    {
+      "name": "a release with no holder is refused",
+      "op": "release",
+      "state": {
+        "claim": {
+          "holder": "boot-a",
+          "at": 1700000000000
+        },
+        "ttl": 600000
+      },
+      "request": {},
+      "expect": {
+        "ok": false,
+        "code": "missing-field",
+        "state": {
+          "claim": {
+            "holder": "boot-a",
+            "at": 1700000000000
+          },
+          "ttl": 600000
+        }
+      }
+    }
+  ]
+}
