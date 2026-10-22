@@ -898,8 +898,10 @@ added or removed without this sentence moving fails there:
     fetched for any of it. The page's own words go 332 → **492**, inside D188's 500 and inside
     the ceiling `privacy`'s page derives, so no word ceiling moved. `test/how-it-works.mjs` holds
     the four levels — one `<defs>`, every `<use>` resolving, every symbol used, no level drawing
-    its own copy of an entity, the markers, and every label a row of `website/data/zoom-levels.yaml`
-    in the document the row cites — and `test/a11y.mjs` holds the markers and the captions; the
+    its own copy of an entity, the markers, and every label of a level held to the drawing it is
+    drawn from in both directions — a row of `website/data/zoom-levels.yaml` then, and the owner's
+    own board since 2026-10-22, when the boards replaced the data file — and `test/a11y.mjs` holds
+    the markers and the captions; the
     drawings themselves are the owner's to read, and that is Check 112 in
     `docs/gcp-live-checklist.md`. **Twenty-one of those bytes are the spaces at the end of the
     drawing's own labels**, which `test/spacing.mjs` asked for and the first full run of the suite
@@ -1030,7 +1032,7 @@ added or removed without this sentence moving fails there:
     files stays **29** and the count of pages **12**. The script did not move —
     `dist/scripts/site.js` is 70,008 bytes in both builds — and neither did the homepage's HTML
     (56,898 in both), which is why **the page weight does not move either**: the heaviest page is
-    still the homepage, at 563,219 bytes, and it renders none of this. What the page's own 22,314
+    still the homepage, at 563,219 bytes, and it renders none of this. What the page's own 22,339
     are: the four boards redrawn as four `<svg viewBox="0 0 1280 720" role="img">` drawings, the
     one zero-size `<svg>` holding the single `<defs>` — **17 `<symbol>`s** (`zoom-job`,
     `zoom-orchestrator`, `zoom-developer` and `zoom-developer-planned`, `zoom-person` and
@@ -1043,7 +1045,9 @@ added or removed without this sentence moving fails there:
     page that renders it.
     **The page's words go 492 → 868** — the boards' own labels, which are what a level says — and
     **D188's number moves with them, 600 → 900**: 900 is the smallest round ceiling above the
-    page, and the next page down is the homepage at 563 words (Getting Started is 309). The
+    page, and the next page down that D188 governs is the homepage at 563 words (Getting Started
+    is 309; the privacy statement, at 759, is the page the words-per-page ceiling itself is
+    derived from, so D188's own number does not measure it). The
     levels' words are no longer a data file: `website/data/zoom-levels.yaml` is gone and the
     boards are the source of truth — `src/lib/zoom-boards.mjs` reads each board's visible strings
     at build time and `holdZoomBoards` refuses a build whose drawing and board disagree, **in

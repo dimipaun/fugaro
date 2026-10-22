@@ -2759,19 +2759,21 @@ const ZOOM_PHONE_MIN = 10
 
 /**
  * Every way the four levels are not read on a phone, as the lines a reader of the failure gets:
- * the figure with no floor under its width, a label the phone keeps that the floor draws under
- * the brief's 10 px, a label the phone drops that the floor could have drawn, and a group of
- * small print that is not hidden where the phone reads the page.
+ * the figure with no floor under its width, a figure that does not scroll the floor it declares,
+ * a label the phone keeps that the floor draws under the brief's 10 px, a label the phone drops
+ * that the floor could have drawn, and a group of small print that is not hidden where the phone
+ * reads the page.
  *
  * **Why the floor is the whole of the phone reading.** A board is 1280 units wide and its labels
  * carry the board's own sizes, so a drawing scaled to a 390 px column sets the boards' 14 px
  * labels at 4.3 px, which is not text. The drawing therefore keeps a floor (`min-width`) and
  * scrolls sideways inside its own box rather than shrinking past it, and the labels the floor
  * cannot draw at 10 px — the boards' 11, 12 and 13 px small print — are drawn inside
- * `<g class="zoom-fine">`, which the phone's own query hides. Both halves are read here against
- * the floor the page's stylesheet declares, so the floor and the small print can only move
- * together: raise the floor and a hidden label is refused as one the phone could read, lower it
- * and a kept label is refused as one it cannot.
+ * `<g class="zoom-fine">`, which the phone's own query hides. All three are read here against the
+ * floor the page's stylesheet declares: the floor, the box that scrolls it and the small print can
+ * only move together, so raise the floor and a hidden label is refused as one the phone could read,
+ * lower it and a kept label is refused as one it cannot, and take the scrolling away and the
+ * drawing a reader was meant to scroll is refused for leaving the column instead.
  */
 export function zoomPhoneFailures(html, css) {
   const out = []
@@ -2824,6 +2826,26 @@ export function zoomPhoneFailures(html, css) {
   if (!hidden) {
     out.push(
       `\`.zoom-fine\` is not hidden at ${ZOOM_PHONE_WIDTH} px, and the labels the ${floor} px floor cannot draw at ${ZOOM_PHONE_MIN} px are drawn inside it: the phone either hides them or draws them at a size no reader reads (the brief of 2026-10-22)`,
+    )
+  }
+
+  // And the box the floor overflows into scrolls: the floor is wider than the phone's column, so
+  // the drawing leaves the column and the figure is the box that has to carry it. A floor with
+  // nothing scrolling it is a floor a reader never sees the far side of — the drawing is clipped
+  // or it pushes the page sideways, and both are the phone reading failing at the other end.
+  let scrolls = false
+  for (const rule of cssRules(css)) {
+    if (!/\.zoom-figure/.test(rule.selector ?? '')) continue
+    if (!appliesAt(rule.conditions, ZOOM_PHONE_WIDTH)) continue
+    for (const [property, value] of cssDeclarations(rule.body ?? '')) {
+      const declared = value.trim()
+      if (property === 'overflow-x' && (declared === 'auto' || declared === 'scroll')) scrolls = true
+      if (property === 'overflow' && (declared === 'auto' || declared === 'scroll')) scrolls = true
+    }
+  }
+  if (!scrolls) {
+    out.push(
+      `\`figure.zoom-figure\` does not scroll at ${ZOOM_PHONE_WIDTH} px, and the drawing it holds keeps a ${floor} px floor: the floor is wider than the phone's column, so the figure is the box that scrolls it — without one the drawing is clipped or the page itself moves sideways (the brief of 2026-10-22)`,
     )
   }
 
@@ -3114,6 +3136,15 @@ test('every label the phone keeps is drawn at 10 px or more, and the small print
   const needlessFailures = zoomPhoneFailures(needless, css)
   assert.equal(needlessFailures.length, 1, `a label hidden though the phone could read it is refused ${needlessFailures.length} times: ${needlessFailures.join(' | ')}`)
   assert.match(needlessFailures[0], /a label the phone could read is a label the phone keeps/, 'the refusal does not say the label was hidden for nothing')
+
+  // 4. And the box the floor needs: with the figure's scrolling taken away the drawing still keeps
+  //    its 920 units and nothing carries them, so the refusal names the box rather than a label.
+  const fixed = css.replace('overflow-x:auto', 'overflow-x:visible')
+  assert.notEqual(fixed, css, 'the built stylesheet declares no `overflow-x: auto` on the figure, and the plant below takes the scrolling away')
+  const fixedFailures = zoomPhoneFailures(page.html, fixed)
+  assert.equal(fixedFailures.length, 1, `a figure that does not scroll the floor it declares is refused ${fixedFailures.length} times: ${fixedFailures.join(' | ')}`)
+  assert.match(fixedFailures[0], /does not scroll at 390 px/, 'the refusal does not say the figure does not scroll')
+  assert.match(fixedFailures[0], /keeps a 920 px floor/, 'the refusal does not name the floor the drawing keeps')
 })
 
 test('all four levels are in the built HTML, in order, with no script', () => {

@@ -876,7 +876,10 @@ strict CSP and "no third-party origin" rules are untouched.
   paragraph inside the frame, so each level now carries `role="img"` with its own `<title>` and
   `<desc>`, and `website/test/a11y.mjs` refuses a level that is not one named picture. A reader
   who cannot see the drawing is given the board's title and subtitle rather than forty loose
-  labels in markup order.
+  labels in markup order. The brief's own words for the markup are the rule: "Text is real SVG
+  `<text>` with the site's font stack; each level has a `<title>`/`<desc>` and `role="img"`;
+  decorative parts `aria-hidden`" — which is what `website/test/a11y.mjs`'s `zoomA11yFailures`
+  reads, and why a level announced as anything but one named picture is refused there.
 - **The drawings carry the boards' own colours.** The boards are drawn on the palette's ground
   (`--ground`, the one board colour that is exactly a site token) with thirteen colours the site
   does not otherwise use; they live at `:root` as `--zoom-*` variables, and the paint and contrast

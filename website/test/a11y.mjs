@@ -944,8 +944,10 @@ export function zoomSectionOf(html) {
  * than the level it names, a marker a keyboard cannot reach, a level with no name of its own, a
  * level hidden from assistive technology, and a level that is not one named image.
  *
- * **Why a level is one image** (the brief of 2026-10-22: "each level has a `<title>`/`<desc>`
- * and `role="img"`"). A level is drawn from a board and is a picture of a system: the boards
+ * **Why a level is one image** (the owner's brief of 2026-10-22, recorded in
+ * `docs/website/zoom-diagrams/reconciliation.md` §13: each level carries a `<title>`, a `<desc>`
+ * and `role="img"`, and the decorative parts are `aria-hidden`). A level is drawn from a board and
+ * is a picture of a system: the boards
  * label their parts, and the parts are not a sentence read in markup order. So the drawing is
  * announced once, by its `<title>`, with its `<desc>` as the telling — the paragraph under the
  * board and the caption beside it are the page's own text and stay readable in their own right.
