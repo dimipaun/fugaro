@@ -2,7 +2,10 @@ package cli
 
 import (
 	"encoding/json"
+	"io/fs"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +19,16 @@ import (
 const (
 	newProj    = "fugaro-new-1234"
 	billingAcc = "0123AB-4567CD-89EF01"
+)
+
+// The three patterns TestTheBillingListIsNarrow reads the tree with: the one
+// call site that lists a caller's billing accounts, and the predicate that
+// bounds it. They are written on the call and not on the callee's own name so
+// that an aliased import is caught too.
+var (
+	billingListCallRE = regexp.MustCompile(`\.ListWithFallback\(`)
+	canTypeReadRE     = regexp.MustCompile(`\br\.canType\(\)`)
+	canTypeGuardRE    = regexp.MustCompile(`if !r\.canType\(\) \{`)
 )
 
 // projectRig is the init rig with the Firebase Management and Cloud
@@ -766,5 +779,93 @@ func TestFirebaseProjectIsRefusedWithoutCreateProject(t *testing.T) {
 	without := &initOptions{door: setupDoor.name, cloud: cloudOptions{gcpProject: newProj}, firebase: fpID}
 	if err := without.check(); err != nil {
 		t.Errorf("--firebase-project %s with no --create-project: %v, want nil (the two-project layout)", fpID, err)
+	}
+}
+
+// TestTheBillingListIsNarrow pins the two halves of the rule W4.5 leaves
+// behind (docs/setup-wizard/implementation-plan.md, task W4.5). The project
+// stage's rule had two clauses: init never lists the caller's billing
+// accounts, and it never prints the account a project is already linked to.
+// W4.3 made the first false for exactly one call site — the wizard's billing
+// question, at a real terminal — so what this test pins is how narrow that
+// reversal is: the account list is asked for from one place in the whole tree,
+// in a file that reads canType() only to refuse. And the second clause is
+// untouched, in the stage and in the question both: a run over a project that
+// IS linked to an account never prints that account.
+func TestTheBillingListIsNarrow(t *testing.T) {
+	// The reversal is one call site in the tree, and it is the question's.
+	var callers []string
+	root := filepath.Join("..", "..")
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if name := d.Name(); name == "node_modules" || (name != "." && name != ".." && strings.HasPrefix(name, ".")) {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if billingListCallRE.Match(b) {
+			callers = append(callers, filepath.ToSlash(path))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.ToSlash(filepath.Join(root, "internal", "cli", "billing_prompt.go")); len(callers) != 1 || callers[0] != want {
+		t.Errorf("the caller's billing accounts are listed from %v, want only %s: a second call site is a wider reversal than the owner answered (D6)", callers, want)
+	}
+	// That file reads canType() only to refuse, so the one list call cannot be
+	// reached on a path that skipped it (Global Constraint 8).
+	b, err := os.ReadFile("billing_prompt.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads, guards := len(canTypeReadRE.FindAll(b, -1)), len(canTypeGuardRE.FindAll(b, -1))
+	if reads == 0 || reads != guards {
+		t.Errorf("billing_prompt.go reads canType() %d time(s), %d of them as a refusal: the account list may be asked for only where canType() says yes", reads, guards)
+	}
+
+	// The half of the old rule that survives. The project is linked to an
+	// account that is not enabled, which is the one state the stage reports
+	// and never replaces — and the run is at a terminal, with a source that
+	// would answer, so nothing but the rule keeps the account out of the
+	// output.
+	r := newProjectRig(t)
+	linked := pickerAccountID(t, "linked")
+	offered := pickerAccountID(t, "offered")
+	r.crm.AddProject(newProj, 424242)
+	r.gcs.AddProject(newProj, 424242)
+	r.fb.AddFirebase(newProj)
+	r.bill.SetSuspended(newProj, linked)
+	f := gcpfake.NewBilling(t)
+	f.AddAccountNamed(offered, "an account this run could link", true)
+	pickerSources(t, f) // after newProjectRig, which stubs the sources out
+	out, _, err := r.run(t, true, newProj+"\n"+linked+"\n", "--create-project", "--link-billing", linked)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d (%v), want 1: the link a project already has is the user's to change\n%s", ExitCode(err), err, out)
+	}
+	if !strings.Contains(out, "never replaces an existing link") {
+		t.Errorf("the run does not report the link it found, so this is not the path that knows about it:\n%s", out)
+	}
+	for _, leak := range []string{linked, offered, "billingAccounts/"} {
+		if strings.Contains(out, leak) {
+			t.Errorf("the account a project is already linked to reached the output (%q):\n%s", leak, out)
+		}
+	}
+	if n, m := billingListCalls(f), billingListCalls(r.bill); n != 0 || m != 0 {
+		t.Errorf("the accounts were listed: %d call(s) from the question's source, %d from the stage's", n, m)
+	}
+	if len(r.bill.Links()) != 0 || r.bill.Attempts() != 0 {
+		t.Errorf("the link the project already had was written: %d link(s), %d attempt(s)", len(r.bill.Links()), r.bill.Attempts())
 	}
 }
