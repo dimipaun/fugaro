@@ -282,7 +282,7 @@ func resolveRepoTarget(ctx context.Context, project string) (*repoTarget, initfl
 	}
 	root, err := gitRead(ctx, ".", "rev-parse", "--show-toplevel")
 	if err != nil {
-		return skip("not in a checkout: run fugaro setup --repo in a checkout of the repository to onboard it")
+		return skip(notInACheckout + ": run fugaro setup --repo in a checkout of the repository to onboard it")
 	}
 	oi, ok := readOrigin(ctx, root)
 	repo := oi.Repo

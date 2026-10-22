@@ -64,7 +64,7 @@ func (e *initEngine) authState(o originInfo) (repoAuth, error) {
 // are given in a checkout that the gate would ask about. W3.4 rewords it: the
 // question below it is now how a reader asks for the installation alone, so
 // the note points at the answer rather than at another command.
-const checkoutNote = "this checkout's repository is not onboarded; the converge in a checkout also onboards its repository unless you answer no to the question it asks first."
+const checkoutNote = "this checkout's repository is not onboarded; the converge in a checkout also onboards its repository, unless the question about it is answered no. To set up only the installation, run fugaro setup from outside the checkout."
 
 // enrolNote is the one line a run since W3.4 prints when there is no checkout
 // to ask about: a repository is enrolled by the run that is in a checkout of
@@ -76,7 +76,8 @@ func enrolNote() string {
 
 // notInACheckout is the opening of the repository target's refusal where there
 // is no checkout at all, which is the one case with no repository to ask
-// about (the others are a checkout the gate refuses).
+// about (the others are a checkout the gate refuses). The target builds its
+// refusal from it, so the two cannot drift apart.
 const notInACheckout = "not in a checkout"
 
 // The wizard's first-repository question (W3.4, D5, answered 2026-10-20 as
@@ -85,8 +86,9 @@ const notInACheckout = "not in a checkout"
 // stage plans. It is the wizard's question and it authorizes nothing: it is
 // asked in front of the gate, not instead of it. Enter takes yes, and yes goes
 // on to the same typed owner/name confirmation an unlisted repository has
-// always needed; no onboards nothing, says how to enrol the repository later,
-// and leaves nothing for the user to do.
+// always needed; no onboards nothing, skips the repository stage (there is
+// nothing left for the user about it: they answered), and says how to enrol
+// the repository later.
 const (
 	onboardAnswerYes = "yes"
 	onboardAnswerNo  = "no"

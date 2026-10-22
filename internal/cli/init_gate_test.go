@@ -527,7 +527,7 @@ func TestUnknownRepoQuestionComesBeforeAnyPlan(t *testing.T) {
 // answered no (W3.4). Nothing else prints it, and the guard itself is
 // unchanged.
 func TestInstallationFlagNoteInUnonboardedCheckout(t *testing.T) {
-	const note = "this checkout's repository is not onboarded; the converge in a checkout also onboards its repository unless you answer no to the question it asks first."
+	const note = "this checkout's repository is not onboarded; the converge in a checkout also onboards its repository, unless the question about it is answered no. To set up only the installation, run fugaro setup from outside the checkout."
 	releaseBuild(t, "0.2.0")
 	checkout := func(t *testing.T) {
 		t.Chdir(repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", "")))
