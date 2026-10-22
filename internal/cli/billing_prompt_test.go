@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -787,6 +788,355 @@ func filesUnder(t *testing.T, root string) []string {
 	})
 	sort.Strings(out)
 	return out
+}
+
+// The rest of this file is D3 (task W4.4): the Cloud Billing API being off on
+// the credentials' quota project. The API's own answer says which project that
+// is, and the wizard does one of two things with it — offers to turn the API on
+// in the project being set up, behind a typed confirmation that --yes never
+// covers, or refuses and names the line to run elsewhere and who to ask — and
+// neither of them replaces the fallback (W4.2) or today's guided line (F6).
+
+// pickerQuotaOther is the credentials' quota project in D3's second case: not
+// the project this run sets up, and not a project of anybody's — a name of the
+// project-ID shape, like the account ids above, and never a literal that looks
+// like a credential.
+const pickerQuotaOther = "quota-other-1234"
+
+// pickerBillingAPI is the API these tests turn off: the one the account list
+// needs, spelled as Google spells it. It is the test's own copy on purpose — a
+// test that turned off whatever name the code happens to use would pass on any
+// name at all, and the enable's own argv is compared with internal/billing's
+// line below, which is what pins the two spellings together.
+const pickerBillingAPI = "cloudbilling.googleapis.com"
+
+// pickerDisabledOn turns the Cloud Billing API off on the billing fake, with
+// consumer as the credentials' quota project: the state D3's three cases start
+// from. It is internal/billing's own way of setting the state up (its tests use
+// the same fake), and the returned Service Usage fake is where "was anything
+// enabled" is read — an enable of this API on that endpoint turns it back on.
+func pickerDisabledOn(t *testing.T, f *gcpfake.Billing, consumer string) *gcpfake.ServiceUsage {
+	t.Helper()
+	su := gcpfake.NewServiceUsage(t)
+	su.Consumer = consumer
+	su.Disable(pickerBillingAPI, f.Server)
+	return su
+}
+
+// pickerEnableLine is the enable line internal/billing's own ErrDisabled
+// carries for the state f is in. Both D3's refusal and the argv the wizard runs
+// are that line, so the tests below cannot pass on a line the cli invented.
+func pickerEnableLine(t *testing.T, f *gcpfake.Billing) string {
+	t.Helper()
+	_, err := billing.List(context.Background(), billing.Credentials{Endpoint: f.URL, NoAuth: true})
+	var e *billing.ErrDisabled
+	if !errors.As(err, &e) {
+		t.Fatalf("the fake is not answering SERVICE_DISABLED: %v", err)
+	}
+	return e.EnableCommand
+}
+
+// pickerGcloudRunner is the wizard's gcloud as these tests have it: present on
+// PATH, its billing list maimed by hand — the shape Check 111's wrapper has, so
+// that the API being off is what the question answers — and every other command
+// recorded rather than run. It returns the recorded argvs, which is where
+// "enables nothing" and "runs this exact line" are both read.
+func pickerGcloudRunner(t *testing.T, f *gcpfake.Billing) *[][]string {
+	t.Helper()
+	ran := &[][]string{}
+	old := billingSources
+	billingSources = billing.Options{
+		Credentials: billing.Credentials{Endpoint: f.URL, NoAuth: true},
+		Gcloud: billing.Gcloud{
+			LookPath: func(file string) (string, error) { return "/usr/bin/" + file, nil },
+			Run: func(_ context.Context, args ...string) ([]byte, error) {
+				*ran = append(*ran, append([]string{}, args...))
+				if len(args) > 0 && args[0] == "billing" {
+					return nil, errors.New("gcloud: billing accounts list is unavailable in this run")
+				}
+				return nil, nil
+			},
+		},
+	}
+	t.Cleanup(func() { billingSources = old })
+	return ran
+}
+
+// pickerEnableArgv is the argv the enable line names: the line without the
+// binary's own name, which is how the wizard runs it.
+func pickerEnableArgv(t *testing.T, f *gcpfake.Billing) []string {
+	t.Helper()
+	return strings.Fields(strings.TrimPrefix(pickerEnableLine(t, f), billing.GcloudBin+" "))
+}
+
+// pickerEnables is the enables among what the wizard ran: the fallback's own
+// list call is a command too, and "nothing was enabled" is about the one that
+// turns an API on.
+func pickerEnables(ran *[][]string) [][]string {
+	var out [][]string
+	for _, args := range *ran {
+		if len(args) > 0 && args[0] == "services" {
+			out = append(out, args)
+		}
+	}
+	return out
+}
+
+// TestRefusalWhenTheQuotaProjectIsAnotherProject: D3's second case, and the
+// red step of W4.4. The credentials' quota project is not the project this run
+// sets up, so the API being off there is not this run's to fix: it refuses —
+// naming the quota project, the exact line to run there and who to ask — and
+// enables nothing anywhere. An API turned on on a project none of the run's
+// answers named is exactly the surprise F8's refusals exist to prevent, and the
+// operator still gets the fallback (W4.2) or today's guided line (F6).
+func TestRefusalWhenTheQuotaProjectIsAnotherProject(t *testing.T) {
+	f := gcpfake.NewBilling(t)
+	su := pickerDisabledOn(t, f, "projects/"+pickerQuotaOther)
+	r, out := pickerRun(t, true, pickerAnswers(""), nil)
+	ran := pickerGcloudRunner(t, f)
+	if err := r.gatherInputs(t.Context()); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	line := pickerEnableLine(t, f)
+	if !strings.Contains(out.String(), line) {
+		t.Errorf("the refusal does not carry the exact line %q:\n%s", line, out)
+	}
+	if !strings.Contains(out.String(), pickerQuotaOther) {
+		t.Errorf("the refusal does not name the quota project %q:\n%s", pickerQuotaOther, out)
+	}
+	if !strings.Contains(strings.ToLower(out.String()), "ask an owner") {
+		t.Errorf("the refusal does not say who to ask:\n%s", out)
+	}
+	if strings.Contains(out.String(), "CONFIRM") {
+		t.Errorf("an API on another project was offered for enabling:\n%s", out)
+	}
+	if len(pickerEnables(ran)) != 0 || len(su.Enables()) != 0 {
+		t.Errorf("the refusal enabled something: gcloud %v, Service Usage %v", pickerEnables(ran), su.Enables())
+	}
+	if su.Enabled(pickerBillingAPI) {
+		t.Errorf("%s is enabled in the quota project after a refusal", pickerBillingAPI)
+	}
+	if r.o.linkBilling != "" {
+		t.Errorf("the refusal recorded an account: %q", r.o.linkBilling)
+	}
+}
+
+// TestEnableOfferedOnlyWhenTheQuotaProjectIsTheProject: D3's first case. The
+// API is off on the project this run is setting up, which is the one project
+// the offer may name: the wizard asks, in one typed confirmation naming the
+// project and the API, and only that answer turns the API on. Where the quota
+// project is another one there is no offer at all (the refusal above).
+func TestEnableOfferedOnlyWhenTheQuotaProjectIsTheProject(t *testing.T) {
+	t.Run("the project being set up", func(t *testing.T) {
+		f := gcpfake.NewBilling(t)
+		pickerDisabledOn(t, f, "projects/proj-1234")
+		r, out := pickerRun(t, true, pickerAnswers("proj-1234"), nil)
+		ran := pickerGcloudRunner(t, f)
+		if err := r.gatherInputs(t.Context()); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if !strings.Contains(out.String(), "CONFIRM") {
+			t.Fatalf("the API being off on the project being set up was not offered:\n%s", out)
+		}
+		for _, want := range []string{pickerBillingAPI, "proj-1234"} {
+			if !strings.Contains(out.String(), want) {
+				t.Errorf("the offer does not name %q:\n%s", want, out)
+			}
+		}
+		want, got := pickerEnableArgv(t, f), pickerEnables(ran)
+		if len(got) != 1 || !reflect.DeepEqual(got[0], want) {
+			t.Errorf("the enable the wizard ran: %v, want %v (the line internal/billing carries)", got, want)
+		}
+	})
+
+	t.Run("another project", func(t *testing.T) {
+		f := gcpfake.NewBilling(t)
+		pickerDisabledOn(t, f, "projects/"+pickerQuotaOther)
+		r, out := pickerRun(t, true, pickerAnswers("proj-1234"), nil)
+		ran := pickerGcloudRunner(t, f)
+		if err := r.gatherInputs(t.Context()); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if strings.Contains(out.String(), "CONFIRM") || len(pickerEnables(ran)) != 0 {
+			t.Errorf("the offer was made for another project's API (ran %v):\n%s", pickerEnables(ran), out)
+		}
+	})
+}
+
+// TestEnablingIsTypedAndNeverUnderYes: the offer is a typed step, like the
+// project stage's banners — a word that is not the project's own ID leaves the
+// API off — and --yes never covers it: a --yes run is a run that asked for no
+// question, so it is not offered the enable at all (asksBilling), and nothing
+// about a project changes there.
+func TestEnablingIsTypedAndNeverUnderYes(t *testing.T) {
+	t.Run("the project's ID is what enables it", func(t *testing.T) {
+		for _, answer := range []string{"", "yes", "proj-12345"} {
+			f := gcpfake.NewBilling(t)
+			pickerDisabledOn(t, f, "projects/proj-1234")
+			r, out := pickerRun(t, true, pickerAnswers(answer), nil)
+			ran := pickerGcloudRunner(t, f)
+			if err := r.gatherInputs(t.Context()); err != nil {
+				t.Fatalf("%v\n%s", err, out)
+			}
+			if !strings.Contains(out.String(), "CONFIRM") {
+				t.Errorf("the answer %q was not asked for as a confirmation:\n%s", answer, out)
+			}
+			if len(pickerEnables(ran)) != 0 {
+				t.Errorf("the answer %q enabled the API: %v\n%s", answer, pickerEnables(ran), out)
+			}
+			if !strings.Contains(out.String(), pickerEnableLine(t, f)) {
+				t.Errorf("the answer %q left no line to run instead:\n%s", answer, out)
+			}
+		}
+	})
+
+	t.Run("--yes", func(t *testing.T) {
+		f := gcpfake.NewBilling(t)
+		pickerDisabledOn(t, f, "projects/proj-1234")
+		o := &initOptions{yes: true, createProject: true, name: "aurora",
+			cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}}
+		r, out := pickerRun(t, true, "", o)
+		ran := pickerGcloudRunner(t, f)
+		if err := r.gatherInputs(t.Context()); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if out.Len() != 0 {
+			t.Errorf("--yes wants no question answered, and the wizard asked one:\n%s", out)
+		}
+		if len(pickerEnables(ran)) != 0 {
+			t.Errorf("--yes enabled the API: %v", pickerEnables(ran))
+		}
+	})
+}
+
+// TestNothingIsEnabledWithoutAnAnswer: nothing enables the API but an answer
+// this run can act on. An empty line is the way out of the question, a run with
+// no line at all (EOF) has answered nothing, and a gcloud that is not on PATH —
+// or an enable that fails — leaves the project exactly as it was, with the line
+// to run by hand in front of the operator.
+func TestNothingIsEnabledWithoutAnAnswer(t *testing.T) {
+	t.Run("an empty line", func(t *testing.T) {
+		f := gcpfake.NewBilling(t)
+		pickerDisabledOn(t, f, "projects/proj-1234")
+		r, out := pickerRun(t, true, pickerAnswers(""), nil)
+		ran := pickerGcloudRunner(t, f)
+		if err := r.gatherInputs(t.Context()); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if len(pickerEnables(ran)) != 0 {
+			t.Errorf("an empty answer enabled the API: %v", pickerEnables(ran))
+		}
+		if !strings.Contains(out.String(), pickerEnableLine(t, f)) {
+			t.Errorf("the decline left no line to run instead:\n%s", out)
+		}
+	})
+
+	t.Run("no line at all", func(t *testing.T) {
+		f := gcpfake.NewBilling(t)
+		pickerDisabledOn(t, f, "projects/proj-1234")
+		// The question is the last one, so stdin ends at the offer's prompt.
+		r, out := pickerRun(t, true, "proj-1234\n\n"+setupAnswerCreate+"\n\n", nil)
+		ran := pickerGcloudRunner(t, f)
+		if err := r.gatherInputs(t.Context()); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if len(pickerEnables(ran)) != 0 {
+			t.Errorf("a run that answered nothing enabled the API: %v", pickerEnables(ran))
+		}
+	})
+
+	t.Run("gcloud is not on PATH", func(t *testing.T) {
+		f := gcpfake.NewBilling(t)
+		pickerDisabledOn(t, f, "projects/proj-1234")
+		r, out := pickerRun(t, true, pickerAnswers("proj-1234"), nil)
+		ran := &[][]string{}
+		old := billingSources
+		billingSources = billing.Options{
+			Credentials: billing.Credentials{Endpoint: f.URL, NoAuth: true},
+			Gcloud: billing.Gcloud{
+				LookPath: func(string) (string, error) { return "", fs.ErrNotExist },
+				Run: func(_ context.Context, args ...string) ([]byte, error) {
+					*ran = append(*ran, append([]string{}, args...))
+					return nil, nil
+				},
+			},
+		}
+		t.Cleanup(func() { billingSources = old })
+		if err := r.gatherInputs(t.Context()); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if len(*ran) != 0 {
+			t.Errorf("a run without gcloud ran %v", *ran)
+		}
+		if len(pickerEnables(ran)) != 0 {
+			t.Errorf("a run without gcloud enabled the API: %v", pickerEnables(ran))
+		}
+		if !strings.Contains(out.String(), pickerEnableLine(t, f)) {
+			t.Errorf("the run without gcloud left no line to run instead:\n%s", out)
+		}
+	})
+
+	t.Run("the enable fails", func(t *testing.T) {
+		f := gcpfake.NewBilling(t)
+		pickerDisabledOn(t, f, "projects/proj-1234")
+		r, out := pickerRun(t, true, pickerAnswers("proj-1234"), nil)
+		old := billingSources
+		billingSources = billing.Options{
+			Credentials: billing.Credentials{Endpoint: f.URL, NoAuth: true},
+			Gcloud: billing.Gcloud{
+				LookPath: func(file string) (string, error) { return "/usr/bin/" + file, nil },
+				Run: func(context.Context, ...string) ([]byte, error) {
+					return nil, errors.New("gcloud: PERMISSION_DENIED")
+				},
+			},
+		}
+		t.Cleanup(func() { billingSources = old })
+		if err := r.gatherInputs(t.Context()); err != nil {
+			t.Fatalf("a failed enable ended the run: %v\n%s", err, out)
+		}
+		if !strings.Contains(out.String(), "PERMISSION_DENIED") {
+			t.Errorf("the failed enable is not reported:\n%s", out)
+		}
+	})
+}
+
+// TestThePickerStillWorksWithNoAPI: the API being off is not the run failing.
+// Where the fallback answers (W4.2), the question lists the accounts it gives
+// and the picker works — nothing is offered for enabling, because nothing needs
+// it — and the API's state is the state it was.
+func TestThePickerStillWorksWithNoAPI(t *testing.T) {
+	f := gcpfake.NewBilling(t)
+	su := pickerDisabledOn(t, f, "projects/proj-1234")
+	acct := pickerAccountID(t, "gcloud")
+	r, out := pickerRun(t, true, pickerAnswers("1"), nil)
+	old := billingSources
+	billingSources = billing.Options{
+		Credentials: billing.Credentials{Endpoint: f.URL, NoAuth: true},
+		Gcloud: billing.Gcloud{
+			LookPath: func(file string) (string, error) { return "/usr/bin/" + file, nil },
+			Run: func(context.Context, ...string) ([]byte, error) {
+				return []byte(fmt.Sprintf("%-22s%-34s%-7s%s\n%-22s%-34s%-7s%s\n",
+					"ACCOUNT_ID", "NAME", "OPEN", "MASTER_ACCOUNT_ID",
+					acct, "own account", "True", "")), nil
+			},
+		},
+	}
+	t.Cleanup(func() { billingSources = old })
+	if err := r.gatherInputs(t.Context()); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if r.o.linkBilling != acct {
+		t.Errorf("the picked account: %q, want the one gcloud listed (%q)\n%s", r.o.linkBilling, acct, out)
+	}
+	if !strings.Contains(out.String(), billing.SourceGcloud.String()) {
+		t.Errorf("the question does not say gcloud answered:\n%s", out)
+	}
+	if strings.Contains(out.String(), "CONFIRM") {
+		t.Errorf("an API the fallback made unnecessary was offered for enabling:\n%s", out)
+	}
+	if len(su.Enables()) != 0 || su.Enabled(pickerBillingAPI) {
+		t.Errorf("the API's state changed: enables %v, enabled %v", su.Enables(), su.Enabled(pickerBillingAPI))
+	}
 }
 
 // TestThePickerAndTheStagePrintTheSameGuidedLine: the line the question leaves
