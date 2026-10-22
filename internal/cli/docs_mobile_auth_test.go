@@ -16,9 +16,9 @@ import (
 // No Go, no TypeScript, no rules change, no Firebase configuration and no live
 // action follows from any of them.
 //
-// This pin is P0 of that plan, and the plan says what it holds. Six of the
-// seven tests below are one claim each, and every one of them is a sentence a
-// later edit can quietly falsify:
+// This pin is P0 of that plan, and the plan says what it holds. Each of the
+// seven tests below is one claim, and every one of them is a sentence a later
+// edit can quietly falsify:
 //
 //   - TestDocsMobileAuthDocumentsExist -- the four documents are in the tree,
 //     and the index's status line still says "plan only; no code is
@@ -51,8 +51,10 @@ import (
 //
 // **What this guard does not hold, said rather than left to be found.** It
 // checks paths, not symbols: a symbol named beside a citation without the
-// possessive form (`rules.go`'s `PathDevices`) is outside it, exactly as the
-// coordinator plan records of its own pair of checks. It reads **this folder
+// possessive form ("minted through `MintDeviceToken`" after a path) is outside
+// it, for the reason `docs/coordinator/implementation-plan.md` gives of its own
+// pair of checks in its P0 -- pairing an identifier with a citation needs a
+// notion of scope the prose does not carry. It reads **this folder
 // only**: it makes no claim about docs/mobile/, docs/central-orchestrator/,
 // docs/coordinator/ or the check register, each of which its own pin holds --
 // and it holds a citation into another folder's document to that path
