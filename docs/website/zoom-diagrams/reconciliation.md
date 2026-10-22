@@ -369,10 +369,14 @@ node yet ('fugaro pair' is plan task P6.6 and is not built)", and no QR generato
 anywhere in `go.mod` or `internal/`. The roles are defined **only** in the owner's spec
 (`docs/mobile-auth/spec.md` — Viewer / Operator / Admin as an allowlist capability table),
 and D225 puts the role as a **field on the device node**, read in v1 by the CLI and the
-console and **never by the rules** (`docs/mobile-auth/reconciliation.md:466-505`). The whole
-`docs/mobile-auth/` folder is "plan only. No code is implemented… nothing here is approved"
-(`docs/mobile-auth/README.md:3`), and its sixteen decisions D221–D236 are **recommendations
-the owner has not answered** (`docs/mobile-auth/reconciliation.md:443-448`).
+console and **never by the rules** (`docs/mobile-auth/reconciliation.md` §4, D225). The whole
+`docs/mobile-auth/` folder is "plan only. No code is implemented" (`docs/mobile-auth/README.md`,
+its status line), and its sixteen decisions D221–D236 were **answered by the owner, each as
+recommended, on 2026-10-22** — so the plan is approved for **P0 and P1**, the two parts that wait
+on nothing built, and the parts that wait on the mobile Phase 6 tasks (P6.6, P6.8) wait still
+(`docs/mobile-auth/reconciliation.md` §4; `docs/mobile-auth/implementation-plan.md` §11). **None
+of that makes this row's own subject less of a gap**: the role is still a field on a node no code
+writes, because the parts that would write it are the ones that wait.
 
 ### ZF28 — **Rule** — what the voice ruling fixes, and what it forbids
 
@@ -819,8 +823,9 @@ None of them is written "(default)", and an answer is not a go: each part of
 The numbers are **D237 onward**: the highest written decision under `docs/` is **D236**
 (`docs/mobile-auth/`), the block `D198`–`D200` sits inside the coordinator's "a move into the
 block must start at D198" note and `D200` may be held by the owner's notes
-(`docs/coordinator/README.md:113`; `docs/mobile-auth/README.md:41`), and the convention is to
-take the first block above the highest allocation rather than to derive one by grepping
+(`docs/coordinator/README.md:113`; `docs/mobile-auth/README.md`, "The numbers this work takes"), and
+the convention is to take the first block above the highest allocation rather than to derive one by
+grepping
 (`docs/website/redesign/implementation-plan.md:556-569`). **The allocation is the owner's, and
 the owner has now taken it: the answers of 2026-10-21 were given under `D237`–`D252`, so the
 block below is this line of work's and the records that name it — the plan's §8, the README's
