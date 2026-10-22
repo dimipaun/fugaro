@@ -54,7 +54,7 @@ fugaro creds ls
 ```
 
 1. **The kill switch.** `fugaro budget show` says who set it, when and why. If it was deliberate, stop here.
-2. **The service itself.** A Cloud Run service scaled to zero instances, or one whose revision fails to start, answers nothing. Re-deploy the released image, or scale it back up.
+2. **The service itself.** Read the service's own state before you act on it — **zero instances is not a fault**: Cloud Run scales it to zero between reviews, the first call after idle pays about a second of cold start and is served, and the installation's module sets no minimum instance count ([spec.md](spec.md) states the design). The shapes that do answer nothing are §1's own reads failing: a service **never applied** (`NotFound`), a revision that **fails to start** (the `gcloud run services describe` status names it, and the image is what to re-deploy), and a caller **IAM refuses** (`PermissionDenied` — the repository job's `run.invoker` member, §1's third read). Re-deploy the released image for a revision that will not start; fix the invoker grant for a caller that is not allowed to reach it.
 3. **The bundle.** `fugaro creds ls` answers a **named failure** for every way the bundle can be missing, and **never an empty list**: a document this command can list always holds at least one credential, because the loader refuses an empty one. Read the failure it names — each is a different repair:
 
    | `fugaro creds ls` says | What it means | What you do |
