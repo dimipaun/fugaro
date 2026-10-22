@@ -702,6 +702,68 @@ func TestMintRefusesWhenItCannotBeAudited(t *testing.T) {
 	})
 }
 
+// TestEveryMintLineNamesTheAppKey is the naming rule of a mint's line, and it
+// is one rule and not a rule per stage: EVERY line this endpoint writes names
+// the App key (auditMint). The name is this endpoint's own — the credential an
+// installation token is issued from — and not something read out of the bundle,
+// so it is the same whether the refusal was taken before the bundle was read or
+// after it, and it is never empty. Which credential answered is what an operator
+// audits a mint by, and a line that named none would be a mint they cannot
+// account for.
+//
+// The stages below are the two sides of the bundle read (a body this endpoint
+// cannot read, the operator's stop switch; then a bundle with no App key in it),
+// and the binding refusal and the issuance are pinned beside the calls they
+// belong to (TestMintForOwnRepositoryOnly, TestMintIsStoppedByTheKillSwitch,
+// TestMintAudited).
+func TestEveryMintLineNamesTheAppKey(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*svc, *Config)
+		body   string
+	}{
+		{
+			name: "a body this endpoint cannot read, before the bundle",
+			body: mintBody("not-a-number"),
+		},
+		{
+			name:   "the operator's stop switch, before the bundle",
+			mutate: func(s *svc, _ *Config) { s.kills.repos[s.slug] = true },
+			body:   mintBody(testAppID),
+		},
+		{
+			name: "a bundle with no App key, after the bundle",
+			mutate: func(s *svc, _ *Config) {
+				s.src.docs = [][]byte{testBundleDoc(t)}
+			},
+			body: mintBody(testAppID),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := mintSvc(t, tc.mutate)
+			resp, body := s.mintCall(t, tc.body)
+			if resp.StatusCode != StatusUnavailable {
+				t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+			}
+			lines := mintAuditLines(t, s)
+			if len(lines) != 1 {
+				t.Fatalf("the refused mint wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+			}
+			line := lines[0]
+			checkAuditShape(t, line)
+			if got := line["credential"]; got != config.GitHubAppKeySecret {
+				t.Errorf("the mint's audit line names credential %v, want the App key's name %q", got, config.GitHubAppKeySecret)
+			}
+			if got := line["tier"]; got != "" {
+				t.Errorf("the mint's audit line carries tier %v, and the App key has none", got)
+			}
+			if got := line["purpose"]; got != PurposeMint {
+				t.Errorf("the mint's audit line carries purpose %v, want %q", got, PurposeMint)
+			}
+		})
+	}
+}
+
 // levelOffHandler is a handler that records nothing: Enabled is false for every
 // level, which is the half of "cannot be audited" a level-filtered log is
 // (C1.13's line(): slog's own LogAttrs would drop such a record silently).
