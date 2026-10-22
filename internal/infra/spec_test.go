@@ -2291,16 +2291,17 @@ func TestRepoAddressesMatchTheCredentialsGolden(t *testing.T) {
 // Anthropic key and a provider's key. The build account's own accessor on the
 // App key is not the job's and does not move (D148, F3).
 //
-// The App key's rows are the gated half (review finding F1, 2026-10-21): with
-// the runner still reading the key — this branch, config.ServiceHeldSecretNames
-// empty — the opt-in takes only the model accessors away, because a job whose
-// account lost its accessor on a key its container still mounted is a job Cloud
-// Run refuses to create; and with the name in that list (the state C2.2's
-// release puts the tree in) the App key's accessor goes with them. Both states
-// are asserted against the same Run: the mirror and the module are held to each
-// other by deploy/terraform's TestServiceHeldSecretsMatchTheCredentialsService,
-// so a module that dropped the accessor while the list was empty would be a
-// plan Go's own address list disagrees with.
+// The App key's rows are the gated half (review finding F1, 2026-10-21): now
+// that C2.2's release is in this tree — the runner fetches the run's
+// installation tokens from the service, and config.ServiceHeldSecretNames names
+// the key — the App key's accessor goes with the model ones. Before that
+// release the opt-in had to take only the model accessors away, because a job
+// whose account lost its accessor on a key its container still mounted is a job
+// Cloud Run refuses to create; the accessor and the mount now move in the same
+// plan. The mirror and the module are held to each other by deploy/terraform's
+// TestServiceHeldSecretsMatchTheCredentialsService, so a module that dropped
+// the accessor while the list was empty would be a plan Go's own address list
+// disagrees with.
 //
 // It then runs the same two address lists through Retirements, both
 // directions, because that is what the drop is FOR: the state an installation
@@ -2428,13 +2429,10 @@ func TestRepoAddressesDropServiceHeldSecretsWhenTheServiceIsOn(t *testing.T) {
 				}
 			}
 
-			// This branch: the job reads the App key, so the opt-in takes only
-			// the model accessors away and the App key's stays (F1).
-			check("the job reads the key", tc.wantGone, tc.wantAdd)
-			// C2.2's release: the App key joins the list and its accessor goes
-			// with the model ones, in the same plan.
-			serviceHoldsTheAppKey(t)
-			check("C2.2's release", slices.Concat(tc.wantGone, tc.wantAppKey), tc.wantAdd)
+			// The App key's accessor goes with the model ones, in the same
+			// plan: C2.2's release is in this tree, so the job reads no key and
+			// gives that accessor up too (F1).
+			check("the service holds the App key", slices.Concat(tc.wantGone, tc.wantAppKey), tc.wantAdd)
 		})
 	}
 }
