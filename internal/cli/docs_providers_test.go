@@ -87,6 +87,70 @@ func isFence(line string) bool {
 	return strings.HasPrefix(s, "```") || strings.HasPrefix(s, "~~~")
 }
 
+// TestDocsSectionHelperCutsAtItsOwnLevelAndSkipsFences is the guard on the
+// guard: docSection is what every "read the claims out of THIS section" test in
+// this package stands on, and the C1.22 code review found it cutting at the next
+// "## " whatever the target's own level was. It is exercised on a document this
+// test owns, so the properties are not at the mercy of a later rewrite of the
+// real ones it is used on, and each is the property a caller's comment claims:
+//
+//   - a "### " read stops at the next "### " — a sibling must not satisfy it —
+//     and at the next "## " above it;
+//   - a "## " read still carries its own "### " children and stops at the next
+//     "## ", which is what every "## " caller has always relied on;
+//   - a "#" line inside a fenced code block is a comment and not a heading:
+//     cutting there ends a section in the middle of its own example, which is
+//     what a first, fence-blind version of this fix did to the Check
+//     70a/70b/70c guards, whose bash blocks carry "#" comment lines.
+//
+// Both properties are mutation-proved, each by the change it is about, run and
+// restored: cutting at "## " whatever the level is (the helper's old rule)
+// fails it on the sibling's text, and a fence-blind headingLevel fails it on
+// the fenced section losing its own body.
+func TestDocsSectionHelperCutsAtItsOwnLevelAndSkipsFences(t *testing.T) {
+	const path = "synthetic.md"
+	const doc = `# Doc
+
+## One
+
+### One A
+
+claim of one A
+
+### One B
+
+claim of one B
+
+## Two
+
+claim of two
+`
+	got := docSection(t, path, doc, "### One A")
+	if !strings.Contains(got, "claim of one A") {
+		t.Errorf("docSection(### One A) dropped the section's own text: %q", got)
+	}
+	for _, banned := range []string{"claim of one B", "claim of two", "## Two"} {
+		if strings.Contains(got, banned) {
+			t.Errorf("docSection(### One A) read %q: a ### section runs to the next heading of its own level or higher, and a sibling's text must not be able to satisfy a claim about this one", banned)
+		}
+	}
+	if got := docSection(t, path, doc, "## One"); !strings.Contains(got, "claim of one B") {
+		t.Errorf("docSection(## One) dropped its own ### children: a ## section runs to the next ## , which is what every ## caller reads")
+	}
+	// The fence, in a document of its own: a "#" line inside it is a comment,
+	// and the heading after the fence still ends the section.
+	fenced := "### Fenced\n\n```bash\n# not a heading\necho hi\n```\n\nstill the fenced section\n\n## Next\n\ngone\n"
+	got = docSection(t, path, fenced, "### Fenced")
+	for _, want := range []string{"# not a heading", "still the fenced section"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("docSection(### Fenced) lost %q: a # line inside a fence is a comment, not a heading, and cutting there ends a section in the middle of its own example", want)
+		}
+	}
+	if strings.Contains(got, "gone") {
+		t.Error("docSection(### Fenced) ran past `## Next`: tracking the fence must not hide the heading that really does end the section")
+	}
+}
+
 // TestMultiModelNamesDirectProviders: docs/multi-model.md must document
 // sending a model's traffic straight to its vendor instead of OpenRouter
 // (design generic-tool.md §6, G18): a "Direct to the vendor" section with a
