@@ -84,10 +84,11 @@
 // a confirmed action is a value the app holds. P6.9's typed path makes the same
 // call for the same reason, in the same words.
 //
-// **A launch is not confirmed -- and it does travel (D162).** `propose` answers
-// `pass-through` for one and hands the owner's own words to the same `send` port
-// agent text goes to, which is exactly what P6.9's typed path does for the same
-// verb (`mobile/src/text/input.js`, `return send(text)`): "no confirmation" means
+// **A launch is not confirmed -- and it does travel (D162).** The machine answers
+// `pass-through` for one, and `propose` hands the owner's own words to the same
+// `send` port agent text goes to, which is exactly what P6.9's typed path does
+// for the same verb (`mobile/src/text/input.js`, `return send(text)`): "no
+// confirmation" means
 // the command goes to the agent as text, through the one write path the phone
 // has. What is unwritten for a launch is the same *record* the confirmed action
 // above waits on -- not the launch itself.
@@ -629,7 +630,8 @@ export function createVoiceDialogue(options = {}) {
    * `send` port as `sent`, with `verb` and `actionId: null` (see `deliver`).
    *
    * @param {unknown} input
-   * @returns {Promise<object>} the read-back that was spoken, or a refusal
+   * @returns {Promise<object>} the read-back that was spoken, a launch's `sent`,
+   *   or a refusal
    */
   async function propose(input = {}) {
     try {
