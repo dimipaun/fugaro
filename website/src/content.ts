@@ -1416,6 +1416,7 @@ export function loadMobileClaims(): MobileClaimsFacts {
   }
 
   return { claims }
+}
 
 // website/data/why-gcp.yaml — the claims the "Why GCP" page renders.
 // ---------------------------------------------------------------------------------------
