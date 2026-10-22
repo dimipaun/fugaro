@@ -205,12 +205,12 @@ const (
 	// KindModel is a model credential: the cascade offers it, creds.Select
 	// picks one, and the service attaches its value to an Anthropic call.
 	KindModel Kind = "model"
-	// KindGitHubApp is the GitHub App's private key (config.GitHubAppKeySecret,
-	// the one entry whose Name and Key are the same string). The mint parses
-	// it and signs the App's JWT with it (github.go) and nothing else in this
-	// service reads it. It has no tier, and it must never reach the cascade: a
-	// candidate the cascade could select would be an App private key attached
-	// to an Anthropic call as the caller's credential.
+	// KindGitHubApp is the GitHub App's private key: the document key
+	// config.GitHubAppKeySecret. The mint parses it and signs the App's JWT
+	// with it (github.go) and nothing else in this service reads it. It has no
+	// tier, and it must never reach the cascade: a candidate the cascade could
+	// select would be an App private key attached to an Anthropic call as the
+	// caller's credential.
 	KindGitHubApp Kind = "github-app"
 )
 
@@ -285,7 +285,21 @@ func (e Entry) LogValue() slog.Value { return slog.StringValue(e.String()) }
 // (TestBundleValueNeverInErrorOrLog).
 type Bundle struct {
 	entries []Entry
-	byName  map[string]int
+	// byName indexes the MODEL credentials by the name the cascade speaks
+	// (the Claude account's, config.AnthropicSecret). The App key is not in
+	// it, and it cannot be: an account may legally be named
+	// config.GitHubAppKeySecret (claude-oauth-token-github-app-key is a legal
+	// named account), so the App key's resolved name is a name a model
+	// credential may also have, and one map keyed by name could not hold both
+	// without one of them being unreachable. The App key is found by its kind
+	// instead (AppKey), which is a stronger reading than a name: there is
+	// exactly one document key that is the App key.
+	byName map[string]int
+	// appKey is the index of the App key entry, or -1 when the document holds
+	// none. It is at most one entry: CredentialKey answers KindGitHubApp for
+	// exactly one document key, and a second occurrence of that key is a
+	// duplicate the loader refuses.
+	appKey int
 }
 
 // Len is how many credentials the document holds.
@@ -319,14 +333,38 @@ func (b *Bundle) Names() []string {
 	return out
 }
 
-// Lookup answers the credential of that name. found=false is a name the
-// document does not hold, which is a refusal and never an empty credential.
+// Lookup answers the MODEL credential of that name — the name the cascade,
+// the policy's accounts block, the marks and the wire contract speak. found
+// =false is a name the document does not hold, which is a refusal and never an
+// empty credential.
+//
+// The App key is deliberately not reachable through it (AppKey is), because
+// its name is a name a model credential may also have: a caller of Lookup that
+// asked for "github-app-key" would be asking for an account, and a caller that
+// wants the key says so by asking for the kind.
 func (b *Bundle) Lookup(name string) (Entry, bool) {
 	i, ok := b.byName[name]
 	if !ok {
 		return Entry{}, false
 	}
 	return b.entries[i], true
+}
+
+// AppKey answers the bundle's GitHub App private key (C2.1), which is the
+// entry whose document key is config.GitHubAppKeySecret. found=false is a
+// document that holds no App key, which the mint refuses on (ErrMintNoAppKey)
+// and never falls back from (D143).
+//
+// It selects by KIND rather than by name, and that is the whole reason it is
+// not a Lookup: an account named "github-app-key" resolves to that same name,
+// so a name lookup could not tell the key from the token, and the token
+// offered to a PEM parser is the mistake this accessor exists to make
+// unrepresentable.
+func (b *Bundle) AppKey() (Entry, bool) {
+	if b == nil || b.appKey < 0 {
+		return Entry{}, false
+	}
+	return b.entries[b.appKey], true
 }
 
 // String renders the bundle as its names and tiers. It is what makes
@@ -441,7 +479,7 @@ func ParseBundle(raw []byte) (*Bundle, error) {
 	if n := len(root.Content) / 2; n > MaxBundleCredentials {
 		return nil, bundleErr(ErrBundleTooMany, "")
 	}
-	b := &Bundle{entries: make([]Entry, 0, len(root.Content)/2), byName: make(map[string]int, len(root.Content)/2)}
+	b := &Bundle{entries: make([]Entry, 0, len(root.Content)/2), byName: make(map[string]int, len(root.Content)/2), appKey: -1}
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		k, v := root.Content[i], root.Content[i+1]
 		if k.Kind != yaml.ScalarNode || k.Tag != "!!str" {
@@ -451,12 +489,33 @@ func ParseBundle(raw []byte) (*Bundle, error) {
 		if !ok {
 			return nil, bundleErr(ErrBundleUnknownKey, k.Value)
 		}
-		if _, dup := b.byName[name]; dup {
-			// yaml.v3 refuses a duplicate mapping key when it decodes into a
-			// Go map, but this is a Node walk: two keys that are different
-			// strings and one credential would otherwise be one entry
-			// silently replacing another, which is a document no writer
-			// produces and no reader may guess at.
+		// yaml.v3 refuses a duplicate mapping key when it decodes into a Go
+		// map, but this is a Node walk: two keys that are different strings
+		// and one credential would otherwise be one entry silently replacing
+		// another, which is a document no writer produces and no reader may
+		// guess at.
+		//
+		// What "one credential" means is read off the KIND, because the two
+		// kinds do not share a namespace. The App key is one document key
+		// (CredentialKey answers KindGitHubApp for exactly one spelling), so a
+		// second github-app-key is the duplicate. A model credential is one
+		// NAME, which two spellings may carry (claude-oauth-token and
+		// claude-oauth-token-alice are different names, but
+		// claude-oauth-token-github-app-key resolves to "github-app-key"), so
+		// the model family is keyed on the resolved name.
+		//
+		// The two families do NOT collide even though a name can be the same
+		// string: "github-app-key" is the App key's document key and may also
+		// be an account's resolved name, and a document holding both is a
+		// legal document (the published schema admits both keys) with two
+		// different credentials in it. Keying them into one map would refuse
+		// it with ErrBundleUnknownKey — a false diagnosis of a valid
+		// document, and the loader disagreeing with the schema it publishes.
+		if kind == KindGitHubApp {
+			if b.appKey >= 0 {
+				return nil, bundleErr(ErrBundleUnknownKey, k.Value)
+			}
+		} else if _, dup := b.byName[name]; dup {
 			return nil, bundleErr(ErrBundleUnknownKey, k.Value)
 		}
 		if v.Kind != yaml.ScalarNode || v.Tag != "!!str" {
@@ -468,7 +527,11 @@ func ParseBundle(raw []byte) (*Bundle, error) {
 		if v.Value == "" || len(v.Value) > MaxBundleValueBytes {
 			return nil, bundleErr(ErrBundleBadValue, k.Value)
 		}
-		b.byName[name] = len(b.entries)
+		if kind == KindGitHubApp {
+			b.appKey = len(b.entries)
+		} else {
+			b.byName[name] = len(b.entries)
+		}
 		b.entries = append(b.entries, Entry{Kind: kind, Name: name, Tier: tier, Key: k.Value, value: secret{value: v.Value}})
 	}
 	if len(b.entries) == 0 {

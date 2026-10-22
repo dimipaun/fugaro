@@ -590,6 +590,30 @@ func TestMintRefusesWhatItCannotSignWith(t *testing.T) {
 	}
 }
 
+// TestMintSignsWithTheKeyAndNotTheAccountNamedAfterIt: the App key and the
+// account family are two namespaces that can spell the same string, so a
+// bundle may hold both config.GitHubAppKeySecret and an account whose resolved
+// name is exactly that (claude-oauth-token-github-app-key -> "github-app-key").
+// The mint reads the key by its KIND (Bundle.AppKey), never by a name the two
+// can share, so the account's token is never handed to the PEM parser and the
+// mint still issues — which is what proves it read the key: a mint that had
+// taken the account for the key would have refused with ErrMintBadAppKey
+// before reaching GitHub.
+func TestMintSignsWithTheKeyAndNotTheAccountNamedAfterIt(t *testing.T) {
+	doc := append(mintBundleDoc(t), []byte(config.ClaudeAccountSecret(config.GitHubAppKeySecret)+": "+fakeCred(t, "account")+"\n")...)
+	s, gh := mintSvc(t, func(s *svc, _ *Config) { s.src.docs = [][]byte{doc} })
+	resp, body := s.mintCall(t, mintBody(testAppID))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the answer is %d, want 200: %s", resp.StatusCode, body)
+	}
+	if ans := mintAnswer(t, body); ans.Token != gh.token {
+		t.Errorf("the answer = %+v, want the fake's token", ans)
+	}
+	if n := gh.count(); n != 2 {
+		t.Errorf("GitHub saw %d requests, want the installation lookup and the mint", n)
+	}
+}
+
 // TestMintRefusesABodyItCannotRead: the mint's body is this contract's, and
 // this contract is strict (Convention 6). A field the service does not know, a
 // missing or malformed App ID, an oversized body and another method are all

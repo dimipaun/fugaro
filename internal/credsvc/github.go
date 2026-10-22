@@ -41,6 +41,16 @@ package credsvc
 // header — and every refusal below is a sentence this file wrote rather than
 // another package's, because an upstream's error text is not this service's to
 // hand to a run.
+//
+// How the key gets into the bundle is C1.25's half, which the plan's C2.1 file
+// list names (internal/cli/creds.go, the same key through `fugaro creds set`).
+// That file is NOT on this branch — no `creds` command exists here yet — so on
+// this branch the App key has no writer, and an installation whose bundle holds
+// none gets exactly the named refusal below (ErrMintNoAppKey) and never a
+// fallback. What C2.1 owes C1.25 is here and is the shared code that writer
+// reuses: CredentialKey answers the App key's kind, the schema admits the key,
+// and the mint reads it by kind. Nothing else is needed from this side, and a
+// second writer would be the thing to avoid.
 
 import (
 	"context"
@@ -171,18 +181,19 @@ func mintRepository(canonical string) (owner, repo string, err error) {
 
 // appKey is the bundle's GitHub App private key, parsed.
 //
-// The name is looked up AND the entry's kind is checked: an account may be
+// It is found by KIND (Bundle.AppKey) and never by name: an account may be
 // named "github-app-key" (claude-oauth-token-github-app-key is a legal named
-// account), and a lookup that took a token for the App key would be a token
-// offered to a PEM parser. The kind is what the document says the entry is,
-// and only KindGitHubApp is the key.
+// account) and resolves to that same name, so a name lookup could not tell the
+// key from the token — and a token offered to a PEM parser is the mistake the
+// kind exists to make unrepresentable. The kind is what the document says the
+// entry is, and only KindGitHubApp is the key.
 //
 // Neither refusal carries the value: a parse error is another package's
 // sentence about a credential, and a credential in an error is a credential in
 // a log.
 func appKey(b *Bundle) (*rsa.PrivateKey, error) {
-	e, ok := b.Lookup(config.GitHubAppKeySecret)
-	if !ok || e.Kind != KindGitHubApp {
+	e, ok := b.AppKey()
+	if !ok {
 		return nil, ErrMintNoAppKey
 	}
 	key, err := github.ParsePrivateKey([]byte(e.Value()))
@@ -259,6 +270,14 @@ func (s *Server) mint(ctx context.Context, w http.ResponseWriter, r *http.Reques
 // auditMint writes the audit line for one mint: run, repository, credential
 // name, purpose, status. It is C1.13's shape as that task's plan writes it,
 // and it carries no tier: the App key is not spent on a call, so it has none.
+//
+// C1.13 is the task that owns the service's audit line, and it writes it in
+// internal/credsvc/audit.go, which is NOT landed on this branch — so this is a
+// local spelling of that shape rather than a call into its writer, and it is
+// the ONE reconciliation C2.1 owes when C1.13 lands: fold this line into
+// C1.13's writer, keeping the fields below and keeping the tier absent (a tier
+// names the credential a model call spent, and a mint spends none). The shape
+// is pinned by TestMintAudited so the fold is a move and not a rewrite.
 //
 // The line names the App key and never its value, and the token that was
 // minted is in neither.
