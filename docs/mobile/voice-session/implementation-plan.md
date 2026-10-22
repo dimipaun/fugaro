@@ -10,11 +10,21 @@ leaves a "live" session behind after a crash. Where the spec and the
 reconciliation disagree, **the reconciliation wins** — the spec was written
 without seeing this repository.
 
-**Status: plan only; nothing is implemented; decisions open.** Not one line of
-any task below has been written or run. **D201–D220 in
-[reconciliation.md](reconciliation.md) §5 are open**: every one carries a
-recommendation, and **none is taken**. Answering a decision is not approving a
-task. The gate at the end of this file is **not passed**.
+**Status: VS0 is implemented; every other part is not; one decision is
+answered.** **Amended 2026-10-22:** the owner **answered D205 as recommended**
+— the machine lives in JavaScript, in `mobile/src/voice-session/` — and
+**approved VS0.1, VS0.2 and VS0.3, and only those three**. They are written,
+tested and in review as **PR #921**, and they ship **no native code, no
+manifest change and no device step** (which is what the gate below says they
+never needed). **VS1 onward is not approved**, and **D201–D204 and D206–D220 in
+[reconciliation.md](reconciliation.md) §5 remain open**: every one carries a
+recommendation, and **a recommendation is not a decision**. Answering a decision
+is not approving a task, and this file's gate is **not passed for any part but
+VS0**.
+
+*The status as first written, kept:* **plan only; nothing is implemented;
+decisions open** — not one line of any task had been written or run, and none of
+D201–D220 was taken.
 
 **Checked against.** `main` at `c92093b6` (the mobile tree at `12fbe60e`), the
 same commit as [reconciliation.md](reconciliation.md). Every path and symbol
@@ -106,7 +116,7 @@ the owner's.
 
 | Part | What it is | Tasks | Mergeable alone? | What it waits on |
 |---|---|---|---|---|
-| **VS0 — The machine, and its tests** | `mobile/src/voice-session/`: the state machine as a **pure reducer over the spec's §5 event stream**, with its own door, its own scan and a test for every transition — including the timeout and `shouldResume: false` paths the spec's §11 asks for. **No native, no device, no decision but D205.** | VS0.1–VS0.3 | **Yes** — nothing imports it yet | D205 (where the machine lives); safe to start the moment it is answered |
+| **VS0 — The machine, and its tests** | `mobile/src/voice-session/`: the state machine as a **pure reducer over the spec's §5 event stream**, with its own door, its own scan and a test for every transition — including the timeout and `shouldResume: false` paths the spec's §11 asks for. **No native, no device, no decision but D205.** | VS0.1–VS0.3 | **Yes** — nothing imports it yet | D205 (where the machine lives) — **answered 2026-10-22 as recommended, and VS0.1–VS0.3 are implemented (PR #921)** |
 | **VS1 — The seam** | The controller that joins the machine to reality: it drives `pipeline.start()`/`stop()`, reads `pipeline.speaking()`/`turn()` (never storing them), keeps P3.5's switch and queue where they are, and registers itself as `mobile/index.js`'s one construction site. Native is a **port** with a fake, exactly like `src/audio/`. | VS1.1–VS1.3 | **Yes** — the fake means the app runs unchanged | VS0; **D213** (VS1.2's reporting shape) |
 | **VS2 — The declarations** | Everything the two platforms need *declared*, through `app.config.js` and a config plugin (F6): the iOS background mode, the usage string, `NSSupportsLiveActivities` and the App Group; the Android permissions and the FGS type. **No native code yet** — this part is what turns the fence red if it is done in `app.json`. | VS2.1–VS2.3 | **Yes** — the declarations are inert until a module uses them | VS1 (the policy scan needs the module to exist); **D207** (VS2.1's background mode) |
 | **VS3 — Android** | The local Expo module's Kotlin half: `VoiceSessionModule.kt`, `VoiceSessionService.kt`, `AudioFocusController.kt`, the notification, the route signal, the `START_NOT_STICKY` contract. | VS3.1–VS3.3 | **Yes**, and independent of VS4 | VS2; **D209** (call state), **D210** (notifications denied), **D218** (the category) |
@@ -121,7 +131,7 @@ the owner's.
 
 | | Rule |
 |---|---|
-| **D205** (where the machine lives) gates **all of VS0–VS2**, which is the part of this plan that is otherwise safe to start at once. Its recommended answer — JavaScript — is the one the rest of the plan is written against, and a different answer rewrites VS0, VS2, VS3 and VS4. |
+| **D205** (where the machine lives) gates **all of VS0–VS2**, which is the part of this plan that is otherwise safe to start at once. Its recommended answer — JavaScript — is the one the rest of the plan is written against, and a different answer rewrites VS0, VS2, VS3 and VS4. **Answered 2026-10-22: the recommendation**, which is why **VS0.1–VS0.3 are implemented (PR #921)** and VS1's and VS2's own gates — D213 and D207 — are what they still wait on. |
 | **D204** (16.1 versus 17) gates **VS4.3 and VS4.4**, because it is the difference between one Live Activity UI and two, and between buttons and a deep link. Its recommended answer — iOS 17 — makes VS4.4's fallback row disappear. |
 | **D207** (background audio, extending D122) gates **VS2.1**, the commit that declares `UIBackgroundModes`. |
 | **D209** gates **VS3.2**'s call-state half: the recommended answer removes the `READ_PHONE_STATE` request and the whole denial path. |
@@ -209,6 +219,14 @@ The whole of this part is **CI-runnable, on any machine, with no device** — wh
 is what the spec's own §11 unit-test line asks for and what Global Constraint 10
 allows. Nothing here imports a native module, a clock, a random source, a file
 or the network.
+
+**Implemented 2026-10-22** (D205 answered as recommended; the owner approved
+VS0.1–VS0.3 and nothing else). The three tasks below are in `mobile/` on the
+branch of **PR #921**, with `npm test` at 700 pass, 0 fail; the files, the tests
+and the verification each task names were written as they stand here, and the
+two places the code had to decide something this plan leaves open are named in
+that pull request (the six app-side events beside §5's six, and
+`shouldResume: false` ending as `interruption_timeout`).
 
 ### Task VS0.1: The event contract, as the spec's §5 writes it — **new**
 
@@ -768,23 +786,32 @@ performs any step.**
 - **D205 is the plan's load-bearing decision.** Its recommended answer
   (JavaScript) is what makes VS0–VS2 CI-runnable and cheap; the alternative
   rewrites four parts and gives up every device-free test in this plan.
+  **Answered 2026-10-22 as recommended**, and the first of the parts it gates —
+  VS0, the machine and its tests — is implemented (PR #921).
 
 ---
 
 ## OWNER APPROVAL GATE
 
-**Not passed. No part is approved. Nothing is implemented.** D201–D220 in
-[reconciliation.md](reconciliation.md) §5 are open; each carries a
-recommendation, and **answering one is not a go**.
+**Passed for VS0 and for nothing else.** **Amended 2026-10-22:** the owner
+**answered D205 as recommended** (JavaScript, in `mobile/src/voice-session/`)
+and **approved VS0.1, VS0.2 and VS0.3 — the event contract, the reducer and its
+tests — and no other task**; those three are implemented and in review as
+**PR #921**. **No part from VS1 onward is approved**, and **D201–D204 and
+D206–D220 in [reconciliation.md](reconciliation.md) §5 remain open**; each
+carries a recommendation, and **answering one is not a go**.
+
+*The gate as first written, kept:* **not passed, no part approved, nothing
+implemented** — and answering a decision is not a go.
 
 To start any part the owner names it (or a task) and says go. What each part
 waits for, in one line:
 
 | To start | The owner must have |
 |---|---|
-| **VS0** | answered **D205** (where the machine lives) — and no other decision |
-| **VS1** | VS0 merged, and **D213** (VS1.2's reporting shape) |
-| **VS2** | VS1 merged, and **D207** (the background mode VS2.1 declares) |
+| **VS0** | answered **D205** (where the machine lives) — and no other decision. **Done 2026-10-22: answered as recommended, VS0.1–VS0.3 approved and implemented (PR #921); VS0 is complete once that pull request is merged** |
+| **VS1** | VS0 merged, and **D213** (VS1.2's reporting shape) — **still owed** |
+| **VS2** | VS1 merged, and **D207** (the background mode VS2.1 declares) — **still owed** |
 | **VS3** | VS2 merged, and **D209**, **D210**, **D218** |
 | **VS4** | VS2 merged, **D204**, **D203**, and the **Apple portal steps** of the reconciliation's §6.1 | 
 | **VS5** | VS3 and VS4 merged |
@@ -798,8 +825,11 @@ no manifest, open no microphone and require no device, and they are the whole of
 what the spec's own §11 asks CI to hold. **They are the minimum first cut that is
 useful and safe**, and they are useful even if every other part of this plan is
 never approved: they are the machine, written down, before anything can be built
-on a wrong idea of what it is.
+on a wrong idea of what it is. **They were approved on 2026-10-22 and are
+written** (PR #921) — the one part of this plan that is.
 
 **Not before the gate:** no `prebuild`, no `eas build`, no native module, no
 manifest change, no portal step, no check run. The gate is the owner's, and this
-file does not pass it.
+file does not pass it. **The 2026-10-22 approval did not move that line: VS0
+was approved *because* it needs none of those things**, and every part that
+does — VS1's native port onward — still waits for its own yes.
