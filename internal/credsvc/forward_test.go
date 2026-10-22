@@ -105,14 +105,18 @@ func TestServiceForwardsWithSelectedCredential(t *testing.T) {
 
 // TestServiceStreamsUnbuffered: an answer reaches the run as it arrives (C1.8),
 // and the service is a forwarder in that respect and not a buffer. The upstream
-// holds each event back for a second, so an answer that were read whole before
-// it was written could not deliver the first event in a fraction of that.
+// holds each event after the first back for a second, so an answer that were
+// read whole before it was written could not deliver the first event until five
+// seconds had passed — and the clock is started before the call is made, because
+// a service that buffered would hold the response HEADERS back with the body and
+// the client's own call would be what blocked.
 func TestServiceStreamsUnbuffered(t *testing.T) {
 	s := newSvc(t)
 	reply := anthropicfake.StreamOK(testModel, testUsage)
 	reply.EventDelay = time.Second
 	s.up.Script = []anthropicfake.Reply{reply}
 
+	start := time.Now()
 	resp := s.post(t, MessagesPath, callBody("stream"), func(r *http.Request) {
 		r.Header.Set("Accept", "text/event-stream")
 	})
@@ -123,7 +127,6 @@ func TestServiceStreamsUnbuffered(t *testing.T) {
 	if got := resp.Header.Get("Content-Type"); !strings.Contains(got, "text/event-stream") {
 		t.Fatalf("Content-Type = %q, want an event stream", got)
 	}
-	start := time.Now()
 	first := readEvent(t, bufio.NewReader(resp.Body))
 	elapsed := time.Since(start)
 	if first == "" {
@@ -345,39 +348,71 @@ func TestServiceHasNoAdminRoutes(t *testing.T) {
 }
 
 // TestServiceNeverLogsHeaders: the no-echo rule over the whole of what a call
-// leaves behind. The service's log holds no token and no credential value, a
-// header it does not know does not reach Anthropic beside a subscription
-// credential, and this service's own two identity headers never leave it.
+// leaves behind. The service's log holds no token and no credential value, and
+// this service's own two identity headers never leave it — the run's Firebase ID
+// token and the job's Google ID token are this contract's, and Anthropic has no
+// use for either.
+//
+// The two tiers are two different questions and both are asked, because the two
+// upstream paths are built by two different helpers: the shared tier's is an
+// allow-list (Check 90's, and a header the client invented cannot ride beside a
+// subscription credential), while the paid tier's is the gateway's usual
+// "everything but the credentials" — and that one would carry this contract's
+// own headers upstream if the call were not read without them.
 func TestServiceNeverLogsHeaders(t *testing.T) {
-	s := newSvc(t)
 	const marker = "marker-only-this-call-carried"
-	runTok, jobTok := s.runToken(), s.jobToken()
-	resp, body := s.callTokens(t, callBody(marker), runTok, jobTok, s.job, func(r *http.Request) {
-		r.Header.Set("X-Test-Marker", marker)
-	})
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("the answer is %d, want 200", resp.StatusCode)
+	cases := []struct {
+		name string
+		// paidOnly serves the call from the project's own key: the bundle holds
+		// no shared token, so the cascade has no tier A to consider.
+		paidOnly bool
+		// inventedReaches is whether a header this contract knows nothing about
+		// may reach Anthropic on this tier: the shared tier's allow-list drops
+		// it, and the paid tier's forward-everything rule does not.
+		inventedReaches bool
+	}{
+		{name: "the shared tier", inventedReaches: false},
+		{name: "the project's own key", paidOnly: true, inventedReaches: true},
 	}
-	req := s.up.Seen()[0]
-	if got := req.Header.Get("X-Test-Marker"); got != "" {
-		t.Error("a header the client invented reached Anthropic beside a subscription credential")
-	}
-	if got := req.Header.Get(HeaderRunIdentity); got != "" {
-		t.Error("the run's identity token reached Anthropic")
-	}
-	if got := req.Header.Get(HeaderRunJob); got != "" {
-		t.Error("the run's job name reached Anthropic")
-	}
-	for _, secret := range []string{runTok, jobTok, marker, fakeCred(t, "default"), fakeCred(t, testAccount), fakeCred(t, "paid")} {
-		if strings.Contains(s.logs.String(), secret) {
-			t.Fatal("a value a call carried is in the service's log")
-		}
-		if strings.Contains(string(body), secret) {
-			t.Fatal("a value a call carried is in the answer")
-		}
-	}
-	if got := s.logs.String(); got != "" {
-		t.Errorf("a call the service answered wrote a log line: %s", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newSvcWith(t, func(s *svc, _ *Config) {
+				if tc.paidOnly {
+					s.src.docs = [][]byte{testBundlePaidOnlyDoc(t)}
+				}
+			})
+			runTok, jobTok := s.runToken(), s.jobToken()
+			resp, body := s.callTokens(t, callBody(marker), runTok, jobTok, s.job, func(r *http.Request) {
+				r.Header.Set("X-Test-Marker", marker)
+			})
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("the answer is %d, want 200", resp.StatusCode)
+			}
+			req := s.up.Seen()[0]
+			if got := req.Header.Get(HeaderRunIdentity); got != "" {
+				t.Error("the run's identity token reached Anthropic")
+			}
+			if got := req.Header.Get(HeaderRunJob); got != "" {
+				t.Error("the run's job name reached Anthropic")
+			}
+			if got := req.Header.Get("Authorization"); strings.Contains(got, jobTok) {
+				t.Error("the job's ID token reached Anthropic")
+			}
+			if got := req.Header.Get("X-Test-Marker"); (got != "") != tc.inventedReaches {
+				t.Errorf("a header the client invented reached Anthropic: got %v, want %v", got != "", tc.inventedReaches)
+			}
+			for _, value := range []string{runTok, jobTok, marker, fakeCred(t, "default"), fakeCred(t, testAccount), fakeCred(t, "paid")} {
+				if strings.Contains(s.logs.String(), value) {
+					t.Fatal("a value a call carried is in the service's log")
+				}
+				if strings.Contains(string(body), value) {
+					t.Fatal("a value a call carried is in the answer")
+				}
+			}
+			if got := s.logs.String(); got != "" {
+				t.Errorf("a call the service answered wrote a log line: %s", got)
+			}
+		})
 	}
 }
 
