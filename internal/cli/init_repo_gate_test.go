@@ -267,6 +267,54 @@ func TestOnboardRepoRefusedInAnAgentSession(t *testing.T) {
 	}
 }
 
+// TestUnknownDetailNamesTheRouteTheRunHas: the opt-in clause of the gate's
+// sentence is the caller's, because the way in is not the same in every run
+// (W5.1). --yes covers onboarding an unlisted repository in a converge whose
+// origin's identity is the one it claims (D12), and it does not for a rewritten
+// URL or a host that is not a provider's own; a coding agent's session covers
+// nothing and is handed no flag to paste; and the standalone --repo gate's
+// question IS the identity, so its sentence says --yes cannot give it here. A
+// single sentence for all four would name a route three of them do not have —
+// the clause that used to be printed everywhere said "not covered by --yes"
+// where --yes did cover it.
+func TestUnknownDetailNamesTheRouteTheRunHas(t *testing.T) {
+	plain := originInfo{Repo: "acme/app", Host: "github.com"}
+	rewritten := originInfo{Repo: "acme/app", Host: "github.com", Raw: "https://github.com/acme/app.git", Effective: "https://github.com/acme/other.git", Rewritten: true}
+	other := originInfo{Repo: "acme/app", Host: "gitlab.example"}
+
+	t.Setenv("CLAUDECODE", "")
+	if got := convergeOptIn(plain); !strings.Contains(got, "--yes covers it") {
+		t.Errorf("a converge of an unambiguous origin does not name --yes: %q", got)
+	}
+	for _, oi := range []originInfo{rewritten, other} {
+		got := convergeOptIn(oi)
+		if !strings.Contains(got, "--yes does not give it") || strings.Contains(got, "--yes covers it") {
+			t.Errorf("an origin whose identity is not the one it claims names --yes as the way in: %q", got)
+		}
+	}
+	// A coding agent's session confirms nothing, so the sentence names no flag
+	// for it to paste: the ordinary origin's clause mentions none at all, and
+	// the other two keep denying it rather than offering it.
+	t.Setenv("CLAUDECODE", "1")
+	if got := convergeOptIn(plain); strings.Contains(got, "--yes") || !strings.Contains(got, "confirms nothing") {
+		t.Errorf("an agent session is handed --yes: %q", got)
+	}
+	for _, oi := range []originInfo{rewritten, other} {
+		if got := convergeOptIn(oi); strings.Contains(got, "covers it") {
+			t.Errorf("an agent session is told --yes covers the step: %q", got)
+		}
+	}
+	t.Setenv("CLAUDECODE", "")
+	if !strings.Contains(repoGateOptIn, "--yes does not give here") {
+		t.Errorf("the --repo gate's clause does not say --yes cannot answer its question: %q", repoGateOptIn)
+	}
+	// And the clause is part of the sentence the reader sees, once.
+	d := unknownDetail("aurora", plain, convergeOptIn(plain))
+	if strings.Count(d, "--yes") != 1 || !strings.Contains(d, "needs your own opt-in — --yes covers it") {
+		t.Errorf("the detail names the route %d times: %q", strings.Count(d, "--yes"), d)
+	}
+}
+
 // What a hostile origin prints is cut, in the text and in --json.
 func TestHostileOriginIsTruncatedInDetail(t *testing.T) {
 	long := strings.Repeat("x", 5000)

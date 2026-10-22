@@ -284,6 +284,26 @@ func TestRunConfirmationCallSites(t *testing.T) {
 			t.Errorf("%s uses the run confirmation", f)
 		}
 	}
+	// Nor do they read the run's review to find out whether it was taken: the
+	// review's answer covers the installation's ordinary steps, and the steps
+	// above are not among them — an unlisted repository's identity is not on
+	// the screen the person answered, so reading its state there would take a
+	// confirmation for something it never named (W5.1's repository gate was
+	// the one call site that did). Only init_review.go, which owns the review,
+	// may read it.
+	readReview := regexp.MustCompile(`\br\.review\.`)
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") || f == "init_review.go" {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if readReview.Match(b) {
+			t.Errorf("%s reads r.review: the run's one confirmation is init_review.go's to read", f)
+		}
+	}
 }
 
 // --- through the command, over the fakes ---

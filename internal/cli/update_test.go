@@ -107,14 +107,21 @@ func TestUpdateWithoutAnInstallationNamesSetup(t *testing.T) {
 }
 
 // TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne: a checkout whose
-// repository the project does not list is not update's to enrol (D5). Update's
-// converge never enrols one, so the run leaves one line naming `fugaro setup`,
-// exit code 1, and never the typed owner/name: there is nothing for this run to
-// type. The repository engine is never reached.
+// repository the project does not list is not update's to enrol **by asking**
+// (D5). Update's converge never puts the typed owner/name question and never
+// offers --onboard-repo, so the run leaves one line naming `fugaro setup`,
+// exit code 1, and never the typed owner/name: there is nothing for this run
+// to type. The repository engine is never reached. --yes is a different
+// matter, and TestUpdateAppliesTheFourStepsItOwns pins it: D12 makes the step
+// a covered one, which is why the sentence above says "by asking".
 func TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne(t *testing.T) {
-	releaseBuild(t, "0.2.0")
-	r := newInitRig(t)
-	r.stateBucket()
+	// The rig of an installation that converges with nothing to do, not a bare
+	// one: this test has to reach the stages that work on the checkout for its
+	// assertions to see what they print. With a plan that fails, the run stops
+	// at the installation, left_for_you is empty and the --onboard-repo arm
+	// below passes without ever having a line to look at — which is how the
+	// secrets stage kept offering the flag after the other two stopped.
+	r := updateRig(t)
 	dir := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", initProjectName, ""))
 	t.Chdir(dir)
 	out, errOut, err := executeStdin(t, "", "update")
@@ -137,19 +144,38 @@ func TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne(t *testing.T) {
 	if calls := r.ran(t, "apply"); len(calls) != 0 {
 		t.Errorf("an apply ran:\n%q", calls)
 	}
-	// The stage says the same on its own, with the same line: the origin is a
-	// provider's, the name is not listed, and the door does not enrol.
-	e, _ := stageEngine(t, "acme/app\n", &initOptions{door: updateDoor.name})
+
+	// The three stages that work on the checkout — secrets, plugin, repository
+	// — leave ONE line each in ONE result, and it is the same line. A run that
+	// offered --onboard-repo at one of them would be telling the reader to
+	// pass a flag its own door refuses to put, beside two stages naming the
+	// door that asks; the human run above cannot see that, because a run whose
+	// apply stops at the installation prints no left-for-you at all.
+	// A plan-only run is the one that reaches every stage of the list (a
+	// needs-you stage blocks the ones behind it otherwise), and it confirms
+	// nothing: conditions() reads --yes as false under --plan-only.
+	e, _ := stageEngine(t, "", &initOptions{door: updateDoor.name, planOnly: true})
 	unknownRepo(e)
 	rs := newRepositoryStage(e)
 	rs.engineStage.run = neverRun(t)
-	res, err := initflow.Run(t.Context(), []initflow.Stage{rs}, e.options())
-	if err != nil || stateOf(res, "repository") != initflow.NeedsYou || len(res.Left) != 1 {
-		t.Fatalf("%v %+v %v", err, res.Stages, res.Left)
+	res, err := initflow.Run(t.Context(), []initflow.Stage{newSecretsStage(e), newPluginStage(e), rs}, e.options())
+	if err != nil {
+		t.Fatal(err)
 	}
-	lf := res.Left[0]
-	if lf.Kind != initflow.LeftCommand || !strings.HasSuffix(lf.Text, " setup") {
-		t.Errorf("the repository stage leaves %+v, want one command naming the door that enrols", lf)
+	for _, name := range []string{initflow.Secrets, initflow.Plugin, initflow.Repository} {
+		if stateOf(res, name) != initflow.NeedsYou {
+			t.Fatalf("%s is %+v, want needs-you: the repository is not the project's and this door does not ask", name, res.Stages)
+		}
+		lf, ok := leftOf(res, name)
+		if !ok {
+			t.Fatalf("%s left nothing for the user: %+v", name, res.Left)
+		}
+		if lf.Kind != initflow.LeftCommand || !strings.HasSuffix(lf.Text, " setup") {
+			t.Errorf("%s leaves %+v, want one command naming the door that enrols", name, lf)
+		}
+	}
+	if len(res.Left) != 3 {
+		t.Errorf("the run left %d lines, want one per stage: %+v", len(res.Left), res.Left)
 	}
 }
 
