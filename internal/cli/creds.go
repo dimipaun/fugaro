@@ -493,7 +493,7 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string) error {
 	case errors.Is(err, errNoBundleVersion):
 		before = bundleDoc{}
 	case errors.Is(err, errBundleDisabled):
-		return credsDisabledRefusal(store.id, "write")
+		return credsDisabledRefusal(store.id, "written")
 	case err != nil:
 		return remoteErr(err, nil)
 	default:
