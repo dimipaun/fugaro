@@ -309,14 +309,22 @@ func TestSecurityMdCrossReferencesPointTheRightWay(t *testing.T) {
 // service is the only identity with Secret Manager access, that it audits
 // every issuance, and that the bundle cannot leak.
 //
-// Mutation-proofed once, on 2026-10-22, in the task's own red step: replacing
-// the sentence "the only Fugaro runtime identity with access to model
-// credentials" with "the only Fugaro identity with access to model
-// credentials" (the wider claim the design's D148 draft used) makes this test
-// fail on the "the only Fugaro runtime identity with access to model
-// credentials" pin, and nothing else in the file changes. Restored
-// immediately; the guards are red before the doc edit and green after it,
-// which is the whole point of writing them first.
+// Mutation-proofed once, on 2026-10-22, as the plan's Red step requires.
+// Replacing the section's sentence "It is the only Fugaro runtime identity
+// with access to model credentials (D148)." with "It is the only Fugaro
+// identity with access to model credentials (D148)." — the wider claim the
+// design's D148 draft used — makes this test fail on the "the only Fugaro
+// runtime identity with access to model credentials" pin and on nothing else.
+// The byte-identity guard for the website page fails with it, as it does for
+// any edit to SECURITY.md until the page is regenerated; that is the page
+// guard working, not a second finding. The mutation also settled *how* the
+// claims are matched: the first version of this test searched the whole file,
+// and the mutation passed, because the "In short" bullet carries the same
+// phrase and satisfied the pin on its own. The claims are therefore read out
+// of the section (docSection) and not out of the document, so a claim that
+// lives only in a bullet pointing here does not make this test pass.
+// Restored immediately; the guards are red before the doc edit and green
+// after it, which is the point of writing them first.
 func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 	s := readDoc(t, "SECURITY.md")
 	// The section is a section: the "In short" bullet links to it and the
@@ -325,7 +333,8 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 	if !strings.Contains(s, "\n### The credentials service\n") {
 		t.Error("SECURITY.md has no `### The credentials service` section: the service changes the trust model, and the section is where it is stated")
 	}
-	flat := flattenDoc(s)
+	// The section alone, flattened: every claim below has to be *in* it.
+	section := flattenDoc(docSection(t, "SECURITY.md", s, "### The credentials service"))
 	for _, want := range []string{
 		// D148's sentence, at the scope D148 gives it: a runtime identity,
 		// not every identity.
@@ -334,7 +343,7 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"the build service account",
 		"Project Owners and Editors",
 		// Q6's shape and its cost.
-		"one secret, one grant, one leak",
+		"One secret, one grant, one leak",
 		"a read of the bundle is every credential the service holds at once",
 		// Off by default, opt-in, and the flag that opts in.
 		"fugaro init --provision-credentials",
@@ -360,20 +369,22 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		// Egress stays a known limit (D144).
 		"Network egress is not restricted",
 	} {
-		if !strings.Contains(flat, want) {
-			t.Errorf("SECURITY.md never says %q: the credentials service is in the trust model, and the document does not state it", want)
+		if !strings.Contains(section, want) {
+			t.Errorf("the `### The credentials service` section never says %q: the credentials service is in the trust model, and the section is where it is stated", want)
 		}
 	}
 	// The three overclaims. Each is the shape a rewrite drifts into, so each
 	// is banned as the whole sentence, not as a word: "the service is not the
 	// only identity with access to Secret Manager" is the true sentence and
-	// does not contain the banned one.
+	// does not contain the banned one. These are read out of the whole
+	// document: an overclaim in a bullet that points at the section is just as
+	// wrong as one in the section.
 	for _, banned := range []string{
 		"the service is the only identity with access to Secret Manager",
 		"the service audits every issuance",
 		"the bundle cannot leak",
 	} {
-		if strings.Contains(flat, banned) {
+		if strings.Contains(flattenDoc(s), banned) {
 			t.Errorf("SECURITY.md says %q: that claim is wider than the code on this tree", banned)
 		}
 	}
@@ -382,9 +393,11 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 // TestSecurityMdNamesTheCredentialsServicesKnownLimits: the parts of the
 // service that are *not* wired on this tree, said plainly rather than left for
 // a reader to assume. Each is a claim the section would otherwise make by
-// being silent, and each names the thing a later release turns on.
+// being silent, and each names the thing a later release turns on. Read out of
+// the section, like the headline test's claims, so a limit stated somewhere
+// else in the file does not count as this section stating it.
 func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
-	flat := flattenDoc(readDoc(t, "SECURITY.md"))
+	section := flattenDoc(docSection(t, "SECURITY.md", readDoc(t, "SECURITY.md"), "### The credentials service"))
 	for _, want := range []string{
 		// C1.11's answer path: the auditor is armed and writes a probe's and
 		// a mint's line; the forwarded call's line is defined and not called.
@@ -397,8 +410,8 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 		// launcher's.
 		"the launcher makes no account allow-list check of its own",
 	} {
-		if !strings.Contains(flat, want) {
-			t.Errorf("SECURITY.md does not state the known limit %q: a limit that is not stated is read as a guarantee", want)
+		if !strings.Contains(section, want) {
+			t.Errorf("the `### The credentials service` section does not state the known limit %q: a limit that is not stated is read as a guarantee", want)
 		}
 	}
 }
