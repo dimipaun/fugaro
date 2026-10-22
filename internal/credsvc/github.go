@@ -130,8 +130,22 @@ type MintRequest struct {
 }
 
 // MintResponse is the answer: the installation token, when it expires, and the
-// repository it is scoped to (the canonical name, which is the one the run's
-// own record and the audit line speak).
+// repository the token is scoped to.
+//
+// Repository is the CANONICAL name — "<provider>/<owner>/<name>", the spelling
+// projectpolicy.Canonical builds and JobAccount.Repo holds ("github/acme/app")
+// — and not the storage slug. The two are different strings and both are
+// spoken by something: the slug ("acme-app-1a2b3c4d", task.Slug) is the run's
+// own record's key, what creds.Run carries and what C1.13's audit line writes
+// in its repository field (Identity.Slug), while the canonical name is the one
+// the operator onboarded, the one this service's binding table is keyed by, and
+// the one GitHub itself takes in the two path segments the mint is scoped with.
+// The answer carries the canonical name because a caller that asked for a token
+// for its own repository is being told what the token is FOR, in the spelling
+// the provider and the onboarding record use — and because the caller already
+// knows its own slug, so repeating it would tell it nothing. A caller that
+// needs the slug has it (it is its own identity), and no caller needs to
+// recover one from the other: task.Slug is one-way.
 //
 // Token is the credential's value and the reason this endpoint exists. Nothing
 // in this package logs it, and a caller must not either.

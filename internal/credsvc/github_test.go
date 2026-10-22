@@ -69,6 +69,22 @@ func appKeyPEM(t *testing.T) string {
 	}))
 }
 
+// pemCore is the first line of a PEM's base64 body: the part of a private key
+// that has no newline in it. A check for "the App key is in this text" has to
+// use it rather than the whole PEM, because every text this test reads — an
+// answer body, an audit line — is JSON, where a multi-line value's newlines are
+// escaped and the PEM's own text therefore never appears. A 64-character line
+// of a freshly generated key is distinctive enough that a match is the key and
+// not a coincidence.
+func pemCore(t *testing.T) string {
+	t.Helper()
+	lines := strings.Split(strings.TrimSpace(appKeyPEM(t)), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("the App key's PEM is not a PEM: %q", appKeyPEM(t))
+	}
+	return lines[1]
+}
+
 // mintBundleDoc is the installation's bundle with the GitHub App key in it:
 // the fixture's own document (the model credentials) plus a private key. The
 // key is written as a YAML block scalar, which is how a multi-line PEM reads
@@ -334,6 +350,40 @@ func TestMintForOwnRepositoryOnly(t *testing.T) {
 				t.Errorf("the mint's answer carries %s, which describes a model call and not a mint", name)
 			}
 		}
+		// The value hygiene the file's header claims — "the value is written to
+		// the answer and to nothing else: no log line, no error, no header" —
+		// and the App key's, which is written nowhere at all.
+		//
+		// A header is held to this by its VALUE and not by its name, which is
+		// what the X-Fugaro- loop above cannot do: that loop names the family
+		// this service owns, and a value written under a name nobody thought of
+		// is the leak worth catching. The body is held to everything but the
+		// token, which is the one value the answer exists to carry (and is
+		// asserted above, from the parsed answer) — the App key's own PEM
+		// included, because a caller that received it would hold what D145
+		// exists to keep out of the job.
+		//
+		// The App key is looked for by pemCore and not by its whole PEM: this
+		// text is JSON, and a multi-line value's newlines are escaped in it, so
+		// the PEM as written never appears even when the key is right there.
+		for _, secret := range []string{gh.token, pemCore(t), fakeCred(t, "default"), fakeCred(t, testAccount), fakeCred(t, "paid"), runTok, jobTok} {
+			for name, values := range resp.Header {
+				for _, v := range values {
+					if strings.Contains(v, secret) {
+						t.Errorf("the mint's answer carries a credential value in its %s header", name)
+					}
+				}
+			}
+			if strings.Contains(s.logs.String(), secret) {
+				t.Errorf("a minted token's own request wrote a credential value to the service's log:\n%s", s.logs.String())
+			}
+			if strings.Contains(s.audit.String(), secret) {
+				t.Error("the mint's audit line carries a credential value")
+			}
+			if secret != gh.token && strings.Contains(string(body), secret) {
+				t.Errorf("the mint's answer body carries %q, and the token is the only value it may carry", secret)
+			}
+		}
 		// The caller's own two tokens never reach GitHub: the App's JWT
 		// authenticates the call, and the two identities are this service's to
 		// verify and to keep (the rule C1.11's scrub keeps for a model call).
@@ -507,7 +557,7 @@ func TestMintAudited(t *testing.T) {
 			t.Errorf("the mint's audit line %s = %v, want %q", field, got, want)
 		}
 	}
-	for _, secret := range []string{gh.token, appKeyPEM(t), fakeCred(t, "default")} {
+	for _, secret := range []string{gh.token, pemCore(t), fakeCred(t, "default")} {
 		if strings.Contains(s.audit.String(), secret) {
 			t.Fatal("the audit line carries a credential value")
 		}
@@ -540,7 +590,7 @@ func TestMintAudited(t *testing.T) {
 			t.Errorf("the refusal's audit line %s = %v, want %q", field, got, want)
 		}
 	}
-	for _, secret := range []string{gh.token, appKeyPEM(t), "not-a-number"} {
+	for _, secret := range []string{gh.token, pemCore(t), "not-a-number"} {
 		if strings.Contains(s.audit.String(), secret) {
 			t.Errorf("the refusal's audit line carries %q", secret)
 		}
@@ -820,6 +870,16 @@ func TestMintRelaysNoGitHubTextAndHaltsTheRun(t *testing.T) {
 	}
 	if strings.Contains(got.Message, marker) || strings.Contains(got.Message, "401") {
 		t.Errorf("the refusal carries GitHub's own text: %q", got.Message)
+	}
+	// GitHub's own text is in NO line this service writes: not the answer (the
+	// two checks above), not the audit line, and not the operator's log line —
+	// which is the one that matters most here, because the failed request
+	// carried the App's JWT and httpjson's StatusError quotes up to 512 bytes
+	// of the answer's body, so an operator's line built from err.Error() would
+	// be relaying another service's sentence and could be echoing the request
+	// back. The status alone is what this service writes about it.
+	if strings.Contains(s.logs.String(), marker) {
+		t.Errorf("the operator's log line carries GitHub's own text:\n%s", s.logs.String())
 	}
 	if strings.Contains(s.audit.String(), marker) {
 		t.Error("the audit line carries GitHub's own text")
