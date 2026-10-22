@@ -216,6 +216,16 @@ func (s *credentialsStage) Apply(ctx context.Context, _ initflow.Env) (out initf
 			// later fugaro to apply with none of this stage's confirmation.
 			return initflow.Outcome{}, err
 		}
+		// The key STAYS: the plan that found nothing to do was made WITH the
+		// key in the tfvars, so the installation's state already holds the
+		// service it describes. Putting the key back would leave a document
+		// that plans that service's destruction — which the bundle
+		// container's prevent_destroy refuses — while this stage reported
+		// itself done. It is kept BEFORE the audience below, which is the same
+		// rule the apply further down follows: things that apply start here,
+		// and a document restored after one of them applied is the destruction
+		// plan above.
+		s.keepKey = true
 		// Nothing to change in the tfvars as they stand, and the revision may
 		// STILL be the one the apply that created the service left behind:
 		// with no url in the tfvars the module writes its unassigned
@@ -226,13 +236,6 @@ func (s *credentialsStage) Apply(ctx context.Context, _ initflow.Env) (out initf
 		if err != nil {
 			return initflow.Outcome{}, err
 		}
-		// The key STAYS: the plan that found nothing to do was made WITH the
-		// key in the tfvars, so the installation's state already holds the
-		// service it describes. Putting the key back would leave a document
-		// that plans that service's destruction — which the bundle
-		// container's prevent_destroy refuses — while this stage reported
-		// itself done.
-		s.keepKey = true
 		if filled {
 			return initflow.Outcome{Changed: true, Detail: "applied: " + s.changes.String() + " (the credentials service's audience)"}, nil
 		}
