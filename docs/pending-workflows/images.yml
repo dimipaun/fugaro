@@ -203,7 +203,14 @@ jobs:
         run: images/smoke-credentials.sh fugaro-credentials:ci
       - name: Size budget
         if: contains(needs.version.outputs.kinds, ',credentials,')
-        run: images/size-budget.sh fugaro-credentials:ci
+        # A real budget, not size-budget.sh's 4000 MB default: this image is
+        # the fugaro binary (about 56 MB with -s -w) in a distroless static
+        # layer (a few MB), so the default would pass a build that shipped the
+        # whole module cache or a second toolchain -- which is exactly what a
+        # budget is for on the one image that holds every model credential.
+        # images/credentials_test.go pins these two numbers and the fact that
+        # this step passes them.
+        run: images/size-budget.sh fugaro-credentials:ci 100 85
       - name: Secret scan
         if: contains(needs.version.outputs.kinds, ',credentials,')
         run: images/scan.sh --secrets fugaro-credentials:ci

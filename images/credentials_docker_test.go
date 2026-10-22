@@ -4,6 +4,7 @@ package images_test
 
 import (
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -27,8 +28,12 @@ func TestCredentialsImageSmoke(t *testing.T) {
 	}
 	// The service image holds every model credential the installation has, so
 	// its size is bounded and it is scanned for secrets: both are the
-	// scripts the images workflow runs on the other legs.
-	if out, err := exec.Command("sh", "size-budget.sh", image).CombinedOutput(); err != nil {
+	// scripts the images workflow runs on the other legs. The budget is the
+	// workflow's own (credentialsSizeBudgetMB/credentialsSizeWarnMB), not
+	// size-budget.sh's 4000 MB default, which no build of this image could
+	// fail.
+	if out, err := exec.Command("sh", "size-budget.sh", image,
+		strconv.Itoa(credentialsSizeBudgetMB), strconv.Itoa(credentialsSizeWarnMB)).CombinedOutput(); err != nil {
 		t.Fatalf("size-budget.sh: %v\n%s", err, out)
 	}
 	if out, err := exec.Command("sh", "scan.sh", "--secrets", image).CombinedOutput(); err != nil {

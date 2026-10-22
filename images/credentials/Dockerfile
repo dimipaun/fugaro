@@ -20,8 +20,23 @@
 # images/build-base.sh credentials <registry>/fugaro-credentials:latest and
 # docker push it. The syntax pin above, like the one in images/base/Dockerfile
 # and images/history/Dockerfile, is bumped by hand monthly.
+#
+# Both of this image's bases are pinned BY DIGEST, the way images/base/Dockerfile
+# pins Debian (ARG DEBIAN_DIGEST) and unlike the history image, which still
+# carries the "pin it by digest when the digest is known" note. The two are the
+# builder that compiles the binary and the distroless layer the service runs,
+# and neither is a floating tag here: a tag is a name whose bytes the registry
+# may point somewhere else between two builds of the same commit, and this
+# image is the one process that holds every model credential the installation
+# has -- the digest the release signs and `fugaro init` writes into the
+# service's Terraform variable is a digest of what the build produced, and a
+# base that moved under it would make that signature describe something else
+# than what a rebuild from the same commit produces. The digests are read from
+# the registries' own manifests (docker buildx imagetools inspect) and bumped
+# by hand with the syntax pin; images/credentials_test.go asserts both FROMs
+# carry one, so a tag cannot come back by accident.
 
-FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS fugaro
+FROM --platform=$BUILDPLATFORM golang:1.27-bookworm@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5 AS fugaro
 ARG TARGETOS
 ARG TARGETARCH
 ARG FUGARO_VERSION=dev
@@ -39,9 +54,11 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
       -o /out/fugaro ./cmd/fugaro
 
 # static-debian12:nonroot has CA certificates, tzdata and uid 65532 and
-# nothing else. Pinned by tag only: pin it by digest when the digest is known
-# (docker buildx imagetools inspect gcr.io/distroless/static-debian12:nonroot).
-FROM gcr.io/distroless/static-debian12:nonroot
+# nothing else. The digest is the multi-platform index read on 2026-10-22
+# (docker buildx imagetools inspect gcr.io/distroless/static-debian12:nonroot),
+# so the build resolves the same bytes on either build platform; it moves by
+# hand with the syntax pin above.
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 COPY --from=fugaro /out/fugaro /usr/local/bin/fugaro
 USER 65532:65532
 # The service's entrypoint: Cloud Run sets no command and no args, so this CMD
