@@ -346,7 +346,17 @@ restore_run() {
   svc_left=$(gcloud run services list --project="${P:?}" --region="${L:?}" \
     --filter="metadata.name=${SVC}" --format='value(metadata.name)' | wc -l | tr -d ' ') || svc_rc=$?
   repo_left=$(gcloud artifacts repositories list --project="${P:?}" --location="${L:?}" \
-    --filter="name~/repositories/${SVC}\$" --format='value(name)' | wc -l | tr -d ' ') || repo_rc=$?
+    --filter="name~/repositories/${SVC}\$" --format='value(name)' 2>"$SCRATCH/repo-count.err" | wc -l | tr -d ' ') || repo_rc=$?
+  cat "$SCRATCH/repo-count.err" >&2 2>/dev/null || true
+  # The repository list swallows a server error (exit 0, nothing on stdout, `WARNING:
+  # Failed to list repositories ...` on stderr), which would read as a count of 0 -- and
+  # skip the image count below -- while the delete above failed in the same outage. That
+  # warning makes the count a failed query, exactly as a non-zero exit does.
+  if [ "$repo_rc" = 0 ] && grep -q 'Failed to list' "$SCRATCH/repo-count.err" 2>/dev/null; then
+    say "the repository list printed 'Failed to list repositories' on stderr and exited 0: gcloud swallowed an API error, so its empty answer is read as a failed query (exit 1), not as 0"
+    repo_rc=1
+    repo_left=""
+  fi
   # The images live inside the repository, so the question is asked only while the repository
   # list succeeded and said one is there: against a repository this Restore has just deleted
   # the CLI answers NOT_FOUND, and that answer IS the count of images left, not a failed
@@ -510,6 +520,12 @@ list_state() {
   out=$("$@" 2>"$SCRATCH/list.err") || rc=$?
   out=$(printf '%s' "$out" | tr -d '\r' | sed -e 's/[[:space:]]*$//' | grep -v '^$' || true)
   if [ "$rc" != 0 ]; then
+    printf 'unreadable'
+  elif grep -q 'Failed to list' "$SCRATCH/list.err" 2>/dev/null; then
+    # `gcloud artifacts repositories list` SWALLOWS a server error: on an HTTP
+    # 5xx (after its own retries) it logs `WARNING: Failed to list repositories
+    # for project ...` on stderr, prints nothing and exits 0 -- the exact shape of
+    # "not there". That warning is gcloud saying the answer is not a reading.
     printf 'unreadable'
   elif [ -z "$out" ]; then
     printf 'not-there'
@@ -1334,7 +1350,7 @@ print_plan() {
   if [ "${BUILD_SA%%@*}" = "$DEDICATED_SA_ID" ]; then
     say "  [optional, per installation fugaro (${P}), run by YOU, never run by this script] gcloud iam service-accounts delete ${BUILD_SA} --project=${P}"
   fi
-  say "What needed the network and your credentials in THIS dry run: fugaro doctor, the describes of the service and the repository, the build-account list, the two IAM policy reads and the staging-bucket list (all reads). Local only: the scratch directory and the files in it (relay.py, Dockerfile, cloudbuild.yaml)."
+  say "What needed the network and your credentials in THIS dry run: fugaro doctor, the lists that ask whether the service and the repository are there, the build-account list, the two IAM policy reads and the staging-bucket list (all reads). Local only: the scratch directory and the files in it (relay.py, Dockerfile, cloudbuild.yaml)."
 }
 
 main() {

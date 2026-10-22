@@ -324,7 +324,23 @@ if args[:2] == ["artifacts", "repositories"] and args[2:3] == ["create"]:
         time.sleep(HANG_SECONDS)
     sys.exit(0)
 
+# FAKE_GCLOUD_AR_SWALLOWS is an Artifact Registry outage the way the real
+# `artifacts repositories list` meets it: on an HTTP 5xx it logs a WARNING on
+# stderr, prints NOTHING and exits 0 (googlecloudsdk command_lib/artifacts/util.py,
+# ListLocationRepos). `probe` swallows every repository list; `restore` swallows
+# those after the deploy was attempted -- the Restore's count -- and fails the
+# repository delete in the same outage, so the repository is still there.
+AR_SWALLOWS = os.environ.get("FAKE_GCLOUD_AR_SWALLOWS", "")
+
+
+def ar_down():
+    return AR_SWALLOWS == "probe" or (AR_SWALLOWS == "restore" and state("deploy-attempted"))
+
+
 if args[:2] == ["artifacts", "repositories"] and args[2:3] == ["delete"]:
+    if ar_down():
+        sys.stderr.write("ERROR: (gcloud.artifacts.repositories.delete) HttpError 503: the fake gcloud was told Artifact Registry is down\n")
+        sys.exit(1)
     rm("repo")
     sys.exit(0)
 
@@ -332,11 +348,28 @@ if args[:2] == ["artifacts", "repositories"] and args[2:3] == ["list"]:
     if (listfails("repositories") and state("deploy-attempted")) or "repositories" in os.environ.get("FAKE_GCLOUD_PROBE_FAILS", "").split(","):
         sys.stderr.write(LIST_FAILED)
         sys.exit(1)
+    if ar_down():
+        sys.stderr.write("WARNING: Failed to list repositories for project fugaro-dev, location us-east5: HttpError 503\n")
+        sys.exit(0)
     if os.environ.get("FAKE_GCLOUD_LIST_GARBAGE") == "repositories":
         print("projects/fugaro-dev/locations/us-east5/repositories/some-other-repo")
         sys.exit(0)
-    if state("repo") or os.environ.get("FAKE_GCLOUD_REPO_EXISTS") == "yes":
-        print("projects/fugaro-dev/locations/us-east5/repositories/fugaro-chk91")
+    # The project's repositories, and the --filter applied to them the way gcloud
+    # applies `name~REGEX` (a regular-expression SEARCH on the full resource name),
+    # so a filter that lost its `$` anchor matches FAKE_GCLOUD_EXTRA_REPOS's
+    # prefix-named neighbours (fugaro-chk91-old) and is caught.
+    names = ["fugaro-chk91"] if (state("repo") or os.environ.get("FAKE_GCLOUD_REPO_EXISTS") == "yes") else []
+    names += os.environ.get("FAKE_GCLOUD_EXTRA_REPOS", "").split()
+    full = ["projects/fugaro-dev/locations/us-east5/repositories/" + n for n in names]
+    filt = flag("--filter") if has("--filter") else ""
+    if filt:
+        if not filt.startswith("name~"):
+            sys.stderr.write("ERROR: the fake gcloud only knows the name~REGEX repository filter, not: %s\n" % filt)
+            sys.exit(2)
+        import re
+        full = [n for n in full if re.search(filt[len("name~"):], n)]
+    for n in full:
+        print(n)
     sys.exit(0)
 
 if args[:2] == ["artifacts", "docker"] and args[2:3] == ["images"]:
@@ -1875,6 +1908,58 @@ test_restore_count_query_failure_is_not_papered_over() {
   fi
 }
 
+# `gcloud artifacts repositories list` SWALLOWS a server error: on an HTTP 5xx it logs
+# `WARNING: Failed to list repositories ...` on stderr, prints nothing and exits 0 -- the
+# shape of "not there". In the guard that would adopt a foreign repository; in the Restore
+# it reads as a repository count of 0 (and skips the image count) while the delete failed
+# in the same outage: `restore: PASS` with the repository left behind. Both fail closed.
+test_a_swallowed_repository_list_error_is_not_absence() {
+  local dir=$work/ar-swallow-probe
+  prepare "$dir"
+  run91 "$dir" FAKE_GCLOUD_AR_SWALLOWS=probe
+  expect_status "$status" 1 "swallowed repository list (guard): the verdict"
+  expect_contains "$err" "whether a repository named fugaro-chk91 is already in fugaro-dev/us-east5 cannot be read" \
+    "swallowed repository list (guard): the guard stops"
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls")
+  expect_absent "$calls" "repositories create" "swallowed repository list (guard): nothing was created"
+  expect_absent "$calls" "run deploy" "swallowed repository list (guard): nothing was deployed"
+  expect_absent "$calls" "delete" "swallowed repository list (guard): nothing was deleted"
+  if [ -d "$scratch" ]; then fail "swallowed repository list (guard): the scratch directory survived"; fi
+
+  dir=$work/ar-swallow-restore
+  prepare "$dir"
+  run91 "$dir" FAKE_GCLOUD_AR_SWALLOWS=restore
+  expect_status "$status" 1 "swallowed repository list (Restore): the verdict"
+  expect_contains "$err" "Failed to list repositories" "swallowed repository list (Restore): gcloud's warning is shown"
+  expect_contains "$out" "FACT restore-counts: FAIL" "swallowed repository list (Restore): the count is not read as 0"
+  expect_contains "$out" "repository unread (exit 1)" "swallowed repository list (Restore): the repository count is the unread one"
+  expect_absent "$out" "FACT restore-counts: PASS" "swallowed repository list (Restore): no count is claimed"
+  expect_absent "$out" "FACT restore: PASS" "swallowed repository list (Restore): no clean project is claimed"
+  expect_contains "$out" "FACT restore: FAIL" "swallowed repository list (Restore): the Restore says it cannot tell"
+  if [ ! -d "$scratch" ]; then
+    fail "swallowed repository list (Restore): the scratch directory was removed"
+  else
+    kept+=("$scratch")
+  fi
+}
+
+# The repository filters are anchored (`name~/repositories/fugaro-chk91$`): a repository
+# whose name merely STARTS with the check's (fugaro-chk91-old) is not this check's and must
+# not be seen by the guard (it would stop as "cannot be read") or by the Restore's count (it
+# would read 1 and FAIL). The fake applies the filter as gcloud does, so an unanchored filter
+# fails this test.
+test_a_prefix_named_repository_is_not_the_checks() {
+  local dir=$work/ar-prefix
+  prepare "$dir"
+  run91 "$dir" FAKE_GCLOUD_EXTRA_REPOS="fugaro-chk91-old xfugaro-chk91"
+  expect_status "$status" 0 "prefix-named repository: the run passes"
+  expect_contains "$out" "FACT restore-counts: PASS — services: 0, images: 0, repository: 0" \
+    "prefix-named repository: the Restore's count does not see it"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "repositories delete fugaro-chk91-old" \
+    "prefix-named repository: it is never deleted"
+}
+
 # A scratch directory the run cannot remove is a FAIL, and a FAIL in the block is a
 # non-zero exit: the row is added to the facts BEFORE the verdict is read out of them, so a
 # block that reads `scratch-removed: FAIL` cannot end at `exit 0` and be taken for a pass.
@@ -2102,6 +2187,8 @@ t test_failed_deploy_keeps_the_record_it_made
 t test_an_unreadable_describe_is_not_an_absent_resource
 t test_absence_is_an_empty_list_not_an_error_string
 t test_an_unreadable_repository_describe_stops_before_the_create
+t test_a_swallowed_repository_list_error_is_not_absence
+t test_a_prefix_named_repository_is_not_the_checks
 t test_an_unreadable_describe_after_a_failed_deploy_keeps_the_record
 t test_a_url_describe_that_fails_after_the_deploy_does_not_end_the_run_bare
 t test_a_config_describe_that_fails_after_the_deploy_does_not_end_the_run_bare
