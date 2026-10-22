@@ -28,7 +28,14 @@
 //     role it does not know — refuses that address outright rather than being
 //     treated as absent, so a broken exact entry can never leave somebody with
 //     their domain's (possibly higher) role: a wide grant is not the fallback
-//     for an unreadable narrow one.
+//     for an unreadable narrow one. An entry a list cannot read at all — a
+//     trailing space, a display-name form, an empty value, a control byte —
+//     refuses the WHOLE resolution, because there is no narrower refusal
+//     available: the entry names nobody this package can identify, so the answer
+//     must not be computed as if it were absent either. The refusal names the
+//     entry's position in the list and never its value; it is an error the
+//     administrator fixes at the write (D224), which is what makes the strict
+//     rule affordable.
 //   - One address, one decision. NormalizeEmail is the canonical form two
 //     writers agree on (the domain lower-cased, the local part kept byte for
 //     byte), and it is idempotent, so two spellings that differ only in the

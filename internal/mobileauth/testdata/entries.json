@@ -203,6 +203,53 @@
       "domains": [{"address": "example.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
       "address": "Dimi Paun <dimi@example.com>",
       "want_error": "not_allowed"
+    },
+    {
+      "name": "an unreadable exact entry refuses the whole resolution rather than falling through to its domain",
+      "exact": [{"address": "dimi@good.com ", "role": "viewer", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "domains": [{"address": "good.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "dimi@good.com",
+      "want_error": "not_allowed"
+    },
+    {
+      "name": "an exact entry in display-name form refuses the whole resolution rather than falling through to its domain",
+      "exact": [{"address": "Dimi <dimi@good.com>", "role": "viewer", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "domains": [{"address": "good.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "dimi@good.com",
+      "want_error": "not_allowed"
+    },
+    {
+      "name": "an empty exact entry refuses the whole resolution",
+      "exact": [{"address": "", "role": "viewer", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "domains": [{"address": "good.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "dimi@good.com",
+      "want_error": "not_allowed"
+    },
+    {
+      "name": "an exact entry carrying a control character refuses the whole resolution",
+      "exact": [{"address": "dimi@good.com\u0000", "role": "viewer", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "domains": [{"address": "good.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "dimi@good.com",
+      "want_error": "not_allowed"
+    },
+    {
+      "name": "an unreadable exact entry refuses even beside a usable entry for the address",
+      "exact": [{"address": "dimi@good.com", "role": "viewer", "at": "2026-10-22T09:00:00Z", "by": "dimi"}, {"address": "dimi@good.com ", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "domains": [{"address": "good.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "dimi@good.com",
+      "want_error": "not_allowed"
+    },
+    {
+      "name": "an unreadable domain entry refuses the whole resolution rather than admitting another domain's member",
+      "domains": [{"address": "good.com ", "role": "viewer", "at": "2026-10-22T09:00:00Z", "by": "dimi"}, {"address": "other.example", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "ana@other.example",
+      "want_error": "not_allowed"
+    },
+    {
+      "name": "an unreadable domain entry refuses the domain it would otherwise have admitted",
+      "domains": [{"address": "good.com ", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "dimi@good.com",
+      "want_error": "not_allowed"
     }
   ],
   "keys": [

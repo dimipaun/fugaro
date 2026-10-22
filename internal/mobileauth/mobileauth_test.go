@@ -228,6 +228,99 @@ func TestResolveRefusesAnEntryThatNamesTheAddressButCannotBeUsed(t *testing.T) {
 	}
 }
 
+// TestResolveAnUnreadableEntryRefusesTheWholeResolution is the security review's
+// MAJOR: an entry this package cannot read at all — a trailing space, a
+// display-name form, an empty value, a control byte — used to be skipped like an
+// entry that names nobody, so the lookup fell through to the person's DOMAIN
+// entry and took its role. With the exact entry above set to viewer and the
+// domain entry below set to admin, that handed dimi@good.com admin: a wider
+// grant than the admin wrote, and no test pinned it.
+//
+// So an entry a list cannot read refuses the whole resolution. Resolve runs at
+// the administrator's write (D224), which is what makes the strict rule cheap:
+// the refusal is an error for the admin to fix, not an outage for the person,
+// and the lookup names the entry by its INDEX rather than repeating its value —
+// the value is untrusted node content and no part of a refusal should echo it.
+func TestResolveAnUnreadableEntryRefusesTheWholeResolution(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{"an exact entry with a trailing space", "dimi@good.com "},
+		{"an exact entry in display-name form", "Dimi <dimi@good.com>"},
+		{"an empty exact entry", ""},
+		{"an exact entry with a control character", "dimi@good.com\x00"},
+	}
+	domains := []Entry{{Address: "good.com", Role: RoleAdmin, At: written(), By: "dimi"}}
+	for _, c := range cases {
+		exact := []Entry{{Address: c.value, Role: RoleViewer, At: written(), By: "dimi"}}
+		role, err := Resolve(exact, domains, "dimi@good.com")
+		if !errors.Is(err, ErrNotAllowed) {
+			t.Errorf("%s: Resolve = %q, %v; want ErrNotAllowed and NOT the domain's admin", c.name, role, err)
+			continue
+		}
+		if role != RoleNone {
+			t.Errorf("%s: Resolve = %q beside %v, want the zero Role", c.name, role, err)
+		}
+		// The refusal names the entry by position, because that is the one
+		// handle an administrator has on a value this package cannot read.
+		if !strings.Contains(err.Error(), "entry 0 of the exact entries") {
+			t.Errorf("%s: Resolve = %v; want the refusal to name the entry's position in the exact list", c.name, err)
+		}
+		if c.value != "" && strings.Contains(err.Error(), c.value) {
+			t.Errorf("%s: Resolve = %v; the refusal repeats the entry's value, and an unreadable value is not something to echo", c.name, err)
+		}
+	}
+	// A usable exact entry does not rescue the list: the point of the rule is
+	// that the answer is not computed as if the unreadable entry were absent.
+	exact := []Entry{
+		{Address: "dimi@good.com", Role: RoleViewer, At: written(), By: "dimi"},
+		{Address: "dimi@good.com ", Role: RoleAdmin, At: written(), By: "dimi"},
+	}
+	if role, err := Resolve(exact, domains, "dimi@good.com"); !errors.Is(err, ErrNotAllowed) {
+		t.Errorf("Resolve with a usable entry beside an unreadable one = %q, %v; want ErrNotAllowed", role, err)
+	}
+}
+
+// TestResolveAnUnreadableDomainEntryRefusesTheWholeResolution is the domain
+// kind's twin: same rule, same index in the refusal, and no answer computed from
+// the entries that could be read. A domain list with one broken entry is a list
+// somebody has to fix before this node authorises anybody.
+func TestResolveAnUnreadableDomainEntryRefusesTheWholeResolution(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{"a domain entry with a trailing space", "good.com "},
+		{"a wildcard domain entry", "*.good.com"},
+		{"an empty domain entry", ""},
+		{"a domain entry with a control character", "good.com\n"},
+	}
+	for _, c := range cases {
+		domains := []Entry{{Address: c.value, Role: RoleAdmin, At: written(), By: "dimi"}}
+		role, err := Resolve(nil, domains, "dimi@good.com")
+		if !errors.Is(err, ErrNotAllowed) {
+			t.Errorf("%s: Resolve = %q, %v; want ErrNotAllowed", c.name, role, err)
+			continue
+		}
+		if role != RoleNone {
+			t.Errorf("%s: Resolve = %q beside %v, want the zero Role", c.name, role, err)
+		}
+		if !strings.Contains(err.Error(), "entry 0 of the domain entries") {
+			t.Errorf("%s: Resolve = %v; want the refusal to name the entry's position in the domain list", c.name, err)
+		}
+	}
+	// The unreadable entry is not the looked-up domain's, and the lookup is
+	// refused all the same: the rule is about the list, not about the row.
+	domains := []Entry{
+		{Address: "good.com ", Role: RoleViewer, At: written(), By: "dimi"},
+		{Address: "other.example", Role: RoleAdmin, At: written(), By: "dimi"},
+	}
+	if role, err := Resolve(nil, domains, "ana@other.example"); !errors.Is(err, ErrNotAllowed) {
+		t.Errorf("Resolve(ana@other.example) beside an unreadable entry = %q, %v; want ErrNotAllowed, not the %q a readable row carries", role, err, RoleAdmin)
+	}
+}
+
 // TestDomainOfAcceptsACanonicalAddressOnly: DomainOf's answer is the key a
 // domain entry is looked up by, so it gives one only for an address this package
 // would claim — never a domain for a value a caller forgot to canonicalise.
