@@ -11,6 +11,11 @@ package github
 // as Self, someone else's does not, and an identity that could not be
 // established (a refusal, or an answer that is not a bot account at all) is
 // Self=false rather than a guess.
+//
+// The two wants pin Base: "main" as well, which these fixtures have carried
+// all along: FetchPRHead reads the pull request's base branch (the review
+// stage diffs against it, not against a hardcoded main), so the whole struct
+// is what the identity read returns, not the identity fields alone.
 
 import (
 	"context"
@@ -66,7 +71,7 @@ func openService(t *testing.T, fixture string, warn func(string)) *Provider {
 // false.
 func TestGitHubSelfFromTheRunsOwnToken(t *testing.T) {
 	got, err := openService(t, "pull_open_head_service.json", nil).FetchPRHead(ctx, 12)
-	want := gitprov.PRHead{SHA: headSHA, Fork: false, Open: true, AuthorID: "900001", AuthorLogin: "fugaro-app[bot]",
+	want := gitprov.PRHead{SHA: headSHA, Base: "main", Fork: false, Open: true, AuthorID: "900001", AuthorLogin: "fugaro-app[bot]",
 		Association: "NONE", Self: true, SourceRepo: "acme/web"}
 	if err != nil || got != want {
 		t.Fatalf("got %+v, %v, want %+v", got, err, want)
@@ -82,7 +87,7 @@ func TestGitHubSelfFromTheRunsOwnToken(t *testing.T) {
 // this test fails, wanting Self=false and getting true.
 func TestGitHubSelfFalseForSomeoneElsesPRWithTheService(t *testing.T) {
 	got, err := openService(t, "pull_other_author_head_service.json", nil).FetchPRHead(ctx, 12)
-	want := gitprov.PRHead{SHA: headSHA, Fork: false, Open: true, AuthorID: "900002", AuthorLogin: "someone-else[bot]",
+	want := gitprov.PRHead{SHA: headSHA, Base: "main", Fork: false, Open: true, AuthorID: "900002", AuthorLogin: "someone-else[bot]",
 		Association: "NONE", SourceRepo: "acme/web"}
 	if err != nil || got != want {
 		t.Fatalf("got %+v, %v, want %+v", got, err, want)
