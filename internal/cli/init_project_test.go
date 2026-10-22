@@ -359,8 +359,10 @@ func TestIDCollisionSuggestsAlternative(t *testing.T) {
 	}
 }
 
-// Without --link-billing the stage creates the project, links nothing,
-// lists nothing, and leaves the one gcloud line, exiting 1.
+// Without --link-billing the stage creates the project, links nothing, lists
+// nothing itself — the wizard's billing question (W4.3) is the one place in a
+// run that lists the caller's accounts, and this stage never asks for one —
+// and leaves the one gcloud line, exiting 1.
 func TestBillingGuidedByDefault(t *testing.T) {
 	r := newProjectRig(t)
 	out, _, err := r.run(t, true, newProj+"\n", "--create-project")
@@ -376,7 +378,7 @@ func TestBillingGuidedByDefault(t *testing.T) {
 	}
 	for _, q := range r.bill.Requests() {
 		if !strings.HasSuffix(q.Path, "/billingInfo") || q.Method != "GET" {
-			t.Errorf("billing call %s %s: only the project's own billing is read, never the accounts", q.Method, q.Path)
+			t.Errorf("billing call %s %s: the project stage reads only the project's own billing, never the accounts (the wizard's billing question is the one place a run lists them, W4.3)", q.Method, q.Path)
 		}
 	}
 	// A rerun with the project there reads, changes nothing, and says the same.
