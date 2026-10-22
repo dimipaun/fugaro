@@ -1225,13 +1225,16 @@ test('the four levels are four named anchors a keyboard reaches in order, and no
   assert.match(verdict(numberOnly).join(' | '), /is named "1", and a marker's name says which level it jumps to/, 'the reading passes a marker a screen reader reads as "1"')
 
   const notAnAnchor = page.html.replace(
-    /<a class="zoom-marker" href="#level-1"[^>]*>1<\/a>/,
+    /<a class="zoom-marker"[^>]*href="#level-1"[^>]*>1<\/a>/,
     (tag) => tag.replace('<a class="zoom-marker"', '<span class="zoom-marker"').replace('href="#level-1"', 'data-href="#level-1"').replace('</a>', '</span>'),
   )
   assert.notEqual(notAnAnchor, page.html, 'the built page carries no first marker of the shape the plant below rewrites')
   assert.match(verdict(notAnAnchor).join(' | '), /is a `<span>`, and the markers are anchors/, 'the reading passes a marker a keyboard cannot reach')
 
-  const tabbed = page.html.replace('<a class="zoom-marker" href="#level-1"', '<a class="zoom-marker" tabindex="1" href="#level-1"')
+  // The positive tabindex goes on the marker's own opening tag whatever else the tag carries
+  // (Part 5's `data-zoom-marker` sits between the class and the `href`), so the plant reads the
+  // class attribute rather than a whole tag spelled out.
+  const tabbed = page.html.replace(/(<a class="zoom-marker")/, '$1 tabindex="1"')
   assert.notEqual(tabbed, page.html, 'the built page carries no first marker of the shape the plant below rewrites')
   assert.match(verdict(tabbed).join(' | '), /carries `tabindex="1"`/, 'the reading passes a positive tabindex on a marker')
 

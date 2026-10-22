@@ -136,6 +136,12 @@ const DOCUMENT_SELECTORS = new Map([
   // answered with nothing. What is inside a block is asked of the block, not of the document
   // (the map below).
   ['[data-slider]', (el) => el.attrs.has('data-slider')],
+  // The zoom section's own door, on the one page that carries it (Part 5). Nothing here reads a
+  // level — a pinned section has nothing to do with consent — but `site.js` asks every page for
+  // it, and the stub's rule is that a selector is taught here rather than answered with nothing.
+  // What is inside the section is asked of the section, not of the document: the runway, the
+  // panels and the markers are in the element map below.
+  ['[data-zoom]', (el) => el.attrs.has('data-zoom')],
   ['.site-nav details[open]', (el) => el.name === 'details' && el.attrs.has('open')],
   // The keyboard's way into a group asks for the groups themselves, whatever the device answers
   // (the pointer's half above asks for the open ones). Every shipped page carries the menu, and
@@ -165,6 +171,14 @@ const ELEMENT_SELECTORS = new Map([
   ['[data-slider-dot]', (el) => el.attrs.has('data-slider-dot')],
   ['[data-slider-prev]', (el) => el.attrs.has('data-slider-prev')],
   ['[data-slider-next]', (el) => el.attrs.has('data-slider-next')],
+  // The zoom section's own hooks, read inside the section the script found by its door above
+  // (Part 5). They are asked only on the page that carries the section, and a stub element here
+  // has no `getBoundingClientRect` to measure with — which is the answer the script reads as "no
+  // measurement, no pinning", so a page this stub runs is a page whose section is left as the
+  // stills. Taught all the same, because the queries are made.
+  ['[data-zoom-runway]', (el) => el.attrs.has('data-zoom-runway')],
+  ['[data-zoom-panel]', (el) => el.attrs.has('data-zoom-panel')],
+  ['[data-zoom-marker]', (el) => el.attrs.has('data-zoom-marker')],
 ])
 
 // The address a stubbed page is "at", and the page it was reached from: both carry a query
