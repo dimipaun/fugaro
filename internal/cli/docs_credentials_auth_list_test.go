@@ -336,3 +336,86 @@ func namesEveryAuth(t *testing.T, where, text string, auths []string) {
 		}
 	}
 }
+
+// TestDocsMultiModelDocumentsTheCascadeSwitch is Task C1.22's other half of the
+// doc sweep: docs/multi-model.md §5 refuses a provider model under
+// `agent.auth: cascade` and never says what the value *is* for. This pins the
+// section that does, and it is checked against that section alone (docSection)
+// so a claim that lives only in §5's refusal does not make it pass. The claims
+// are the ones an author has to get right: the cascade is a credential switch
+// that names no model of its own (D133, D150), it reaches a run only when the
+// operator-written project policy turns it on (O2/O3), the repository's file
+// is refused rather than ignored when the policy does not, and the runbook is
+// where an operator goes when a run halts on it.
+func TestDocsMultiModelDocumentsTheCascadeSwitch(t *testing.T) {
+	const path = "docs/multi-model.md"
+	section := docSection(t, path, readDoc(t, path), "## The cascade, and the project policy switch")
+	flat := flattenDoc(section)
+	for _, want := range []string{
+		"agent.auth: cascade",
+		"routing.claude: {via: cascade}",
+		"fugaro project policy publish",
+		"the project policy",
+		"the credentials service",
+		"it names no model of its own",
+		"refused",
+		"docs/credentials-service/runbook.md",
+		// What the launch actually refuses on. The section first said the
+		// service's absence is what refuses a launch ("an installation that
+		// never ran `fugaro init --provision-credentials` has none, and a
+		// `cascade` run is refused at launch there too"), and the launch gate
+		// reads no such thing: cascadeLaunchRefusal (internal/cli/run.go)
+		// judges the published switch, the gateway's mode and the rules
+		// marker, so a published switch with no service launches a run that
+		// halts at the gateway (code review of C1.22).
+		"cascadeLaunchRefusal",
+		"reads neither the service nor its bundle",
+		// What a run past the launch gate does, which the section stated the
+		// wrong way round: with no service address the run is refused while
+		// it is still bootstrapping (serviceUpstream,
+		// internal/runner/gateway.go), so it FAILS as an infra_error and
+		// opens no pull request. The section said it "halts at the gateway,
+		// named (budget_unavailable)", which is the wired service's
+		// unreachable path and not this one — and on this release no job has
+		// the address at all (independent review of C1.22, M2).
+		"ships dormant",
+		"no job is ever given its address",
+		"serviceUpstream",
+		"FUGARO_CREDENTIALS_SERVICE_URL",
+		"failed run, not a halt",
+		"infra_error",
+		"no pull request opened",
+		// What the opt-in does to the job's mounts. The section said an
+		// `oauth` workflow of the same repository "keeps its own mount
+		// unchanged", which is false once the installation opts in:
+		// dropModelMounts (internal/infra/spec.go, internal/infra/readiness.go)
+		// deletes every mount config.IsModelSecretEnv names —
+		// CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY and each provider key —
+		// for every workflow of a per-repository job, whatever agent.auth is
+		// (code review of C1.22, and it contradicted the next clause of the
+		// same sentence and SECURITY.md's own guarded claim).
+		"dropModelMounts",
+		"IsModelSecretEnv",
+		"does **not** keep its own mount",
+		"shared project job",
+		"C3.9",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("%s's cascade section never says %q", path, want)
+		}
+	}
+	for _, banned := range []string{
+		// The claim that the service's absence is what refuses the launch.
+		"is refused at launch there too",
+		// The claim that a run with no service halts: it fails at bootstrap.
+		"halts at the gateway",
+		"budget_unavailable",
+		// The claim that an `oauth` workflow keeps its model mount: the
+		// opt-in drops it, per-repository and in every auth mode.
+		"keeps its own mount unchanged",
+	} {
+		if strings.Contains(flat, banned) {
+			t.Errorf("%s's cascade section says %q: the launch reads the policy switch, not the service, and the opt-in drops every per-repository job's model mounts", path, banned)
+		}
+	}
+}
