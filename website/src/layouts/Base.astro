@@ -126,12 +126,16 @@ const fonts = site.fonts
 // The sections of the site, in two groups (P3's menu, D182, **with the Reference group dropped
 // by the owner's feedback of 2026-10-21**: "let's drop the top reference menu. We'll move the
 // submenu console under product, and the rest go under Project"). The routes are the ones the
-// plan's page list fixes (how-it-works, getting-started, caps-and-costs, console, docs,
-// security, changelog, faq, community) and each label is the route's own words rather than a
-// copy of a page's title — a nav that restated the pages would be a second copy of them to
-// keep in step. The groups' four-and-five split is the feedback's, not a symmetry: *Product*
-// carries the four pages about running the thing the visitor came for, and *Project* the five
-// about the project itself, Docs and Changelog included.
+// plan's page list fixes (how-it-works, why-gcp, getting-started, caps-and-costs, console,
+// docs, security, changelog, faq, community) and each label is the route's own words rather
+// than a copy of a page's title — a nav that restated the pages would be a second copy of
+// them to keep in step. The groups' five-and-five split is the feedback's, not a symmetry:
+// *Product* carries the five pages about running the thing the visitor came for — how it
+// works and where it runs, how to start, what it costs and the console — and *Project* the
+// five about the project itself, Docs and Changelog included. "Why GCP" is the second
+// *Product* item (D238), which is where the brief's "right after the zoom diagrams" puts it:
+// the fourth zoom level is the picture of everything in one project, and the page is the
+// argument for it.
 //
 // **Home is not one of them, and it is in the menu all the same** (the owner's feedback of
 // 2026-10-21: "I think we need a 'Home' as the first menu"). D182 took Home out of the menu
@@ -146,6 +150,7 @@ const NAV_GROUPS = [
     label: 'Product',
     items: [
       { href: '/how-it-works/', label: 'How it works' },
+      { href: '/why-gcp/', label: 'Why GCP' },
       { href: '/getting-started/', label: 'Getting started' },
       { href: '/caps-and-costs/', label: 'Caps and costs' },
       { href: '/console/', label: 'Console' },

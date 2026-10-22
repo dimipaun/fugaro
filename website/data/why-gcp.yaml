@@ -1,0 +1,109 @@
+# website/data/why-gcp.yaml -- the claims /why-gcp/ renders (the owner's brief of 2026-10-21,
+# "Why GCP"; decision D243, and the reconciliation's section 4, findings ZF15-ZF22).
+#
+# This is the page's one source of truth, and the rule it is written to is the site's
+# (Global Constraint 6): a page renders a fact, it never restates one. So every claim below
+# carries the file in this repository that proves it, the page renders that file as the
+# claim's source, and the build refuses a claim whose source is not in the tree --
+# `website/src/content.ts`'s `loadWhyGcp` reads this file and stops, naming the row, when it
+# is not.
+#
+# What a row is, and what each field is for:
+#
+#   id      the row's anchor on the page, and the name a build error uses. The page renders
+#           it as the row's `id`, so a duplicate is two elements with one name. An `id` is an
+#           attribute value, and `website/test/origins.mjs` refuses the service's name in any
+#           attribute while `analytics.enabled` is false -- the same rule the page's own
+#           `description` is worded around -- so the row about it is named `gcp-project`: the
+#           claim, not the product.
+#   text    the site's own sentence, consistent with `source` and never a copy of it: a page
+#           that repeats a document's sentences is the second copy of it, and the copy that
+#           drifts first (F37, F47).
+#   source  the file the claim is traceable to, relative to the repository root. The page
+#           renders it as a link and fails the build if it is missing.
+#   date    the day the claim was last read against that document, written YYYY-MM-DD. Every
+#           row carries one -- a claim about what other clouds do is a claim whose age a
+#           reader has to be able to judge (docs/website/README.md: "no competitor comparison
+#           without a source and a date"; ZF58), and a row's date is what makes the rest of
+#           the file's claims as checkable as that one.
+#
+# **The four points are the brief's, as the tree supports them, and the two the tree refuses
+# are rewritten rather than dropped** (the plan's Part 2; ZF15-ZF22):
+#
+#   - "Firebase is non-negotiable" is too strong (ZF19). Firebase is the budget, dashboard
+#     and history control plane, it is optional -- a run needs none of it -- and it is not
+#     behind the backend seam, which is the part that makes it GCP-bound whatever runs a job
+#     (ZF20; `docs/backends.md:11`).
+#   - "so there is no extra setup" is false (ZF18): the same-project services come with the
+#     project, and `fugaro init` is what provisions them.
+#   - "Fugaro gets its own isolated, Fugaro-managed project" is not true in the present tense
+#     (ZF17): managed projects are gated off. What is true is that Fugaro runs in the project
+#     it is given and that nothing requires that project to be your production one.
+#   - "free and disposable" is the brief's own suggested framing's word and the repository
+#     rejects it (ZF15, ZF22; `docs/design/managed-projects.md:18,211`), so this file does not
+#     carry it and the row that answers the brief's "Safety" point says what is in the project
+#     instead. D248: a managed project is new and holds only Fugaro's resources.
+#   - The AWS paragraph is the repository's position rather than the brief's story about how
+#     the design got here (ZF21): a second cloud is out of scope for 1.0 and wanted from
+#     contributors.
+#
+# The `framing` row is the page's one-sentence answer to the brief's "Suggested framing", and
+# it is the sentence D249 requires the built page to carry: the brief's own version of it
+# carries the word the repository rejects, and the same sentence with "one integrated project"
+# and no "disposable" is what the reconciliation says is supportable (ZF22).
+version: 1
+
+points:
+  - id: control-plane
+    text: >-
+      Fugaro's control plane is Firebase: the budget's live counters, the dashboard and the
+      run history. A run needs none of it, so it is optional, and it is not behind the
+      backend seam — which is why it stays GCP-bound whatever runs your jobs.
+    source: docs/backends.md
+    date: 2026-10-22
+
+  - id: gcp-project
+    text: >-
+      A Firebase project is a Google Cloud project. Cloud Run, Secret Manager, the runs
+      bucket and the database the budget lives in are all services of it, and `fugaro init`
+      is what provisions them.
+    source: docs/gcp-setup.md
+    date: 2026-10-22
+
+  - id: one-brain
+    text: >-
+      One Fugaro project is one Google Cloud project holding one Firebase project, its
+      repositories and its people, and the installation's secrets, IAM, billing link and
+      budget all live in that one place rather than being split across two providers.
+    source: docs/design/m9-budget-and-dashboard.md
+    date: 2026-10-22
+
+  - id: fugaro-project
+    text: >-
+      A new Google Cloud project costs nothing by itself, and the resources `fugaro init`
+      creates are Fugaro's own: the Terraform state, the spend history and the kill switch
+      all live in the project Fugaro works in, not in your application's.
+    source: docs/design/managed-projects.md
+    date: 2026-10-22
+
+closing:
+  - id: nothing-moves
+    text: >-
+      Nothing of yours moves. Fugaro works in the Google Cloud project you give it, a
+      project created for it holds nothing of yours, and where your application runs is not
+      a question this asks.
+    source: docs/gcp-setup.md
+    date: 2026-10-22
+
+  - id: second-cloud
+    text: >-
+      A second cloud is not built and not refused. The backend seam and its conformance
+      suite are in the tree, and an AWS or an Azure backend is wanted from contributors.
+    source: README.md
+    date: 2026-10-22
+
+framing:
+  id: one-integrated-project
+  text: No other cloud offers this as one integrated project.
+  source: docs/backends.md
+  date: 2026-10-22

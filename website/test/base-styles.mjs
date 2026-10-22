@@ -2786,7 +2786,7 @@ export function navFailures(html, rel) {
   // amendment, the fixture below and check 70a's steps all tell the reader to look for
   // "Product" and "Project" — so the names and the routes are held here, with the count.
   const GROUPS_WANTED = [
-    ['Product', ['/how-it-works/', '/getting-started/', '/caps-and-costs/', '/console/']],
+    ['Product', ['/how-it-works/', '/why-gcp/', '/getting-started/', '/caps-and-costs/', '/console/']],
     ['Project', ['/docs/', '/security/', '/faq/', '/community/', '/changelog/']],
   ]
   groups.forEach((group, at) => {
@@ -2877,7 +2877,7 @@ test('the section nav is a labelled landmark of keyboard-reachable links, with t
 // Reference group: Console under *Product*, Docs and Changelog under *Project*), so a fixture
 // is the real shape and not a smaller one the rule happens to accept.
 const FIXTURE_GROUPS = [
-  ['Product', [['/how-it-works/', 'How it works'], ['/getting-started/', 'Getting started'], ['/caps-and-costs/', 'Caps and costs'], ['/console/', 'Console']]],
+  ['Product', [['/how-it-works/', 'How it works'], ['/why-gcp/', 'Why GCP'], ['/getting-started/', 'Getting started'], ['/caps-and-costs/', 'Caps and costs'], ['/console/', 'Console']]],
   ['Project', [['/docs/', 'Docs'], ['/security/', 'Security'], ['/faq/', 'FAQ'], ['/community/', 'Community'], ['/changelog/', 'Changelog']]],
 ]
 

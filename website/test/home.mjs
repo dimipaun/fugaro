@@ -245,17 +245,27 @@ function installPathNote(id) {
 }
 
 /**
- * The routes the site's pages live at, from the plan: the page files its tasks' `**Files:**`
+ * The routes the site's pages live at, from the plans: the page files their tasks' `**Files**`
  * lines name. Pages are lowercase and components are capitalised in this repository, so a
  * lowercase `<name>.astro` in a Files line is a page — and this is the only list of the
  * site's pages that exists while the page tasks are still being written.
+ *
+ * Two plans write pages: the website plan (`**Files:**`, which names a page by its bare file
+ * name once the full path is written beside it) and the zoom-diagrams plan (`**Files.**`,
+ * which always writes the path). A name is read where a line writes it as a path segment of
+ * a backticked path, which is the shape both plans use — reading any lowercase `.astro` on
+ * the line instead would take `Base.astro` for `ase` and `Terminal.astro` for `erminal`, and
+ * a route list that carries routes no task writes is a list that would pass a link to one.
  */
 function plannedRoutes() {
   const routes = new Set()
-  for (const line of repoFile('docs/website/implementation-plan.md').split('\n')) {
-    if (!line.startsWith('**Files:**')) continue
-    for (const m of line.matchAll(/([a-z0-9-]+)\.astro/g)) {
-      routes.add(m[1] === 'index' ? '/' : `/${m[1]}/`)
+  const plans = ['docs/website/implementation-plan.md', 'docs/website/zoom-diagrams/implementation-plan.md']
+  for (const plan of plans) {
+    for (const line of repoFile(plan).split('\n')) {
+      if (!line.startsWith('**Files')) continue
+      for (const m of line.matchAll(/`(?:[a-z0-9-]+\/)*([a-z0-9-]+)\.astro/g)) {
+        routes.add(m[1] === 'index' ? '/' : `/${m[1]}/`)
+      }
     }
   }
   return routes
@@ -2394,7 +2404,7 @@ test("every link on the two pages points at a route the plan's tasks write", () 
     for (const href of internalLinks(page)) {
       assert.ok(
         routes.has(href),
-        `the ${where} page links ${href}, which is not a route the plan's tasks write (the layout's nav and the hero's call to action included, because every link on these pages is checked here): a route outside that list is a 404 in the artifact, and it is Global Constraint 9's defect one page over from the download link it names (W1.4)`,
+        `the ${where} page links ${href}, which is not a route the plans' tasks write (the layout's nav and the hero's call to action included, because every link on these pages is checked here): a route outside that list is a 404 in the artifact, and it is Global Constraint 9's defect one page over from the download link it names (W1.4)`,
       )
     }
   }
