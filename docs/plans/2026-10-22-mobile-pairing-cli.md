@@ -494,7 +494,7 @@ in the **encrypted pairing payload**. Both can hold, and here is how:
 
 | Carrier | Holds | Does not hold | Why |
 | --- | --- | --- | --- |
-| **The QR** (on screen, photographable) | the project id, the database URL, the Identity Toolkit API key, the endpoint the CLI's signer is reached at — **the bootstrap configuration the phone needs to exchange a custom token at all** — and the one-shot `p~` pairing token | the MAC key (D171), the device token, **the identity** (#787), the code (M3) | the phone cannot sign in before it knows where to sign in; a photograph of the QR yields a token that reaches two nodes and nothing else |
+| **The QR** (on screen, photographable) | the project id, the database URL and the Identity Toolkit API key — **the bootstrap configuration the phone needs to exchange a custom token at all** — and the one-shot `p~` pairing token | the MAC key (D171), the device token, **the identity** (#787), the code (M3) | the phone cannot sign in before it knows where to sign in; a photograph of the QR yields a token that reaches two nodes and nothing else |
 | **`config/pairing/$uid/request`** (written by the phone) | `key` (the phone's X25519 public key, one pinned spelling) and `at` | everything else — the template's `$other` refuses it | §2 (a); the code is derived by both ends and never written |
 | **`config/pairing/$uid/delivery`** (written by the CLI, read once by the phone) | **the authoritative configuration the app stores** (D199), the device token (`m~`, `mu = uid`), and the per-pairing MAC key — all inside the sealed envelope | anything in clear | §2 (a) 4: no `.validate`, so no generation (M14); D199 |
 | **`config/admin/devices/$uid`** (written by the CLI) | the name, the administered email (D226), the role (D225), the pairing time | any token, any key, any fingerprint (M13) | §2 (b) |
@@ -837,8 +837,8 @@ today. The declaration is in the tree:
   identifier."*
 
 **What has to be revisited, and by whom.** The declaration's *answer* is unlikely to change —
-X25519 and AES-GCM are standard, and Apple's exemption covers exactly this class — but the **basis**
-changes, and two store artifacts describe the app's data handling rather than its crypto:
+X25519 and AES-GCM are the standard primitives such declarations are normally made about — but the
+**basis** changes, and two store artifacts describe the app's data handling rather than its crypto:
 
 1. **The export declaration itself.** The declaration was made for an app whose only cryptography was
    the platform's own TLS. Pairing adds key agreement and AEAD **the app implements** (through the
@@ -1126,8 +1126,9 @@ plan diverges from the mobile plan's task text**, and they are the ones that hol
    plus one sweep interval** (a session cannot outlive the ID token, §11) — and the CLI deletes only
    the **node** on success, which database admin allows. **Cost:** P6.6's file list says "the `m~`
    rule"; this makes it a two-prefix rule, which is a divergence from the task text and is why it is
-   asked. **The alternative** — P6.6 deleting the user under the operator's ADC — needs a role nobody
-   holds, so in practice it would fail or be skipped and the orphans would accumulate.
+   asked. **The alternative** — P6.6 deleting the user under the operator's ADC — needs a role no
+   Terraform grant gives the operator (an installation's owners or editors may hold it through basic
+   roles, §19), so in practice it would refuse or be skipped and the orphans would accumulate.
 2. **The abandoned `pairing/$uid` node: who deletes it?**
    Nothing in the rules puts a clock on a pairing session (§2 (a), M2). **Recommended: the CLI
    deletes it on success (T1's step 9), and the sweep deletes it when it deletes the `p~` user** —
