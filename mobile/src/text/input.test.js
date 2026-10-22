@@ -35,6 +35,8 @@ import { CONFIRM_CUE, REFUSAL as CONFIRM_REFUSAL } from '../../../shared/confirm
 import { COMMAND, NOT_UNDERSTOOD_REPLY } from '../../../shared/command/index.js';
 import { MemorySecureStore, SecretStore, secret } from '../accounts/index.js';
 import { createMailboxClient } from '../mailbox/client.js';
+import { MemoryConnection } from '../mailbox/connection.js';
+import { macOf } from '../mailbox/mac.js';
 import { MemoryMailboxStore } from '../mailbox/store.js';
 import { MemorySpeaker } from '../mailbox/speaker.js';
 import {
@@ -64,6 +66,8 @@ const MAC_KEY = 'synthetic-mac-key-0123456789abcdef';
 const SECRETS = ['synthetic-token-0123456789'];
 
 const INBOX = `mailbox/${UID}/inbox`;
+/** The orchestrator's heartbeat node: D113b's third path, and never the phone's. */
+const HEARTBEAT = `mailbox/${UID}/heartbeat`;
 const RUN_TARGET = Object.freeze({ kind: 'run', runId: 'run-42' });
 const MERGE_TARGET = Object.freeze({
   kind: 'merge',
@@ -99,12 +103,30 @@ async function harness(options = {}) {
     account: ACCOUNT,
     keys,
     store: db,
+    connection: new MemoryConnection(),
     speaker: new MemorySpeaker(),
     now: () => nowMs,
     newId: () => `m-${++minted}`,
     secrets: SECRETS,
     heartbeatIntervalMs: INTERVAL_MS,
   });
+
+  // **The phone has looked before it types.** P6.10's gate fails closed on a
+  // consumer nothing has observed (the review's M2), so the state a running
+  // phone is in is one poll already made: a fresh heartbeat is delivered into
+  // the database the way the orchestrator's end writes it, and the client reads
+  // it once. It is fixture setup -- `deliver` is the OTHER end's write, and the
+  // tests below count the client's own writes -- and a test that wants the
+  // unobserved phone asks for it with `observe: false`.
+  if (options.observe !== false) {
+    const beat = { at: nowMs - 1_000, boot: 'boot-0001' };
+    db.deliver(HEARTBEAT, {
+      ...beat,
+      mac: macOf(beat, MAC_KEY, 'heartbeat'),
+    });
+    await client.poll();
+  }
+
   let ids = 0;
   const input = createTypedInput({
     mailbox: client,

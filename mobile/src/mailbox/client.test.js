@@ -124,6 +124,18 @@ class LoggedStore {
   reads() {
     return Object.freeze([...this.#reads]);
   }
+
+  /**
+   * Start counting from here: the harness's own observing pass (P6.10's M2) is
+   * fixture setup, and "poll read nothing" must stay a claim about the test's own
+   * calls and not about the pass that put the phone in the state the app is in.
+   * Nothing that happens after the mark is hidden, which is the whole point of
+   * marking rather than swapping the store out.
+   */
+  mark() {
+    this.#writes.length = 0;
+    this.#reads.length = 0;
+  }
 }
 
 /** A speaker that records the order it spoke in, beside the store's writes. */
@@ -155,11 +167,8 @@ async function harness(options = {}) {
   const store = new LoggedStore(db, events);
   const speaker = options.speaker ?? new LoggedSpeaker(events);
   const keys = options.keys ?? new SecretStore(new MemorySecureStore());
-  // P6.10's port. It defaults to ONLINE and to a consumer nothing has looked at
-  // yet, which is the state every test that is not about the gate starts in: a
-  // suite about signing and acking must not silently be a suite about being
-  // offline, and "nothing has been observed" is not evidence that the consumer
-  // is down (`gate.js` says why).
+  // P6.10's port: ONLINE unless a test says otherwise, so that a suite about
+  // signing and acking is not silently a suite about being in a tunnel.
   const connection = options.connection ?? new MemoryConnection();
   // The key is stored under the INSTALLATION's id, which is not the mailbox's
   // (D114 vs the rules' `$mb == auth.uid`): the two tests that move the account
@@ -179,6 +188,45 @@ async function harness(options = {}) {
     heartbeatIntervalMs: options.heartbeatIntervalMs ?? INTERVAL_MS,
     ...(options.mailboxTtlMs === undefined ? {} : { mailboxTtlMs: options.mailboxTtlMs }),
   });
+
+  // **The phone starts where the app's does: one poll already made.**
+  //
+  // P6.10's gate fails closed on a consumer nothing has observed (the review's
+  // M2), so a harness that handed out a phone which had never looked would make
+  // every send in this file a test of the gate's `consumer-unobserved` refusal.
+  // The pass below is the state a paired, running phone is in within one
+  // heartbeat interval: a fresh heartbeat is delivered into the database the way
+  // the consumer's other end would write it (a delivery, not a phone write) and
+  // the client polls once, which is a read and mints no id.
+  //
+  // **It is fixture setup and not the scenario**, which is why the logs the test
+  // asserts on start here: `mark()` drops the reads this pass made, and it is
+  // the same for the event trail. Nothing else of the pass is invisible, and
+  // nothing needs to be: it speaks nothing (the databases a test hands in carry
+  // no unanswered outbox message -- the two restarts pass back a database whose
+  // one message is acked) and writes nothing (a poll on an empty outbox acks
+  // nothing). A test that wants the unobserved phone instead asks for it with
+  // `observe: false`, and a test that wants to watch this pass asserts on the
+  // client before the harness has made it.
+  if (options.observe !== false && options.pair !== false) {
+    // `deliver` and not `write`: this is the OTHER end's node, so it lands even
+    // where the phone's own port is set to refuse (`{failWrites: true}` is a
+    // store that says no to the phone, not a consumer that stopped writing),
+    // and it is not logged as a phone write -- `writes()` is the record of what
+    // the client asked for.
+    db.deliver(client.paths.heartbeat, signed(
+      { at: nowMs - 1_000, boot: 'boot-0001' },
+      'heartbeat',
+      options.key ?? MAC_KEY,
+    ));
+    await client.poll();
+    store.mark();
+    // The key's own count is fixture setup too: `countingKeys` answers "was the
+    // material asked for", and the observing poll asked for it legitimately.
+    if (typeof keys.mark === 'function') keys.mark();
+    events.length = 0;
+  }
+
   return {
     client,
     store,
@@ -210,9 +258,13 @@ async function harness(options = {}) {
  * store answered, so the count is the thing a test asserts.
  */
 function countingKeys(inner) {
-  const asked = [];
+  let asked = [];
   return {
     asked: () => Object.freeze([...asked]),
+    /** Start counting from here: the harness's observing poll is setup. */
+    mark: () => {
+      asked = [];
+    },
     put: (accountId, item, value) => inner.put(accountId, item, value),
     use: (accountId, item, fn) => {
       asked.push(item);
@@ -301,7 +353,9 @@ test('every port and every value source is required, and nothing is guessed', ()
   // A missing port is a wiring bug, not a refusal a caller can ignore: a
   // client built without a key store would fail at the first utterance, with
   // the owner waiting.
-  for (const field of ['account', 'keys', 'store', 'connection', 'speaker', 'now', 'newId', 'secrets', 'heartbeatIntervalMs']) {
+  // `connection` is deliberately NOT in this list: P6.10's port is optional and
+  // its default refuses (`UNWIRED_CONNECTION`) -- see the test below.
+  for (const field of ['account', 'keys', 'store', 'speaker', 'now', 'newId', 'secrets', 'heartbeatIntervalMs']) {
     const { [field]: _gone, ...rest } = base;
     assert.throws(() => createMailboxClient(rest), TypeError, `without ${field}`);
   }
@@ -323,6 +377,38 @@ test('every port and every value source is required, and nothing is guessed', ()
   for (const mailboxTtlMs of [0, -1, 1.5, 'x', null]) {
     assert.throws(() => createMailboxClient({ ...base, mailboxTtlMs }), TypeError, String(mailboxTtlMs));
   }
+});
+
+test('a client built without a connection refuses to send, and says why (the review\'s BLOCKER)', async () => {
+  // The first version of P6.10 REQUIRED the port and threw without it, which
+  // broke seventy-seven of this app's own tests -- a wiring failure wearing a
+  // gate's clothes, and the review's BLOCKER. The port is optional now, and its
+  // default is the one that cannot send into the SDK's queue: a phone whose
+  // connection was never wired answers `no-connection`, so the owner is told
+  // "No connection. I have not sent that." instead of a write that arrives an
+  // hour later. (`connection.js`'s `UNWIRED_CONNECTION`.)
+  const wiring = {
+    account: ACCOUNT,
+    keys: new SecretStore(new MemorySecureStore()),
+    store: new MemoryMailboxStore(),
+    speaker: new MemorySpeaker(),
+    now: () => T0,
+    newId: () => 'm-1',
+    secrets: SECRETS,
+    heartbeatIntervalMs: INTERVAL_MS,
+  };
+  const client = createMailboxClient(wiring);
+  assert.equal(client.ok, true, 'a client without a connection is built, not thrown at');
+  assert.deepEqual(await client.send('run 42 finished'), {
+    ok: false,
+    code: GATE_CODES.NO_CONNECTION,
+    field: 'connection',
+    message: OFFLINE_SPEECH[GATE_CODES.NO_CONNECTION],
+    told: true,
+  });
+  // A port that IS given and cannot answer is still a wiring bug: the default
+  // covers "not wired", not "wired to nothing".
+  assert.throws(() => createMailboxClient({ ...wiring, connection: {} }), TypeError, 'a half-wired connection');
 });
 
 test('an account tuple that is not usable is a wiring failure carrying P3.1\'s code', () => {
@@ -424,18 +510,28 @@ test('the message it writes is exactly the five fields, tagged over the schema\'
 });
 
 test('no unsigned write is ever attempted: without a key the store is not called', async () => {
-  // The plan's sentence, as a test. Three ways to have no usable key, and in
-  // all three the write set stays empty -- an unsigned message is never
-  // *attempted*, not merely never landed.
-  const unpaired = await harness({ pair: false });
+  // The plan's sentence, as a test. Two ways to have no usable key, and in both
+  // the write set stays empty -- an unsigned message is never *attempted*, not
+  // merely never landed.
+  //
+  // **The key goes missing AFTER the phone has looked, and P6.10's M2 is why.**
+  // A phone with no key cannot poll either (`poll` verifies the heartbeat with
+  // the same key), so a phone that never had one refuses at the gate as
+  // unobserved before the key is ever reached -- true, but not this test's
+  // question, which is what happens at the key. Taking the key away from a phone
+  // that has already observed the consumer is that question: the gate passes and
+  // the send stops where it should.
+  const gonePort = new MemorySecureStore();
+  const unpaired = await harness({ keys: new SecretStore(gonePort) });
+  await gonePort.deleteItem(`fugaro.account.${ACCOUNT.id}.macKey`);
   assert.deepEqual(await unpaired.client.send('run 42 finished'), refuse(CLIENT_CODES.NO_KEY, 'keys'));
   assert.deepEqual(unpaired.store.writes(), []);
 
   // The item is there and cannot be read (a value this module could not have
   // written): a different fact, and a different code.
   const port = new MemorySecureStore();
+  const unreadable = await harness({ keys: new SecretStore(port) });
   await port.setItem(`fugaro.account.${ACCOUNT.id}.macKey`, 42);
-  const unreadable = await harness({ keys: new SecretStore(port), pair: false });
   assert.deepEqual(await unreadable.client.send('run 42 finished'), refuse(CLIENT_CODES.KEY_UNREADABLE, 'keys'));
   assert.deepEqual(unreadable.store.writes(), []);
 
@@ -465,7 +561,11 @@ test('a pairing key short enough to turn up inside its own tag still speaks', as
   await plantOutbox(h, 'r-1', {}, { key: SHORT_KEY });
   const report = await h.client.poll();
   assert.deepEqual(report.spoken, ['r-1']);
-  assert.equal(report.presence.state, STATE.OFFLINE, 'an empty heartbeat node, and nothing more is claimed');
+  // The key reads BOTH directions: the harness has already observed the consumer
+  // through this same short key (P6.10's M2 means a phone has to have looked),
+  // so this poll sees a live orchestrator rather than an empty node -- and the
+  // fence cannot refuse one direction while accepting the other.
+  assert.equal(report.presence.state, STATE.LIVE);
 });
 
 test('the tag is over the REDACTED text, so a secret is in neither the bytes nor the tag', async () => {
@@ -574,6 +674,11 @@ test('a clock that is not a time, and an id that is not a database key, are refu
       secrets: SECRETS,
       heartbeatIntervalMs: INTERVAL_MS,
     });
+    // P6.10's gate refuses an unobserved consumer before it looks at the id
+    // (M2), and the observation is PER-CLIENT state: a second client is a second
+    // phone and has to have looked, so this one polls first, exactly as the
+    // harness does for its own.
+    await client.poll();
     assert.deepEqual(await client.send('run 42 finished'), refuse(CLIENT_CODES.BAD_ID, 'newId'), String(bad));
   }
   assert.deepEqual(h.store.writes(), [], 'an id the rules would refuse is not attempted either');
@@ -820,7 +925,9 @@ test('it acks nothing it has not spoken, and a failed speak leaves the message u
 });
 
 test('it does not speak or ack the same message twice', async () => {
-  const h = await harness();
+  // `observe: false`: this test is about the outbox, and the presence it asserts
+  // at the end is the one an EMPTY heartbeat node gives.
+  const h = await harness({ observe: false });
   await plantOutbox(h, 'r-1');
   await h.client.poll();
   const second = await h.client.poll();
@@ -1106,7 +1213,11 @@ test('an unreadable outbox is a refusal, and nothing is spoken', async () => {
 // ---------------------------------------------------------------------------
 
 test('a signed heartbeat is read through P1.4 and its agent list is carried', async () => {
-  const h = await harness();
+  // `observe: false`: every heartbeat below is this test's own, and the
+  // harness's observing pass would leave a heartbeat node the plant cannot
+  // rewrite (the template denies a second write) -- see the same note in
+  // `client.js`'s fixture section.
+  const h = await harness({ observe: false });
   await plantHeartbeat(h, { agents: [{ id: 'orch-1', name: 'orchestrator' }] });
   const report = await h.client.poll();
   assert.deepEqual(report.presence, {
@@ -1135,7 +1246,8 @@ test('an unsigned heartbeat, or one signed for another node, is offline with no 
   // itself as the agent the owner talks to -- which is why the tag covers the
   // agent list too.
   const AGENTS = [{ id: 'orch-1', name: 'orchestrator' }];
-  const unsigned = await harness();
+  // `observe: false`, here and below: every heartbeat is planted by this test.
+  const unsigned = await harness({ observe: false });
   // A heartbeat whose tag is there and wrong: the schema accepts the shape, so
   // the refusal is this client's (`heartbeat-unsigned`), not the schema's.
   await plantHeartbeat(unsigned, { agents: AGENTS }, { raw: { at: T0 - 1_000, boot: 'boot-0001', agents: AGENTS, mac: 'f'.repeat(64) } });
@@ -1149,18 +1261,18 @@ test('an unsigned heartbeat, or one signed for another node, is offline with no 
   });
   // ... and one with no tag at all is not a heartbeat: the schema refuses its
   // shape, before any tag is looked for.
-  const tagless = await harness();
+  const tagless = await harness({ observe: false });
   await plantHeartbeat(tagless, { agents: AGENTS }, { raw: { at: T0 - 1_000, boot: 'boot-0001', agents: AGENTS } });
   assert.equal((await tagless.client.poll()).presence.reason, PRESENCE_REASON.INVALID);
 
-  const reflected = await harness();
+  const reflected = await harness({ observe: false });
   await plantHeartbeat(reflected, {}, { direction: 'inbox' });
   assert.equal((await reflected.client.poll()).presence.reason, PRESENCE_REASON.UNSIGNED);
 
   // A heartbeat whose `at` was moved after it was signed: the tag no longer
   // covers the record, so it is worth nothing -- an old-but-honest heartbeat
   // and a rewritten one must not read the same.
-  const tampered = await harness();
+  const tampered = await harness({ observe: false });
   const honest = signed({ at: T0 - 1_000, boot: 'boot-0001' }, 'heartbeat');
   await plantHeartbeat(tampered, {}, { raw: { ...honest, at: T0 - 5_000_000 } });
   const tamperedReport = await tampered.client.poll();
@@ -1171,7 +1283,8 @@ test('an unsigned heartbeat, or one signed for another node, is offline with no 
 });
 
 test('an empty heartbeat node is offline, and garbage is offline too', async () => {
-  const empty = await harness();
+  // `observe: false`: an EMPTY node is the fixture, so nothing may plant one.
+  const empty = await harness({ observe: false });
   assert.deepEqual((await empty.client.poll()).presence, {
     state: STATE.OFFLINE,
     verified: false,
@@ -1179,7 +1292,7 @@ test('an empty heartbeat node is offline, and garbage is offline too', async () 
     agents: null,
     ageMs: null,
   });
-  const garbage = await harness();
+  const garbage = await harness({ observe: false });
   await garbage.db.write(HEARTBEAT, { boot: 'boot-0001' });
   const garbageReport = await garbage.client.poll();
   assert.equal(garbageReport.presence.reason, PRESENCE_REASON.INVALID);
@@ -1200,7 +1313,7 @@ test('a signed heartbeat P1.4 will not judge is offline for this module\'s own r
   // caller with a string neither `REASON` nor `PRESENCE_REASON` contains, which
   // is exactly what the presence contract at the top of `client.js` promises
   // cannot happen.
-  const h = await harness();
+  const h = await harness({ observe: false });
   await plantHeartbeat(h, { at: 0 });
   // The premise, held to the two modules' own code rather than to this comment.
   assert.equal(
@@ -1662,7 +1775,10 @@ test('a consumer that is offline, or unsigned, or on another clock, refuses too'
     ['another node\'s', async (h) => { await plantHeartbeat(h, {}, { direction: 'inbox' }); }, GATE_CODES.CONSUMER_OFFLINE],
     ['ahead of the server', async (h) => { await plantHeartbeat(h, { at: h.now() + INTERVAL_MS * 5 }); }, GATE_CODES.CONSUMER_CLOCK_DIFFERS],
   ]) {
-    const h = await harness();
+    // `observe: false`: the presence each case asserts is the one its own
+    // planting (or its own empty database) produces, and each one polls for it
+    // before the send.
+    const h = await harness({ observe: false });
     await plant(h);
     const polled = await h.client.poll();
     assert.equal(polled.presence.state === STATE.LIVE, false, name);
@@ -1673,18 +1789,40 @@ test('a consumer that is offline, or unsigned, or on another clock, refuses too'
   }
 });
 
-test('before anything has been observed the phone still sends, and that is named', async () => {
-  // The one place the plan's two conditions do not reach: a phone that has not
-  // polled has observed nothing, and `null` is not evidence that the consumer is
-  // down. Inventing a refusal from it would make a freshly paired phone unable
-  // to say its first sentence. `gate.js` names the limit; this test holds the
-  // behaviour, because a later change to it should be a decision and not an
-  // accident.
-  const h = await harness();
-  assert.equal((await h.client.send('run 42 finished')).ok, true, 'nothing observed yet');
-  // ... and once a poll HAS looked, the same consumer refuses.
+test('before anything has been observed the phone refuses, and then sends once it has looked', async () => {
+  // **The review's M2, at the client.** The first version of the gate let a
+  // phone that had never polled send, on the argument that `null` is not
+  // evidence that the consumer is down. A gate that sends on "probably fine" is
+  // the gate G21 is about, so it fails closed: an unobserved consumer is a
+  // refusal, with its own code, and the owner is told which of the two it is
+  // ("I have not heard from the orchestrator yet" and not "it is offline").
+  // The cost is one poll before the first sentence, which is asserted here as
+  // the way out rather than argued about.
+  const h = await harness({ observe: false });
+  const refused = await h.client.send('run 42 finished');
+  assert.deepEqual(refused, {
+    ok: false,
+    code: GATE_CODES.CONSUMER_UNOBSERVED,
+    field: 'presence',
+    message: OFFLINE_SPEECH[GATE_CODES.CONSUMER_UNOBSERVED],
+    told: true,
+  });
+  assert.deepEqual(h.store.writes(), [], 'nothing was written');
+  assert.equal(h.minted(), 0, 'and no id was minted');
+  assert.deepEqual(h.client.pending(), []);
+  assert.deepEqual(h.client.unsent(), [
+    { text: 'run 42 finished', at: T0, code: GATE_CODES.CONSUMER_UNOBSERVED },
+  ]);
+
+  // The look that changes it: one poll over the consumer's own heartbeat, and
+  // the same sentence goes out.
   await plantHeartbeat(h);
-  await h.client.poll();
+  const polled = await h.client.poll();
+  assert.equal(polled.presence.state, STATE.LIVE);
+  assert.deepEqual(await h.client.send('run 42 finished'), { ok: true, id: 'm-1', at: T0 });
+
+  // ... and once the consumer has been observed and gone quiet, the refusal is
+  // the offline one and not the unobserved one: the two are not the same news.
   h.advance(INTERVAL_MS * 20);
   assert.equal((await h.client.send('and another thing')).code, GATE_CODES.CONSUMER_OFFLINE);
 });

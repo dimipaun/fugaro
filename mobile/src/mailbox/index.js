@@ -31,7 +31,13 @@ export {
   toPresenceHeartbeat,
 } from './client.js';
 
-export { GATE_CODES, OFFLINE_SPEECH, evaluateGate, offlineSpeech } from './gate.js';
+export {
+  GATE_CODES,
+  OFFLINE_SPEECH,
+  evaluateConnection,
+  evaluateGate,
+  offlineSpeech,
+} from './gate.js';
 
 export { MAILBOX_ROOT, isDatabaseKey, mailboxPaths } from './paths.js';
 

@@ -16,20 +16,69 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { STATE } from '../../../shared/presence/index.js';
-import { GATE_CODES, OFFLINE_SPEECH, evaluateGate, offlineSpeech } from './gate.js';
+import {
+  GATE_CODES,
+  OFFLINE_SPEECH,
+  evaluateConnection,
+  evaluateGate,
+  offlineSpeech,
+} from './gate.js';
 
 /** A presence object in the shape `client.js`'s `presenceOf` returns. */
 function presence(state, verified = true) {
   return { state, verified, reason: 'fresh', ageMs: 1_000, agents: null };
 }
 
-test('a connected phone with nothing observed may send', () => {
-  // The one input that is not an observation. A freshly paired phone has not
-  // polled yet, and `null` is not evidence that the consumer is down: see the
-  // header of `gate.js` for why this is the plan's own gap and what bounds it.
-  assert.deepEqual(evaluateGate({ online: true, presence: null }), { ok: true });
-  assert.deepEqual(evaluateGate({ online: true }), { ok: true });
-  assert.deepEqual(evaluateGate({ online: true, presence: undefined }), { ok: true });
+test('a connected phone that has observed nothing refuses, and says which nothing it is', () => {
+  // **The review's M2.** `null` is the absence of an observation, and the gate
+  // fails closed on it: no observation = offline, with its own code so that the
+  // owner is told "I have not heard from it yet" rather than a claim that it is
+  // down. A connected phone with a live heartbeat is the only thing that sends.
+  for (const presence of [null, undefined]) {
+    assert.deepEqual(evaluateGate({ online: true, presence }), {
+      ok: false,
+      code: GATE_CODES.CONSUMER_UNOBSERVED,
+      field: 'presence',
+    });
+  }
+  // `presence` left out entirely is the same input as `null`, not a licence:
+  // the default is a refusal, the way the connection's is.
+  assert.deepEqual(evaluateGate({ online: true }), {
+    ok: false,
+    code: GATE_CODES.CONSUMER_UNOBSERVED,
+    field: 'presence',
+  });
+  assert.deepEqual(evaluateGate(), { ok: false, code: GATE_CODES.NO_CONNECTION, field: 'connection' });
+  // And the observation is enough on its own: the connection is still asked
+  // first, so an offline phone with a live heartbeat refuses as a tunnel.
+  assert.deepEqual(evaluateGate({ online: true, presence: presence(STATE.LIVE) }), { ok: true });
+});
+
+test('the connection half can be asked on its own: it is what flush and poll ask', () => {
+  // `flush` and `poll` re-send and read; neither has an observation question to
+  // ask (presence is what a poll MAKES), and asking it would refuse every pass
+  // on a phone that had not polled -- the circle. So the two halves are two
+  // functions, and this one answers about the connection alone: no presence, no
+  // refusal it did not come for.
+  for (const online of [true]) {
+    assert.deepEqual(evaluateConnection(online), { ok: true });
+  }
+  for (const online of [false, undefined, null, 0, 1, 'online', {}, [], Number.NaN]) {
+    assert.deepEqual(
+      evaluateConnection(online),
+      { ok: false, code: GATE_CODES.NO_CONNECTION, field: 'connection' },
+      String(online),
+    );
+  }
+  assert.deepEqual(evaluateConnection(), { ok: false, code: GATE_CODES.NO_CONNECTION, field: 'connection' });
+  // The two agree about the connection, which is the one thing they share.
+  for (const online of [true, false, undefined]) {
+    const whole = evaluateGate({ online, presence: presence(STATE.LIVE) });
+    const half = evaluateConnection(online);
+    assert.equal(whole.ok, half.ok, String(online));
+    if (!half.ok) assert.deepEqual(whole, half, String(online));
+  }
+  assert.equal(Object.isFrozen(evaluateConnection(true)), true);
 });
 
 test('a live, verified consumer may be sent to, and nothing else may', () => {

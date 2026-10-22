@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import * as mailbox from './index.js';
+import { macOf } from './mac.js';
 
 test('the door exports the client, the paths, the codes and the three fakes', () => {
   assert.deepEqual(Object.keys(mailbox).sort(), [
@@ -32,6 +33,7 @@ test('the door exports the client, the paths, the codes and the three fakes', ()
     'SPEAK_CODES',
     'STORE_CODES',
     'createMailboxClient',
+    'evaluateConnection',
     'evaluateGate',
     'isDatabaseKey',
     'mailboxPaths',
@@ -55,6 +57,7 @@ test('the tag functions and the adapters are not on the door', () => {
 
 test('the client the door builds is the one the tests in this directory build', async () => {
   // A door that exported a different builder would still pass the set above.
+  const store = new mailbox.MemoryMailboxStore();
   const client = mailbox.createMailboxClient({
     account: {
       id: 'laptop',
@@ -63,7 +66,7 @@ test('the client the door builds is the one the tests in this directory build', 
       fugaroProject: 'fugaro',
     },
     keys: { use: async (id, item, fn) => ({ ok: true, result: await fn('synthetic-key') }) },
-    store: new mailbox.MemoryMailboxStore(),
+    store,
     connection: new mailbox.MemoryConnection(),
     speaker: new mailbox.MemorySpeaker(),
     now: () => 1_700_000_000_000,
@@ -72,6 +75,16 @@ test('the client the door builds is the one the tests in this directory build', 
     heartbeatIntervalMs: 60_000,
   });
   assert.deepEqual(client.paths.inbox, 'mailbox/uid-0001/inbox');
+  // P6.10's gate fails closed on a consumer the phone has not observed (the
+  // review's M2), so the door's client is put in the state the app is in: one
+  // poll over the consumer's own heartbeat, signed the way the other end signs
+  // it. Without it this test would be a test of `consumer-unobserved`.
+  const beat = { at: 1_700_000_000_000 - 1_000, boot: 'boot-0001' };
+  await store.write('mailbox/uid-0001/heartbeat', {
+    ...beat,
+    mac: macOf(beat, 'synthetic-key', 'heartbeat'),
+  });
+  assert.equal((await client.poll()).presence.state, 'live');
   assert.deepEqual(await client.send('run 42 finished'), {
     ok: true,
     id: 'm-1',
