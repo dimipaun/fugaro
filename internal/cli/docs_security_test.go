@@ -353,8 +353,8 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"the write-once outcome",
 		"the only bound on a replayed identity",
 		// The accepted limits the owner ruled on 2026-10-19.
-		"the launcher's reach",
-		"the replay bounds",
+		"The launcher's reach",
+		"The replay bounds",
 		// The cap is advisory.
 		"ADVISORY",
 		// Egress stays a known limit (D144).
