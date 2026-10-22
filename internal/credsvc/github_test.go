@@ -320,6 +320,18 @@ func TestMintForOwnRepositoryOnly(t *testing.T) {
 		if !strings.Contains(mint.body, `"repositories":["aurora"]`) {
 			t.Errorf("the mint asked GitHub for %s, want the run's own repository", mint.body)
 		}
+		// The answer carries a credential's value, so it is no-store and it
+		// carries none of the forward path's headers: X-Fugaro-Tier and
+		// X-Fugaro-Credential describe a credential that answered an
+		// Anthropic call, and a mint has neither.
+		if got := resp.Header.Get("Cache-Control"); got != "no-store" {
+			t.Errorf("the answer is Cache-Control %q, want no-store: an intermediary must not cache a credential", got)
+		}
+		for name := range resp.Header {
+			if strings.HasPrefix(name, "X-Fugaro-") {
+				t.Errorf("the mint's answer carries %s, which describes a model call and not a mint", name)
+			}
+		}
 		// The caller's own two tokens never reach GitHub: the App's JWT
 		// authenticates the call, and the two identities are this service's to
 		// verify and to keep (the rule C1.11's scrub keeps for a model call).
@@ -335,8 +347,15 @@ func TestMintForOwnRepositoryOnly(t *testing.T) {
 	t.Run("another repository's run is refused", func(t *testing.T) {
 		s, gh := mintSvc(t, nil)
 		// The fixture's job account is bound to testRepo; this run identity is
-		// a run of the other repository.
-		other := s.runToken(func(c map[string]any) { c["fs"] = testSlug(t, testOtherRepoPath) })
+		// a well-formed run of the other repository — its uid spells its own
+		// slug, so the run token verifies — and the pairing of the two
+		// identities is what refuses it (review finding N1).
+		otherSlug := testSlug(t, testOtherRepoPath)
+		other := s.runToken(func(c map[string]any) {
+			c["fs"] = otherSlug
+			c["sub"] = "r~" + otherSlug + "~" + s.run
+			c["user_id"] = c["sub"]
+		})
 		resp, body := s.mintTokens(t, mintBody(testAppID), other, s.jobToken(), s.job)
 		if resp.StatusCode != StatusUnverified {
 			t.Fatalf("the answer is %d, want %d: the run is not a run of the job's repository", resp.StatusCode, StatusUnverified)
@@ -581,13 +600,24 @@ func TestMintRefusesABodyItCannotRead(t *testing.T) {
 		method string
 		body   string
 		status int
+		// wantMsg is a phrase the refusal must carry, for the cases whose
+		// refusal is only distinguishable by what it says.
+		wantMsg string
 	}{
 		{name: "no app id", method: http.MethodPost, body: `{}`, status: StatusUnavailable},
 		{name: "an app id that is not a number", method: http.MethodPost, body: mintBody("abc"), status: StatusUnavailable},
 		{name: "an app id over the bound", method: http.MethodPost, body: mintBody(strings.Repeat("9", 21)), status: StatusUnavailable},
 		{name: "a repository the caller tried to name", method: http.MethodPost, body: `{"app_id":"` + testAppID + `","repository":"` + testRepoPath + `"}`, status: StatusUnavailable},
 		{name: "a body that is not JSON", method: http.MethodPost, body: "app_id=1234", status: StatusUnavailable},
-		{name: "an oversized body", method: http.MethodPost, body: `{"app_id":"` + strings.Repeat("1", maxMintRequestBytes) + `"}`, status: StatusUnavailable},
+		{
+			// A body that is a mint call but for its size: the bound is what
+			// refuses it, and the refusal says so. The padding is a literal
+			// size rather than maxMintRequestBytes, so this pins the bound
+			// instead of moving with it.
+			name: "an oversized body", method: http.MethodPost, status: StatusUnavailable,
+			body:    `{"app_id":"` + testAppID + `","pad":"` + strings.Repeat("x", 8<<10) + `"}`,
+			wantMsg: "larger than",
+		},
 		{name: "another method", method: http.MethodGet, body: mintBody(testAppID), status: http.StatusNotFound},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -602,8 +632,12 @@ func TestMintRefusesABodyItCannotRead(t *testing.T) {
 				t.Errorf("GitHub saw %d requests for a body this service refuses, want none", n)
 			}
 			if tc.status == StatusUnavailable {
-				if got := refusal(t, resp.StatusCode, body); got.Error != ErrorStateUnavailable {
+				got := refusal(t, resp.StatusCode, body)
+				if got.Error != ErrorStateUnavailable {
 					t.Errorf("the refusal is %q, want %q", got.Error, ErrorStateUnavailable)
+				}
+				if tc.wantMsg != "" && !strings.Contains(got.Message, tc.wantMsg) {
+					t.Errorf("the refusal is %q, want it to carry %q", got.Message, tc.wantMsg)
 				}
 			}
 		})
