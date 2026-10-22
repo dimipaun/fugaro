@@ -205,7 +205,7 @@ func (s *Server) switchCost(tier string) SwitchCost {
 	s.mu.Lock()
 	model, tokens, known := s.lastModel, s.lastCacheRead, s.lastCacheKnown
 	s.mu.Unlock()
-	if !known || model == "" {
+	if !known {
 		return SwitchCost{Unmeasured: true}
 	}
 	m, ok := s.o.Prices.Lookup(model)

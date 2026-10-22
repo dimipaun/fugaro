@@ -1,7 +1,9 @@
 package gateway
 
 import (
+	"math"
 	"net/http"
+	"sync/atomic"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
@@ -214,5 +216,131 @@ func TestOneReservationCoversServiceRetry(t *testing.T) {
 	}
 	if call := h.logs.lastCall(t); num(call["reserved_micros"]) == 0 {
 		t.Error("the call settled with no reservation recorded")
+	}
+}
+
+// TestSwitchLogRecorded: what a switch costs is the gateway's estimate, not
+// the service's (F24): the cached context of the last call, re-read at the
+// input rate instead of the cache-read rate on the tier that answered. The
+// run's switch log is {run, from, to, reason, estimated cache-miss cost}
+// (D140); the record itself is written where the run's answers are (C1.19),
+// and this is the answer it writes from -- the service's own record,
+// verbatim, beside a figure only the gateway can compute.
+func TestSwitchLogRecorded(t *testing.T) {
+	const sw = `{"from":"repo-a","to":"repo-shared-b","reason":"exhausted"}`
+	cached := int64(300)
+	u := pricing.Usage{Input: 900, CacheRead: cached, Output: 40}
+	// 300 cached tokens at sonnet's list rates -- $2/M in, cache reads at
+	// 0.1 x in -- is 300 x $1.8/M of miss.
+	const want = 0.00054
+	for _, tc := range []struct {
+		tier string
+		cost SwitchCost
+	}{
+		{TierB, SwitchCost{USD: want}},
+		// Tier C is OpenRouter, where Claude's cache behaviour is
+		// unmeasured: the record says so rather than $0 (F24, Checks 46/50).
+		{TierC, SwitchCost{Unmeasured: true}},
+	} {
+		t.Run(tc.tier, func(t *testing.T) {
+			var answers []ServiceAnswer
+			var n atomic.Int64
+			h, _ := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+				if n.Add(1) == 1 {
+					return tierReply(TierA, "repo-a", u)
+				}
+				r := tierReply(tc.tier, "repo-shared-b", pricing.Usage{Input: 800, Output: 40})
+				r.Header.Set(HeaderSwitch, sw)
+				return r
+			}, func(o *Options) {
+				o.OnServiceAnswer = func(a ServiceAnswer) { answers = append(answers, a) }
+			})
+
+			// The first call is the one whose cache a switch re-reads: it
+			// is settled before the second answer is read (one stage each,
+			// so the order is the ledger's and not the scheduler's).
+			if resp, b := h.post(msg(sonnet, 100)); resp.StatusCode != http.StatusOK {
+				t.Fatalf("the call before the switch: %d %s", resp.StatusCode, b)
+			}
+			h.gw.EndStage()
+			h.gw.BeginStage(defaultStage)
+			if resp, b := h.post(msg(sonnet, 100)); resp.StatusCode != http.StatusOK {
+				t.Fatalf("the call that switched: %d %s", resp.StatusCode, b)
+			}
+			h.gw.EndStage()
+
+			if len(answers) != 2 {
+				t.Fatalf("the hook was told about %d answers, want 2", len(answers))
+			}
+			if got := answers[0]; got.Switch != "" || got.SwitchCost != (SwitchCost{}) {
+				t.Errorf("a call that switched nothing carried a switch: %+v", got)
+			}
+			got := answers[1]
+			if got.Switch != sw {
+				t.Errorf("the switch read back as %q, want the service's own record verbatim", got.Switch)
+			}
+			if got.Tier != tc.tier {
+				t.Errorf("the switch's answer was read as tier %q, want %q", got.Tier, tc.tier)
+			}
+			if got.SwitchCost.Unmeasured != tc.cost.Unmeasured || math.Abs(got.SwitchCost.USD-tc.cost.USD) > 1e-9 {
+				t.Errorf("the switch's cache miss was estimated at %+v, want %+v", got.SwitchCost, tc.cost)
+			}
+		})
+	}
+}
+
+// TestSwitchCostUnmeasuredWithoutALastCall: the estimate needs a last call
+// whose cached context is known. Before any call has reported usage there is
+// nothing to re-read, and a call that settled at its reservation because its
+// usage could not be read leaves what it had cached unknown -- which is not
+// zero. A switch in either place says unmeasured rather than a miss that
+// looks free.
+func TestSwitchCostUnmeasuredWithoutALastCall(t *testing.T) {
+	const sw = `{"to":"repo-shared-b","reason":"not_admitted"}`
+	for _, tc := range []struct {
+		name  string
+		first *anthropicfake.Reply
+	}{
+		{"no call yet", nil},
+		{"a call whose usage was not readable", &anthropicfake.Reply{
+			// A 2xx the gateway cannot read (an encoding it does not
+			// decode), so the call settles at its reservation: it was
+			// served, it is paid for, and what it had cached is not known.
+			Events:   []anthropicfake.Event{anthropicfake.Ping},
+			Encoding: "br",
+			Header:   http.Header{HeaderTier: []string{TierA}, HeaderCredential: []string{"repo-a"}},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var answers []ServiceAnswer
+			var n atomic.Int64
+			h, _ := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+				if n.Add(1) == 1 && tc.first != nil {
+					return *tc.first
+				}
+				r := tierReply(TierB, "repo-shared-b", pricing.Usage{Input: 800, Output: 40})
+				r.Header.Set(HeaderSwitch, sw)
+				return r
+			}, func(o *Options) {
+				o.OnServiceAnswer = func(a ServiceAnswer) { answers = append(answers, a) }
+			})
+			if tc.first != nil {
+				if resp, _ := h.post(msg(sonnet, 100, `"stream":true`)); resp.StatusCode != http.StatusOK {
+					t.Fatalf("the call before the switch: %d", resp.StatusCode)
+				}
+				if rep := h.gw.EndStage(); rep.UsageUnparsed != 1 {
+					t.Fatalf("the unreadable call settled as parsed: %+v", rep)
+				}
+				h.gw.BeginStage(defaultStage)
+			}
+			if resp, b := h.post(msg(sonnet, 100)); resp.StatusCode != http.StatusOK {
+				t.Fatalf("the call that switched: %d %s", resp.StatusCode, b)
+			}
+			h.gw.EndStage()
+			last := answers[len(answers)-1]
+			if last.Switch != sw || !last.SwitchCost.Unmeasured {
+				t.Errorf("the switch's estimate is %+v, want unmeasured", last.SwitchCost)
+			}
+		})
 	}
 }
