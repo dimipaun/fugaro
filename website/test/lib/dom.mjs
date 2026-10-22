@@ -8,10 +8,10 @@
 // "what does the script do", and the two would drift the first time the script changed.
 //
 // What the stub is: the built page parsed by `lib/html.mjs` and wrapped in the handful of DOM
-// calls the script makes — `querySelector(All)`, `getAttribute`/`setAttribute`, `classList`,
-// `closest`, `contains`, `getClientRects`, `focus`, `addEventListener`/`dispatch`, `hidden`,
-// `textContent` — plus the four pieces of browser behaviour the script's duties depend on and
-// nothing more:
+// calls the script makes — `querySelector(All)`, `getAttribute`/`setAttribute`,
+// `removeAttribute`, `classList`, `closest`, `contains`, `getClientRects`, `focus`,
+// `addEventListener`/`dispatch`, `hidden`, `textContent` — plus the five pieces of browser
+// behaviour the script's duties depend on and nothing more:
 //
 //   - **the clipboard** (`navigator.clipboard`), which may be absent, may accept or may refuse,
 //     because the script reveals the copy control only where one is there to write to;
@@ -24,7 +24,16 @@
 //     is about by hand;
 //   - **a scroll box**: one width for every element, which is all the script asks for — it reads
 //     `clientWidth` of the slider's track and nothing else's — and a `scrollLeft` per element
-//     that `scrollTo({ left })` moves, so a case can read where a press sent the track.
+//     that `scrollTo({ left })` moves, so a case can read where a press sent the track;
+//   - **the page's own scroll and the two numbers a box reports about it** (the zoom section,
+//     Part 5): a document offset the case sets (`pageScroll`, or `setScroll` while the page is
+//     running) and `getBoundingClientRect()` answering the two values the pinned section reads —
+//     the box's `top` in the window, which is where the case laid it out minus that offset, and
+//     its `height` — out of the `rects` map the case hands in, by the selector the box carries.
+//     `window.scrollTo({ top })` moves the page and reports the `scroll` a browser reports, so a
+//     marker press can be followed to the level it lands on. There is still no layout here: the
+//     numbers are the case's, and what a browser does with a real `position: sticky` is the
+//     owner's live check (`docs/gcp-live-checklist.md`, Check 112).
 //
 // **It is a stub, and it says so.** No layout, no real event loop, no rendering: what a real
 // clipboard does with a real click, what a swipe does with a real trackpad and what a real
@@ -62,6 +71,9 @@ export class FakeElement {
   }
   setAttribute(name, value) {
     this.attrs.set(name, String(value))
+  }
+  removeAttribute(name) {
+    this.attrs.delete(name)
   }
   get hidden() {
     return this.attrs.has('hidden')
@@ -109,6 +121,14 @@ export class FakeElement {
   scrollTo(init) {
     this.dom.scrolls.push({ node: this.node, init })
     if (init && typeof init.left === 'number') this.scrollLeft = init.left
+  }
+  // Where the box is, as the two numbers the pinned section reads: its top in the window, which
+  // is where the case laid it out minus how far the page has been scrolled, and its height.
+  // Everything else a real `DOMRect` carries is zero, because nothing here reads it.
+  getBoundingClientRect() {
+    const rect = this.dom.rectOf(this.node)
+    const top = rect.top - this.dom.pageScroll
+    return { top, height: rect.height, bottom: top + rect.height, left: 0, right: 0, width: 0, x: 0, y: top }
   }
   contains(other) {
     for (let node = other?.node; node; node = node.parent) if (node === this.node) return true
@@ -184,8 +204,15 @@ export class FakeCustomEvent {
  * whether the tab is in the background; and `matchMedia: false` is a browser old enough to have
  * none. `script` is the source run in the page, which is the file the site ships unless a case
  * hands in a defect planted in it.
+ *
+ * The page's own scroll is the zoom section's (`rects`, `pageScroll`, `viewport`): `rects` is
+ * where the case laid the boxes out, in document coordinates, by the selector each one carries;
+ * `pageScroll` is how far down the page the reader already is when it loads; `viewport` is the
+ * window's height, which is the one number the pinned section divides the runway by; and `hash`
+ * is the fragment the page was opened on, which is what puts a reader who followed a level's
+ * own link on that level rather than on the first.
  */
-export function fakeDOM(html, { clipboard = 'ok', undrawn = () => false, storage = {}, width = 0, scroll = {}, reduce = false, hidden = false, matchMedia = true, script = SCRIPT_SOURCE } = {}) {
+export function fakeDOM(html, { clipboard = 'ok', undrawn = () => false, storage = {}, width = 0, scroll = {}, reduce = false, hidden = false, matchMedia = true, rects = {}, pageScroll = 0, viewport = 0, hash = '', script = SCRIPT_SOURCE } = {}) {
   const root = parse(html)
   const wrapped = new Map()
   const written = []
@@ -202,12 +229,26 @@ export function fakeDOM(html, { clipboard = 'ok', undrawn = () => false, storage
   const byId = new Map()
   const scrolled = new Map()
   const scrolls = []
+  // The page's own scroll, and every move the script asked of it (`window.scrollTo`), in order.
+  let page = Number(pageScroll) || 0
+  const pageScrolls = []
   for (const el of walk(root)) if (el.attrs.has('id')) byId.set(el.attrs.get('id'), el)
   const dom = {
     width,
     scrolled,
     scrolls,
+    pageScrolls,
     scrollOf: (node) => scrolled.get(node) ?? 0,
+    /** Where the case laid a box out, by the selector it carries: the first entry of `rects`
+     *  that matches the node, and a box at the document's own origin for everything else — a
+     *  page with no layout is a page whose boxes report nothing, which is the answer the pinned
+     *  section has to survive. */
+    rectOf(node) {
+      for (const [selector, rect] of Object.entries(rects)) {
+        if (dom.matches(node, selector)) return { top: Number(rect.top) || 0, height: Number(rect.height) || 0 }
+      }
+      return { top: 0, height: 0 }
+    },
     wrap(node) {
       if (!wrapped.has(node)) wrapped.set(node, new FakeElement(node, dom))
       return wrapped.get(node)
@@ -236,6 +277,15 @@ export function fakeDOM(html, { clipboard = 'ok', undrawn = () => false, storage
       return true
     },
   }
+  // How far down the page the reader is: the number `getBoundingClientRect` subtracts and the
+  // number a case can move by hand (`setScroll`), which is what a reader scrolling looks like to
+  // the pinned section.
+  Object.defineProperty(dom, 'pageScroll', {
+    get: () => page,
+    set: (value) => {
+      page = Number(value) || 0
+    },
+  })
   function compound(node, part) {
     if (!/^[a-z]*(\.[\w-]+|\[[\w-]+\])*$/.test(part)) throw new Error(`the fake DOM does not understand the selector part ${part}`)
     const tag = /^[a-z]+/.exec(part)?.[0]
@@ -273,6 +323,31 @@ export function fakeDOM(html, { clipboard = 'ok', undrawn = () => false, storage
   }
   const window = {
     setTimeout: (fn, ms) => timers.push({ fn, ms }),
+    // The window's height, which is the one number the pinned section divides the runway by, and
+    // the page's own scroll, which is the number it reads back to work out where a level's share
+    // of the runway is in page coordinates. Both are live: `setScroll` below moves the page and
+    // the two names report the move, the way a browser's do.
+    innerHeight: viewport,
+    get pageYOffset() {
+      return page
+    },
+    get scrollY() {
+      return page
+    },
+    // The page moving, as a browser reports it to its own listeners: the scroll is recorded and
+    // then the `scroll` event is dispatched, so a marker press can be followed all the way to the
+    // level it lands on rather than only to the number it asked for. A real browser fires this
+    // from its own loop rather than inside `scrollTo`; doing it here is stricter, and a case that
+    // passes here is one whose arithmetic lands exactly on the level it aimed at.
+    scrollTo(init) {
+      pageScrolls.push({ init: init ?? {} })
+      const top = init && typeof init.top === 'number' ? init.top : 0
+      page = top
+      window.dispatchEvent({ type: 'scroll' })
+    },
+    // The address the page was opened on: the fragment is the level a reader followed a marker's
+    // own link to, and it is the only part of the address `site.js` reads for the section.
+    location: { hash: hash ? (hash.charAt(0) === '#' ? hash : `#${hash}`) : '' },
     setInterval(fn, ms) {
       const timer = { fn, ms, cancelled: false }
       intervals.push(timer)
@@ -339,6 +414,19 @@ export function fakeDOM(html, { clipboard = 'ok', undrawn = () => false, storage
     store,
     /** Every `scrollTo` the script made, in order: what it asked the track for, and how. */
     scrolls,
+    /** Every `scrollTo` the script made **of the page itself**, in order, as `{ init }` — the
+     *  same shape the track's `scrolls` carry, with the page in the place of the element: the
+     *  `top` a marker press asked for, and whether the move is the stylesheet's animation or an
+     *  instant one. */
+    pageScrolls,
+    /** How far down the page the reader is. */
+    pageScroll: () => page,
+    /** The reader scrolling: the page moves and every `scroll` listener hears it, which is what
+     *  a swipe, a trackpad and a keyboard's Page Down all come to. */
+    setScroll(top) {
+      page = Number(top) || 0
+      window.dispatchEvent({ type: 'scroll' })
+    },
     find: (selector) => document.querySelectorAll(selector),
     /** The timers still running: what a case fires, and what it holds a stop to. */
     running: () => intervals.filter((timer) => !timer.cancelled),

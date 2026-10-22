@@ -506,7 +506,10 @@ test('every pair base.css paints is in the contrast set, for all four palettes',
 //   - reduced motion (D105): every animation, transition and smooth scroll the page's CSS
 //     declares is either gated on `prefers-reduced-motion: no-preference` or neutralised by
 //     a `prefers-reduced-motion: reduce` rule — the universal one the base layout writes, or
-//     one naming the same selector;
+//     one naming the same selector. The pinned zoom section's own transition (Part 5) is one
+//     of the rules this reading covers, and the last case in this file unwraps its gate off the
+//     built stylesheet to show it, because a scoped component's rules are exactly the ones a
+//     reader of the built CSS can miss;
 //   - contrast over the built CSS: the colour tokens the page ships are the palette in
 //     force's (so the pairs checked above are the pairs a reader gets), no shipped stylesheet
 //     paints a colour literal outside the token block, and an element that sets both its
@@ -1225,13 +1228,16 @@ test('the four levels are four named anchors a keyboard reaches in order, and no
   assert.match(verdict(numberOnly).join(' | '), /is named "1", and a marker's name says which level it jumps to/, 'the reading passes a marker a screen reader reads as "1"')
 
   const notAnAnchor = page.html.replace(
-    /<a class="zoom-marker" href="#level-1"[^>]*>1<\/a>/,
+    /<a class="zoom-marker"[^>]*href="#level-1"[^>]*>1<\/a>/,
     (tag) => tag.replace('<a class="zoom-marker"', '<span class="zoom-marker"').replace('href="#level-1"', 'data-href="#level-1"').replace('</a>', '</span>'),
   )
   assert.notEqual(notAnAnchor, page.html, 'the built page carries no first marker of the shape the plant below rewrites')
   assert.match(verdict(notAnAnchor).join(' | '), /is a `<span>`, and the markers are anchors/, 'the reading passes a marker a keyboard cannot reach')
 
-  const tabbed = page.html.replace('<a class="zoom-marker" href="#level-1"', '<a class="zoom-marker" tabindex="1" href="#level-1"')
+  // The positive tabindex goes on the marker's own opening tag whatever else the tag carries
+  // (Part 5's `data-zoom-marker` sits between the class and the `href`), so the plant reads the
+  // class attribute rather than a whole tag spelled out.
+  const tabbed = page.html.replace(/(<a class="zoom-marker")/, '$1 tabindex="1"')
   assert.notEqual(tabbed, page.html, 'the built page carries no first marker of the shape the plant below rewrites')
   assert.match(verdict(tabbed).join(' | '), /carries `tabindex="1"`/, 'the reading passes a positive tabindex on a marker')
 
@@ -1250,4 +1256,53 @@ test('the four levels are four named anchors a keyboard reaches in order, and no
   const hiddenLevel = page.html.replace('<figure class="zoom-figure" id="level-2"', '<figure class="zoom-figure" aria-hidden="true" id="level-2"')
   assert.notEqual(hiddenLevel, page.html, 'the built page carries no second level of the shape the plant below rewrites')
   assert.match(verdict(hiddenLevel).join(' | '), /level "level-2" is hidden from assistive technology/, 'the reading passes a level no screen reader is told about')
+})
+
+// The pinned section's own motion, read the way every page's motion is read (Part 5; the plan's
+// tests: "a11y.mjs's `motionFailures` extended if the section needs a property it does not read
+// today, with a plant for each new property"). The section declares one property it did not
+// declare before — a `transition`, the fade and the scale between two levels — and the reading
+// already reads `transition`, so **nothing here is extended**. What this case holds instead is
+// that the section's own rules are *inside* that reading rather than beside it, which no plant
+// of a synthetic rule can show: the plant below is the built stylesheet itself, with the
+// section's `prefers-reduced-motion: no-preference` wrapper taken off, and the reading has to
+// name the section's selector once both paths the contract allows are gone.
+test('the zoom section’s own transition is gated, and outside every path the contract allows the reading refuses it', () => {
+  const page = builtPages().find((entry) => entry.rel === 'how-it-works/index.html')
+  assert.ok(page, 'the built site has no How It Works page, and the pinned section is part of it (D237)')
+  const css = shippedCSS(parse(page.html))
+  assert.deepEqual(motionFailures(css), [], 'the built page declares motion the reading refuses (D105)')
+
+  // The gate, unwrapped: the section's own rule is left in the stylesheet's body with no
+  // `no-preference` around it. Both the unwrapping and the rule it left behind are asserted, so
+  // a build whose stylesheet changes shape fails here rather than passing on a plant that did
+  // nothing — which is the one way a plant of a built artifact goes quiet.
+  // The block is unwrapped whole rather than one rule deep, because the section's transition is
+  // two rules now: the fade itself, and the `transition-delay` that puts the level arriving on
+  // screen over the one leaving. A pattern that stopped at the first rule would match neither and
+  // the plant below would silently do nothing.
+  const GATE = /@media \(prefers-reduced-motion:no-preference\)\{((?:[^{}]|\{[^{}]*\})*)\}/
+  const ungated = css.replace(GATE, '$1')
+  assert.notEqual(ungated, css, 'the built page carries no `no-preference` block of the shape the plant below unwraps')
+  assert.ok(!NO_PREFERENCE.test(ungated), 'the unwrapping left a `no-preference` gate behind, so the plant below is not about every rule that gate held')
+  const SECTION_SELECTOR = '\\.zoom\\[data-astro-cid-[a-z0-9]+\\]\\[data-zoom-ready\\] \\.zoom-figure\\[data-astro-cid-[a-z0-9]+\\]'
+  const SECTION_RULE = new RegExp(`${SECTION_SELECTOR}\\{transition:`)
+  assert.match(ungated, SECTION_RULE, 'the unwrapping left no transition on the section\'s own rule, so the plant below is not about the section')
+
+  // The contract's second path still holds it, and this is why the gate above is a declaration
+  // of intent rather than the only thing between a reduced-motion reader and a fade: the base
+  // layout's universal `reduce` rule sets `transition-duration: 1ms !important`, so an ungated
+  // transition is neutralised rather than refused (D105, `Base.astro`).
+  assert.deepEqual(motionFailures(ungated), [], 'the universal reduce rule no longer neutralises an ungated transition')
+
+  // Take that rule away too and the reading names the section: the proof that the component's
+  // scoped rules are read at all, and the failure the gate is written to avoid.
+  const bare = ungated.replace(/transition-duration:1ms!important;?/g, '')
+  assert.notEqual(bare, ungated, 'the built stylesheet carries no universal `transition-duration` for the plant below to remove')
+  const failures = motionFailures(bare)
+  const names = new RegExp(`^${SECTION_SELECTOR} declares transition: opacity var\\(--duration-base\\)`)
+  assert.ok(
+    failures.some((line) => names.test(line)),
+    `the section's own transition is not read by the motion reading, so nothing here holds it:\n  ${failures.join('\n  ') || '(nothing)'}`,
+  )
 })

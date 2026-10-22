@@ -6,9 +6,19 @@
  * **What it draws.** The zoom-out sequence the brief asks for, as four pictures a reader can
  * see without a script: inside one cloud job, the orchestrator fanning jobs out, the
  * developer's own view, and the whole project with everything of the other three inside it.
- * This is the brief's **still** half. The pinned, scroll-driven section that zooms between the
- * four is Part 5 and is not this component: nothing here moves, and nothing here is measured by
- * a script.
+ * This is the brief's **still** half, and it is the whole of what this component renders: four
+ * `<figure>`s in a runway, each with its drawing and its caption, all four visible, in order,
+ * with no script at all.
+ *
+ * **The pinned half is `site.js`'s, and it is written as an enhancement of these stills**
+ * (Part 5; D245, D247). The markup carries the hooks the script drives — `data-zoom` on the
+ * section, `data-zoom-runway` and `data-zoom-stage` on the two boxes the pinning needs,
+ * `data-zoom-panel` on each level and `data-zoom-marker` on each anchor — and **nothing in the
+ * built page carries the state they are read for**: `data-zoom-ready`, `data-zoom-shown` and
+ * the markers' `aria-current` are written by `site.js` and by nothing else, so the stylesheet's
+ * pinned rules cannot reach a page whose script never ran. A reader with no script, a reader
+ * whose system asks for less motion, and a browser too old to answer that question all get the
+ * stills above; the pinned sequence is a fourth case, not the base one.
  *
  * **The shapes are shared, and that is the point** (D244). One `<defs>` — in the zero-size
  * `<svg class="zoom-defs">` under the heading — holds one `<symbol>` per entity: the job tile,
@@ -29,8 +39,10 @@
  *
  * **One `<nav>` of markers, and no script** (D245). Four anchors, `#level-1` … `#level-4`, each
  * with an accessible name, mirroring the console slider's dots: the linkcheck gate resolves
- * them, a no-JS reader can use them, and Part 5 reuses the same ids rather than adding a second
- * set.
+ * them, a no-JS reader can use them, and the pinned half reuses the same ids rather than adding
+ * a second set. In the stills the anchors are the browser's own — each figure stands at its own
+ * place in the column — and once `site.js` has pinned the section it answers a press itself,
+ * because four panels stacked in one sticky box are four anchors pointing at one place.
  *
  * **A level is a list of labelled parts, so nothing here is one image.** The drawing is inline
  * SVG whose text is the repository's own words: each level's parts carry that text, the
@@ -324,7 +336,7 @@ const SYMBOLS: Record<string, string> = {
 }
 ---
 
-<section class="zoom" aria-labelledby="zoom-title">
+<section class="zoom" data-zoom aria-labelledby="zoom-title">
   <h2 class="zoom-title" id="zoom-title">The four levels</h2>
 
   <nav class="zoom-nav" aria-label="The four levels">
@@ -332,7 +344,7 @@ const SYMBOLS: Record<string, string> = {
       {
         markers.map((marker) => (
           <li>
-            <a class="zoom-marker" href={marker.href} aria-label={marker.name}>
+            <a class="zoom-marker" data-zoom-marker href={marker.href} aria-label={marker.name}>
               {marker.number}
             </a>
           </li>
@@ -345,17 +357,27 @@ const SYMBOLS: Record<string, string> = {
     <defs set:html={ENTITIES.map((entity) => SYMBOLS[entity]).join('')} />
   </svg>
 
-  {
-    drawings.map(({ level, markup, height }) => (
-      <figure class="zoom-figure" id={level.id}>
-        <svg class="zoom-svg" viewBox={`0 0 ${W} ${height}`} set:html={markup} />
-        <figcaption class="zoom-caption">
-          <span class="zoom-level-name">{level.name.text}</span>
-          {level.caption !== null && <span class="zoom-level-caption">{level.caption.text}</span>}
-        </figcaption>
-      </figure>
-    ))
-  }
+  {/* The runway and the stage: the scroll length the section is pinned for, and the box that
+      sticks to the window while it passes. Both are plain boxes in the markup — the four levels
+      stand in the stage in the order the data file writes them, one after another, exactly as
+      they did before this part — and the height, the `position: sticky` and the one-panel-at-a-
+      time layout are the stylesheet's, scoped to the `data-zoom-ready` that only `site.js`
+      writes. */}
+  <div class="zoom-runway" data-zoom-runway>
+    <div class="zoom-stage" data-zoom-stage>
+      {
+        drawings.map(({ level, markup, height }) => (
+          <figure class="zoom-figure" id={level.id} data-zoom-panel={level.id}>
+            <svg class="zoom-svg" viewBox={`0 0 ${W} ${height}`} set:html={markup} />
+            <figcaption class="zoom-caption">
+              <span class="zoom-level-name">{level.name.text}</span>
+              {level.caption !== null && <span class="zoom-level-caption">{level.caption.text}</span>}
+            </figcaption>
+          </figure>
+        ))
+      }
+    </div>
+  </div>
 </section>
 
 <style>
@@ -507,5 +529,131 @@ const SYMBOLS: Record<string, string> = {
   .zoom :global(.zoom-label) {
     fill: var(--text-muted);
     font-family: var(--font-sans);
+  }
+
+  /* ---- the pinned, scroll-driven section (Part 5; D245, D247) ---------------------------- */
+
+  /* Everything below is scoped to `[data-zoom-ready]`, and that attribute is written by
+     `website/public/scripts/site.js` and by nothing else. That is the whole of the fallback:
+     the rules cannot reach a page whose script never ran, so the markup's own four stills are
+     what a reader with no script gets, and the pinned sequence is a state a script asks for. */
+
+  /* The runway: one viewport of scroll per level, which is the length the stage is pinned for.
+     The multiplier is the number of levels `website/data/zoom-levels.yaml` writes — four — and
+     `website/test/how-it-works.mjs` reads the two against each other, so a fifth level in the
+     data file without this number moving is a level the reader reaches in a fifth of the scroll
+     the other four get. */
+  .zoom[data-zoom-ready] .zoom-runway {
+    height: calc(4 * 100vh);
+  }
+
+  /* The stage sticks to the top of the window for the whole runway, and the four levels are
+     laid out in its one cell — the level on screen is the one the script marked, and the other
+     three are drawn where they are rather than removed, so nothing about the section's own
+     height moves as the reading changes. */
+  .zoom[data-zoom-ready] .zoom-stage {
+    position: sticky;
+    top: 0;
+    display: grid;
+    align-content: center;
+    min-height: 100vh;
+  }
+
+  .zoom[data-zoom-ready] .zoom-figure {
+    grid-area: 1 / 1;
+    margin: 0;
+    opacity: 0;
+    visibility: hidden;
+    transform: scale(0.94);
+  }
+
+  .zoom[data-zoom-ready] .zoom-figure[data-zoom-shown] {
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+  }
+
+  /* The zoom between two levels, and the only motion this section declares. It is gated on the
+     reader's own answer — `no-preference` — rather than neutralised after the fact, which is
+     what `website/test/a11y.mjs`'s motion reading asks of every rule a page declares: a reader
+     who has asked for less motion is given no transition to have to neutralise. */
+  @media (prefers-reduced-motion: no-preference) {
+    .zoom[data-zoom-ready] .zoom-figure {
+      transition:
+        opacity var(--duration-base) var(--ease-out),
+        transform var(--duration-base) var(--ease-out),
+        visibility 0s linear var(--duration-base);
+    }
+
+    /* The level arriving is on screen at once and fades in over the one leaving, which is still
+       fading out beneath it — a crossfade rather than a dip to the background. `visibility` is a
+       step and not a curve, so it is the delay that makes the two overlap: without it the level
+       leaving is gone in the same frame the next one starts from nothing, and the reader watches
+       the drawing materialise out of the page instead of out of the level they were reading. The
+       delay belongs to the level on its way out, which is why the rule naming the level on screen
+       is the one that takes it back off. */
+    .zoom[data-zoom-ready] .zoom-figure[data-zoom-shown] {
+      transition-delay: 0s;
+    }
+  }
+
+  /* The reduced-motion path, and it is the stills again: the same markup, the same four
+     drawings, in order, with the pinning, the scale and the fade taken back off. `site.js`
+     stands the section down for a reader who has asked for less motion before it writes
+     anything, so this rule is the second half of one answer rather than the only half of it —
+     and it is the half that holds where the preference is turned on under a page that has
+     already been pinned, or where a stylesheet is read without the script. */
+  @media (prefers-reduced-motion: reduce) {
+    .zoom[data-zoom-ready] .zoom-runway {
+      height: auto;
+    }
+
+    .zoom[data-zoom-ready] .zoom-stage {
+      position: static;
+      display: block;
+      min-height: 0;
+    }
+
+    .zoom[data-zoom-ready] .zoom-figure {
+      grid-area: auto;
+      margin: 0 0 var(--space-lg);
+      opacity: 1;
+      visibility: visible;
+      transform: none;
+    }
+  }
+
+  /* Where there is room, the markers stand beside the pinned stage rather than above it, and
+     they stay beside it: the nav is the grid's first column and stretches the height of the
+     runway, so its list — a column of four markers now, not a row — can stick to the top of the
+     window the way the stage does, and a reader deep in the runway still has the four anchors a
+     press away. Below this width they are the row above the stage they have always been, which
+     is the shape a phone can reach with a thumb. */
+  @media (min-width: 60rem) {
+    .zoom[data-zoom-ready] {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      column-gap: var(--space-lg);
+    }
+
+    .zoom[data-zoom-ready] .zoom-title {
+      grid-column: 1 / -1;
+    }
+
+    .zoom[data-zoom-ready] .zoom-nav {
+      grid-column: 1;
+      grid-row: 2;
+    }
+
+    .zoom[data-zoom-ready] .zoom-runway {
+      grid-column: 2;
+      grid-row: 2;
+    }
+
+    .zoom[data-zoom-ready] .zoom-marker-list {
+      position: sticky;
+      top: var(--space-lg);
+      flex-direction: column;
+    }
   }
 </style>

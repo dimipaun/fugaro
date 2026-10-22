@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **1,447,967 bytes in a checkout with no tags** and to **1,447,967 bytes with the
+  commit builds to **1,479,809 bytes in a checkout with no tags** and to **1,479,809 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -968,11 +968,75 @@ added or removed without this sentence moving fails there:
     route that has left its group, and `test/nav-hover.mjs` reads the two lists the menu
     draws; `base.css`'s phone cut is left at the width the four-item row was measured at.
 
-  - **JavaScript per page:** 262,560 bytes. Three times 87,520: the one script the site ships,
-    `public/scripts/site.js` (70,016 bytes), plus 25 %. What the file carries is the copy
-    control, the menu, the consent gate and **both of the site's sliders** — the console page's,
+  - **The four levels pin, scale and fade as the reader scrolls** (the owner's brief of
+    2026-10-21, the zoom-diagrams plan's Part 5; ZU1, D245, D247), and **this round re-derives
+    all three figures from the build**: the round above it stated its own move and left the
+    figures where they were, so the numbers it inherited were the ones a build two rounds back
+    derived, and a ceiling nobody measured is not a ceiling. The move, measured file by file
+    against `main` rather than argued: `dist/scripts/site.js` 70,008 → **82,142** (**+12,134**,
+    the whole of the section's script) and `dist/how-it-works/index.html` 51,485 → **53,646**
+    (**+2,161**), so the site figure moves 1,447,967 → **1,478,107** — and this round is
+    exactly **14,295** of that, with **no other file in `dist/` moving a byte**, the count of
+    files staying **28** and the count of pages **11**. What the page's own 2,161 are: the
+    scoped stylesheet Astro inlines into the one page that renders the component (**+1,837** —
+    the runway's height, the stage's `position: sticky`, the one-panel-at-a-time grid, the
+    transition and the reduced-motion cut that takes all of it back off) and the hooks the
+    script reads (**+324**): `data-zoom` on the section, `data-zoom-marker` on each of the four
+    anchors, and the two boxes the pinning needs — the runway and the stage —
+    `data-zoom-runway` and `data-zoom-stage`. **No text and no picture is added**: the
+    section's words, the heading over the levels and the four markers, landed with the stills
+    above, so How It Works is **492** words before and after and no word ceiling moves. **The
+    page weight is re-derived from the page the script lands on**: the homepage fetches the
+    script, so it moves 563,101 → **575,235** (the figure the round above left behind was
+    563,219, which is this build's homepage plus the 118 the menu round took off it — 110 of
+    HTML and 8 of script), and How It Works, which carries the script *and* the new markup,
+    144,044 → **158,339**. The script's own move is 12,134 of the 12,126 the js figure above
+    moves, the 8 between them being the menu round's, which is why `main`'s script is 70,008
+    where the figure above it was derived from 70,016. **The section is progressive enhancement
+    and nothing else**: the stills are the no-JS page, the reduced-motion page and the page a
+    browser too old to answer `matchMedia` gets, every pinned rule is scoped to the
+    `data-zoom-ready` that `site.js` alone writes, and the four panels are one sticky box the
+    script measures — which is why the section's anchors are answered by the script once the
+    section is pinned, four fragments in one box being four anchors pointing at one place,
+    while in the stills they are the browser's own. `test/how-it-works.mjs` holds the pinning
+    plant by plant — the hooks, the runway's length against the data file's four levels, the
+    scoping, the motion gate and the stills' own rules — and drives the script against the
+    built page: the level the reader is on, the marker press that lands on it, the hash that
+    opens on it, and the stand-down a reader who has asked for less motion gets; the reading
+    itself is the owner's, and that is Check 112 in `docs/gcp-live-checklist.md`.
+
+    **The review round on this pull request moved 1,702 bytes of it, and the three figures below
+    are the ones this build derives with those bytes in.** Two of them are the crossfade: the
+    section's fade was one-sided — the level arriving snapped from nothing in the frame the level
+    leaving began to fade, so the reader watched the drawing materialise out of the page rather
+    than out of the level they were reading — so the transition carries
+    `visibility 0s linear var(--duration-base)` and the level on screen is the rule that takes
+    that delay back off. The other two are defects the review found in the pinning, and both are
+    the same one in two places: **a reader who has asked for less motion could still be pinned**,
+    because the fragment they arrived on and the marker they pressed both went through `go()`,
+    which writes the state the stylesheet's pinned rules are scoped to. The reading is now
+    `pinned()`'s — the runway's own box, with the state written before the geometry is read — and
+    both of `level()` and `offset()` go through it, so the section is pinned before either
+    reading is taken and by nothing else; the two paths a reduced-motion reader could still be
+    pinned by are refused where they are written, and `test/how-it-works.mjs` plants a defect in
+    each. The move, measured the same way: `dist/how-it-works/index.html` 53,646 → **53,812**
+    (**+166**, every byte of it the stylesheet Astro inlines into that one page) and
+    `dist/scripts/site.js` 82,142 → **83,678** (**+1,536**: the 19 of a comment in the shared
+    slider's own `show()` that named the two stub DOMs as the reason a mark is written `true` or
+    `false` rather than added and removed — `removeAttribute` is a stub method now, and the reason
+    is the one the zoom section's markers share — and the 1,517 the three fixes above are). So
+    the site figure moves 1,478,107 → **1,479,809**, the homepage, which fetches the script,
+    575,235 → **576,771**, and How It Works, which carries the script *and* the stylesheet,
+    158,339 → **160,041**; the count of files stays **28** and the count of pages **11**, and no
+    word moves. `test/a11y.mjs`'s motion reading unwraps the section's `no-preference` block
+    **whole** now that the gate holds two rules — the fade and the delay — because a plant that
+    stopped at the first rule would leave the second behind and pass on a reading of nothing.
+
+  - **JavaScript per page:** 313,794 bytes. Three times 104,598: the one script the site ships,
+    `public/scripts/site.js` (83,678 bytes), plus 25 %. What the file carries is the copy
+    control, the menu, the consent gate, **both of the site's sliders** — the console page's,
     which the feedback-B round above added, and the homepage's, which the feedback-A round above
-    it added.
+    it added — and **the pinned zoom section**, which the round at the end of this list added.
     The console's half is the feedback-B round's, and it was the first JavaScript the site had
     gained since the menu (the owner's feedback of 2026-10-21): the bar the markup emits
     `hidden` — a Previous arrow, the count and a Next arrow — is revealed and driven here, the
@@ -1027,10 +1091,10 @@ added or removed without this sentence moving fails there:
     and the menu still has a second level Tab has to be able to enter. Every page loads the
     file once, so it is the whole of a page's JavaScript, and the test keeps a case that says
     so over the built artifact.
-  - **Page weight per page:** 2,112,072 bytes. Three times 704,024: the heaviest page, the
-    homepage, at 563,219 bytes (its HTML, the four screenshots it renders, and the files
+  - **Page weight per page:** 2,162,892 bytes. Three times 720,964: the heaviest page, the
+    homepage, at 576,771 bytes (its HTML, the four screenshots it renders, and the files
     it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 5,429,877 bytes. Three times 1,809,959 (every file in `dist/`, 1,447,967
+  - **Whole site:** 5,549,286 bytes. Three times 1,849,762 (every file in `dist/`, 1,479,809
     bytes across 28 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
