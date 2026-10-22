@@ -104,11 +104,15 @@ func TestDocsChecklistHasChecks94And95And99(t *testing.T) {
 	}
 
 	// The register's own allocation paragraph: Task C1.23 wrote 94, 95 and 99,
-	// and 93 and 96-98 are what stays empty.
+	// Task C2.4 wrote 96, and 93, 97 and 98 are what stays empty. The paragraph
+	// was pinned as "**96 to 98**" while 96 was unwritten; C2.4 (this branch's
+	// own task) wrote it, so the pin is the register's real sentence now and
+	// the number it left out is named with the task that wrote it.
 	for _, want := range []string{
 		"by that plan's Task C1.23",
-		"**90, 91, 92, 94, 95 and 99 are written below**",
-		"**96 to 98**",
+		"**90, 91, 92, 94, 95, 96 and 99 are written below**",
+		"**96** (GitHub tokens through the service) by its Task C2.4",
+		"**97** and **98** are the reserved numbers above",
 		"**93 is reserved and unused:**",
 	} {
 		if !strings.Contains(doc, want) {
