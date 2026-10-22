@@ -109,6 +109,12 @@ func (s *pluginStage) plan1(ctx context.Context) (*pluginwire.Change, *initflow.
 	switch a, err := e.authState(repo); {
 	case err != nil:
 		return nil, nil, err
+	case a == authNeeded && !e.r.o.enrolling():
+		// A door that does not enrol a repository: one line naming the door
+		// that does, and never the typed question or --onboard-repo, which
+		// would be this run's to give (D5, W5.1).
+		lf := enrolLeft(e.r.o.doorName())
+		return status(initflow.NeedsYou, unknownDetailNotEnrolled(e.lc.Name, repo, e.r.o.doorName()), &lf)
 	case a == authNeeded:
 		lf := onboardLeft(repo, e.r.o.doorName())
 		return status(initflow.NeedsYou, unknownDetail(e.lc.Name, repo), &lf)
