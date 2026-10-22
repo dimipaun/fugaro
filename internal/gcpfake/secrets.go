@@ -18,10 +18,11 @@ import (
 // Secrets is a stateful fake of the Secret Manager v1 calls Fugaro makes:
 // secrets get, create, list (with a filter of labels.k=v terms joined by
 // " AND "), delete, getIamPolicy, addVersion and versions list, disable,
-// delete and destroy. It has no access call unless a test allows it
-// (AllowAccess): Fugaro never reads a value back, but for the GitHub App
-// pre-check's one read of the App's key, so any other client that tries fails
-// the test.
+// delete and destroy, and the value read at `latest` or at a numbered version.
+// It has no access call unless a test allows it (AllowAccess): the CLI reads a
+// value back in exactly two places — the GitHub App pre-check's one read of
+// the App's key, and C1.25's read of the bundle document it is about to
+// rewrite — so any other client that tries fails the test.
 //
 // Deleted and Destroyed record the two destructive calls, so a test can
 // assert that a run never made one: a retirement leaves a secret and its
@@ -47,6 +48,11 @@ type Secrets struct {
 	// FailListWith, when non-zero, makes secrets.list answer that HTTP
 	// status: what pins the degradation of a refused label read.
 	FailListWith int
+	// FailDisableWith, when non-zero, makes versions/N:disable answer that
+	// HTTP status: what pins the retirement C1.25's rotation makes as
+	// best-effort — the write is already verified when it is attempted, so a
+	// refused disable is reported and the command still succeeds.
+	FailDisableWith int
 	// FailVersionsAfter makes every version list after the first n answer
 	// 403 PERMISSION_DENIED: the read a step past the label calls makes,
 	// which a test cannot name by ID because the same secrets are read
@@ -93,7 +99,10 @@ var (
 	secretsPathRE  = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets$`)
 	addVersionRE   = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+):addVersion$`)
 	versionsPathRE = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions$`)
-	accessRE       = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/latest:access$`)
+	// accessRE is the value read, at `latest` or at a numbered version: C1.25's
+	// `creds ls` reads the version its metadata came from, so that the names it
+	// prints and the time beside them are one version's.
+	accessRE = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/(latest|[0-9]+):access$`)
 	secretPolicyRE = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+):getIamPolicy$`)
 	versionRE      = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+)$`)
 	destroyRE      = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+):destroy$`)
@@ -183,6 +192,18 @@ func (f *Secrets) Disabled() []string {
 	return append([]string(nil), f.disables...)
 }
 
+// AddVersion appends a version to secret id, as another writer of the same
+// secret would: it changes the fake's state without a client call, so a test
+// can land a concurrent write inside a window of the code under test — and
+// Requests stays exactly what that code asked for.
+func (f *Secrets) AddVersion(id string, value []byte) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if s := f.secrets[id]; s != nil {
+		s.versions = append(s.versions, append([]byte(nil), value...))
+	}
+}
+
 // Seed creates secret id with labels and one version holding value, as
 // another tool would. A nil value creates the secret with no version.
 func (f *Secrets) Seed(id string, labels map[string]string, value []byte) {
@@ -226,7 +247,16 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "Secret ["+p+"] not found or has no versions.")
 			return
 		}
-		if state := s.state(len(s.versions)); state == "DISABLED" {
+		// `latest` is the newest version, whatever its state; a number is that
+		// version or nothing.
+		n := len(s.versions)
+		if m[3] != "latest" {
+			if n = atoi(m[3]); n < 1 || n > len(s.versions) {
+				writeError(w, http.StatusNotFound, "NOT_FOUND", "Secret ["+p+"] not found.")
+				return
+			}
+		}
+		if state := s.state(n); state == "DISABLED" {
 			// As real Secret Manager: a DISABLED version is there and its
 			// value is not readable. It is not a 404 — the version exists —
 			// so a caller that reads a state as an absence is caught here.
@@ -234,8 +264,8 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			return
 		}
 		f.accessed = append(f.accessed, m[2])
-		writeJSON(w, http.StatusOK, map[string]any{"name": "projects/" + m[1] + "/secrets/" + m[2] + "/versions/" + strconv.Itoa(len(s.versions)),
-			"payload": map[string]any{"data": base64.StdEncoding.EncodeToString(s.versions[len(s.versions)-1])}})
+		writeJSON(w, http.StatusOK, map[string]any{"name": "projects/" + m[1] + "/secrets/" + m[2] + "/versions/" + strconv.Itoa(n),
+			"payload": map[string]any{"data": base64.StdEncoding.EncodeToString(s.versions[n-1])}})
 	case r.Method == http.MethodGet && secretPathRE.MatchString(p):
 		m := secretPathRE.FindStringSubmatch(p)
 		s := f.secrets[m[2]]
@@ -275,6 +305,10 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		s := f.secrets[m[2]]
 		if s == nil || version(s, m[3]) == nil {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "not found")
+			return
+		}
+		if f.FailDisableWith != 0 {
+			writeError(w, f.FailDisableWith, http.StatusText(f.FailDisableWith), "injected failure")
 			return
 		}
 		f.disables = append(f.disables, "projects/"+m[1]+"/secrets/"+m[2]+"/versions/"+m[3])
