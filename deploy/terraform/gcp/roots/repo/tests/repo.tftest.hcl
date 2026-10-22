@@ -1460,7 +1460,7 @@ run "credentials_service_on_job" {
     secrets             = var.bitbucket.repo.secrets
     runs_bucket         = var.bitbucket.installation.runs_bucket
     job_runner_role     = var.bitbucket.installation.role_ids.job_runner
-    credentials_service = { name = "fugaro-credentials", region = "us-east5" }
+    credentials_service = { name = "fugaro-credentials", region = "us-east5", url = "https://fugaro-credentials-123456789012.us-east5.run.app" }
   }
 
   override_resource {
@@ -1540,7 +1540,7 @@ run "credentials_service_on_provider_keys" {
     })
     runs_bucket         = var.bitbucket.installation.runs_bucket
     job_runner_role     = var.bitbucket.installation.role_ids.job_runner
-    credentials_service = { name = "fugaro-credentials", region = "us-east5" }
+    credentials_service = { name = "fugaro-credentials", region = "us-east5", url = "https://fugaro-credentials-123456789012.us-east5.run.app" }
   }
 
   override_resource {
@@ -1665,7 +1665,7 @@ run "credentials_service_on_github_app_key" {
     secrets             = var.github.repo.secrets
     runs_bucket         = var.github.installation.runs_bucket
     job_runner_role     = var.github.installation.role_ids.job_runner
-    credentials_service = { name = "fugaro-credentials", region = "us-east5" }
+    credentials_service = { name = "fugaro-credentials", region = "us-east5", url = "https://fugaro-credentials-123456789012.us-east5.run.app" }
   }
 
   override_resource {
@@ -1721,7 +1721,7 @@ run "credentials_service_on_with_the_app_key_mount_dropped" {
     secrets             = var.github.repo.secrets
     runs_bucket         = var.github.installation.runs_bucket
     job_runner_role     = var.github.installation.role_ids.job_runner
-    credentials_service = { name = "fugaro-credentials", region = "us-east5" }
+    credentials_service = { name = "fugaro-credentials", region = "us-east5", url = "https://fugaro-credentials-123456789012.us-east5.run.app" }
   }
 
   override_resource {
@@ -1749,6 +1749,35 @@ run "credentials_service_on_with_the_app_key_mount_dropped" {
     condition     = length(google_cloud_run_v2_service_iam_member.credentials) == 1
     error_message = "the job account still gains its one invoker grant on the service"
   }
+}
+
+# A credentials service with no URL is refused, and it has to be: the URL is
+# the job's FUGARO_CREDENTIALS_SERVICE_URL, and an opted-in job mounts no
+# model credential and no App key at all — a service it could not name would
+# leave every run of it failing on a key the job was never given (C1.15, C2.2,
+# review finding F1). The refusal is the module's variable validation; the
+# spec refuses the same shape earlier, with the remedy (internal/infra).
+run "credentials_service_without_url_fails_the_plan" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project             = var.github.project
+    fugaro_project      = var.github.fugaro_project
+    region              = var.github.region
+    name                = "web"
+    repo_label          = var.github.repo.label
+    workflow            = var.github.repo.workflows.web
+    secrets             = var.github.repo.secrets
+    runs_bucket         = var.github.installation.runs_bucket
+    job_runner_role     = var.github.installation.role_ids.job_runner
+    credentials_service = { name = "fugaro-credentials", region = "us-east5" }
+  }
+
+  expect_failures = [var.credentials_service]
 }
 
 # The same github workflow with the opt-in OFF: the App key keeps its accessor
@@ -1826,7 +1855,7 @@ run "credentials_service_on_build_keeps_the_app_key" {
     project        = var.github.project
     fugaro_project = var.github.fugaro_project
     region         = var.github.region
-    installation   = merge(var.github.installation, { credentials_service = { name = "fugaro-credentials", region = "us-east5" } })
+    installation   = merge(var.github.installation, { credentials_service = { name = "fugaro-credentials", region = "us-east5", url = "https://fugaro-credentials-123456789012.us-east5.run.app" } })
     repo           = var.github.repo
   }
 

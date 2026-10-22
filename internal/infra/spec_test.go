@@ -1996,8 +1996,37 @@ func repoRootCredentialsAPIKeyInputs(t *testing.T) Inputs {
 	t.Helper()
 	in := repoRootInputs(t, `agent: { auth: api-key }`)
 	in.LC = parseLC(t, repoRootAPIKeyLC)
-	in.Installation.CredentialsService = &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+	in.Installation.CredentialsService = &CredentialsService{Name: "fugaro-credentials", Region: "us-east5", URL: credentialsServiceURL}
 	return in
+}
+
+// TestRepoRefusesAnOptedInServiceWithoutAURL is the other side of the wiring
+// TestTheOptInPutsTheServiceURLOnTheJob pins, and the reason it is a REFUSAL
+// rather than a fallback: an installation that opted in before the URL was an
+// output has credentials_service {name, region} in its outputs and no url, and
+// a spec built from it would drop every opt-in job's App key and model mounts
+// (C1.20, C2.3) while its environment named no service at all — the run would
+// read a key it no longer has (appKey()'s refusal) with no way to reach the
+// one that holds it. Refusing is what the missing tag_mover role does to the
+// same installation (internal/cli's installationOutputs), and the remedy is
+// the same: run fugaro init, which re-applies the installation root and writes
+// the field.
+func TestRepoRefusesAnOptedInServiceWithoutAURL(t *testing.T) {
+	in := repoRootInputs(t, repoRootOAuthAgent)
+	in.Installation.CredentialsService = &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+	_, err := Repo(in)
+	if err == nil {
+		t.Fatal("a spec whose credentials service has no URL was accepted: its jobs would mount no model credential and no App key, and name no service to ask (F1)")
+	}
+	if !strings.Contains(err.Error(), "url") {
+		t.Errorf("the refusal does not name the missing field: %v", err)
+	}
+	// And with the URL in place the same inputs build: the refusal is the
+	// field's absence and not the opt-in itself.
+	in.Installation.CredentialsService.URL = credentialsServiceURL
+	if _, err := Repo(in); err != nil {
+		t.Errorf("the same spec with the service's URL was refused: %v", err)
+	}
 }
 
 // repoRootSpec is the golden fixture's spec for the agent block given.
@@ -2174,7 +2203,7 @@ func repoRootFixtureSpec(t *testing.T, name string) RepoSpec {
 	}
 	in := repoRootInputs(t, f.agent)
 	if f.credentialsService {
-		in.Installation.CredentialsService = &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+		in.Installation.CredentialsService = credentialsService()
 	}
 	rs, err := Repo(in)
 	if err != nil {
@@ -2311,7 +2340,7 @@ func TestRepoAddressesMatchTheCredentialsGolden(t *testing.T) {
 // branch disabled every test stayed green (independent security review of the
 // implementation, m2), which is what this pins.
 func TestRepoAddressesDropServiceHeldSecretsWhenTheServiceIsOn(t *testing.T) {
-	svc := &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+	svc := credentialsService()
 	appKey := func(workflows ...string) []string {
 		var out []string
 		for _, key := range workflows {
@@ -2465,7 +2494,7 @@ func TestRepoAddressesDropServiceHeldSecretsWhenTheServiceIsOn(t *testing.T) {
 // service-on spec mounts the model credentials exactly like the service-off
 // one, and every clause below fails.
 func TestNoModelMountsWithService(t *testing.T) {
-	svc := &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+	svc := credentialsService()
 	for _, tc := range []struct {
 		name string
 		in   Inputs

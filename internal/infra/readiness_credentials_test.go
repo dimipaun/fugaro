@@ -8,6 +8,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/runner"
 )
 
@@ -18,11 +19,18 @@ var (
 	appKeyEnv     = config.ReservedSecrets[config.GitHubAppKeySecret]
 )
 
+// credentialsServiceURL is the URL the fixture's service answers at: what the
+// installation root outputs as credentials_service.url, and what every
+// opted-in job carries as providers.EnvCredentialsServiceURL.
+const credentialsServiceURL = "https://fugaro-credentials-123456789012.us-east5.run.app"
+
 // credentialsService is the opt-in the tests here turn on: what an
 // installation's outputs carry once fugaro init's credentials stage has run
-// (internal/infra.CredentialsService, D146).
+// (internal/infra.CredentialsService, D146). All three fields, the URL
+// included: a service without one is refused (resolve), because an opted-in
+// job whose environment names no service has no credential left to reach.
 func credentialsService() *CredentialsService {
-	return &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+	return &CredentialsService{Name: "fugaro-credentials", Region: "us-east5", URL: credentialsServiceURL}
 }
 
 // seedRepoReady stores the fixture's secrets and image, so that nothing but
@@ -155,5 +163,72 @@ func TestReadinessDropsTheAppKeyMountOnceTheServiceHoldsIt(t *testing.T) {
 	}
 	if slices.Contains(on.Addresses(), gone) {
 		t.Errorf("the on plan still produces %s: the job's account keeps no accessor on the App key once the service holds it (C2.3)", gone)
+	}
+}
+
+// TestTheOptInPutsTheServiceURLOnTheJob is the other half of the flip, and
+// without it the flip IS the break review finding F1 warned about: an
+// opted-in job loses the App key's mount and every model mount (C2.3, C1.20),
+// and the ONE thing that makes its run ask the service instead of reading a
+// key out of its own environment is providers.EnvCredentialsServiceURL in that
+// job's environment — internal/gitprov/providers.FromEnv opens the github
+// provider keyless on it, internal/runner's serviceTokens installs the
+// service's installation tokens on it, and the gateway's upstream is the
+// service on it. Nothing else in the tree sets it: modules/workflow's job.tf
+// passes var.workflow.env through verbatim, so the spec is where it must
+// appear, and a flip landed without it leaves every GitHub run of an
+// installation that opted in failing on a key the job was never given
+// (appKey()'s refusal).
+//
+// It is NOT set on the check job, and that is deliberate: the check runs as
+// the build account, which keeps its own accessor on the App key and its
+// container (D148, F3), so its run reads the key it has — the service is
+// never its upstream and naming it there would take the keyless path away
+// from a job whose account still holds the key.
+//
+// The mutation is the env line in spec.go's workflow builder: delete it and
+// the "on" rows below fail, with the job still mounting nothing and asking
+// nobody.
+func TestTheOptInPutsTheServiceURLOnTheJob(t *testing.T) {
+	offIn := repoRootInputs(t, repoRootOAuthAgent)
+	offSpec, err := Repo(offIn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	onIn := offIn
+	onIn.Installation.CredentialsService = credentialsService()
+	onSpec, err := Repo(onIn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The jobs as a run sees them, through Readiness, because the check job
+	// exists only in its output (readiness.go builds it): the assertion below
+	// is about the environment a job is deployed with, not about the spec's
+	// own map.
+	f := newCloud(t)
+	seedRepoReady(t, f, onSpec)
+	off, _, _ := readinessOf(t, f, offSpec)
+	on, _, _ := readinessOf(t, f, onSpec)
+
+	if off.Workflows["web"].Env[providers.EnvCredentialsServiceURL] != "" {
+		t.Fatalf("with the credentials service off workflow web carries %s=%q: only the opt-in sets it (D147)", providers.EnvCredentialsServiceURL, off.Workflows["web"].Env[providers.EnvCredentialsServiceURL])
+	}
+	for _, key := range []string{"web", "web_bmb"} {
+		if got := on.Workflows[key].Env[providers.EnvCredentialsServiceURL]; got != credentialsServiceURL {
+			t.Errorf("with the credentials service on workflow %s carries %s=%q, want %q: the job mounts no model credential and no App key, so this URL is the only way its run has to a credential (C1.15, C2.2, C2.3)", key, providers.EnvCredentialsServiceURL, got, credentialsServiceURL)
+		}
+		// A plain variable and never a secret mount: it is an address, not a
+		// credential, and the redactor's list is built from the mounts.
+		if logical, mounted := on.Workflows[key].SecretEnv[providers.EnvCredentialsServiceURL]; mounted {
+			t.Errorf("with the credentials service on workflow %s mounts %s as the secret %q: the service's URL is an address, not a credential", key, providers.EnvCredentialsServiceURL, logical)
+		}
+	}
+	// The build account's job: it keeps the App key, so it keeps reading it.
+	if on.Check == nil {
+		t.Fatal("the fixture deploys no check job: the assertion below would pass vacuously")
+	}
+	if got := on.Check.Env[providers.EnvCredentialsServiceURL]; got != "" {
+		t.Errorf("the check job carries %s=%q with the credentials service on, want none: it runs as the build account, which keeps the App key and reads it (D148, F3)", providers.EnvCredentialsServiceURL, got)
 	}
 }

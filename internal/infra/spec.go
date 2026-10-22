@@ -161,6 +161,22 @@ type CredentialsService struct {
 	// Name is the Cloud Run service's name, Region the region it runs in.
 	Name   string `json:"name"`
 	Region string `json:"region"`
+	// URL is the service's own Cloud Run URL — the installation root's
+	// google_cloud_run_v2_service.credentials[0].uri — and it is the address
+	// every opted-in job is given as providers.EnvCredentialsServiceURL. That
+	// variable is the whole "the service is on" fact for a run (C1.15, C2.2):
+	// with it set, internal/gitprov/providers opens the github provider
+	// keyless and internal/runner installs the service's installation tokens,
+	// and the gateway's upstream is the service rather than an in-job
+	// credential. It is also the audience the service's ID-token check is made
+	// for (C1.10).
+	//
+	// Empty in the outputs of an installation applied before this field
+	// existed, and such a spec is refused (resolve) rather than built: the
+	// opt-in takes the job's own App key and model credentials away (C1.20,
+	// C2.3), so an opted-in job whose environment names no service would have
+	// no credential left to reach.
+	URL string `json:"url"`
 }
 
 // RoleIDs are the custom roles' full names, projects/<p>/roles/<id>.
@@ -383,6 +399,18 @@ func resolve(in Inputs) (*repoCtx, error) {
 	}
 	if c.inst.RunsBucket != c.bucket {
 		return nil, userErr("the installation's runs bucket is %s, but the local config's is %s", c.inst.RunsBucket, c.bucket)
+	}
+	// An installation that opted in before the service's URL was an output
+	// has no url here, and a spec built from it would be the F1 break read
+	// the other way round: the opt-in drops the job's App key and its model
+	// credentials (C1.20, C2.3) and the job would then name no service to ask
+	// (providers.EnvCredentialsServiceURL comes from this field), so every run
+	// of it would fail on a key the job no longer has. Refused for the same
+	// reason and with the same remedy as a missing tag_mover role
+	// (internal/cli's installationOutputs): run fugaro init, which re-applies
+	// the installation root and writes the field into its outputs.
+	if cs := c.inst.CredentialsService; cs != nil && cs.URL == "" {
+		return nil, userErr("the installation's credentials service has no url in its outputs (installation.credentials_service.url), so no job could reach it: run fugaro init, which re-applies the installation root and outputs the service's URL")
 	}
 	if c.registryHost, err = registryHost(lc, in.Installation.RegistryHost); err != nil {
 		return nil, err
@@ -784,6 +812,19 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	}
 	if c.appID != "" {
 		ws.Env[providers.EnvGitHubAppID] = c.appID
+	}
+	// The one variable that makes a run ask the service instead of reading a
+	// credential out of its own environment (C1.15, C2.2), and the reason the
+	// opt-in's drops are safe: on it, providers.FromEnv opens the github
+	// provider keyless — the App key is the service's — and the runner's
+	// gateway upstream is the service, so the job that mounts no model
+	// credential and no App key still has a way to both. It goes on every
+	// workflow job of an opted-in installation and on no other job: the check
+	// job is built separately and deliberately keeps it unset, because it runs
+	// as the build account, which keeps its own accessor on the App key and
+	// reads it (D148, F3).
+	if cs := c.inst.CredentialsService; cs != nil {
+		ws.Env[providers.EnvCredentialsServiceURL] = cs.URL
 	}
 	if p, ok := lc.PriceOverride(lc.Region); ok {
 		ws.Env[ComputePricesEnv] = formatPrice(p.VCPUSecondUSD) + "," + formatPrice(p.GiBSecondUSD)

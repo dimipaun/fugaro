@@ -4130,8 +4130,31 @@ func TestCredentialsServiceIsOptIn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(squash(stripComments(string(rb))), "credentials_service = optional(object({ name = string region = string }))") {
-		t.Error("gcp/roots/repo/variables.tf: the installation object must accept credentials_service, or the repo root cannot carry the installation's service")
+	if !strings.Contains(squash(stripComments(string(rb))), "credentials_service = optional(object({ name = string region = string url = optional(string) }))") {
+		t.Error("gcp/roots/repo/variables.tf: the installation object must accept credentials_service, the URL included, or the repo root cannot carry the installation's service")
+	}
+	// The URL, from the output that alone knows it to the job that must carry
+	// it: an installation's outputs are what `fugaro init --repo` reads, and
+	// the spec turns this field into the job's FUGARO_CREDENTIALS_SERVICE_URL
+	// (C1.15, C2.2). Nothing else can supply it — the module never derives it
+	// — so an output that stopped carrying it would leave every opted-in job
+	// with no credential and no address, which is the break review finding F1
+	// describes.
+	ib, err := fs.ReadFile(FS, "gcp/modules/installation/outputs.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(squash(stripComments(string(ib))), "value = var.credentials_service == null ? null : { name = google_cloud_run_v2_service.credentials[0].name region = var.region url = google_cloud_run_v2_service.credentials[0].uri }") {
+		t.Error("gcp/modules/installation/outputs.tf: the credentials_service output must carry the service's URL (google_cloud_run_v2_service.credentials[0].uri), the only place a repository root can learn it from")
+	}
+	// And the workflow module refuses a service without one, because that is
+	// the shape that would plan a job with nothing to read.
+	wb, err := fs.ReadFile(FS, "gcp/modules/workflow/variables.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(squash(stripComments(string(wb))), "can(regex(\"^https://[^ ]+$\", var.credentials_service.url))") {
+		t.Error("gcp/modules/workflow/variables.tf: credentials_service must be validated for the service's URL, or an installation whose outputs have none plans a job that mounts no model credential and no App key and names no service")
 	}
 }
 
