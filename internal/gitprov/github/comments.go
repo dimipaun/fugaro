@@ -79,10 +79,10 @@ func (p *Provider) appSlug(ctx context.Context) (slug string, ok bool) {
 	if p.identityDone {
 		return p.slug, p.slug != ""
 	}
-	slug, what, err := p.readAppSlug(ctx)
+	identity, what, err := p.readAppSlug(ctx)
 	switch {
 	case err == nil:
-		p.identityDone, p.slug = true, slug
+		p.identityDone, p.slug = true, identity
 		return p.slug, p.slug != ""
 	case errors.Is(err, errNoIdentity) || definite(ctx, err):
 		p.identityDone = true
@@ -96,7 +96,7 @@ func (p *Provider) appSlug(ctx context.Context) (slug string, ok bool) {
 
 // readAppSlug asks the API who Fugaro is, by the one route this process can
 // take. It returns the slug, the read's name (for the warning), and an error
-// that is never nil without one.
+// that is nil only when there is a slug to return.
 //
 // The installation-token route is the one C2.2 needs, and it is deliberately
 // strict about the answer: only a bot account is the App's own identity, and
