@@ -76,19 +76,19 @@ type Item struct{ name string }
 func ParseItem(name, project string) (Item, error) {
 	switch {
 	case name == "":
-		return Item{}, errors.New("keychain: the keychain item name is empty")
+		return Item{}, errors.New("keychain: the item name is empty")
 	case len(name) > ItemMax:
-		return Item{}, fmt.Errorf("keychain: the keychain item name %q is longer than %d characters", name, ItemMax)
+		return Item{}, fmt.Errorf("keychain: the item name %q is longer than %d characters", name, ItemMax)
 	case !itemRE.MatchString(name):
-		return Item{}, fmt.Errorf("keychain: the keychain item name %q is not a name (at most %d characters of A-Z, a-z, 0-9, '.', '_' and '-')", name, ItemMax)
+		return Item{}, fmt.Errorf("keychain: the item name %q is not a name (at most %d characters of A-Z, a-z, 0-9, '.', '_' and '-')", name, ItemMax)
 	case strings.HasPrefix(name, "-"):
 		// M5's alphabet plus the one shape it leaves: a name that begins with
 		// a dash is the argument-injection shape, since the name is an argv
 		// element of a keychain program (M11). It is refused here rather than
 		// left to whichever option parser the platform's tool happens to use.
-		return Item{}, fmt.Errorf("keychain: the keychain item name %q begins with '-' and would be read as a flag by a keychain program", name)
+		return Item{}, fmt.Errorf("keychain: the item name %q begins with '-' and would be read as a flag by a keychain program", name)
 	case project != "" && !strings.Contains(name, project):
-		return Item{}, fmt.Errorf("keychain: the keychain item name %q does not contain the project's name %q, so it could name another project's key", name, project)
+		return Item{}, fmt.Errorf("keychain: the item name %q does not contain the project's name %q, so it could name another project's key", name, project)
 	}
 	return Item{name: name}, nil
 }

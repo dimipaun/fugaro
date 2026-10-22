@@ -173,16 +173,16 @@ func isPlanPath(p string) bool {
 // The list shrinks as the tasks land, and the test says so when it does not:
 // T1 (`internal/mailbox/message.go`, `message_test.go` and the package
 // directory they make) has been built, so its three entries left this map and
-// are checked like every other cited path. The remaining entries are the tasks
-// still unbuilt — T2 and T2a's `mac.go`, T3's lease, T4's ledger, T5's command,
-// T6's runner, T7's sweeper and T8's corpus — and each of them must stay
-// absent until its own task lands.
+// are checked like every other cited path, and T2's two (`mac.go`, the verify
+// half of the tag and the inbound gate, and `internal/mailbox/keychain`, the
+// item-name reader) left it the same way. The remaining entries are the tasks
+// still unbuilt — T2a's `mac_sign_test.go` and the signing half of `mac.go`,
+// T3's lease, T4's ledger, T5's command, T6's runner, T7's sweeper and T8's
+// corpus — and each of them must stay absent until its own task lands.
 var planWillCreate = map[string]string{
 	"internal/cli/mailbox.go":                 "T5's command surface",
 	"internal/cli/mailbox_test.go":            "T5, T6",
 	"internal/cli/mailbox_sweep_test.go":      "T7",
-	"internal/mailbox/keychain":               "T2's keychain item-name reader",
-	"internal/mailbox/mac.go":                 "T2 (verify) and T2a (sign)",
 	"internal/mailbox/lease.go":               "T3",
 	"internal/mailbox/ledger.go":              "T4",
 	"internal/mailbox/expiry.go":              "T3, T4",
