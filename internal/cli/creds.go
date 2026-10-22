@@ -521,7 +521,7 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string) error {
 	// The name is checked before the project is selected, so a name that is
 	// not a bundle key (a value pasted into the argument position, say) is
 	// refused without a cloud call and without being echoed.
-	if _, _, ok := credsvc.CredentialKey(name); !ok {
+	if _, _, _, ok := credsvc.CredentialKey(name); !ok {
 		return credsNameRefusal()
 	}
 	_, lc, err := selectProject(ctx, o.cloud)
@@ -716,7 +716,7 @@ func credsDocRefusal(id string, err error) error {
 	msg := credsvc.BundleRefusal(err)
 	var be *credsvc.BundleError
 	if errors.As(err, &be) {
-		if _, _, known := credsvc.CredentialKey(be.Key); known && be.Key != "" {
+		if _, _, _, known := credsvc.CredentialKey(be.Key); known && be.Key != "" {
 			msg = be.Error() // a credential's name, so a name
 		}
 	}
