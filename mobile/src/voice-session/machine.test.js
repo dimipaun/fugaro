@@ -335,10 +335,13 @@ test('error ends the session, and §10\'s revoked permission is its own reason',
   const revoked = moved(state('listening'), { type: 'error', code: 'permission', message: 'the microphone was revoked' });
   assert.equal(revoked.state, 'ended');
   assert.equal(revoked.endReason, END_REASONS.PERMISSION);
-  assert.deepEqual(revoked.error, { code: 'permission', message: 'the microphone was revoked' }, 'D213: what failed is kept');
+  // §5's own two fields survive the reduction. What a screen *does* with them
+  // is D213's -- open, and VS1.2's to answer -- so this asserts the machine's
+  // half only.
+  assert.deepEqual(revoked.error, { code: 'permission', message: 'the microphone was revoked' }, '§5: what failed is kept');
   assert.equal(moved(state('listening'), EVENT.error).endReason, END_REASONS.ERROR);
   // Before a session there is nothing to end, and the error is still worth
-  // showing: the screen is what reports it.
+  // keeping: the screen is what reports it.
   const idle = moved(INITIAL_SESSION_STATE, EVENT.error);
   assert.equal(idle.state, 'idle');
   assert.equal(idle.error.code, 'boom');

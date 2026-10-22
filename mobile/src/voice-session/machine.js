@@ -79,8 +79,14 @@
 //     extend the window a paused session may hold a microphone open in.
 //   * **`error` ends the session as §10 says**: `permission` for a revoked
 //     permission, `error` for anything else. The event's own `code` and
-//     `message` are kept on the state, because D213's answer is that the app's
-//     screen shows what failed -- and never audio and never a transcript.
+//     `message` are kept on the state because **§5 carries them** -- the
+//     contract's shape is not this machine's to narrow -- and never audio and
+//     never a transcript. D213 (what a failure reports, and to where) is *open*
+//     and gates VS1.2, so nothing here is built on it: its **recommended**
+//     answer is a refusal code and the field it names, rendered by the screen
+//     that made the call, and whether `message` is shown at all is that task's
+//     to decide. What this file promises is only that the event's own two
+//     fields survive the reduction.
 //
 // **`serviceStopped` is reduced here, and its emitter is not.** §5 carries the
 // event and VS3.3 is the task that makes Android produce it (the self-stop and
@@ -371,7 +377,7 @@ function onServiceStopped(state, event) {
   return ended(state, END_REASONS.SERVICE_STOPPED);
 }
 
-/** §10: an error ends the session, and its code and message are kept (D213). */
+/** §10: an error ends the session, and §5's own `code` and `message` are kept (D213 is open: VS1.2 decides what the screen shows). */
 function onError(state, event) {
   if (state.state === 'ended') return ok(state);
   const error = Object.freeze({ code: event.code, message: event.message });

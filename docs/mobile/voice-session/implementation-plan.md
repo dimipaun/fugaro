@@ -227,9 +227,11 @@ VS0.1–VS0.3 and nothing else). The three tasks below are in `mobile/` on the
 branch of **PR #921**, with `npm test` at 701 pass, 0 fail (the whole mobile
 suite, of which 51 are this folder's); the files, the tests
 and the verification each task names were written as they stand here, and the
-two places the code had to decide something this plan leaves open are named in
-that pull request (the six app-side events beside §5's six, and
-`shouldResume: false` ending as `interruption_timeout`).
+three places the code had to decide something this plan leaves open are named in
+that pull request: the six app-side events beside §5's six, the **one field the
+contract adds to §5** — `interruptionBegan.suspended`, P8's suspension key,
+which §5's `{ source }` does not carry — and `shouldResume: false` ending as
+`interruption_timeout`.
 
 ### Task VS0.1: The event contract, as the spec's §5 writes it — **new**
 
@@ -240,7 +242,11 @@ tree's plain-JS-with-JSDoc style, next to `mobile/src/audio/pipeline.js`);
 **What it does.** Freezes the six event kinds and `AudioRoute` exactly as
 [spec.md](spec.md) §5 writes them, plus `SESSION_STATES` (the spec's §4 eight),
 `END_REASONS` and the two pause reasons, as frozen objects in the shape
-`PIPELINE_EVENTS`/`AUDIO_IN_EVENTS` already use. A single exported validator
+`PIPELINE_EVENTS`/`AUDIO_IN_EVENTS` already use — **and one field §5 does not
+carry**: the implemented task adds `interruptionBegan.suspended` for P8, because
+§5's `{ source }` cannot tell a real interruption from iOS's suspension
+notification (`events.js`'s header is where that argument is made, and it is the
+one place the reconciliation wins over the spec). A single exported validator
 (`isVoiceSessionEvent`) mirrors `isVoicePipeline`, so the module rejects a
 malformed event at the boundary rather than at the transition.
 **Tests.** Every kind and every route is exported; an unknown `type`, an unknown
@@ -296,7 +302,10 @@ controller, in the same commit as the export); the same
 three recursive scans `src/audio/index.test.js` runs (no package imports; only
 `shared/` outside `mobile/`; no clock, random, file or network) run over
 `src/voice-session/`; and two **new** assertions this work adds: **a paused
-session touches no credential** (no import of `src/accounts/`, matching F24) and
+session touches no credential** (no specifier that resolves into
+`src/accounts/` — the credential — **or `src/mailbox/`**, the module that reads
+it into a network client, and no production file here importing anything outside
+its own directory, matching F24) and
 **no file here builds a string from `transcript`** (F9, D213).
 **Verification.** `cd mobile && node --test src/voice-session/index.test.js`; then
 **`cd mobile && npm test`** or **`fugaro verify test`** for the whole suite — the

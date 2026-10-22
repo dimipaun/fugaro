@@ -58,8 +58,11 @@ const DIR = import.meta.dirname;
 const MOBILE = join(DIR, '..', '..');
 /** The repository's `shared/`, the one sibling D119 lets the app reach. */
 const SHARED = join(MOBILE, '..', 'shared');
+
 /** `mobile/src/accounts/`, which is where the credential lives (F24). */
 const ACCOUNTS = join(MOBILE, 'src', 'accounts');
+/** `mobile/src/mailbox/`, which reads the credential into a network client (F24). */
+const MAILBOX = join(MOBILE, 'src', 'mailbox');
 const SELF = 'index.test.js';
 
 /**
@@ -380,22 +383,6 @@ function strangers(file, text, dir = DIR, { node = false } = {}) {
     .map((spec) => `${file}: ${spec}`);
 }
 
-/**
- * The specifiers in `file` that resolve into `mobile/src/accounts/` -- the
- * credential, and F24's fence. A package name is `strangers`' business and not
- * this function's: what F24 forbids is the app's own secure store being reached
- * from a session.
- */
-function credentials(file, text, dir = DIR) {
-  return specifiers(code(text))
-    .filter((spec) => {
-      if (!spec.startsWith('.')) return false;
-      const target = resolve(join(dir, dirname(file)), spec);
-      return target === ACCOUNTS || target.startsWith(ACCOUNTS + sep);
-    })
-    .map((spec) => `${file}: ${spec}`);
-}
-
 test('the module imports the app and shared/, and no package at all', () => {
   // Positive controls: the shapes this rule exists to catch. The two assembled
   // paths are written that way because a literal path outside the app would be
@@ -458,10 +445,51 @@ test('the module imports the app and shared/, and no package at all', () => {
 // fail on exactly the call it is for. The fence is at the directory and it
 // includes the tests: a fixture that reached the secure store would be the same
 // coupling, written where it is hardest to see.
+//
+// **Two paths to a credential, so three rules.** `src/accounts/` is the
+// credential. `src/mailbox/` is the module that carries it into a network
+// client -- `mailbox/client.js` imports `accounts/account.js`,
+// `accounts/secret.js` and `accounts/secure-store.js`, and F24's own
+// consequence is that a paused session issues no mailbox call -- so a fence
+// that resolved only into `accounts/` would let `import { send } from
+// '../mailbox/index.js'` through every scan in this file. Both roots are
+// therefore blocked, in every scanned file; and **production code here imports
+// nothing outside this directory at all**, the same rule in its strongest form
+// and the one a new import trips first: the session's own files reach no
+// neighbour, so there is no path to a credential left to argue about. The tests
+// are held to the two roots instead, because D206 requires them to drive P3.4's
+// real pipeline -- `../audio/` is the one neighbour they may reach, and it
+// imports itself and `shared/` and no credential.
 
-test('nothing here reaches a credential: no import of src/accounts/ (F24)', () => {
+/**
+ * The specifiers in `file` that resolve into one of `roots` -- the credential,
+ * and the module that carries it (F24). A package name is `strangers`' business
+ * and not this function's: what F24 forbids is the app's own secure store being
+ * reached from a session.
+ */
+function credentials(file, text, dir = DIR, roots = [ACCOUNTS, MAILBOX]) {
+  return specifiers(code(text))
+    .filter((spec) => {
+      if (!spec.startsWith('.')) return false;
+      const target = resolve(join(dir, dirname(file)), spec);
+      return roots.some((root) => target === root || target.startsWith(root + sep));
+    })
+    .map((spec) => `${file}: ${spec}`);
+}
+
+/**
+ * The relative specifiers in `file` that leave this directory -- `../`, and not
+ * `./`. Only production code is held to this one (see above).
+ */
+function leavesTheModule(file, text) {
+  return specifiers(code(text))
+    .filter((spec) => spec.startsWith('.') && !spec.startsWith('./'))
+    .map((spec) => `${file}: ${spec}`);
+}
+
+test('nothing here reaches a credential, directly or through the mailbox (F24)', () => {
   // Positive controls: each import form that lands in `mobile/src/accounts/`,
-  // including a nested file, whose path has one more `..`.
+  // including a nested file, whose path has one more `..`...
   assert.deepEqual(
     credentials('machine.js', "import { reveal } from '../accounts/secure-store.js';\n"),
     ['machine.js: ../accounts/secure-store.js'],
@@ -474,8 +502,19 @@ test('nothing here reaches a credential: no import of src/accounts/ (F24)', () =
     credentials('events.js', "const store = await import('../accounts/expo-secure-store.js');\n"),
     ['events.js: ../accounts/expo-secure-store.js'],
   );
-  // ... and the neighbours are not flagged: a sibling file, the pipeline, and
-  // the shared package.
+  // ... and each form that lands in the module that carries one: a static
+  // import of the door, of the client that makes the call, and a `require`.
+  assert.deepEqual(credentials('machine.js', "import { send } from '../mailbox/index.js';\n"), [
+    'machine.js: ../mailbox/index.js',
+  ]);
+  assert.deepEqual(credentials('events.js', "import { poll } from '../mailbox/client.js';\n"), [
+    'events.js: ../mailbox/client.js',
+  ]);
+  assert.deepEqual(credentials('machine.js', "const { send } = require('../mailbox/index.js');\n"), [
+    'machine.js: ../mailbox/index.js',
+  ]);
+  // ... and the neighbours are not flagged: a sibling file, the pipeline (which
+  // imports itself and `shared/` and no credential), and the shared package.
   assert.deepEqual(
     credentials(
       'machine.js',
@@ -484,10 +523,25 @@ test('nothing here reaches a credential: no import of src/accounts/ (F24)', () =
     [],
   );
 
-  // The tree: no specifier lands there, and no file's code names the path at
-  // all -- a string path handed to a dynamic import is the same coupling.
+  // The production rule, and its control: the session's own code reaches
+  // nothing outside this directory -- not the mailbox, not the store, not a
+  // screen.
+  assert.deepEqual(leavesTheModule('machine.js', "import { send } from '../mailbox/index.js';\n"), [
+    'machine.js: ../mailbox/index.js',
+  ]);
+  assert.deepEqual(leavesTheModule('machine.js', "import { reduce } from './machine.js';\n"), []);
+
+  // The tree: no specifier lands in either root, no production file leaves this
+  // directory, and no file's code names either path at all -- a string path
+  // handed to a dynamic import is the same coupling.
   assert.deepEqual(scanned().flatMap(([file, text]) => credentials(file, text)), []);
-  assert.deepEqual(scanned().filter(([, text]) => /\baccounts\//.test(text)).map(([file]) => file), []);
+  assert.deepEqual(production().flatMap(([file, text]) => leavesTheModule(file, text)), []);
+  assert.deepEqual(
+    scanned()
+      .filter(([, text]) => /\baccounts\//.test(text) || /\bmailbox\//.test(text))
+      .map(([file]) => file),
+    [],
+  );
 });
 
 // **F9/D213: no file here carries words the user said.** The Live Activity and
