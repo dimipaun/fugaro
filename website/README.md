@@ -1081,6 +1081,40 @@ added or removed without this sentence moving fails there:
     homepage's is 563,140. The drawings are the owner's to read, and that is **Check 112** in
     `docs/gcp-live-checklist.md`.
 
+||||||| 61cdff71
+  - **The menu gained Why GCP, and the site gained its twelfth route** (the owner's brief of
+    2026-10-21, `docs/website/zoom-diagrams/`, Part 2 of its implementation plan; D238, D243,
+    D248, D249). The item is *Product*'s second, between How it works and Getting started, and
+    the menu is inlined into every page, so it is **40 bytes onto each of the eleven pages that
+    were already there**; the new route's page, `dist/why-gcp/index.html`, is **23,651 bytes**;
+    and the FAQ page is **753 heavier** — the same 40, plus the 713 of the seventh answer it
+    renders — so the build's whole-site size moves 1,463,812 → **1,488,616** (+24,804) and the
+    artifact goes **28 → 29 files**, **11 → 12 pages**. **The script does not move a byte** (70,008
+    before and after): the page is claims and their sources in markup, and what holds them is
+    the suite rather than the browser. The page's claims live in `website/data/why-gcp.yaml` —
+    one row per claim, each with the file in this repository that proves it and the day it was
+    last read against that file, which is what lets a reader date a claim about what another
+    cloud offers (D243) — and the one sentence the page carries about the other clouds is the
+    sentence D249 requires it to carry, held by `test/wording.mjs` together with the phrases the
+    page may not be made of. The FAQ's seventh answer is the reader's own question ("Do I need
+    to be on GCP?"), the two answers whose detail lives on this page link it by name, and
+    `test/faq-community.mjs` holds both pages: the FAQ's seven entries to their data file, and
+    the Why GCP page to its rows, in the file's order, with the file each row names linked at
+    the branch `ci.yml` pushes to. **The three budget figures below are left where they are**
+    (the owner's ruling of 2026-10-20: they are re-derived when the owner asks, not every
+    round), so this round is stated here and the figures stay the ones the round above derived.
+    The whole-site derivation's own base is stale, and this round is where it is worth saying
+    so: it names 1,447,967 bytes across 28 files, where this build is 1,488,616 across 29 —
+    this round's 24,804 and the 15,845 the checkout was already over the stated figure before
+    it. The ceilings are unaffected either way, being three times the derived value rather than
+    the measurement.
+    Measured against the base this round and the phone app's share, which are the same base
+    (28 files, 11 pages): on the merged tree the two rounds together leave `dist/` at **30
+    files** and **13 pages**, and *Product* holds **six** items — this round's *Why GCP*
+    second, the phone app's *Mobile* last — so the bullet above's "fifth" is where that round
+    put it, not where it sits now.
+
+
   - **JavaScript per page:** 262,560 bytes. Three times 87,520: the one script the site ships,
     `public/scripts/site.js` (70,016 bytes), plus 25 %. What the file carries is the copy
     control, the menu, the consent gate and **both of the site's sliders** — the console page's,
@@ -1259,7 +1293,7 @@ added or removed without this sentence moving fails there:
   region;
   Getting Started's install section opens with its commands, with the
   sentence about them still there after the paths; and on every route that prints a command —
-  three of the eleven today, and the other eight are skipped rather than asserted about — the
+  three of the thirteen today, and the other ten are skipped rather than asserted about — the
   first `h2` precedes the first `pre`. Its fourth rule is the owner's feedback of 2026-10-19:
   Getting Started is three bands in the order a reader reads them — `#install` (the command
   and the console), `#setup` (what a real installation needs, an `ol` whose every step names

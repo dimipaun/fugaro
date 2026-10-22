@@ -361,7 +361,7 @@ a.skip-link:focus {
    * header's own padding is still narrow, so a list opening rightwards from the last group
    * would run past the viewport and give the page a sideways scroll. Anchored right, no
    * group's list can reach that edge — and the wordmark at the other end leaves far more room
-   * than either group's list needs at any width from 48rem up (four items under *Product*,
+   * than either group's list needs at any width from 48rem up (five items under *Product*,
    * five under *Project*). */
   .site-nav-group {
     position: relative;

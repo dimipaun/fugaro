@@ -457,21 +457,38 @@ func TestUpgradeCloudCheckCaveatFiresEvenWithAnEmptyLocalConfig(t *testing.T) {
 	}
 }
 
+// jobReadErrorMarker is the text the fake's failed jobs.get carries, and what
+// this test asks the output never to hold. A marker word, not a status
+// number: the first version asserted the output never holds "500" (the status
+// the fake answers), but every rig makes its temp directories under a name
+// derived from the test's own -- `TestUpgradeCloud...NNN` plus random digits
+// -- so a random suffix carrying "500" put "500" in the output on its own and
+// failed the test for no defect at all. That is the flake that blocked the
+// 0.9.6 and 0.9.7 release gates. A word no path and no number can carry
+// cannot arrive that way, so a failure here now means the note really did
+// repeat the error it was handed.
+const jobReadErrorMarker = "kestrel-injected-job-read-failure"
+
 // TestUpgradeCloudCouldNotCheckJobConfigCopyOnAJobReadError: a real error
-// reading the deployed job (here, the fake answering 500 to jobs.get) must
-// not look like "the copies match": it is reported, and the report never
-// repeats the underlying error (which could carry a URL or, from a real
-// client library, a token).
+// reading the deployed job (here, the fake failing jobs.get with
+// jobReadErrorMarker as its message) must not look like "the copies match":
+// it is reported, and the report never repeats the underlying error (which
+// could carry a URL or, from a real client library, a token).
 //
 // Mutation (verified, run and restored): in jobConfigCopyNote, change
 // `if err != nil { return couldNotCheckJobConfigCopy(...) }` after JobFullEnv
 // to `if err != nil && false`: this test fails, finding no note (silence
-// that looks like a match).
+// that looks like a match). Mutation (verified, run and restored), for the
+// leak assertion itself: append the error's own text to the note there
+// (`couldNotCheckJobConfigCopy("reading the deployed job failed") + " " + err.Error()`),
+// which keeps the note's fixed reason and adds jobReadErrorMarker, and fails
+// the test on the marker -- so the marker is text the error really carries,
+// not a string no run can produce.
 func TestUpgradeCloudCouldNotCheckJobConfigCopyOnAJobReadError(t *testing.T) {
 	r := upgradeRigWithGitHubAppID(t)
 	stubCurrentRefresh(t, r)
 	setJobConfigCopyEnv(t, r, "api", nil)
-	r.run.SetJobFaults(gcpfake.JobFaults{GetStatus: 500})
+	r.run.SetJobFaults(gcpfake.JobFaults{GetStatus: 500, GetError: jobReadErrorMarker})
 	fakeSteps(t, "", nil)
 	out, _, err := executeStdin(t, "", "upgrade", "--yes")
 	if err != nil {
@@ -480,7 +497,7 @@ func TestUpgradeCloudCouldNotCheckJobConfigCopyOnAJobReadError(t *testing.T) {
 	if !strings.Contains(out, "note: could not check the job's config copy (reading the deployed job failed)") {
 		t.Fatalf("missing the could-not-check note:\n%s", out)
 	}
-	for _, leak := range []string{"500", "googleapi", "http://", "https://"} {
+	for _, leak := range []string{jobReadErrorMarker, "googleapi", "http://", "https://"} {
 		if strings.Contains(out, leak) {
 			t.Fatalf("the note leaked the underlying error %q:\n%s", leak, out)
 		}

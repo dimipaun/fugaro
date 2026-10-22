@@ -113,6 +113,12 @@ type JobFaults struct {
 	// GetStatus and PatchStatus, when non-zero, make jobs get and jobs
 	// patch answer that HTTP status, changing nothing.
 	GetStatus, PatchStatus int
+	// GetError, when set, is the message jobs get's error carries instead
+	// of the default "injected failure". A test that asks whether a caller
+	// repeated an error's own text needs text it can recognise: the status
+	// alone ("500") is in every name a temp directory can carry, and the
+	// default message is every other fault's too.
+	GetError string
 	// Polls is how many operations get answer not done before the patch's
 	// operation is done; when it is non-zero the patch itself answers not
 	// done, and the job changes only when the operation is done.
@@ -743,7 +749,11 @@ func (f *Run) testJobPermissions(w http.ResponseWriter, r *http.Request, p strin
 func (f *Run) getJob(w http.ResponseWriter, p string) {
 	project, region, name, _ := jobPath(p)
 	if f.faults.GetStatus != 0 {
-		writeError(w, f.faults.GetStatus, http.StatusText(f.faults.GetStatus), "injected failure")
+		msg := f.faults.GetError
+		if msg == "" {
+			msg = "injected failure"
+		}
+		writeError(w, f.faults.GetStatus, http.StatusText(f.faults.GetStatus), msg)
 		return
 	}
 	if f.jobs[name] == nil {
