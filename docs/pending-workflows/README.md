@@ -662,12 +662,12 @@ then writes the digest it names into the service's Terraform variable
 tag at plan time), and its own rig publishes exactly that `-pinned` tag.
 Nothing outside the hunks below changes: the triggers, the `version` job's
 version-picking, the `fugaro-base` and `docker-tests` jobs, every *step* of
-`publish` and `publish-base` and `publish`'s own `needs: [version, history]`
-and `matrix.base: [history]` are carried over byte for byte. Two *comments* are
-not, and they are hunks of their own below: a comment naming the jobs that hold
-`packages: write` and `id-token: write` is part of the trust boundary it
-describes, and both copies of it would otherwise be wrong. The diff against the
-committed file is six things:
+`publish` and `publish-base`, and `publish`'s own `needs: [version, history]`
+and `matrix.base: [history]` lines are all carried over byte for byte. Two
+*comments* are not, and each is a hunk of its own below: a comment naming the
+jobs that hold `packages: write` and `id-token: write` is part of the trust
+boundary it describes, so both copies of it would otherwise be wrong. The diff
+against the committed file is six things:
 
 - **`version`'s "Which images this tree builds" list gains `credentials`:**
   `for k in history base credentials;`, plus six added comment lines above the
