@@ -7,12 +7,14 @@
 # there.
 #
 # What this script deliberately does NOT assert: that a fully configured
-# `credentials serve` refuses to start. That is true of this build and only of
-# it -- the service's own code is a later task's, and the revision that carries
-# it serves instead of refusing -- so a smoke test that pinned it would have to
-# be rewritten the day the service lands. The refusal it does assert (a missing
-# FUGARO_PROJECT, named, exit 1, before anything else) is this task's own
-# contract and stays true either way.
+# `credentials serve` refuses to start. That refusal is a fact about the
+# deployment rather than about this image -- the installation module sets three
+# names on the service and the configuration the service needs four more facts
+# it does not carry (internal/cli/credentials_serve.go's config builder) -- so a
+# smoke test that pinned its text would have to be rewritten the day the
+# container carries them. The refusal it does assert (a missing FUGARO_PROJECT,
+# named, exit 1, before anything else) is this task's own contract and stays
+# true either way.
 set -eu
 image=${1:?usage: smoke-credentials.sh IMAGE}
 fail() { echo "smoke-credentials: $*" >&2; exit 1; }

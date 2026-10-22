@@ -47,7 +47,18 @@ and names `docs/pending-workflows/images.yml` and
 directions (it reads the whole flattened page, so the name has to go from
 every backticked mention on it, not only from that sentence). (4) Update **this
 document**, which would otherwise go on describing a staged copy that is gone:
-the opening line's count and this section's status line. (5) Compare the action
+the opening line's count and this section's status line. (5) Update
+**`docs/release.md`**, whose `## What a tag does` section enumerates the images
+`images.yml` builds, smoke-tests, scans and publishes and which of them carries
+the signed `<version>-pinned` tag: once this copy is in and the credentials
+image ships, that sentence is stale in the way `.goreleaser.yaml`'s release
+notes and `website/README.md` were already updated for, so it has to name
+`fugaro-credentials` too — built and scanned on every run, published with the
+others, and **signed and pinned the way `fugaro-base` is** (the `-pinned` tag
+`fugaro init`'s credentials stage resolves), with `verify-public` pulling it
+back. Nothing holds that sentence to the workflow — unlike `website/README.md`'s
+count, which `website/test/readme.mjs` checks in both directions — so this step
+is for the reader rather than for a red test. (6) Compare the action
 pins with the other workflows' first — Dependabot does not watch
 `docs/pending-workflows/`, so nothing else will (see `## Before you copy: check
 the action pins` at the end).

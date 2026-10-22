@@ -172,10 +172,12 @@ func TestCredentialsImageBuildsWithBuildBase(t *testing.T) {
 // TestCredentialsSmokeScriptChecksTheEntrypoint: the smoke script is what
 // proves the built image is the service's process -- non-root, no shell, no
 // baked credential, and the entrypoint refusing by name without the module's
-// environment. It must not assert the build-state refusal (that a configured
-// `credentials serve` declines to start because C1.11 is absent): that is true
-// of this build alone and would have to be rewritten the day the service
-// lands, which is not what a smoke test is for.
+// environment. It must not assert the configured refusal (that `credentials
+// serve` declines to start because the deployment's three names are not enough
+// to build the service's configuration): that is a fact about the deployment
+// rather than about the image, and would have to be rewritten the day the
+// container carries the four facts internal/cli/credentials_serve.go's config
+// builder needs, which is not what a smoke test is for.
 func TestCredentialsSmokeScriptChecksTheEntrypoint(t *testing.T) {
 	b, err := os.ReadFile("smoke-credentials.sh")
 	if err != nil {
@@ -196,7 +198,7 @@ func TestCredentialsSmokeScriptChecksTheEntrypoint(t *testing.T) {
 		}
 	}
 	if strings.Contains(script, "C1.11") {
-		t.Error("smoke-credentials.sh pins the build-state refusal (C1.11 is absent), which the service's own merge invalidates")
+		t.Error("smoke-credentials.sh pins the build-state refusal (that the service's own code is absent), which is not this build's state: internal/credsvc carries the service")
 	}
 }
 

@@ -36,9 +36,9 @@ import (
 //
 // It is hidden twice -- the group and the subcommand -- because it is not an
 // operator's command: it takes no argument, no flag and no config file, and
-// everything it needs is the environment the installation module sets on the
-// service. `fugaro --help` is where that is checked
-// (TestCredentialsServeHidden).
+// everything it can be given is the environment the installation module sets
+// on the service -- which is not yet enough to serve (below). `fugaro --help`
+// is where that is checked (TestCredentialsServeHidden).
 //
 // The environment is credentials.tf's, and it is exactly three names:
 // FUGARO_PROJECT, FUGARO_GCP_PROJECT and FUGARO_REGION. They are the history
@@ -54,33 +54,48 @@ import (
 // the command has no flag that could carry a value, no output of its own, and
 // every refusal below names a variable or a missing piece and never a value.
 //
-// WHAT IS NOT HERE YET, AND WHY THIS COMMAND DOES NOT SERVE.
+// WHAT THIS BUILD CANNOT DO, AND WHY THIS COMMAND DOES NOT SERVE.
 //
-// The service itself -- its two routes, the forward, the cascade, the bundle
-// loader -- is plan task C1.11's (internal/credsvc's server.go, forward.go,
-// cascade.go and bundle.go). **C1.11 is not in this build**: this tree's
-// internal/credsvc carries the run-identity verification and the wire contract
-// (C1.10) and the exported forwarding helpers the service reuses (C1.8), and
-// nothing that can answer a call -- there is no credsvc.NewServer to host and
-// no bundle loader to build it with. So this command refuses to start, naming
-// that, instead of binding a port. That is the fail-closed direction this
-// whole work is held to (D143: an unreachable service halts a run, and no code
-// path falls back to a key in the job): a service that started and answered
-// anything at all is a service whose answers a run acts on, and a revision
-// that fails to start is what tells an owner the image they deployed cannot
-// serve, while a service that answered every call with a refusal would look
-// healthy and halt every run that reached it.
+// The service itself is plan task C1.11's, and it is in this build:
+// internal/credsvc's server.go defines Config and NewServer, and the routes,
+// the forward, the cascade and the bundle loader are there with it. So the
+// host below is real -- credsvc.NewServer over a configuration, the platform's
+// PORT, the bounds a long-lived streamed call allows, and a SIGTERM that
+// drains -- and it is the whole of what this image runs.
 //
-// When C1.11 lands, serveCredentials becomes the wiring: credsvc.NewServer's
-// Config built from this environment -- the verifier (project, Firebase
-// project, the service's own audience, the job account table, both key sets
-// and the write-once outcome reader), the bundle loader over Secret Manager as
-// the service's own account, the policy, kill and state readers over the
-// database, and the patcher the ended-run cleanup needs -- hosted by an
-// http.Server with the timeouts a long-lived streamed call allows and shut
-// down on the signal Cloud Run sends. Nothing else in this file changes: the
-// command, the environment, the refusals and the hidden registration are
-// C1.14's and stay as they are.
+// What is missing is the credsvc.Config that host is handed, and that is a
+// fact about the deployment rather than about this build. The installation
+// module puts exactly three names on the service's container
+// (FUGARO_PROJECT, FUGARO_GCP_PROJECT, FUGARO_REGION; credentials.tf), and a
+// Config needs four more facts of the installation: the realtime database URL
+// the policy, kill, state, probe and outcome readers are all built on, the
+// Firebase project a run's identity is verified against, the service's own
+// URL (the audience its callers' ID tokens are minted for), and the job
+// service accounts, one per (repository, workflow). None is derivable from
+// the three -- a Cloud Run URL is not a function of a name and a region, and
+// a repository's slug is a hash (task.Slug) -- and guessing any of them is
+// what this command must not do: a guessed audience or account table is a
+// service that admits a caller it should not, which is the boundary D135/Q6
+// exist to keep.
+//
+// So credentialsServiceConfig refuses, by name, listing all four and naming
+// the change that lifts it, and no port is bound: that is the fail-closed
+// direction this whole work is held to (D143: an unreachable service halts a
+// run, and no code path falls back to a key in the job). A revision that
+// fails to start is what tells an owner the image they deployed cannot serve,
+// while a service that answered every call with a refusal would look healthy
+// and halt every run that reached it.
+//
+// The change that lifts it is not a variable an operator can add to the
+// container: the cover's credentialsServiceEnv allow-list admits those three
+// names and refuses a fourth at plan time, which is the rule that keeps an
+// environment variable from being a path a credential reaches this process
+// by. It is this command's own config builder, that allow-list and
+// credentials.tf moving together -- and no task in the plan records that
+// change (C1.18, which owns the container, has landed; its allow-list is the
+// boundary above). The day it lands this command serves with no change to its
+// own contract: the three names stay required, the refusals stay by name, and
+// hostCredentialsService below is already the host those facts feed.
 func newCredentialsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:    "credentials",
@@ -185,19 +200,24 @@ func serveCredentials(ctx context.Context, cmd *cobra.Command, getenv func(strin
 // refusal here fails closed -- admits one it should not: the audience is what
 // binds a caller's ID token to *this* service, and the account table is the
 // only part of "which job is this run in" a caller cannot write. So this
-// refuses, by name, listing what the deployment has to carry, and nothing is
-// started: a revision that fails to start is what tells an owner the image
-// they deployed cannot serve, while a service that answered every call with a
-// refusal would look healthy and halt every run that reached it (D143).
+// refuses, by name, listing all four and the change that has to carry them,
+// and nothing is started: a revision that fails to start is what tells an
+// owner the image they deployed cannot serve, while a service that answered
+// every call with a refusal would look healthy and halt every run that
+// reached it (D143).
 //
-// It is a named refusal and not a comment because the change that lifts it is
-// small and belongs to the deployment: credentials.tf (C1.18) sets these on
-// the service's container -- the two history already sets, the service's own
-// URL, and the job accounts the workflow module creates (modules/workflow/
-// sa.tf) -- and internal/infra/tf's credentialsServiceEnv allow-list grows
-// with them. This command's contract does not change when it does: the three
-// names stay required, the refusals stay by name, and hostCredentialsService
-// below is already the host those variables feed.
+// It is a named refusal and not a comment because what lifts it is a small,
+// nameable change -- but not a deployment setting an operator can add. The
+// cover's credentialsServiceEnv allow-list admits exactly the three names
+// above and refuses a fourth at plan time (internal/infra/tf/cover.go; the
+// plan records the rule as a security boundary), and credentials.tf sets
+// exactly those three, so the four facts cannot arrive on the container
+// without this command's own builder, that allow-list and credentials.tf
+// moving together. No task in the plan records that change: C1.18, which owns
+// the container, has landed with its three names and its allow-list. This
+// command's contract does not change when the change lands: the three names
+// stay required, the refusals stay by name, and hostCredentialsService below
+// is already the host those facts feed.
 func credentialsServiceConfig(getenv func(string) string) (credsvc.Config, error) {
 	// The three names credentials.tf sets on the service, and the allow-list
 	// init's cover holds its container to (credentialsServiceEnv). An empty
@@ -210,7 +230,7 @@ func credentialsServiceConfig(getenv func(string) string) (credsvc.Config, error
 			return credsvc.Config{}, userErr("the credentials service needs %s in its environment (the installation module sets it on the service)", k)
 		}
 	}
-	return credsvc.Config{}, userErr("the credentials service cannot be configured from this deployment: the installation module sets %s, %s and %s on the service and nothing else, and the service needs four more facts of the installation -- its realtime database URL, its Firebase project, its own URL (the audience its callers' ID tokens are minted for) and the job service accounts of its repositories and workflows. None is derivable from the three: a Cloud Run URL is not a function of a name and a region, a repository's slug is a hash, and a guessed audience or account table is a service that admits a caller it should not. Nothing was started and no credential was issued; set them on the service's container (credentials.tf, task C1.18) and this command serves",
+	return credsvc.Config{}, userErr("the credentials service cannot be configured from this deployment: the installation module sets %s, %s and %s on the service and nothing else, and the service needs four more facts of the installation -- its realtime database URL, its Firebase project, its own URL (the audience its callers' ID tokens are minted for) and the job service accounts of its repositories and workflows. None is derivable from the three: a Cloud Run URL is not a function of a name and a region, a repository's slug is a hash, and a guessed audience or account table is a service that admits a caller it should not. Nothing was started and no credential was issued. This is not a variable an operator can add to the container: internal/infra/tf's credentialsServiceEnv allow-list admits exactly these three names and refuses a fourth at plan time, so the change is this command's own config builder, that allow-list and credentials.tf together -- and no task in the plan records it",
 		envProject, envGCPProject, envRegion)
 }
 
@@ -255,7 +275,7 @@ const (
 // It is a function of the built configuration rather than of the environment,
 // so it is the same host whatever the deployment's variables turn out to be,
 // and so a test can start it with a server of its own and stop it again
-// (TestCredentialsServeHostsTheService).
+// (TestCredentialsServeHostStopsOnSignal).
 func hostCredentialsService(ctx context.Context, cfg credsvc.Config, getenv func(string) string, errw io.Writer) error {
 	srv, err := credsvc.NewServer(cfg)
 	if err != nil {

@@ -128,12 +128,30 @@ func TestCredentialsServeRefusesWithoutTheDeploymentsOwnFacts(t *testing.T) {
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want a user error (exit 1)", err)
 	}
-	// It names the four facts, and the task that puts them on the container,
-	// so an operator who deploys this image is owed the reason and the fix.
-	for _, want := range []string{"realtime database URL", "Firebase project", "audience", "job service accounts", "C1.18"} {
+	// It names the four facts, so an operator who deploys this image is owed
+	// the reason.
+	for _, want := range []string{"realtime database URL", "Firebase project", "audience", "job service accounts"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("err = %v, want it to name %q", err, want)
 		}
+	}
+	// And it names the real change rather than a variable someone forgot: the
+	// four facts cannot be added to the container, because the cover's
+	// credentialsServiceEnv allow-list admits exactly the three names the
+	// module sets and refuses a fourth at plan time, and credentials.tf sets
+	// those three. So the refusal names this command's own builder, that
+	// allow-list and credentials.tf together -- and says the plan records no
+	// task for it. A message naming only a deployment change would send an
+	// operator at something this tree refuses at plan time and that would not
+	// make the command serve (PR #872's stub had the same defect from the other
+	// side: it named a build state).
+	for _, want := range []string{"credentialsServiceEnv", "allow-list", "config builder", "credentials.tf", "no task in the plan"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %v, want it to name %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "C1.18") {
+		t.Fatalf("err = %v, but C1.18 has landed and its allow-list is what refuses a fourth name: the fix is not that task", err)
 	}
 	// And it never claims the service is absent from this build: C1.11 is in
 	// it, and a refusal that said otherwise would send an operator looking for
