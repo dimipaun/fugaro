@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -81,6 +83,12 @@ func svcRun(t *testing.T, auth string, edit func(*run)) *run {
 func svcSession(t *testing.T) *budget.Session {
 	t.Helper()
 	db := gcpfake.NewRTDB(t)
+	// The installation's own limits, as `fugaro init --firebase` writes them:
+	// without limits.maxReserveMicros the lease refuses everything, and the
+	// run's gateway would halt on its first call for a reason that is about
+	// the fixture and not about the cascade.
+	maxReserve := budget.Micros(5_000_000)
+	db.Set(budget.PathLimits, budget.Limits{MaxReserveMicros: &maxReserve})
 	iam := gcpfake.NewIAMCredentials(t)
 	iam.AddSigner(svcSignerEmail)
 	itk := gcpfake.NewIdentityToolkit(t, iam, svcAPIKey, svcProject)
@@ -562,4 +570,109 @@ func TestMetadataIDToken(t *testing.T) {
 			t.Errorf("the default host is %q", defaultMetadataHost)
 		}
 	})
+}
+
+// TestServiceAnswerReachesTheRunsWait: C1.15's runner half is a hand-off, and
+// this is it end to end. The run's own startGateway builds the gateway and
+// wires the answer to the run; the service answers the contract's own typed
+// exhausted_until (written by the contract's own writer, so the test is
+// against the wire form and not against a body this file made up); and what
+// the runner does about it is end the stage that is in flight -- which is
+// C1.17's wait beginning, since stage waits for the reset and resumes the
+// stage's session on it.
+//
+// The stage's own cancel is the runner's record of that decision, so a test
+// that is not running a whole run can hold it (stageOnce writes r.haltStage;
+// this test writes it the way that code does). The wait itself, its bound and
+// its halt are C1.17's own tests (creds_wait_test.go), which drive the same
+// answer through RunHandle.ServiceAnswer.
+func TestServiceAnswerReachesTheRunsWait(t *testing.T) {
+	reset := time.Now().Add(3 * time.Minute).Truncate(time.Millisecond)
+	status, _, answer, err := credsvc.ExhaustedUntil{ResetAt: reset, Tried: []credsvc.Tried{
+		{Name: "repo-shared-b", Tier: credsvc.TierB, Reason: credsvc.ReasonExhausted},
+	}}.Wire(time.Now())
+	if err != nil {
+		t.Fatalf("the contract's own exhausted answer: %v", err)
+	}
+	svc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write(answer)
+	}))
+	defer svc.Close()
+	const idToken = "job-id-token-from-the-metadata-stand-in"
+	meta := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, idToken)
+	}))
+	defer meta.Close()
+
+	r := svcRun(t, config.AuthCascade, func(r *run) {
+		r.d.Env = []string{
+			credentialsServiceURLEnv + "=" + svc.URL,
+			metadataHostEnv + "=" + strings.TrimPrefix(meta.URL, "http://"),
+		}
+		r.spend = Spend{Mode: "observe", Prices: pricing.Embedded()}
+	})
+	r.sess = svcSession(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := r.startGateway(ctx); err != nil {
+		t.Fatalf("the run's own gateway: %v", err)
+	}
+	defer func() {
+		c, stop := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stop()
+		_ = r.gw.Close(c)
+	}()
+	if r.gwAgent == nil || r.gwAgent.BaseURL == "" {
+		t.Fatal("the run's gateway did not start")
+	}
+
+	// The stage in flight, as stageOnce records it.
+	var mu sync.Mutex
+	var cause error
+	r.mu.Lock()
+	r.haltStage = func(err error) { mu.Lock(); cause = err; mu.Unlock() }
+	r.mu.Unlock()
+
+	r.gw.BeginStage(gateway.Stage{Name: "implement", Model: "claude-sonnet-5-5"})
+	req, err := http.NewRequest("POST", r.gwAgent.BaseURL+"/v1/messages",
+		strings.NewReader(`{"model":"claude-sonnet-5-5","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("x-api-key", r.gwAgent.Token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	// The agent's own answer is the service's: retryable, and no halt -- an
+	// exhausted answer is a wait, not a stop (C1.17, D143).
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("the agent's call was answered %d: %s", resp.StatusCode, body)
+	}
+	r.mu.Lock()
+	halt := r.halt
+	r.mu.Unlock()
+	if halt != nil {
+		t.Errorf("the run halted on an exhausted answer: %+v", halt)
+	}
+
+	// What the runner did about it: the stage in flight was ended with the
+	// reset the service named, which is what stage turns into the wait.
+	mu.Lock()
+	got := cause
+	mu.Unlock()
+	var ex *exhaustedError
+	if !errors.As(got, &ex) {
+		t.Fatalf("the stage in flight was ended with %v, want the exhausted answer", got)
+	}
+	if !ex.Until.Equal(reset.UTC()) {
+		t.Errorf("the stage was ended until %s, want the reset the service named, %s", ex.Until, reset.UTC())
+	}
 }
