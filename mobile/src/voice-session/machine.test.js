@@ -329,6 +329,11 @@ test('an unknown event is refused and changes nothing', () => {
     { type: 'unavailable' }, // one of the pipeline's own events, reduced nowhere here
     { type: '' },
     {},
+    // A `type` that names an `Object.prototype` member: the contract's own map
+    // is a plain object, so this is where a lookup that is not `Object.hasOwn`
+    // would throw instead of refusing.
+    { type: 'constructor' },
+    { type: 'toString' },
     'tick',
     7,
     [],

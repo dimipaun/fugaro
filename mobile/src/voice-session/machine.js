@@ -137,7 +137,10 @@ export const MACHINE_CODES = Object.freeze({
  * @property {number|null} pausedAt `ctx.now()` when the **interruption** pause
  *   began; §8's timer is measured from it, and a route pause has none
  * @property {number|null} startedAt `ctx.now()` when the session was asked for
- * @property {string|null} endReason one of `END_REASONS`, once `ended`
+ * @property {string|null} endReason one of `END_REASONS`: **why the session is
+ *   ending or has ended**, set when the end begins (a hang-up writes `hangup`
+ *   while the state is still `ending`, so the teardown that follows reports
+ *   itself without rewriting the cause -- see the header)
  * @property {{code: string, message: string}|null} error the last `error` event
  */
 export const INITIAL_SESSION_STATE = Object.freeze({

@@ -132,6 +132,15 @@ test('an unknown type is refused', () => {
   for (const type of ['audioFocusLost', 'interruptionbegan', 'tick', '', undefined]) {
     assert.equal(isVoiceSessionEvent({ type, source: 'call' }), false, String(type));
   }
+  // ... and neither is a `type` that names a member of `Object.prototype`: the
+  // field map is a plain object, so `constructor` or `toString` would otherwise
+  // resolve to an *inherited* value and this check would throw instead of
+  // answering no. A validator is handed whatever a platform sends, and a
+  // refusal is the only answer it may give.
+  for (const type of ['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__', 'isPrototypeOf']) {
+    assert.equal(isVoiceSessionEvent({ type, source: 'call' }), false, type);
+    assert.equal(isVoiceSessionEvent({ type }), false, type);
+  }
   // ... and the shapes that are not events at all.
   for (const value of [null, undefined, 'interruptionBegan', 7, [], true]) {
     assert.equal(isVoiceSessionEvent(value), false, String(value));

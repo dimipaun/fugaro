@@ -177,7 +177,9 @@ function isOneOf(vocabulary, value) {
  * `isVoicePipeline` is: it promises nothing about whether the event makes
  * sense *now* -- that is the machine's transition table, and the answer there is
  * a refusal with its own code. What it promises is that nothing downstream has
- * to ask whether `route` is a route.
+ * to ask whether `route` is a route, and that **every** input gets an answer:
+ * `true` or `false`, never a throw, however odd the platform's `type` string is
+ * (see `Object.hasOwn` below).
  *
  * The three refusals the plan names are the ones a native module is most likely
  * to get wrong: an unknown `type` (a platform emitting its own event), an
@@ -190,8 +192,15 @@ function isOneOf(vocabulary, value) {
  */
 export function isVoiceSessionEvent(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  // `Object.hasOwn` and not `SESSION_EVENT_FIELDS[value.type]`: a `type` that
+  // names an `Object.prototype` member -- `constructor`, `toString`, `valueOf`,
+  // `hasOwnProperty`, `__proto__` -- would otherwise resolve to an *inherited*
+  // value, and the field check below would throw on it. A validator a native
+  // port refuses events with (VS1.2) answers yes or no to whatever a platform
+  // sends, and a string a platform happened to choose is not allowed to turn a
+  // refusal into a crash.
+  if (!Object.hasOwn(SESSION_EVENT_FIELDS, value.type)) return false;
   const fields = SESSION_EVENT_FIELDS[value.type];
-  if (fields === undefined) return false;
   if (Object.keys(value).some((key) => !fields.includes(key))) return false;
   switch (value.type) {
     case 'interruptionBegan':

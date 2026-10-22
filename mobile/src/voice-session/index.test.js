@@ -121,9 +121,10 @@ test('the walk is recursive, so a file in a subdirectory is part of the module',
 test('the module is exactly these files, at every depth', () => {
   // A new file here is a new thing the app can import, so it is a deliberate
   // edit to this list. That is what makes "the machine and the events, and
-  // nothing else" checkable rather than a claim in a header: the controller
-  // arrives in VS1.1 as `controller.js` plus its test, and this fails until
-  // that is written down -- at any depth, which is why the walk is recursive.
+  // nothing else" checkable rather than a claim in a header: the session
+  // controller arrives in VS1.1 as `session.js` plus `session.test.js`, and
+  // this fails until that is written down -- at any depth, which is why the
+  // walk is recursive.
   assert.deepEqual(FILES, [
     'events.js',
     'events.test.js',
