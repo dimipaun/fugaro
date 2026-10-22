@@ -7,6 +7,21 @@ would follow from them. **Owner: Dimi Paun. Date: 2026-10-21.** Read against `ma
 (`cli: fugaro --version and fugaro -v print the version, like fugaro version (#794)`); every
 citation is by **path and symbol, never by line number**.
 
+**Amended 2026-10-22 — the owner accepted this folder as recommended, and the paragraph above is
+kept as the state it described.** The owner's ruling of **2026-10-22**: **D221–D236 accepted as
+recommended**, with **P0 and P1 approved** and **P3–P5 coming after P6.6 and P6.8** — the two mobile
+Phase 6 tasks that build the pairing CLI (`fugaro pair`, whose CLI plan is
+[../plans/2026-10-22-mobile-pairing-cli.md](../plans/2026-10-22-mobile-pairing-cli.md)) and the
+app's half of pairing, which this folder's P3 extends. The ruling is the **owner's own word, given on
+2026-10-22 and relayed to the change that wrote this note**: this folder did not carry it before, and
+it is recorded here the way [../mobile/functional-spec-reconciliation.md](../mobile/functional-spec-reconciliation.md)
+§3.7 records the owner's answer of 2026-10-20 and [../mobile/README.md](../mobile/README.md) records
+the voice-evaluation-switch ruling of 2026-10-19. So, precisely: the **decisions and parts** are
+accepted **as recommended**; the **tasks** are approved only where the ruling says so — **P0**, **P1**
+— and **P3–P5 are ordered after P6.6 and P6.8** rather than approved by it; **every other part is
+proposed and unapproved**, and **"plan only" still describes the tree**: no code, no rules document,
+no Firebase configuration, nothing built.
+
 The spec is one page of prose and a flow: sign in with an account already on the phone, scan a
 project QR, let the project's allowlist check the verified email. What the repository holds today is
 the **other** half of that — an allowlist that is a **device node keyed by Firebase Auth uid**, an

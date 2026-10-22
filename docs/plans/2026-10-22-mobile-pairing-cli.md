@@ -36,12 +36,19 @@ takes nothing the table assigns away; where the tree makes the `m~` rule insuffi
 an owner decision (decision 1) rather than widening the task in silence.
 
 **The mobile-auth folder is accepted as recommended (D221–D236), and this plan absorbs the parts
-that land on these three tasks.** `docs/mobile-auth/reconciliation.md` was accepted by the owner on
-2026-10-22 as recommended, with **P0/P1 approved** and **P3–P5 after P6.6/P6.8** — so P6.6 is the
-task the folder's P3 extends and nothing in the folder is built. Three of its rulings reach this
-plan and are written into it: **D226** (pairing refuses an unverified email, using the check
-`internal/cli/init_members.go`'s `userEmail` already performs), **D224** (the email is resolved once,
-in the CLI, at the write) and **D225** (the role is a field on the node that no rule reads in v1).
+that land on these three tasks.** The owner's ruling of **2026-10-22** — **D221–D236 accepted as
+recommended**, with **P0/P1 approved** and **P3–P5 ordered after P6.6/P6.8** — was relayed to this
+change and is **recorded in the tree by this change**:
+`docs/mobile-auth/README.md`'s dated note of 2026-10-22 carries it, with the provenance, because the
+folder did not carry it before (its three status lines of 2026-10-21 are kept as the state they
+described, each with a one-line pointer to that note). **This plan cites that note and asserts
+nothing of its own** — a plan that treated an unrecorded ruling as an approval would build on a
+decision the tree cannot show, and the reviewer's job here is to check the note rather than this
+sentence. So P6.6 is the task the folder's P3 extends, and nothing in the folder is built. Three of
+its rulings reach this plan and are written into it: **D226** (pairing refuses an unverified email,
+using the check `internal/cli/init_members.go`'s `userEmail` already performs), **D224** (the email
+is resolved once, in the CLI, at the write) and **D225** (the role is a field on the node that no
+rule reads in v1).
 **#787's amendment of 2026-10-20 is the frame the whole document sits in** — *pairing is discovery,
 not identity* — and it is quoted in §4.4 and §12 rather than paraphrased.
 
@@ -300,7 +307,10 @@ reader), but **nothing in the rules puts a clock on the session**: the `p~` uid 
 delivery node *"for as long as its Auth user exists"*, and the Auth user outlives the five-minute
 token because the exchange yields an hour-long ID token (D165's `exp` bounds the exchange, not the
 session). So a pairing session that is never completed leaves **an Auth user and a node** behind, and
-nothing else removes either. The CLI deletes both on success; the **sweep** removes what is left
+nothing else removes either. **Two leftovers, two owners, and the CLI owns the node alone:** on
+success the CLI deletes the **`pairing/$uid` node** (§7.1 step 9) and **never the `p~` Auth user** —
+the role that takes, `roles/firebaseauth.admin`, is the history job's alone, which is decision 1 —
+and the **sweep** deletes the Auth user, and the node too when the session was abandoned
 (decision 2). **Cost if wrong:** orphaned `p~` Auth users accumulate for the life of the project —
 invisible, unbilled, and each one a uid that `pairingClaim` would still admit if its ID token
 survived (it does not, but nothing in this plan should rest on that).
@@ -436,7 +446,15 @@ fugaro pair [--name NAME] [--email ADDRESS] [--role ROLE] [--timeout D] [--json]
 | `--name` | string | `""` | the device's name, for `pair ls` and the node's own field |
 | `--email` | string | `""` | **D226's administered email**; refused unless it is a verified address of the pairing operator (§12) |
 | `--role` | string | `admin` | **D225's role**, one of the CLI's own role words; a field on the node, read by no rule in v1 |
-| `--timeout` | duration | `5m` | how long to wait for the phone's key and the typed code; never more than `token.Lifetime` |
+| `--timeout` | duration | `2m` | how long to wait for the phone's key and the typed code; **refused above `4m30s`** |
+
+**`--timeout` is capped below D165's token, and the token is sized to the wait.** The pairing token's
+`exp` is **5 minutes at most** (D165), so a wait longer than that would outlive the credential the
+phone is holding and surface as an opaque token error instead of this command's own refusal. The
+command therefore does both: it **mints the token to cover the wait** —
+`exp = iat + min(5m, timeout + 30s)`, §7.1 step 3 — and it **refuses `--timeout` above `4m30s`**,
+which is the five-minute ceiling less the 30-second exchange slack the phone needs after the operator
+types. The default `2m` leaves room for a slow scan without approaching either bound.
 | `--json` | bool | `false` | one JSON document instead of lines |
 | `--project`, `--gcp-project` | string | `""` | the existing project selectors, `addCloudFlags`'s, unchanged |
 
@@ -460,11 +478,23 @@ fugaro pair ls [--json] [--project NAME | --gcp-project ID]
 ```
 
 Lists the children of `PathDevices`: for each, the uid (a key, and therefore printable), the
-**name**, the **administered email**, the **role**, the pairing time, and whether the Auth user still
-exists. It reads with database admin. **It never prints a token, a key or a keychain item's value** —
-and the item's *name* is not in the node (M13), so `ls` prints what the node holds and nothing else.
-A node with no readable children prints as its uid alone, because the node's children are
-unconstrained and an older or hand-written entry may hold only the uid.
+**name**, the **administered email**, the **role** and the pairing time. It reads with database
+admin. **It never prints a token, a key or a keychain item's value** — and the item's *name* is not
+in the node (M13), so `ls` prints what the node holds and nothing else. A node with no readable
+children prints as its uid alone, because the node's children are unconstrained and an older or
+hand-written entry may hold only the uid.
+
+**It does not report whether the device's Auth user still exists** (decision 11). That column cannot
+be answered with the credential this command has: the Auth user is **not in the database**, so
+database admin does not reach it — it needs `firebaseauth.users.get`, and
+`roles/firebaseauth.admin`'s only Terraform-granted holder is the history job's account (`iam.tf`'s
+`history_auth`, §6). The alternative — binding that role to the same principals as `token_minter` —
+widens the blast radius past what this command is for, because the role creates and deletes users and
+updates their custom attributes, which is a **second way to set a claim** beside the signer's
+(`rules.go`'s `userClaim` comment treats claim-setting as the launcher-equivalent power). What the
+operator needs is on the node, and **the node's existence is what the rules read**; an orphaned Auth
+user whose node is gone is the **sweep's** business (decisions 1 and 2) and is invisible to the rules
+by construction.
 
 ### 4.3 `fugaro pair revoke <uid|name>`
 
@@ -541,7 +571,7 @@ same value the operator saw on the phone, and it is not a secret (it is a hash o
 | Code | When |
 | --- | --- |
 | 0 | the act was performed — a completed pairing, a printed `ls`, a completed `revoke` |
-| 1 | a **refusal the operator can fix**: no project selectable; no signer or no database reachable as this operator; **the minter role missing** (named); **database admin missing** (named); an unverified or absent email (D226); an invalid `--role`; a `--timeout` above `token.Lifetime`; a fingerprint mismatch; a request node already written by another key; a `revoke` naming nothing, or naming two nodes; a keychain that cannot be written |
+| 1 | a **refusal the operator can fix**: no project selectable; no signer or no database reachable as this operator; **the minter role missing** (named); **database admin missing** (named); an unverified or absent email (D226); an invalid `--role`; a `--timeout` above `4m30s`; a fingerprint mismatch; a request node already written by another key; a `revoke` naming nothing, or naming two nodes; a keychain that cannot be written |
 | 2 | the database or the Identity Toolkit could not be **reached** — an outage or a transport error, `dbErr`'s `remote` branch |
 
 **Both role refusals are exit 1 and both name the missing one**, before any side effect (T1, T4):
@@ -583,7 +613,7 @@ with it, verified against the tree:
 
 | State | Where | Who may write it | Written how |
 | --- | --- | --- | --- |
-| The pairing token | nowhere (minted, shown in the QR, discarded) | — | `token.Mint` with `uid = pu = p~<random>`, `exp ≤ 5m` |
+| The pairing token | nowhere (minted, shown in the QR, discarded) | — | `token.Mint` with `uid = pu = p~<random>`, `exp = iat + min(5m, timeout + 30s)` |
 | The phone's public key | `config/pairing/$uid/request` = `{key, at}` | **the phone**, under the `p~` token | once only; the template's write-once rule and `$other` fence it (§2 (a)) |
 | The pairing payload | `config/pairing/$uid/delivery` | **the CLI**, with **database admin** | sealed to the phone's key; read once by the phone (§8) |
 | The device node | `config/admin/devices/$uid` = name, administered email, role, at | **the CLI**, with **database admin** | written **before** the token is delivered (M4); no secret (M13) |
@@ -594,7 +624,7 @@ with it, verified against the tree:
 | The dedupe ledger, the used action and confirmation ids, the window state, the expiry records | `$XDG_STATE_HOME/fugaro/mailbox/<project>/ledger.json` | the consumer | P4.1's tmp+rename, `0o600`; P6.7 extends the key spaces (M7) |
 | Prompts waiting for an answer | `$XDG_STATE_HOME/fugaro/mailbox/<project>/pending.json` | the consumer | P4.1's; the entry's shape is P6.5's |
 | A stored prompt past the TTL | `mailbox/$mb/**` | **the owner-run sweeper** — P6.13's delete set (M8) | deleted, never answered |
-| An orphaned `p~` Auth user and its `pairing/$uid` node | the Identity Toolkit and `config/pairing/$uid` | **the history sweep**, which holds `roles/firebaseauth.admin` (`iam.tf`'s `history_auth`) | decision 1; the CLI's own deletion needs a role the operator does not hold |
+| An orphaned `p~` Auth user and its `pairing/$uid` node | the Identity Toolkit and `config/pairing/$uid` | **the history sweep**, which holds `roles/firebaseauth.admin` (`iam.tf`'s `history_auth`) | decision 1; the CLI's own deletion needs a role no Terraform grant gives the operator |
 | An orphaned `m~` Auth user whose device node is gone | the Identity Toolkit | **the history sweep** | D166's own answer; P6.6's `m~` rule (T4) |
 | The installation's Firebase configuration | the QR (bootstrap) and the delivery (the stored record) | — | D199; §4.4 |
 
@@ -624,8 +654,10 @@ extending it is **P6.6's** — the one file the mobile plan gives it for this. I
    that is not verified is a refusal. The domain rule (D223) is applied here, at the write, because
    the rules cannot express it (§2 (b)).
 3. **Mint the pairing token**: a fresh `p~<random>` uid, claims `pu = uid` (and nothing else),
-   `exp ≤ 5m`. **Draw the seal key and the ephemeral key pair only after this**, so a refusal above
-   has no side effect at all.
+   `exp = iat + min(5m, timeout + 30s)` — D165's five-minute ceiling, **sized to the wait** so the
+   phone's exchange still lands before the token dies (the 30 s is the exchange's slack, and it is
+   why `--timeout`'s own ceiling is `4m30s`; §4.1). **Draw the seal key and the ephemeral key pair
+   only after this**, so a refusal above has no side effect at all.
 4. **Show the QR** and wait, with `--timeout`, for **both**: the phone's key in
    `config/pairing/$uid/request` (read with database admin, `.read: false`) and the operator's typed
    code.
@@ -639,7 +671,9 @@ extending it is **P6.6's** — the one file the mobile plan gives it for this. I
    database admin. **Before the delivery** (M4).
 8. **Seal and write `config/pairing/$uid/delivery`** (§8) with database admin.
 9. **Delete `config/pairing/$uid`** — the whole subtree — so the payload does not sit readable for the
-   hour the `p~` ID token lives.
+   hour the `p~` ID token lives. **The Auth user is not deleted here and cannot be** (decision 1):
+   the CLI's credential does not carry `roles/firebaseauth.admin`, and the sweep is what removes the
+   orphan (decision 2). The command says so in its output.
 10. **Print what it wrote**, the device uid, the name and the fingerprint, and **never** the token, the
     key or the item's value.
 
@@ -691,8 +725,22 @@ requires no new module (T3 asserts it). So:
 `seal.go`'s reason. The uid is bound so a payload cannot be moved to another pairing's node. The
 **key** is bound so a payload sealed for one phone cannot be opened by another phone that shares the
 node — which is not reachable today, since one node has one reader, but is exactly the kind of thing
-that stops being true when a later change adds a second device to a pairing. The zero bytes are the
-separators, and neither a uid (`p~` + base64url) nor a key's bytes contain one.
+that stops being true when a later change adds a second device to a pairing.
+
+**What makes the AAD canonical is the field layout, not the absence of a byte — and the distinction
+matters, because the key is raw.** The uid is the only variable-width part, so the first zero byte
+after it is its terminator: a uid cannot contain one (`p~` followed by unpadded base64url, §2 (e)).
+**The key can, and routinely does**: these are 32 raw public-key bytes, and roughly one in eight
+such values contains a `0x00`. So the rule is **not** "no field contains a zero" — an implementer who
+believes that may think a zero inside the key is a separator, or that a separator can be dropped.
+What makes it unambiguous is that **everything after the uid's terminator is fixed-width and in a
+fixed order**: the key's 32 bytes, then the version byte. A zero inside the key is therefore
+positional data and nothing else, and no length prefix is needed. The consequence for a reviewer:
+**an implementation must not reorder, truncate, re-encode or length-prefix those two trailing
+fields** — each of those changes the AAD, and the mutation in T3 (`TestEnvelopeBindsThePairingUID`)
+is what shows it. The second zero byte, before the version, is `seal.go`'s shape kept for
+consistency; with a fixed-width key it is redundant, and dropping it would be a *different* AAD
+rather than a bug — which is exactly why the layout is pinned here instead of left to taste.
 
 **What the envelope is not.** It is **not** a boundary against the operator, the launcher, or anyone
 holding database admin: the ephemeral private key lives in the CLI's memory and the plaintext in its
@@ -718,13 +766,15 @@ message MAC are different things: the MAC is P4.1's one function over P6.3's `ca
 | **The ledger** — P4.1 lands the delivery ledger; P6.7 extends it to action and confirmation ids and to expiry | **P4.1 then P6.7** | §8.4, row 5 |
 | **The pending prompts, the TTL, the safe answer exactly once, the queue cap, the revoke** | **P6.7** (the module is P6.5's) | §8.4, row 6 |
 | **The heartbeat's `agents` list** | **P6.7**; P4.1 writes the heartbeat without it | §8.4, row 7 |
-| **The store-side deletion of a stored prompt** | **P6.13**, "and nothing more" | §8.4, row 8; the merged plan's decision 8 |
+| **The store-side deletion of a stored prompt** | **P6.13**, "and nothing more" | the merged plan's **decision 8**, which assigns the two store-side rows wholesale — **§8.4's own table carries no store-side row** (its rows are the MAC function, the inbound gate, the per-kind clauses, the ledger, the prompts, the heartbeat's `agents` and the `acked` read/presence/launch), which is why decision 8 exists |
 | **The `m~` rule in `internal/budget/sweep.go`** | **P6.6** | the merged plan's decision 8 |
 
-**What this plan adds to that table: nothing.** It is quoted so that the two documents cannot drift
-on which task owns a row, and so that a task here which takes a row the table assigns away is a
-finding rather than an edit. The one place the tree makes the table's own words insufficient — the
-`m~`-only sweep rule leaving `p~` orphans — is owner decision 1, and it is asked, not assumed.
+**What this plan adds to that split: nothing.** The table is quoted so that the two documents cannot
+drift on which task owns a row, and so that a task here which takes a row the table assigns away is a
+finding rather than an edit. Its one row that §8.4 does not carry — the store-side deletion — is
+assigned by the merged plan's **decision 8**, not by a §8.4 row, and is cited from there. The one
+place the tree makes the merged plan's own words insufficient — the `m~`-only sweep rule leaving `p~`
+orphans — is owner decision 1, and it is asked, not assumed.
 
 **The interval the table leaves open, stated:** between P4.1 and P6.6 the consumer verifies inbound
 and signs outbound with a key it reads from the keychain **and there is no pairing to have written
@@ -878,7 +928,7 @@ ones a reviewer runs; each task repeats its own.
 
 | Concern | How it is exercised |
 | --- | --- |
-| The pairing token's shape and lifetime | a fake signer; `uid`/`pu` begin with `p~`; `exp − iat ≤ 5m`; never `r~` |
+| The pairing token's shape and lifetime | a fake signer; `uid`/`pu` begin with `p~`; `exp − iat ≤ 5m` **and** `exp ≥ iat + --timeout`; never `r~` |
 | The device token's claim | a fake signer; `uid == mu == m~…`; never `r~` |
 | The typed code | a fake key pair; a wrong code writes nothing (no node, no token, no key, no delivery) |
 | The fingerprint's derivation | both spellings of one key yield one code (the spelling is pinned, M3) |
@@ -886,7 +936,7 @@ ones a reviewer runs; each task repeats its own.
 | The two role refusals | two fakes, each refusing one role, each asserting the message names it and no side effect happened |
 | The device node | written before the delivery; holds no token, no key and no fingerprint (M13) |
 | `revoke` | the node is deleted before the keychain item; the Auth user is not deleted |
-| The sweep's `m~` and `p~` rules | a fake Identity Toolkit and a fake database; an `m~` user whose node exists survives, one whose node is gone is deleted; a `p~` user younger than `token.Lifetime` survives |
+| The sweep's `m~` and `p~` rules | a fake Identity Toolkit and a fake database; an `m~` user whose node exists survives, one whose node is gone is deleted; a `p~` user younger than `token.Lifetime` plus one sweep interval survives |
 | The consumer's gate | P4.1's simulator, plus `shared/confirm/vectors.json` replayed (T5) |
 | The ledger and the expiry | a restart between two passes; a sweep between two passes; exactly-once, both times |
 | The store-side deletion | a fake clock; older than the TTL is deleted, younger survives; the sweeper writes no answer |
@@ -913,8 +963,9 @@ a finding.**
 **Verification.** `go run ./internal/clidoc` then
 `GOFLAGS=-p=2 go test ./internal/clidoc ./internal/cli -run 'CliRef|Docs|Lint|Pair' -count=1`, plus
 `gofmt -l internal/cli`: the QR holds the bootstrap configuration and the token and **no key**; the
-token's `uid` and `pu` begin with `p~` and never `r~`; `exp − iat ≤ 5m`; `--timeout` above
-`token.Lifetime` is refused; the command is **visible** in the reference and the hidden sweeper is
+token's `uid` and `pu` begin with `p~` and never `r~`; `exp − iat ≤ 5m`; **`exp ≥ iat + --timeout`**,
+so the token always outlives the wait; `--timeout` above `4m30s` is refused; the command is
+**visible** in the reference and the hidden sweeper is
 not.
 **Red step.** Add the command without regenerating the reference and watch
 `TestCliReferenceIsCurrent` fail with the regenerating command in the message.
@@ -963,8 +1014,10 @@ the envelope is claimed as **a capability, not a boundary** (§8), and that the 
 **Verification.** `GOFLAGS=-p=2 go test ./internal/budget ./internal/cli -run 'Pair|Sweep|Revoke' -count=1`
 with the fakes: `revoke` deletes the **node before** the keychain item; the Auth user is **not**
 deleted; the sweeper never deletes an `m~` user whose device node exists and does delete one whose
-node is gone; a `p~` user younger than `token.Lifetime` survives and an older one is deleted; a
-`pairing/$uid` node whose user is deleted is deleted; `ls` prints no token, no key and no item value;
+node is gone; a `p~` user younger than `token.Lifetime` plus one sweep interval survives and an older
+one is deleted; a
+`pairing/$uid` node whose user is deleted is deleted; `ls` prints no token, no key and no item value,
+and **no Auth-user column** (decision 11);
 a `revoke` naming nothing, or two nodes, is refused.
 **Red step.** Delete the keychain item before the node and watch
 `TestRevokeDeletesTheNodeFirst` fail.
@@ -1194,6 +1247,17 @@ plan diverges from the mobile plan's task text**, and they are the ones that hol
     (`internal/cli/docs_mobile_mailbox_plan_test.go`) is the precedent and the machinery exists
     (a derived citation list, a negative control) if the owner wants one as a **separate, small
     task** — it is not part of P6.6, P6.7 or P6.13, and building it here would be code.
+11. **Does `pair ls` report whether the device's Auth user still exists?**
+    **Recommended: no — the column is dropped (§4.2).** The Auth user is not in the database, so the
+    database admin `ls` reads with cannot reach it; answering the column needs
+    `firebaseauth.users.get`, and `roles/firebaseauth.admin` is bound by `iam.tf` to the history job's
+    account alone. **Cost:** the operator loses a diagnostic — an orphaned `m~` user is invisible in
+    `pair ls` and shows up only in the sweep's report (T4, decision 6). **The alternative** — adding
+    the role to the same binding set as `token_minter` — is a **wider** grant than the minting role
+    it would sit beside: `firebaseauth.admin` creates and deletes users and updates their custom
+    attributes, which is a second way to set a claim, and the rules' `userClaim` comment already
+    treats claim-setting as the launcher-equivalent power. So the recommendation is to drop the
+    column rather than hand every launcher and operator that role for a column in a listing.
 
 ---
 
