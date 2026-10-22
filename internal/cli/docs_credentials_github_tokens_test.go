@@ -20,7 +20,11 @@ import (
 // symbols an operator can read the exact one out of.
 //
 // Mutations (verified, run and restored): the stale sentence put back into
-// docs/git-providers.md → FAIL; the "the runner still reads the key it is given
+// docs/git-providers.md → FAIL; the second stale sentence ("the long-lived
+// credential behind each one never is") put back — the claim this test was
+// extended for, false on Bitbucket → FAIL, on the ban and on the pin both; the
+// Bitbucket bullet softened back to a short-lived credential of its own → FAIL;
+// the "the runner still reads the key it is given
 // and the agent can still reach that same mounted copy" clause deleted, with the
 // held-secrets list still empty in internal/config/providers.go → FAIL, because
 // the documents claim the job keeps the mount and the code is what decides it;
@@ -38,11 +42,26 @@ func TestDocsGitProvidersStateWhatReachesTheAgentExactly(t *testing.T) {
 	if strings.Contains(providers, "None of these variables reaches the agent") {
 		t.Errorf("docs/git-providers.md still says \"None of these variables reaches the agent\": the long-lived variables do not reach it, and the run's own short-lived git credential does — on Bitbucket the access token itself, on GitHub the installation token minted from the pair (design §6.2, F34)")
 	}
+	// And the second stale claim, which replaced the first and was still false:
+	// it said the long-lived credential behind each variable never reaches the
+	// agent, which contradicts the sentence two lines later — on Bitbucket the
+	// run's git credential IS this repository's access token, and the job's
+	// environment holds the same value. Bitbucket is what C2.2 does not touch,
+	// so no release of the credentials service makes that sentence true.
+	if strings.Contains(providers, "the long-lived credential behind each one never is") {
+		t.Errorf("docs/git-providers.md says \"the long-lived credential behind each one never is\" in the agent's environment: false on Bitbucket, where the run's git credential is this repository's access token (`FUGARO_GIT_TOKEN`), the same value the job's environment holds as `FUGARO_BITBUCKET_TOKEN` (`internal/runner/runner.go`'s `refreshGitAuth`, `internal/gitops/credentials.go`). State it per provider, as a known limit")
+	}
 
 	// The exact one, and the four properties of the mint a reader of this
 	// document has to be able to rely on.
 	for _, want := range []string{
-		"**None of these variables is in the agent's environment, and the long-lived credential behind each one never is.**",
+		// The credential the agent gets, per provider: the App's key is not in the
+		// agent's environment on GitHub, and on Bitbucket the long-lived
+		// credential's own value is, by design.
+		"**None of these variables is in the agent's environment — but what stands behind each one is two different stories, and on Bitbucket the agent does get the long-lived credential's own value.**",
+		"**On Bitbucket it IS this repository's access token**",
+		"handed to the agent as `FUGARO_GIT_TOKEN` by the credential helper below",
+		"This is a **known limit** of the Bitbucket path",
 		"never the App's private key and never another repository's token",
 		"### The App key when an installation has a credentials service",
 		"`github.ServiceTokens`",
