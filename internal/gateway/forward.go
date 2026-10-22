@@ -449,16 +449,72 @@ func readBody(r *http.Request) ([]byte, int, string) {
 
 // check applies the stage's pins and limits and the request's shape.
 func (s *Server) check(st Stage, p parsed, m pricing.Model) string {
-	if !s.sameModel(p.model, st.Model) && !s.sameModel(p.model, st.Background) {
-		return fmt.Sprintf("model %s is not pinned for stage %s", logValue(p.model), st.Name)
+	return checkRequest(p, m, pinOf(st), s.o.Prices, s.o.Routes)
+}
+
+// pinOf is the gateway's own RequestPin: the stage's two pins, the stage's
+// own max_tokens bound, and the stage's name as the refusal names it. Where is
+// spelled here so that the refusal reads exactly as it did before the check
+// was shared with the credentials service: "model X is not pinned for stage
+// implement".
+func pinOf(st Stage) RequestPin {
+	return RequestPin{
+		Models:          []string{st.Model, st.Background},
+		Where:           "stage " + st.Name,
+		Model:           st.Model,
+		MaxOutputTokens: st.MaxOutputTokens,
 	}
-	if s.routeFor(p.model) != nil && hasVariantSuffix(p.model) {
+}
+
+// modelFor is the price row a request's model is judged and priced by, and
+// whether the table knew it: the table's own row, or -- for a model the table
+// does not have -- a row carrying the table's maximum, which is the
+// fail-closed direction and the one the run's reservation counts. A model the
+// table lacks is priced at the maximum and not refused here, because a run may
+// legitimately pin one it added under model_prices.
+func modelFor(prices *pricing.Table, model string) (pricing.Model, bool) {
+	t := pricesOr(prices)
+	if m, ok := t.Lookup(model); ok {
+		return m, true
+	}
+	return pricing.Model{ID: model, Rates: t.Max()}, false
+}
+
+// pricesOr is the table the request rules read: prices, or the embedded table
+// for a caller that has none. The credentials service passes the project's own
+// table, and the embedded one is what a table-less caller gets rather than a
+// nil dereference: every rule below reads a model's own bounds from it.
+func pricesOr(prices *pricing.Table) *pricing.Table {
+	if prices == nil {
+		return pricing.Embedded()
+	}
+	return prices
+}
+
+// checkRequest is the gateway's request check, over the pin its caller carries
+// rather than a Stage: the model pin, the variant-suffix refusal, the shape
+// refusal (a server tool among them), the foreign-field refusal and the
+// max_tokens bounds. "" accepts the request; anything else is the refusal's
+// sentence, without a status or a prefix, which each surface adds its own way
+// (the gateway answers 400 with "fugaro: " in front of it).
+//
+// It is the one place these rules are written. The gateway's own path reaches
+// it through Server.check (which builds the pin from the stage), and the
+// credentials service through RequestRefusal (export.go, which builds it from
+// the project's allow-list) -- so a rule changed for one is changed for both,
+// and there is no second copy to drift.
+func checkRequest(p parsed, m pricing.Model, pin RequestPin, prices *pricing.Table, routes []Route) string {
+	prices = pricesOr(prices)
+	if len(pin.Models) > 0 && !slices.ContainsFunc(pin.Models, func(x string) bool { return sameModel(p.model, x, prices, routes) }) {
+		return fmt.Sprintf("model %s is not pinned for %s", logValue(p.model), pin.Where)
+	}
+	if routeFor(p.model, routes) != nil && hasVariantSuffix(p.model) {
 		return fmt.Sprintf("model %s carries a variant suffix, which changes the provider's routing and price: pin the plain model ID", logValue(p.model))
 	}
 	if p.violation != "" {
 		return p.violation
 	}
-	if p.foreign != "" && s.routeFor(p.model) != nil {
+	if p.foreign != "" && routeFor(p.model, routes) != nil {
 		return fmt.Sprintf("field %s is not allowed on a provider route (it isn't priced by the budget)", strconv.Quote(logValue(p.foreign)))
 	}
 	maxOut := m.MaxOutputTokens
@@ -468,8 +524,8 @@ func (s *Server) check(st Stage, p parsed, m pricing.Model) string {
 	if p.maxTokens > maxOut {
 		return fmt.Sprintf("max_tokens %d for model %s is above the model's maximum %d", p.maxTokens, logValue(p.model), maxOut)
 	}
-	if st.MaxOutputTokens > 0 && s.sameModel(p.model, st.Model) && p.maxTokens > st.MaxOutputTokens {
-		return fmt.Sprintf("max_tokens %d for model %s is above the stage's limit %d", p.maxTokens, logValue(p.model), st.MaxOutputTokens)
+	if pin.MaxOutputTokens > 0 && sameModel(p.model, pin.Model, prices, routes) && p.maxTokens > pin.MaxOutputTokens {
+		return fmt.Sprintf("max_tokens %d for model %s is above the stage's limit %d", p.maxTokens, logValue(p.model), pin.MaxOutputTokens)
 	}
 	if p.images > 0 && m.ImageTokens <= 0 {
 		return fmt.Sprintf("images aren't priced for model %s", logValue(p.model))
@@ -480,18 +536,18 @@ func (s *Server) check(st Stage, p parsed, m pricing.Model) string {
 // sameModel: the same ID, or two spellings the table resolves to one
 // model. A prefix never matches, and a provider's model matches only
 // itself: the alias rule is Claude's.
-func (s *Server) sameModel(a, pin string) bool {
+func sameModel(a, pin string, prices *pricing.Table, routes []Route) bool {
 	if a == "" || pin == "" {
 		return false
 	}
 	if a == pin {
 		return true
 	}
-	if s.routeFor(a) != nil || s.routeFor(pin) != nil {
+	if routeFor(a, routes) != nil || routeFor(pin, routes) != nil {
 		return false
 	}
-	ma, okA := s.o.Prices.Lookup(a)
-	mp, okP := s.o.Prices.Lookup(pin)
+	ma, okA := prices.Lookup(a)
+	mp, okP := prices.Lookup(pin)
 	return okA && okP && ma.ID == mp.ID
 }
 
@@ -529,9 +585,8 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request, rt route
 	defer st.calls.Done()
 	cl.stage = st.st.Name
 
-	m, known := s.o.Prices.Lookup(p.model)
+	m, known := modelFor(s.o.Prices, p.model)
 	if !known { // a pinned model the table lacks: priced at the table's maximum
-		m = pricing.Model{ID: p.model, Rates: s.o.Prices.Max()}
 		cl.pricedAs = pricedMax
 	}
 	if v := s.check(st.st, p, m); v != "" {
@@ -1194,7 +1249,7 @@ func (s *Server) countRoutedModel(body []byte) (string, error) {
 		return "", errors.New("the request body is not a JSON object")
 	}
 	for k, v := range top {
-		if m, ok := v.(string); ok && strings.EqualFold(k, "model") && s.routeFor(m) != nil {
+		if m, ok := v.(string); ok && strings.EqualFold(k, "model") && routeFor(m, s.o.Routes) != nil {
 			return m, nil
 		}
 	}

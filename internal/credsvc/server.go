@@ -322,7 +322,16 @@ func NewServer(cfg Config) (*Server, error) {
 // The order of the checks is the order of their cost and of their authority:
 // the route, then the request as the contract reads it, then the two
 // identities, then the binding between them, then the operator's stop flag,
-// then the bundle and the policy, and only then the cascade.
+// then the policy and the request itself, and only then the bundle and the
+// cascade.
+//
+// The request's own check is deliberately before the bundle (the C1.11
+// follow-up): the bundle is the one document that holds every credential, and a
+// request the gateway would refuse — a model the project does not allow, a
+// server tool, a shape the budget cannot bound — must be refused without a
+// credential ever being read. The policy is read first because the check needs
+// it: it is a policy read, not a credential, and a policy that cannot be read
+// refuses the call either way.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	if r.Method != http.MethodPost || (r.URL.Path != MessagesPath && r.URL.Path != CountTokensPath) {
@@ -373,6 +382,40 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"the credentials service is stopped by the "+which+" kill switch")
 		return
 	}
+	// The project's policy, and the request itself, are read before the bundle:
+	// the request's check needs the policy's allow-list, and neither is a
+	// credential. A request the gateway's own rules refuse is answered here —
+	// before the one document that holds every credential is read at all.
+	shared, found, err := s.cfg.Policy.Shared(ctx)
+	if err != nil || !found {
+		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, "the project's policy could not be read")
+		return
+	}
+	cl, err := readCall(r, []string{req.RunIDToken, req.JobIDToken})
+	if err != nil {
+		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, err.Error())
+		return
+	}
+	if r.URL.Path == MessagesPath {
+		// Only the Messages path is held to these rules. The token count's body
+		// is not a Messages body — it carries no max_tokens — and the gateway
+		// does not hold it to them either (its own forwardFree), so a check
+		// applied to it would refuse calls the gateway forwards.
+		refusal, err := s.requestRefusal(shared, cl.body)
+		if err != nil {
+			// A body the gateway cannot read at all: its own path answers this
+			// as a 400 of the same kind, so it is the same refusal here.
+			refusal = err.Error()
+		}
+		if refusal != "" {
+			// The gateway's own sentence, and the one thing this service's
+			// answer adds to it: the refusal happened before any credential was
+			// read. Nothing of the request's own text is echoed back and no
+			// credential value is anywhere in it — none was touched.
+			s.refuse(w, StatusRequestRefused, ErrorRequestRefused, requestRefused+refusal)
+			return
+		}
+	}
 	b, err := s.cfg.Bundles.Load(ctx)
 	if err != nil {
 		// Fail closed, and name the CLASS of what is wrong without ever
@@ -382,24 +425,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, BundleRefusal(err))
 		return
 	}
-	shared, found, err := s.cfg.Policy.Shared(ctx)
-	if err != nil || !found {
-		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, "the project's policy could not be read")
-		return
-	}
 	cands, notAdmitted, err := s.candidates(ctx, id.Slug, ja.Repo, b)
 	if err != nil {
 		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, "the repository's admissions could not be read")
 		return
 	}
-	cl, err := readCall(r, []string{req.RunIDToken, req.JobIDToken})
-	if err != nil {
-		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, err.Error())
-		return
-	}
 	sel := &creds.Selector{Store: s.cfg.State, Settings: settingsOf(shared), Now: s.now}
 	s.forward(ctx, w, cl, sel, creds.Run{Slug: id.Slug, ID: id.Run}, b, cands, notAdmitted)
 }
+
+// requestRefused is what every request refusal begins with: the gateway's own
+// sentence follows it. A caller reading it learns the two things that are not
+// in the gateway's sentence — that this is the request being refused and that
+// the refusal came before any credential was read — and no credential value is
+// in either.
+const requestRefused = "the request is refused before any credential is read: "
 
 // refuse writes one typed refusal. It is the only way this service answers a
 // call it does not forward, so every refusal carries a type the runner
