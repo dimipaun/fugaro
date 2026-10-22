@@ -524,13 +524,23 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 
 // confirmLocation is the Firestore database's own confirmation: its location
 // is permanent, so the person types the location itself, at a real terminal.
-// --yes, --non-interactive, --json, a pipe and a coding agent never confirm it
-// (initflow.Typed): the step is then the user's, with the one-line route.
+// --non-interactive, --json, a pipe and a coding agent never confirm it, and
+// --yes confirms it only where the door owns the step (stepConfirmation,
+// stepClass): D12's answer of 2026-10-20 keeps the location Typed in `setup`,
+// the door that asks for it as a first-time question, and `update` — which
+// meets it as a step of a stage it owns — applies it under --yes. It is the
+// one of the four call sites D12 moves that moves in one door rather than
+// both. Where nothing can confirm it the step is the user's, with the
+// one-line route.
 func (r *initRun) confirmLocation() error {
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s): the Firestore database is created in %s, and a database's location can NEVER be changed.\n", r.projectName, infra.FirestoreLocation)
-	if !canConfirmTyped(initflow.Typed, r.conditions()) {
+	switch r.stepConfirmation(r.stepClass()) {
+	case stepLeave:
 		lf := promptLeft(initflow.Firebase, "type "+infra.FirestoreLocation+" to confirm the Firestore database's permanent location when asked, after running", r.o.doorName(), "--firebase-project", quoteWord(r.o.firebaseProject()))
 		return &initflow.NeedsYouError{Left: lf}
+	case stepByYes:
+		fmt.Fprintln(r.w, "  confirmed by --yes")
+		return nil
 	}
 	fmt.Fprintf(r.w, "Type %s to create it there: ", infra.FirestoreLocation)
 	line, err := r.in.ReadString('\n')

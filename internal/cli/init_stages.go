@@ -122,6 +122,15 @@ func (e *initEngine) options() initflow.Options {
 // the confirmation matrix's rows (setup_refusals_test.go, which calls this
 // with an engine and reads the list back). The engines' own behaviour is
 // theirs; this function is only who is in the run.
+//
+// Both front doors run this one list, and the door only removes: `update` is
+// everything `setup` registers, minus the project stage's creation path (a
+// project it never creates) and minus the Batch backend's (the stage is
+// behind --provision-batch, which update refuses). So update's stages are
+// preflight, installation, Firebase, images, installation a second time,
+// secrets, plugin and the repository of the checkout it is run in (W5.1).
+// There is no services stage in either list: initflow.Services is a slot in
+// the canonical order nothing registers.
 func initStages(e *initEngine) []initflow.Stage {
 	e.images, e.repo = newImagesStage(e), newRepositoryStage(e)
 	stages := []initflow.Stage{&preflightStage{e}, newInstallationStage(e), newFirebaseStage(e), e.images, newInstallation2Stage(e)}

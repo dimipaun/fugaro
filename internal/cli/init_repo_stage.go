@@ -91,9 +91,15 @@ func (s *repositoryStage) Check(ctx context.Context) (initflow.Status, error) {
 		return initflow.Status{}, err
 	case a == authAsk:
 		return initflow.Status{State: initflow.Todo, Detail: "onboards " + repo + ", which is not the project's yet: asks you to type its name first"}, nil
+	case a == authNeeded && !s.e.r.o.enrolling():
+		// A door that does not enrol leaves one line naming the door that
+		// does, and never the typed question: there is nothing for this run to
+		// type (D5).
+		lf := enrolLeft(s.e.r.o.doorName())
+		return initflow.Status{State: initflow.NeedsYou, Detail: unknownDetailNotEnrolled(s.e.lc.Name, s.tg.origin, s.e.r.o.doorName()), Left: &lf}, nil
 	case a == authNeeded:
 		lf := onboardLeft(s.tg.origin, s.e.r.o.doorName())
-		return initflow.Status{State: initflow.NeedsYou, Detail: unknownDetail(s.e.lc.Name, s.tg.origin), Left: &lf}, nil
+		return initflow.Status{State: initflow.NeedsYou, Detail: unknownDetail(s.e.lc.Name, s.tg.origin, convergeOptIn(s.e.lc, s.tg.origin)), Left: &lf}, nil
 	}
 	return initflow.Status{State: initflow.Todo, Detail: "onboards " + repo + "; plans when applied"}, nil
 }
@@ -112,6 +118,8 @@ func (s *repositoryStage) authorize(ctx context.Context, env initflow.Env) error
 	switch a, err := e.authState(s.tg.origin); {
 	case err != nil:
 		return err
+	case a == authNeeded && !e.r.o.enrolling():
+		return &initflow.NeedsYouError{Left: enrolLeft(s.e.r.o.doorName())}
 	case a == authNeeded || (a == authAsk && !env.Interactive):
 		return &initflow.NeedsYouError{Left: onboardLeft(s.tg.origin, s.e.r.o.doorName())}
 	case a == authAsk:

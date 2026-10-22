@@ -828,12 +828,13 @@ func (s *imagesStage) confirmText(pl []planned, n int, bytes int64, unpinned []s
 	return strings.Join(parts, " — and it ") + " (as you, with your own credentials)"
 }
 
-// confirmReplace is the typed-only confirmation (initflow.Typed) of moving a
-// tag in the registry that names another image, a release tag or
-// history:latest. --replace-image KIND names the intent; the project's name
-// typed at a real terminal confirms it, and --yes, --non-interactive, --json,
-// a pipe and a coding agent never do. It is asked before anything is copied
-// or pinned.
+// confirmReplace is the confirmation of moving a tag in the registry that
+// names another image, a release tag or history:latest. --replace-image KIND
+// names the intent; the project's name typed at a real terminal confirms it,
+// or --yes, and --non-interactive, --json, a pipe and a coding agent never do.
+// --yes is the answer in BOTH front doors (askCovered): D12's answer of
+// 2026-10-20 keeps only three steps typed, and this is not one of them. It is
+// asked before anything is copied or pinned.
 func (s *imagesStage) confirmReplace(pl []planned) error {
 	var kinds, lines []string
 	for _, p := range pl {
@@ -846,7 +847,7 @@ func (s *imagesStage) confirmReplace(pl []planned) error {
 		return nil
 	}
 	r := s.e.r
-	ok, reachable, err := r.askTyped("REPLACES " + strings.Join(lines, "; ") + " in your registry: whatever uses those tags (jobs, builds) then runs the new image, and the old digest is no longer named by the tag")
+	ok, reachable, err := r.askCovered("REPLACES " + strings.Join(lines, "; ") + " in your registry: whatever uses those tags (jobs, builds) then runs the new image, and the old digest is no longer named by the tag")
 	if err != nil {
 		return err
 	}

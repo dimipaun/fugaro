@@ -547,6 +547,17 @@ func fakeTerminal(t *testing.T) {
 	t.Cleanup(func() { stdinIsTerminal = old })
 }
 
+// noTerminal is the other half: a run with no terminal on stdin, whatever the
+// test binary's own stdin is. A test that has to be sure of it says so rather
+// than reading the default, which is green on a developer's terminal and red in
+// CI (or the reverse).
+func noTerminal(t *testing.T) {
+	t.Helper()
+	old := stdinIsTerminal
+	stdinIsTerminal = func(io.Reader) bool { return false }
+	t.Cleanup(func() { stdinIsTerminal = old })
+}
+
 // typedThroughYes lets a test that is about something else answer a typed-only
 // confirmation (the Firestore location, a billable build, replacing a tag) from
 // its stdin while it passes --yes, which the real rule never allows (its own

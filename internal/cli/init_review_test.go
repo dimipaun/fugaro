@@ -284,6 +284,26 @@ func TestRunConfirmationCallSites(t *testing.T) {
 			t.Errorf("%s uses the run confirmation", f)
 		}
 	}
+	// Nor do they read the run's review to find out whether it was taken: the
+	// review's answer covers the installation's ordinary steps, and the steps
+	// above are not among them — an unlisted repository's identity is not on
+	// the screen the person answered, so reading its state there would take a
+	// confirmation for something it never named (W5.1's repository gate was
+	// the one call site that did). Only init_review.go, which owns the review,
+	// may read it.
+	readReview := regexp.MustCompile(`\br\.review\.`)
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") || f == "init_review.go" {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if readReview.Match(b) {
+			t.Errorf("%s reads r.review: the run's one confirmation is init_review.go's to read", f)
+		}
+	}
 }
 
 // --- through the command, over the fakes ---
@@ -751,8 +771,12 @@ func TestReviewScreenPrintsOnlySafeText(t *testing.T) {
 	}
 }
 
-// The first Cloud Build's confirmation is never on the covered path: the
-// function that offers it uses askTyped and never the run confirmation.
+// The first Cloud Build's confirmation is never on the ordinary covered path:
+// the function that offers it uses the confirmation of the step it is
+// (askCovered, which W5.1 makes YesOrTyped: D12's answer of 2026-10-20 covers a
+// billable first image build in BOTH front doors, and in neither of them does
+// the run's own --yes/terminal decision stand in for it), and never the run
+// confirmation.
 func TestCloudBuildConfirmationStaysOutsideTheCoveredPath(t *testing.T) {
 	b, err := os.ReadFile("init.go")
 	if err != nil {
@@ -771,11 +795,14 @@ func TestCloudBuildConfirmationStaysOutsideTheCoveredPath(t *testing.T) {
 		return body
 	}
 	body := funcBody("func (r *initRun) buildImages(")
-	if !strings.Contains(body, "r.askTyped(") {
-		t.Error("buildImages no longer asks the typed confirmation")
+	if !strings.Contains(body, "r.askCovered(") {
+		t.Error("buildImages no longer asks the step's own confirmation")
 	}
-	if a, s := strings.Index(body, "r.askTyped("), strings.Index(body, "r.submitAndWait("); a < 0 || s < 0 || a > s {
-		t.Errorf("buildImages must ask the typed confirmation (at %d) before r.submitAndWait( (at %d)", a, s)
+	if a, s := strings.Index(body, "r.askCovered("), strings.Index(body, "r.submitAndWait("); a < 0 || s < 0 || a > s {
+		t.Errorf("buildImages must ask the step's confirmation (at %d) before r.submitAndWait( (at %d)", a, s)
+	}
+	if strings.Contains(body, "r.askTyped(") {
+		t.Error("buildImages asks the Typed confirmation: the billable build is covered in both doors (D12)")
 	}
 	for _, bad := range []string{"confirmOrdinary", "askOrdinary", "runCovers", "r.confirm(", "r.ask("} {
 		if strings.Contains(body, bad) {

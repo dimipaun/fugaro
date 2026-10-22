@@ -159,8 +159,8 @@ the current directory), whose fugaro.yaml says what it needs, into the
 installation fugaro setup applied. It adopts what the bootstrap made for it
 (checking each resource's marks and live grants first), creates the rest,
 and deploys each workflow's job once its secrets are stored and its image is
-built. It offers each workflow's first image build (billable: the project's name
-typed at a real terminal, never --yes), then deploys the built image and unpauses the daily check. It
+built. It offers each workflow's first image build (billable: --yes covers it, and
+at a terminal without --yes the project's name is typed), then deploys the built image and unpauses the daily check. It
 prints the fugaro secrets set commands still needed, and adds the
 repository to the local config. A repository the local config does not list
 takes the same opt-in as the converge's stages (below): its owner/name typed at
@@ -179,8 +179,11 @@ review screen and ONE typed project name, asked when the first of them has
 something to change (so a rerun with nothing to do asks nothing). Each step
 still prints its own exact plan. It never covers creating a project, linking
 billing, the Firestore database's permanent location, a Cloud Build, replacing
-a registry tag (--replace-image), an unlisted repository or a secret: each
-keeps its own typed confirmation. The state bucket and the API enable are fixed, announced, free steps; every
+a registry tag (--replace-image), an unlisted repository or a secret. Those are
+their own steps: the build, the tag and onboarding an unlisted repository are
+covered by --yes in either door (D12's answer of 2026-10-20), and a project's
+creation, the billing link, the location and a secret value keep a typed
+confirmation of their own. The state bucket and the API enable are fixed, announced, free steps; every
 Terraform plan is shown as it runs and is covered only if it is creates and
 in-place updates of the installation's own resource kinds, granting only the
 modules' roles to the listed launchers, operators and budget admins (the review
@@ -198,13 +201,16 @@ and applies nothing.
 
 What --yes covers: the ordinary steps, which are the installation's and the
 Firebase root's Terraform applies, the images' copy, the local config's
-writes, the plugin wiring and a known repository's steps. It never covers
-creating a project or linking billing, a secret, a repository the project does
-not list, the Firestore database's permanent location, a billable first image
-build, or replacing a tag in your registry (--replace-image KIND names the
-intent; the project's name is typed at a real terminal): with --yes,
---non-interactive, --json or a pipe each of those is left for you, with the one
-line to run. In a coding agent's environment (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT,
+writes, the plugin wiring, a repository's steps — onboarding one the project
+does not list included — a billable first image build and replacing a tag in
+your registry (--replace-image KIND names the intent). D12's answer of
+2026-10-20 is what makes those last three ordinary: they are covered in either
+door, while a repository whose origin git config rewrites, or whose host is not
+a provider's own, takes the typed owner/name whatever the run was given. What
+--yes still never covers: creating a project or linking billing, a secret, and
+the Firestore database's permanent location, this door's first-time question.
+With --yes, --non-interactive, --json or a pipe each of those is left for you,
+with the one line to run. In a coding agent's environment (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT,
 CLAUDE_CODE_SSE_PORT, CLAUDE_CODE_REMOTE, CURSOR_AGENT or AI_AGENT is set) setup
 applies nothing, --yes included, and says to run it in your own terminal
 window; --plan-only and the read-only checks still work, and so does setup
@@ -262,12 +268,15 @@ a checkout there is nothing to ask about, so setup prints the one line saying
 how a repository is enrolled later: setup --repo, in a checkout of it.
 
 Both stages act only on a repository the project's local config already lists,
-or one you opt in: a repository not listed yet needs its owner/name typed at
-your own terminal (naming the checkout's path), or --onboard-repo owner/name,
-which must equal the origin (setup --repo takes both too); --yes,
---non-interactive and a coding agent's environment never cover it (the flag is
-refused there), so a cloned third-party repository cannot onboard itself. The
-secrets stage is behind the same gate.`
+or one you opt in: a repository not listed yet is onboarded when you opt it in
+— its owner/name typed at your own terminal (naming the checkout's path), or
+--onboard-repo owner/name, which must equal the origin (setup --repo takes both
+too) — or by the run's own --yes, which covers onboarding one whose origin git
+config does not rewrite and whose host is a provider's own (D12's answer of
+2026-10-20). --non-interactive without --yes, --json, a pipe and a coding
+agent's environment confirm none of it (the flag is refused there), so a cloned
+third-party repository cannot onboard itself. The secrets stage is behind the
+same gate.`
 
 // setupDoor is the first door: the wizard, and the only door that creates.
 var setupDoor = convergeDoor{

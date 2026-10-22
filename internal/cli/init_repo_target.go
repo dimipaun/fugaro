@@ -198,6 +198,27 @@ func repoKnown(lc *localcfg.Config, o originInfo) bool {
 	return false
 }
 
+// repoNameListed reports whether the local config lists this repository's
+// owner/name at all, whatever host it records it at — which is the difference
+// between a repository the run was never told about and one the config
+// already knows somewhere else (repoKnown's other half). The gate treats the
+// second as its own question and not as a step a --yes covers (W5.1).
+func repoNameListed(lc *localcfg.Config, o originInfo) bool {
+	if lc == nil {
+		return false
+	}
+	want, err := task.CanonicalRepo(o.Repo)
+	if err != nil {
+		return false
+	}
+	for name := range lc.Repos {
+		if c, err := task.CanonicalRepo(name); err == nil && c == want {
+			return true
+		}
+	}
+	return false
+}
+
 // sameRepo compares two owner/name strings the way the config does.
 func sameRepo(a, b string) bool {
 	x, err1 := task.CanonicalRepo(a)

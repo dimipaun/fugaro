@@ -735,10 +735,11 @@ var propertyAgentSites = map[string]string{
 // outsideAgentSites are the agent-marker sites the property does not cover,
 // each with the reason.
 var outsideAgentSites = map[string]string{
-	"init.go runInit":             "OUTSIDE: --publish-config's refusal before any write; not a confirmation (initFlagCases: publish-config)",
-	"init.go publishSharedConfig": "OUTSIDE: the shared-config publish after the local config is written; not a confirmation, it skips with a note under a marker",
-	"initsecrets.go agentEnv":     "OUTSIDE: the definition of agentEnv itself (TestManagedAgentMarkersAreTheExpectedSix pins agentMarker)",
-	"initsecrets.go Check":        "OUTSIDE: the wording of the secrets stage's detail; whether it prompts is canPrompt (an inline site)",
+	"init.go runInit":                 "OUTSIDE: --publish-config's refusal before any write; not a confirmation (initFlagCases: publish-config)",
+	"init.go publishSharedConfig":     "OUTSIDE: the shared-config publish after the local config is written; not a confirmation, it skips with a note under a marker",
+	"initsecrets.go agentEnv":         "OUTSIDE: the definition of agentEnv itself (TestManagedAgentMarkersAreTheExpectedSix pins agentMarker)",
+	"initsecrets.go Check":            "OUTSIDE: the wording of the secrets stage's detail; whether it prompts is canPrompt (an inline site)",
+	"init_repo_gate.go convergeOptIn": "OUTSIDE: the wording of the repository gate's detail — it says whether --yes is named as a way in; whether the run may onboard at all is authState/onboardCovered (inline sites)",
 }
 
 // Every inline decision refuses under each marker, and only under a marker:

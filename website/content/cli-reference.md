@@ -2522,8 +2522,8 @@ the current directory), whose fugaro.yaml says what it needs, into the
 installation fugaro setup applied. It adopts what the bootstrap made for it
 (checking each resource's marks and live grants first), creates the rest,
 and deploys each workflow's job once its secrets are stored and its image is
-built. It offers each workflow's first image build (billable: the project's name
-typed at a real terminal, never --yes), then deploys the built image and unpauses the daily check. It
+built. It offers each workflow's first image build (billable: --yes covers it, and
+at a terminal without --yes the project's name is typed), then deploys the built image and unpauses the daily check. It
 prints the fugaro secrets set commands still needed, and adds the
 repository to the local config. A repository the local config does not list
 takes the same opt-in as the converge's stages (below): its owner/name typed at
@@ -2542,8 +2542,11 @@ review screen and ONE typed project name, asked when the first of them has
 something to change (so a rerun with nothing to do asks nothing). Each step
 still prints its own exact plan. It never covers creating a project, linking
 billing, the Firestore database's permanent location, a Cloud Build, replacing
-a registry tag (--replace-image), an unlisted repository or a secret: each
-keeps its own typed confirmation. The state bucket and the API enable are fixed, announced, free steps; every
+a registry tag (--replace-image), an unlisted repository or a secret. Those are
+their own steps: the build, the tag and onboarding an unlisted repository are
+covered by --yes in either door (D12's answer of 2026-10-20), and a project's
+creation, the billing link, the location and a secret value keep a typed
+confirmation of their own. The state bucket and the API enable are fixed, announced, free steps; every
 Terraform plan is shown as it runs and is covered only if it is creates and
 in-place updates of the installation's own resource kinds, granting only the
 modules' roles to the listed launchers, operators and budget admins (the review
@@ -2561,13 +2564,16 @@ and applies nothing.
 
 What --yes covers: the ordinary steps, which are the installation's and the
 Firebase root's Terraform applies, the images' copy, the local config's
-writes, the plugin wiring and a known repository's steps. It never covers
-creating a project or linking billing, a secret, a repository the project does
-not list, the Firestore database's permanent location, a billable first image
-build, or replacing a tag in your registry (--replace-image KIND names the
-intent; the project's name is typed at a real terminal): with --yes,
---non-interactive, --json or a pipe each of those is left for you, with the one
-line to run. In a coding agent's environment (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT,
+writes, the plugin wiring, a repository's steps — onboarding one the project
+does not list included — a billable first image build and replacing a tag in
+your registry (--replace-image KIND names the intent). D12's answer of
+2026-10-20 is what makes those last three ordinary: they are covered in either
+door, while a repository whose origin git config rewrites, or whose host is not
+a provider's own, takes the typed owner/name whatever the run was given. What
+--yes still never covers: creating a project or linking billing, a secret, and
+the Firestore database's permanent location, this door's first-time question.
+With --yes, --non-interactive, --json or a pipe each of those is left for you,
+with the one line to run. In a coding agent's environment (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT,
 CLAUDE_CODE_SSE_PORT, CLAUDE_CODE_REMOTE, CURSOR_AGENT or AI_AGENT is set) setup
 applies nothing, --yes included, and says to run it in your own terminal
 window; --plan-only and the read-only checks still work, and so does setup
@@ -2625,12 +2631,15 @@ a checkout there is nothing to ask about, so setup prints the one line saying
 how a repository is enrolled later: setup --repo, in a checkout of it.
 
 Both stages act only on a repository the project's local config already lists,
-or one you opt in: a repository not listed yet needs its owner/name typed at
-your own terminal (naming the checkout's path), or --onboard-repo owner/name,
-which must equal the origin (setup --repo takes both too); --yes,
---non-interactive and a coding agent's environment never cover it (the flag is
-refused there), so a cloned third-party repository cannot onboard itself. The
-secrets stage is behind the same gate.
+or one you opt in: a repository not listed yet is onboarded when you opt it in
+— its owner/name typed at your own terminal (naming the checkout's path), or
+--onboard-repo owner/name, which must equal the origin (setup --repo takes both
+too) — or by the run's own --yes, which covers onboarding one whose origin git
+config does not rewrite and whose host is a provider's own (D12's answer of
+2026-10-20). --non-interactive without --yes, --json, a pipe and a coding
+agent's environment confirm none of it (the flag is refused there), so a cloned
+third-party repository cannot onboard itself. The secrets stage is behind the
+same gate.
 
 Usage: `fugaro setup [--repo [PATH]]`
 
@@ -2656,7 +2665,7 @@ Flags:
 | `--create-project` | bool | `false` | no | create the GCP project --gcp-project names and add Firebase to it, as you, after you type its ID at a terminal (never with --yes, --non-interactive or --json). An ID that exists and you can read is adopted; one held by someone else is refused. Billing is not linked unless --link-billing is also given; without it setup prints the one gcloud command that links it |
 | `--display-name` | string | "" | no | with --create-project: the project's display name (default: its ID) |
 | `--expect-digest` | stringArray | `[]` | no | pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it setup trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag |
-| `--firebase-project` | string | "" | no | build the budget backend in this Firebase project: the run's Firebase project is the installation's own --gcp-project by default (one id for both, D7), so this is the advanced flag, for a Firebase project of its own (one you created and linked to billing, or created with --create-project). It is also the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location, typed confirmation) and the config |
+| `--firebase-project` | string | "" | no | build the budget backend in this Firebase project: the run's Firebase project is the installation's own --gcp-project by default (one id for both, D7), so this is the advanced flag, for a Firebase project of its own (one you created and linked to billing, or created with --create-project). It is also the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: typed where it is a first-time question, covered by --yes where the run re-converges an installation that is already there) and the config |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `--github-app-id` | string | "" | no | the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; setup asks once at a terminal, and --non-interactive needs it) |
 | `-h`, `--help` | bool | `false` | no | help for setup |
@@ -2669,7 +2678,7 @@ Flags:
 | `--no-build` | bool | `false` | no | with --repo: don't offer the first image builds |
 | `--no-log-isolation` | bool | `false` | no | leave Fugaro job logs in _Default instead of their own log bucket |
 | `--non-interactive` | bool | `false` | no | never prompt, and never read stdin: a step that needs you is listed under left_for_you (exit 1), and applying needs --yes, else the run only plans (a fresh state bucket needs its typed confirmation even then, so that plan exits 1); --yes never covers the typed-only steps (see --yes). With --config-only it only stops them prompting: their confirmations then need --yes |
-| `--onboard-repo` | string | "" | no | owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one non-interactive opt-in to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes never covers it, and a coding agent's environment refuses it; any other origin takes the typed confirmation) |
+| `--onboard-repo` | string | "" | no | owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes also covers onboarding such a repository, and neither it nor this flag is honoured in a coding agent's session; any other origin takes the typed confirmation) |
 | `--operator` | stringArray | `[]` | no | an IAM member who onboards repositories (repeatable; default: the local config's, and for a new config you, the authenticated user) |
 | `--parent` | string | "" | no | with --create-project: organizations/<number> or folders/<number> to create the project under (default: no parent; an organization is never guessed) |
 | `--plan-only` | bool | `false` | no | stop after showing the plan (never takes --yes: it creates nothing on a flag's word) |
@@ -2679,13 +2688,13 @@ Flags:
 | `--publish-config` | bool | `false` | no | publish the shared config to the runs bucket and stop (setup does it after it writes the local config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--registry-cleanup` | string | "" | no | Artifact Registry cleanup: dry-run (the default), on or off |
-| `--replace-image` | stringArray | `[]` | no | KIND (history; repeatable): let the converge replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is confirmed by typing the project's name at a real terminal, never by --yes, --non-interactive or --json |
+| `--replace-image` | stringArray | `[]` | no | KIND (history; repeatable): let the converge replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so --yes covers it in either door and a terminal without --yes types the project's name (a pipe, --json, --non-interactive and a coding agent's session confirm nothing) |
 | `--repo` | bool | `false` | no | onboard the repository of the checkout at PATH (default: the current directory) instead of the installation |
 | `--retire` | bool | `false` | no | with --repo: run the retirement this config change needs (a workflow or a named account removed, a secret no longer mounted): remove the protected addresses from Terraform's state (destroying nothing), apply, then delete the orphaned Cloud Run jobs through the API. The project's name is typed twice at a real terminal, and --yes, --non-interactive, --json, a pipe and a coding agent cover neither. Excludes --plan-only, --print-vars and --forget, which read or forget rather than apply |
 | `--runs-bucket` | string | "" | no | the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>) |
 | `--scheduler-region` | string | "" | no | Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers) |
 | `--state-bucket` | string | "" | no | the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>) |
-| `--yes` | bool | `false` | no | confirm the ordinary steps without asking (only after reading what they do). Never covers creating a project, billing, a secret, an unlisted repository, the Firestore location, a billable first image build or replacing an image tag (typed at a real terminal). Under a coding agent's environment variable (CLAUDECODE and the like) setup applies nothing, --yes included (except setup --anchor, which only edits the checkout's fugaro.yaml and honours --yes there); that is a mitigation, not a barrier: an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint |
+| `--yes` | bool | `false` | no | confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it) — and it never covers creating a project, linking a billing account, the Firestore database's location, or a secret value: each of those is typed at a real terminal, and no door relaxes them. Under a coding agent's environment variable (CLAUDECODE and the like) setup applies nothing, --yes included (except setup --anchor, which only edits the checkout's fugaro.yaml and honours --yes there); that is a mitigation, not a barrier: an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint |
 
 Subcommands:
 
@@ -2785,10 +2794,14 @@ destroying nothing else.
 
 Everything else is setup's help word for word, because it is the same
 converge: the review screen and the one typed project name in a project Fugaro
-owns; the steps that keep their own typed confirmation (a project's creation
-and the billing link are setup's, and here they cannot arise at all, but the
-Firestore database's permanent location, a billable first image build,
-replacing a registry tag, an unlisted repository and the secrets are not); the
+owns; the steps that keep their own typed confirmation — a project's creation
+and the billing link are setup's, and here they cannot arise at all, and a
+secret is a value, typed in a hidden prompt, which --yes cannot supply — against
+the steps --yes covers, which by D12's answer of 2026-10-20 is every ordinary
+step this door owns: the Firestore database's permanent location, a billable
+first image build, replacing a registry tag and onboarding an unlisted
+repository on a provider's own host with an origin git config that does not
+rewrite it (the build, the tag and the repository are covered in setup too); the
 secrets stage's hidden prompts and the one line of fugaro secrets set commands
 it leaves instead; the plugin wiring; --anchor, which writes the checkout's
 gcp_project line and nothing else; --plan-only, --print-vars, --config-only and
@@ -2818,7 +2831,7 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--config-only` | bool | `false` | no | only write the local config, from the installation's outputs (else the flags) |
 | `--expect-digest` | stringArray | `[]` | no | pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it update trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag |
-| `--firebase-project` | string | "" | no | build the budget backend in this Firebase project: the run's Firebase project is the installation's own --gcp-project by default (one id for both, D7), so this is the advanced flag, for a Firebase project of its own (one you created and linked to billing, or created with --create-project). It is also the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location, typed confirmation) and the config |
+| `--firebase-project` | string | "" | no | build the budget backend in this Firebase project: the run's Firebase project is the installation's own --gcp-project by default (one id for both, D7), so this is the advanced flag, for a Firebase project of its own (one you created and linked to billing, or created with --create-project). It is also the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: typed where it is a first-time question, covered by --yes where the run re-converges an installation that is already there) and the config |
 | `--forget` | bool | `false` | no | roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `--github-app-id` | string | "" | no | the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; update asks once at a terminal, and --non-interactive needs it) |
@@ -2830,7 +2843,7 @@ Flags:
 | `--no-build` | bool | `false` | no | with --repo: don't offer the first image builds |
 | `--no-log-isolation` | bool | `false` | no | leave Fugaro job logs in _Default instead of their own log bucket |
 | `--non-interactive` | bool | `false` | no | never prompt, and never read stdin: a step that needs you is listed under left_for_you (exit 1), and applying needs --yes, else the run only plans (a fresh state bucket needs its typed confirmation even then, so that plan exits 1); --yes never covers the typed-only steps (see --yes). With --forget and --config-only it only stops them prompting: their confirmations then need --yes |
-| `--onboard-repo` | string | "" | no | owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one non-interactive opt-in to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes never covers it, and a coding agent's environment refuses it; any other origin takes the typed confirmation) |
+| `--onboard-repo` | string | "" | no | owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes also covers onboarding such a repository, and neither it nor this flag is honoured in a coding agent's session; any other origin takes the typed confirmation) |
 | `--operator` | stringArray | `[]` | no | an IAM member who onboards repositories (repeatable; default: the local config's, and for a new config you, the authenticated user) |
 | `--plan-only` | bool | `false` | no | stop after showing the plan (never takes --yes: it creates nothing on a flag's word) |
 | `--print-vars` | bool | `false` | no | print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates) |
@@ -2838,13 +2851,13 @@ Flags:
 | `--publish-config` | bool | `false` | no | publish the shared config to the runs bucket and stop (update does it after it writes the local config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--registry-cleanup` | string | "" | no | Artifact Registry cleanup: dry-run (the default), on or off |
-| `--replace-image` | stringArray | `[]` | no | KIND (history; repeatable): let the converge replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is confirmed by typing the project's name at a real terminal, never by --yes, --non-interactive or --json |
+| `--replace-image` | stringArray | `[]` | no | KIND (history; repeatable): let the converge replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so --yes covers it in either door and a terminal without --yes types the project's name (a pipe, --json, --non-interactive and a coding agent's session confirm nothing) |
 | `--repo` | bool | `false` | no | onboard the repository of the checkout at PATH (default: the current directory) instead of the installation |
 | `--retire` | bool | `false` | no | with --repo: run the retirement this config change needs (a workflow or a named account removed, a secret no longer mounted): remove the protected addresses from Terraform's state (destroying nothing), apply, then delete the orphaned Cloud Run jobs through the API. The project's name is typed twice at a real terminal, and --yes, --non-interactive, --json, a pipe and a coding agent cover neither. Excludes --plan-only, --print-vars and --forget, which read or forget rather than apply |
 | `--runs-bucket` | string | "" | no | the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>) |
 | `--scheduler-region` | string | "" | no | Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers) |
 | `--state-bucket` | string | "" | no | the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>) |
-| `--yes` | bool | `false` | no | confirm the ordinary steps without asking (only after reading what they do). Never covers creating a project, billing, a secret, an unlisted repository, the Firestore location, a billable first image build or replacing an image tag (typed at a real terminal). Under a coding agent's environment variable (CLAUDECODE and the like) update applies nothing, --yes included (except update --anchor, which only edits the checkout's fugaro.yaml and honours --yes there); that is a mitigation, not a barrier: an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint |
+| `--yes` | bool | `false` | no | confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — the Firestore database's location, a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it) — and it never covers creating a project, linking a billing account, or a secret value: each of those is typed at a real terminal, and no door relaxes them. Under a coding agent's environment variable (CLAUDECODE and the like) update applies nothing, --yes included (except update --anchor, which only edits the checkout's fugaro.yaml and honours --yes there); that is a mitigation, not a barrier: an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint |
 
 Subcommands:
 

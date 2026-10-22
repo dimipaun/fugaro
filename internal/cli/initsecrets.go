@@ -385,6 +385,14 @@ func (s *secretsStage) authorize(env initflow.Env) error {
 	switch a, err := s.e.authState(s.origin); {
 	case err != nil:
 		return err
+	case a == authNeeded && !s.e.r.o.enrolling():
+		// A door that does not enrol a repository by asking: one line naming
+		// the door that does, and never --onboard-repo, which is not this
+		// run's to offer (D5). Without this arm the secrets stage would offer
+		// the flag for a step its door does not ask about, while the plugin
+		// and repository stages of the same run name `fugaro setup` for the
+		// same repository (W5.1).
+		return &initflow.NeedsYouError{Left: enrolLeft(s.e.r.o.doorName())}
 	case a == authNeeded || (a == authAsk && !env.Interactive):
 		return &initflow.NeedsYouError{Left: onboardLeft(s.origin, s.e.r.o.doorName())}
 	case a == authAsk:
@@ -485,9 +493,14 @@ func (s *secretsStage) Check(ctx context.Context) (initflow.Status, error) {
 	switch a, err := s.e.authState(s.origin); {
 	case err != nil:
 		return initflow.Status{}, err
+	case a == authNeeded && !s.e.r.o.enrolling():
+		// As authorize: the door that does not ask names the door that does,
+		// with the same line the plugin and repository stages leave (W5.1).
+		lf := enrolLeft(s.e.r.o.doorName())
+		return initflow.Status{State: initflow.NeedsYou, Detail: unknownDetailNotEnrolled(s.e.lc.Name, s.origin, s.e.r.o.doorName()), Left: &lf}, nil
 	case a == authNeeded:
 		lf := onboardLeft(s.origin, s.e.r.o.doorName())
-		return initflow.Status{State: initflow.NeedsYou, Detail: unknownDetail(s.e.lc.Name, s.origin), Left: &lf}, nil
+		return initflow.Status{State: initflow.NeedsYou, Detail: unknownDetail(s.e.lc.Name, s.origin, convergeOptIn(s.e.lc, s.origin)), Left: &lf}, nil
 	case a == authAsk:
 		s.checked = false
 		return initflow.Status{State: initflow.Todo, Detail: "which secrets are stored is read after you confirm the repository " + pluginwire.Printable(s.origin.typed())}, nil

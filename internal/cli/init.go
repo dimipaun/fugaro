@@ -66,7 +66,7 @@ type initOptions struct {
 	baseKinds                           []string // --base: base kinds to mirror now
 	imageSource                         string   // --image-source: a fork's own release registry/owner
 	expectDigests                       []string // --expect-digest KIND=sha256:...: the digest a release tag must resolve to
-	replaceImages                       []string // --replace-image KIND: kinds (history) whose tag in your registry may be replaced, each still behind a typed confirmation; a base kind is refused there, since nothing is copied for it any more
+	replaceImages                       []string // --replace-image KIND: kinds (history) whose tag in your registry may be replaced, each an ordinary covered step (askCovered: D12's answer of 2026-10-20 covers it in both doors, and a terminal without --yes types the project's name); a base kind is refused there, since nothing is copied for it any more
 	launchers, operators                []string
 	budget                              int64
 	budgetCurrency, billingAccount      string
@@ -225,6 +225,20 @@ func (o *initOptions) doorName() string {
 // spell a whole command line.
 func (o *initOptions) doorProgram() string { return "fugaro " + o.doorName() }
 
+// enrolling is whether this run may enrol a repository the local config does
+// not list by asking for it: with the typed owner/name, or with --onboard-repo.
+// `setup` may, in both of its modes — it owns that question (D5) — and `update`
+// may only in its --repo mode, where the user named the checkout to converge.
+// `update`'s converge never asks: no typed owner/name, no --onboard-repo, and a
+// checkout whose repository the config does not list is left with the line that
+// names `fugaro setup`. That is its asking, not its covering — `--yes` covers
+// onboarding an unlisted repository in either door's converge (D12's answer of
+// 2026-10-20, authState/onboardCovered), so this is what a run that gave no such
+// confirmation falls back on (W5.1).
+func (o *initOptions) enrolling() bool {
+	return o.door != updateDoor.name || o.repo
+}
+
 // initCreation is what a run of setup --create-project did, as the run itself
 // knows it (not inferred from the cloud afterwards): the project it created,
 // whether the project was already there when it was read, and how much of the
@@ -341,7 +355,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.StringSliceVar(&o.baseKinds, "base", nil, "copy the release's base image (the only kind: base) into the project's registry now, besides what the checkout's fugaro.yaml needs (comma-separated or repeated)")
 	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release images come from: a base kind is resolved and signature-verified there and pinned through the installation's remote repository, a history image is copied from it (default ghcr.io/dimipaun; a fork names its own, such as ghcr.io/acme)")
 	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it "+d.name+" trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag")
-	f.StringArrayVar(&o.replaceImages, "replace-image", nil, "KIND (history; repeatable): let the converge replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is confirmed by typing the project's name at a real terminal, never by --yes, --non-interactive or --json")
+	f.StringArrayVar(&o.replaceImages, "replace-image", nil, "KIND (history; repeatable): let the converge replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so --yes covers it in either door and a terminal without --yes types the project's name (a pipe, --json, --non-interactive and a coding agent's session confirm nothing)")
 	f.StringArrayVar(&o.launchers, "launcher", nil, "an IAM member who launches and watches runs (repeatable; default: the local config's, and for a new config you, the authenticated user)")
 	f.StringArrayVar(&o.operators, "operator", nil, "an IAM member who onboards repositories (repeatable; default: the local config's, and for a new config you, the authenticated user)")
 	f.Int64Var(&o.budget, "budget", 0, "a monthly budget on the project, in whole units of --budget-currency")
@@ -350,7 +364,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.StringVar(&o.alertEmail, "alert-email", "", "where failed image checks and rebuilds are reported (default: the local config's)")
 	f.BoolVar(&o.noLogIsolation, "no-log-isolation", false, "leave Fugaro job logs in _Default instead of their own log bucket")
 	f.StringVar(&o.registryCleanup, "registry-cleanup", "", "Artifact Registry cleanup: dry-run (the default), on or off")
-	f.StringVar(&o.firebase, "firebase-project", "", "build the budget backend in this Firebase project: the run's Firebase project is the installation's own --gcp-project by default (one id for both, D7), so this is the advanced flag, for a Firebase project of its own (one you created and linked to billing, or created with --create-project). It is also the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location, typed confirmation) and the config")
+	f.StringVar(&o.firebase, "firebase-project", "", "build the budget backend in this Firebase project: the run's Firebase project is the installation's own --gcp-project by default (one id for both, D7), so this is the advanced flag, for a Firebase project of its own (one you created and linked to billing, or created with --create-project). It is also the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: typed where it is a first-time question, covered by --yes where the run re-converges an installation that is already there) and the config")
 	f.StringVar(&o.budgetMode, "budget-mode", "", "with --firebase-project: off, observe or enforce: the jobs' budget mode in the project config, and for observe and enforce the project-wide mode in the database (an absent one is seeded observe)")
 	f.StringArrayVar(&o.budgetAdmins, "budget-admin", nil, "with --firebase-project: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins)")
 	f.BoolVar(&o.createProject, "create-project", false, "create the GCP project --gcp-project names and add Firebase to it, as you, after you type its ID at a terminal (never with --yes, --non-interactive or --json). An ID that exists and you can read is adopted; one held by someone else is refused. Billing is not linked unless --link-billing is also given; without it "+d.name+" prints the one gcloud command that links it")
@@ -366,8 +380,29 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.BoolVar(&o.forget, "forget", false, "roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state")
 	f.StringArrayVar(&o.allowDelete, "allow-delete", nil, "a resource address the plan may delete or replace (repeatable)")
 	f.BoolVar(&o.provisionBatch, "provision-batch", false, "after the installation's ordinary steps, provision the Batch compute backend into a state of its own (design docs/design/compute-backend.md §8.1 task 6): the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router, and a preloaded boot image rebuilt on a schedule. It is money (a billable build, a NAT's hours) and permanent, so --yes never covers it and it is typed at a real terminal; nothing runs it by default, and no run can use the backend until the enable task. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor)")
-	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). Never covers creating a project, billing, a secret, an unlisted repository, the Firestore location, a billable first image build or replacing an image tag (typed at a real terminal). Under a coding agent's environment variable (CLAUDECODE and the like) "+d.name+" applies nothing, --yes included (except "+d.name+" --anchor, which only edits the checkout's fugaro.yaml and honours --yes there); that is a mitigation, not a barrier: an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint")
-	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one non-interactive opt-in to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes never covers it, and a coding agent's environment refuses it; any other origin takes the typed confirmation)")
+	// D12's answer of 2026-10-20 (docs/setup-wizard/reconciliation.md §5, and
+	// §5 of docs/coordinator/reconciliation.md): --yes is total over the
+	// ordinary steps a door owns, and the one step that moves between the doors
+	// is the Firestore database's location — covered in `update`, kept typed in
+	// `setup`, the door that asks for it as a first-time question. The door
+	// that takes --forget is `update`.
+	//
+	// Both doors print this one flag set, so both halves of the sentence have
+	// to be the reader's own door: a line naming the other one tells half its
+	// readers to switch commands for nothing
+	// (TestNoDoorsFlagHelpNamesTheOtherDoor).
+	covers := "a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it)"
+	never := "creating a project, linking a billing account, the Firestore database's location, or a secret value"
+	if d.takes("forget") {
+		covers = "the Firestore database's location, " + covers
+		// The location is one of this door's covered steps, so it is not in
+		// this door's never list; the two that cannot arise here at all are
+		// still true of --yes wherever they can (they are the other door's
+		// flags, refused by name here).
+		never = "creating a project, linking a billing account, or a secret value"
+	}
+	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — "+covers+" — and it never covers "+never+": each of those is typed at a real terminal, and no door relaxes them. Under a coding agent's environment variable (CLAUDECODE and the like) "+d.name+" applies nothing, --yes included (except "+d.name+" --anchor, which only edits the checkout's fugaro.yaml and honours --yes there); that is a mitigation, not a barrier: an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint")
+	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes also covers onboarding such a repository, and neither it nor this flag is honoured in a coding agent's session; any other origin takes the typed confirmation)")
 	f.BoolVar(&o.allowFork, "allow-fork", false, "let the plugin-wiring stage move the ref of a fugaro marketplace in .claude/settings.json that names a repository other than dimipaun/fugaro (a fork you host); never done otherwise")
 	// The flags --non-interactive only stops from prompting, worded for this
 	// door: --forget is fugaro update's, and setup's help must not describe
@@ -1421,18 +1456,116 @@ func (r *initRun) typed(prompt string) (bool, error) {
 	}
 }
 
-// askTyped is the confirmation of a step that is money or permanent
-// (initflow.Typed): the project's name typed at a real terminal, never --yes,
-// --non-interactive, --json, a pipe or a coding agent. It shows the banner,
-// and reachable says whether it could be asked at all; when it could not,
-// nothing was asked and the caller leaves the step for the user.
-func (r *initRun) askTyped(what string) (confirmed, reachable bool, err error) {
+// stepClass is the confirmation class of the one money-or-permanent step this
+// door decides differently: the Firestore database's location. It is
+// initflow.Typed in `setup`, which asks for it as a first-time question, and
+// initflow.YesOrTyped in `update`, which meets it as a step of a stage it owns
+// — the owner's answer of 2026-10-20 (reconciliation §5, D12), and the one of
+// the four call sites that moves in one front door rather than two.
+//
+// The other three carry no door: a billable first image build and replacing a
+// registry tag are YesOrTyped in **both** doors (askCovered), and creating the
+// project and linking the billing account are Typed in both, `update` refusing
+// their flags outright, so no class here can reach them (init_project.go).
+//
+// A run with no door is a hand-built options value, a test's: it is `setup`
+// (doorName), and the location stays Typed.
+func (r *initRun) stepClass() initflow.ConfirmClass {
+	if r.o.door == updateDoor.name {
+		return initflow.YesOrTyped
+	}
+	return initflow.Typed
+}
+
+// stepConfirmation is how a money-or-permanent step of this door is confirmed
+// now: nothing here can confirm it, --yes did, or the person types the step's
+// own confirmation.
+type stepConfirmation int
+
+const (
+	stepLeave stepConfirmation = iota // nothing was asked: the caller leaves the step
+	stepByYes                         // --yes confirmed it: show no prompt
+	stepTyped                         // the person types this step's own confirmation
+)
+
+// stepConfirmation says which of the three this run is at, for a step of the
+// class. It is one function because it is one rule: who is there, and then the
+// class. The two are read in this order and not the other way round, so that
+// the class cannot widen what a terminal may do: a person who can type the
+// step's own confirmation types it, whatever the class (canConfirmTyped(Typed)),
+// and only a run that is not such a person — no terminal, a pipe, --json,
+// --non-interactive, a coding agent's session, or --yes — falls through to
+// --yes, which confirms a YesOrTyped step and nothing else. --plan-only is not
+// such a person either and --yes is not given it (r.conditions().Yes), so it
+// applies nothing whatever it is passed.
+func (r *initRun) stepConfirmation(class initflow.ConfirmClass) stepConfirmation {
+	if canConfirmTyped(initflow.Typed, r.conditions()) {
+		return stepTyped
+	}
+	yes := r.conditions()
+	yes.Terminal, yes.NonInteractive, yes.JSON = false, false, false
+	if class == initflow.YesOrTyped && canConfirmTyped(initflow.YesOrTyped, yes) {
+		return stepByYes
+	}
+	return stepLeave
+}
+
+// neverConfirmsBuild is the parenthetical that follows "typed at a real
+// terminal" in the warning a run that could not confirm a billable image build
+// prints: which ways of running do not give that confirmation. It names --yes
+// as the way that does, because D12's answer of 2026-10-20 covers the build in
+// BOTH front doors (askCovered) — a line that told the reader "--yes never
+// confirms it" would name the one flag that does. The steps that stay Typed
+// write their own line, at their own call site, where "--yes never confirms it"
+// is true.
+//
+// agent is the run's own reading of the coding-agent marker, and it is why this
+// is a function: a `--repo` run has no agent gate in front of the build (the
+// converge plans read-only instead, so it never prints this), so an agent's
+// session does reach the warning — and there --yes is the flag that session
+// refuses, so naming it would be a recipe for getting past the check, in text
+// the agent reads (AgentAdvice). The clause is chosen by the marker, as
+// convergeOptIn's is.
+func neverConfirmsBuild(agent bool) string {
+	if agent {
+		return "no terminal, --json, a pipe and a coding agent never confirm it"
+	}
+	return "no terminal, --json, a pipe and a coding agent never confirm it, and --yes does"
+}
+
+// askClass is the confirmation of a step that is money or permanent, of the
+// class: the project's name typed at a real terminal, or --yes for a YesOrTyped
+// step. It shows the banner, and reachable says whether it could be asked at
+// all; when it could not, nothing was asked and the caller leaves the step for
+// the user.
+func (r *initRun) askClass(class initflow.ConfirmClass, what string) (confirmed, reachable bool, err error) {
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
-	if !canConfirmTyped(initflow.Typed, r.conditions()) {
+	switch r.stepConfirmation(class) {
+	case stepLeave:
 		return false, false, nil
+	case stepByYes:
+		fmt.Fprintln(r.w, "  confirmed by --yes")
+		return true, true, nil
 	}
 	ok, err := r.typed("Type " + r.projectName + " to confirm: ")
 	return ok, true, err
+}
+
+// askTyped is askClass for a step that stays Typed in both front doors: the
+// project's name typed at a real terminal, never --yes, --non-interactive,
+// --json, a pipe or a coding agent.
+func (r *initRun) askTyped(what string) (confirmed, reachable bool, err error) {
+	return r.askClass(initflow.Typed, what)
+}
+
+// askCovered is askClass for a step D12's answer of 2026-10-20 covers in BOTH
+// front doors — a billable first image build and replacing a registry tag,
+// where the class is YesOrTyped whatever door the reader is at. The door is
+// not asked: only three things stay typed (creating the project, linking the
+// billing account, and the Firestore location in `setup`), and neither of
+// these is one of them.
+func (r *initRun) askCovered(what string) (confirmed, reachable bool, err error) {
+	return r.askClass(initflow.YesOrTyped, what)
 }
 
 // resourceManagerRetries are the waits between reads of the project's
@@ -1657,6 +1790,13 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		return outs, false, initErr(err)
 	}
 	if !exists {
+		// `update` creates nothing, and a state bucket that is not there is no
+		// installation to re-converge: a first installation is `fugaro setup`'s
+		// (D5, D12). Without this the re-converge would create the bucket and
+		// then the whole installation — the one thing the door exists not to do.
+		if r.o.door == updateDoor.name {
+			return outs, false, noInstallationRefusal(spec.StateBucket)
+		}
 		if err := r.confirmOrdinary(fmt.Sprintf("creates gs://%s in %s with versioning, for Terraform state (cents a month)", spec.StateBucket, spec.Region),
 			"nothing was created or applied", ""); err != nil {
 			return outs, false, err
@@ -1916,6 +2056,17 @@ func (r *initRun) configOnly(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 
 // errNoState is a state bucket that doesn't exist yet.
 var errNoState = errors.New("no state bucket")
+
+// noInstallationRefusal is the one refusal of a run that looked for an
+// installation and found none: the sentence names the state bucket it looked
+// for and the door that makes one. It is one function because it is one fact in
+// two places — `update`'s converge, which would otherwise create the bucket and
+// then the whole installation (installRoot), and the `--repo` engine, which
+// reaches the same state bucket from a checkout — and both name `fugaro setup`,
+// the door a first installation is (D5, D12).
+func noInstallationRefusal(stateBucket string) error {
+	return userErr("there is no Terraform state bucket gs://%s, so no installation: run fugaro setup first", stateBucket)
+}
 
 func (r *initRun) readOutputs(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, spec infra.InstallationSpec) (infra.InstallationOutputs, error) {
 	exists, err := infra.CheckStateBucket(ctx, c, spec.Project, spec.StateBucket)
@@ -2520,7 +2671,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	case err != nil:
 		return initErr(err)
 	case !exists:
-		return userErr("there is no Terraform state bucket gs://%s, so no installation: run fugaro setup first", inst.StateBucket)
+		return noInstallationRefusal(inst.StateBucket)
 	}
 	slug, err := task.Slug(cfg.Git.Provider, repo)
 	if err != nil {
@@ -3208,15 +3359,17 @@ func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *con
 				return built, userErr("%v", err)
 			}
 		}
-		// Billable: the typed confirmation of a real terminal, never --yes
-		// (initflow.Typed). A run that cannot take it leaves the build.
-		ok, reachable, err := r.askTyped(cloudBuildBanner(spec.Name, name, lc.Build.MachineType, spec.BuildServiceAccountEmail, spec.RegistryPath))
+		// Billable: the typed confirmation of a real terminal, or --yes —
+		// covered in both front doors (askCovered: D12's answer of 2026-10-20
+		// keeps only three steps typed, and this is not one of them). A run
+		// that cannot take it leaves the build.
+		ok, reachable, err := r.askCovered(cloudBuildBanner(spec.Name, name, lc.Build.MachineType, spec.BuildServiceAccountEmail, spec.RegistryPath))
 		if err != nil {
 			return built, err
 		}
 		if !reachable {
 			r.buildsLeft = append(r.buildsLeft, name)
-			r.warn(fmt.Sprintf("the first image build of %s/%s is billable and was not confirmed: it needs the project's name typed at a real terminal (--yes, --non-interactive, --json, a pipe and a coding agent never confirm it), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks for the project's name too), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
+			r.warn(fmt.Sprintf("the first image build of %s/%s is billable and was not confirmed: it needs the project's name typed at a real terminal ("+neverConfirmsBuild(r.conditions().Agent != "")+"), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks for the project's name too), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
 			continue
 		}
 		if !ok {

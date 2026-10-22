@@ -38,6 +38,13 @@ func conditions() []condition {
 	}
 }
 
+// withDoor is the same condition at the other front door: the door is the only
+// thing that differs, and it is what a step's confirmation class may case on.
+func (c condition) withDoor(door string) condition {
+	c.opts.door = door
+	return c
+}
+
 func (c condition) run(t *testing.T, stdin string) (*initRun, *readSpy, *strings.Builder) {
 	t.Helper()
 	canConfirmTyped = initflow.CanConfirm // the real rule, whatever a rig set
@@ -57,32 +64,52 @@ func (c condition) run(t *testing.T, stdin string) (*initRun, *readSpy, *strings
 	return r, spy, out
 }
 
-// The Firestore location is permanent: only a person typing it at a real
-// terminal confirms it. Every other condition leaves it needs-you, reads no
-// stdin, and never suggests --yes.
+// TestTypedOnlyFirestoreLocationMatrix: the Firestore location is permanent,
+// and it is the ONE step W5.1 changes in a single door (D12's answer of
+// 2026-10-20): `setup` keeps it Typed — only a person typing a real terminal's
+// answer confirms it there — and `update --yes` covers it, because a
+// re-converge of a database that already exists is not a first-time decision.
+// The three steps the answer never relaxes, in either door, are creating the
+// project and linking the billing account (which `update` refuses by flag, so
+// they cannot arise here at all) and this location in `setup`.
 func TestTypedOnlyFirestoreLocationMatrix(t *testing.T) {
-	for _, c := range conditions() {
-		t.Run(c.name, func(t *testing.T) {
-			r, spy, out := c.run(t, infra.FirestoreLocation+"\n")
-			err := r.confirmLocation()
-			can := c.terminal && c.agent == "" && !c.opts.yes && !c.opts.nonInteractive && !c.opts.asJSON
-			if can {
-				if err != nil || !spy.read {
-					t.Fatalf("a person at a terminal could not confirm: %v", err)
+	for _, door := range []string{setupDoor.name, updateDoor.name} {
+		for _, c := range conditions() {
+			t.Run(door+" "+c.name, func(t *testing.T) {
+				c := c.withDoor(door)
+				r, spy, out := c.run(t, infra.FirestoreLocation+"\n")
+				err := r.confirmLocation()
+				// Typed in setup, and the ordinary covered class in update: the
+				// same call site, and the class is the door's (D12).
+				class := initflow.Typed
+				if door == updateDoor.name {
+					class = initflow.YesOrTyped
 				}
-				return
-			}
-			var ny *initflow.NeedsYouError
-			if err == nil || !asNeedsYou(err, &ny) || spy.read {
-				t.Fatalf("err %v, stdin read %v: confirmed, or read, without a person typing", err, spy.read)
-			}
-			if strings.Contains(err.Error()+out.String()+strings.Join(ny.Left.Commands, " "), "--yes") {
-				t.Errorf("the refusal suggests --yes: %v / %v", err, ny.Left)
-			}
-			if len(ny.Left.Commands) != 1 || strings.Contains(ny.Left.Commands[0], "\n") || !strings.Contains(ny.Left.Commands[0], "--firebase-project aurora-fp") {
-				t.Errorf("the typed route is not the one-line command: %+v", ny.Left)
-			}
-		})
+				can := canConfirmStep(class, r.conditions())
+				if can {
+					if err != nil {
+						t.Fatalf("the location was not confirmed: %v", err)
+					}
+					if typed := !c.opts.yes; typed != spy.read {
+						t.Fatalf("typed %v, stdin read %v: not the route this condition has", typed, spy.read)
+					}
+					if c.opts.yes && !strings.Contains(out.String(), "confirmed by --yes") {
+						t.Errorf("update --yes confirmed the location without saying so:\n%s", out)
+					}
+					return
+				}
+				var ny *initflow.NeedsYouError
+				if err == nil || !asNeedsYou(err, &ny) || spy.read {
+					t.Fatalf("err %v, stdin read %v: confirmed, or read, without a confirmation", err, spy.read)
+				}
+				if strings.Contains(err.Error()+out.String()+strings.Join(ny.Left.Commands, " "), "--yes") {
+					t.Errorf("the refusal suggests --yes: %v / %v", err, ny.Left)
+				}
+				if len(ny.Left.Commands) != 1 || strings.Contains(ny.Left.Commands[0], "\n") || !strings.Contains(ny.Left.Commands[0], "--firebase-project aurora-fp") {
+					t.Errorf("the typed route is not the one-line command: %+v", ny.Left)
+				}
+			})
+		}
 	}
 }
 
@@ -101,23 +128,32 @@ func asNeedsYou(err error, target **initflow.NeedsYouError) bool {
 	return false
 }
 
-// The billable first image build is typed-only too, and a run that cannot
-// take it leaves the build (and is needs-you at the end), never builds.
+// TestTypedOnlyImageBuildMatrix: the billable first image build under every
+// condition. W5.1 moves it out of the Typed class — D12's answer of 2026-10-20
+// makes it an ordinary covered row of BOTH front doors, so `--yes` takes it
+// here and in `setup` alike — and the name stays the one the image-refresh plan
+// records for this matrix. What does not change is the direction of the
+// mistake: a coding agent's environment, --json, --non-interactive and a run
+// with no terminal at all never confirm it, and a run that cannot take it
+// leaves the build (and is needs-you at the end), never builds.
 func TestTypedOnlyImageBuildMatrix(t *testing.T) {
 	for _, c := range conditions() {
 		t.Run(c.name, func(t *testing.T) {
 			fb := gcpfake.NewBuild(t)
-			r, spy, _ := c.run(t, initProjectName+"\n")
+			r, spy, out := c.run(t, initProjectName+"\n")
 			lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5",
 				BaseImages: map[string]string{"base": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3"},
 				Endpoints:  localcfg.Endpoints{CloudBuild: fb.URL + "/", NoAuth: true}}
 			cfg := &config.Config{Workflows: map[string]config.Workflow{"app": {}}}
 			spec := infra.RepoSpec{Name: initProjectName, BuildServiceAccountEmail: "b@x.iam", RegistryPath: "r"}
 			built, err := r.buildImages(t.Context(), lc, cfg, spec, []string{"app"})
-			can := c.terminal && c.agent == "" && !c.opts.yes && !c.opts.nonInteractive && !c.opts.asJSON
+			// YesOrTyped, exactly: --yes takes it, a real terminal types it
+			// with no --non-interactive and no --json, and a coding agent's
+			// environment takes it from neither.
+			can := canConfirmStep(initflow.YesOrTyped, r.conditions())
 			for _, rq := range fb.Requests() {
 				if rq.Method == "POST" {
-					t.Fatalf("a build was submitted without a person typing: %s", rq.Path)
+					t.Fatalf("a build was submitted without a confirmation: %s", rq.Path)
 				}
 			}
 			if built != 0 {
@@ -125,13 +161,20 @@ func TestTypedOnlyImageBuildMatrix(t *testing.T) {
 			}
 			if can {
 				// Confirmed: the run went on to build, and stopped at the
-				// (deliberately incomplete) spec, after the confirmation.
-				if err == nil || !strings.Contains(err.Error(), "no workflow") || !spy.read {
-					t.Fatalf("err %v, read %v: the typed confirmation was not taken", err, spy.read)
+				// (deliberately incomplete) spec, after the confirmation. Only
+				// the typed route reads stdin; --yes confirms without asking.
+				if err == nil || !strings.Contains(err.Error(), "no workflow") {
+					t.Fatalf("err %v: the confirmation was not taken", err)
+				}
+				if typed, read := c.terminal && !c.opts.yes, spy.read; typed != read {
+					t.Fatalf("typed %v, stdin read %v", typed, read)
+				}
+				if c.opts.yes && !strings.Contains(out.String(), "confirmed by --yes") {
+					t.Errorf("--yes confirmed the build without saying so:\n%s", out)
 				}
 				return
 			}
-			if err != nil || spy.read || len(r.buildsLeft) != 1 {
+			if err != nil || len(r.buildsLeft) != 1 {
 				t.Fatalf("err %v, read %v, left %v", err, spy.read, r.buildsLeft)
 			}
 			if w := strings.Join(r.res.Warnings, "\n"); !strings.Contains(w, "billable") || strings.Contains(w, "pass --yes") {
