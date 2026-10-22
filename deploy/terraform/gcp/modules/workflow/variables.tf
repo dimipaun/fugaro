@@ -139,10 +139,11 @@ variable "runs_bucket" {
 }
 
 variable "credentials_service" {
-  description = "The installation's credentials service (D146, D147): its Cloud Run service name and region, or null while the installation has not opted in. Null is what keeps the job's model-secret accessors and creates no invoker grant; set, it is what drops them (the service holds those credentials) and grants the job's account roles/run.invoker on it (D135)."
+  description = "The installation's credentials service (D146, D147): its Cloud Run service name, region and URL, or null while the installation has not opted in. Null is what keeps the job's model-secret accessors and creates no invoker grant; set, it is what drops them (the service holds those credentials) and grants the job's account roles/run.invoker on it (D135). The URL (the installation root's google_cloud_run_v2_service.uri) is not read here — it is the job's FUGARO_CREDENTIALS_SERVICE_URL, which the spec puts in var.workflow.env — but a service without one is refused, because an opted-in job whose environment names no service has no credential left to reach (C1.15, C2.2)."
   type = object({
     name   = string
     region = string
+    url    = optional(string)
   })
   default = null
 
@@ -152,6 +153,11 @@ variable "credentials_service" {
       can(regex("^[a-z]+-[a-z]+[0-9]+$", var.credentials_service.region))
     )
     error_message = "credentials_service needs a Cloud Run service name and a region such as us-east5."
+  }
+
+  validation {
+    condition     = var.credentials_service == null ? true : can(regex("^https://[^ ]+$", var.credentials_service.url))
+    error_message = "credentials_service needs the service's Cloud Run URL (its google_cloud_run_v2_service.uri, https://...): an opted-in job mounts no model credential and no App key, and FUGARO_CREDENTIALS_SERVICE_URL is the only way its run has to one (C1.15, C2.2)."
   }
 }
 

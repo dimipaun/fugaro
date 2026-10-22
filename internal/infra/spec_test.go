@@ -1996,8 +1996,37 @@ func repoRootCredentialsAPIKeyInputs(t *testing.T) Inputs {
 	t.Helper()
 	in := repoRootInputs(t, `agent: { auth: api-key }`)
 	in.LC = parseLC(t, repoRootAPIKeyLC)
-	in.Installation.CredentialsService = &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+	in.Installation.CredentialsService = &CredentialsService{Name: "fugaro-credentials", Region: "us-east5", URL: credentialsServiceURL}
 	return in
+}
+
+// TestRepoRefusesAnOptedInServiceWithoutAURL is the other side of the wiring
+// TestTheOptInPutsTheServiceURLOnTheJob pins, and the reason it is a REFUSAL
+// rather than a fallback: an installation that opted in before the URL was an
+// output has credentials_service {name, region} in its outputs and no url, and
+// a spec built from it would drop every opt-in job's App key and model mounts
+// (C1.20, C2.3) while its environment named no service at all — the run would
+// read a key it no longer has (appKey()'s refusal) with no way to reach the
+// one that holds it. Refusing is what the missing tag_mover role does to the
+// same installation (internal/cli's installationOutputs), and the remedy is
+// the same: run fugaro init, which re-applies the installation root and writes
+// the field.
+func TestRepoRefusesAnOptedInServiceWithoutAURL(t *testing.T) {
+	in := repoRootInputs(t, repoRootOAuthAgent)
+	in.Installation.CredentialsService = &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+	_, err := Repo(in)
+	if err == nil {
+		t.Fatal("a spec whose credentials service has no URL was accepted: its jobs would mount no model credential and no App key, and name no service to ask (F1)")
+	}
+	if !strings.Contains(err.Error(), "url") {
+		t.Errorf("the refusal does not name the missing field: %v", err)
+	}
+	// And with the URL in place the same inputs build: the refusal is the
+	// field's absence and not the opt-in itself.
+	in.Installation.CredentialsService.URL = credentialsServiceURL
+	if _, err := Repo(in); err != nil {
+		t.Errorf("the same spec with the service's URL was refused: %v", err)
+	}
 }
 
 // repoRootSpec is the golden fixture's spec for the agent block given.
@@ -2174,7 +2203,7 @@ func repoRootFixtureSpec(t *testing.T, name string) RepoSpec {
 	}
 	in := repoRootInputs(t, f.agent)
 	if f.credentialsService {
-		in.Installation.CredentialsService = &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+		in.Installation.CredentialsService = credentialsService()
 	}
 	rs, err := Repo(in)
 	if err != nil {
@@ -2291,16 +2320,17 @@ func TestRepoAddressesMatchTheCredentialsGolden(t *testing.T) {
 // Anthropic key and a provider's key. The build account's own accessor on the
 // App key is not the job's and does not move (D148, F3).
 //
-// The App key's rows are the gated half (review finding F1, 2026-10-21): with
-// the runner still reading the key — this branch, config.ServiceHeldSecretNames
-// empty — the opt-in takes only the model accessors away, because a job whose
-// account lost its accessor on a key its container still mounted is a job Cloud
-// Run refuses to create; and with the name in that list (the state C2.2's
-// release puts the tree in) the App key's accessor goes with them. Both states
-// are asserted against the same Run: the mirror and the module are held to each
-// other by deploy/terraform's TestServiceHeldSecretsMatchTheCredentialsService,
-// so a module that dropped the accessor while the list was empty would be a
-// plan Go's own address list disagrees with.
+// The App key's rows are the gated half (review finding F1, 2026-10-21): now
+// that C2.2's release is in this tree — the runner fetches the run's
+// installation tokens from the service, and config.ServiceHeldSecretNames names
+// the key — the App key's accessor goes with the model ones. Before that
+// release the opt-in had to take only the model accessors away, because a job
+// whose account lost its accessor on a key its container still mounted is a job
+// Cloud Run refuses to create; the accessor and the mount now move in the same
+// plan. The mirror and the module are held to each other by deploy/terraform's
+// TestServiceHeldSecretsMatchTheCredentialsService, so a module that dropped
+// the accessor while the list was empty would be a plan Go's own address list
+// disagrees with.
 //
 // It then runs the same two address lists through Retirements, both
 // directions, because that is what the drop is FOR: the state an installation
@@ -2310,7 +2340,7 @@ func TestRepoAddressesMatchTheCredentialsGolden(t *testing.T) {
 // branch disabled every test stayed green (independent security review of the
 // implementation, m2), which is what this pins.
 func TestRepoAddressesDropServiceHeldSecretsWhenTheServiceIsOn(t *testing.T) {
-	svc := &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+	svc := credentialsService()
 	appKey := func(workflows ...string) []string {
 		var out []string
 		for _, key := range workflows {
@@ -2428,13 +2458,10 @@ func TestRepoAddressesDropServiceHeldSecretsWhenTheServiceIsOn(t *testing.T) {
 				}
 			}
 
-			// This branch: the job reads the App key, so the opt-in takes only
-			// the model accessors away and the App key's stays (F1).
-			check("the job reads the key", tc.wantGone, tc.wantAdd)
-			// C2.2's release: the App key joins the list and its accessor goes
-			// with the model ones, in the same plan.
-			serviceHoldsTheAppKey(t)
-			check("C2.2's release", slices.Concat(tc.wantGone, tc.wantAppKey), tc.wantAdd)
+			// The App key's accessor goes with the model ones, in the same
+			// plan: C2.2's release is in this tree, so the job reads no key and
+			// gives that accessor up too (F1).
+			check("the service holds the App key", slices.Concat(tc.wantGone, tc.wantAppKey), tc.wantAdd)
 		})
 	}
 }
@@ -2467,7 +2494,7 @@ func TestRepoAddressesDropServiceHeldSecretsWhenTheServiceIsOn(t *testing.T) {
 // service-on spec mounts the model credentials exactly like the service-off
 // one, and every clause below fails.
 func TestNoModelMountsWithService(t *testing.T) {
-	svc := &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+	svc := credentialsService()
 	for _, tc := range []struct {
 		name string
 		in   Inputs

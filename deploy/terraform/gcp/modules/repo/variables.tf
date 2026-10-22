@@ -48,12 +48,15 @@ variable "installation" {
     launchers = list(string)
     operators = list(string)
     # The installation's credentials service (D146, D147), absent while it has
-    # not opted in: its Cloud Run service name and region, which the workflow
-    # module turns into each job account's roles/run.invoker grant and into the
-    # drop of that job's model-secret accessors.
+    # not opted in: its Cloud Run service name, region and URL, which the
+    # workflow module turns into each job account's roles/run.invoker grant,
+    # into the drop of that job's model-secret accessors, and into the job's
+    # own FUGARO_CREDENTIALS_SERVICE_URL (the spec carries that one in
+    # var.workflow.env; C1.15, C2.2).
     credentials_service = optional(object({
       name   = string
       region = string
+      url    = optional(string)
     }))
   })
 

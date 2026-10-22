@@ -82,10 +82,11 @@ output "history_job" {
 }
 
 output "credentials_service" {
-  description = "The credentials service's Cloud Run service name and region, or null while the installation has not opted in (D147). A repository root grants each job account roles/run.invoker on it from these, and drops the job's model-secret accessors with it."
+  description = "The credentials service's Cloud Run service name, region and URL, or null while the installation has not opted in (D147). A repository root grants each job account roles/run.invoker on it from these, drops the job's model-secret accessors with it, and gives each job the URL as FUGARO_CREDENTIALS_SERVICE_URL — the variable a run reads to ask the service instead of reading a credential out of its own environment (C1.15, C2.2)."
   value = var.credentials_service == null ? null : {
     name   = google_cloud_run_v2_service.credentials[0].name
     region = var.region
+    url    = google_cloud_run_v2_service.credentials[0].uri
   }
 }
 

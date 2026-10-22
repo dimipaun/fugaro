@@ -457,27 +457,26 @@ func TestIsModelSecretEnv(t *testing.T) {
 	}
 }
 
-// TestServiceHeldSecretNamesAreEmptyUntilTheJobGivesTheAppKeyUp pins the value
-// of the switch C2.3 turns (review finding F1, 2026-10-21): the list is empty
-// on this branch, and the GitHub App's private key is the one name that belongs
-// in it.
+// TestServiceHeldSecretNamesAreTheAppKeyAndNothingElse pins the value of the
+// switch C2.3 turns, now that C2.2's release is in this tree: the list names
+// the GitHub App's private key, and only it.
 //
-// Empty, because the job still reads the key: C2.1 gives the service the key
-// and C2.2 is what makes the runner fetch the run's installation tokens instead
-// of reading FUGARO_GITHUB_APP_PRIVATE_KEY. With the name in the list before
-// that, the job loses its accessor (modules/workflow/sa.tf) while its container
-// still mounts the key (job.tf) — a job Cloud Run refuses to create, which
-// fails every GitHub run of an installation that opted in.
+// Filled, because the job no longer reads the key: C2.1 gives the service the
+// key and C2.2 is what makes the runner fetch the run's installation tokens
+// instead of reading FUGARO_GITHUB_APP_PRIVATE_KEY (internal/gitprov's github
+// provider). While the job still read the key, the name here would have taken
+// the job's accessor away (modules/workflow/sa.tf) while its container still
+// mounted the key (job.tf) — a job Cloud Run refuses to create, which fails
+// every GitHub run of an installation that opted in (review finding F1,
+// 2026-10-21). With C2.2 in the tree the accessor and the mount go together,
+// and this one name is what turns both on.
 //
-// The mutation is the list, in either direction: filled early it is that break,
-// and emptied after C2.2 lands it leaves the job's accessor on a key the
-// service holds. When C2.2 lands this test becomes what it was: exactly one
-// entry, the reserved name of the App key and not a second spelling of it — a
-// rename of the reserved key that left this list behind would drop the accessor
-// of a name no job mounts while the renamed one kept it.
-func TestServiceHeldSecretNamesAreEmptyUntilTheJobGivesTheAppKeyUp(t *testing.T) {
-	if len(ServiceHeldSecretNames) != 0 {
-		t.Fatalf("ServiceHeldSecretNames = %v, want none: the job gives the GitHub App's private key up in C2.2's release, with the runner's fetch, never before (review finding F1)", ServiceHeldSecretNames)
+// The mutation is the list, in either direction: emptied, the job keeps its
+// accessor on a key the service holds, and a second spelling added drops the
+// accessor of a name no job mounts while the reserved one keeps its grant.
+func TestServiceHeldSecretNamesAreTheAppKeyAndNothingElse(t *testing.T) {
+	if len(ServiceHeldSecretNames) != 1 || ServiceHeldSecretNames[0] != GitHubAppKeySecret {
+		t.Fatalf("ServiceHeldSecretNames = %v, want exactly [%s]: C2.2's release, with the runner's fetch of the run's installation tokens, is what lets the job give the App key up (review finding F1)", ServiceHeldSecretNames, GitHubAppKeySecret)
 	}
 	env, ok := ReservedSecrets[GitHubAppKeySecret]
 	if !ok {
@@ -495,15 +494,13 @@ func TestServiceHeldSecretNamesAreEmptyUntilTheJobGivesTheAppKeyUp(t *testing.T)
 // internal/infra's mirror repeats, so a clause lost here is an accessor a job
 // keeps on a credential the service was to hold.
 //
-// The GitHub App's private key is in the second half and the list is empty on
-// this branch (review finding F1), so its rows are false here and true in the
-// subtest that fills the list — the state C2.2's release puts the tree in. Both
-// are asserted: the shipped value is what an opted-in installation lives with
-// today, and the filled one is what the flip must produce.
+// The GitHub App's private key is in the second half: C2.2's release fills the
+// list with its name, so its rows are true here — an opted-in installation's
+// job keeps no accessor on the key (review finding F1).
 //
-// The mutations are the two clauses: dropping the name clause leaves a filled
-// list's names with the job (C2.3's whole point), and dropping the model clause
-// leaves the model credentials with it (C1.18's). The Bitbucket token and a
+// The mutations are the two clauses: dropping the name clause leaves the App
+// key with the job (C2.3's whole point), and dropping the model clause leaves
+// the model credentials with it (C1.18's). The Bitbucket token and a
 // workflow's own secret must stay false either way (D145).
 func TestIsServiceHeldSecretEnv(t *testing.T) {
 	for _, tc := range []struct {
@@ -515,9 +512,15 @@ func TestIsServiceHeldSecretEnv(t *testing.T) {
 		{"ANTHROPIC_API_KEY", AnthropicSecret, true},
 		{ProviderKeyEnv("openrouter-api-key"), "openrouter-api-key", true},
 		{ProviderKeyEnvPrefix + "OPENROUTER_API_KEY", "some-provider-key", true},
-		// The GitHub App's private key, by name: not until C2.2's release fills
-		// the list — the job keeps the accessor it needs to read the key.
-		{"FUGARO_GITHUB_APP_PRIVATE_KEY", GitHubAppKeySecret, false},
+		// The GitHub App's private key, by its logical name: the service holds
+		// it, so the job's account keeps no accessor on it (C2.2's release,
+		// C2.3).
+		{"FUGARO_GITHUB_APP_PRIVATE_KEY", GitHubAppKeySecret, true},
+		// The name decides, whatever variable the entry carries (no workflow
+		// can mount a reserved name under a variable of its own —
+		// config.ReservedEnv refuses every FUGARO_ variable — so the two always
+		// agree in a real spec, and the mirror's rule is the name's).
+		{"NPM_TOKEN", GitHubAppKeySecret, true},
 		// D145's exceptions: Bitbucket's token and a workflow's own secret
 		// keep the job's accessor, whatever they are mounted as.
 		{"FUGARO_BITBUCKET_TOKEN", BitbucketSecret, false},
@@ -528,28 +531,6 @@ func TestIsServiceHeldSecretEnv(t *testing.T) {
 	} {
 		if got := IsServiceHeldSecretEnv(tc.env, tc.name); got != tc.want {
 			t.Errorf("IsServiceHeldSecretEnv(%q, %q) = %v, want %v", tc.env, tc.name, got, tc.want)
-		}
-	}
-
-	// C2.2's release, simulated: the App key joins the list and the name clause
-	// decides on its own, whatever variable the entry carries (no workflow can
-	// mount a reserved name under a variable of its own — config.ReservedEnv
-	// refuses every FUGARO_ variable — so the two always agree in a real spec,
-	// and the mirror's rule is the name's).
-	ServiceHeldSecretNames = []string{GitHubAppKeySecret}
-	t.Cleanup(func() { ServiceHeldSecretNames = []string{} })
-	for _, tc := range []struct {
-		env, name string
-		want      bool
-	}{
-		{"FUGARO_GITHUB_APP_PRIVATE_KEY", GitHubAppKeySecret, true},
-		{"NPM_TOKEN", GitHubAppKeySecret, true},
-		// A filled list still says nothing about the other credentials.
-		{"NPM_TOKEN", "npm-token", false},
-		{"FUGARO_BITBUCKET_TOKEN", BitbucketSecret, false},
-	} {
-		if got := IsServiceHeldSecretEnv(tc.env, tc.name); got != tc.want {
-			t.Errorf("with the App key in ServiceHeldSecretNames: IsServiceHeldSecretEnv(%q, %q) = %v, want %v", tc.env, tc.name, got, tc.want)
 		}
 	}
 }

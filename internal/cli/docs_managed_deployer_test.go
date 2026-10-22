@@ -286,10 +286,13 @@ func TestChecklistHasCheck68(t *testing.T) {
 	}
 	// The workdir and its backend, which is where the gate variable lives and
 	// where the plan is made. The checkout's root has neither a tfvars file nor a
-	// backend block, so a check that plans there cannot run at all.
+	// backend block, so a check that plans there cannot run at all. The workdir
+	// is keyed by the GCP PROJECT id, not by the installation name
+	// (infra.InstallationWorkdir, internal/infra/workdir.go), so the path below
+	// carries $P and not $I.
 	for _, want := range []string{
 		`XDG_STATE_HOME:-$HOME/.local/state`,
-		`/fugaro/terraform/${I:?}/installation`,
+		`/fugaro/terraform/${P:?}/installation`,
 		`TF_DATA_DIR="$W/.terraform" TF_CLI_CONFIG_FILE="$W/terraformrc"`,
 		`-backend-config=bucket="${STATE_BUCKET:?}"`,
 		"-backend-config=prefix=fugaro/installation",

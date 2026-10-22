@@ -1010,6 +1010,11 @@ func TestCredsLsRefusesAnUnreadableBundle(t *testing.T) {
 // to rewrite) and a server that repeats its request body hands the whole thing
 // back. Both echoes are the real bytes: the fake repeats the payload it
 // received, so nothing here is a guess at what the command sends.
+//
+// The App key is the case the single-line fixture values cannot reach: its
+// value is a multi-line PEM (credsvc's github-app-key), so a leak is a leak of
+// one line, and the scan for it is line by line rather than window by window
+// (assertNoPEMLine says why).
 func TestCredsCommandsNeverLogAValue(t *testing.T) {
 	f := credsFixtureFor(t)
 	value := credsValue(t, "echoed")
@@ -1061,6 +1066,42 @@ func TestCredsCommandsNeverLogAValue(t *testing.T) {
 		t.Fatal("a bundle holding a value as a key was listed")
 	}
 	assertNoValue(t, out+errOut+err.Error(), value)
+
+	// The App key's answer: it is the one entry whose value is many lines
+	// (credsvc's github-app-key, the PEM the mint signs with), so the leak
+	// this guards against comes a line at a time. The write is refused, its
+	// server echoes the whole payload back — the document, which now holds
+	// the key — and no line of the key may reach the terminal, the error, or
+	// the redactor's blind spot.
+	f.seed(t, []byte(config.ClaudeOAuthToken+": "+value+"\n"))
+	key := appKeyPEM(t)
+	f.EchoAddVersionPayload = true
+	out, errOut, err = executeStdin(t, key, "creds", "set", config.GitHubAppKeySecret)
+	if err == nil {
+		t.Fatal("a refused write of the App key succeeded")
+	}
+	if !strings.Contains(err.Error(), "the payload was") {
+		t.Fatalf("the fake's echo did not reach the error, so this proves nothing: %v", err)
+	}
+	assertNoPEMLine(t, out+errOut+err.Error(), key)
+	assertRedacted(t, out+errOut+err.Error(), key)
+}
+
+// assertNoPEMLine fails if any line of a multi-line PEM value appears in s, or
+// its shape marker. It is the App key's own scan: assertNoValue's every-window
+// check is useless on a base64 body (lower-case letters make its windows
+// collide with ordinary prose), while a whole base64 line of a 2048-bit key is
+// 64 bytes and does not.
+func assertNoPEMLine(t *testing.T, s, value string) {
+	t.Helper()
+	for _, line := range strings.Split(strings.TrimSuffix(value, "\n"), "\n") {
+		if strings.Contains(s, line) {
+			t.Fatalf("a line of the App key leaked (%d bytes): %q", len(line), s)
+		}
+	}
+	if strings.Contains(s, "PRIVATE KEY") {
+		t.Fatalf("the App key's shape leaked: %q", s)
+	}
 }
 
 // assertRedacted fails if s still carries a secret the way the production

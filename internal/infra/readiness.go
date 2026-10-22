@@ -244,14 +244,13 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 		// the job is one Cloud Run refuses to create, and every run of that
 		// installation fails. The grant and the mount go together, always.
 		//
-		// Which names those are is config.ServiceHeldSecretNames, and it is
-		// empty on this branch: the GitHub App's private key joins it in the
-		// release that also stops the job READING the key (C2.2, the runner's
-		// fetch of the run's installation tokens from the service). Until then
-		// the job keeps both its accessor and its mount, and a GitHub run of an
-		// installation that opted in works exactly as it did before — which is
-		// what the flip's absence has to mean, since C2.1's mint and C2.2's
-		// fetch are not in this tree yet.
+		// Which names those are is config.ServiceHeldSecretNames, and it names
+		// the GitHub App's private key: C2.2's release stops the job READING it
+		// (the runner fetches the run's installation tokens from the service),
+		// so the opt-in now takes the mount away, in the same plan as the
+		// accessor. Before C2.2 the list was empty and the job kept both, since
+		// a job whose account has no accessor on a key its container still
+		// mounts is a job Cloud Run refuses to create (review finding F1).
 		//
 		// It is dropped HERE rather than where the pre-readiness spec builds
 		// its mounts, and that is the whole point of the placement: the App
