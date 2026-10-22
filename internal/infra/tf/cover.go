@@ -671,12 +671,20 @@ var knownCommands = [][2][]string{
 
 // credentialsServiceEnv are the only environment variables the credentials
 // service's container sets (installation/credentials.tf): the project it
-// serves, the project it reads the bundle in, and the region — no secret ID
-// and no value, because the loader derives the container from the project
-// name and reads it as the service's own account. The case below is an
+// serves, the project it reads the bundle in, the region, the database and
+// Firebase project it reads runs from, its own URL (the audience its callers'
+// ID tokens are minted for) and the installation's per-repository jobs as a
+// JSON array of {provider, repo, workflow} triples — no secret ID and no
+// secret value, because the loader derives the container from the project
+// name and reads it as the service's own account, and the job accounts are
+// derived from the triples rather than carried. The case below is an
 // allowlist of these, so an environment that hands this process anything else
 // is not covered; TestAllowedTypesCoverTheModules keeps the two lists in step.
-var credentialsServiceEnv = []string{"FUGARO_PROJECT", "FUGARO_GCP_PROJECT", "FUGARO_REGION"}
+var credentialsServiceEnv = []string{
+	"FUGARO_PROJECT", "FUGARO_GCP_PROJECT", "FUGARO_REGION",
+	"FUGARO_RTDB_URL", "FUGARO_FIREBASE_PROJECT",
+	"FUGARO_CREDENTIALS_SERVICE_URL", "FUGARO_JOB_ACCOUNTS",
+}
 
 // APITargets are the two services the Firebase web key may call, sorted;
 // a fresh slice each call, so no caller can change the rule.
@@ -1906,7 +1914,7 @@ func (c Cover) attributes(rc ResourceChange, creates, createdSAIDs, heldSAIDs ma
 				// like) carries the module's name and a value the module never
 				// set, which is exactly the path a credential reaches this
 				// process without a Secret Manager read. The module sets a
-				// literal for each of the three and nothing else.
+				// literal for each of the seven and nothing else.
 				//
 				// The test is the block's contents, not the key's presence.
 				// `value_source` is a nested block of list nesting mode, and
@@ -1914,10 +1922,10 @@ func (c Cover) attributes(rc ResourceChange, creates, createdSAIDs, heldSAIDs ma
 				// omitting it: every env entry of a plan the module writes
 				// carries `"value_source": []` (testdata/golden/*.plan.json),
 				// so a nil test on the interface refuses the module's own
-				// three literals. objects([]any{}) is nil, so this admits that
+				// literals. objects([]any{}) is nil, so this admits that
 				// shape and still refuses a real secret_key_ref.
 				if refs := objects(e["value_source"]); len(refs) > 0 {
-					return "an environment variable whose value comes from a source rather than the module: this service's environment is the module's three names and nothing else"
+					return "an environment variable whose value comes from a source rather than the module: this service's environment is the module's own names and nothing else"
 				}
 			}
 		}

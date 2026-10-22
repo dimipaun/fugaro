@@ -393,11 +393,15 @@ func TestAllowedTypesCoverTheModules(tt *testing.T) {
 		"modules/firebase/firebase.tf":    {`identitytoolkit.googleapis.com`, `securetoken.googleapis.com`},
 		"modules/installation/budget.tf":  {`billing_account = var.budget.billing_account`},
 		// The credentials service's own literals, which its case in cover.go
-		// reads: the IAM setting it requires and the three environment
-		// variables credentialsServiceEnv allows. A module edit that renames
-		// or drops one fails here rather than refusing a plan the module
-		// still writes.
-		"modules/installation/credentials.tf": {`invoker_iam_disabled = false`, `"FUGARO_PROJECT"`, `"FUGARO_GCP_PROJECT"`, `"FUGARO_REGION"`,
+		// reads: the IAM setting it requires and the seven environment
+		// variables credentialsServiceEnv allows — the service's whole
+		// configuration (C1.14), which is the module's and not the plan's. A
+		// module edit that renames or drops one fails here rather than
+		// refusing a plan the module still writes.
+		"modules/installation/credentials.tf": {`invoker_iam_disabled = false`,
+			`"FUGARO_PROJECT"`, `"FUGARO_GCP_PROJECT"`, `"FUGARO_REGION"`,
+			`"FUGARO_RTDB_URL"`, `"FUGARO_FIREBASE_PROJECT"`,
+			`"FUGARO_CREDENTIALS_SERVICE_URL"`, `"FUGARO_JOB_ACCOUNTS"`,
 			// The account its template names, which the case reads back as the
 			// account this plan creates (serviceAccount): a module edit that
 			// points the service at another identity fails here rather than
@@ -822,7 +826,7 @@ func credentialsSibling(id string, acts ...string) ResourceChange {
 
 // service is the credentials service as modules/installation/credentials.tf
 // writes it: one container at template[0].containers[0] — one `template` level
-// fewer than a job's — with image as the container's image, the module's three
+// fewer than a job's — with image as the container's image, the module's seven
 // environment variables, the account the module creates for it, and the IAM
 // check stated rather than implied.
 //
@@ -831,14 +835,18 @@ func credentialsSibling(id string, acts ...string) ResourceChange {
 // the key is present with an empty list, not absent or null (see
 // testdata/golden/*.plan.json, where every literal env entry of every plan has
 // exactly this shape). A fixture without it is a plan the module cannot
-// produce, and it hid a cover case that refused all three of these literals —
-// the rows below are what catch that, so the shape is held here rather than
+// produce, and it hid a cover case that refused these literals — the rows
+// below are what catch that, so the shape is held here rather than
 // simplified away.
 func service(image string) ResourceChange {
 	c := map[string]any{"image": image, "env": []any{
 		map[string]any{"name": "FUGARO_PROJECT", "value": "aurora", "value_source": []any{}},
 		map[string]any{"name": "FUGARO_GCP_PROJECT", "value": "proj-1", "value_source": []any{}},
 		map[string]any{"name": "FUGARO_REGION", "value": "us-east5", "value_source": []any{}},
+		map[string]any{"name": "FUGARO_RTDB_URL", "value": "https://aurora-default-rtdb.firebaseio.com", "value_source": []any{}},
+		map[string]any{"name": "FUGARO_FIREBASE_PROJECT", "value": "aurora-fp", "value_source": []any{}},
+		map[string]any{"name": "FUGARO_CREDENTIALS_SERVICE_URL", "value": "https://fugaro-credentials-123456789012.us-east5.run.app", "value_source": []any{}},
+		map[string]any{"name": "FUGARO_JOB_ACCOUNTS", "value": `[{"provider":"github","repo":"acme/webapp","workflow":"web"}]`, "value_source": []any{}},
 	}}
 	return rc("google_cloud_run_v2_service", map[string]any{"invoker_iam_disabled": false,
 		"template": []any{map[string]any{"service_account": credentialsAccountEmail, "containers": []any{c}}}}, map[string]any{}, "create")
@@ -983,6 +991,10 @@ func TestCoverRefusesACredentialsServiceThatIsNotTheModules(t *testing.T) {
 				map[string]any{"name": "FUGARO_PROJECT", "value": "aurora", "value_source": []any{}},
 				map[string]any{"name": "FUGARO_GCP_PROJECT", "value": "proj-1", "value_source": []any{}},
 				map[string]any{"name": "FUGARO_REGION", "value": "us-east5", "value_source": []any{}},
+				map[string]any{"name": "FUGARO_RTDB_URL", "value": "https://aurora-default-rtdb.firebaseio.com", "value_source": []any{}},
+				map[string]any{"name": "FUGARO_FIREBASE_PROJECT", "value": "aurora-fp", "value_source": []any{}},
+				map[string]any{"name": "FUGARO_CREDENTIALS_SERVICE_URL", "value": "https://fugaro-credentials-123456789012.us-east5.run.app", "value_source": []any{}},
+				map[string]any{"name": "FUGARO_JOB_ACCOUNTS", "value": `[{"provider":"github","repo":"acme/webapp","workflow":"web"}]`, "value_source": []any{}},
 			}
 			return r
 		}, true},

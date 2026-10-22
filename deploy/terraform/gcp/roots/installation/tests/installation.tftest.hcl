@@ -1881,10 +1881,18 @@ run "credentials_service_on" {
       "anthropic-api-key"  = "fugaro-project-aurora-anthropic-api-key-8c2d5f6a1e9b3074"
     }
     credentials_service = {
-      account_id    = "fugaro-credentials"
-      service       = "fugaro-credentials"
-      image         = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
-      bundle_secret = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
+      url = "https://fugaro-credentials-123456789012.us-east5.run.app"
     }
   }
 
@@ -1970,15 +1978,52 @@ run "credentials_service_on" {
     google_cloud_run_v2_service.credentials[0].template[0].timeout == "3600s")
     error_message = "the service runs as its own account, on the image the variable carries, with the longest timeout Cloud Run allows for a streaming proxy"
   }
+  # The environment is the seven names C1.14's `fugaro credentials serve`
+  # reads and internal/infra/tf's credentialsServiceEnv allows, and it is held
+  # as an exact map: an eighth entry, a missing one, a name the process does
+  # not read, or a value that is not the installation's own fails here. What
+  # the service does with a value (a database URL that is not the Firebase
+  # project's, an audience that is not a URL, a job table that binds nothing)
+  # is refused by the process itself, by name, and is C1.14's tests.
   assert {
     condition = tomap({
       for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.name => e.value
       }) == tomap({
-      FUGARO_PROJECT     = "aurora"
-      FUGARO_GCP_PROJECT = "proj-1234"
-      FUGARO_REGION      = "us-east5"
+      FUGARO_PROJECT                 = "aurora"
+      FUGARO_GCP_PROJECT             = "proj-1234"
+      FUGARO_REGION                  = "us-east5"
+      FUGARO_RTDB_URL                = "https://aurora-fp-default-rtdb.firebaseio.com"
+      FUGARO_FIREBASE_PROJECT        = "aurora-fp"
+      FUGARO_CREDENTIALS_SERVICE_URL = "https://fugaro-credentials-123456789012.us-east5.run.app"
+      FUGARO_JOB_ACCOUNTS            = "[{\"provider\":\"github\",\"repo\":\"acme/webapp\",\"workflow\":\"web\"}]"
     })
-    error_message = "the container's environment is its identity and nothing else: no secret ID, no credential value, and no fourth entry"
+    error_message = "the container's environment is the seven names the service reads and nothing else: no secret ID, no credential value, and no eighth entry"
+  }
+  # The service's own URL is the audience its callers' ID tokens are minted
+  # for, and it is the one entry the module cannot fill on the apply that
+  # CREATES the service: Cloud Run assigns it, and no expression inside this
+  # resource can read its own uri (Terraform refuses a self-referential
+  # block), so the variable carries it and the module's output reads it back
+  # for the next apply. Unset, the name is set and EMPTY — the service then
+  # refuses to serve and names it (C1.14) — which is the fail-closed
+  # direction, and `coalesce(try(var.credentials_service.url, null), "")` is
+  # what keeps the empty case a value the module set rather than a name the
+  # process would refuse by a different message.
+  # The job table is the one name whose value is a document, and it is the
+  # module's own jsonencode of the triples: the service derives the job
+  # accounts from them (credsvc.JobAccountsFor) rather than reading emails,
+  # because the account's name and the repository's slug are both hashes of
+  # these three fields.
+  assert {
+    condition = jsondecode([
+      for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.value
+      if e.name == "FUGARO_JOB_ACCOUNTS"
+      ][0]) == [{
+      provider = "github"
+      repo     = "acme/webapp"
+      workflow = "web"
+    }]
+    error_message = "the job table must be the variable's triples as JSON, which is what the service decodes (all three fields present, no others)"
   }
   assert {
     condition = (length(google_cloud_run_v2_service.credentials[0].template[0].containers) == 1 &&
@@ -2037,10 +2082,17 @@ run "credentials_service_image_must_be_a_digest" {
 
   variables {
     credentials_service = {
-      account_id    = "fugaro-credentials"
-      service       = "fugaro-credentials"
-      image         = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials:latest"
-      bundle_secret = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials:latest"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
     }
   }
 
@@ -2059,10 +2111,17 @@ run "credentials_service_image_must_be_a_whole_digest" {
 
   variables {
     credentials_service = {
-      account_id    = "fugaro-credentials"
-      service       = "fugaro-credentials"
-      image         = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e"
-      bundle_secret = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
     }
   }
 

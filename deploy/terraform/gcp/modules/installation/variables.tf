@@ -291,12 +291,20 @@ variable "project_secrets" {
 }
 
 variable "credentials_service" {
-  description = "The credentials service (D146, D147): the installation's own Cloud Run service that alone holds the model credentials. OFF by default (null) — with it off this module creates nothing, every job keeps its model-secret accessors and no run reaches a service. image is the released service image, pinned BY DIGEST and never by tag (C1.20's init stage fills the verified digest, as it fills history.image; the validation below refuses a tag, because the account this service runs as reads every credential in the bundle and an operator may push a tag to the installation's own registry); bundle_secret is the Secret Manager ID of the one bundle container the service reads — the project-wide container of the logical name \"creds-bundle\" (internal/backend/gcp's ProjectSecretID, CredsBundleSecretID once the loader of C1.11 declares it), which C1.20's stage fills from that one function so the container created here and the name the loader reads cannot drift. It is created here and written only by the owner-run fugaro creds set (C1.25)."
+  description = "The credentials service (D146, D147): the installation's own Cloud Run service that alone holds the model credentials. OFF by default (null) — with it off this module creates nothing, every job keeps its model-secret accessors and no run reaches a service. image is the released service image, pinned BY DIGEST and never by tag (C1.20's init stage fills the verified digest, as it fills history.image; the validation below refuses a tag, because the account this service runs as reads every credential in the bundle and an operator may push a tag to the installation's own registry); bundle_secret is the Secret Manager ID of the one bundle container the service reads — the project-wide container of the logical name \"creds-bundle\" (internal/backend/gcp's ProjectSecretID, CredsBundleSecretID once the loader of C1.11 declares it), which C1.20's stage fills from that one function so the container created here and the name the loader reads cannot drift. It is created here and written only by the owner-run fugaro creds set (C1.25). firebase_project, rtdb_url and job_accounts are the rest of what the process is configured with (C1.14's serve, whose whole environment is this module's env blocks): the Firebase project a run's identity is verified against and the database it reads, and the installation's per-repository jobs as {provider, repo, workflow} triples, from which the service derives the job service accounts it binds a run to. url is the service's OWN URL — the audience its callers' Google ID tokens are minted for — and it is optional because Cloud Run assigns it: no expression in this file can read google_cloud_run_v2_service.credentials[0].uri from inside that resource (a self-referential block), so the first apply creates the revision with the name empty and the service refuses to serve until the apply that carries the URL the output reads back (C1.20's stage fills it, the same way history.deploy_job and its rtdb_url are filled on a later apply). A revision with no URL yet is the fail-closed direction: a service that guessed its own audience would accept a token minted for another service, and one that served anyway would look healthy while every run halted (D143)."
   type = object({
-    account_id    = string
-    service       = string
-    image         = string
-    bundle_secret = string
+    account_id       = string
+    service          = string
+    image            = string
+    bundle_secret    = string
+    firebase_project = string
+    rtdb_url         = string
+    job_accounts = list(object({
+      provider = string
+      repo     = string
+      workflow = string
+    }))
+    url = optional(string)
   })
   default = null
 
@@ -320,6 +328,29 @@ variable "credentials_service" {
       can(regex("^[a-zA-Z0-9_-]{1,255}$", var.credentials_service.bundle_secret))
     )
     error_message = "credentials_service needs a service account ID (6-30 characters of a-z, 0-9 and -, starting with a letter), a Cloud Run service name, an image pinned by digest (an image reference ending in @sha256: and 64 lower-case hex digits — never a tag: an operator can push a tag), and the bundle secret's Secret Manager ID (letters, digits, - and _)."
+  }
+
+  # The four facts the process is configured with (C1.14), held to their shape
+  # at plan time rather than left to the revision that would refuse them: a
+  # service whose environment is wrong does not serve at all, so an installation
+  # that planned one would halt every run that reached it (D143). The two
+  # project-shaped names are the same regex the account ID above is held to
+  # (Firebase project IDs have the same shape), the URLs are history.tf's own
+  # rule (https://<host>, no path), and the job table must not be empty: the
+  # service refuses a table that binds no run to a repository (an empty one is
+  # a service an operator would read as healthy while every run halted), so a
+  # plan that carries one is refused here instead of at the revision.
+  validation {
+    condition = var.credentials_service == null ? true : (
+      can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.credentials_service.firebase_project)) &&
+      can(regex("^https://[a-z0-9.-]+$", var.credentials_service.rtdb_url)) &&
+      length(var.credentials_service.job_accounts) > 0 &&
+      alltrue([for j in var.credentials_service.job_accounts :
+        j.provider != "" && j.repo != "" && j.workflow != ""
+      ]) &&
+      (try(var.credentials_service.url, null) == null || can(regex("^https://[a-z0-9.-]+$", var.credentials_service.url)))
+    )
+    error_message = "credentials_service needs the Firebase project a run's identity is verified against (the shape of a project ID), the installation's realtime database URL (https://<database>.firebasedatabase.app or .firebaseio.com, without a path — the same rule history.rtdb_url is held to), at least one job as {provider, repo, workflow} with all three set (the service binds a run to a repository through them, and an empty table refuses every caller), and, once it is known, its own URL in the same https://<host> form."
   }
 }
 

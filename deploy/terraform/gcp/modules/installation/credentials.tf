@@ -191,13 +191,16 @@ resource "google_cloud_run_v2_service" "credentials" {
         }
       }
 
-      # The service's identity, and no credential: it reads the one bundle
-      # secret as its own account, by the name it derives from FUGARO_PROJECT
-      # (the project-wide container of the logical name "creds-bundle",
+      # The service's whole configuration (C1.14's `fugaro credentials serve`
+      # reads exactly these seven names, and internal/infra/tf's
+      # credentialsServiceEnv is the allow-list that refuses an eighth at plan
+      # time). No credential is among them: it reads the one bundle secret as
+      # its own account, by the name it derives from FUGARO_PROJECT (the
+      # project-wide container of the logical name "creds-bundle",
       # internal/backend/gcp's ProjectSecretID — the same value
       # var.credentials_service.bundle_secret carries, which is what the
-      # container above is created with), so no secret ID and no value is ever
-      # an environment variable here.
+      # container above is created with), so no secret ID and no secret value
+      # is ever an environment variable here.
       env {
         name  = "FUGARO_PROJECT"
         value = var.fugaro_project
@@ -209,6 +212,48 @@ resource "google_cloud_run_v2_service" "credentials" {
       env {
         name  = "FUGARO_REGION"
         value = var.region
+      }
+      # The installation's database and the Firebase project a run's identity
+      # is verified against: the history job's own two names (history.tf),
+      # taken from this variable rather than from var.history so an
+      # installation that runs this service without a budget job can still
+      # state them (the database belongs to the Firebase root, not to the
+      # history job).
+      env {
+        name  = "FUGARO_RTDB_URL"
+        value = var.credentials_service.rtdb_url
+      }
+      env {
+        name  = "FUGARO_FIREBASE_PROJECT"
+        value = var.credentials_service.firebase_project
+      }
+      # The service's own URL: the audience every caller's Google ID token is
+      # minted for, and the one thing that binds such a token to THIS service.
+      # Cloud Run assigns it, and nothing in this file may read
+      # google_cloud_run_v2_service.credentials[0].uri from inside that
+      # resource (Terraform refuses a self-referential block), so the first
+      # apply writes the name empty and the revision refuses to serve — by
+      # name — until the apply whose tfvars carry the URL the module's output
+      # (outputs.tf) reads back. Fail-closed either way: a revision that
+      # guessed its own audience would accept a token minted for another
+      # service, and one that served with no audience would halt every run
+      # (D143) while looking healthy.
+      env {
+        name  = "FUGARO_CREDENTIALS_SERVICE_URL"
+        value = coalesce(try(var.credentials_service.url, null), "")
+      }
+      # The installation's per-repository jobs, as the triples the service
+      # derives the job accounts from (credsvc.JobAccountsFor over
+      # task.Slug and gcp.ServiceAccountID): the emails themselves are derived
+      # there rather than passed, because an account's name and the
+      # repository's slug are both hashes of these three fields, and a list of
+      # emails here would be a second derivation that can drift from the
+      # accounts the deployer created. This is the one name whose value is a
+      # document, and it is the installation's own shape rather than a
+      # credential.
+      env {
+        name  = "FUGARO_JOB_ACCOUNTS"
+        value = jsonencode(var.credentials_service.job_accounts)
       }
     }
   }
