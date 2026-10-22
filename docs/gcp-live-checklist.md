@@ -6905,8 +6905,12 @@ SVC=$(gcloud run services list --platform=managed --project="$P" --region="$REGI
 [ -n "$SVC" ] || { echo "Check 96 stopped: no credentials service is deployed on $P in $REGION (the opt-in is off, or the release has not carried it)" >&2; exit 1; }
 SVCURL=$(gcloud run services describe "$SVC" --project="$P" --region="$REGION" --format='value(status.url)' 2>/dev/null)
 [ -n "$SVCURL" ] || { echo "Check 96 stopped: '$SVC' has no URL: it is not serving" >&2; exit 1; }
-FPROJ=$(gcloud run services describe "$SVC" --project="$P" --region="$REGION" \
-        --format='value(spec.template.spec.containers[0].env.filter("name=FUGARO_PROJECT").extract("value").flatten())' 2>/dev/null)
+SVC_JSON=$(gcloud run services describe "$SVC" --project="$P" --region="$REGION" --format=json 2>/dev/null)
+[ -n "$SVC_JSON" ] || { echo "Check 96 stopped: could not read '$SVC'" >&2; exit 1; }
+FPROJ=$(printf '%s' "$SVC_JSON" | python3 -c 'import json,sys
+c = json.load(sys.stdin)["spec"]["template"]["spec"]["containers"][0]
+print(next((e.get("value","") for e in c.get("env",[]) if e.get("name")=="FUGARO_PROJECT"), ""))')
+[ -n "$FPROJ" ] || { echo "Check 96 stopped: the service's container names no FUGARO_PROJECT, so the run identity's fp claim cannot be minted for it" >&2; exit 1; }
 fugaro budget show --all --json > "$W/budget.json" 2>/dev/null || { echo "Check 96 stopped: 'fugaro budget show --all --json' failed; run it from the sandbox checkout" >&2; exit 1; }
 python3 - "$W/budget.json" "$CHK96_SANDBOX_REPO" "$W/repos.env" <<'PY' || exit 1
 import json, sys
@@ -6924,9 +6928,9 @@ PY
 JOB_JSON=$(gcloud run jobs describe "$CHK96_SANDBOX_JOB" --project="$P" --region="$REGION" --format=json 2>/dev/null)
 [ -n "$JOB_JSON" ] || { echo "Check 96 stopped: no job '$CHK96_SANDBOX_JOB' in $P/$REGION" >&2; exit 1; }
 JOBSA=$(printf '%s' "$JOB_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["spec"]["template"]["spec"]["serviceAccountName"])')
-APPID=$(printf '%s' "$JOB_JSON" | python3 -c 'import json,sys; print(next((e["value"] for e in json.load(sys.stdin)["spec"]["template"]["spec"]["containers"][0]["env"] if e["name"]=="FUGARO_GITHUB_APP_ID"), ""))')
+APPID=$(printf '%s' "$JOB_JSON" | python3 -c 'import json,sys; print(next((e.get("value","") for e in json.load(sys.stdin)["spec"]["template"]["spec"]["containers"][0]["env"] if e["name"]=="FUGARO_GITHUB_APP_ID"), ""))')
 [ -n "$JOBSA" ] && [ -n "$APPID" ] || { echo "Check 96 stopped: the job names no service account or no FUGARO_GITHUB_APP_ID" >&2; exit 1; }
-echo "Check 96 ready: P=$P region=$REGION firebase=$FB service=$SVC url=$SVCURL job=$CHK96_SANDBOX_JOB jobSA=$JOBSA appID=$APPID sandbox_slug=$SANDBOX_SLUG other_slug=$OTHER_SLUG — no token is printed, ever"
+echo "Check 96 ready: P=$P region=$REGION firebase=$FB fugaro_project=$FPROJ service=$SVC url=$SVCURL job=$CHK96_SANDBOX_JOB jobSA=$JOBSA appID=$APPID sandbox_slug=$SANDBOX_SLUG other_slug=$OTHER_SLUG — no token is printed, ever"
 fugaro version    # the release this check is run from: read-only
 ```
 
@@ -6934,7 +6938,7 @@ fugaro version    # the release this check is run from: read-only
 
    ```bash
    grep -n 'ServiceHeldSecretNames' internal/config/providers.go | head -1
-   grep -A3 'var ServiceHeldSecretNames' internal/config/providers.go
+   grep -n 'var ServiceHeldSecretNames' internal/config/providers.go
    printf '%s' "$JOB_JSON" | python3 - <<'PY'
    import json, sys
    spec = json.load(sys.stdin)["spec"]["template"]["spec"]
@@ -7020,7 +7024,7 @@ fugaro version    # the release this check is run from: read-only
    PY
    gcloud iam service-accounts sign-jwt --iam-account="$FUGARO_LIVE_TOKEN_SIGNER" "$W/custom.json" "$W/custom.jwt" >/dev/null || {
      echo "Check 96 stopped: the signer would not sign (it needs iam.serviceAccounts.signJwt for your identity — the fugaroTokenMinter grant Check 92 uses)" >&2; exit 1; }
-   python3 - "$W/custom.jwt" "$W/exchange.json" <<'PY' > "$W/exchange.body"
+   python3 - "$W/custom.jwt" "$W/exchange.body" <<'PY'
    import json, sys
    json.dump({"token": open(sys.argv[1]).read().strip(), "returnSecureToken": True}, open(sys.argv[2], "w"))
    PY
@@ -7029,24 +7033,29 @@ fugaro version    # the release this check is run from: read-only
      | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit("no idToken: " + json.dumps(sorted(d))) if "idToken" not in d else print(d["idToken"])') || {
      echo "Check 96 stopped: the run identity was not exchanged (the web API key must be the sandbox Firebase project's restricted one)" >&2; exit 1; }
 
-   # The one mint call. Both identities go in headers read from stdin, so neither reaches argv.
-   mint() {   # $1 = the run identity file or - ; prints the status; body lands in $W/answer.json
-     printf 'header = "Authorization: Bearer %s"\nheader = "X-Fugaro-Run-Identity: %s"\nheader = "X-Fugaro-Run-Job: %s"\nheader = "Content-Type: application/json"\n' \
-       "$JOBTOK" "$2" "$CHK96_SANDBOX_JOB" |
-       curl -sS --config - -o "$W/answer.json" -w '%{http_code}' -X POST --data "{\"app_id\":\"$APPID\"}" "$SVCURL$MINT"
+   # The mint call, used by step 4 as well. Both identities go in headers read from stdin,
+   # so neither reaches argv; the answer lands in ANSWER, a shell variable, so no file ever
+   # holds a token: mint() echoes the status and leaves the body in ANSWER.
+   mint() {   # $1 = the caller's ID token, $2 = the run identity -> sets ANSWER and MINT_STATUS, echoes the status
+     local out
+     out=$(printf 'header = "Authorization: Bearer %s"\nheader = "X-Fugaro-Run-Identity: %s"\nheader = "X-Fugaro-Run-Job: %s"\nheader = "Content-Type: application/json"\n' \
+       "$1" "$2" "$CHK96_SANDBOX_JOB" |
+       curl -sS --config - -w '\n%{http_code}' -X POST --data "{\"app_id\":\"$APPID\"}" "$SVCURL$MINT")
+     ANSWER=${out%$'\n'*}          # everything but the status line
+     MINT_STATUS=${out##*$'\n'}    # the status line
+     echo "mint status: $MINT_STATUS"
    }
-   echo "positive mint status: $(mint run "$RUNTOK")"
-   python3 - "$W/answer.json" "$CHK96_SANDBOX_REPO" <<'PY' > "$W/answer.env"
+   mint "$JOBTOK" "$RUNTOK"         # the positive mint: the job's own token as the caller
+   printf '%s' "$ANSWER" | python3 - "$CHK96_SANDBOX_REPO" <<'PY'
    import json, sys
-   ans = json.load(open(sys.argv[1]))
-   want = sys.argv[2]
+   ans = json.load(sys.stdin)
+   want = sys.argv[1]
    print("repository field:", ans.get("repository"))
    print("expires_at:", ans.get("expires_at"))
    print("repository is the calling account's own:", ans.get("repository", "").endswith("/" + want.split("/")[-1]))
-   open(sys.argv[1] + ".env", "w").write("TOK=%s\n" % ans.get("token", ""))
    PY
-   . "$W/answer.json.env"
-   [ -n "${TOK:-}" ] || { echo "Check 96 stopped: the mint answered no token (see $W/answer.json — and do not paste it)" >&2; exit 1; }
+   TOK=$(printf '%s' "$ANSWER" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("token",""))')
+   [ -n "$TOK" ] || { echo "Check 96 stopped: the mint answered no token -- the body is in ANSWER; do not paste it" >&2; exit 1; }
    # The token's reach, read at GitHub and printed as facts. The token is in a config read
    # from stdin: it is never in argv, and every answer here is read and never written.
    hdr() { printf 'header = "Authorization: Bearer %s"\nheader = "Accept: application/vnd.github+json"\nheader = "X-Github-Api-Version: 2022-11-28"\n' "$TOK"; }
@@ -7069,7 +7078,7 @@ fugaro version    # the release this check is run from: read-only
    ```
    **FACT:** the caller's own account and the run identity's uid, **both recorded by shape only** — the impersonated job account's email and the uid `r~<slug>~<run>` are names, and the two tokens themselves are never printed; the mint's status (**`200`**); the answer's `repository` (**the sandbox repository's canonical name**: this is the field that says the service minted for the *calling account's* repository and not for one a caller named, because there is no field in which a caller could have named one); its `expires_at` (**inside the hour** GitHub gives an installation token); and the token's reach at GitHub — the installation's repository list holding **exactly one** entry, that repository, the `contents` read answering **`200`**, and the `actions` dispatch answering **`403`** (a granted permission would have answered `404`, because that workflow does not exist: the probe cannot start anything, and a `404` here is a failure — the run's token would hold a permission the run's set does not). Then the audit line: **exactly one** `credsvc: audit` line for this run, `credential` `github-app-key`, `purpose` `mint`, **`tier` empty** (the App key is not a model credential and a tier on a mint is refused rather than written), `caller` the verified job account, `status` `ok`, and **lines carrying a `ghs_` token: `0`** — the service's log is the one place a mint is recorded, and it records the credential's name.
 
-4. **A run identity for repository X cannot mint for Y, and a caller that is no job account is refused.** *(Guard block.)* Two refusals, made the same way as the mint above and both of them admissions rather than mints: the first presents a run identity of **another repository of the same installation** with the **sandbox job's** own token (X's run, Y's job), the second presents the **owner's own** Google ID token for the service's audience with a valid run identity, so the pair is complete and the account is what is wrong.
+4. **A run identity for repository X cannot mint for Y, and a caller that is no job account is refused.** *(Guard block.)* Two refusals, made the same way as the mint above and both of them admissions rather than mints: the first presents a run identity of **another repository of the same installation** with the **sandbox job's** own token (X's run, Y's job), the second presents **your own** Google ID token for the service's audience with a valid run identity, so that where your identity can reach the service at all, the account is the one thing wrong with the pair.
 
    ```bash
    # (a) X's run identity, Y's job account: the pairing refusal.
@@ -7092,13 +7101,19 @@ fugaro version    # the release this check is run from: read-only
    RUNTOKX=$(curl -sS -X POST -H 'Content-Type: application/json' --data @"$W/exchangex.body" \
      "https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=$FUGARO_LIVE_FIREBASE_API_KEY" \
      | python3 -c 'import json,sys; print(json.load(sys.stdin)["idToken"])')
-   echo "cross-repository status: $(mint x "$RUNTOKX")"
-   cat "$W/answer.json"; echo    # the refusal's own two fields: this file holds no token
+   mint "$JOBTOK" "$RUNTOKX"       # X's run identity, Y's job account: echoes the refusal's status
+   printf '%s\n' "$ANSWER"; echo   # the refusal's own two fields: a refusal carries no token
 
-   # (b) The owner's own identity as the caller: not one of the installation's job accounts.
+   # (b) A caller that is no job account at all: your own identity. The installation grants
+   # roles/run.invoker to each job account and to nothing else (modules/workflow/sa.tf), so a
+   # stock installation refuses this at the front end before the container runs -- and that
+   # refusal is Google's, which the missing audit line below is what tells apart from the
+   # service's. If you have granted your own identity run.invoker on the service (a debugging
+   # grant nothing in the installation makes for you), the same call reaches the container and
+   # the service refuses it `unverified_job_identity` instead.
    OWNTOK=$(gcloud auth print-identity-token --audiences="$SVCURL")
-   echo "not-a-job-account status: $(mint owner "$RUNTOK")"
-   cat "$W/answer.json"; echo
+   mint "$OWNTOK" "$RUNTOK"        # your own identity as the caller: echoes the status
+   printf '%s\n' "$ANSWER"; echo   # an IAM refusal's body is Google's, not this service's
 
    gcloud logging read --project="$P" --limit=30 --format=json \
      "resource.type=\"cloud_run_revision\" resource.labels.service_name=\"$SVC\" jsonPayload.status=\"unverified_run_identity\"" > "$W/refused.json"
@@ -7113,7 +7128,7 @@ fugaro version    # the release this check is run from: read-only
    print("lines carrying a ghs_ token:", raw.count("ghs_"))
    PY
    ```
-   **FACT:** (a) the status **`403`** and the answer's own body — `{"error":"unverified_run_identity","message":"the run identity is not a run of the calling job's repository"}` — with **nothing minted**: the run identity was verified (its signature, its `fp`, its `fx` and its liveness all passed, or the refusal would have been a different one) and the pairing is what refused it, which is the claim the row states; (b) the status **`403`** with `{"error":"unverified_job_identity",…}` and a sentence that names no account — the caller was authenticated by Cloud Run IAM (the owner's identity can reach the service) and the service still refused it, which is what makes the account table the gate and the invoker grant a fence; and the log lines for both: `unverified_run_identity` / `unverified_job_identity`, `credential` `github-app-key`, **no `ghs_` anywhere**, and **no mint that issued** for either run id (the refusals minted nothing: an installation token that GitHub minted and nobody received would still be a token this check caused, and the log is where that would show).
+   **FACT:** (a) the status **`403`** and the answer's own body — `{"error":"unverified_run_identity","message":"the run identity is not a run of the calling job's repository"}` — with **nothing minted**: the run identity was verified (its signature, its `fp`, its `fx` and its liveness all passed, or the refusal would have been a different one) and the pairing is what refused it, which is the claim the row states; (b) the status **`403`** and one of the two answers the installation decides between — **no body this service wrote and no audit line for the call** (the stock installation: IAM refused your identity, the same fact step 2 read, now with an identity rather than none), or `{"error":"unverified_job_identity",…}` with a sentence that names no account if you hold `run.invoker` on the service (then the front end admitted you and the service refused the account itself, which is the claim that the account table is the gate and the invoker grant only a fence); and the log lines: `unverified_run_identity` for (a) always and `unverified_job_identity` for (b) only if your identity reached the container, `credential` `github-app-key`, **no `ghs_` anywhere**, and **no mint that issued** for either run id (the refusals minted nothing: an installation token that GitHub minted and nobody received would still be a token this check caused, and the log is where that would show).
 
 5. **What survives: nothing — the final assertion.** *(Guard block.)* The identities this check minted are Firebase Auth users (`r~<slug>~<run>` for the two scratch run ids), and the check deletes them the way it created them: as the owner, with the project's own API, then reading the project's user list back.
 
@@ -7129,13 +7144,13 @@ fugaro version    # the release this check is run from: read-only
    ls -A "$W"; rm -rf "$W"
    echo "scratch left: $(ls -d /tmp/chk96 2>/dev/null | wc -l)   # 0"
    ```
-   **FACT:** the two deletions' statuses, the read-back count (**`0`**: no uid the check created is in the project's user list — the read-back **is** the final assertion, and a survivor is a failure this check reports rather than leaves), the list of `$W` before it is removed (the two custom-token claim files, the two signed custom tokens, the two exchange bodies, the answers, the audit and refused-log dumps and the budget and secrets dumps — and **no file that holds an ID token or an installation token**, because the two run identities and the minted token live only in variables), and the count above (**`0`**: the scratch directory is gone). The one thing this check cannot take back is the installation token step 3 minted: it is a real token at GitHub, this check never wrote it anywhere, and it expires on its own inside the hour — record that in the paste-back, because a reader of these facts is entitled to know a credential existed. **GitHub is the only place it lives, and GitHub expires it.**
+   **FACT:** the two deletions' statuses, the read-back count (**`0`**: no uid the check created is in the project's user list — the read-back **is** the final assertion, and a survivor is a failure this check reports rather than leaves), the list of `$W` before it is removed (the two custom-token claim files, the two signed custom tokens, the two exchange bodies, the impersonation's stderr, the audit and refused-log dumps and the budget and secrets dumps — and **no file that holds an ID token or an installation token**: the two run identity ID tokens and the one minted installation token live in shell variables only, and the mint's own answer is read out of a variable rather than written down), and the count above (**`0`**: the scratch directory is gone). The one thing this check cannot take back is the installation token step 3 minted: it is a real token at GitHub, this check never wrote it anywhere, and it expires on its own inside the hour — record that in the paste-back, because a reader of these facts is entitled to know a credential existed. **GitHub is the only place it lives, and GitHub expires it.**
 
-**Passes when:** step 1's FACTs hold — `config.ServiceHeldSecretNames` names `github-app-key` in the checkout, the job's container environment has no `FUGARO_GITHUB_APP_PRIVATE_KEY`, no mount or secret reference of the job's spec names the App key's container, the job's account is a member of neither the App key's policy nor the bundle's, and the bundle's policy is exactly the one `secretmanager.secretAccessor` grant on the service's own account (Q6); step 2's unauthenticated call is refused `403` by the front end with no audit line; step 3's mint answers `200` naming the sandbox repository, expires inside the hour, and its token reaches exactly that one repository, reads `contents` (`200`) and is refused `actions: write` (`403`), with one audit line for the run — `credential` `github-app-key`, `purpose` `mint`, no tier, `status` `ok` — and no `ghs_` anywhere in the log; step 4's two refusals are `403` `unverified_run_identity` (the pairing sentence) and `403` `unverified_job_identity`, both audited, neither minting anything; and step 5's read-back is **`0`** users, **`0`** scratch directories, and no token in any file.
+**Passes when:** step 1's FACTs hold — `config.ServiceHeldSecretNames` names `github-app-key` in the checkout, the job's container environment has no `FUGARO_GITHUB_APP_PRIVATE_KEY`, no mount or secret reference of the job's spec names the App key's container, the job's account is a member of neither the App key's policy nor the bundle's, and the bundle's policy is exactly the one `secretmanager.secretAccessor` grant on the service's own account (Q6); step 2's unauthenticated call is refused `403` by the front end with no audit line; step 3's mint answers `200` naming the sandbox repository, expires inside the hour, and its token reaches exactly that one repository, reads `contents` (`200`) and is refused `actions: write` (`403`), with one audit line for the run — `credential` `github-app-key`, `purpose` `mint`, no tier, `status` `ok` — and no `ghs_` anywhere in the log; step 4's two refusals are `403` `unverified_run_identity` (the pairing sentence, always audited) and, for a caller that is no job account, a `403` from the front end with no audit line (the stock installation) or `403` `unverified_job_identity` from the service if your identity holds `run.invoker` — neither minting anything; and step 5's read-back is **`0`** users, **`0`** scratch directories, and no token in any file.
 
-**Fails when:** the job's environment or mounts still name the App key, or its account still holds an accessor on it (**the release has not landed** — record it and stop, rather than reading a claim about a change that is not deployed); `config.ServiceHeldSecretNames` is empty while the job is discovered to be keyless (the two moved apart, and the code is the one that decides); the bundle's policy holds a second member, a second role or a condition (Q6 broken); the unauthenticated call answers `200` (the service is deployed without IAM); the mint answers anything but `200`, or names a repository that is not the calling account's, or returns a token whose reach is wider than one repository or than the run's set — a `404` on the `actions` probe is a failure with no write in it, and a `200` would mean the probe ran something; a mint is audited with a tier, or a `ghs_` string appears in any log line or in any FACT line (the check fails on its own secret scan); the pairing case is **accepted** (a job account minting for another repository, the finding review finding N1 exists to prevent), or refused with a different error type (`unverified_job_identity` where the pairing was meant, or an `unverified_run_identity` whose cause was an expired identity rather than the pairing — the two are different facts); or a cleanup that leaves a Firebase Auth user or a scratch file. **What failing looks like:** `func … credentialsServiceConfig` refusing at step 2's guard — **the service cannot be configured from its deployment**, which is the state this tree is in and the reason no mint can be made at all; `gcloud auth print-identity-token --impersonate-service-account` refused — `iam.serviceAccounts.getOpenIdToken` is missing on the job's account, and the check stops with that name rather than widening it; a `401` from GitHub on the probes — the installation token was mistyped or the App's installation no longer covers the repository; and `signInWithCustomToken` refused — the web API key is not the sandbox Firebase project's restricted one, or the signer is not a service account of `fugaro-dev`.
+**Fails when:** (b) answers `200`, or a refusal other than the two above comes back where the pairing was meant; the job's environment or mounts still name the App key, or its account still holds an accessor on it (**the release has not landed** — record it and stop, rather than reading a claim about a change that is not deployed); `config.ServiceHeldSecretNames` is empty while the job is discovered to be keyless (the two moved apart, and the code is the one that decides); the bundle's policy holds a second member, a second role or a condition (Q6 broken); the unauthenticated call answers `200` (the service is deployed without IAM); the mint answers anything but `200`, or names a repository that is not the calling account's, or returns a token whose reach is wider than one repository or than the run's set — a `404` on the `actions` probe is a failure with no write in it, and a `200` would mean the probe ran something; a mint is audited with a tier, or a `ghs_` string appears in any log line or in any FACT line (the check fails on its own secret scan); the pairing case is **accepted** (a job account minting for another repository, the finding review finding N1 exists to prevent), or refused with a different error type (`unverified_job_identity` where the pairing was meant, or an `unverified_run_identity` whose cause was an expired identity rather than the pairing — the two are different facts); or a cleanup that leaves a Firebase Auth user or a scratch file. **What failing looks like:** `func … credentialsServiceConfig` refusing at step 2's guard — **the service cannot be configured from its deployment**, which is the state this tree is in and the reason no mint can be made at all; `gcloud auth print-identity-token --impersonate-service-account` refused — `iam.serviceAccounts.getOpenIdToken` is missing on the job's account, and the check stops with that name rather than widening it; a `401` from GitHub on the probes — the installation token was mistyped or the App's installation no longer covers the repository; and `signInWithCustomToken` refused — the web API key is not the sandbox Firebase project's restricted one, or the signer is not a service account of `fugaro-dev`.
 
-**Paste back:** `fugaro version` and the guard block's ready line; step 1's `ServiceHeldSecretNames` lines, the job's environment **names**, its mount and secret-reference names, both secret containers' policies verbatim and the two `the job account is a member:` answers; step 2's status and the note that no audit line exists for it; step 3's two identity **shapes** (the job account's email, the uid), the mint's status, its `repository`, its `expires_at`, the three GitHub answers (**the repository list, and the two status codes**), and the audit line's fields (and the `ghs_` count, which must be `0`); step 4's two statuses, the two answer bodies verbatim, and the refused lines; and step 5's two read-backs (**`0`** each) with the note that the minted installation token was never written down and expires on its own. **Never paste a token of any kind — no ID token, no custom token, no installation token, no access token, no web API key — and never paste a database URL in a form that carries a credential; the FACT lines above are written so that none of them needs one.** Until this check runs, the three claims of row 79 are **UNVERIFIED** live, and row 96 above stays **NOT RUN**.
+**Paste back:** `fugaro version` and the guard block's ready line; step 1's `ServiceHeldSecretNames` lines, the job's environment **names**, its mount and secret-reference names, both secret containers' policies verbatim and the two `the job account is a member:` answers; step 2's status and the note that no audit line exists for it; step 3's two identity **shapes** (the job account's email, the uid), the mint's status, its `repository`, its `expires_at`, the three GitHub answers (**the repository list, and the two status codes**), and the audit line's fields (and the `ghs_` count, which must be `0`); step 4's two statuses, the two answer bodies verbatim, and the refused lines — naming which of (b)'s two answers came back and, if it was the front end's, that no audit line exists for it; and step 5's two read-backs (**`0`** each) with the note that the minted installation token was never written down and expires on its own. **Never paste a token of any kind — no ID token, no custom token, no installation token, no access token, no web API key — and never paste a database URL in a form that carries a credential; the FACT lines above are written so that none of them needs one.** Until this check runs, the three claims of row 79 are **UNVERIFIED** live, and row 96 above stays **NOT RUN**.
 
 **Restore.** There is nothing to roll back, and that is the point of the shape this check has: it deploys nothing, applies no Terraform, writes no database node, reads no bundle and changes no job. Three things it does change, all of them its own:
 
