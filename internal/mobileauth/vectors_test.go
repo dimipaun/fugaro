@@ -47,8 +47,15 @@ type resolveCase struct {
 }
 
 type keyCase struct {
+	Name string `json:"name"`
+	// Address and Key are the round-trip pair: EncodeNodeKey(Address) is Key
+	// and DecodeNodeKey(Key) is Address.
 	Address string `json:"address"`
 	Key     string `json:"key"`
+	// WantDecodeError marks a key DecodeNodeKey must refuse, so the file can
+	// state the encodings this package did not make beside the ones it did
+	// (Address is unused there).
+	WantDecodeError bool `json:"want_decode_error"`
 }
 
 func loadVectors(t *testing.T) vectors {
@@ -152,6 +159,12 @@ func TestVectorsResolve(t *testing.T) {
 func TestVectorsNodeKeys(t *testing.T) {
 	v := loadVectors(t)
 	for _, c := range v.Keys {
+		if c.WantDecodeError {
+			if back, err := DecodeNodeKey(c.Key); err == nil {
+				t.Errorf("%s: DecodeNodeKey(%q) = %q, want a refusal", c.Name, c.Key, back)
+			}
+			continue
+		}
 		got, err := EncodeNodeKey(c.Address)
 		if err != nil {
 			t.Errorf("%s: EncodeNodeKey = %v", c.Address, err)

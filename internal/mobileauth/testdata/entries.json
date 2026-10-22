@@ -29,6 +29,10 @@
     {"name": "a label starting with a hyphen is refused", "in": "dimi@-example.com", "want_error": true},
     {"name": "a numeric last label is refused", "in": "dimi@127.0.0.1", "want_error": true},
     {"name": "a non-ASCII address is refused rather than folded", "in": "dimi@exämple.com", "want_error": true},
+    {"name": "an address over 254 bytes is refused", "in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com", "want_error": true},
+    {"name": "a local part over 64 bytes is refused", "in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com", "want_error": true},
+    {"name": "a local part of exactly 64 bytes is accepted", "in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com", "want": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com"},
+    {"name": "a label over 63 bytes is refused", "in": "dimi@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com", "want_error": true},
     {"name": "an empty value is refused", "in": "", "want_error": true}
   ],
   "normalize_domain": [
@@ -39,6 +43,7 @@
     {"name": "a trailing dot is refused", "in": "example.com.", "want_error": true},
     {"name": "an all-digit last label is refused", "in": "127.0.0.1", "want_error": true},
     {"name": "a non-ASCII domain is refused", "in": "exämple.com", "want_error": true},
+    {"name": "a domain over 253 bytes is refused", "in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com", "want_error": true},
     {"name": "an empty value is refused", "in": "", "want_error": true}
   ],
   "resolve": [
@@ -93,6 +98,15 @@
       "address": "Dimi@example.com",
       "want_error": "not_allowed"
     },
+    {"name": "an exact entry that names the address but is not in canonical form refuses it rather than falling through to its domain", "exact": [{"address": "Dimi@Example.com", "role": "viewer", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "domains": [{"address": "example.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "address": "Dimi@example.com", "want_error": "not_allowed"},
+    {"name": "an exact entry with an unfolded domain and a folded lookup refuses it rather than falling through to its domain", "exact": [{"address": "dimi@Example.com", "role": "viewer", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "domains": [{"address": "example.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "address": "dimi@example.com", "want_error": "not_allowed"},
+    {"name": "an exact entry that names the address but carries no known role refuses it rather than falling through to its domain", "exact": [{"address": "dimi@example.com", "role": "superuser", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "domains": [{"address": "example.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "address": "dimi@example.com", "want_error": "not_allowed"},
+    {"name": "an exact entry that names the address with no role refuses it rather than falling through to its domain", "exact": [{"address": "dimi@example.com", "role": "", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "domains": [{"address": "example.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "address": "dimi@example.com", "want_error": "not_allowed"},
+    {"name": "a usable entry of the key still grants beside an unusable entry for the same address", "exact": [{"address": "dimi@example.com", "role": "viewer", "at": "2026-10-22T09:00:00Z", "by": "dimi"}, {"address": "Dimi@Example.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "address": "dimi@example.com", "want": "viewer"},
+    {"name": "an entry that cannot be normalised at all names nobody", "exact": [{"address": " dimi@example.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "address": "dimi@example.com", "want_error": "not_allowed"},
+    {"name": "an exact entry whose local part differs in case names another address, so its domain's role stands", "exact": [{"address": "Dimi@example.com", "role": "viewer", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "domains": [{"address": "example.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "address": "dimi@example.com", "want": "admin"},
+    {"name": "a domain entry that names the domain but carries no known role admits nobody", "domains": [{"address": "example.com", "role": "superuser", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "address": "dimi@example.com", "want_error": "not_allowed"},
+    {"name": "a domain entry that names the domain with no role admits nobody", "domains": [{"address": "example.com", "role": "", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "address": "dimi@example.com", "want_error": "not_allowed"},
     {
       "name": "an exact entry that is not in canonical form admits nobody",
       "exact": [{"address": "Dimi@Example.com", "role": "operator", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
@@ -198,6 +212,7 @@
     {"address": "sub.example.com", "key": "sub%2Eexample%2Ecom"},
     {"address": "a%40b@example.com", "key": "a%2540b@example%2Ecom"},
     {"address": "dimi@exämple.com", "key": "dimi@ex%C3%A4mple%2Ecom"},
-    {"address": "a/b#c$d[e]@example.com", "key": "a%2Fb%23c%24d%5Be%5D@example%2Ecom"}
+    {"address": "a/b#c$d[e]@example.com", "key": "a%2Fb%23c%24d%5Be%5D@example%2Ecom"},
+    {"name": "a key with a non-hex first escape digit is refused", "address": "", "key": "dimi%G2com", "want_decode_error": true}
   ]
 }

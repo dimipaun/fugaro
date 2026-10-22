@@ -60,7 +60,7 @@ func TestNodeKeyRefusesWhatAKeyCannotHold(t *testing.T) {
 	if _, err := EncodeNodeKey(""); err == nil {
 		t.Error("EncodeNodeKey(\"\") = nil error, want a refusal: an empty string is not a key")
 	}
-	// 257 dots: 771 bytes encoded, over the bound.
+	// 256 dots: 768 bytes encoded, exactly the bound; 257 dots is one byte over.
 	if key, err := EncodeNodeKey(strings.Repeat(".", 256)); err != nil {
 		t.Errorf("EncodeNodeKey(256 dots) = %v, want the 768-byte bound to hold", err)
 	} else if len(key) != 768 {
@@ -68,6 +68,26 @@ func TestNodeKeyRefusesWhatAKeyCannotHold(t *testing.T) {
 	}
 	if _, err := EncodeNodeKey(strings.Repeat(".", 257)); err == nil {
 		t.Error("EncodeNodeKey(257 dots) = nil error, want a refusal: it encodes past 768 bytes")
+	}
+	// The bound is on the key, not on the input: literal bytes cost one byte
+	// each, so a 300-byte (or 768-byte) input of them is a legal key, and it is
+	// the reason the doc states the encoded bound rather than an input one.
+	for _, n := range []int{300, 768} {
+		key, err := EncodeNodeKey(strings.Repeat("a", n))
+		if err != nil {
+			t.Errorf("EncodeNodeKey(%d literal bytes) = %v, want a legal key", n, err)
+			continue
+		}
+		if key != strings.Repeat("a", n) {
+			t.Errorf("EncodeNodeKey(%d literal bytes) is %d bytes, want them unchanged", n, len(key))
+		}
+		back, err := DecodeNodeKey(key)
+		if err != nil || back != key {
+			t.Errorf("DecodeNodeKey(EncodeNodeKey(%d literal bytes)) = %q, %v; want the input back", n, back, err)
+		}
+	}
+	if _, err := EncodeNodeKey(strings.Repeat("a", 769)); err == nil {
+		t.Error("EncodeNodeKey(769 literal bytes) = nil error, want a refusal: 769 bytes is over the key bound")
 	}
 	if _, err := DecodeNodeKey(strings.Repeat("A", 769)); err == nil {
 		t.Error("DecodeNodeKey(769 bytes) = nil error, want a refusal")

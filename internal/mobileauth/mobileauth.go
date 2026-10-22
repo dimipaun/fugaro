@@ -23,7 +23,12 @@
 //     and two entries that claim one key with different roles all resolve to
 //     no role at all (RoleNone) and an error. Nothing is guessed, nothing is
 //     defaulted, and nothing is combined: Resolve returns the role of ONE
-//     entry, never the higher of two.
+//     entry, never the higher of two. And an entry that names the looked-up
+//     address in a form this package would not write — an unfolded domain, a
+//     role it does not know — refuses that address outright rather than being
+//     treated as absent, so a broken exact entry can never leave somebody with
+//     their domain's (possibly higher) role: a wide grant is not the fallback
+//     for an unreadable narrow one.
 //   - One address, one decision. NormalizeEmail is the canonical form two
 //     writers agree on (the domain lower-cased, the local part kept byte for
 //     byte), and it is idempotent, so two spellings that differ only in the

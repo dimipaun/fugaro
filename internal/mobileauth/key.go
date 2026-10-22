@@ -27,9 +27,16 @@ const maxNodeKey = 768
 //     accepts, so a key read back from the node is the address the entry names
 //     and not a value somebody has to guess at.
 //
-// What it accepts, stated: any non-empty string of at most 256 bytes, which is
-// far more than an address or a domain (NormalizeEmail's bound is 254). It does
-// not validate what s is: the canonical form is what a writer encodes
+// What it accepts, stated: any non-empty string whose ENCODING is at most 768
+// bytes — the same bound the tree's path check applies, because the encoded key
+// is what the database holds. That is at most 768 bytes of input when every byte
+// is written literally, and 256 bytes when every byte is escaped (three bytes
+// each); an address or a domain is far shorter than either (NormalizeEmail's own
+// bound is 254). The bound is on the key rather than on the input on purpose: a
+// 300-byte input of literal bytes is a legal 300-byte key, and refusing it would
+// refuse a key the database accepts.
+//
+// It does not validate what s is: the canonical form is what a writer encodes
 // (NormalizeEmail for an address, NormalizeDomain for a domain), and it is the
 // canonical form that makes one person one key. An empty string is refused
 // because an empty key is not a key.

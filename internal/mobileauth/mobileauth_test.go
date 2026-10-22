@@ -2,6 +2,7 @@ package mobileauth
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -145,6 +146,115 @@ func TestResolveUnknownRoleIsRefused(t *testing.T) {
 	if _, err := Resolve(exact, nil, "dimi@example.com"); !errors.Is(err, ErrNotAllowed) {
 		t.Fatalf("Resolve with only an unknown role = %v, want ErrNotAllowed", err)
 	}
+	// The domain kind's twin of the same branch: a domain entry that names the
+	// domain and carries no role this package knows is a refusal of its own,
+	// and the message is asserted because the branch is otherwise
+	// indistinguishable — without it the same ErrNotAllowed comes from the
+	// final "not named at all" return, so a reader of the error cannot tell a
+	// domain entry that failed to be usable from a domain that is not an entry.
+	for _, role := range []Role{RoleNone, Role("superuser"), Role("Admin")} {
+		domains := []Entry{{Address: "example.com", Role: role, At: written(), By: "dimi"}}
+		got, err := Resolve(nil, domains, "dimi@example.com")
+		if !errors.Is(err, ErrNotAllowed) {
+			t.Errorf("Resolve with a domain entry carrying role %q = %q, %v; want ErrNotAllowed", role, got, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), "cannot be used") {
+			t.Errorf("Resolve with a domain entry carrying role %q = %v; want the refusal to say the entry names the domain and cannot be used", role, err)
+		}
+	}
+}
+
+// TestResolveRefusesAnEntryThatNamesTheAddressButCannotBeUsed is the fail-open
+// this rule closes, and it is the one the review found: an exact entry whose
+// stored form is not canonical (or whose role is unknown) still NAMES the person
+// it was written for, so an exact entry that cannot be used must refuse that
+// person rather than handing them their domain's role. Treat a non-canonical
+// entry as absent — skip it and fall through — and the first case returns admin.
+func TestResolveRefusesAnEntryThatNamesTheAddressButCannotBeUsed(t *testing.T) {
+	cases := []struct {
+		name    string
+		exact   []Entry
+		address string
+		domain  Role
+	}{
+		{
+			name:    "an exact entry with an unfolded domain",
+			exact:   []Entry{{Address: "Dimi@Example.com", Role: RoleViewer, At: written(), By: "dimi"}},
+			address: "Dimi@example.com",
+			domain:  RoleAdmin,
+		},
+		{
+			name:    "an exact entry with an unfolded domain and a folded lookup",
+			exact:   []Entry{{Address: "dimi@Example.com", Role: RoleViewer, At: written(), By: "dimi"}},
+			address: "dimi@example.com",
+			domain:  RoleAdmin,
+		},
+		{
+			name:    "an exact entry with an unknown role",
+			exact:   []Entry{{Address: "dimi@example.com", Role: Role("superuser"), At: written(), By: "dimi"}},
+			address: "dimi@example.com",
+			domain:  RoleAdmin,
+		},
+		{
+			name:    "an exact entry with an absent role",
+			exact:   []Entry{{Address: "dimi@example.com", Role: RoleNone, At: written(), By: "dimi"}},
+			address: "dimi@example.com",
+			domain:  RoleAdmin,
+		},
+	}
+	for _, c := range cases {
+		domains := []Entry{{Address: "example.com", Role: c.domain, At: written(), By: "dimi"}}
+		role, err := Resolve(c.exact, domains, c.address)
+		if !errors.Is(err, ErrNotAllowed) {
+			t.Errorf("%s: Resolve(%q) = %q, %v; want ErrNotAllowed and no fall-through to the domain's %s", c.name, c.address, role, err, c.domain)
+			continue
+		}
+		// The refusal says which half of the rule refused, and the sentence is
+		// the evidence that no fall-through happened: the same ErrNotAllowed
+		// would otherwise come from a lookup that named nobody at all.
+		if !strings.Contains(err.Error(), "so its domain's entries are not consulted") {
+			t.Errorf("%s: Resolve(%q) = %v; want the refusal to say the unusable exact entry stops the domain's entries being consulted", c.name, c.address, err)
+		}
+	}
+	// A well-formed entry of the same key still grants: an entry that cannot be
+	// used is not a poison pill for the person's other, usable entry.
+	exact := []Entry{
+		{Address: "dimi@example.com", Role: RoleViewer, At: written(), By: "dimi"},
+		{Address: "Dimi@Example.com", Role: RoleAdmin, At: written(), By: "dimi"},
+	}
+	if role, err := Resolve(exact, nil, "dimi@example.com"); err != nil || role != RoleViewer {
+		t.Errorf("Resolve with one usable and one unusable entry for the key = %q, %v; want viewer", role, err)
+	}
+}
+
+// TestDomainOfAcceptsACanonicalAddressOnly: DomainOf's answer is the key a
+// domain entry is looked up by, so it gives one only for an address this package
+// would claim — never a domain for a value a caller forgot to canonicalise.
+func TestDomainOfAcceptsACanonicalAddressOnly(t *testing.T) {
+	cases := []struct {
+		address, want string
+	}{
+		{"dimi@example.com", "example.com"},
+		{"dimi@sub.example.com", "sub.example.com"},
+		{"Dimi@example.com", "example.com"},
+	}
+	for _, c := range cases {
+		domain, ok := DomainOf(c.address)
+		if !ok || domain != c.want {
+			t.Errorf("DomainOf(%q) = %q, %v; want %q, true", c.address, domain, ok, c.want)
+		}
+	}
+	refused := []string{
+		"", "@b.com", "@", "dimi@", "dimi@Example.COM", "dimi@example.com ", " dimi@example.com",
+		"dimi@@example.com", "dimi@example.com@example.com", "Dimi Paun <dimi@example.com>",
+		"dimi@localhost", "dimi@example.com.",
+	}
+	for _, address := range refused {
+		if domain, ok := DomainOf(address); ok {
+			t.Errorf("DomainOf(%q) = %q, true; want the domain of a canonical address only", address, domain)
+		}
+	}
 }
 
 // TestResolveFoldsOnlyTheDomainsCase is the red step's fourth mutation: two
@@ -263,6 +373,21 @@ func TestResolveReadsNoClockAndNoNode(t *testing.T) {
 	}
 	if role, err := Resolve(exact, nil, "never@example.com"); err != nil || role != RoleOperator {
 		t.Errorf("Resolve(never@example.com) = %q, %v; want operator", role, err)
+	}
+}
+
+// TestAllDigitsIsFalseWithoutADigit pins the helper the numeric-TLD refusal is
+// built on, including the empty label: "" is not an all-digit label, so a domain
+// whose last label is empty is refused by the empty-label rule and not admitted
+// by this one. It is a direct test because the caller reaches allDigits only
+// with a label the loop has already proved non-empty, which leaves the empty
+// case covered by nothing else.
+func TestAllDigitsIsFalseWithoutADigit(t *testing.T) {
+	cases := map[string]bool{"": false, "0": true, "123": true, "com": false, "1a": false, "a1": false, "127": true}
+	for s, want := range cases {
+		if got := allDigits(s); got != want {
+			t.Errorf("allDigits(%q) = %v, want %v", s, got, want)
+		}
 	}
 }
 

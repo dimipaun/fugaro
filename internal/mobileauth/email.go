@@ -141,16 +141,27 @@ func NormalizeDomain(domain string) (string, error) {
 	return folded, nil
 }
 
-// DomainOf returns the domain of a canonical address: the part after its "@".
-// It is a reading of a value NormalizeEmail produced, so it does not validate
-// again — an address that is not canonical has no domain this package will
-// claim, and DomainOf says so with ok == false.
+// DomainOf returns the domain of an address: the part after its "@", and
+// whether the address is one this package would claim a domain for.
+//
+// It accepts a canonical address only — NormalizeEmail(address) == address —
+// because its answer is the key a domain entry is looked up by, and an address
+// that is not canonical has no domain this package will claim: DomainOf says ok
+// == false for a padded, unfolded or malformed value rather than handing back a
+// domain that matches no canonical domain entry. "@b.com",
+// "dimi@Example.COM" and "dimi@example.com " are all refused, so a caller that
+// trusts ok never has to canonicalise again first. Resolve is the caller that
+// matters: it passes its own canonical address here, which is why its domain
+// entries are compared against a folded domain.
 func DomainOf(address string) (string, bool) {
-	at := strings.IndexByte(address, '@')
-	if at < 0 || at == len(address)-1 || strings.Contains(address[at+1:], "@") {
+	canonical, err := NormalizeEmail(address)
+	if err != nil || canonical != address {
 		return "", false
 	}
-	return address[at+1:], true
+	// NormalizeEmail accepted the address, so it carries exactly one "@" with a
+	// non-empty local part and a domain that passed NormalizeDomain: the index
+	// below cannot miss and the part after it is never empty.
+	return address[strings.IndexByte(address, '@')+1:], true
 }
 
 // firstNonPrintableASCII returns the offset of the first byte of s outside
