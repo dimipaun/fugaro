@@ -661,8 +661,21 @@ func (s *Session) planByTier(ctx context.Context, p pending, ledger RunLedger, l
 	slug, run := s.cfg.Slug, s.cfg.Run
 	// The days this run may split onto: today always, and yesterday only
 	// while it holds a lease there, oldest first (the same rule, order and
-	// reason the totals settle by).
+	// reason the totals settle by). Each day is read once, and only when a
+	// tier actually reaches it.
 	days := []int64{today - 1, today}
+	shares := map[int64]RunLedger{}
+	shareAt := func(day int64) (RunLedger, error) {
+		if dr, ok := shares[day]; ok {
+			return dr, nil
+		}
+		var dr RunLedger
+		if _, err := s.db.Get(ctx, PathSpendRun(day, slug, run), &dr); err != nil {
+			return dr, err
+		}
+		shares[day] = dr
+		return dr, nil
+	}
 	for _, tier := range []string{TierB, TierC} {
 		want := p.byTier[tier]
 		if want <= 0 {
@@ -694,8 +707,8 @@ func (s *Session) planByTier(ctx context.Context, p pending, ledger RunLedger, l
 			if day != today && !leased[day] {
 				continue
 			}
-			var dr RunLedger
-			if _, err := s.db.Get(ctx, PathSpendRun(day, slug, run), &dr); err != nil {
+			dr, err := shareAt(day)
+			if err != nil {
 				return err
 			}
 			take := min(left, dr.Reserved-dr.Released-dr.ByTier[tier].Spent)
