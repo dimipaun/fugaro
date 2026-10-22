@@ -99,7 +99,7 @@ func TestAuditCarriesNamesOnly(t *testing.T) {
 		a, buf := newAudit(t)
 		for _, purpose := range []string{PurposeForward, PurposeProbe, PurposeMint} {
 			buf.Reset()
-			if err := a.Write(context.Background(), id.Audit(purpose, auditName, TierA, StatusOK)); err != nil {
+			if err := a.Write(context.Background(), id.Audit(AuditEvent{Credential: auditName, Tier: TierA, Purpose: purpose, Status: StatusOK})); err != nil {
 				t.Fatalf("Write(%s): %v", purpose, err)
 			}
 			lines := auditLines(t, buf)
@@ -137,7 +137,7 @@ func TestAuditCarriesNamesOnly(t *testing.T) {
 		a, buf := newAudit(t, WithAuditScrub(func(s string) string {
 			return strings.ReplaceAll(s, value, marker)
 		}))
-		if err := a.Write(context.Background(), id.Audit(PurposeForward, value, TierA, StatusOK)); err != nil {
+		if err := a.Write(context.Background(), id.Audit(AuditEvent{Credential: value, Tier: TierA, Purpose: PurposeForward, Status: StatusOK})); err != nil {
 			t.Fatalf("Write: %v", err)
 		}
 		raw := buf.String()
@@ -155,7 +155,7 @@ func TestAuditCarriesNamesOnly(t *testing.T) {
 		// one is refused, the refusal names the field, and neither the line nor
 		// the error repeats what the field held.
 		full := func(mutate func(*AuditEvent)) AuditEvent {
-			ev := id.Audit(PurposeForward, auditName, TierA, StatusOK)
+			ev := id.Audit(AuditEvent{Credential: auditName, Tier: TierA, Purpose: PurposeForward, Status: StatusOK})
 			mutate(&ev)
 			return ev
 		}
@@ -203,6 +203,37 @@ func TestAuditCarriesNamesOnly(t *testing.T) {
 		}
 	})
 
+	t.Run("the verified identity is the line's who, whatever the caller put there", func(t *testing.T) {
+		// Identity.Audit completes an event with what auth.go verified. A
+		// caller that filled those fields in itself — or with its own text —
+		// does not get them written: the line's "who" is the verified one.
+		a, buf := newAudit(t)
+		ev := id.Audit(AuditEvent{
+			Run:        "another-run",
+			Repository: "another-repo",
+			Job:        "another-job",
+			Caller:     "someone-else@example.invalid",
+			Credential: auditName,
+			Tier:       TierA,
+			Purpose:    PurposeForward,
+			Status:     StatusOK,
+		})
+		if err := a.Write(context.Background(), ev); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		line := auditLines(t, buf)[0]
+		for field, want := range map[string]string{
+			"run":        f.run,
+			"repository": f.slug,
+			"job":        f.job,
+			"caller":     testJobSA,
+		} {
+			if got := line[field]; got != want {
+				t.Errorf("%s = %v, want the verified %q", field, got, want)
+			}
+		}
+	})
+
 	t.Run("a name that carries a bidi control is escaped, not carried", func(t *testing.T) {
 		// A slug is held to token.ValidSegment, which refuses '~', '/' and
 		// controls — and a bidi control is neither, so it passes that rule and
@@ -210,7 +241,7 @@ func TestAuditCarriesNamesOnly(t *testing.T) {
 		// terminal (F32: the names that travel are text from another writer).
 		const rlo = "‮"
 		a, buf := newAudit(t)
-		ev := id.Audit(PurposeForward, auditName, TierA, StatusOK)
+		ev := id.Audit(AuditEvent{Credential: auditName, Tier: TierA, Purpose: PurposeForward, Status: StatusOK})
 		ev.Run = f.run + rlo + "gpj.exe"
 		if err := a.Write(context.Background(), ev); err != nil {
 			t.Fatalf("Write: %v", err)
@@ -255,7 +286,7 @@ func TestAuditOnRefusal(t *testing.T) {
 
 	t.Run("a refused run records the run, the repository and the credential it was about", func(t *testing.T) {
 		a, buf := newAudit(t)
-		if err := a.Write(context.Background(), id.Audit(PurposeForward, auditName, TierB, ReasonStopped)); err != nil {
+		if err := a.Write(context.Background(), id.Audit(AuditEvent{Credential: auditName, Tier: TierB, Purpose: PurposeForward, Status: ReasonStopped})); err != nil {
 			t.Fatalf("Write: %v", err)
 		}
 		line := auditLines(t, buf)[0]
@@ -279,7 +310,7 @@ func TestAuditOnRefusal(t *testing.T) {
 	t.Run("a status the contract does not know is refused, and not repeated", func(t *testing.T) {
 		a, buf := newAudit(t)
 		const invented = "spent-the-cap"
-		if err := a.Write(context.Background(), id.Audit(PurposeForward, auditName, TierA, invented)); err == nil {
+		if err := a.Write(context.Background(), id.Audit(AuditEvent{Credential: auditName, Tier: TierA, Purpose: PurposeForward, Status: invented})); err == nil {
 			t.Fatal("Write accepted a status the contract does not carry")
 		}
 		if strings.Contains(buf.String(), invented) {
@@ -292,7 +323,7 @@ func TestAuditOnRefusal(t *testing.T) {
 
 	t.Run("a purpose the service does not issue for is refused", func(t *testing.T) {
 		a, buf := newAudit(t)
-		if err := a.Write(context.Background(), id.Audit("whatever", auditName, TierA, StatusOK)); err == nil {
+		if err := a.Write(context.Background(), id.Audit(AuditEvent{Credential: auditName, Tier: TierA, Purpose: "whatever", Status: StatusOK})); err == nil {
 			t.Fatal("Write accepted a purpose the service does not have")
 		}
 		if got := auditLines(t, buf)[0]["field"]; got != "purpose" {

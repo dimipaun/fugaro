@@ -59,7 +59,9 @@ const (
 	// a request the service forwarded (C1.11).
 	PurposeForward = "forward"
 	// PurposeProbe is the minimal call C1.12 makes on a backed-off credential
-	// before real work is routed to it again.
+	// before real work is routed to it again. A probe that fails is recorded
+	// with the status of the mark it leaves (ReasonExhausted: the credential
+	// stays held, for longer), and a probe that succeeds with StatusOK.
 	PurposeProbe = "probe"
 	// PurposeMint is a GitHub App installation token minted from the App key
 	// in the bundle (C2.1). The credential's name is the App key's.
@@ -146,22 +148,24 @@ type AuditEvent struct {
 	Status string
 }
 
-// Audit returns the event for an act on this run: the identity's own verified
-// fields filled in — the run, its repository, the job it reported and the
-// account that called — and the rest left to the caller. It is the way C1.11
-// writes a line, so the run a line names is the run the service verified and
-// not one a caller typed.
-func (id Identity) Audit(purpose, credential, tier, status string) AuditEvent {
-	return AuditEvent{
-		Run:        id.Run,
-		Repository: id.Slug,
-		Job:        id.Job,
-		Caller:     id.JobAccount,
-		Credential: credential,
-		Tier:       tier,
-		Purpose:    purpose,
-		Status:     status,
-	}
+// Audit completes an event with the identity the service verified: the run,
+// its repository, the job the run reported and the account that called are
+// taken from the identity and from nowhere else, so a line's "who" is always
+// what auth.go verified and never a value a caller typed. It is the way C1.11
+// writes a line:
+//
+//	a.Write(ctx, id.Audit(AuditEvent{Credential: name, Tier: TierA,
+//		Purpose: PurposeForward, Status: StatusOK}))
+//
+// The four fields it sets are set whatever the caller put there, which is the
+// point: the fields it does not set are the caller's, and the rules for them
+// are checked on the way out either way.
+func (id Identity) Audit(ev AuditEvent) AuditEvent {
+	ev.Run = id.Run
+	ev.Repository = id.Slug
+	ev.Job = id.Job
+	ev.Caller = id.JobAccount
+	return ev
 }
 
 // Auditor writes the service's audit lines. It is safe for concurrent use (the
