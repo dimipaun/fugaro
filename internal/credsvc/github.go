@@ -49,13 +49,18 @@ package credsvc
 //
 // How the key gets into the bundle is C1.25's half, which the plan's C2.1 file
 // list names (internal/cli/creds.go, the same key through `fugaro creds set`).
-// That file is NOT on this branch — no `creds` command exists here yet — so on
-// this branch the App key has no writer, and an installation whose bundle holds
-// none gets exactly the named refusal below (ErrMintNoAppKey) and never a
-// fallback. What C2.1 owes C1.25 is here and is the shared code that writer
-// reuses: CredentialKey answers the App key's kind, the schema admits the key,
-// and the mint reads it by kind. Nothing else is needed from this side, and a
-// second writer would be the thing to avoid.
+// That writer is on this branch and takes the key the way this file reads it:
+// `fugaro creds set github-app-key` is the ONE entry whose value is not one
+// line, so it accepts exactly one PEM block and parses it with the parser
+// below (github.ParsePrivateKey, the same function appKey calls) — a key the
+// command stores is a key this mint signs with, and the two answers cannot
+// drift. An installation whose bundle holds no key gets exactly the named
+// refusal below (ErrMintNoAppKey) and never a fallback, which is also what a
+// bundle written before this command knew the key's shape holds. What C2.1 owes
+// C1.25 is here and is the shared code that writer reuses: CredentialKey
+// answers the App key's kind, the schema admits the key, and the mint reads it
+// by kind. Nothing else is needed from this side, and a second writer would be
+// the thing to avoid.
 
 import (
 	"context"

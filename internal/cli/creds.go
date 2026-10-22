@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -26,6 +27,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -136,6 +138,7 @@ NAME is a credential the service can issue, in the document's own spelling:
   ` + config.ClaudeOAuthToken + `                    the default Claude account's OAuth token (tier A)
   ` + config.ClaudeOAuthTokenPrefix + `<account>       a named Claude account's OAuth token (tier A)
   ` + config.AnthropicSecret + `                the project's Anthropic API key (tier B)
+  ` + config.GitHubAppKeySecret + `                  the GitHub App's private key (no tier: the mint signs with it)
 
 The value is read only from stdin: pipe or redirect it in
 (fugaro creds set ` + config.ClaudeOAuthToken + ` < token-file), or, when stdin is a terminal, paste it
@@ -144,6 +147,17 @@ environment, and never printed. One trailing newline (\n or \r\n) is dropped,
 and the command says so. A value must be 4 bytes to ` + strconv.Itoa(credsvc.MaxBundleValueBytes) + `, on one line, with
 no whitespace at either end; a longer value is a document the service's loader
 would refuse, so it is refused here instead.
+
+` + config.GitHubAppKeySecret + ` is the ONE multi-line entry: it is an RSA private key in a PEM,
+so it has to come in on stdin, from the key file the App's page downloads
+(fugaro creds set ` + config.GitHubAppKeySecret + ` < PATH-TO-THE-KEY-FILE) — the hidden prompt reads one
+line and cannot take a paste of a whole key, so it refuses this name and says
+so. The value must be exactly one PEM block, its -----BEGIN line to its
+matching -----END line and nothing else, and it must be a key the service's
+mint can parse (internal/gitprov/github's ParsePrivateKey: PKCS#1 "RSA PRIVATE
+KEY" or PKCS#8 "PRIVATE KEY", RSA). A single line of anything, a PEM with a
+line of text around it, and a key the mint cannot use are each refused before
+the write, and no refusal repeats a byte of the value.
 
 The write is a read-modify-write of one document: the other entries keep their
 bytes, and the whole document is parsed with the service's own loader
@@ -521,7 +535,10 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string) error {
 	// The name is checked before the project is selected, so a name that is
 	// not a bundle key (a value pasted into the argument position, say) is
 	// refused without a cloud call and without being echoed.
-	if _, _, _, ok := credsvc.CredentialKey(name); !ok {
+	// The kind is kept, not just checked: it is what says whether this name's
+	// value is one line (every model credential) or a PEM (the App key).
+	_, kind, _, ok := credsvc.CredentialKey(name)
+	if !ok {
 		return credsNameRefusal()
 	}
 	_, lc, err := selectProject(ctx, o.cloud)
@@ -552,7 +569,7 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string) error {
 			return credsDocRefusal(store.id, err)
 		}
 	}
-	value, err := readBundleValue(ctx, cmd.InOrStdin(), cmd.ErrOrStderr(), name)
+	value, err := readBundleValue(ctx, cmd.InOrStdin(), cmd.ErrOrStderr(), name, kind)
 	if err != nil {
 		return err
 	}
@@ -723,20 +740,31 @@ func credsDocRefusal(id string, err error) error {
 	return userErr("nothing was written: the bundle in %s is not a document the credentials service accepts: %s. The service's own loader (internal/credsvc/bundle.go) reads the same schema, so a document refused here would be refused there", safetext.Field(id), safetext.Field(msg))
 }
 
-// readBundleValue reads NAME's value. It is readSecret's shape (secrets.go) —
-// a terminal gets a hidden prompt, anything else is read to EOF — with this
-// command's own rules: every credential the bundle holds is one line, so there
-// is no multiline form here, and the bound is the loader's per-credential one
-// rather than Secret Manager's.
+// readBundleValue reads NAME's value, whose shape KIND decides. It is
+// readSecret's shape (secrets.go) — a terminal gets a hidden prompt, anything
+// else is read to EOF — with this command's own rules: a model credential is
+// one line, and the GitHub App's key is the one entry that is a PEM, which the
+// hidden prompt cannot take (it reads one line), so that name comes in on
+// stdin and a terminal is refused before anything is read. The bound is the
+// loader's per-credential one rather than Secret Manager's.
 //
 // The value never comes from an argument, a flag or the environment: this
 // function's only inputs are stdin and the terminal. One trailing "\n" or
 // "\r\n" is dropped and said, because a value pasted from a file almost always
 // has one and silently keeping it would store a credential the service cannot
 // use.
-func readBundleValue(ctx context.Context, in io.Reader, prompt io.Writer, name string) ([]byte, error) {
+func readBundleValue(ctx context.Context, in io.Reader, prompt io.Writer, name string, kind credsvc.Kind) ([]byte, error) {
+	multiline := kind == credsvc.KindGitHubApp
 	var raw []byte
 	if f, ok := in.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+		// The one refusal made before the prompt: a PEM is many lines, the
+		// hidden prompt reads one, and a prompt that took the -----BEGIN line
+		// and then failed would have made the operator paste a private key
+		// into a terminal for nothing. The sentence is readSecret's own for
+		// the same case (secrets.go), with this command's name.
+		if multiline {
+			return nil, userErr("%s is a private key, which spans several lines and the hidden prompt can't take; redirect it from the key file: fugaro creds set %s < PATH-TO-THE-KEY-FILE", name, name)
+		}
 		b, err := readHidden(ctx, f, prompt, name)
 		if err != nil {
 			return nil, err
@@ -754,19 +782,21 @@ func readBundleValue(ctx context.Context, in io.Reader, prompt io.Writer, name s
 			fmt.Fprintln(prompt, "note: dropped the value's trailing newline")
 		}
 	}
-	if err := validateBundleValue(raw); err != nil {
+	if err := validateBundleValue(raw, kind); err != nil {
 		return nil, err
 	}
 	return raw, nil
 }
 
 // validateBundleValue is the rules a value meets before it goes into the
-// bundle: the floor and shape `fugaro secrets set` applies (not empty, at
-// least the redaction floor, one line, no NUL, no whitespace at either end)
-// and the bundle's own bound, credsvc.MaxBundleValueBytes — the loader's
+// bundle: not empty, at least the redaction floor, no NUL, and within the
+// bundle's own bound, credsvc.MaxBundleValueBytes — the loader's
 // per-credential limit, which a longer value would break, so it is refused
-// here rather than by the service later. Errors never quote the value.
-func validateBundleValue(raw []byte) error {
+// here rather than by the service later. What shape the value has to be is
+// KIND's: a model credential is one line with no whitespace at either end
+// (`fugaro secrets set`'s rule), and the App key is one PEM block that the
+// service's own mint can parse. Errors never quote the value.
+func validateBundleValue(raw []byte, kind credsvc.Kind) error {
 	switch {
 	case len(raw) == 0:
 		return userErr("the value is empty; pipe it in on stdin or paste it at the prompt")
@@ -776,10 +806,51 @@ func validateBundleValue(raw []byte) error {
 		return userErr("the value is over the bundle's %d-byte per-credential limit, which the service's loader enforces; nothing was written", credsvc.MaxBundleValueBytes)
 	case bytes.IndexByte(raw, 0) >= 0:
 		return userErr("the value holds a NUL byte")
+	}
+	if kind == credsvc.KindGitHubApp {
+		return validateAppKeyPEM(raw)
+	}
+	switch {
 	case bytes.ContainsAny(raw, "\r\n"):
-		return userErr("the value spans several lines: every credential the bundle holds is one line (an App key or a PEM is not a bundle entry)")
+		return userErr("the value spans several lines: every credential the bundle holds is one line, except the GitHub App's key, which is a PEM and is set with fugaro creds set %s < PATH-TO-THE-KEY-FILE", config.GitHubAppKeySecret)
 	case len(bytes.TrimSpace(raw)) != len(raw):
 		return userErr("the value starts or ends with whitespace, most likely a copy-and-paste slip")
+	}
+	return nil
+}
+
+// validateAppKeyPEM is the shape of the bundle's one multi-line entry, the
+// GitHub App's private key (C2.1). Three things are checked, and the third is
+// the one that matters:
+//
+//   - It is exactly one PEM block and nothing else: it starts at a -----BEGIN
+//     line (no leading blank line or text), pem.Decode finds a block, and
+//     nothing but whitespace follows its matching -----END line — so the one
+//     trailing newline a redirected key file ends with is fine and a second
+//     key, a comment or a stray paste is not. pem.Decode is what pairs the two
+//     lines: it refuses a block whose END line does not repeat its BEGIN type,
+//     and a body that is not base64. It is NOT what refuses text before the
+//     block (it scans for the BEGIN line), which is why the prefix is checked
+//     here.
+//   - It is not larger than any other entry (the bound above).
+//   - It is a key the MINT can use, and it is the mint's own parser that
+//     decides: github.ParsePrivateKey, the function internal/credsvc's mint
+//     calls on this very value. An "EC PRIVATE KEY" is one PEM block of
+//     base64 and is refused here, by the same code that would refuse it at the
+//     service — so the two answers to "is this the App's key" cannot drift,
+//     and a key that installs is a key that mints.
+//
+// Neither refusal repeats a byte of the value: the parser's own error is not
+// relayed (it is another package's sentence about a credential, and it is not
+// this command's to print), and what is named is the CLASS — one PEM block, an
+// RSA key in PKCS#1 or PKCS#8 — which is what an operator acts on.
+func validateAppKeyPEM(raw []byte) error {
+	block, rest := pem.Decode(raw)
+	if !bytes.HasPrefix(raw, []byte("-----BEGIN ")) || block == nil || len(bytes.TrimSpace(rest)) != 0 {
+		return userErr("%s must be exactly one PEM block — its -----BEGIN line, its base64 body, its matching -----END line — and nothing before or after it but a trailing newline. It is multi-line, so it comes in on stdin from the key file the GitHub App's page downloads: fugaro creds set %s < PATH-TO-THE-KEY-FILE", config.GitHubAppKeySecret, config.GitHubAppKeySecret)
+	}
+	if _, err := github.ParsePrivateKey(raw); err != nil {
+		return userErr("the value is not a private key the credentials service can use: the service's mint parses this entry with internal/gitprov/github's ParsePrivateKey, which takes an RSA private key in a PKCS#1 (\"RSA PRIVATE KEY\") or PKCS#8 (\"PRIVATE KEY\") PEM; nothing was written. The App key comes in on stdin from the key file the GitHub App's page downloads: fugaro creds set %s < PATH-TO-THE-KEY-FILE", config.GitHubAppKeySecret)
 	}
 	return nil
 }
