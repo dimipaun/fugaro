@@ -654,11 +654,11 @@ func TestMintRefusesWhenItCannotBeAudited(t *testing.T) {
 		{name: "a log that does not record the level", handler: &levelOffHandler{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			auditor, err := NewAuditor(tc.handler, armed())
-			if err != nil {
-				t.Fatalf("NewAuditor: %v", err)
-			}
-			s, gh := mintSvc(t, func(_ *svc, cfg *Config) { cfg.Audit = auditor })
+			// The handler is handed to the SERVICE and not to an auditor built
+			// here: the mint writes through the auditor the service builds for
+			// every line it writes (NewServer's NewProbeAuditor), so a handler
+			// the service cannot write through is one the mint cannot either.
+			s, gh := mintSvc(t, func(_ *svc, cfg *Config) { cfg.AuditLog = tc.handler })
 			resp, body := s.mintCall(t, mintBody(testAppID))
 			if resp.StatusCode != StatusUnavailable {
 				t.Fatalf("the answer is %d, want %d: a token this service could not audit is handed to nobody", resp.StatusCode, StatusUnavailable)
@@ -686,11 +686,9 @@ func TestMintRefusesWhenItCannotBeAudited(t *testing.T) {
 	// The other half: a refused mint is still refused, and the audit failure is
 	// on the service's log rather than in the run's answer.
 	t.Run("a refusal is still refused", func(t *testing.T) {
-		auditor, err := NewAuditor(&recordHandler{err: errors.New("the log is not recording")}, armed())
-		if err != nil {
-			t.Fatalf("NewAuditor: %v", err)
-		}
-		s, gh := mintSvc(t, func(_ *svc, cfg *Config) { cfg.Audit = auditor })
+		s, gh := mintSvc(t, func(_ *svc, cfg *Config) {
+			cfg.AuditLog = &recordHandler{err: errors.New("the log is not recording")}
+		})
 		resp, body := s.mintCall(t, mintBody("not-a-number"))
 		if resp.StatusCode != StatusUnavailable {
 			t.Fatalf("the answer is %d, want %d", resp.StatusCode, StatusUnavailable)
@@ -940,7 +938,17 @@ func TestMintRelaysNoGitHubTextAndHaltsTheRun(t *testing.T) {
 // installation token included. The run halts on the refusal, as it does for a
 // model call.
 func TestMintIsStoppedByTheKillSwitch(t *testing.T) {
-	s, gh := mintSvc(t, func(s *svc, _ *Config) { s.kills.global = true })
+	// The audit lines go to a buffer of their own, which is the handler the
+	// SERVICE is configured with (AuditLog): the mint has no sink of its own
+	// (auditMint), so a line for this call that the service's one auditor did
+	// not write would be a line this test does not find — and the fixture's
+	// default buffer, which nothing is writing through any more, must stay
+	// empty for this call.
+	mintLog := &logBuf{}
+	s, gh := mintSvc(t, func(s *svc, cfg *Config) {
+		s.kills.global = true
+		cfg.AuditLog = slog.NewJSONHandler(mintLog, nil)
+	})
 	resp, body := s.mintCall(t, mintBody(testAppID))
 	if resp.StatusCode != StatusUnavailable {
 		t.Fatalf("the answer is %d, want %d", resp.StatusCode, StatusUnavailable)
@@ -956,9 +964,12 @@ func TestMintIsStoppedByTheKillSwitch(t *testing.T) {
 	// (server.go), so a purpose taken from the branch would be "forward" here
 	// and the audit would tell an operator that a model call was refused when
 	// the run asked for an installation token.
-	lines := auditLines(t, s.audit)
+	lines := auditLines(t, mintLog)
 	if len(lines) != 1 {
 		t.Fatalf("the stopped mint wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+	}
+	if other := s.audit.String(); other != "" {
+		t.Errorf("the call wrote to a second audit sink, want none: the mint has one writer: %s", other)
 	}
 	line := lines[0]
 	checkAuditShape(t, line)

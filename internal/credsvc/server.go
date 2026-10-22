@@ -166,13 +166,6 @@ type Config struct {
 	Policy PolicyReader
 	// State is the cascade's shared state under creds/.
 	State creds.Store
-	// Audit is C1.13's auditor: the one writer of the service's audit lines,
-	// and the seam the service's own redaction is armed at (WithAuditScrub).
-	// Every act of this service that touches a credential is recorded through
-	// it — a mint (C2.1) writes its line here — and an act that cannot be
-	// audited is not made (D143), so NewServer refuses a service without one
-	// rather than building one whose mints could only refuse.
-	Audit *Auditor
 	// Kills reads the operator's two stop switches.
 	Kills KillReader
 	// DB is the one database write the service makes outside the cascade: the
@@ -186,11 +179,14 @@ type Config struct {
 	// probing a credential, which lapses on its own and is never deleted.
 	// *rtdb.Client is one.
 	Probes ProbeLeases
-	// AuditLog is where the service's audited acts are written (C1.13): the
-	// probe today (C1.12), and every act the service audits as the rest of this
-	// build wires one. The service builds its auditor from it, armed with the
-	// bundle loader's own redaction (NewProbeAuditor), so a credential's value
-	// cannot reach a line: the arming is not a caller's to forget.
+	// AuditLog is where the service's audited acts are written (C1.13): every
+	// line this service writes, the mint's (C2.1) and the probe's (C1.12)
+	// included. There is one writer and one handler — Server.audit is the ONLY
+	// auditor this service holds — so no act of it has a log of its own and an
+	// operator reads one stream. The service builds its auditor from this
+	// handler, armed with the bundle loader's own redaction (NewProbeAuditor),
+	// so a credential's value cannot reach a line: the arming is not a caller's
+	// to forget.
 	//
 	// It is a handler and not a logger, deliberately — see NewAuditor: a logger
 	// carries whatever it was built with, and an attr or a group on an audit
@@ -309,13 +305,6 @@ func NewServer(cfg Config) (*Server, error) {
 	if cfg.Kills == nil {
 		return nil, errors.New("credsvc: the service cannot read the stop switches")
 	}
-	if cfg.Audit == nil {
-		// C1.13: an issuance that cannot be audited is not made. A service with
-		// no auditor is a service whose every mint would refuse, so it is
-		// refused here — where an operator sees it at startup — rather than
-		// discovered as a run that halts.
-		return nil, errors.New("credsvc: the service has no auditor, so an issuance it made could not be audited")
-	}
 	if cfg.DB == nil {
 		return nil, errors.New("credsvc: the service cannot remove an ended run's placement")
 	}
@@ -331,7 +320,10 @@ func NewServer(cfg Config) (*Server, error) {
 		// The same refusal for the same reason one step further along: a probe
 		// this service could not audit must not be made (D143), and one that
 		// cannot be audited at all is one that cannot be made at all — which is
-		// again a credential that never comes back.
+		// again a credential that never comes back. It is also the whole of the
+		// service's audit: the auditor built from this handler is the one the
+		// answer path and the mint write through, so a service without it is a
+		// service whose every issuance and every mint would refuse.
 		return nil, errors.New("credsvc: the service has no audit handler, so it cannot record a probe and a backed-off credential could never come back")
 	}
 	if len(cfg.JobAccounts) == 0 {

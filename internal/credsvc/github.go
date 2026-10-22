@@ -330,16 +330,24 @@ func (s *Server) refuseMint(ctx context.Context, w http.ResponseWriter, id Ident
 // the error type the wire contract and this file already share — so the status
 // is a word the runner's halt message and the operator's line read alike.
 //
+// The writer is the service's one auditor (Server.audit) and not a second one
+// taken from the configuration: there is one audit log, the service builds the
+// writer from the handler it was configured with (NewServer's NewProbeAuditor),
+// and that writer is armed with the bundle loader's own redaction — so a mint's
+// lines are redacted by the same code and the same values as every other line
+// this service writes, and no caller of this package can hand the mint a writer
+// the arming was forgotten on.
+//
 // Nothing in the event can carry a value: the App key's value and the minted
 // token have no field to be written into, the credential field is the name,
-// and the auditor's own redaction (armed by whoever built it, WithAuditScrub)
-// runs over every field before any rule looks at one.
+// and the auditor's own redaction (armed by the service, WithAuditScrub) runs
+// over every field before any rule looks at one.
 //
 // A returned error means the act was not recorded and the caller must not go
 // on with it — the mint's answer is a refusal in that case, and a refusal's
 // answer is the refusal it already had.
 func (s *Server) auditMint(ctx context.Context, id Identity, status string) error {
-	return s.cfg.Audit.Write(ctx, id.Audit(AuditEvent{
+	return s.audit.Write(ctx, id.Audit(AuditEvent{
 		Credential: config.GitHubAppKeySecret,
 		Purpose:    PurposeMint,
 		Status:     status,
