@@ -5,9 +5,9 @@ configuration is touched, and **every decision in it is answered** — the owner
 as recommended on 2026-10-22** and approved the plan's **P0 and P1**, the two parts that wait on
 nothing built (**P3, P4 and P5 wait on the mobile Phase 6 tasks**, per the plan's §11). The four
 documents below are the owner's spec, what the repository actually holds, the decisions planning
-found, and the plan that would follow from them. **Owner: Dimi Paun. Date: 2026-10-21.** Read against `main` at `d9dda8f3`
-(`cli: fugaro --version and fugaro -v print the version, like fugaro version (#794)`); every
-citation is by **path and symbol, never by line number**.
+found, and the plan that would follow from them. **Owner: Dimi Paun. Date: 2026-10-21.** Read
+against `main` at `d9dda8f3` (`cli: fugaro --version and fugaro -v print the version, like fugaro
+version (#794)`); every citation is by **path and symbol, never by line number**.
 
 The spec is one page of prose and a flow: sign in with an account already on the phone, scan a
 project QR, let the project's allowlist check the verified email. What the repository holds today is
