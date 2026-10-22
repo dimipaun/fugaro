@@ -1003,41 +1003,54 @@ func TestChecklistCheck68GuardPinsTheInstallation(t *testing.T) {
 	})
 }
 
-// TestReleaseManagedDeployerBulletStatesTheCurrentReason: the Before-you-tag
-// bullet for `managedDeployerShipped` used to give the gate's reason as the
-// 0.8.6 fence itself — "that binding's `fmgd-` fence is not an IAM condition GCP
-// accepts as written (17 logical operators where IAM allows 12;
-// `resource.name.contains()` is not a supported function; `resource.name` is not
-// supported for most of the types it fences)" — and described one scoped role
-// with one conditioned binding. Both halves are now wrong about this tree: the
-// redesign replaced that shape with seven roles, seven conditioned bindings, at
-// most three logical operators per expression and no `contains(` anywhere, and
-// the reason the gate is still closed is that the fence has not been measured
-// live (the design's §9, Check 68 — USER-RUN, NOT RUN). A release checklist read
-// against the old text sends a release hunting a defect that is no longer there
-// and names a shape the module does not write.
+// TestReleaseManagedDeployerBulletStatesTheFlipAndItsCaveat: the Before-you-tag
+// bullet for `managedDeployerShipped` was a verification bullet while the gate
+// was shut, and it gave the gate's reason as the 0.8.6 fence itself. Both halves
+// are now wrong about this tree: 0.10.0 ships the gate open (the owner's ruling
+// of 2026-10-22), and the shape that ships is the redesign — seven roles, seven
+// conditioned bindings, at most three logical operators per expression and no
+// `contains(` anywhere. What the flip does not settle is the fence's live
+// measurement (the design's §9, Check 68 — OWNER-RUN, NOT RUN), and that caveat
+// is what the bullet has to carry now: a release checklist read against the old
+// text sends a release verifying a constant that no longer gates anything, and
+// one read without the caveat tells an operator the fence is proved.
 //
 // Mutation (verified, run and restored): put the old reason sentence back into
 // the bullet — this fails naming it.
-func TestReleaseManagedDeployerBulletStatesTheCurrentReason(t *testing.T) {
+func TestReleaseManagedDeployerBulletStatesTheFlipAndItsCaveat(t *testing.T) {
 	doc := readDoc(t, "docs/release.md")
-	start := strings.Index(doc, "Verify `managedDeployerShipped`")
+	start := strings.Index(doc, "`managedDeployerShipped` in the same file is `true` as of 0.10.0")
 	if start < 0 {
-		t.Fatal("docs/release.md's Before-you-tag list has no `managedDeployerShipped` bullet: it is where a release verifies the managed gate")
+		t.Fatal("docs/release.md's Before-you-tag list has no bullet saying `managedDeployerShipped` is true as of 0.10.0: it is where a release reads where the managed gate stands")
 	}
 	bullet := doc[start:]
 	if end := strings.Index(bullet[1:], "\n- **"); end >= 0 {
 		bullet = bullet[:end+1]
 	}
-	// The current reason and the current shape, so a release reads what the tree
-	// gates off and why.
+	// The flip, the shape it ships and the caveat, so a release reads what the
+	// tree ships and what is still unproved.
 	for _, want := range []string{
 		"seven conditioned bindings",
 		"has not been measured live",
 		"Check 68",
+		"fails partway through its apply",
+		"opt-in per project",
 	} {
 		if !strings.Contains(bullet, want) {
-			t.Errorf("the `managedDeployerShipped` bullet does not say %q: the gate is closed because the redesigned fence has not been measured live, and the bullet has to say so rather than describe a defect the redesign removed", want)
+			t.Errorf("the `managedDeployerShipped` bullet does not say %q: 0.10.0 ships the fence with the live measurement still ahead of it, and the bullet has to say both rather than describe a defect the redesign removed", want)
+		}
+	}
+	// The names that made the gate re-openable went with the flip, and the
+	// bullet says so, the way the `batchProvisionShipped` bullet above it does.
+	for _, want := range []string{"managedDeployerOpen", "managedDisabled", "refuseManagedNotShipped"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("the `managedDeployerShipped` bullet does not name %q among the names that went with the flip: an open gate nothing closes and a refusal nothing can reach are names a later reader re-opens", want)
+		}
+	}
+	// And it no longer claims the gate is shut.
+	for _, wrong := range []string{"currently `false`", "While it is `false`", "Flip it to `true`"} {
+		if strings.Contains(bullet, wrong) {
+			t.Errorf("the `managedDeployerShipped` bullet still says %q: the constant is true as of 0.10.0 and there is no flip left to verify", wrong)
 		}
 	}
 	// The pre-redesign shape, which is history and not the reason: the bullet may
@@ -1129,46 +1142,50 @@ func TestChecklistCheck68HardStopCountsAgree(t *testing.T) {
 	}
 }
 
-// TestGcpSetupSaysWhyTheManagedGateIsClosed: the operator guide's disabled-mode
-// note carried the pre-redesign reason — the deployer's scoped role "is not an
+// TestGcpSetupSaysTheManagedPathShipsUnmeasured: the operator guide's managed
+// note carried the disabled-mode reason — the deployer's scoped role "is not an
 // IAM condition GCP accepts yet", with the redesign still ahead ("after the
 // fence is redesigned") — while the paragraph two above it, docs/release.md's
-// bullet and docs/design/managed-projects.md's 0.10.0 note all state the reason
-// this tree actually has: the redesign is written and in the tree, and what is
-// missing is the live measurement (Check 68, written and NOT RUN). An operator
-// reading the note is deciding whether the gate can be opened, so a reason the
-// branch itself removed sends them looking for a defect that is no longer there.
+// bullet and docs/design/managed-projects.md's 0.10.0 note all state what this
+// tree actually has: the redesign is written and in the tree, 0.10.0 ships it
+// (the owner's ruling of 2026-10-22), and what is missing is the live
+// measurement (Check 68, written and NOT RUN). An operator reading the note is
+// deciding whether to turn managed projects on, so the note has to say both
+// halves: the path is available, and the fence's protection is unproved.
 //
 // Mutations (verified, run and restored): the old reason sentence put back into
 // the note, and "after the fence is redesigned" put back — both fail here.
-func TestGcpSetupSaysWhyTheManagedGateIsClosed(t *testing.T) {
+func TestGcpSetupSaysTheManagedPathShipsUnmeasured(t *testing.T) {
 	const path = "docs/gcp-setup.md"
 	doc := readDoc(t, path)
-	const lead = "**Disabled since 0.8.6, and still off in 0.9.0.**"
+	const lead = "**Available since 0.10.0, and the fence has not been measured live.**"
 	i := strings.Index(doc, lead)
 	if i < 0 {
-		t.Fatalf("%s no longer has the managed-mode disabled note (%q): it is where the guide says why the gate is closed", path, lead)
+		t.Fatalf("%s no longer has the managed-path note (%q): it is where the guide says where the gate stands and what is unproved", path, lead)
 	}
 	note := doc[i:]
 	if end := strings.Index(note, "\n\n"); end >= 0 {
 		note = note[:end]
 	}
 	for _, want := range []string{
+		"0.10.0",
+		"owner-run after the release",
 		"measured live",
 		"Check 68",
 		"NOT RUN",
-		"0.10.0",
+		"opt-in per project",
 	} {
 		if !strings.Contains(note, want) {
-			t.Errorf("%s's disabled note does not say %q: the gate is closed because the redesigned fence has not been measured live (Check 68 is written and NOT RUN), and the note is where an operator reads that", path, want)
+			t.Errorf("%s's managed note does not say %q: 0.10.0 ships the path with the fence unmeasured (Check 68 is written, owner-run after the release and NOT RUN), and the note is where an operator reads that", path, want)
 		}
 	}
 	for _, wrong := range []string{
 		"is not an IAM condition GCP accepts",
 		"after the fence is redesigned",
+		"refuse before any cloud call",
 	} {
 		if strings.Contains(note, wrong) {
-			t.Errorf("%s's disabled note still states %q: this branch lands the redesign (seven roles, one per service, one binding each, at most three logical operators), so the fence's old defect is history and the reason the gate is closed is the missing live measurement", path, wrong)
+			t.Errorf("%s's managed note still states %q: the redesign is in the tree and 0.10.0 ships it, so the fence's old defect is history and the entry points no longer refuse", path, wrong)
 		}
 	}
 }
