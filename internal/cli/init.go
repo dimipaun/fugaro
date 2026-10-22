@@ -1841,7 +1841,14 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	// fourteen resources the fence is.
 	spec.ManagedDeployerScoped, err = r.managedProject(ctx, c)
 	if err != nil {
-		return outs, false, initErr(err)
+		// A remote failure of this run and not a refusal: there is no plan to
+		// refuse yet, and the run cannot tell whether the variable belongs on
+		// or off, so it plans nothing rather than guessing (the guard's own
+		// read-error refusal, which is this same fact read at the point where a
+		// plan exists to refuse, is below). The text the read failed with is a
+		// bounded field: it is a service's words about an object in the
+		// operator's project, and the operator is who has to act on it.
+		return outs, false, initErr(fmt.Errorf("whether %s is a managed project could not be read while this installation was being planned: %s", safetext.Field(r.projectName), safetext.Field(err.Error())))
 	}
 	for _, n := range im.Notes {
 		r.warn(n)

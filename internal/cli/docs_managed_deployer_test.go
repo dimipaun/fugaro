@@ -1338,14 +1338,14 @@ func TestChecklistCheck68IndexRowKeepsC3AndSecretManagerApart(t *testing.T) {
 // points at.
 //
 // Mutations (verified, run and restored): a `deployer.tf:<line>` citation put
-// back in the design → FAIL; the "GATED OFF since 0.8.6" heading renamed in
-// `deployer.tf` → FAIL; the §3 `| C7 |` row renamed in the design → FAIL; the
-// register's "### Option 2" heading renamed → FAIL.
+// back in the design → FAIL; the "SHIPPED IN 0.10.0, AND NOT YET MEASURED"
+// heading renamed in `deployer.tf` → FAIL; the §3 `| C7 |` row renamed in the
+// design → FAIL; the register's "### Option 2" heading renamed → FAIL.
 func TestManagedDeployerCitationsNameThePlaceNotTheLine(t *testing.T) {
 	cites := []struct {
 		doc, file, anchor string
 	}{
-		{"docs/design/managed-deployer-fence.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "GATED OFF since 0.8.6"},
+		{"docs/design/managed-deployer-fence.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "SHIPPED IN 0.10.0, AND NOT YET MEASURED"},
 		{"docs/design/managed-deployer-fence.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "ONE BINDING PER SERVICE"},
 		{"docs/design/managed-deployer-fence.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "Two halves and not one role bound twice"},
 		{"docs/design/managed-deployer-fence.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "The deployer account of D75"},

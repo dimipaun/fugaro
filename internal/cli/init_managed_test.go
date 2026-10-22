@@ -699,20 +699,24 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 	}
 
 	// (e) A plan with no delete is never refused because of the list or the
-	// flag: not with an unreadable list, not with an --allow-delete naming
-	// nothing in the plan, and the creation fact is not even read for it.
+	// flag: not with an unreadable list, and not with an --allow-delete naming
+	// nothing in the plan. The creation fact is read once for it, and not by
+	// the guard: the installation's managed_deployer_scoped is written from it
+	// (installRoot, which is what gives an installation that uses managed
+	// projects the deployer's fence), so the read is the plan's own and not the
+	// refusal's — the guard reads the fact only once a plan is refused.
 	r = newInitRig(t)
 	r.managedRuns(t, initProjectName, initProject)
 	if err := r.gcs.Bucket(t, initRunsBucket).Bucket.WriteAll(context.Background(), managed.AllowDeleteObject, []byte("not a list"), nil); err != nil {
 		t.Fatal(err)
 	}
-	reads := stubManagedFact(t, false, errors.New("must not be read"))
+	reads := stubManagedFact(t, false, nil)
 	out, _, err := executeStdin(t, "", "setup", "--yes", "--allow-delete", address)
 	if err != nil || len(r.ran(t, "apply")) != 1 {
 		t.Fatalf("a plan with no delete: err %v, %d applies\n%s", err, len(r.ran(t, "apply")), out)
 	}
-	if *reads != 0 {
-		t.Errorf("the creation fact was read %d time(s) for a plan the guard admits", *reads)
+	if *reads != 1 {
+		t.Errorf("the creation fact was read %d time(s) for a plan the guard admits, want 1 (installRoot's managed_deployer_scoped read)", *reads)
 	}
 }
 
@@ -772,9 +776,10 @@ func TestManagedInitRefusalOfWhatNoApprovalClearsHasNoAdvice(t *testing.T) {
 }
 
 // Task 3.2's review, finding 3: the creation-fact read fails closed. An error
-// reading it is not "not managed" — the refusal names no flag and no hint and
-// says the read failed — nothing is applied, and the error is not remembered:
-// the next refusal reads again.
+// reading it is not "not managed" — the run says the read failed, names no flag
+// and no hint, and stops before it plans anything (installRoot's own read of
+// the fact, which writes the installation's managed_deployer_scoped) — and the
+// error is not remembered: the next refusal reads again.
 func TestManagedInitFactReadErrorFailsClosed(t *testing.T) {
 	const a = "user:a@example.com"
 	address := `module.installation.google_storage_bucket_iam_member.state["` + a + `"]`
@@ -782,13 +787,21 @@ func TestManagedInitFactReadErrorFailsClosed(t *testing.T) {
 	r.stateBucket()
 	r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
 	reads := stubManagedFact(t, false, errors.New("the storage API answered 400"))
-	_, _, err := executeStdin(t, "", "setup", "--yes")
-	managedRefusal(t, err, address, false)
-	if !strings.Contains(err.Error(), "could not be read") || !strings.Contains(err.Error(), "the storage API answered 400") {
-		t.Errorf("the refusal does not say the read failed:\n%s", err)
+	out, _, err := executeStdin(t, "", "setup", "--yes")
+	// A remote failure, not a refusal: the run is stopped by the read itself,
+	// before any plan exists to refuse.
+	if ExitCode(err) != ExitRemoteError {
+		t.Fatalf("exit %d, err %v; want the read's own failure", ExitCode(err), err)
 	}
-	if len(r.ran(t, "apply")) != 0 {
-		t.Fatal("a plan the guard refused was applied")
+	if !strings.Contains(err.Error(), "could not be read") || !strings.Contains(err.Error(), "the storage API answered 400") {
+		t.Errorf("the failure does not say the read failed:\n%s", err)
+	}
+	noFlagName(t, err.Error())
+	if strings.Contains(err.Error(), address) {
+		t.Errorf("the failure names a plan's address, and no plan was made:\n%s", err)
+	}
+	if len(r.ran(t, "plan"))+len(r.ran(t, "apply")) != 0 {
+		t.Fatalf("a run whose read of the creation fact failed planned or applied something:\n%s", out)
 	}
 	if *reads != 1 {
 		t.Errorf("%d reads, want 1", *reads)
@@ -905,7 +918,9 @@ func TestManagedInitRefusalAtEveryCallSite(t *testing.T) {
 }
 
 // Task 3.2's review, finding 4, at init's sites: the refusal's address, and a
-// failed read's own words, are bounded fields.
+// failed read's own words — in the guard's refusal and in installRoot's own
+// read of the same fact, which is where a failed read stops a `fugaro setup`
+// before any plan — are bounded fields.
 func TestManagedInitRefusalBoundsUntrustedText(t *testing.T) {
 	for name, v := range map[string]string{
 		"C1 CSI":        "module.installation.google_storage_bucket.a" + string(rune(0x9b)) + "31m",
@@ -920,8 +935,15 @@ func TestManagedInitRefusalBoundsUntrustedText(t *testing.T) {
 				r.stateBucket()
 				r.setPlan(t, change(v, "delete"))
 				_, _, err := executeStdin(t, "", "setup", "--yes")
-				if ExitCode(err) != ExitUserError {
-					t.Fatalf("exit %d, err %v", ExitCode(err), err)
+				// A read that failed stops the run at installRoot's own read of
+				// the fact (a remote failure, before any plan), while a refusal
+				// is the guard's, once the plan exists.
+				wantCode := ExitUserError
+				if readErr != nil {
+					wantCode = ExitRemoteError
+				}
+				if ExitCode(err) != wantCode {
+					t.Fatalf("exit %d, err %v; want %v", ExitCode(err), err, wantCode)
 				}
 				msg := err.Error()
 				for _, r := range msg {
@@ -929,7 +951,13 @@ func TestManagedInitRefusalBoundsUntrustedText(t *testing.T) {
 						t.Errorf("the refusal carries %U:\n%q", r, msg)
 					}
 				}
-				if want := 2 + map[bool]int{true: 1}[readErr != nil]; strings.Count(msg, "\n")+1 != want {
+				// The guard's refusal is its sentence and the read-failed line
+				// (two and three); installRoot's read failure is one.
+				want := 2 + map[bool]int{true: 1}[readErr != nil]
+				if readErr != nil {
+					want = 1
+				}
+				if strings.Count(msg, "\n")+1 != want {
 					t.Errorf("the refusal is %d lines, want %d:\n%s", strings.Count(msg, "\n")+1, want, msg)
 				}
 				if strings.Contains(msg, strings.Repeat("x", 600)) {
