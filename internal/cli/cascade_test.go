@@ -1351,10 +1351,14 @@ func TestCascadeLaunchMergesTheDefaultBranchesPolicy(t *testing.T) {
 // projectpolicy.validBudget refuses an *empty* list, so "publishes none" is the
 // key left out, which is the node that keeps the allow-list the job's
 // environment was deployed with and is exactly the list the service cannot read
-// (H1). What is judged is that node and not the run's merged list: the ceiling
-// of the run's own environment carries no allow-list either here, and a launch
-// judged on the merge would still refuse — the test below pins the node's list
-// by publishing it there.
+// (H1).
+//
+// What is judged is that node's list and not the run's merged one, and the
+// third launch below is what says so: the same project with the allow-list in
+// the *installation's* own config (the ceiling) and none in the policy is
+// refused just the same, because the ceiling never reaches the service. A gate
+// reading the run's merged list would admit a run whose every call the service
+// refuses.
 //
 // Mutation (run, restored): drop the refusal and the launch below goes through
 // — the gate answers nil for the same fixture, and the run is left to be refused
@@ -1399,6 +1403,16 @@ func TestCascadeLaunchRefusedWithoutAllowList(t *testing.T) {
 		t.Errorf("an api-key launch of an installation whose policy publishes no allow-list: %v", err)
 	}
 
+	// The ceiling's list is not the node's, and it is the node's the service
+	// reads: with the allow-list in the fixture's own config and none in the
+	// policy, the launch is refused for the same reason.
+	ceilingAllowList(t, f.cloudFixture)
+	projectJobCheckoutYAML(t, cascadeLaunchYAML)
+	_, _, err = execute(t, "run", "--repo", "acme/app", "--run-id", "20261022-090002-ca5e", "Add a feature")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "budget.allowed_models") {
+		t.Errorf("a cascade launch whose ceiling publishes the allow-list and whose policy does not: exit = %d, err = %v, want the allow-list refusal (the ceiling never reaches the credentials service)", ExitCode(err), err)
+	}
+
 	// The way out, and the same cascade admitted: the project publishes the
 	// allow-list the ruling requires, and nothing else about the fixture
 	// changes. What is asserted is the gate's own answer, since the rest of a
@@ -1411,6 +1425,28 @@ func TestCascadeLaunchRefusedWithoutAllowList(t *testing.T) {
 	}
 	if err := cascadeLaunchRefusal(context.Background(), env, &task.Spec{Repo: "acme/app"}); err != nil {
 		t.Errorf("a cascade launch whose policy publishes the allow-list: %v", err)
+	}
+}
+
+// ceilingAllowList adds the model allow-list to the fixture's *local* config —
+// the ceiling a job's environment is deployed with — and leaves the published
+// policy's node as it is. The two are different layers, and the credentials
+// service reads the node alone (internal/credsvc's requestModels), which is what
+// tells a gate that reads the node from one that reads the run's merged list.
+func ceilingAllowList(t *testing.T, f *cloudFixture) {
+	t.Helper()
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const budget = "budget: { mode: "
+	if !strings.Contains(string(data), budget) {
+		t.Fatalf("the fixture's project config no longer carries %q:\n%s", budget, data)
+	}
+	added := strings.Replace(string(data), budget, "budget: { allowed_models: [claude-sonnet-5-5], mode: ", 1)
+	if err := os.WriteFile(path, []byte(added), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 
