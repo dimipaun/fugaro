@@ -123,16 +123,52 @@ the `live` tag; the file is still compiled in CI's lint.
 The repository's configured commands, recorded by `fugaro verify`:
 
 ```
-fugaro verify build   # go build ./... && go vet ./... && gofmt check — passed
-fugaro verify test    # go test over every package but runner/e2e/image/images — passed
+fugaro verify build   # go build ./... && go vet ./... && gofmt check — PASSED
+fugaro verify test    # go test over every package but runner/e2e/image/images — FAILED
 ```
+
+**`fugaro verify test` fails on this base, and the failure is not this note's.**
+The one failing test is
+`internal/cli`'s `TestDocsCoordinatorNumbersTableIsReadFromItsSources`:
+
+```
+docs_coordinator_test.go:1609: docs/coordinator/README.md's checks row says the
+highest check section written is 90, and the register's highest `## Check`
+section is 91: the row is a reading of the register, and the two move together
+```
+
+It is a pre-existing inconsistency of `integration-0.9.6`, and this note's file
+is not one it reads (the test reads `docs/coordinator/README.md` and
+`docs/gcp-live-checklist.md`). Proof — the same test on a clean checkout of the
+base, with this note's commit absent:
+
+```
+$ git worktree add /tmp/basecheck origin/integration-0.9.6
+$ cd /tmp/basecheck && go test ./internal/cli/ -count=1 -run TestDocsCoordinatorNumbersTableIsReadFromItsSources
+--- FAIL: TestDocsCoordinatorNumbersTableIsReadFromItsSources (0.04s)
+    docs_coordinator_test.go:1609: ... the highest check section written is 90,
+    and the register's highest `## Check` section is 91 ...
+FAIL
+```
+
+The cause is C0.3's own commit, `2d424f30` *"docs(credentials-service): Task C0.3
+— Checks 90 and 91 written into the live-check register (#727)"*: it wrote
+`## Check 91` into `docs/gcp-live-checklist.md` but left
+`docs/coordinator/README.md`'s Checks row reading *"The highest check section
+written is 90 — the credentials service's header swap, written and run on
+2026-10-21"*. `origin/main` carries neither that row's claim nor the
+`coordinatorHighestWrittenRE` rule that reads it (its `docs_coordinator_test.go`
+has no such rule and passes), so the rule arrives with this branch; the row and
+the register disagree on it. This run does not touch it: the row is another
+work's document, and the plan's Global Constraint 1 scopes a credentials-service
+docs change to `docs/credentials-service/`.
 
 `fugaro verify test` excludes `internal/e2e` (its tests need Docker and a git
 checkout this container does not have; `fugaro.yaml` says so), so the plan's own
 C1.4 verification was run directly as supporting evidence:
 
 ```
-go vet -tags live ./internal/e2e/...   # passes: the live file compiles, and no check runs
+go vet -tags live ./internal/e2e/...   # PASSES: the live file compiles, and no check runs
 ```
 
 The untagged `go test ./internal/e2e/...` the plan also names is CI's, not this
