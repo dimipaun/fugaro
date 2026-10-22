@@ -29,7 +29,32 @@ func credsVarsSpec() CredentialsServiceSpec {
 		Service:      CredentialsServiceName,
 		Image:        credsVarsImage(),
 		BundleSecret: "fugaro-creds-bundle",
+		// The four facts the process is configured with (C1.14), the job
+		// table among them: the carry has to move the whole object, and a
+		// field dropped here is an environment variable the module writes
+		// empty on the next apply.
+		FirebaseProject: "aurora-fp",
+		RTDBURL:         "https://aurora-fp-default-rtdb.firebaseio.com",
+		JobAccounts: []CredentialsJob{
+			{Provider: "github", Repo: "acme/webapp", Workflow: "web"},
+			{Provider: "github", Repo: "acme/webapp", Workflow: "web_bmb"},
+		},
+		URL: "https://fugaro-credentials-123456789012.us-east5.run.app",
 	}
+}
+
+// credsVarsSpecEqual compares two specs by their JSON: the object carries a
+// list, so it is not comparable with ==.
+func credsVarsSpecEqual(a, b CredentialsServiceSpec) bool {
+	ja, err := json.Marshal(a)
+	if err != nil {
+		return false
+	}
+	jb, err := json.Marshal(b)
+	if err != nil {
+		return false
+	}
+	return string(ja) == string(jb)
 }
 
 // credsVarsDiscovered is an installation tfvars as the installation stage
@@ -84,7 +109,7 @@ func TestSetCredentialsServiceKeepsEveryOtherKey(t *testing.T) {
 	if doc.CredentialsService == nil {
 		t.Fatalf("credentials_service was not written:\n%s", got)
 	}
-	if *doc.CredentialsService != svc {
+	if !credsVarsSpecEqual(*doc.CredentialsService, svc) {
 		t.Errorf("credentials_service = %+v, want %+v", *doc.CredentialsService, svc)
 	}
 	if want, have := credsVarsDoc(t, []byte(credsVarsDiscovered)), credsVarsDoc(t, got); !mapsEqual(want, have) {
@@ -133,7 +158,7 @@ func TestCarriedCredentialsServiceCarriesExactlyTheOneKey(t *testing.T) {
 	if err := json.Unmarshal(got, &doc); err != nil {
 		t.Fatalf("the result is not a tfvars document: %v\n%s", err, got)
 	}
-	if doc.CredentialsService == nil || *doc.CredentialsService != svc {
+	if doc.CredentialsService == nil || !credsVarsSpecEqual(*doc.CredentialsService, svc) {
 		t.Fatalf("credentials_service = %v, want the key carried forward as %+v\n%s", doc.CredentialsService, svc, got)
 	}
 	if want, have := credsVarsDoc(t, fresh), credsVarsDoc(t, got); !mapsEqual(want, have) {
