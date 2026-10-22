@@ -996,7 +996,7 @@ test('the Why GCP reader refuses a row the file cannot support, naming it', (t) 
     },
     {
       what: 'an empty field',
-      edit: (text) => text.replace(/    text: >-\n      Fugaro's control plane[\s\S]*?Firebase project\.\n/, "    text: ''\n"),
+      edit: (text) => text.replace(/    text: >-\n      Fugaro's control plane[\s\S]*?backend seam\.\n/, "    text: ''\n"),
       wanted: /\.text is empty/,
     },
     {

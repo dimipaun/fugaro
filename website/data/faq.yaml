@@ -56,7 +56,7 @@ questions:
     question: Where does the code run?
     answer: >-
       In your own Google Cloud project, not on a service of ours: each task is one Cloud Run
-      job execution. AWS and Azure are not built.
+      job execution.
     source: README.md
     more_label: Why GCP
     more_href: /why-gcp/
@@ -70,8 +70,7 @@ questions:
     question: Do I need to be on GCP?
     answer: >-
       Not for your application: Fugaro runs in a Google Cloud project of yours, and where your
-      application itself is hosted does not decide it. AWS and Azure backends are wanted from
-      contributors, not required.
+      application itself is hosted does not decide it.
     source: README.md
     more_label: Why GCP
     more_href: /why-gcp/
