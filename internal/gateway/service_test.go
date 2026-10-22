@@ -549,6 +549,15 @@ func TestServiceRefusalIsNeverRelayed(t *testing.T) {
 			want: http.StatusForbidden, halt: true, detail: refusalDetail(ErrorUnverifiedJobIdentity),
 		},
 		{
+			// The service's request check refusing the call itself: the 400
+			// the service answers, halted with the detail that names what to
+			// look at. The service's own sentence is never relayed, so the
+			// detail is the only place the operator can learn why.
+			name: "request_refused", status: http.StatusBadRequest,
+			body: `{"error":"request_refused","message":"` + serviceSaid + `"}`,
+			want: http.StatusForbidden, halt: true, detail: refusalDetail(ErrorRequestRefused),
+		},
+		{
 			// A type this release does not know: the service's own text, and
 			// not one this gateway can account a call by.
 			name: "a type this release does not know", status: http.StatusForbidden,
@@ -695,6 +704,46 @@ func TestServiceRefusalIsNeverRelayed(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestServiceRequestRefusedDetailNamesTheWayOut: the service's own sentence is
+// never relayed (D143), so for the service's request refusal the halt's detail
+// is the only place an operator can learn what happened. It is pinned here, and
+// not only read back from refusalDetail: it names the refusal type and it points
+// at the project's published budget.allowed_models -- the allow-list a project
+// that publishes none is refused for, and the first thing to look at for the
+// check's other rules too. The service's own sentence is not echoed into it
+// either, so a detail built from the answer instead of from the type is red.
+func TestServiceRequestRefusedDetailNamesTheWayOut(t *testing.T) {
+	const serviceSaid = "the project publishes no budget.allowed_models; add the allow-list to the project layer"
+	h, _ := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+		return anthropicfake.Reply{Status: http.StatusBadRequest,
+			Body:   `{"error":"request_refused","message":"` + serviceSaid + `"}`,
+			Header: http.Header{"Content-Type": []string{"application/json"}}}
+	}, nil)
+
+	resp, body := h.post(msg(sonnet, 1000))
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("the agent's answer: %d %s, want 403", resp.StatusCode, body)
+	}
+	if strings.Contains(body, serviceSaid) {
+		t.Errorf("the service's own sentence reached the agent: %s", body)
+	}
+	halt := haltOf(t, h)
+	if halt.Reason != ReasonBudgetUnavailable {
+		t.Errorf("the halt is %q, want %q", halt.Reason, ReasonBudgetUnavailable)
+	}
+	if !strings.Contains(halt.Detail, ErrorRequestRefused) {
+		t.Errorf("the halt's detail is %q, and it must name the refusal type %q", halt.Detail, ErrorRequestRefused)
+	}
+	if !strings.Contains(halt.Detail, "budget.allowed_models") {
+		t.Errorf("the halt's detail is %q, and it must name the project's published budget.allowed_models: "+
+			"the service's sentence never reaches the operator, so this is where the way out is named", halt.Detail)
+	}
+	if strings.Contains(halt.Detail, serviceSaid) {
+		t.Errorf("the halt's detail carries the service's own sentence: %q", halt.Detail)
+	}
+	assertNoSecret(t, "the halt's detail", halt.Detail, secrets(h, t))
 }
 
 func ptrTime(t time.Time) *time.Time { return &t }

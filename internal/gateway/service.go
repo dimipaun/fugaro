@@ -118,6 +118,15 @@ const (
 	// ErrorStateUnavailable is the service being unable to read the state it
 	// must read: a refusal, so the run halts (D143), never a fallback.
 	ErrorStateUnavailable = "state_unavailable"
+	// ErrorRequestRefused is the call itself being refused by the service's
+	// own request check (credsvc.ErrorRequestRefused, C1.11's follow-up): a
+	// model the project's published allow-list does not name, a server tool,
+	// a shape the budget cannot bound, a max_tokens above the model's own
+	// bound — and, since the owner's ruling of 2026-10-22, a project that
+	// publishes no budget.allowed_models at all, which the service refuses
+	// fail-closed rather than pinning no model. A refusal, so the run halts
+	// (D143), and the halt's detail names what to look at.
+	ErrorRequestRefused = "request_refused"
 )
 
 // Why a credential was not used, in a refusal's tried list
@@ -774,6 +783,17 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 		return http.StatusServiceUnavailable, true, "", nil
 	case ErrorStateUnavailable:
 		return s.haltService(w, refusalDetail(e.Error)), true, "", nil
+	case ErrorRequestRefused:
+		// The service's request check refused the call itself, and the one
+		// cause a forwarded call can really have is a project that publishes
+		// no allow-list: the gateway pins a call to the stage's models, and
+		// the pins were held to the project's list when the run started, so
+		// the service refuses what this gateway forwarded only when that list
+		// is absent (the owner's ruling of 2026-10-22) or has moved under a
+		// running run. The detail says so, because the service's own sentence
+		// never reaches the agent (D143): without it the operator reads a
+		// detail about a broken service instead of the missing allow-list.
+		return s.haltService(w, refusalDetail(e.Error)), true, "", nil
 	case ErrorUnverifiedRunIdentity, ErrorUnverifiedJobIdentity:
 		return s.haltService(w, refusalDetail(e.Error)), true, "", nil
 	}
@@ -810,8 +830,10 @@ const (
 )
 
 // refusalDetail is the detail for a typed refusal the run cannot be served
-// by: the type, which is one of the contract's own constants, and nothing
-// else.
+// by: the type, which is one of the contract's own constants, and what the
+// operator is to look at — never anything the service sent, and never a
+// credential. Every sentence here is a constant, so a refusal's Detail is the
+// same text whatever the service's own body said.
 func refusalDetail(typ string) string {
 	switch typ {
 	case ErrorStateUnavailable:
@@ -820,6 +842,15 @@ func refusalDetail(typ string) string {
 		return "the credentials service refused this run's identity (unverified_run_identity)"
 	case ErrorUnverifiedJobIdentity:
 		return "the credentials service refused this job's identity (unverified_job_identity)"
+	case ErrorRequestRefused:
+		// The service's request check refused the call, and its own sentence
+		// is never relayed (D143): this is the sentence the agent and the
+		// run's record get instead. It names the way out first, because the
+		// cause a forwarded call really has is a project that publishes no
+		// budget.allowed_models (the owner's ruling of 2026-10-22) — and it
+		// does not claim that is the only one, because the same type answers
+		// for a server tool, an unbounded shape and a max_tokens bound.
+		return "the credentials service refused this request (request_refused: check the project's published budget.allowed_models and this call's model, tools and max_tokens)"
 	}
 	return stateDetailUnreadable
 }

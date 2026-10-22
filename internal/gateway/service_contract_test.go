@@ -137,6 +137,7 @@ func TestServiceConstantsMirrorCredsvc(t *testing.T) {
 		{gateway.ErrorUnverifiedRunIdentity, credsvc.ErrorUnverifiedRunIdentity},
 		{gateway.ErrorUnverifiedJobIdentity, credsvc.ErrorUnverifiedJobIdentity},
 		{gateway.ErrorStateUnavailable, credsvc.ErrorStateUnavailable},
+		{gateway.ErrorRequestRefused, credsvc.ErrorRequestRefused},
 	}
 	for _, x := range errs {
 		if x.gateway != x.wire {
