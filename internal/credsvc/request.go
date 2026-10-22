@@ -22,7 +22,8 @@ package credsvc
 // read — so the call is REFUSED rather than pinned to nothing (the owner's
 // ruling of 2026-10-22): the service fails closed, and the refusal names the
 // way out. Everything else in the check — the server-tool refusal, the shape
-// refusal, the model's own max_tokens bound — applies either way. The gateway's
+// refusal, the model's own max_tokens bound — applies to every call this
+// service does serve, alongside the pin. The gateway's
 // own behaviour for an empty list is unchanged: its path pins a call to the
 // stage's models, and reading the project's policy is this service's job and
 // not the gateway's.

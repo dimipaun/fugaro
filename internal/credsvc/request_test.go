@@ -326,13 +326,11 @@ func TestServiceRefusesAProjectWithNoAllowList(t *testing.T) {
 }
 
 // TestServiceWithoutAnAllowListReadsNoBody: the refusal above is the project's
-// and not the request's, so it does not depend on what the body says — and it
-// comes before the price table the check builds, so a project whose prices are
-// unreadable is still refused for the reason it can fix.
-//
-// The two bodies are the ones the check would have refused and accepted; both
-// are answered the way-out sentence, because neither can be judged without the
-// list this service does not have.
+// and not the request's, so it does not depend on what the body says. The
+// second body is one the gateway cannot read at all — the check's own 400 — and
+// it is answered the way-out sentence, because with no list there is nothing to
+// judge the call against in the first place: the fix is the same either way,
+// and it is the project's.
 func TestServiceWithoutAnAllowListReadsNoBody(t *testing.T) {
 	for _, body := range []string{
 		callBody("no-allow-list"),
