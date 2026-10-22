@@ -558,7 +558,7 @@ printed table (pinned by `TestScopeTableMatchesDocs`), and a case in
 five edits" shape F7 records for the repository's own file. The published
 project *policy* is the wrong carrier for it: a new key inside the policy node is
 a `projectpolicy.Version` bump, and a bump drops every policy an installation has
-published until its rules are redeployed with `fugaro init --firebase`
+published until its rules are redeployed with `fugaro init --firebase-project`
 (`internal/budget/rules/marker.go`) — a mode default is not worth that.
 
 **F37 — The precedence regime exists, is stated once, and has no area rank.**
@@ -614,7 +614,7 @@ rather than being ignored. `internal/budget/model.go`'s `AgentEntry` has no mode
 field. The tree records two ways of adding one: `Recipe`'s, where
 `internal/budget/registry.go`'s `Session.Start` drops the field on
 `ErrPermissionDenied`, warns that the database's rules predate it and tells the
-operator to run `fugaro init --firebase`, and remembers for the session
+operator to run `fugaro init --firebase-project`, and remembers for the session
 (`noRecipe`); and the creds family's, where `internal/budget/rules/marker.go`
 records a marker and the run is to halt on a downgrade — **planned, not built**:
 `HaltCredsRulesDenied` is named in that file's comment, in
@@ -886,7 +886,7 @@ corpus case (F36) — the five-edit shape F7 records, done at the layer rather
 than in the file. The published project policy is deliberately **not** a carrier
 for it: a policy key is a `projectpolicy.Version` bump, a bump drops every policy
 an installation has already published until its rules are redeployed with
-`fugaro init --firebase`, and a mode default is not worth that (`marker.go`'s
+`fugaro init --firebase-project`, and a mode default is not worth that (`marker.go`'s
 warning is the reason the rule exists).
 
 **Recommended, part three: a *floor* the project's repositories cannot edit
@@ -2037,7 +2037,7 @@ The live checks below are the ones a person runs, because a container cannot:
 | A run started with `--ref` at a branch whose own `rigor:` disagrees with the base branch's | which revision the mode was read from (D25) — the answer the owner's ruling on that decision makes | needs two branches and a real run on the branch |
 | A run whose diff matches two areas, one Critical and one POC | the mixed-area rule is the strictest of the matched, and the record names both (D23) | needs a real diff that lands in both |
 | A run whose first round stays in one area and whose second round reaches another | the raised mode bought the rounds that remained, and never fell back (D22) | needs a live agent and a multi-round run |
-| `fugaro watch` on a live run after the rules are redeployed | the mode and its layer reach a live row, and an installation with old rules drops the field and warns instead of failing the entry (F40) | needs a deployed database and `fugaro init --firebase` |
+| `fugaro watch` on a live run after the rules are redeployed | the mode and its layer reach a live row, and an installation with old rules drops the field and warns instead of failing the entry (F40) | needs a deployed database and `fugaro init --firebase-project` |
 | The pull request that fixes a filed item | the item's `status` flips and the index regenerates in that same commit, and the pin goes red if either is forgotten (D31) | a real pull request, reviewed as a diff |
 | Two branches filing items on the same day, merged in either order | the id collision is a rename rather than a silent clash, and the index conflict is resolved by re-running the generator (D26, D28) | two real branches, two merges, and the provider's own conflict |
 
@@ -2135,6 +2135,6 @@ the plan says so where it touches one.
 | U7 | the console tolerates a richer finding row without a contract change | the console's renderer run against a `fugaro diagnose --json` payload with scores |
 | U8 | a narrower `check` gate for POC fits inside `fugaro.yaml`'s verify timeout on a real repository | a timed run of each mode's gate |
 | U9 | an area rule matches the paths a real run actually touches at a moment when the run can still act on it (D22's moments are the tree's, not a measurement) | a live multi-round run whose diff crosses an area boundary, read from the record's own resolution note |
-| U10 | adding a child to the registry entry is accepted by a deployed database after `fugaro init --firebase`, and refused readably before it (F40) | the rules deployed to a real project, then one run live in `fugaro watch` |
+| U10 | adding a child to the registry entry is accepted by a deployed database after `fugaro init --firebase-project`, and refused readably before it (F40) | the rules deployed to a real project, then one run live in `fugaro watch` |
 | U11 | an item filed by a run into its own branch is read by the reviewer of that pull request as a record rather than as a change under review (F44) | one real run that files an item, and a reading of that pull request's diff by a person |
 | U12 | the generated index stays mergeable when two branches filed on the same day, in either merge order, without a hand edit (D28) | two real branches filing items, merged in one order and then the other |

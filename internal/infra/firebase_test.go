@@ -43,7 +43,7 @@ func checkGolden(t *testing.T, name string, got []byte) {
 	}
 }
 
-// The tfvars init --firebase writes, byte for byte: a change here is a change
+// The tfvars init --firebase-project writes, byte for byte: a change here is a change
 // to what Terraform is given.
 func TestFirebaseTfvarsGolden(t *testing.T) {
 	inst := installationSpec(t)
@@ -324,7 +324,7 @@ func TestDeleteHintsForFirebaseGrants(t *testing.T) {
 		t.Errorf("hints = %v", hints)
 	}
 	hints = DeleteHints(planDeleting("module.installation.google_cloud_run_v2_job.history[0]"), nil)
-	if len(hints) != 1 || !strings.Contains(hints[0], "--firebase") {
+	if len(hints) != 1 || !strings.Contains(hints[0], "--firebase-project") {
 		t.Errorf("hints = %v", hints)
 	}
 }
@@ -448,11 +448,11 @@ func TestDBLimitsKeepOwnerValues(t *testing.T) {
 }
 
 // A deployed marker *above* this binary's RulesVersion is a newer Fugaro's
-// rules. init --firebase deploys the rules the binary carries, so an older
+// rules. init --firebase-project deploys the rules the binary carries, so an older
 // binary would put its own, older document over the newer installation's and
 // record generation RulesVersion in the marker over the newer number — the
 // downgrade `fugaro doctor` warns about and tells the owner not to cause
-// ("do not re-run 'fugaro update --firebase' with this binary", doctorRulesSkew).
+// ("do not re-run 'fugaro update --firebase-project' with this binary", doctorRulesSkew).
 // The deploy path refuses instead: nothing is planned, nothing is written, and
 // the rules and the marker are left exactly as the newer installation left
 // them.
@@ -728,9 +728,9 @@ func TestFirebaseOutputsMustBelongToOneProject(t *testing.T) {
 	for name, mut := range foreign {
 		o := good
 		mut(&o)
-		// Passed --firebase aurora-fp: nothing else is accepted.
+		// Passed --firebase-project aurora-fp: nothing else is accepted.
 		if err := CheckFirebaseOutputsFor(o, "aurora-fp", false); err == nil {
-			t.Errorf("%s accepted with --firebase aurora-fp", name)
+			t.Errorf("%s accepted with --firebase-project aurora-fp", name)
 		}
 		// Derived from the state: the three still have to agree.
 		if name != "project" {

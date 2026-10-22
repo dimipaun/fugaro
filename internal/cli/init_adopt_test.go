@@ -212,7 +212,7 @@ func TestNothingIsAppliedAfterAnAdoptInTheSameRun(t *testing.T) {
 }
 
 // firebaseState puts the Firebase root's state object in the rig's state
-// bucket: someone's update --firebase has applied it.
+// bucket: someone's update --firebase-project has applied it.
 func (r *initRig) firebaseState(t *testing.T) {
 	t.Helper()
 	w, err := r.gcs.Bucket(t, initStateBucket).NewWriter(context.Background(), infra.StatePrefixFirebase+"/default.tfstate", nil)

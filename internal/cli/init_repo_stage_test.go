@@ -293,7 +293,7 @@ func TestInitRepoUnchanged(t *testing.T) {
 	// The installation's flags are still refused for --repo, and the
 	// repository's still refused without it.
 	for _, tc := range [][]string{
-		{"setup", "--repo", "--firebase", "fb-proj-1234", root},
+		{"setup", "--repo", "--firebase-project", "fb-proj-1234", root},
 		{"setup", "--repo", "--launcher", "user:a@b.c", root},
 		{"setup", "--no-build"},
 		{"setup", "--allow-job-delete"},

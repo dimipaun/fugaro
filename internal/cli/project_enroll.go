@@ -347,7 +347,7 @@ func spendRepos(ctx context.Context, lc *localcfg.Config, now time.Time) (recs [
 	case errors.Is(err, firestore.ErrNoDatabase):
 		return nil, "the project's Firebase project has no Firestore database, so its spend history was not read", nil
 	case errors.Is(err, firestore.ErrNotFound):
-		return nil, "the project's Firestore database has no history mark (fugaro update --firebase has not set it up), so its spend history was not read", nil
+		return nil, "the project's Firestore database has no history mark (fugaro update --firebase-project has not set it up), so its spend history was not read", nil
 	case err != nil:
 		return nil, "", firestoreErr(lc, err)
 	}

@@ -354,7 +354,13 @@ func (r *initRun) gatherInputs(ctx context.Context) error {
 		}
 		o.name = v
 	}
-	return nil
+	// The billing question is the last of the wizard's questions (W4.3): it is
+	// about the GCP project the answers above settled, and it is asked only
+	// where the answer is one this run acts on (asksBilling, billing_prompt.go)
+	// — which includes the second answer to the question above, adoption, where
+	// the project stage skips before it reads anything and a billing answer
+	// would be read by nobody.
+	return r.askBilling(ctx)
 }
 
 // installationName is the name of the installation that already exists in the

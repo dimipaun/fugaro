@@ -489,7 +489,7 @@ func TestReviewScreenGolden(t *testing.T) {
 	}
 }
 
-// The whole first-run shape of update --firebase with the images: in a project
+// The whole first-run shape of update --firebase-project with the images: in a project
 // marked as Fugaro's, one typed project name covers the installation apply,
 // the Viewer-read removal, the Firebase apply, the Firestore writes, the image
 // copy, the history job's apply and the local config; the Firestore database's
@@ -505,7 +505,7 @@ func TestFirebaseRunTakesOnePromptPlusTheLocation(t *testing.T) {
 			r.markedRuns(t, "", "")
 		}
 		fakeTerminal(t)
-		out, errOut, err := executeStdin(t, stdin, "setup", "--firebase", fp, "--base", "base")
+		out, errOut, err := executeStdin(t, stdin, "setup", "--firebase-project", fp, "--base", "base")
 		return out + errOut, err, r
 	}
 	// One project for everything (the Firebase project is the installation's).
