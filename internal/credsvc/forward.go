@@ -452,7 +452,11 @@ var dropAnswerHeaders = map[string]bool{
 func copyAnswerHeaders(dst, src http.Header, credential string) {
 	for k, vs := range src {
 		ck := http.CanonicalHeaderKey(k)
-		if dropAnswerHeaders[ck] {
+		if dropAnswerHeaders[ck] || strings.HasPrefix(ck, "X-Fugaro-") {
+			// The upstream never speaks in the service's own answer headers
+			// (the tier, the credential, the switch, the probes): they are the
+			// service's to write, and one the upstream sent would be charged or
+			// believed as the service's.
 			continue
 		}
 		dst[ck] = append([]string(nil), vs...)
