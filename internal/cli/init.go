@@ -1431,21 +1431,20 @@ func (r *initRun) typed(prompt string) (bool, error) {
 	}
 }
 
-// stepClass is the confirmation class of a step this door takes that is money
-// or permanent: initflow.Typed, or initflow.YesOrTyped for `update`, the door
-// D12 makes total over what it owns.
+// stepClass is the confirmation class of the one money-or-permanent step this
+// door decides differently: the Firestore database's location. It is
+// initflow.Typed in `setup`, which asks for it as a first-time question, and
+// initflow.YesOrTyped in `update`, which meets it as a step of a stage it owns
+// — the owner's answer of 2026-10-20 (reconciliation §5, D12), and the one of
+// the four call sites that moves in one front door rather than two.
 //
-// The answer of 2026-10-20 (reconciliation §5) is that `update --yes` covers
-// everything update owns — the Firestore database's location, a billable first
-// image build and replacing a registry tag among them — so a CI job that
-// upgrades the CLI and has to rebuild an image gets the build rather than
-// needs-you and exit code 1, while `setup` keeps every one of those steps
-// Typed: it is the door that asks for them as first-time questions. The two
-// steps that may never be relaxed are `setup`'s alone and `update` refuses
-// them by name, so no class here can reach them (init_project.go).
+// The other three carry no door: a billable first image build and replacing a
+// registry tag are YesOrTyped in **both** doors (askCovered), and creating the
+// project and linking the billing account are Typed in both, `update` refusing
+// their flags outright, so no class here can reach them (init_project.go).
 //
 // A run with no door is a hand-built options value, a test's: it is `setup`
-// (doorName), and its steps stay Typed.
+// (doorName), and the location stays Typed.
 func (r *initRun) stepClass() initflow.ConfirmClass {
 	if r.o.door == updateDoor.name {
 		return initflow.YesOrTyped
@@ -1464,23 +1463,23 @@ const (
 	stepTyped                         // the person types this step's own confirmation
 )
 
-// stepConfirmation says which of the three this run is at. It is one function
-// because it is one rule: who is there, and then the door's class (stepClass).
-// The two are read in this order and not the other way round, so that the
-// class cannot widen what a terminal may do: a person who can type the step's
-// own confirmation types it, whatever the door (canConfirmTyped(Typed)), and
-// only a run that is not such a person — no terminal, a pipe, --json,
+// stepConfirmation says which of the three this run is at, for a step of the
+// class. It is one function because it is one rule: who is there, and then the
+// class. The two are read in this order and not the other way round, so that
+// the class cannot widen what a terminal may do: a person who can type the
+// step's own confirmation types it, whatever the class (canConfirmTyped(Typed)),
+// and only a run that is not such a person — no terminal, a pipe, --json,
 // --non-interactive, a coding agent's session, or --yes — falls through to
-// --yes, which confirms the steps of a door whose class is YesOrTyped and
-// nothing else. --plan-only is not such a person either and --yes is not
-// given it (r.conditions().Yes), so it applies nothing whatever it is passed.
-func (r *initRun) stepConfirmation() stepConfirmation {
+// --yes, which confirms a YesOrTyped step and nothing else. --plan-only is not
+// such a person either and --yes is not given it (r.conditions().Yes), so it
+// applies nothing whatever it is passed.
+func (r *initRun) stepConfirmation(class initflow.ConfirmClass) stepConfirmation {
 	if canConfirmTyped(initflow.Typed, r.conditions()) {
 		return stepTyped
 	}
 	yes := r.conditions()
 	yes.Terminal, yes.NonInteractive, yes.JSON = false, false, false
-	if r.stepClass() == initflow.YesOrTyped && canConfirmTyped(initflow.YesOrTyped, yes) {
+	if class == initflow.YesOrTyped && canConfirmTyped(initflow.YesOrTyped, yes) {
 		return stepByYes
 	}
 	return stepLeave
@@ -1488,26 +1487,25 @@ func (r *initRun) stepConfirmation() stepConfirmation {
 
 // neverConfirms is the parenthetical that follows "typed at a real terminal" in
 // the warnings and left-for-yous of a step that could not be confirmed: which
-// ways of running do not give the confirmation. It is the door's own, because
-// D12 makes `update --yes` the way a step update owns is confirmed with no
-// terminal — a line that told an update run "--yes never confirms it" would
-// name the one flag that does.
-func (r *initRun) neverConfirms() string {
-	if r.stepClass() == initflow.YesOrTyped {
+// ways of running do not give the confirmation. It is the step's own, because
+// D12 makes --yes the way a YesOrTyped step is confirmed with no terminal — a
+// line that told a reader of such a step "--yes never confirms it" would name
+// the one flag that does.
+func (r *initRun) neverConfirms(class initflow.ConfirmClass) string {
+	if class == initflow.YesOrTyped {
 		return "no terminal, --json, a pipe and a coding agent never confirm it, and --yes does"
 	}
 	return "--yes, --non-interactive, --json, a pipe and a coding agent never confirm it"
 }
 
-// askTypedOwned is askTyped for a step of this door's own class (stepClass):
-// `setup`'s are Typed and behave exactly as askTyped does, and `update`'s are
-// YesOrTyped, so --yes confirms them and nothing is typed. Everything else
-// about the step is unchanged: it is money or permanent, it still shows its
-// banner, and a run that cannot confirm it leaves it for the user (reachable
-// false, nothing asked).
-func (r *initRun) askTypedOwned(what string) (confirmed, reachable bool, err error) {
+// askClass is the confirmation of a step that is money or permanent, of the
+// class: the project's name typed at a real terminal, or --yes for a YesOrTyped
+// step. It shows the banner, and reachable says whether it could be asked at
+// all; when it could not, nothing was asked and the caller leaves the step for
+// the user.
+func (r *initRun) askClass(class initflow.ConfirmClass, what string) (confirmed, reachable bool, err error) {
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
-	switch r.stepConfirmation() {
+	switch r.stepConfirmation(class) {
 	case stepLeave:
 		return false, false, nil
 	case stepByYes:
@@ -1518,18 +1516,21 @@ func (r *initRun) askTypedOwned(what string) (confirmed, reachable bool, err err
 	return ok, true, err
 }
 
-// askTyped is the confirmation of a step that is money or permanent
-// (initflow.Typed): the project's name typed at a real terminal, never --yes,
-// --non-interactive, --json, a pipe or a coding agent. It shows the banner,
-// and reachable says whether it could be asked at all; when it could not,
-// nothing was asked and the caller leaves the step for the user.
+// askTyped is askClass for a step that stays Typed in both front doors: the
+// project's name typed at a real terminal, never --yes, --non-interactive,
+// --json, a pipe or a coding agent.
 func (r *initRun) askTyped(what string) (confirmed, reachable bool, err error) {
-	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
-	if !canConfirmTyped(initflow.Typed, r.conditions()) {
-		return false, false, nil
-	}
-	ok, err := r.typed("Type " + r.projectName + " to confirm: ")
-	return ok, true, err
+	return r.askClass(initflow.Typed, what)
+}
+
+// askCovered is askClass for a step D12's answer of 2026-10-20 covers in BOTH
+// front doors — a billable first image build and replacing a registry tag,
+// where the class is YesOrTyped whatever door the reader is at. The door is
+// not asked: only three things stay typed (creating the project, linking the
+// billing account, and the Firestore location in `setup`), and neither of
+// these is one of them.
+func (r *initRun) askCovered(what string) (confirmed, reachable bool, err error) {
+	return r.askClass(initflow.YesOrTyped, what)
 }
 
 // resourceManagerRetries are the waits between reads of the project's
@@ -3322,16 +3323,17 @@ func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *con
 				return built, userErr("%v", err)
 			}
 		}
-		// Billable: the typed confirmation of a real terminal, and --yes for
-		// the door that owns the step (stepClass: `update` covers its own
-		// steps under --yes, D12). A run that cannot take it leaves the build.
-		ok, reachable, err := r.askTypedOwned(cloudBuildBanner(spec.Name, name, lc.Build.MachineType, spec.BuildServiceAccountEmail, spec.RegistryPath))
+		// Billable: the typed confirmation of a real terminal, or --yes —
+		// covered in both front doors (askCovered: D12's answer of 2026-10-20
+		// keeps only three steps typed, and this is not one of them). A run
+		// that cannot take it leaves the build.
+		ok, reachable, err := r.askCovered(cloudBuildBanner(spec.Name, name, lc.Build.MachineType, spec.BuildServiceAccountEmail, spec.RegistryPath))
 		if err != nil {
 			return built, err
 		}
 		if !reachable {
 			r.buildsLeft = append(r.buildsLeft, name)
-			r.warn(fmt.Sprintf("the first image build of %s/%s is billable and was not confirmed: it needs the project's name typed at a real terminal ("+r.neverConfirms()+"), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks for the project's name too), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
+			r.warn(fmt.Sprintf("the first image build of %s/%s is billable and was not confirmed: it needs the project's name typed at a real terminal ("+r.neverConfirms(initflow.YesOrTyped)+"), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks for the project's name too), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
 			continue
 		}
 		if !ok {

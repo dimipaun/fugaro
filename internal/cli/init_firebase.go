@@ -528,11 +528,13 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 // --yes confirms it only where the door owns the step (stepConfirmation,
 // stepClass): D12's answer of 2026-10-20 keeps the location Typed in `setup`,
 // the door that asks for it as a first-time question, and `update` — which
-// meets it as a step of a stage it owns — applies it under --yes. Where
-// nothing can confirm it the step is the user's, with the one-line route.
+// meets it as a step of a stage it owns — applies it under --yes. It is the
+// one of the four call sites D12 moves that moves in one door rather than
+// both. Where nothing can confirm it the step is the user's, with the
+// one-line route.
 func (r *initRun) confirmLocation() error {
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s): the Firestore database is created in %s, and a database's location can NEVER be changed.\n", r.projectName, infra.FirestoreLocation)
-	switch r.stepConfirmation() {
+	switch r.stepConfirmation(r.stepClass()) {
 	case stepLeave:
 		lf := promptLeft(initflow.Firebase, "type "+infra.FirestoreLocation+" to confirm the Firestore database's permanent location when asked, after running", r.o.doorName(), "--firebase-project", quoteWord(r.o.firebaseProject()))
 		return &initflow.NeedsYouError{Left: lf}

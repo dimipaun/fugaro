@@ -752,9 +752,11 @@ func TestReviewScreenPrintsOnlySafeText(t *testing.T) {
 }
 
 // The first Cloud Build's confirmation is never on the ordinary covered path:
-// the function that offers it uses its door's own typed confirmation
-// (askTypedOwned, which W5.1 makes case on the door: typed for `setup`, and
-// also covered by `update --yes`), and never the run confirmation.
+// the function that offers it uses the confirmation of the step it is
+// (askCovered, which W5.1 makes YesOrTyped: D12's answer of 2026-10-20 covers a
+// billable first image build in BOTH front doors, and in neither of them does
+// the run's own --yes/terminal decision stand in for it), and never the run
+// confirmation.
 func TestCloudBuildConfirmationStaysOutsideTheCoveredPath(t *testing.T) {
 	b, err := os.ReadFile("init.go")
 	if err != nil {
@@ -773,11 +775,14 @@ func TestCloudBuildConfirmationStaysOutsideTheCoveredPath(t *testing.T) {
 		return body
 	}
 	body := funcBody("func (r *initRun) buildImages(")
-	if !strings.Contains(body, "r.askTypedOwned(") {
-		t.Error("buildImages no longer asks the typed confirmation")
+	if !strings.Contains(body, "r.askCovered(") {
+		t.Error("buildImages no longer asks the step's own confirmation")
 	}
-	if a, s := strings.Index(body, "r.askTypedOwned("), strings.Index(body, "r.submitAndWait("); a < 0 || s < 0 || a > s {
-		t.Errorf("buildImages must ask the typed confirmation (at %d) before r.submitAndWait( (at %d)", a, s)
+	if a, s := strings.Index(body, "r.askCovered("), strings.Index(body, "r.submitAndWait("); a < 0 || s < 0 || a > s {
+		t.Errorf("buildImages must ask the step's confirmation (at %d) before r.submitAndWait( (at %d)", a, s)
+	}
+	if strings.Contains(body, "r.askTyped(") {
+		t.Error("buildImages asks the Typed confirmation: the billable build is covered in both doors (D12)")
 	}
 	for _, bad := range []string{"confirmOrdinary", "askOrdinary", "runCovers", "r.confirm(", "r.ask("} {
 		if strings.Contains(body, bad) {

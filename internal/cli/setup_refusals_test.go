@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/mirror"
 )
 
 // setup_refusals_test.go pins the refusal matrix both front doors must pass
@@ -31,9 +32,14 @@ import (
 // real terminal, the only mode that may confirm a Typed step. Without the
 // control a matrix of refusals cannot tell "refused" from "never ran".
 //
-// No task may relax a row of it (the plan's Global Constraint 4). W5.1 adds
-// the second front door's column, where the owner's D12 answer covers more in
-// `update`; nothing here changes for `setup`.
+// No task may relax a row of it (the plan's Global Constraint 4), with the one
+// exception the owner made: W5.1. It adds the second front door's column to the
+// call-site table, where D12's answer of 2026-10-20 covers more — and every row
+// that moves is a call site, so **no stage row here changes**: the five covered
+// stages and the three `noYes` ones are exactly as they were, in both doors.
+// After the flip the rule reads "these three rows may never be relaxed, in
+// either front door": creating the project, linking the billing account, and
+// the Firestore database's location in `setup`.
 
 // cliStage is one stage initStages() registers: the constructor it is built
 // with, the flag it is behind, and the three facts the loop decides about it —
@@ -319,71 +325,177 @@ func withoutServices(names []string) []string {
 	return slices.DeleteFunc(slices.Clone(names), func(n string) bool { return n == initflow.Services })
 }
 
-// typedStep is one thing only a person may confirm, and the stage that owns
-// it: the stage's own left-for-you, and whether that stage is SelfConfirming
-// (the loop lets such a stage run without a terminal, and refuses any other
-// before its apply).
+// coversIn is which front doors D12's answer of 2026-10-20 covers a step in,
+// written down here rather than read off initflow, so that relaxing a call site
+// is a line this file has to be changed to say (W0.1's rule, kept).
+type coversIn int
+
+const (
+	coversNone   coversIn = iota // money or permanent in both doors: never
+	coversBoth                   // an ordinary covered row of both front doors
+	coversUpdate                 // covered in `update` alone; `setup` keeps it Typed
+)
+
+// in is whether this door's --yes covers the step.
+func (c coversIn) in(door string) bool {
+	switch c {
+	case coversBoth:
+		return true
+	case coversUpdate:
+		return door == updateDoor.name
+	}
+	return false
+}
+
+// class is the confirmation class the step's call site gives it at this door:
+// what init.go's askClass is handed, askCovered (YesOrTyped) or askTyped
+// (Typed). It is the whole of what D12 moves — the door is the only input, and
+// the three rows that never move are Typed here for both of them.
+func (c coversIn) class(door string) initflow.ConfirmClass {
+	if c.in(door) {
+		return initflow.YesOrTyped
+	}
+	return initflow.Typed
+}
+
+// canConfirmStep is the call site's own rule for a step of this class — what
+// init.go's askClass is: the typed route of a real terminal (a person typing
+// the project's name, with none of --yes, --non-interactive and --json), or,
+// for a step D12 covers, --yes and nothing else. A covered step is not confirmable
+// by a pipe, --json, --non-interactive or a coding agent's session: those confirm
+// it no more than they do a Typed one, and the difference between the two classes
+// is exactly --yes.
+func canConfirmStep(class initflow.ConfirmClass, c initflow.Conditions) bool {
+	if canConfirmTyped(initflow.Typed, c) {
+		return true
+	}
+	if class != initflow.YesOrTyped {
+		return false
+	}
+	c.Terminal, c.NonInteractive, c.JSON = false, false, false
+	return canConfirmTyped(initflow.YesOrTyped, c)
+}
+
+// typedStep is one thing that is money or permanent, and the stage that owns
+// it: the stage's own left-for-you, whether that stage is SelfConfirming (the
+// loop lets such a stage run without a terminal, and refuses any other before
+// its apply), and what D12's answer says about it in each front door.
 type typedStep struct {
 	what  string
 	stage string
-	left  func(t *testing.T) initflow.Left
+	// left is the step's own left-for-you, from the call site that builds it,
+	// at this door: a step whose class is YesOrTyped is left by the same call
+	// site, and the line names the door the reader is at.
+	left func(t *testing.T, door string) initflow.Left
 	// self is whether the owning stage is SelfConfirming: the loop lets such a
 	// stage run without a terminal (its own apply refuses), and refuses any
 	// other before its apply.
 	self bool
 	// yesCovers is whether --yes may confirm the stage: false for the two
-	// inside initflow.Project, which noYes declares, and true for the two
-	// inside a covered stage, whose own step stays Typed. It is written down
-	// here and not read off initflow.YesCovers, so that taking a noYes away
-	// fails the matrix and not only the table.
+	// inside initflow.Project, which noYes declares, and true for the four
+	// inside a covered stage. It is written down here and not read off
+	// initflow.YesCovers, so that taking a noYes away fails the matrix and not
+	// only the table. It is a fact about the stage, and no row of it moves:
+	// D12 is a call-site answer.
 	yesCovers bool
+	// covers is D12's row for this step: which front doors cover it.
+	covers coversIn
+	// kind is the LeftKind the step's refusal has in this door and this mode.
+	// It differs by row rather than by rule (W0.1's own note): the Firestore
+	// location, the build and the registry tag leave a prompt, while the
+	// repository's is a command for an ordinary origin and a console line when
+	// the origin is rewritten or the session is a coding agent's. Nil is
+	// "always a prompt".
+	kind func(door, agent string) initflow.LeftKind
 }
 
-// typedSteps is the plan's list. Two of the four are steps inside a stage the
-// run's one confirmation does cover — runCovered names Firebase and Repository
-// — and that is the plan's own description of them (D12: "within those stages
-// the Firestore database's location, a Cloud Build ... stay Typed"): what is
-// never covered is the step, not the stage. The other two are inside
-// initflow.Project, which noYes declares and --yes therefore never reaches at
-// all. The left-for-you is the real one wherever the CLI builds it in one
-// place, so a change to the prompt moves here too.
+// leftKind is the row's expectation, with the prompt default.
+func (s typedStep) leftKind(door, agent string) initflow.LeftKind {
+	if s.kind == nil {
+		return initflow.LeftPrompt
+	}
+	return s.kind(door, agent)
+}
+
+// typedSteps is the plan's list, six rows after W5.1: the two inside
+// initflow.Project — which noYes declares, so --yes never reaches the stage at
+// all, in either door — and the four call sites W5.1's table names, which are
+// guards inside stages the run's one confirmation already covers (runCovered
+// names Firebase, Images and Repository). That is the plan's own description of
+// them: what was never covered is the step, not the stage. D12's answer moves
+// the four call sites and none of the stage rows, and it moves them per door,
+// which is what covers carries. The left-for-you is the real one wherever the
+// CLI builds it in one place, so a change to a prompt moves here too.
 func typedSteps() []typedStep {
 	return []typedStep{
 		{what: "project creation", stage: initflow.Project, left: projectCreateLeft},
 		{what: "the billing link", stage: initflow.Project, left: projectLinkLeft},
-		{what: "the Firestore location", stage: initflow.Firebase, left: firestoreLocationLeft, self: true, yesCovers: true},
-		{what: "a billable first image build", stage: initflow.Repository, left: billableBuildPrompt, self: true, yesCovers: true},
+		{what: "the Firestore location", stage: initflow.Firebase, left: firestoreLocationLeft,
+			self: true, yesCovers: true, covers: coversUpdate},
+		{what: "a billable first image build", stage: initflow.Repository, left: billableBuildPrompt,
+			self: true, yesCovers: true, covers: coversBoth},
+		{what: "replacing a registry tag", stage: initflow.Images, left: registryTagLeft,
+			self: true, yesCovers: true, covers: coversBoth},
+		{what: "onboarding an unlisted repository", stage: initflow.Repository, left: onboardingLeft,
+			self: true, yesCovers: true, covers: coversBoth, kind: onboardingKind},
 	}
 }
 
+// onboardingKind is the repository row's refusal shape: an ordinary origin at a
+// run that can confirm things leaves the one-line opt-in command, and a coding
+// agent's session — or a rewritten origin, which the matrix's own origin is not
+// — leaves the console line instead. A door that does not enrol leaves the line
+// naming the door that does, which is a command too.
+func onboardingKind(door, agent string) initflow.LeftKind {
+	if door == updateDoor.name || agent == "" {
+		return initflow.LeftCommand
+	}
+	return initflow.LeftConsole
+}
+
 // projectCreateLeft is the project stage's own left-for-you for a creation: the
-// real Left, from the stage's own branch, with nothing read.
-func projectCreateLeft(t *testing.T) initflow.Left {
+// real Left, from the stage's own branch, with nothing read. The project stage
+// is `setup`'s alone — `update` does not register it and refuses
+// --create-project outright — so this row is the same in either door, and the
+// door is not part of what it says.
+func projectCreateLeft(t *testing.T, door string) initflow.Left {
 	t.Helper()
-	s := &projectStage{e: &initEngine{r: &initRun{o: &initOptions{cloud: cloudOptions{gcpProject: initProject}}}}, id: initProject}
+	s := &projectStage{e: &initEngine{r: &initRun{o: &initOptions{door: door, cloud: cloudOptions{gcpProject: initProject}}}}, id: initProject}
 	s.create = true
 	return s.Left()
 }
 
 // projectLinkLeft is the same for the billing link: the second of the project
 // stage's three typed banners, whose own left-for-you is a prompt as well.
-func projectLinkLeft(t *testing.T) initflow.Left {
+func projectLinkLeft(t *testing.T, door string) initflow.Left {
 	t.Helper()
-	o := &initOptions{cloud: cloudOptions{gcpProject: initProject}, linkBilling: "ACCOUNT"}
+	o := &initOptions{door: door, cloud: cloudOptions{gcpProject: initProject}, linkBilling: "ACCOUNT"}
 	s := &projectStage{e: &initEngine{r: &initRun{o: o}}, id: initProject}
 	s.link = true
 	return s.Left()
 }
 
-// firestoreLocationLeft is the Firestore location's own refusal, from the
-// engine that owns it: confirmLocation at a run that cannot type it.
-func firestoreLocationLeft(t *testing.T) initflow.Left {
+// noTypedTerminal is the run the call-site generators below are built on: a run
+// with no terminal and none of the flags, so the step cannot be confirmed and
+// the call site leaves its own line. The real stdinIsTerminal is put back when
+// the test ends.
+func noTypedTerminal(t *testing.T) {
 	t.Helper()
 	old := stdinIsTerminal
 	stdinIsTerminal = func(io.Reader) bool { return false }
 	t.Cleanup(func() { stdinIsTerminal = old })
 	canConfirmTyped = initflow.CanConfirm
-	r := &initRun{o: &initOptions{firebase: "aurora-fp"}, w: io.Discard, in: bufio.NewReader(strings.NewReader(""))}
+}
+
+// firestoreLocationLeft is the Firestore location's own refusal, from the
+// engine that owns it: confirmLocation at a run that cannot confirm it, at this
+// door. `setup` keeps the step Typed and `update` covers it, so the same call
+// site leaves the line in either door when the run cannot take it — which is
+// the point of W5.1's per-door class.
+func firestoreLocationLeft(t *testing.T, door string) initflow.Left {
+	t.Helper()
+	noTypedTerminal(t)
+	r := &initRun{o: &initOptions{door: door, firebase: "aurora-fp"}, w: io.Discard, in: bufio.NewReader(strings.NewReader(""))}
 	err := r.confirmLocation()
 	var ny *initflow.NeedsYouError
 	if !asNeedsYou(err, &ny) {
@@ -392,24 +504,59 @@ func firestoreLocationLeft(t *testing.T) initflow.Left {
 	return ny.Left
 }
 
+// registryTagLeft is the same for replacing a registry tag: init_images.go's own
+// confirmReplace, reached with a plan that would replace the tag, at a run that
+// cannot confirm it.
+func registryTagLeft(t *testing.T, door string) initflow.Left {
+	t.Helper()
+	noTypedTerminal(t)
+	r := &initRun{o: &initOptions{door: door, firebase: "aurora-fp"}, w: io.Discard, in: bufio.NewReader(strings.NewReader(""))}
+	s := &imagesStage{e: &initEngine{r: r}}
+	err := s.confirmReplace([]planned{{item: imageItem{label: "base", kind: "base", dst: mirror.Ref{Host: "h", Repo: "r", Tag: "t"}},
+		plan: &mirror.Plan{Digest: "sha256:" + strings.Repeat("d", 64), DestDigest: "sha256:" + strings.Repeat("e", 64)}}})
+	var ny *initflow.NeedsYouError
+	if !asNeedsYou(err, &ny) {
+		t.Fatalf("replacing a registry tag's refusal is %v, want needs-you", err)
+	}
+	return ny.Left
+}
+
+// onboardingLeft is the repository row's own line at this door. The converge's
+// confirmRepo asks for the typed owner/name when it can, and leaves the
+// one-line opt-in when it cannot (onboardLeft); a door that does not enrol a
+// repository — `update`, whose converge leaves one to `fugaro setup` — leaves
+// the command naming the door that does (enrolLeft, D5).
+func onboardingLeft(t *testing.T, door string) initflow.Left {
+	t.Helper()
+	if door == updateDoor.name {
+		return enrolLeft(door)
+	}
+	return onboardLeft(originInfo{Repo: "acme/app", Host: "github.com"}, door)
+}
+
 // billableBuildPrompt is the left-for-you the repository stage leaves for a
 // billable first image build: init.go's own billableBuildLeft, the one function
 // repoEngine builds that step's left with, called the way the converge calls it
 // (embedded: the repository stage is the run's own, not fugaro update --repo). It
 // is not a copy of the prompt here, so a change to the prompt — its kind
 // included, which is the thing this matrix is about — moves this row with it.
-func billableBuildPrompt(*testing.T) initflow.Left {
-	return billableBuildLeft(true, "setup")
+// The step is covered in both doors (D12), so like the tag's line this one is
+// what a run that cannot take it leaves, in either of them.
+func billableBuildPrompt(_ *testing.T, door string) initflow.Left {
+	return billableBuildLeft(true, door)
 }
 
-// TestTheFourTypedStepsLeaveAPrompt is the other half of the plan's sentence:
-// each of the four answers needs-you with a LeftKind of prompt — the person is
-// told to type the confirmation in their own terminal, and the left-for-you is
-// a prompt, not a command to paste.
-func TestTheFourTypedStepsLeaveAPrompt(t *testing.T) {
-	for _, s := range typedSteps() {
-		if lf := s.left(t); lf.Kind != initflow.LeftPrompt || lf.Stage != s.stage {
-			t.Errorf("%s: %+v, want a prompt on %s", s.what, lf, s.stage)
+// TestTheTypedStepsLeaveTheirOwnRefusal is the other half of the plan's
+// sentence: each of these answers needs-you with its own kind of line, in each
+// door — a prompt for the five that a person types (they are told to type the
+// confirmation in their own terminal), and the repository row's command or
+// console line, which is why that row's kind is not a rule over LeftKind.
+func TestTheTypedStepsLeaveTheirOwnRefusal(t *testing.T) {
+	for _, door := range []string{setupDoor.name, updateDoor.name} {
+		for _, s := range typedSteps() {
+			if lf := s.left(t, door); lf.Kind != s.leftKind(door, "") || lf.Stage != s.stage {
+				t.Errorf("%s/%s: %+v, want a %s on %s", door, s.what, lf, s.leftKind(door, ""), s.stage)
+			}
 		}
 	}
 }
@@ -473,33 +620,35 @@ func (m refusalMode) loopOptions(c initflow.Conditions) initflow.Options {
 	}
 }
 
-// runRefusal runs the step's stage through the loop in this mode, on the
-// harness init_confirm_test.go already has: a terminal swapped in, the agent's
-// marker set, and canConfirmTyped the real rule.
-func (m refusalMode) runRefusal(t *testing.T, s typedStep) (*initflow.Result, error, *refusalStage) {
+// runRefusal runs the step's stage through the loop in this mode, at this door,
+// on the harness init_confirm_test.go already has: a terminal swapped in, the
+// agent's marker set, and canConfirmTyped the real rule. The conditions it read
+// come back too, so the test can ask the same rule what this mode can confirm.
+func (m refusalMode) runRefusal(t *testing.T, s typedStep, door string) (*initflow.Result, error, *refusalStage, initflow.Conditions) {
 	t.Helper()
-	run, _, _ := m.condition.run(t, "")
+	run, _, _ := m.condition.withDoor(door).run(t, "")
 	conds := run.conditions()
-	st := &refusalStage{step: s, left: s.left(t), conds: conds}
+	st := &refusalStage{step: s, left: s.left(t, door), conds: conds, door: door}
 	var stage initflow.Stage = st
 	if s.self {
 		stage = &refusalEngineStage{refusalStage: st}
 	}
 	res, err := initflow.Run(context.Background(), []initflow.Stage{stage}, m.loopOptions(conds))
-	return res, err, st
+	return res, err, st, conds
 }
 
 // refusalStage is one of the CLI's stages with no cloud behind it: it plans
 // when applied (as every engine stage does) and its apply is the step the row
-// names. The apply consults the real rule — initflow.CanConfirm(Typed, ...),
-// which is what init's askTyped (init.go) and the project stage's canType
-// (init_project.go) consult — so a run that cannot type the confirmation leaves
-// the step, exactly as the engines do, and nothing else about the stage
-// decides.
+// names. The apply consults the real rule — initflow.CanConfirm of the class
+// the row gives the step at this door, which is what init's askClass (init.go)
+// and the project stage's canType (init_project.go) consult — so a run that
+// cannot confirm the step leaves it, exactly as the engines do, and nothing
+// else about the stage decides.
 type refusalStage struct {
 	step  typedStep
 	left  initflow.Left
 	conds initflow.Conditions
+	door  string
 
 	applied bool
 	gotEnv  *initflow.Env
@@ -514,7 +663,7 @@ func (s *refusalStage) Plan(context.Context, initflow.Env) (initflow.Plan, error
 }
 func (s *refusalStage) Apply(_ context.Context, env initflow.Env) (initflow.Outcome, error) {
 	s.gotEnv = &env
-	if !canConfirmTyped(initflow.Typed, s.conds) {
+	if !canConfirmStep(s.step.covers.class(s.door), s.conds) {
 		return initflow.Outcome{}, &initflow.NeedsYouError{Left: s.left}
 	}
 	s.applied = true
@@ -531,68 +680,99 @@ type refusalEngineStage struct{ *refusalStage }
 func (*refusalEngineStage) SelfConfirming() {}
 
 // TestRefusalMatrixNeverConfirmsWhatIsMoneyOrPermanent is the matrix itself:
-// for each of the four and each mode, the state the loop reaches, whether the
-// step was applied, and whether --yes reached a stage it never covers.
+// for each of the six steps, each door and each mode, the state the loop
+// reaches, whether the step was applied, and whether --yes reached a stage it
+// never covers.
+//
+// The expected apply is D12's row read as a rule, and it is the whole of what
+// W5.1 changes here: a step the door covers is given by the run's own
+// confirmation, which is --yes or the project's name typed at a real terminal
+// (canConfirmStep), and a step the door keeps Typed is given by the control
+// alone. A caller that relaxed a call site the answer does not move applies it
+// in --json, in a pipe or in an agent's session and fails here; one that left a
+// moved call site Typed fails here too, because the covered modes apply
+// nothing.
 func TestRefusalMatrixNeverConfirmsWhatIsMoneyOrPermanent(t *testing.T) {
-	for _, s := range typedSteps() {
-		for _, m := range refusalModes() {
-			t.Run(s.what+"/"+m.name, func(t *testing.T) {
-				res, err, st := m.runRefusal(t, s)
-				if st.applied != m.control {
-					t.Fatalf("applied = %v, want %v: %s is money or permanent, and only a person typing the confirmation at a real terminal gives it (err %v, result %+v)", st.applied, m.control, s.what, err, res)
-				}
-				if got := initflow.YesCovers(s.stage); got != s.yesCovers {
-					t.Errorf("YesCovers(%s) = %v, and the row says %v: --yes reaches the stage the plan's list says it must not", s.stage, got, s.yesCovers)
-				}
-				if st.gotEnv != nil && st.gotEnv.Yes != (m.opts.yes && s.yesCovers) {
-					t.Errorf("%s: the loop handed the stage --yes = %v, want %v (--yes %v, the stage covered %v)", s.what, st.gotEnv.Yes, m.opts.yes && s.yesCovers, m.opts.yes, s.yesCovers)
-				}
-				switch {
-				case m.control:
-					if err != nil || res == nil || res.ExitCode() != 0 || stateOf(res, s.stage) != initflow.Changed {
-						t.Fatalf("the control did not confirm the step: err %v, result %+v", err, res)
+	for _, door := range []string{setupDoor.name, updateDoor.name} {
+		for _, s := range typedSteps() {
+			for _, m := range refusalModes() {
+				t.Run(door+"/"+s.what+"/"+m.name, func(t *testing.T) {
+					res, err, st, conds := m.runRefusal(t, s, door)
+					class := s.covers.class(door)
+					wantApplied := canConfirmStep(class, conds)
+					if st.applied != wantApplied {
+						t.Fatalf("applied = %v, want %v: %s at fugaro %s is %s here (err %v, result %+v)", st.applied, wantApplied, s.what, door, classWord(class), err, res)
 					}
-				case m.planOnly:
-					if err != nil || res == nil || res.ExitCode() != 0 || stateOf(res, s.stage) != initflow.Todo {
-						t.Fatalf("--non-interactive without --yes did not only plan: err %v, result %+v", err, res)
+					if got := initflow.YesCovers(s.stage); got != s.yesCovers {
+						t.Errorf("YesCovers(%s) = %v, and the row says %v: --yes reaches the stage the plan's list says it must not", s.stage, got, s.yesCovers)
 					}
-				case err != nil:
-					// The loop refused before the stage's apply: a covered
-					// stage that is not SelfConfirming, with no terminal and no
-					// --yes, is not let prompt at all.
-					if !strings.Contains(err.Error(), "needs a real terminal") {
-						t.Fatalf("%s: %v, want the loop's no-terminal refusal", m.name, err)
+					if st.gotEnv != nil && st.gotEnv.Yes != (m.opts.yes && s.yesCovers) {
+						t.Errorf("%s: the loop handed the stage --yes = %v, want %v (--yes %v, the stage covered %v)", s.what, st.gotEnv.Yes, m.opts.yes && s.yesCovers, m.opts.yes, s.yesCovers)
 					}
-				default:
+					switch {
+					case m.control:
+						if err != nil || res == nil || res.ExitCode() != 0 || stateOf(res, s.stage) != initflow.Changed {
+							t.Fatalf("the control did not confirm the step: err %v, result %+v", err, res)
+						}
+					case wantApplied:
+						// Covered here: the step applied with no terminal at
+						// all, which is what D12 bought `update --yes` — and
+						// for the two rows covered in both doors, `setup
+						// --yes` as well.
+						if err != nil || res == nil || res.ExitCode() != 0 || stateOf(res, s.stage) != initflow.Changed {
+							t.Fatalf("a covered step was not applied by the run's own confirmation: err %v, result %+v", err, res)
+						}
+					case m.planOnly:
+						if err != nil || res == nil || res.ExitCode() != 0 || stateOf(res, s.stage) != initflow.Todo {
+							t.Fatalf("--non-interactive without --yes did not only plan: err %v, result %+v", err, res)
+						}
+					case err != nil:
+						// The loop refused before the stage's apply: a covered
+						// stage that is not SelfConfirming, with no terminal and no
+						// --yes, is not let prompt at all.
+						if !strings.Contains(err.Error(), "needs a real terminal") {
+							t.Fatalf("%s: %v, want the loop's no-terminal refusal", m.name, err)
+						}
+					default:
+						if err != nil {
+							t.Fatalf("%s: %v", m.name, err)
+						}
+						if stateOf(res, s.stage) != initflow.NeedsYou || res.ExitCode() != 1 {
+							t.Fatalf("%s: state %q, exit %d, want needs-you and 1 (result %+v)", m.name, stateOf(res, s.stage), res.ExitCode(), res)
+						}
+						lf, ok := leftOf(res, s.stage)
+						if !ok || lf.Kind != s.leftKind(door, m.agent) {
+							t.Fatalf("%s: left-for-you %+v (found %v), want a %s on %s", m.name, lf, ok, s.leftKind(door, m.agent), s.stage)
+						}
+					}
+					if m.agent == "" {
+						return
+					}
+					// The refusal an agent reads offers it no --yes: not the
+					// stage's own text, and not the loop's.
+					all := refusalMatrixText(res)
 					if err != nil {
-						t.Fatalf("%s: %v", m.name, err)
+						all += err.Error()
 					}
-					if stateOf(res, s.stage) != initflow.NeedsYou || res.ExitCode() != 1 {
-						t.Fatalf("%s: state %q, exit %d, want needs-you and 1 (result %+v)", m.name, stateOf(res, s.stage), res.ExitCode(), res)
+					if strings.Contains(all, "--yes") {
+						t.Errorf("an agent session was told to pass --yes:\n%s", all)
 					}
-					lf, ok := leftOf(res, s.stage)
-					if !ok || lf.Kind != initflow.LeftPrompt {
-						t.Fatalf("%s: left-for-you %+v (found %v), want a prompt on %s", m.name, lf, ok, s.stage)
+					if !strings.Contains(all, m.agent) {
+						t.Errorf("the refusal does not name the marker %s:\n%s", m.agent, all)
 					}
-				}
-				if m.agent == "" {
-					return
-				}
-				// The refusal an agent reads offers it no --yes: not the
-				// stage's own text, and not the loop's.
-				all := refusalMatrixText(res)
-				if err != nil {
-					all += err.Error()
-				}
-				if strings.Contains(all, "--yes") {
-					t.Errorf("an agent session was told to pass --yes:\n%s", all)
-				}
-				if !strings.Contains(all, m.agent) {
-					t.Errorf("the refusal does not name the marker %s:\n%s", m.agent, all)
-				}
-			})
+				})
+			}
 		}
 	}
+}
+
+// classWord names a confirmation class the way the call sites do, for the
+// matrix's failures.
+func classWord(class initflow.ConfirmClass) string {
+	if class == initflow.YesOrTyped {
+		return "covered by the run's own confirmation"
+	}
+	return "Typed: only a person at a real terminal gives it"
 }
 
 func leftOf(res *initflow.Result, stage string) (initflow.Left, bool) {

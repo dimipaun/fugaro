@@ -1,8 +1,15 @@
 package cli
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // hostileRepoRig is a rig and a checkout of a third-party repository whose
@@ -67,6 +74,90 @@ func TestInitRepoAloneIsBehindTheHostileGate(t *testing.T) {
 			}
 			if tc.env != "" && !strings.Contains(all, "your own terminal") {
 				t.Errorf("no typed route:\n%s", all)
+			}
+		})
+	}
+}
+
+// TestSetupOnboardsUnderYesWithoutATypedConfirmation: D12's answer of
+// 2026-10-20 makes onboarding an unlisted repository an ordinary covered row of
+// BOTH front doors' converge, so `setup --yes` onboards one with no typed
+// question and no --onboard-repo. What it does not do is widen the gate: an
+// origin git config rewrites, a host that is not a provider's, and a name the
+// config knows at another host are all still the gate's own question, because
+// none of them says which repository the run is being asked about.
+//
+// The step is taken in the converge (onboardCovered), so it is driven through
+// the stage with the engine stubbed, as the gate's other tests are.
+func TestSetupOnboardsUnderYesWithoutATypedConfirmation(t *testing.T) {
+	releaseBuild(t, "0.2.0")
+	rewritten := func(t *testing.T) string {
+		t.Helper()
+		dir := repoCheckout(t, "https://evil.example/acme/app.git", checkoutYAML("github", "oauth", "aurora", ""))
+		f, err := os.OpenFile(filepath.Join(dir, ".git", "config"), os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString("[url \"https://github.com/\"]\n\tinsteadOf = https://evil.example/\n"); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+		if got := testutil.Git(t, dir, "remote", "get-url", "origin"); got != githubOrigin {
+			t.Fatalf("the fixture does not rewrite: %q", got)
+		}
+		return dir
+	}
+	for _, tc := range []struct {
+		name  string
+		dir   func(t *testing.T) string
+		lc    func(e *initEngine)
+		cover bool
+	}{
+		{name: "an unlisted repository on a provider's host", cover: true,
+			dir: func(t *testing.T) string {
+				return repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", ""))
+			}},
+		{name: "a host that is not a provider's",
+			dir: func(t *testing.T) string {
+				return repoCheckout(t, "https://evil.example/acme/app.git", checkoutYAML("github", "oauth", "aurora", ""))
+			}},
+		{name: "an origin git config rewrites", dir: rewritten},
+		{name: "a name the config knows at another host", lc: func(e *initEngine) {
+			e.lc.Repos = map[string]localcfg.Repo{"acme/app": {Provider: "bitbucket"}}
+		}, dir: func(t *testing.T) string {
+			return repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", ""))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(tc.dir(t))
+			fakeTerminal(t)
+			// --yes on a pipe: the covered step takes no terminal at all.
+			e, out := stageEngine(t, "acme/app\n", &initOptions{yes: true, githubAppID: "12345"})
+			unknownRepo(e)
+			if tc.lc != nil {
+				tc.lc(e)
+			}
+			ran := false
+			rs := newRepositoryStage(e)
+			rs.engineStage.run = func(context.Context) error { ran = true; return nil }
+			res, err := initflow.Run(t.Context(), []initflow.Stage{rs}, e.options())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.cover {
+				if !ran || stateOf(res, "repository") != initflow.Done {
+					t.Fatalf("--yes did not onboard it: ran %v %+v\n%s", ran, res.Stages, out)
+				}
+				if strings.Contains(out.String(), "Type ") || len(res.Left) != 0 {
+					t.Errorf("--yes asked for a confirmation:\n%s%+v", out, res.Left)
+				}
+				return
+			}
+			if ran || stateOf(res, "repository") != initflow.NeedsYou || len(res.Left) != 1 {
+				t.Fatalf("--yes onboarded an origin it cannot name: ran %v %+v %v\n%s", ran, res.Stages, res.Left, out)
+			}
+			if strings.Contains(res.Left[0].Text, "Type ") {
+				t.Errorf("the gate's line is a prompt under --yes: %q", res.Left[0].Text)
 			}
 		})
 	}

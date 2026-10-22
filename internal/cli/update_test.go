@@ -197,13 +197,18 @@ func contains(list []string, want string) bool {
 	return false
 }
 
-// TestUpdateAppliesTheFourStepsItOwns is D12's call-site half: `update --yes`
-// covers the Firestore database's location, a billable first image build,
-// replacing a registry tag and onboarding an unlisted repository, each at the
-// function that takes the step, and `setup` keeps every one of them typed.
+// TestUpdateAppliesTheFourStepsItOwns is D12's call-site half, at the four
+// functions that take the steps. `update --yes` covers all four: the Firestore
+// database's location, a billable first image build, replacing a registry tag
+// and onboarding an unlisted repository. `setup` keeps exactly one of them —
+// the location, the door that asks for it as a first-time question — and the
+// other three are covered in both doors, which is the answer's own row-by-row
+// statement of what moves.
+//
 // Planting the bug in either direction fails it: a call site relaxed for
-// `setup` fails the setup arm, and one left Typed for `update` fails the
-// update arm.
+// `setup` (the location) fails the setup arm here, and one left Typed for
+// `update` fails the update arm — for the build and the tag, whose arms run
+// both doors, that is the same mutation seen twice.
 func TestUpdateAppliesTheFourStepsItOwns(t *testing.T) {
 	t.Run("the Firestore location", func(t *testing.T) {
 		for _, tc := range []struct {
@@ -241,35 +246,28 @@ func TestUpdateAppliesTheFourStepsItOwns(t *testing.T) {
 			Workflows: map[string]infra.WorkflowSpec{"app": {}}}
 		lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5",
 			BaseImages: map[string]string{"base": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3"}}
-		for _, tc := range []struct {
-			door    string
-			covered bool
-		}{{setupDoor.name, false}, {updateDoor.name, true}} {
-			t.Run(tc.door, func(t *testing.T) {
+		// Covered in BOTH front doors (D12: "become ordinary covered rows in
+		// both front doors"), so the arm that plants the bug is the one that
+		// leaves it Typed.
+		for _, door := range []string{setupDoor.name, updateDoor.name} {
+			t.Run(door+" --yes", func(t *testing.T) {
 				fb := useFakeBuilder(t)
 				fakeTerminal(t)
-				e, out := stageEngine(t, initProjectName+"\n", &initOptions{door: tc.door, yes: true})
+				e, out := stageEngine(t, initProjectName+"\n", &initOptions{door: door, yes: true})
 				e.r.setProject(lc)
 				built, err := e.r.buildImages(t.Context(), lc, cfg, spec, []string{"app"})
-				if tc.covered {
-					if err != nil || built != 1 || len(fb.specs) != 1 {
-						t.Fatalf("update --yes did not build: built %d, err %v\n%s", built, err, out)
-					}
-					if !strings.Contains(out.String(), "confirmed by --yes") {
-						t.Errorf("the covered build does not say how it was confirmed:\n%s", out)
-					}
-					return
+				if err != nil || built != 1 || len(fb.specs) != 1 {
+					t.Fatalf("%s --yes did not build: built %d, err %v\n%s", door, built, err, out)
 				}
-				if err != nil || built != 0 || len(fb.specs) != 0 {
-					t.Fatalf("setup built a billable image under --yes: built %d, err %v\n%s", built, err, out)
+				if !strings.Contains(out.String(), "confirmed by --yes") {
+					t.Errorf("the covered build does not say how it was confirmed:\n%s", out)
 				}
-				if len(e.r.buildsLeft) != 1 || !strings.Contains(out.String(), "is billable and was not confirmed") {
-					t.Errorf("the setup run does not leave the build for the user: %v\n%s", e.r.buildsLeft, out)
+				if len(e.r.buildsLeft) != 0 {
+					t.Errorf("a covered build was left for the user: %v", e.r.buildsLeft)
 				}
 			})
 		}
-		// A terminal with no --yes types it, in either door: the class decides
-		// what --yes does, and nothing else.
+		// A terminal with no --yes types it, in either door.
 		for _, door := range []string{setupDoor.name, updateDoor.name} {
 			fb := useFakeBuilder(t)
 			fakeTerminal(t)
@@ -280,32 +278,50 @@ func TestUpdateAppliesTheFourStepsItOwns(t *testing.T) {
 				t.Errorf("%s at a terminal: built %d, err %v\n%s", door, built, err, out)
 			}
 		}
+		// A run that cannot take it — no terminal and no --yes — leaves the
+		// build, in either door, and the warning names --yes as the way to
+		// give it (it is one now).
+		for _, door := range []string{setupDoor.name, updateDoor.name} {
+			t.Run(door+" with no terminal", func(t *testing.T) {
+				noTerminal(t)
+				fb := useFakeBuilder(t)
+				e, out := stageEngine(t, initProjectName+"\n", &initOptions{door: door})
+				e.r.setProject(lc)
+				built, err := e.r.buildImages(t.Context(), lc, cfg, spec, []string{"app"})
+				if err != nil || built != 0 || len(fb.specs) != 0 {
+					t.Fatalf("%s with no terminal and no --yes built: built %d, err %v\n%s", door, built, err, out)
+				}
+				if len(e.r.buildsLeft) != 1 || !strings.Contains(out.String(), "is billable and was not confirmed") || !strings.Contains(out.String(), "and --yes does") {
+					t.Errorf("the run does not leave the build, saying --yes gives it: %v\n%s", e.r.buildsLeft, out)
+				}
+			})
+		}
 	})
 
 	t.Run("replacing a registry tag", func(t *testing.T) {
 		pl := []planned{{item: imageItem{label: "base", kind: "base", dst: mirror.Ref{Host: "h", Repo: "r", Tag: "t"}},
 			plan: &mirror.Plan{Digest: "sha256:" + strings.Repeat("d", 64), DestDigest: "sha256:" + strings.Repeat("e", 64)}}}
-		for _, tc := range []struct {
-			door    string
-			covered bool
-		}{{setupDoor.name, false}, {updateDoor.name, true}} {
-			t.Run(tc.door, func(t *testing.T) {
-				e, out := stageEngine(t, initProjectName+"\n", &initOptions{door: tc.door, yes: true})
+		// Covered in BOTH front doors, as the build is.
+		for _, door := range []string{setupDoor.name, updateDoor.name} {
+			t.Run(door+" --yes", func(t *testing.T) {
+				e, out := stageEngine(t, initProjectName+"\n", &initOptions{door: door, yes: true})
 				st := &imagesStage{e: e}
-				err := st.confirmReplace(pl)
-				if tc.covered {
-					if err != nil {
-						t.Fatalf("update --yes did not cover the replacement: %v\n%s", err, out)
-					}
-					if !strings.Contains(out.String(), "confirmed by --yes") {
-						t.Errorf("the covered replacement does not say how it was confirmed:\n%s", out)
-					}
-					return
+				if err := st.confirmReplace(pl); err != nil {
+					t.Fatalf("%s --yes did not cover the replacement: %v\n%s", door, err, out)
 				}
-				if err == nil || !strings.Contains(err.Error(), "the project's name") {
-					t.Fatalf("setup replaced a tag under --yes: %v\n%s", err, out)
+				if !strings.Contains(out.String(), "confirmed by --yes") {
+					t.Errorf("the covered replacement does not say how it was confirmed:\n%s", out)
 				}
 			})
+		}
+		// And a run that cannot take it leaves it, in either door.
+		for _, door := range []string{setupDoor.name, updateDoor.name} {
+			e, out := stageEngine(t, initProjectName+"\n", &initOptions{door: door})
+			st := &imagesStage{e: e}
+			err := st.confirmReplace(pl)
+			if err == nil || !strings.Contains(err.Error(), "the project's name") {
+				t.Fatalf("%s replaced a tag with no confirmation: %v\n%s", door, err, out)
+			}
 		}
 	})
 
