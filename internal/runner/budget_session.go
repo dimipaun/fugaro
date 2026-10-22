@@ -356,8 +356,13 @@ func (r *run) startBudgetBackend(ctx context.Context) error {
 	r.sess = sess
 	r.mu.Unlock()
 
-	gw := r.cfg.Agent.Auth == "api-key" || r.cfg.Agent.Auth == "vertex"
-	h, err := sess.Admit(ctx, budget.AdmitOptions{Gateway: gw, LocalEnforce: cfg.LocalEnforce, PolicyCap: r.spend.Cap})
+	// Admit is told whether this run's model calls are leased, and it asks the
+	// run's own predicate rather than spelling the auths again: a cascade run
+	// has a gateway and a lease exactly like an api-key one (C1.19), so a
+	// second spelling here read it as an unleased run and admitted it into an
+	// enforcing installation with no caps — to fail call by call instead of
+	// halting no_cap as every other gatewayed run does.
+	h, err := sess.Admit(ctx, budget.AdmitOptions{Gateway: r.gatewayOn(), LocalEnforce: cfg.LocalEnforce, PolicyCap: r.spend.Cap})
 	switch {
 	case errors.Is(err, budget.ErrGraceExpired):
 		return r.bootstrapHalt(runstore.HaltBudgetUnavailable, "run", "the budget backend could not be reached before the run began: "+r.redact(err.Error()))
