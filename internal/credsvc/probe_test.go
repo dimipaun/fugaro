@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -43,6 +44,10 @@ type fakeProbes struct {
 	reads  int
 	writes int
 	err    error
+	// stale makes every compare-and-set fail, whatever it read first: the node
+	// a real database refuses the write under is one another writer keeps
+	// moving, and this is that writer.
+	stale bool
 }
 
 func newFakeProbes() *fakeProbes {
@@ -80,6 +85,9 @@ func (p *fakeProbes) PutIfMatch(_ context.Context, path, etag string, v any) err
 	defer p.mu.Unlock()
 	if p.err != nil {
 		return p.err
+	}
+	if p.stale {
+		return errStaleVersion
 	}
 	cur := ""
 	if _, ok := p.nodes[path]; ok {
@@ -559,6 +567,70 @@ func TestOneProbeAtATime(t *testing.T) {
 	}
 	if claim.Run != s.run || claim.Slug != s.slug {
 		t.Errorf("the claim names %s/%s, want the run that made the probe (%s/%s)", claim.Slug, claim.Run, s.slug, s.run)
+	}
+}
+
+// TestWaitWhenAProbeIsOwedAndNotMade: a probe owed on a credential the
+// selection could not hand back is due exactly BECAUSE the credential's own
+// wait has passed, so the instant the selection answers with is behind the run
+// by construction. A probe that is not made cannot move it, and the run must
+// still be told a wait it can act on: the answer carries a short instant in the
+// future (waitFloor) rather than the one that has gone.
+//
+// Left alone, every one of these four answers the run a reset_at in the past,
+// the runner resumes at once (C1.17), the state has not moved, and the stage is
+// re-run in a tight loop for as long as the condition lasts — which for a claim
+// another instance holds is up to the claim's own ten minutes.
+//
+// The four are the ways a probe that was owed is not made: the slot is another
+// instance's, the lease cannot be read at all, the claim keeps losing its
+// compare-and-set, and the run's body names no model the service will put in a
+// probe. In none of them may anything be sent upstream.
+func TestWaitWhenAProbeIsOwedAndNotMade(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		set  func(*testing.T, *svc)
+	}{{
+		name: "the slot is another instance's",
+		body: callBody("real-work"),
+		set:  func(t *testing.T, s *svc) { s.probes.hold(t, "default", s.now.Add(time.Minute)) },
+	}, {
+		name: "the lease cannot be read",
+		body: callBody("real-work"),
+		set:  func(_ *testing.T, s *svc) { s.probes.err = errors.New("the database is unreachable") },
+	}, {
+		name: "the claim keeps losing its compare-and-set",
+		body: callBody("real-work"),
+		set:  func(_ *testing.T, s *svc) { s.probes.stale = true },
+	}, {
+		name: "the body names no model",
+		body: `{"max_tokens":16,"messages":[{"role":"user","content":"real-work"}]}`,
+		set:  func(*testing.T, *svc) {},
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, auditLog := probeSvc(t, nil)
+			s.backedOff("default", s.now.Add(-time.Hour), creds.DefaultBackoffInitial)
+			tc.set(t, s)
+
+			resp, body := s.call(t, tc.body)
+			if resp.StatusCode != StatusExhaustedUntil {
+				t.Fatalf("the call answered %d %s, want the typed wait", resp.StatusCode, body)
+			}
+			at := wait(t, resp, body)
+			if !at.After(s.now) {
+				t.Errorf("the run was told to wait until %s, which is not after now (%s): a runner resuming there re-runs the stage at once", at, s.now)
+			}
+			if want := s.now.Add(waitFloor); !at.Equal(want) {
+				t.Errorf("the run was told to wait until %s, want the floor (%s)", at, want)
+			}
+			if got := s.up.Count(); got != 0 {
+				t.Errorf("the upstream saw %d requests, want none: no probe was made", got)
+			}
+			if auditLog.Len() != 0 {
+				t.Errorf("a probe nobody made wrote an audit line: %s", auditLog.String())
+			}
+		})
 	}
 }
 

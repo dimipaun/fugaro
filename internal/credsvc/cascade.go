@@ -408,6 +408,34 @@ func (s *Server) answer(w http.ResponseWriter, cl *call, ans *answer, c creds.Cr
 	}
 }
 
+// waitFloor is the shortest wait this service answers a run with, and it is a
+// floor rather than a value: a wait the selection answered with is relayed as
+// it stands whenever it is really in the future, and an instant that has
+// already passed is replaced by now plus this.
+//
+// An instant in the past is not a wait at all. The runner acts on the typed
+// answer by resuming at reset_at (C1.17), so a reset_at behind the run is an
+// instruction to resume at once, and a run that resumes at once against a state
+// that has not moved is a stage re-run in a tight loop — burning a run's own
+// budget on a wait that was never going to end.
+//
+// Two states reach it, and both are ordinary. A probe owed on a backed-off
+// credential is due exactly BECAUSE the credential's own wait has passed, so the
+// instant the selection answers with (At) is behind the run by construction: the
+// probe is what would move it, and a probe that was not made — the slot is
+// another instance's, the lease cannot be read, the claim keeps losing its
+// compare-and-set, the run's body names no model — leaves nothing but that
+// instant to answer with. And a usage limit whose reset had already passed when
+// the answer was read writes a mark that holds nothing (C1.9), so the next
+// selection answers with a past instant the same way.
+//
+// Fifteen seconds is a value, not a measurement: a probe takes seconds (a
+// one-token call), and the wait has to be long enough that a runner resuming
+// under it does not become the loop this exists to prevent. It is nowhere near
+// the policy's own threshold, so no wait this service invents can be mistaken
+// for the credential's own reset.
+const waitFloor = 15 * time.Second
+
 // refuseSelection turns creds.Select's answer into the client's.
 //
 // The typed answer is the one case the runner acts on rather than halts for:
@@ -425,7 +453,16 @@ func (s *Server) answer(w http.ResponseWriter, cl *call, ans *answer, c creds.Cr
 func (s *Server) refuseSelection(w http.ResponseWriter, err error, tried []Tried) {
 	var until *creds.ExhaustedUntil
 	if errors.As(err, &until) {
-		WriteExhaustedUntil(w, ExhaustedUntil{ResetAt: until.At, Tried: tried}, s.now())
+		now := s.now()
+		reset := until.At
+		if !reset.After(now) {
+			// The instant has passed, which is a state the run cannot act on
+			// (waitFloor). It is answered as a short wait ahead of the run
+			// instead, so the next stage it runs has something to wait for and
+			// the loop is bounded by the floor rather than by the state.
+			reset = now.Add(waitFloor)
+		}
+		WriteExhaustedUntil(w, ExhaustedUntil{ResetAt: reset, Tried: tried}, now)
 		return
 	}
 	WriteWireError(w, StatusUnavailable, WireError{

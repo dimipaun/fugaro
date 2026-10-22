@@ -569,9 +569,11 @@ func probeStatus(o probeOutcome) string {
 // is returned), because an unknown node under creds/ is the operator's to clear
 // and guessing at it would be guessing at whether a probe is in flight.
 //
-// found=false with ok=false is the answer "someone else is probing, or the
+// ok=false with a nil error is the answer "someone else is probing, or the
 // database would not take the write": either way this call makes no probe and
-// the run is answered the wait it was given.
+// the run is answered the wait it was given. The error says only that the lease
+// could not be read, which is the caller's to log and no probe is made on
+// either answer.
 func (s *Server) claimProbe(ctx context.Context, name string, run creds.Run) (ok bool, err error) {
 	now := s.now()
 	path := probeLeasePath(name)
