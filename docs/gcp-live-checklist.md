@@ -6944,52 +6944,52 @@ fugaro version    # the release this check is run from: read-only
    grep -n 'ServiceHeldSecretNames' internal/config/providers.go | head -1
    grep -n 'var ServiceHeldSecretNames' internal/config/providers.go
    python3 - "$W/job.json" <<'PY'
-   import json, sys
-   spec = json.load(open(sys.argv[1]))["spec"]["template"]["spec"]
-   c = spec["containers"][0]
-   names = [e["name"] for e in c.get("env", [])]
-   print("env names:", " ".join(sorted(names)))
-   print("FUGARO_GITHUB_APP_PRIVATE_KEY in env:", "FUGARO_GITHUB_APP_PRIVATE_KEY" in names)
-   print("FUGARO_CREDENTIALS_SERVICE_URL in env:", "FUGARO_CREDENTIALS_SERVICE_URL" in names)
-   mounts = [v.get("name") for v in spec.get("volumes", [])] + [m.get("name") for m in c.get("volumeMounts", [])]
-   refs = [e.get("valueSource", {}).get("secretKeyRef", {}).get("secret", "") for e in c.get("env", [])]
-   print("mounts:", " ".join(sorted(set(x for x in mounts if x))))
-   print("secret env refs:", " ".join(sorted(set(x for x in refs if x))))
-   PY
+import json, sys
+spec = json.load(open(sys.argv[1]))["spec"]["template"]["spec"]
+c = spec["containers"][0]
+names = [e["name"] for e in c.get("env", [])]
+print("env names:", " ".join(sorted(names)))
+print("FUGARO_GITHUB_APP_PRIVATE_KEY in env:", "FUGARO_GITHUB_APP_PRIVATE_KEY" in names)
+print("FUGARO_CREDENTIALS_SERVICE_URL in env:", "FUGARO_CREDENTIALS_SERVICE_URL" in names)
+mounts = [v.get("name") for v in spec.get("volumes", [])] + [m.get("name") for m in c.get("volumeMounts", [])]
+refs = [e.get("valueSource", {}).get("secretKeyRef", {}).get("secret", "") for e in c.get("env", [])]
+print("mounts:", " ".join(sorted(set(x for x in mounts if x))))
+print("secret env refs:", " ".join(sorted(set(x for x in refs if x))))
+PY
    gcloud secrets list --project="$P" --format=json > "$W/secrets.json"
    python3 - "$W/secrets.json" "$JOBSA" "$W/grants.env" <<'PY'
-   import json, sys
-   secrets, jobsa, out = json.load(open(sys.argv[1])), sys.argv[2], sys.argv[3]
-   key = [s for s in secrets if (s.get("labels") or {}).get("fugaro_secret") == "github-app-key"]
-   if len(key) != 1:
-       sys.exit("Check 96 stopped: expected exactly one container labelled fugaro_secret=github-app-key, found %d" % len(key))
-   print("APPKEY=%s" % key[0]["name"].split("/")[-1])
-   bundle = [s for s in secrets if (s.get("labels") or {}).get("fugaro_project")
-             and not (s.get("labels") or {}).get("fugaro_secret")]
-   if len(bundle) != 1:
-       sys.exit("Check 96 stopped: expected exactly one container labelled fugaro_project and one grant on it, found %d" % len(bundle))
-   print("BUNDLE=%s" % bundle[0]["name"].split("/")[-1])
-   open(out, "w").write("APPKEY=%s\nBUNDLE=%s\n" % (key[0]["name"].split("/")[-1], bundle[0]["name"].split("/")[-1]))
-   PY
+import json, sys
+secrets, jobsa, out = json.load(open(sys.argv[1])), sys.argv[2], sys.argv[3]
+key = [s for s in secrets if (s.get("labels") or {}).get("fugaro_secret") == "github-app-key"]
+if len(key) != 1:
+    sys.exit("Check 96 stopped: expected exactly one container labelled fugaro_secret=github-app-key, found %d" % len(key))
+print("APPKEY=%s" % key[0]["name"].split("/")[-1])
+bundle = [s for s in secrets if (s.get("labels") or {}).get("fugaro_project")
+          and not (s.get("labels") or {}).get("fugaro_secret")]
+if len(bundle) != 1:
+    sys.exit("Check 96 stopped: expected exactly one container labelled fugaro_project and one grant on it, found %d" % len(bundle))
+print("BUNDLE=%s" % bundle[0]["name"].split("/")[-1])
+open(out, "w").write("APPKEY=%s\nBUNDLE=%s\n" % (key[0]["name"].split("/")[-1], bundle[0]["name"].split("/")[-1]))
+PY
    . "$W/grants.env"
    # The job account's own reach, read from the two policies: no accessor on the App key,
    # and the bundle's one member (Q6) is the service's account and not a job's.
    python3 - <<PY
-   import json, subprocess, sys
-   def policy(secret):
-       out = subprocess.run(["gcloud", "secrets", "get-iam-policy", secret, "--project", "$P", "--format=json"],
-                            capture_output=True, text=True)
-       if out.returncode != 0:
-           sys.exit("Check 96 stopped: could not read the IAM policy of %s" % secret)
-       members = [b["role"] + " -> " + ",".join(b.get("members", [])) for b in json.loads(out.stdout).get("bindings", [])]
-       return members
-   for name in ("$APPKEY", "$BUNDLE"):
-       members = policy(name)
-       print("%s: %d binding(s)" % (name, len(members)))
-       for m in members:
-           print("   ", m)
-       print("   the job account is a member:", any("$JOBSA" in m for m in members))
-   PY
+import json, subprocess, sys
+def policy(secret):
+    out = subprocess.run(["gcloud", "secrets", "get-iam-policy", secret, "--project", "$P", "--format=json"],
+                         capture_output=True, text=True)
+    if out.returncode != 0:
+        sys.exit("Check 96 stopped: could not read the IAM policy of %s" % secret)
+    members = [b["role"] + " -> " + ",".join(b.get("members", [])) for b in json.loads(out.stdout).get("bindings", [])]
+    return members
+for name in ("$APPKEY", "$BUNDLE"):
+    members = policy(name)
+    print("%s: %d binding(s)" % (name, len(members)))
+    for m in members:
+        print("   ", m)
+    print("   the job account is a member:", any("$JOBSA" in m for m in members))
+PY
    ```
    **FACT:** `config.ServiceHeldSecretNames`'s own line as this checkout has it (an empty list is the release that has not landed — **record it and stop here**: the job is still meant to hold the key, and nothing below would be this release's behaviour), the job's container environment **names** (nothing else from it, and never a value), whether `FUGARO_GITHUB_APP_PRIVATE_KEY` is among them (**false** is the release that landed) and whether `FUGARO_CREDENTIALS_SERVICE_URL` is among them — **record what it reads, and the expected answer today is `false`**: the runner is the only thing that reads that name (`internal/gitprov/providers/providers.go`, `internal/runner/gateway.go`) and **nothing in this tree sets it on a job's environment** — it is in no module of `deploy/terraform/gcp` and no field of `internal/infra` — so an opted-in installation's runner is still reading the App key and minting in the job, and a job that is keyless without the name is a release whose runner has nowhere to mint, which is the finding to report rather than a failure of this step —, the mounts and the secret environment references by name, the App key's container name and the bundle's, the two policies' bindings verbatim, and **`the job account is a member:` false for both containers** — a job account with an accessor on either is the whole finding this step exists for, and the bundle's binding set has to be exactly one (`roles/secretmanager.secretAccessor` on the service's own account, Q6's ruling, Global Constraint 12), with no condition and no second member.
 
@@ -7018,20 +7018,20 @@ fugaro version    # the release this check is run from: read-only
    RUN=$(date -u +%Y%m%d-%H%M%S)-c96a
    NOW=$(date -u +%s)
    python3 - "$FUGARO_LIVE_TOKEN_SIGNER" "$SANDBOX_SLUG" "$RUN" "$NOW" "$FPROJ" "$W/custom.json" <<'PY'
-   import json, sys
-   signer, slug, run, now, fproj, out = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5], sys.argv[6]
-   json.dump({"iss": signer, "sub": signer,
-              "aud": "https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit",
-              "iat": now, "exp": now + 600, "uid": "r~%s~%s" % (slug, run),
-              "claims": {"fs": slug, "fr": run, "fx": (now + 3600) * 1000, "fp": fproj, "rb": signer}},
-             open(out, "w"))
-   PY
+import json, sys
+signer, slug, run, now, fproj, out = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5], sys.argv[6]
+json.dump({"iss": signer, "sub": signer,
+           "aud": "https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit",
+           "iat": now, "exp": now + 600, "uid": "r~%s~%s" % (slug, run),
+           "claims": {"fs": slug, "fr": run, "fx": (now + 3600) * 1000, "fp": fproj, "rb": signer}},
+          open(out, "w"))
+PY
    gcloud iam service-accounts sign-jwt --iam-account="$FUGARO_LIVE_TOKEN_SIGNER" "$W/custom.json" "$W/custom.jwt" >/dev/null || {
      echo "Check 96 stopped: the signer would not sign (it needs iam.serviceAccounts.signJwt for your identity — the fugaroTokenMinter grant Check 92 uses)" >&2; exit 1; }
    python3 - "$W/custom.jwt" "$W/exchange.body" <<'PY'
-   import json, sys
-   json.dump({"token": open(sys.argv[1]).read().strip(), "returnSecureToken": True}, open(sys.argv[2], "w"))
-   PY
+import json, sys
+json.dump({"token": open(sys.argv[1]).read().strip(), "returnSecureToken": True}, open(sys.argv[2], "w"))
+PY
    RUNTOK=$(curl -sS -X POST -H 'Content-Type: application/json' --data @"$W/exchange.body" \
      "https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=$FUGARO_LIVE_FIREBASE_API_KEY" \
      | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit("no idToken: " + json.dumps(sorted(d))) if "idToken" not in d else print(d["idToken"])') || {
@@ -7050,14 +7050,16 @@ fugaro version    # the release this check is run from: read-only
      echo "mint status: $MINT_STATUS"
    }
    mint "$JOBTOK" "$RUNTOK"         # the positive mint: the job's own token as the caller
-   printf '%s' "$ANSWER" | python3 - "$CHK96_SANDBOX_REPO" <<'PY'
-   import json, sys
-   ans = json.load(sys.stdin)
-   want = sys.argv[1]
-   print("repository field:", ans.get("repository"))
-   print("expires_at:", ans.get("expires_at"))
-   print("repository is the calling account's own:", ans.get("repository", "").endswith("/" + want.split("/")[-1]))
-   PY
+   # The answer is read through `python3 -c` with the body on stdin. A heredoc would take
+   # stdin for itself, so the same pipeline written as `python3 - "$repo" <<'PY'` would hand
+   # python the script and an empty stdin: the mint would issue a token and print none of the
+   # facts about it. The body stays in the shell variable: it is never written to a file.
+   printf '%s' "$ANSWER" | python3 -c 'import json,sys
+ans = json.load(sys.stdin)
+want = sys.argv[1]
+print("repository field:", ans.get("repository"))
+print("expires_at:", ans.get("expires_at"))
+print("repository is the one the calling account is bound to:", ans.get("repository", "").endswith("/" + want.split("/")[-1]))' "$CHK96_SANDBOX_REPO"
    TOK=$(printf '%s' "$ANSWER" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("token",""))')
    [ -n "$TOK" ] || { echo "Check 96 stopped: the mint answered no token -- the body is in ANSWER; do not paste it" >&2; exit 1; }
    # The token's reach, read at GitHub and printed as facts. The token is in a config read
@@ -7070,15 +7072,15 @@ fugaro version    # the release this check is run from: read-only
    gcloud logging read --project="$P" --limit=20 --format=json \
      "resource.type=\"cloud_run_revision\" resource.labels.service_name=\"$SVC\" jsonPayload.run=\"$RUN\"" > "$W/audit.json"
    python3 - "$W/audit.json" "$RUN" <<'PY'
-   import json, sys
-   lines = json.load(open(sys.argv[1]))
-   raw = open(sys.argv[1]).read()
-   print("audit lines for this run:", len(lines))
-   for l in lines:
-       p = l.get("jsonPayload", {})
-       print("   ", {k: p.get(k) for k in ("msg", "run", "repository", "job", "caller", "credential", "purpose", "tier", "status")})
-   print("lines carrying a ghs_ token:", raw.count("ghs_"))
-   PY
+import json, sys
+lines = json.load(open(sys.argv[1]))
+raw = open(sys.argv[1]).read()
+print("audit lines for this run:", len(lines))
+for l in lines:
+    p = l.get("jsonPayload", {})
+    print("   ", {k: p.get(k) for k in ("msg", "run", "repository", "job", "caller", "credential", "purpose", "tier", "status")})
+print("lines carrying a ghs_ token:", raw.count("ghs_"))
+PY
    ```
    **FACT:** the caller's own account and the run identity's uid, **both recorded by shape only** — the impersonated job account's email and the uid `r~<slug>~<run>` are names, and the two tokens themselves are never printed; the mint's status (**`200`**); the answer's `repository` (**the sandbox repository's canonical name**: this is the field that says the service minted for the *calling account's* repository and not for one a caller named, because there is no field in which a caller could have named one); its `expires_at` (**inside the hour** GitHub gives an installation token); and the token's reach at GitHub — the installation's repository list holding **exactly one** entry, that repository, the `contents` read answering **`200`**, and the `actions` dispatch answering **`403`** (a granted permission would have answered `404`, because that workflow does not exist: the probe cannot start anything, and a `404` here is a failure — the run's token would hold a permission the run's set does not). Then the audit line: **exactly one** `credsvc: audit` line for this run, `credential` `github-app-key`, `purpose` `mint`, **`tier` empty** (the App key is not a model credential and a tier on a mint is refused rather than written), `caller` the verified job account, `status` `ok`, and **lines carrying a `ghs_` token: `0`** — the service's log is the one place a mint is recorded, and it records the credential's name.
 
@@ -7089,19 +7091,19 @@ fugaro version    # the release this check is run from: read-only
    RUNX=$(date -u +%Y%m%d-%H%M%S)-c96b
    NOW=$(date -u +%s)
    python3 - "$FUGARO_LIVE_TOKEN_SIGNER" "$OTHER_SLUG" "$RUNX" "$NOW" "$FPROJ" "$W/customx.json" <<'PY'
-   import json, sys
-   signer, slug, run, now, fproj, out = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5], sys.argv[6]
-   json.dump({"iss": signer, "sub": signer,
-              "aud": "https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit",
-              "iat": now, "exp": now + 600, "uid": "r~%s~%s" % (slug, run),
-              "claims": {"fs": slug, "fr": run, "fx": (now + 3600) * 1000, "fp": fproj, "rb": signer}},
-             open(out, "w"))
-   PY
+import json, sys
+signer, slug, run, now, fproj, out = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5], sys.argv[6]
+json.dump({"iss": signer, "sub": signer,
+           "aud": "https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit",
+           "iat": now, "exp": now + 600, "uid": "r~%s~%s" % (slug, run),
+           "claims": {"fs": slug, "fr": run, "fx": (now + 3600) * 1000, "fp": fproj, "rb": signer}},
+          open(out, "w"))
+PY
    gcloud iam service-accounts sign-jwt --iam-account="$FUGARO_LIVE_TOKEN_SIGNER" "$W/customx.json" "$W/customx.jwt" >/dev/null
    python3 - "$W/customx.jwt" "$W/exchangex.body" <<'PY'
-   import json, sys
-   json.dump({"token": open(sys.argv[1]).read().strip(), "returnSecureToken": True}, open(sys.argv[2], "w"))
-   PY
+import json, sys
+json.dump({"token": open(sys.argv[1]).read().strip(), "returnSecureToken": True}, open(sys.argv[2], "w"))
+PY
    RUNTOKX=$(curl -sS -X POST -H 'Content-Type: application/json' --data @"$W/exchangex.body" \
      "https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=$FUGARO_LIVE_FIREBASE_API_KEY" \
      | python3 -c 'import json,sys; print(json.load(sys.stdin)["idToken"])')
@@ -7126,16 +7128,16 @@ fugaro version    # the release this check is run from: read-only
    gcloud logging read --project="$P" --limit=30 --format=json \
      "resource.type=\"cloud_run_revision\" resource.labels.service_name=\"$SVC\" (jsonPayload.run=\"$RUN\" OR jsonPayload.run=\"$RUNX\")" > "$W/refused.json"
    python3 - "$W/refused.json" "$RUN" "$RUNX" <<'PY'
-   import json, sys
-   lines = json.load(open(sys.argv[1])); raw = open(sys.argv[1]).read()
-   for want, label in ((sys.argv[2], "the mint's run (step 3's issuance)"), (sys.argv[3], "the pairing refusal's run")):
-       rows = [l for l in lines if l.get("jsonPayload", {}).get("run") == want]
-       print("%s: %d audit line(s)" % (label, len(rows)))
-       for l in rows[:4]:
-           p = l.get("jsonPayload", {})
-           print("   ", {k: p.get(k) for k in ("run", "repository", "caller", "credential", "purpose", "tier", "status")})
-   print("lines carrying a ghs_ token:", raw.count("ghs_"))
-   PY
+import json, sys
+lines = json.load(open(sys.argv[1])); raw = open(sys.argv[1]).read()
+for want, label in ((sys.argv[2], "the mint's run (step 3's issuance)"), (sys.argv[3], "the pairing refusal's run")):
+    rows = [l for l in lines if l.get("jsonPayload", {}).get("run") == want]
+    print("%s: %d audit line(s)" % (label, len(rows)))
+    for l in rows[:4]:
+        p = l.get("jsonPayload", {})
+        print("   ", {k: p.get(k) for k in ("run", "repository", "caller", "credential", "purpose", "tier", "status")})
+print("lines carrying a ghs_ token:", raw.count("ghs_"))
+PY
    ```
    **FACT:** (a) the status **`403`** and the answer's own body — `{"error":"unverified_run_identity","message":"the run identity is not a run of the calling job's repository"}` — with **nothing minted**: the run identity was verified (its signature, its `fp`, its `fx` and its liveness all passed, or the refusal would have been a different one) and the pairing is what refused it, which is the claim the row states; (b) the status **`403`** and one of the two answers the installation decides between — **no body this service wrote and no audit line for the call** (the stock installation: IAM refused your identity, the same fact step 2 read, now with an identity rather than none), or `{"error":"unverified_job_identity",…}` with a sentence that names no account if you hold `run.invoker` on the service (then the front end admitted you and the service refused the account itself, which is the claim that the account table is the gate and the invoker grant only a fence); and the log lines: **`0` audit lines for the pairing refusal's run id** — the refusal is made in `ServeHTTP`, before the mint is reached, and `internal/credsvc/server.go`'s `refuse` writes the typed answer and nothing else, so **a refusal that never reaches the mint is not audited** and a line here would be a finding (it would mean an admission refusal is being recorded as an act); exactly the one `status` `ok` line for the mint's run id that step 3 read, and no second line for it (neither refusal minted); `credential` `github-app-key` on that one line; **no `ghs_` anywhere**; and **no mint that issued** for the pairing refusal's run id (it minted nothing: an installation token that GitHub minted and nobody received would still be a token this check caused, and the log is where that would show).
 
@@ -7148,8 +7150,12 @@ fugaro version    # the release this check is run from: read-only
        --data "{\"localId\":\"$uid\"}" \
        "https://identitytoolkit.googleapis.com/v1/projects/$FB/accounts:delete" >/dev/null
    done
+   # The two run ids go in as argv, and the program carries no apostrophe: inside a
+   # single-quoted `-c` program one closes the quote early, the words after it become python's
+   # argv, and the rest of the block — the `ls`, the `rm -rf` and the `# 0` read-back below —
+   # is silently dropped because python exits on its own syntax error.
    curl -sS -H "Authorization: Bearer $AT" "https://identitytoolkit.googleapis.com/v1/projects/$FB/accounts:batchGet?maxResults=1000" \
-     | python3 -c 'import json,sys; u=json.load(sys.stdin).get("users",[]); print("uids left under the check's two run ids:", sum(1 for x in u if x.get("localId","").endswith(("'"$RUN"'","'"$RUNX"'"))))'
+     | python3 -c 'import json,sys; u=json.load(sys.stdin).get("users",[]); print("uids left under the two run ids this check made:", sum(1 for x in u if x.get("localId","").endswith(tuple(sys.argv[1:]))))' "$RUN" "$RUNX"
    ls -A "$W"; rm -rf "$W"
    echo "scratch left: $(ls -d /tmp/chk96 2>/dev/null | wc -l)   # 0"
    ```
