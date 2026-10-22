@@ -10,11 +10,14 @@
 # `dialogue.js` or the README table, and every one of them must make its own
 # suite fail. A guard whose mutation survives is a guard no test defends.
 #
-# P6.12's guard is the one the plan is security-sensitive for, and it is
-# mutation-proved **once**, deliberately: the owner's ruling of 2026-10-22 asks
-# for reasonable effort on a security-sensitive task and no gold-plating, so the
-# headline fail-closed rule is proved and the rest of the dialogue is defended by
-# its own tests (which the positive control runs).
+# P6.12 is security-sensitive, and its guards are proved at the same depth as the
+# rest of the module's: the headline fail-closed rule (a read-back nobody heard
+# cannot be confirmed) and then every other rule the dialogue is answerable for
+# -- an app command is never forwarded as text, a launch still travels, a command
+# that carried its own confirmation is refused, an expired read-back is not
+# offered again, a moved target is re-proposed, and a question is marked heard
+# only when it was. P6.9, the typed sibling over the same machine, proves 46
+# guards the same way; this module is not proved more thinly than its neighbour.
 #
 #   mobile/src/voice/mutation-proof.sh
 #
@@ -434,16 +437,76 @@ run "the README loses no rule row" \
   mobile/README.md src/voice/index.test.js
 
 # 11. P6.12's headline guard (dialogue.js): the read-back nobody heard.
-#     The plan's fail-closed rule, and the one mutation this task asks for. A
-#     read-back that did not play to the end must be dropped before `propose`
-#     answers: leaving it pending makes the fixed phrase a confirmation of
-#     something the speaker was never told, which is what D169 is against.
-#     Inverting the condition keeps the unspoken read-back confirmable and
-#     breaks every read-back that WAS spoken, so the dialogue's suite goes red
-#     in both directions.
+#     The plan's fail-closed rule. A read-back that did not play to the end must
+#     be dropped before `propose` answers: leaving it pending makes the fixed
+#     phrase a confirmation of something the speaker was never told, which is
+#     what D169 is against. Inverting the condition keeps the unspoken read-back
+#     confirmable and breaks every read-back that WAS spoken, so the dialogue's
+#     suite goes red in both directions.
 run "an unheard read-back is dropped, and cannot be confirmed later" \
   "    if (heard === false) {" \
   "    if (heard === true) {" \
+  mobile/src/voice/dialogue.js src/voice/dialogue.test.js
+
+# 12. P6.12 (dialogue.js): the three routes are three, and only agent text (and
+#     D162's launch) is ever sent. Widening the branch to the app commands is the
+#     failure D164 and D169 are both against: a destructive command -- or the
+#     wake-word utterance P6.1 could not route -- reaching the agent as its own
+#     text.
+run "an app command is never forwarded as text" \
+  "      if (result.route === ROUTE.AGENT_TEXT) return await deliver(result.text);" \
+  "      if (result.route !== ROUTE.NOT_UNDERSTOOD) return await deliver(result.text);" \
+  mobile/src/voice/dialogue.js src/voice/dialogue.test.js
+
+# 13. P6.12 (dialogue.js): a launch travels (D162). Dropping the send is the gap
+#     the typed sibling P6.9 does not have -- it sends the same verb the same way
+#     -- and a `propose` that answered a launch without sending it would leave the
+#     owner's command nowhere.
+run "a launch is sent as the owner's own words" \
+  "        const sent = await deliver(text);
+        if (sent.ok !== true) return sent;" \
+  "        const sent = Object.freeze({ ok: true, outcome: DIALOGUE_OUTCOME.SENT, id: null, at });" \
+  mobile/src/voice/dialogue.js src/voice/dialogue.test.js
+
+# 14. P6.12 (dialogue.js): the command's own words are what the machine reads.
+#     P6.2 refuses an utterance that carries a command AND the phrase (a single
+#     breath cannot authorise what it just said). Replacing the text with a
+#     sentence that cannot contain the phrase disables that check from this side.
+run "a command that carried its own confirmation is refused" \
+  "        text,
+        verb," \
+  "        text: 'the command as the app resolved it',
+        verb," \
+  mobile/src/voice/dialogue.js src/voice/dialogue.test.js
+
+# 15. P6.12 (dialogue.js): an expired read-back is named and dropped. The machine
+#     answers `confirmation-expired`; this module is what keeps the difference
+#     from `no-pending-action` (the timeout says so) and what clears the
+#     reference, so the phrase said afterwards cannot be about it at all.
+run "a timed-out read-back is not offered again" \
+  "      if (
+        stepped.code === CONFIRM_REFUSAL.CONFIRMATION_EXPIRED
+        || stepped.code === CONFIRM_REFUSAL.NO_PENDING_ACTION
+      ) {" \
+  "      if (stepped.code === CONFIRM_REFUSAL.NO_PENDING_ACTION) {" \
+  mobile/src/voice/dialogue.js src/voice/dialogue.test.js
+
+# 16. P6.12 (dialogue.js): a target that moved is re-proposed, not confirmed.
+#     D168's amendment: the phrase may arrive days later, so the sentence that
+#     was read back may name a head that is no longer there. Refusing without
+#     re-speaking leaves the speaker confirming a head they never heard.
+run "a moved target is re-proposed and read back again" \
+  "        return rePropose(at, context.target);" \
+  "        return refuse(stepped.code, stepped.field);" \
+  mobile/src/voice/dialogue.js src/voice/dialogue.test.js
+
+# 17. P6.12 (dialogue.js): a question is marked heard only when it was. Marking
+#     on every real pause records the queued prompts as told to a speaker who
+#     heard "A kill switch is set." -- `announcedAt` is when the user last heard
+#     the question, and a barge-in means they did not.
+run "a question is marked heard only when its announcement played out" \
+  "      const marks = announcesQuestions && heard === true;" \
+  "      const marks = true;" \
   mobile/src/voice/dialogue.js src/voice/dialogue.test.js
 
 echo

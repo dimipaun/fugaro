@@ -28,8 +28,11 @@
 //     afterwards authorises nothing, because the action was dropped when its
 //     read-back did not play out;
 //   * **nothing is sent on an unconfirmed transcript** -- `send` is a spy, and
-//     every test that ends without a confirmation asserts that it was never
-//     called, so a destructive command can never travel as its own text (D169).
+//     every test that proposes, confirms or expires a destructive command
+//     asserts that it was never called, so a destructive command can never
+//     travel as its own text (D169). The only things the spy ever receives are
+//     utterances the router read as agent text and the one launch D162 passes
+//     through, and the tests that see it called assert its contents exactly.
 //
 // Every secret-shaped string below is synthetic and is not recorded from any
 // installation (`belong` least of all, Global Constraint 11).
@@ -437,6 +440,7 @@ test('the plan, sentence six: a queued prompt is not spoken over the user', asyn
   assert.equal(announced.spoken, true);
   assert.equal(announced.count, 1);
   assert.equal(announced.reason, 'prompt');
+  assert.equal(announced.marked, true, 'the questions’ own announcement is what was spoken');
   assert.equal(announced.queue.prompts[0].announcedAt, at, 'the question has been heard as of this pause');
   assert.deepEqual(h.sent, []);
 });
@@ -453,6 +457,34 @@ test('the pause speaks the interrupt policy’s reason, in the phone’s words',
   assert.equal(announced.reason, 'kill');
   assert.equal(announced.text, 'A kill switch is set.');
   assert.deepEqual(h.tts.spoken(), ['A kill switch is set.']);
+
+  // The sentence was the kill switch's, not the questions' -- it says nothing
+  // about what is waiting, so the questions are not recorded as heard.
+  assert.equal(announced.marked, false, 'a reason sentence is not the questions’ announcement');
+  assert.equal(announced.queue.prompts[0].announcedAt, null, 'the question is still unanswered and unheard');
+  assert.equal(announced.count, 1, 'and it is still waiting');
+});
+
+test('a sentence that did not play out marks nothing heard', async () => {
+  const h = harness();
+  const queue = queued(h);
+  const at = h.now();
+
+  // The user talks over it: P3.4's output port cancels the utterance, so the
+  // count was never heard -- and `announcedAt` is when the user heard it.
+  const bargedIn = await interrupted(h.dialogue.pause({ queues: [queue], switch: SWITCH.WIDEN }), h);
+  assert.equal(bargedIn.outcome, DIALOGUE_OUTCOME.ANNOUNCED);
+  assert.equal(bargedIn.text, 'One question waiting');
+  assert.equal(bargedIn.spoken, false);
+  assert.equal(bargedIn.marked, false, 'a refused or cancelled sentence marks nothing');
+  assert.equal(bargedIn.queue.prompts[0].announcedAt, null);
+
+  assert.deepEqual(h.tts.interrupted(), ['One question waiting'], 'the barge-in is what stopped it');
+
+  // And the question is announced at the next pause that does play out.
+  const announced = await spoken(h.dialogue.pause({ queues: [bargedIn.queue], switch: SWITCH.WIDEN }), h);
+  assert.equal(announced.marked, true);
+  assert.equal(announced.queue.prompts[0].announcedAt, at);
 });
 
 // --- the headline: fail closed ---------------------------------------------
@@ -535,12 +567,37 @@ test('the three routes are kept apart: agent text is sent, an app command is not
   assert.equal(pendingQuestion.outcome, DIALOGUE_OUTCOME.PENDING);
   assert.deepEqual(h.sent, ['hello there', 'confirm']);
 
-  // A launch is D162's: straight through, no read-back and no record.
+  // A launch is D162's: no read-back, nothing to confirm -- and it travels, as
+  // the owner's own words, exactly as P6.9's typed path sends it.
   const launch = await h.dialogue.propose({ text: 'Fugaro, launch the release', verb: 'launch' });
-  assert.equal(launch.outcome, DIALOGUE_OUTCOME.PASS_THROUGH);
-  assert.equal(launch.actionId, null);
+  assert.equal(launch.outcome, DIALOGUE_OUTCOME.SENT);
+  assert.equal(launch.verb, 'launch');
+  assert.equal(launch.actionId, null, 'a launch is never proposed for confirmation');
   assert.deepEqual(h.tts.spoken(), [], 'a launch is not read back');
-  assert.deepEqual(h.sent, ['hello there', 'confirm']);
+  assert.deepEqual(h.sent, ['hello there', 'confirm', 'Fugaro, launch the release']);
+  assert.deepEqual(h.dialogue.pending().actions, [], 'a launch leaves nothing pending');
+});
+
+test('a launch is not confirmed and does travel: it goes as the owner’s own words (D162)', async () => {
+  const h = harness();
+
+  // The command the app has resolved is a launch, which is P6.2's one
+  // pass-through verb: no target to resolve, no action id, nothing to read back.
+  const launch = await h.dialogue.propose({ text: 'Fugaro, launch the release', verb: 'launch' });
+  assert.equal(launch.outcome, DIALOGUE_OUTCOME.SENT);
+  assert.equal(launch.verb, 'launch');
+  assert.equal(launch.actionId, null);
+  assert.equal(typeof launch.id, 'string', 'the sink’s own message id');
+  assert.deepEqual(h.sent, ['Fugaro, launch the release'], 'the words the owner said, unchanged');
+  assert.deepEqual(h.tts.spoken(), [], 'a launch has no destructive effect to read back');
+  assert.deepEqual(h.dialogue.pending().actions, [], 'and nothing is left waiting for a phrase');
+
+  // The sink is the app's one write path, so its refusal stands over a launch
+  // too -- and the launch does not travel by another route when it refuses.
+  const offline = harness({ send: async () => ({ ok: false, code: 'offline', field: null }) });
+  const refused = await offline.dialogue.propose({ text: 'Fugaro, launch the release', verb: 'launch' });
+  assert.deepEqual({ ...refused }, { ok: false, code: 'offline', field: null });
+  assert.deepEqual(offline.tts.spoken(), []);
 });
 
 test('the offline refusal stays the client’s, and the command still does not travel', async () => {

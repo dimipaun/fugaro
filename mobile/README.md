@@ -1559,14 +1559,29 @@ dialogue proposes the command again against the fresh target so the sentence
 spoken next names the head that is there now. The speaker hears the current head
 and confirms again; nothing is ever merged against a head they did not hear.
 
-**A queued prompt is not spoken over the user.** `pause({ queues, active, digest,
+**A launch is not confirmed, and it does travel (D162).** `propose` answers a
+launch with `sent`: the owner's own words go to the same `send` sink agent text
+goes to, which is what "no confirmation" means on the wire. It is the one command
+that skips the read-back, because there is no destructive effect to read back,
+and it is the same call P6.9's typed path makes for the same verb
+(`return send(text)` in `src/text/input.js`). The result carries `verb` and
+`actionId: null` — nothing was proposed, so nothing can be confirmed. What is
+unwritten for a launch is the same *record* the paragraph below is about, not the
+launch itself.
+
+**A question is marked heard only when it was.** `pause({ queues, active, digest,
 presence, caps, switch })` composes P6.5: nothing is spoken while the assistant
 is speaking, while a turn is open, or while a read-back is outstanding — a
 question is not read over the user *or* over the question they still have to
 answer. At a real pause one sentence is spoken: the interrupt reason's (P6.5's
 policy, D160's wider table read through D127's switch) or P6.5's own count
-("One question waiting"), and the active installation's due prompts are marked
-heard in the queue handed back to the caller.
+("One question waiting"). The answer's `queue` has the active installation's due
+prompts marked heard — `announcedAt` is when the user last *heard* the question,
+so `marked: true` is said only when the sentence spoken was their own
+announcement **and** it played out. A pause that spoke the kill switch's sentence
+instead, a barge-in, and a port that refused the sentence all answer
+`marked: false` with the queue exactly as it was, so the questions are announced
+at the next pause rather than recorded as told to someone who never heard them.
 
 **What a confirmed action does not do, stated rather than left to be found.**
 The machine's record is **returned, not written**: `delivered: false` with
@@ -1575,8 +1590,14 @@ writes `{ id, sender, text, at, mac }` and cannot carry an action, and sending a
 destructive command as its own text is exactly what D169 forbids. So nothing is
 written rather than the wrong thing; carrying the record is P6.7's (the
 consumer) and P6.10's (the offline gate), and P6.9's typed path makes the same
-call in the same words. **Nothing is sent on an unconfirmed transcript**: every
-test that ends without a confirmation asserts the `send` spy was never called.
+call in the same words.
+
+**Nothing is sent on an unconfirmed transcript**, and the tests say so in the
+form that can be checked: `send` is a spy, every test that proposes, confirms or
+expires a destructive command asserts it was never called, and the tests that do
+see it called (`dialogue.test.js`'s routing test) assert its contents exactly —
+agent text, and nothing else but D162's launch. No transcript is ever sent
+because a phrase was expected.
 
 ## What is not verified here
 

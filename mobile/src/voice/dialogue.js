@@ -84,10 +84,13 @@
 // a confirmed action is a value the app holds. P6.9's typed path makes the same
 // call for the same reason, in the same words.
 //
-// **A launch is not confirmed (D162) and it is not sent here either.** `propose`
-// answers `pass-through` for one, and what carries it to the consumer is the same
-// unwritten seam the record above waits on: the merged client writes text
-// messages only, and a launch is a command rather than a sentence.
+// **A launch is not confirmed -- and it does travel (D162).** `propose` answers
+// `pass-through` for one and hands the owner's own words to the same `send` port
+// agent text goes to, which is exactly what P6.9's typed path does for the same
+// verb (`mobile/src/text/input.js`, `return send(text)`): "no confirmation" means
+// the command goes to the agent as text, through the one write path the phone
+// has. What is unwritten for a launch is the same *record* the confirmed action
+// above waits on -- not the launch itself.
 //
 // **Nothing here reads a clock, a file, the network, a random source or a
 // credential.** `now` (D117's server-anchored now), `newId` and the `send` port
@@ -126,12 +129,15 @@ import { isVoicePipeline } from '../audio/index.js';
  * string is rendering something this module never returns.
  */
 export const DIALOGUE_OUTCOME = Object.freeze({
-  /** The router called it agent text, and the `send` port took it. */
+  /**
+   * The `send` port took it: an utterance the router called agent text, or a
+   * launch (D162) -- which is the one command that travels as the owner's own
+   * words. A launch carries `verb` and `actionId: null`; agent text carries
+   * neither.
+   */
   SENT: 'sent',
   /** A destructive command with a resolved target: the read-back to speak. */
   READ_BACK: 'read-back',
-  /** D162's launch: straight through, no read-back spoken and no record. */
-  PASS_THROUGH: 'pass-through',
   /** The phrase authorised the outstanding action (see the header on delivery). */
   CONFIRMED: 'confirmed',
   /** "Fugaro, cancel that": the read-backs were dropped. */
@@ -358,6 +364,28 @@ export function createVoiceDialogue(options = {}) {
     return dropped.ok;
   }
 
+  /**
+   * Hand one sentence to the sink the app wired in, carrying its refusal.
+   *
+   * This is the only place anything is sent, and it is reached from exactly two
+   * places: an utterance the router read as agent text, and a launch (D162),
+   * which needs no confirmation. A destructive command is never sent as its own
+   * text -- P6.2 answers those with a read-back, and the record of a confirmed
+   * one is returned rather than written (see the header).
+   */
+  async function deliver(text) {
+    const sent = await send(text);
+    if (sent === null || typeof sent !== 'object') {
+      return refuse(DIALOGUE_CODES.BAD_INPUT, 'send');
+    }
+    if (sent.ok !== true) {
+      // The sink's own refusal, carried unchanged (P3.5's `offline` is the one
+      // the owner meets): one fault is one code, and the field is the sink's own.
+      return refuse(sent.code ?? DIALOGUE_CODES.BAD_INPUT, sent.field === undefined ? 'send' : sent.field);
+    }
+    return Object.freeze({ ok: true, outcome: DIALOGUE_OUTCOME.SENT, id: sent.id, at: sent.at });
+  }
+
   /** The read-back that was just spoken, kept for the phrase that may follow it. */
   function remember(stepped, text) {
     last = Object.freeze({
@@ -563,19 +591,7 @@ export function createVoiceDialogue(options = {}) {
       // route is a fault with its own code, and it is not "not understood".
       if (!result.ok) return refuse(result.code, result.field);
 
-      if (result.route === ROUTE.AGENT_TEXT) {
-        const sent = await send(result.text);
-        if (sent === null || typeof sent !== 'object') {
-          return refuse(DIALOGUE_CODES.BAD_INPUT, 'send');
-        }
-        if (sent.ok !== true) {
-          // The sink's own refusal, carried unchanged (P3.5's `offline` is the
-          // one the owner meets): one fault is one code, and the field is the
-          // sink's own.
-          return refuse(sent.code ?? DIALOGUE_CODES.BAD_INPUT, sent.field === undefined ? 'send' : sent.field);
-        }
-        return Object.freeze({ ok: true, outcome: DIALOGUE_OUTCOME.SENT, id: sent.id, at: sent.at });
-      }
+      if (result.route === ROUTE.AGENT_TEXT) return await deliver(result.text);
 
       if (result.route === ROUTE.NOT_UNDERSTOOD) {
         const heard = await speak(result.reply);
@@ -601,14 +617,16 @@ export function createVoiceDialogue(options = {}) {
    *
    *     propose({ text, verb, target, actionId })
    *
-   * `text` is the utterance as it was heard (it is the machine's
-   * `command-and-confirm` check that reads it, and it is never spoken or sent),
-   * `verb` is one of P6.2's closed destructive set, `target` is the resolved one
-   * (a run id, or a repository, PR number and head), and `actionId` is the app's
-   * own when it has one.
+   * `text` is the utterance as it was heard. It is the machine's
+   * `command-and-confirm` check that reads it -- which is why it is handed to the
+   * machine verbatim -- and it is spoken only when it is a launch (D162); a
+   * read-back is the machine's own sentence, built from the resolved target, never
+   * from this text. `verb` is one of P6.2's closed destructive set, `target` is
+   * the resolved one (a run id, or a repository, PR number and head), and
+   * `actionId` is the app's own when it has one.
    *
-   * A launch (D162) answers `pass-through`: no read-back, no record, and nothing
-   * sent here.
+   * A launch (D162) is not read back and needs no phrase: it goes straight to the
+   * `send` port as `sent`, with `verb` and `actionId: null` (see `deliver`).
    *
    * @param {unknown} input
    * @returns {Promise<object>} the read-back that was spoken, or a refusal
@@ -643,12 +661,14 @@ export function createVoiceDialogue(options = {}) {
       if (!stepped.ok) return refuse(stepped.code, stepped.field);
       machine = stepped.state;
       if (stepped.outcome === CONFIRM_OUTCOME.PASS_THROUGH) {
-        return Object.freeze({
-          ok: true,
-          outcome: DIALOGUE_OUTCOME.PASS_THROUGH,
-          verb: stepped.verb,
-          actionId: null,
-        });
+        // D162: a launch is not read back and needs no phrase -- so it is the
+        // one command that travels as the owner's own words, through the same
+        // sink agent text uses (P6.9's typed path sends it the same way). The
+        // machine takes no target and no action id for it, and neither does the
+        // result: `actionId: null` is "nothing was proposed to confirm".
+        const sent = await deliver(text);
+        if (sent.ok !== true) return sent;
+        return Object.freeze({ ...sent, verb: stepped.verb, actionId: null });
       }
       return await readBackAndWait(stepped, at, text);
     } catch {
@@ -691,9 +711,16 @@ export function createVoiceDialogue(options = {}) {
    * the user still has to answer either. When it is a pause, one sentence is
    * spoken: the interrupt reason's (P6.5's policy, which is D160's wider table),
    * or the count ("Two questions waiting"). The questions stay in the queue
-   * either way; what a read marks is that the active installation's due prompts
-   * have been **heard**, and the updated queue is handed back for the caller to
-   * keep.
+   * either way.
+   *
+   * **A question is marked heard only when it was.** `announcedAt` is when the
+   * user last heard it (`shared/prompts/README.md`), so the answer's `queue` has
+   * the active installation's due prompts marked only when the sentence spoken
+   * was their own announcement **and** it played out -- `marked: true` says so.
+   * A pause that spoke the kill switch's sentence instead, a barge-in, and a port
+   * that refused the sentence all answer `marked: false` with the queue as it
+   * was, so the questions are announced at the next pause rather than recorded as
+   * told to someone who never heard them.
    *
    * @param {unknown} input
    * @returns {Promise<object>} what was spoken, with the queue it was read from
@@ -734,10 +761,14 @@ export function createVoiceDialogue(options = {}) {
       });
       if (!policy.ok) return refuse(policy.code, policy.field);
 
-      const marked = announce(active, { now: at });
-      if (!marked.ok) return refuse(marked.code, marked.field);
-
-      const text = policy.interrupt ? REASON_SENTENCES[policy.reason] ?? read.text : read.text;
+      // What is spoken is the interrupt's own sentence where the policy has one
+      // (P6.5's wider table: the kill switch, the caps, the orchestrator being
+      // offline) and the count otherwise. The two are not interchangeable: a
+      // reason sentence says nothing at all about the questions that are waiting,
+      // so only the questions' own announcement may mark them heard.
+      const reasonSentence = REASON_SENTENCES[policy.reason];
+      const announcesQuestions = typeof reasonSentence !== 'string';
+      const text = announcesQuestions ? read.text : reasonSentence;
       if (typeof text !== 'string' || text === '') {
         return Object.freeze({
           ok: true,
@@ -747,13 +778,38 @@ export function createVoiceDialogue(options = {}) {
           held: 'nothing-to-say',
           count: read.count,
           due: read.due,
-          queue: marked.queue,
+          queue: active,
+          marked: false,
           interrupt: policy.interrupt,
           reason: policy.reason,
         });
       }
 
+      // Nothing is marked heard before it is spoken, and nothing is marked heard
+      // that was not the announcement itself. `announcedAt` is when the user last
+      // *heard* the question (`shared/prompts/README.md`), and the two ways that
+      // does not happen here are a barge-in (or a refused port) and a pause whose
+      // sentence was the interrupt's: in both, the questions keep their place and
+      // are announced at the next pause rather than silently marked as told.
       const heard = await speak(text);
+      const marks = announcesQuestions && heard === true;
+      if (!marks) {
+        return Object.freeze({
+          ok: true,
+          outcome: DIALOGUE_OUTCOME.ANNOUNCED,
+          spoken: heard,
+          text,
+          count: read.count,
+          due: read.due,
+          queue: active,
+          marked: false,
+          interrupt: policy.interrupt,
+          reason: policy.reason,
+        });
+      }
+
+      const marked = announce(active, { now: at });
+      if (!marked.ok) return refuse(marked.code, marked.field);
       return Object.freeze({
         ok: true,
         outcome: DIALOGUE_OUTCOME.ANNOUNCED,
@@ -762,6 +818,7 @@ export function createVoiceDialogue(options = {}) {
         count: read.count,
         due: read.due,
         queue: marked.queue,
+        marked: true,
         interrupt: policy.interrupt,
         reason: policy.reason,
       });
