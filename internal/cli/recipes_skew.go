@@ -164,10 +164,18 @@ const catalogShipped = false
 // guard refusal makes, and the one that survives a run that did not create the
 // project — and writes the module's variable from it
 // (infra.InstallOptions.ManagedDeployerScoped). So a run that creates a
-// managed project (--create-project --managed) and every later run against one
-// (the owner's `fugaro managed flag` included) keeps the scoped half, and an
-// installation that never asked for managed writes the same tfvars as before
-// the variable existed.
+// managed project (--create-project --managed) writes the scoped half, and
+// every later run that reaches installRoot — `fugaro setup` and `fugaro
+// update`, the two doors that plan and apply the installation root — writes it
+// again from the same fact, so the variable cannot be dropped by a later run
+// against the project. An installation that never asked for managed writes the
+// same tfvars as before the variable existed.
+//
+// The owner's `fugaro managed flag` is deliberately not in that list: it
+// writes the fact itself (the marker object and the project label) and applies
+// no Terraform, so a project flagged after its installation was stood up gets
+// the fence at the next `fugaro setup` or `fugaro update` of that
+// installation, not in the flagging run.
 //
 // There is deliberately no managedDeployerOpen, no managedDisabled and no
 // refuseManagedNotShipped beside it: an open gate nothing closes and a refusal

@@ -1832,11 +1832,14 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	// deploy/terraform/gcp/modules/installation/deployer.tf). The fact is the
 	// project's own — the creation fact init's guard refusal reads, and the
 	// only record of it that outlives one run — so the run that creates a
-	// managed project (--managed) and every later run against one, the owner's
-	// `fugaro managed flag` included, write the variable; an installation that
+	// managed project (--managed) and every later run that reaches this
+	// function (the setup and update doors, which are the only ones that plan
+	// and apply the installation root) write the variable; an installation that
 	// never asked for managed writes the same tfvars it wrote before the
-	// variable existed. Read here, and not in installOptions, because the
-	// answer is a cloud fact: a plain `fugaro update` of a managed
+	// variable existed. A project the owner flags with `fugaro managed flag`
+	// gets the fence here, at the next such run, because that command writes
+	// the fact and applies nothing. Read here, and not in installOptions,
+	// because the answer is a cloud fact: a plain `fugaro update` of a managed
 	// installation that dropped the variable would plan the destruction of the
 	// fourteen resources the fence is.
 	spec.ManagedDeployerScoped, err = r.managedProject(ctx, c)

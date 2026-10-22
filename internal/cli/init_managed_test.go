@@ -720,6 +720,54 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 	}
 }
 
+// TestManagedInitWritesTheDeployerScopeFromTheCreationFact is the wiring the
+// flip added, asserted where it lands: installRoot writes the installation
+// module's managed_deployer_scoped from the project's own creation fact, and
+// that variable is the whole of what creates the deployer's seven scoped roles
+// and their seven conditioned bindings (deployer.tf's count on every one of
+// them). Both directions are asserted, because the value is a bool and a
+// regression can drop it as easily as invert it: a managed project's
+// terraform.tfvars.json carries the key as true, and a project that is not
+// managed writes the document it wrote before the variable existed — the
+// field is `omitempty`, so "off" is the absent key and not a false one.
+//
+// The fact is read through the fake APIs, not through stubManagedFact: the
+// marker object and the project label managedRuns writes are what the real
+// managed.IsManaged answers true for, so this test also pins that the value
+// comes from the project's record rather than from anything the run knows
+// about itself.
+//
+// Mutation (run, restore): drop the spec.ManagedDeployerScoped assignment from
+// installRoot, or write its negation, and the managed row fails — the key is
+// absent or false where the fence is owed, so the installation plans no scoped
+// role and no conditioned binding at all.
+func TestManagedInitWritesTheDeployerScopeFromTheCreationFact(t *testing.T) {
+	for name, managedProject := range map[string]bool{"managed": true, "not managed": false} {
+		r := newInitRig(t)
+		if managedProject {
+			r.managedRuns(t, initProjectName, initProject)
+		} else {
+			r.stateBucket()
+		}
+		if out, _, err := executeStdin(t, "", "setup", "--yes"); err != nil {
+			t.Fatalf("%s: %v\n%s", name, err, out)
+		}
+		if n := len(r.ran(t, "apply")); n != 1 {
+			t.Fatalf("%s: the installation root was applied %d time(s), want 1: the tfvars read below are the ones that apply was planned from", name, n)
+		}
+		got, ok := r.tfvars(t)["managed_deployer_scoped"]
+		if managedProject {
+			if !ok || got != true {
+				t.Errorf("managed: tfvars[managed_deployer_scoped] = %v (present %v), want true: the installation plans no scoped deployer role, so the fence does not exist for the project the fact describes", got, ok)
+			}
+			continue
+		}
+		if ok {
+			t.Errorf("not managed: tfvars[managed_deployer_scoped] = %v, want the key absent: an installation that never asked for managed plans the deployer's scoped roles", got)
+		}
+	}
+}
+
 // identityOf is the identity a plan's own before view carries for one change,
 // read back through the plan the fake would report: it is tf.RemovedIdentity's
 // answer and not a fixture's guess, so an entry built with it matches exactly
