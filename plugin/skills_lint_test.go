@@ -550,8 +550,12 @@ var (
 	// editSkills is prose telling the agent to change or commit a
 	// Fugaro-owned skill.
 	editSkills = regexp.MustCompile(`(?i)\b(edit|modify|change|commit|patch|rewrite|fork)\b[^.\n]*(plugin/skills|\.claude/skills/fugaro|fugaro-owned skill|fugaro skill)`)
-	// pipedSecret is a secret value fed to secrets set on a command line.
-	pipedSecret = regexp.MustCompile(`\b(echo|printf)\b[^|\n]*\|\s*\S*fugaro\s+secrets\s+set\b|\bfugaro\s+secrets\s+set\b[^\n]*<<<`)
+	// pipedSecret is a secret value fed to a set command on a command line:
+	// `echo "$TOKEN" | fugaro secrets set …`, the same line with `creds set`
+	// (C1.25 takes its value from stdin the same way, and a value written into
+	// a command line lands in the shell's history and the process list), or a
+	// here-string.
+	pipedSecret = regexp.MustCompile(`\b(echo|printf)\b[^|\n]*\|\s*\S*fugaro\s+(?:secrets|creds)\s+set\b|\bfugaro\s+(?:secrets|creds)\s+set\b[^\n]*<<<`)
 )
 
 // ownerCommands are the commands only the user runs, and only from a
@@ -1404,6 +1408,29 @@ func TestLintRejectsCredsOutsideUserRuns(t *testing.T) {
 	// The name is the one thing that may follow: a second positional is the
 	// value, whether or not it looks like one.
 	expectViolation(t, demoTree(t, userRuns("fugaro creds set claude-oauth-token sk-abc123")), "fugaro creds set with a value")
+}
+
+// TestLintRejectsAPipedSecretValue: the rule has one shape and two commands.
+// A value written into a command line is in the shell's history and the
+// process list, so `echo "$TOKEN" | fugaro secrets set …` is a violation —
+// and `creds set` takes its value from stdin the same way (C1.25), so the
+// same line with the other command is one too. It holds inside a user-runs
+// block as well: the block is what makes the command the user's to run, not
+// what makes a value on the command line safe.
+func TestLintRejectsAPipedSecretValue(t *testing.T) {
+	for _, line := range []string{
+		`echo "$TOKEN" | fugaro secrets set claude-oauth-token`,
+		`echo "$TOKEN" | fugaro creds set claude-oauth-token`,
+		`printf '%s' "$TOKEN" | fugaro creds set claude-oauth-token`,
+		`fugaro creds set claude-oauth-token <<< "$TOKEN"`,
+	} {
+		expectViolation(t, demoTree(t, "```bash\n"+line+"\n```\n"), "a secret value on the command line")
+		expectViolation(t, demoTree(t, userRuns(line)), "a secret value on the command line")
+	}
+	// The commands without a value on the line are what the skills do say: the
+	// pipe is the violation, not the command. A redirect from a file is the
+	// form the rule leaves alone — it is how the plan says the value arrives.
+	expectClean(t, demoTree(t, userRuns("fugaro creds set claude-oauth-token < token-file\nfugaro secrets set claude-oauth-token < token-file")))
 }
 
 func TestLintAllowsUserRunsBlock(t *testing.T) {

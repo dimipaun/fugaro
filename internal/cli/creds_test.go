@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -847,6 +848,67 @@ func assertRedacted(t *testing.T, s string, secrets ...string) {
 	if got := agent.Redact(s, secrets); got != s {
 		t.Fatalf("the text still carries a secret the redactor would remove: %q -> %q", s, got)
 	}
+}
+
+// `creds set --json` is the shape an owner's script reads, and it is pinned the
+// way `secrets set --json`'s is: every field named, the COUNT of them fixed —
+// a field added later prints itself unless a test counts — and no field
+// carrying a value or anything derived from one. The count differs by case and
+// both are pinned here: a first write has nothing to replace, so `replaced` is
+// absent (omitempty) rather than empty.
+func TestCredsSetJSONShape(t *testing.T) {
+	f := credsFixtureFor(t)
+	first := credsValue(t, "first")
+	value := credsValue(t, "json")
+	f.seed(t, nil) // the container, with no version: the first write's starting point
+
+	fields := func(t *testing.T, out string) (map[string]json.RawMessage, string, string, string, string, bool) {
+		t.Helper()
+		var js map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(out), &js); err != nil {
+			t.Fatalf("the output is not a JSON object: %s", out)
+		}
+		var got struct {
+			Project  string `json:"project"`
+			Secret   string `json:"secret"`
+			Version  string `json:"version"`
+			Replaced string `json:"replaced"`
+			Disabled bool   `json:"disabled"`
+		}
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatal(err)
+		}
+		return js, got.Project, got.Secret, got.Version, got.Replaced, got.Disabled
+	}
+
+	// The first write: no version was replaced, so there is no replaced field.
+	out, errOut, err := executeStdin(t, first+"\n", "creds", "set", config.ClaudeOAuthToken, "--json")
+	if err != nil {
+		t.Fatalf("%v (stderr %q)", err, errOut)
+	}
+	js, project, secret, version, replaced, disabled := fields(t, out)
+	if want := []string{"disabled", "project", "secret", "version"}; !slices.Equal(slices.Sorted(maps.Keys(js)), want) {
+		t.Errorf("the first write's fields are %v, want %v", slices.Sorted(maps.Keys(js)), want)
+	}
+	if project != "aurora" || secret != f.id || version != "1" || replaced != "" || disabled {
+		t.Errorf("the first write's json = %s", out)
+	}
+
+	// The second: the version it replaced, and that it was disabled.
+	out, errOut, err = executeStdin(t, value+"\n", "creds", "set", config.ClaudeOAuthToken, "--json")
+	if err != nil {
+		t.Fatalf("%v (stderr %q)", err, errOut)
+	}
+	js, project, secret, version, replaced, disabled = fields(t, out)
+	if want := []string{"disabled", "project", "replaced", "secret", "version"}; !slices.Equal(slices.Sorted(maps.Keys(js)), want) {
+		t.Errorf("the fields are %v, want %v (a field added later prints itself unless this test counts)", slices.Sorted(maps.Keys(js)), want)
+	}
+	if project != "aurora" || secret != f.id || version != "2" || replaced != "1" || !disabled {
+		t.Errorf("json = %s", out)
+	}
+	// The value is nowhere in either shape, and neither is a length or a
+	// prefix of one.
+	assertNoValue(t, out+errOut, value, first)
 }
 
 // credsChunkBytes is the length of a middle run of a value that counts as a

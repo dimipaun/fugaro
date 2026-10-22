@@ -290,6 +290,12 @@ func (s *bundleStore) check(ctx context.Context) error {
 // and answers its bytes with the version number the read resolved to. The
 // version number is read from the response's own name rather than assumed, so
 // the number this command prints, disables or re-reads is the server's.
+//
+// A version that is DISABLED is refused as such, and the state comes from the
+// version's own metadata (newestIsDisabled) and never from the API's prose: a
+// refusal built on a sentence would become a generic remote error the day the
+// sentence changed, and the status alone is not enough either — a 400 is also
+// how a malformed request answers.
 func (s *bundleStore) access(ctx context.Context, version string) (bundleDoc, error) {
 	r, err := s.svc.Projects.Secrets.Versions.Access(s.parent() + "/versions/" + version).Context(ctx).Do()
 	if err != nil {
@@ -299,11 +305,10 @@ func (s *bundleStore) access(ctx context.Context, version string) (bundleDoc, er
 			// The container was read a moment ago, so there is no version:
 			// a body that is absent is the same answer as a version that is.
 			return bundleDoc{}, errNoBundleVersion
-		case errors.As(err, &ge) && ge.Code == http.StatusBadRequest && strings.Contains(ge.Message, "is disabled"):
-			// Secret Manager's own answer for a DISABLED version: the bytes
-			// exist and it will not serve them. Matched on the API's own
-			// sentence rather than on the status alone, because a 400 is also
-			// how a malformed request answers.
+		case errors.As(err, &ge) && ge.Code == http.StatusBadRequest && s.newestIsDisabled(ctx):
+			// Secret Manager will not serve a DISABLED version's bytes: they
+			// exist and the state says so. The state is the evidence, read from
+			// the version list, and the 400 is only what made it worth asking.
 			return bundleDoc{}, errBundleDisabled
 		}
 		return bundleDoc{}, s.apiErr("read", err)
@@ -400,6 +405,16 @@ func (s *bundleStore) newest(ctx context.Context) (versionMeta, error) {
 		return versionMeta{}, errNoBundleVersion
 	}
 	return out, nil
+}
+
+// newestIsDisabled reports whether the container's newest version is DISABLED,
+// from the version list's own metadata: the state is a field of the version,
+// and a refusal built on the API's prose instead would rest on a sentence (the
+// review of C1.25). It answers false when the listing itself fails — the
+// caller is already on a failure path, and its own error is the one to report.
+func (s *bundleStore) newestIsDisabled(ctx context.Context) bool {
+	meta, err := s.newest(ctx)
+	return err == nil && meta.state == "DISABLED"
 }
 
 // newerVersion reports whether version a is newer than b. Both are decimal
@@ -854,9 +869,18 @@ func credsLs(cmd *cobra.Command, o credsOptions) error {
 	case err != nil:
 		return remoteErr(err, nil)
 	}
+	// The state came with the metadata, so a DISABLED newest version is refused
+	// from the state itself and not from the API's answer to a read of it: the
+	// bytes exist, the version says DISABLED, and no document is asked for.
+	if meta.state == "DISABLED" {
+		return credsDisabledRefusal(store.id, "read")
+	}
 	doc, err := store.access(ctx, meta.number)
 	switch {
 	case errors.Is(err, errBundleDisabled):
+		// The same refusal, from the same metadata, when the version was
+		// disabled between the listing above and this read: access asks for the
+		// state rather than reading the API's prose.
 		return credsDisabledRefusal(store.id, "read")
 	case err != nil:
 		return remoteErr(err, nil)
