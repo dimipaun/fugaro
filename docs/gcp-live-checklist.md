@@ -364,14 +364,18 @@ allowed to list an account at all), and Check 27's rewritten section is where
 the picker's success path is run.
 
 **Check 112 is the four zoom levels', and it is the next number free above 111** (the
-zoom-diagrams plan `docs/website/zoom-diagrams/implementation-plan.md` §3, its Part 4 — decision
-**D247** takes **112** for this work). The reading is the same shape as the one above and is taken
-the same way: the highest **written** `## Check N` section in this file, read at **`d3a2ef08`** —
-the commit this change is based on — was **111**, and a reservation is not a fact about the tree,
-so the section is **written below** rather than reserved. Its subject is the four levels as
-**stills**, which is what this tree carries: the pinned, scroll-driven zoom between them is **Part
-5** of that plan and is not in this checkout, so the one step of the section that is about the zoom
-is written and **cannot be run yet**. The check is owner-run and it is **NOT RUN**.
+zoom-diagrams plan `docs/website/zoom-diagrams/implementation-plan.md` §3, its Parts 4 and 5 —
+decision **D247** takes **112** for this work). The reading is the same shape as the one above and
+is taken the same way: the highest **written** `## Check N` section in this file, read at
+**`d3a2ef08`** — the commit this change is based on — was **111**, and a reservation is not a fact
+about the tree, so the section is **written below** rather than reserved. Its subject is the four
+levels, and **both halves of them are in this tree now**: Part 4's stills, which are the document's
+own four `<figure>`s, and Part 5's pinned, scroll-driven zoom between them, which is `site.js`'s
+enhancement of those stills and stands down for a reader who has asked for less motion. Part 4
+wrote the section with the pinned step marked **not run** because the tree it was written against
+had no pinning; Part 5 moved that step into the reading and added the reduced-motion step beside
+it, so every step below is about the tree in front of the reader. The check is owner-run and it is
+**NOT RUN**.
 
 **That is the end of the register.** The paragraph below is not another
 reservation: it introduces the check that owns 57, whose row is in the table
@@ -542,7 +546,7 @@ probe account carries predefined grants only).
 | 89 | A signed EAS build, and the store's **internal** track (mobile plan Task P4.2a writes it, and P4.4 **runs** it; D120, C8): a build of the app at `mobile/` — its own artifact, outside the Go module (C2), at the commit whose tag it is versioned from (C6) — signed with **your** distribution credentials (EAS-managed or your own distribution certificate and upload key), and reaching the stores' internal testing tracks only; no public release is implied or made, and the submit track is read before anything is built — step 1's `jq` reads `submit.internal.android.track`, and a profile naming a public track is a stop you take there ("edit it and re-run"), not something the guard reads: the guard hard-stops on the build itself — without `mobile/eas.json` or `mobile/app.config.js` in the checkout (P4.4's), and without the store identity, which it resolves through `app.config.js` out of the two variables you export (the identity is **not** in `app.json` and never will be: the committed config carries no release identity, P3.1's boundary test, and the identity is yours). No agent runs `eas build` or `eas submit`, none touches a signing key, an App Store Connect API key or a Play service-account key, and no store credential enters an agent's environment | See "Check 89" below; **you** run it, at your own terminal, with your own Apple and Google accounts, your own signing keys and your own EAS project, from a clean checkout of the tagged commit; **no agent runs any step of it** (D120, Global Constraint 9). Its guard hard-stops today: P3.1's `mobile/app.json` and P4.4's `mobile/eas.json` and `mobile/app.config.js` are in the tree, so the file tests pass and the stop is the store identity itself — the two variables must be in your shell (or in the EAS project's environment the profile names, for the build job), and until they are, the guard stops before a build that could not reach any track | One build per platform and one submission per platform, on the internal tracks; the signing keys, the App Store Connect API key and the Play service-account key are yours, are never read by this check and are never pasted into a `FACT` line. **USER-RUN, NOT RUN.** |
 
 | 111 | The billing picker's failure modes (setup-wizard plan Task W0.3; D3 and D6): the Cloud Billing API disabled on the quota project — in D3's two cases, the quota project **being** the project set up and the quota project being **another** one — a caller without `billing.accounts.list` on a project whose API **is** enabled (so the API answers **403** rather than the disabled-API refusal), and the three sessions that never list anything at all (no TTY, `--json`, an agent session) — each asserting the guided `gcloud billing projects link` line, that **nothing was enabled**, and that **no account list appears in any output** (the one run where a list *is* expected is the `gcloud` fallback answering an API that refused) | See "Check 111" below; **you** run it at your own terminal, on installation `fugaro` (never `belong`), and **no agent runs any step of it** (an agent session is one of the five modes it observes). | Three throwaway projects of your own — `P` (the installation's), `Q` (API off) and `S` (API on) — and the ADC quota project is repointed by three of the runs. Every step is a refusal, and nothing is created, enabled or linked by the check itself. **NOT RUN.** |
-| 112 | The four zoom levels, drawn once and drawn as stills (zoom-diagrams plan §3, Part 4; D237, D244, D245, D247): the section sits on `/how-it-works/`, **under "The run, end to end" and its diagram** (D237); the four levels are four `<figure>`s in the brief's order, each named by its own `<figcaption>`, which also says which recipe the drawing is; **every entity is one `<symbol>` of one `<defs>`, drawn through `<use>`** — the job tile, the orchestrator, the developer, the console and the project — so a job tile is the same tile at every level (D244), and no level draws its own copy of one; every label of every level is a row of `website/data/zoom-levels.yaml`, held to the document it cites; the four markers are one `<nav>` of anchors with accessible names (D245), each jumping to its own level by keyboard and by pointer; the four levels and every label are in the document **with JavaScript off** (the section ships no script of its own); and the drawings are legible — labels at the palette's own contrast, nothing clipped, nothing drawn as an empty box — on a desktop and at 360, 390 x 844 and 320 (ZU4) | See "Check 112" below; **you** run it, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the live site — read-only, no account, no cloud project touched, no `fugaro` command, and **No agent runs any step of it**. The pinned scroll-driven zoom is **Part 5** and is not in this tree: that step of the section is written and cannot be run yet, and an unrun step is not a pass | One browser, a hard reload, one look at the section with script on and one with it off, and one narrow viewport. Nothing is created, enabled, linked or written. **USER-RUN, NOT RUN.** |
+| 112 | The four zoom levels — drawn once, pinned as the reader scrolls, and stills when the reader asks (zoom-diagrams plan §3, Parts 4 and 5; D237, D244, D245, D247): the section sits on `/how-it-works/`, **under "The run, end to end" and its diagram** (D237); the four levels are four `<figure>`s in the brief's order, each named by its own `<figcaption>`, which also says which recipe the drawing is; **every entity is one `<symbol>` of one `<defs>`, drawn through `<use>`** — the job tile, the orchestrator, the developer, the console and the project — so a job tile is the same tile at every level (D244), and no level draws its own copy of one; every label of every level is a row of `website/data/zoom-levels.yaml`, held to the document it cites; the four markers are one `<nav>` of anchors with accessible names (D245), each jumping to its own level by keyboard and by pointer; the four levels and every label are in the document **with JavaScript off** (the section ships no script of its own, and the page's one script is what pins it); **with script on each level rests as a still and the zoom between them is the reader's own scroll** — smooth, in order, both directions, pinned for the whole runway, with the marker of the level on screen carrying `aria-current="true"` (Part 5); and the system's **reduced-motion preference gives the stills back**, at load and under a page already pinned; and the drawings are legible — labels at the palette's own contrast, nothing clipped, nothing drawn as an empty box — on a desktop and at 360, 390 x 844 and 320 (ZU4) | See "Check 112" below; **you** run it, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the live site — read-only, no account, no cloud project touched, no `fugaro` command, and **No agent runs any step of it**. Every step is about this tree: Part 4 wrote the pinned step as one that could not be run, and Part 5 landed the pinning and moved it into the reading | One browser, a hard reload, one look at the section with script on and one with it off, one slow scroll through the runway in both directions, one marker press, one system preference changed three ways, and one narrow viewport. Nothing is created, enabled, linked or written. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -6095,42 +6099,55 @@ assert_mode() {
 - **Never touch `belong`, EdgeWeb or EdgeServer**: no step here writes to them, the guard block is what makes that so, and the guided line this check is about names a project you type, never one of theirs.
 
 
-## Check 112: the four zoom levels, drawn once and drawn as stills (the built artifact or the live site, read-only; run by you; NOT RUN)
+## Check 112: the four zoom levels — drawn once, pinned as the reader scrolls, and stills when the reader asks (the built artifact or the live site, read-only; run by you; NOT RUN)
 
 **NOT RUN.** Written by **Part 4** of the zoom-diagrams plan
 (`docs/website/zoom-diagrams/implementation-plan.md` §3, decisions D237, D244, D245 and **D247**,
-which takes this number; the reconciliation's §3 is what the levels are allowed to say today), and
-written here rather than left to that plan because this is the file the owner runs live checks out
-of. It is the half of Part 4 no hermetic test can take: the tests hold the section's **shape** and
-its **words** — one `<defs>` of `<symbol>`s drawn through `<use>`, every label a row of
-`website/data/zoom-levels.yaml`, the markers and the captions — and what a browser is for is
-whether the four drawings are **legible**, whether an entity really looks the same at every level,
-and whether a marker lands where it says it lands.
+which takes this number; the reconciliation's §3 is what the levels are allowed to say today) and
+**extended by Part 5** (the plan's §3's pinned section and its §4 row for 112), and written here
+rather than left to that plan because this is the file the owner runs live checks out of. It is
+the half of the zoom work no hermetic test can take: the tests hold the section's **shape**, its
+**words** and its **state** — one `<defs>` of `<symbol>`s drawn through `<use>`, every label a row
+of `website/data/zoom-levels.yaml`, the markers, the captions, and which level the script marks as
+the reader scrolls — and what a browser is for is whether the four drawings are **legible**,
+whether an entity really looks the same at every level, whether the zoom between the levels is
+**smooth**, and whether a marker lands where it says it lands.
 
-**What this tree carries today, and what it does not.** The section exists: `ZoomLevels.astro` is
-mounted on `/how-it-works/` **under "The run, end to end" and its diagram** (D237), it is one
+**What this tree carries today, and both halves are here.** The section exists: `ZoomLevels.astro`
+is mounted on `/how-it-works/` **under "The run, end to end" and its diagram** (D237), it is one
 `<h2>` and one `<nav>` of four markers, and its four `<figure>`s are the levels. Its words are the
 brief's, **corrected to what the runner does**: Level 1 says the first-line review is the coder's
 own model in a new session and that the senior review is a loop bounded by `agent.review_rounds`,
 because that is what `docs/recipes.md` says and what the reconciliation's §3 found the brief's own
-sketch getting wrong. **And it is stills**: there is no animation, no timeline and no script in the
-drawing at all — the page's one script is the site's own, in the head, and it is not this section's
-— so all four levels are whole in the document before anything runs. **The pinned, scroll-driven
-zoom between the levels is Part 5 of the plan and is not in this checkout**, which is why the last
-step below is written and **cannot be run yet**: an unrun step is not a pass, and this row stays
-**NOT RUN** until both halves have been seen.
+sketch getting wrong. **The pinning is Part 5's, and it is progressive enhancement**: the four
+levels are whole in the document before anything runs, and the page's one script — the site's own,
+`public/scripts/site.js`, in the head — is what writes `data-zoom-ready` on the section,
+`data-zoom-shown` on the level the reader is on and `aria-current` on the marker beside it.
+**Nothing in the built page carries any of that state**, which is what makes the fallbacks
+fallbacks: no script, a system that asks for less motion, or a browser too old to answer
+`matchMedia`, and the reader gets Part 4's stills one after another with the markers as the
+browser's own anchors. The section declares **no CSS scroll timeline** (the spike's question, ZU1
+— answered in the zoom folder's README: the level is computed from the reader's own scroll
+position, so the site's universal `animation-duration: 1ms !important` rule has nothing to
+freeze), and every rule that pins, scales or fades is scoped to `data-zoom-ready`.
 
 **What the gates hold, and what only your eyes can.** `website/test/how-it-works.mjs` reads the
 built page and refuses a `<use>` whose target is missing, a symbol no level draws, a level that
 draws its own copy of an entity (D244's same-shape rule, planted three ways), a level kind the
 paint gate has not been taught, a label that is not a row of the data file, a row the drawing does
-not render, and a label attributed to a document that does not carry that line.
-`website/test/a11y.mjs` holds the one `<nav>` and its markers — one per level, each named, each
-pointing at the level beside it, each reachable with no positive `tabindex` — and refuses a level
-announced as one image, because a level here is a list of labelled parts and its words are the
-telling. `website/test/budget.mjs` holds the page inside its byte and word ceilings. **None of
-them reads a pixel**: whether a tile arrives as a black rectangle, whether a label is legible
-against its panel, whether the drawings fit a phone, and whether the jump lands.
+not render, and a label attributed to a document that does not carry that line. It holds the
+pinning too, plant by plant: the hooks in the built page with **none** of the state they are read
+for, the runway's length against the data file's four levels, the scoping of every pinned rule,
+the motion gate, and the stills' own rules — and, driving the script against the built page, the
+level the reader is on, the marker press that lands on it, the hash that opens on it, and the
+stand-down a reader who has asked for less motion gets. `website/test/a11y.mjs` holds the one
+`<nav>` and its markers — one per level, each named, each pointing at the level beside it, each
+reachable with no positive `tabindex` — refuses a level announced as one image, because a level
+here is a list of labelled parts and its words are the telling, and holds the section's own
+transition inside the motion contract (D105). `website/test/budget.mjs` holds the page inside its
+byte and word ceilings. **None of them reads a pixel, and none of them can see a scroll**:
+whether a tile arrives as a black rectangle, whether a label is legible against its panel, whether
+the drawings fit a phone, whether the zoom stutters or skips a level, and whether the jump lands.
 
 **Method.** One browser, one built site, one narrow viewport, no account and no cloud project.
 Either serve the artifact locally or read the deployed site; both are read-only:
@@ -6155,8 +6172,25 @@ grep -o 'class="zoom-[a-z-]*"' website/dist/how-it-works/index.html | sort -u
 # Every label of every level, out of the data file rather than remembered: the text step 4 compares
 # what the drawing prints against is these lines, and each row's `source:` is the document it cites.
 sed -n 's/^ *text: *//p' website/data/zoom-levels.yaml
-# The scripts on the page: one line, the site's own, and no other — the drawing ships none.
+# The scripts on the page: one line, the site's own, and no other — the section ships none, and
+# the pinning is that one script's. Steps 6 and 8.
 grep -o '<script[^>]*>' website/dist/how-it-works/index.html
+# The pinning's hooks, out of the built page rather than typed: steps 6, 8 and 9. The page's own
+# inline stylesheet is taken out first, because it *names* the state the script writes
+# (`[data-zoom-ready]` is in its selectors) — what this counts is the attributes on ELEMENTS, and
+# `data-zoom-ready`, `data-zoom-shown` and `aria-current` are not among them. That absence is the
+# fallback: a page whose script never ran carries no state at all.
+python3 - <<'PY'
+import collections, re
+html = open('website/dist/how-it-works/index.html', encoding='utf-8').read()
+elements = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.S)
+for name, count in sorted(collections.Counter(re.findall(r'data-zoom[a-z-]*(?:="[^"]*")?', elements)).items()):
+    print(f'{count:>3}  {name}')
+PY
+# The motion the section declares, and the two gates around it: step 9. `no-preference` is the
+# gate the transition is written inside, `reduce` is the cut that takes the pinning back off. The
+# first line is the section's own; the base layout's universal rule is the second `reduce`.
+grep -o 'prefers-reduced-motion:[a-z-]*' website/dist/how-it-works/index.html | sort | uniq -c
 ```
 
 1. **The section is where the brief puts it, and it is the page's own block.** Open
@@ -6195,50 +6229,82 @@ grep -o '<script[^>]*>' website/dist/how-it-works/index.html
 
 5. **A marker jumps to its own level, by keyboard and by pointer.** The `<nav>` is the first thing
    after the section's heading, so Tab reaches it from the top of the section: **four anchors**,
-   each with a name that says which level it is. Press **Enter** on each and read the URL: it gains
-   `#level-N`, the page scrolls so that **that level's figure and its caption** are on screen, and
-   the browser's Back returns you to where you were. Then click one with the pointer: the same
-   landing. **FACT:** the URL after each jump, and whether the level named by the marker is the one
-   on screen. A marker that lands on another level, or nowhere, is the failure; a marker whose
-   focus ring is invisible is the keyboard half of it.
+   each with a name that says which level it is. Press **Enter** on each and read the page: **that
+   level's figure and its caption** are the level you are looking at, and the browser's Back
+   returns you to where you were. Then click one with the pointer: the same landing. **FACT:** the
+   level on screen after each jump, and whether it is the level the marker names. In the pinned
+   state (step 8) the URL does not gain the fragment — the script answers the press itself,
+   because the four panels stand in one sticky box and the browser's own jump would land on the
+   section's top — so the reading, not the URL, is what this step asks for; with script off
+   (step 6) the fragment is the browser's and appears. A marker that lands on another level, or
+   nowhere, is the failure; a marker whose focus ring is invisible is the keyboard half of it.
 
-6. **The four levels are there with JavaScript off, and nothing about them moves on its own.**
-   Disable JavaScript for the site, hard-reload `/how-it-works/`, and read the page: **all four
-   figures, all four captions and every label are in the document, in order**, and the markers
-   still jump (they are anchors, and they need no script). Then turn script back on and watch the
-   section for a minute without touching it: **nothing animates, nothing hides itself and nothing
-   scrolls on its own** — this half is stills, and Part 4 ships no timeline. **FACT:** with script
-   off, the four captions' texts and the markers' count; with script on, that nothing in the
-   section moves by itself.
+6. **The four levels are there with JavaScript off, and the markers are the browser's own.** Disable
+   JavaScript for the site, hard-reload `/how-it-works/`, and read the page: **all four figures,
+   all four captions and every label are in the document, in order**, the counter in the Method
+   block shows the four hooks and **no state**, and the markers still jump — they are anchors, and
+   they need no script, so the URL gains `#level-N` and the browser scrolls to that figure.
+   **FACT:** with script off, the four captions' texts, the markers' count, and the fragment in the
+   URL after a jump. This is the page a reader with no script gets, and it is Part 4's stills
+   entire: nothing about the section is withheld from it.
 
-7. **The drawings are legible on a phone.** Set the viewport to **360 × 800** (the width ZU4
-   measures), then to **390 × 844** and **320**, hard-reload, and read the section: each drawing
-   fits the column without a sideways scroll
+7. **The drawings are legible on a phone, and the pinned section is legible there too.** Set the
+   viewport to **360 × 800** (the width ZU4 measures), then to **390 × 844** and **320**,
+   hard-reload, and read the section: each drawing fits the column without a sideways scroll
    (`document.documentElement.scrollWidth` is not wider than the viewport), the labels are drawn at
    a size a reader can read rather than a whole desktop picture shrunk to fit, and the markers are
-   still targets a thumb can hit. **FACT:** the document's scroll width and the smallest drawn label
-   at each of the three widths, and the markers' rendered heights.
+   still targets a thumb can hit — on a phone the markers stand **above** the runway, in the
+   column, rather than beside it (they move beside it at 60rem and up). Scroll the section on the
+   phone as well: the pinned reading of step 8 is the same one, and it is the reading a phone
+   reader gets. **FACT:** the document's scroll width and the smallest drawn label at each of the
+   three widths, the markers' rendered heights, and where the markers sit relative to the runway.
 
-8. **The pinned zoom (Part 5's, and not runnable on this tree).** The brief's "Format" bullet asks
-   that each level rests as a still, that the zoom **between** the levels is smooth as the reader
-   scrolls, that a marker jumps to its level, and that the system's reduced-motion preference turns
-   the section into stills. **This checkout has no pinned zoom and no timeline**, so there is
-   nothing here to observe today and this step is **not run** — it is written now because D247
-   takes the number and a reservation is not a fact about the tree. When Part 5 lands, this step
-   becomes: with the system's *reduce motion* preference **on**, the section shows the four levels
-   as stills and no scroll-driven motion at all; with it off, the zoom between the levels is smooth
-   (no jump, no stutter, no level skipped) and a marker still jumps; and the reduced-motion reader
-   is never shown a level that the motion alone would have revealed. **FACT**, when it can be run:
-   which preference was set, what the section did, and whether any content exists only in the
-   animated path.
+8. **The pinned zoom: each level rests as a still, and the zoom between them is the scroll.**
+   With JavaScript on, hard-reload `/how-it-works/` and scroll **slowly** through the section,
+   from the top of its runway to the bottom: **one level is on screen at a time, whole and still
+   while the page does not move**, and the change from one level to the next is a **smooth fade
+   and scale** as you scroll rather than a jump, a flash or a level skipped. Check the four in
+   order, and check both directions: scrolling back up walks the levels back. **The section is
+   pinned while this happens** — the drawing stays where it is on screen and the page's own
+   content does not slide past it — and the marker beside the level you are on is the one the
+   script marks: open the inspector on the `<nav>` and the current marker carries
+   `aria-current="true"` while the other three carry `"false"`. (That mark is the accessibility
+   tree's; the markers are drawn the same either way, and the level you are on is the one on
+   screen.) Then press a marker (step 5) from inside the section: the reading moves to that
+   level's still. **FACT:** for each level, whether it rested as a still; whether the transition
+   between them was smooth and in order; whether any level was skipped, flickered or arrived
+   half-drawn; which marker carried `aria-current` at each level; and whether the pinning held for
+   the whole runway rather than releasing early. **A level that only exists while scrolling —
+   nothing readable when the page is still — is the failure this step is for**, and so is a zoom
+   that stutters, because a reader with a slower machine than yours is the one who lives with it.
+
+9. **The system's reduced-motion preference turns the section back into stills.** Set the
+   operating system's *reduce motion* preference **on** (macOS: System Settings → Accessibility →
+   Display → Reduce motion; Windows: Settings → Accessibility → Visual effects → Animation
+   effects; GNOME: Settings → Accessibility → Seeing → Reduce Animation), hard-reload
+   `/how-it-works/`, and read the section: **the four levels are four stills again, one after
+   another in the column, with no pinning, no scale and no fade** — the same page as step 6, and
+   the `grep` in the Method block shows the `no-preference` gate the transition is written inside
+   and the `reduce` cut beside it. Then press a marker: it still lands on its level. Turn the
+   preference **off**, reload, and the pinned reading is back (step 8) — and then, with the page
+   already pinned, turn the preference **on** without reloading: the section stands down rather
+   than staying pinned, because the script watches the preference rather than sampling it once.
+   **FACT:** which preference was set, what the section did in each of the three cases, and whether
+   any level exists only in the pinned path (it must not: every level is in the document, and the
+   `python3` counter above is the same document either way).
 
 **Passes when:** the section is on `/how-it-works/` under the run's diagram, headed "The four
 levels"; four figures stand in the brief's order with four captions naming them and the recipe
 each is drawn from; each entity is the same shape at every level it appears at; every label is a
 line of `website/data/zoom-levels.yaml`, legible against its panel and inside its box; four named
-anchors jump to their own levels by keyboard and by pointer; the four levels and their labels are
-in the document with JavaScript off, and nothing in the section animates or hides itself with it
-on; and the drawings fit and stay readable at 360, 390 × 844 and 320.
+anchors jump to their own levels by keyboard and by pointer, in the pinned reading and in the
+stills both; the four levels and their labels are in the document with JavaScript off, with no
+state on any element; with JavaScript on each level rests as a still and the zoom between them is
+the reader's own scroll, smooth, in order and in both directions, with the pinning held for the
+whole runway and the marker of the level on screen carrying `aria-current="true"`; the system's
+*reduce motion* preference gives the stills back, at load and under a page already pinned; and the
+drawings fit and stay readable at 360, 390 × 844 and 320, where the markers stand above the
+runway.
 
 **Fails when:** the section is missing, or sits above the run's diagram, or on a page other than
 `/how-it-works/`; a level has no caption, or a caption names a level the drawing is not; an entity
@@ -6247,29 +6313,37 @@ belongs) — that is D244 broken in the one place a test's message and a reader'
 is missing, clipped, misquoted against its row, or drawn at a contrast a reader cannot read; a
 shape arrives as a black or empty rectangle; a marker points at another level, lands nowhere, has
 no name, or cannot be reached from the keyboard; a level or a label is missing with JavaScript off,
-or one exists only with it on; something in the section animates, hides or scrolls by itself; or a
-drawing overflows the phone's column. **What failing looks like:** the 2026-10-21 defect again —
-Astro scopes a page's stylesheet to the elements the page renders, so a generated shape drawn from
-a component's markup with a plain class arrives **unstyled**, and every shape is a black rectangle;
-and a marker list that a reader can press but that lands on the section's top rather than the level
-it names.
+or one exists only with it on; **a level exists only while scrolling — nothing readable when the
+page is still — or the zoom between two levels jumps, flickers, skips a level, arrives
+half-drawn, or releases the pinning before the runway's end**; a reader who has asked for less
+motion is still given a pinned section, or a scale or a fade, at load or after turning the
+preference on; or a drawing overflows the phone's column. **What failing looks like:** the
+2026-10-21 defect again — Astro scopes a page's stylesheet to the elements the page renders, so a
+generated shape drawn from a component's markup with a plain class arrives **unstyled**, and every
+shape is a black rectangle; a marker list that a reader can press but that lands on the section's
+top rather than the level it names; and a pinned section whose state is written by the markup
+rather than by the script, which is the one way the stills stop being the fallback.
 
 **Paste back** (no secret, no account, nothing from any project): the browser and its version, the
 OS and the date; whether you read the built artifact or the live site, and at which commit; the
 four captions verbatim; per level, the labels you read back and any that differ from the data
-file's rows; for each entity, the levels it is drawn at and whether the shapes matched; the URL
-after each marker jump and whether the level on screen was the one named; the scroll width and the smallest label at 360, at
-390 × 844 and at 320, and any label that was too small to read there; and, for step 8, that it was not
-run — the pinned zoom is Part 5's. Until both halves have been seen, this row stays **NOT RUN**.
+file's rows; for each entity, the levels it is drawn at and whether the shapes matched; the level
+on screen after each marker jump and whether it was the one named, and the URL fragment with
+script off; the scroll width and the smallest label at 360, at
+390 × 844 and at 320, and any label that was too small to read there; for the pinned reading, each
+level in turn — still, smooth, in order, or not — the marker that carried `aria-current` at each
+one, and whether any level was skipped or half-drawn; and, for the reduced-motion preference, the
+three readings (off, on at load, turned on under a pinned page). Until every step has been run,
+this row stays **NOT RUN**.
 
 **Restore.** Nothing is created, so there is nothing to undo: no account, no cloud project, no
 `fugaro` command, no installation and no file is touched by any step above.
 
 - **Stop the localhost server** the Method block started (`kill %1` in the shell that started it,
   or close that shell) — that is the whole of the check's footprint on your machine.
-- **Put the browser's JavaScript and motion settings back** if you changed either for steps 6 and
-  8: they are your browser's, not the check's, and step 6 needs JavaScript on again to be about the
-  site you actually read.
+- **Put the browser's JavaScript and motion settings back** if you changed either for steps 6, 8
+  and 9: they are your browser's, not the check's, and step 8 needs JavaScript on again to be about
+  the site you actually read.
 - **Never touch `belong`, EdgeWeb or EdgeServer**: no step here reads or writes a project at all,
   and the only host this check fetches is the built artifact on localhost or the canonical origin
   the site's own `site.yaml` names.
