@@ -44,10 +44,12 @@ const requestPinWhere = "the project's model allow-list"
 // export — so a rule that changes for the gateway changes here, and a body the
 // gateway would forward is a body this service forwards.
 //
-// The routes are nil: the variant and foreign-field refusals are about what a
-// *provider route* would do with the call, and this service serves the
-// Anthropic upstream, where a call it accepts goes whatever its model is called
-// (internal/credsvc's forward). A caller that has no route has no routed call.
+// The routes are nil, so the two rules that are about a *provider route* — the
+// variant suffix that changes a route's routing and price, and the foreign
+// field a route does not take — cannot fire: this service serves the Anthropic
+// upstream, where an accepted call goes whatever its model is called
+// (internal/credsvc's forward). A caller that routes nothing has no routed
+// call.
 //
 // A body the gateway cannot read at all is a refusal too — the gateway's own
 // path answers parseRequest's error and check's violation alike, as a 400 — so
