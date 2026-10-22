@@ -34,6 +34,37 @@ func TestNewCost(t *testing.T) {
 	}
 }
 
+// TestCostNotionalHalves (P12, D140): the two reader-side halves of ModelUSD.
+// A record written before C1.16 carries no ModelNotionalUSD, so an oauth run's
+// whole figure is its subscription's -- the basis is the fallback -- and a
+// reader that split on the basis instead would bill a mixed run's tier-A
+// dollars, whose basis is api-list for the whole run.
+func TestCostNotionalHalves(t *testing.T) {
+	mixed := NewCost(3, 0.5, BasisAPIList).WithNotional(2)
+	if mixed.ModelMoneyUSD() != 1 || mixed.ModelSubscriptionUSD() != 2 || mixed.TotalUSD != 1.5 {
+		t.Fatalf("mixed = %+v: money %v notional %v total %v", mixed, mixed.ModelMoneyUSD(), mixed.ModelSubscriptionUSD(), mixed.TotalUSD)
+	}
+	paid := NewCost(3, 0.5, BasisAPIList)
+	if paid.ModelMoneyUSD() != 3 || paid.ModelSubscriptionUSD() != 0 {
+		t.Fatalf("api-list = %+v: money %v notional %v", paid, paid.ModelMoneyUSD(), paid.ModelSubscriptionUSD())
+	}
+	// A pre-C1.16 oauth record, and one C1.16 itself wrote: both are the
+	// subscription's whole figure.
+	old := NewCost(3, 0.5, BasisSubscription)
+	if old.ModelMoneyUSD() != 0 || old.ModelSubscriptionUSD() != 3 {
+		t.Fatalf("old subscription = %+v: money %v notional %v", old, old.ModelMoneyUSD(), old.ModelSubscriptionUSD())
+	}
+	sub := old.WithNotional(3)
+	if sub.ModelMoneyUSD() != 0 || sub.ModelSubscriptionUSD() != 3 || sub.TotalUSD != 0.5 {
+		t.Fatalf("subscription = %+v: money %v notional %v total %v", sub, sub.ModelMoneyUSD(), sub.ModelSubscriptionUSD(), sub.TotalUSD)
+	}
+	// WithNotional clamps, so a notional part outside the model figure cannot
+	// make the money part negative.
+	if c := NewCost(1, 0, BasisAPIList).WithNotional(5); c.ModelMoneyUSD() != 0 || c.ModelSubscriptionUSD() != 1 {
+		t.Fatalf("clamped = %+v: money %v notional %v", c, c.ModelMoneyUSD(), c.ModelSubscriptionUSD())
+	}
+}
+
 func TestCostModelFieldsRoundTrip(t *testing.T) {
 	c := NewCost(4.12, 0.38, BasisAPIList)
 	c.ModelSource = "gateway"

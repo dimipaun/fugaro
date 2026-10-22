@@ -182,16 +182,23 @@ func CostLine(c runstore.Cost) string {
 	return line
 }
 
-// costLine is the cost sentence itself, without the estimate's source.
+// costLine is the cost sentence itself, without the estimate's source. Its
+// model figure is the money part of the model spend, so the arithmetic in it
+// adds up -- TotalUSD holds no notional dollar (C1.16, P12) -- and a mixed
+// run's notional part is said beside it rather than counted into it.
 func costLine(c runstore.Cost) string {
 	sub := c.ModelBasis == runstore.BasisSubscription
+	notional := ""
+	if !sub && c.ModelSubscriptionUSD() > 0 {
+		notional = fmt.Sprintf("; model $%.2f notional, counted against the Claude subscription", c.ModelSubscriptionUSD())
+	}
 	switch {
 	case !c.ComputeEstimated && sub:
-		return fmt.Sprintf("**Cost:** model $%.2f notional, counted against the Claude subscription (compute not estimated)", c.ModelUSD)
+		return fmt.Sprintf("**Cost:** model $%.2f notional, counted against the Claude subscription (compute not estimated)", c.ModelSubscriptionUSD())
 	case !c.ComputeEstimated:
-		return fmt.Sprintf("**Cost:** model $%.2f (compute not estimated)", c.ModelUSD)
+		return fmt.Sprintf("**Cost:** model $%.2f (compute not estimated)%s", c.ModelMoneyUSD(), notional)
 	case sub:
-		return fmt.Sprintf("**Cost:** ≈ $%.2f compute (estimate); model $%.2f notional, counted against the Claude subscription", c.ComputeUSD, c.ModelUSD)
+		return fmt.Sprintf("**Cost:** ≈ $%.2f compute (estimate); model $%.2f notional, counted against the Claude subscription", c.ComputeUSD, c.ModelSubscriptionUSD())
 	}
-	return fmt.Sprintf("**Cost:** ≈ $%.2f (model $%.2f + compute $%.2f, estimate)", c.TotalUSD, c.ModelUSD, c.ComputeUSD)
+	return fmt.Sprintf("**Cost:** ≈ $%.2f (model $%.2f + compute $%.2f, estimate)%s", c.TotalUSD, c.ModelMoneyUSD(), c.ComputeUSD, notional)
 }

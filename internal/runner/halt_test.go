@@ -428,6 +428,14 @@ func TestHaltReportAdvice(t *testing.T) {
 	if strings.Contains(got, "--pr N") || !strings.Contains(got, "start the run again") || !strings.Contains(got, "this run spent $3.50") {
 		t.Fatalf("a bootstrap halt's report:\n%s", got)
 	}
+	// A cascade run's model figure holds both: its basis is api-list for the
+	// whole run, and only the money part of it was spent (C1.16, P12).
+	mixed := runstore.ModelOnlyCost(3.5, runstore.BasisAPIList).WithNotional(2.3)
+	rec.Cost = &mixed
+	got = runner.Report(rec, "runs/x/", nil)
+	if !strings.Contains(got, "this run spent $1.20") {
+		t.Fatalf("a mixed run's report bills its subscription's dollars:\n%s", got)
+	}
 	// A subscription run's model figure is notional: never "spent".
 	c := runstore.ModelOnlyCost(3.5, runstore.BasisSubscription)
 	rec.Cost = &c

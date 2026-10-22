@@ -472,11 +472,13 @@ func userStatsRun(l *runstore.Launch, rec *runstore.Record) userStatsRecorded {
 	}
 	r.Status = string(rec.Status)
 	if rec.Cost != nil {
-		switch rec.Cost.ModelBasis {
-		case runstore.BasisSubscription:
-			r.NotionalUSD = rec.Cost.ModelUSD
-		default:
-			r.CountedUSD, r.CountedCost = rec.Cost.ModelUSD, true
+		// The two halves of the model figure (P12, D140): the subscription's
+		// part is notional whoever it belonged to, and the money part counts
+		// toward a cap. A cascade run has both, and its basis is api-list for
+		// the whole run, so neither half can be read off the basis alone.
+		r.NotionalUSD = rec.Cost.ModelSubscriptionUSD()
+		if rec.Cost.ModelBasis != runstore.BasisSubscription {
+			r.CountedUSD, r.CountedCost = rec.Cost.ModelMoneyUSD(), true
 		}
 	}
 	return userStatsRecorded{run: r, recorded: recorded}

@@ -194,7 +194,15 @@ func haltLines(rec *runstore.Record) string {
 	}
 	fmt.Fprintf(&b, " at %s", h.At.UTC().Format("2006-01-02 15:04:05 UTC"))
 	if rec.Cost == nil || rec.Cost.ModelBasis != runstore.BasisSubscription {
-		fmt.Fprintf(&b, " — this run spent $%.2f", rec.CostUSD)
+		// The money the run spent: rec.CostUSD is the whole model figure, and
+		// a cascade run's tier-A dollars are the subscription's, not the
+		// run's (C1.16, P12). Without a breakdown (a record from before it)
+		// the figure is all there is.
+		spent := rec.CostUSD
+		if rec.Cost != nil {
+			spent = rec.Cost.ModelMoneyUSD()
+		}
+		fmt.Fprintf(&b, " — this run spent $%.2f", spent)
 	}
 	b.WriteString(".\n\n")
 	// A halt before anything was pushed has no pull request to continue on.

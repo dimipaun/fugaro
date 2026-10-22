@@ -590,8 +590,10 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 	fmt.Fprintln(tw, header)
 	for _, r := range rows {
 		cost := fmt.Sprintf("$%.2f", r.Cost.TotalUSD)
-		if r.Cost.ModelBasis == runstore.BasisSubscription && r.Cost.ModelUSD > 0 {
-			cost += "~" // the model spend was notional
+		if r.Cost.ModelSubscriptionUSD() > 0 {
+			// The model spend -- or, in a mixed run, part of it -- was
+			// notional, and the figure beside this marker leaves it out.
+			cost += "~"
 		}
 		if !r.Cost.ComputeEstimated {
 			cost += ", compute not estimated" // never "free" (design §10.1)

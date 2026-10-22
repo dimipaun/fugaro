@@ -534,6 +534,12 @@ func cost(r *runstore.Record, e *backend.Execution, prices PriceBook, now time.T
 	}
 	if stored != nil {
 		c.CatalogStale = stored.CatalogStale
+		// The notional part travels with the model figure: the row is a view
+		// of the record's charge, and rebuilding the totals from ModelUSD and
+		// ModelBasis alone would bill a cascade run's tier-A dollars as money
+		// (P12, D140) -- precisely what the basis cannot tell apart. Applied
+		// through WithNotional so the row's TotalUSD is recomputed from it.
+		c = c.WithNotional(stored.ModelSubscriptionUSD())
 	}
 	return c
 }
@@ -541,7 +547,7 @@ func cost(r *runstore.Record, e *backend.Execution, prices PriceBook, now time.T
 // Totals sums rows' costs (design §10.1).
 type Totals struct {
 	Runs             int     `json:"runs"`
-	ModelUSD         float64 `json:"model_usd"`          // billed model spend (api-list)
+	ModelUSD         float64 `json:"model_usd"`          // billed model spend: the money part of the rows' model figure
 	ModelNotionalUSD float64 `json:"model_notional_usd"` // subscription model spend, not billed
 	ComputeUSD       float64 `json:"compute_usd"`
 	TotalUSD         float64 `json:"total_usd"`
@@ -554,11 +560,12 @@ type Totals struct {
 func Sum(rows []Row) Totals {
 	t := Totals{Runs: len(rows)}
 	for _, r := range rows {
-		if r.Cost.ModelBasis == runstore.BasisSubscription {
-			t.ModelNotionalUSD += r.Cost.ModelUSD
-		} else {
-			t.ModelUSD += r.Cost.ModelUSD
-		}
+		// The split is the cost's own notional part, not a reading of the
+		// basis: a mixed run's basis is api-list while part of its model
+		// figure is the subscription's (P12, D140), and summing ModelUSD into
+		// the billed column would call that part money.
+		t.ModelNotionalUSD += r.Cost.ModelSubscriptionUSD()
+		t.ModelUSD += r.Cost.ModelMoneyUSD()
 		t.ComputeUSD += r.Cost.ComputeUSD
 		t.TotalUSD += r.Cost.TotalUSD
 		if !r.Cost.ComputeEstimated {

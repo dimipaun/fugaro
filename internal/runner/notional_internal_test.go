@@ -168,6 +168,30 @@ func TestGatewayStageCostTellsNotionalFromMoney(t *testing.T) {
 	}
 }
 
+// TestCostPartPrintsTheMoneyAgainstTheCap (C1.16, P12, D140): the section's
+// model cost is the money part of the run's model figure, because that is what
+// a cap is enforced on -- a cascade run's tier-A dollars are the subscription's
+// and are in no cap at all. Printed whole, "model cost $3.20 of $5 cap" would
+// read as most of a cap the run never came near.
+func TestCostPartPrintsTheMoneyAgainstTheCap(t *testing.T) {
+	c := runstore.NewCost(3.20, 0, runstore.BasisAPIList).WithNotional(2.00)
+	r := &run{spend: Spend{Mode: "enforce", Cap: 5_000_000}, rec: &runstore.Record{Cost: &c, CostUSD: c.ModelUSD}}
+	if got := r.costPart(); got != "model cost $1.20 of $5 cap" {
+		t.Fatalf("costPart = %q, want the money part beside the cap", got)
+	}
+	// The same run with no cap, and one the plan paid for whole: the second is
+	// notional, never a cost.
+	r.spend.Cap = 0
+	if got := r.costPart(); got != "model cost $1.20" {
+		t.Fatalf("costPart = %q", got)
+	}
+	sub := runstore.ModelOnlyCost(3.20, runstore.BasisSubscription)
+	r.rec = &runstore.Record{Cost: &sub, CostUSD: sub.ModelUSD}
+	if got := r.costPart(); got != "notional $3.20 (not billed)" {
+		t.Fatalf("costPart = %q", got)
+	}
+}
+
 // TestCrossCheckCostComparesTheWholeModelFigure (C1.16, F25): the cross-check
 // holds Claude Code's own total_cost_usd against the gateway's whole model
 // figure -- the money and the notional part together -- because that is what

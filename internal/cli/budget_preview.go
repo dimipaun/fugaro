@@ -610,13 +610,17 @@ func readPreviewHistory(ctx context.Context, b *blobx.Bucket, slug string, now t
 		}
 		priced := false
 		for _, st := range rec.Stages {
-			if st.ModelUSD <= 0 { // omitempty: a record from before Task 24, or a stage that called no model
+			// The stage's money, not its whole figure: a cascade stage's
+			// tier-A dollars are the subscription's (C1.16, P12) and must not
+			// be averaged into a figure printed beside real caps.
+			money := st.ModelUSD - min(st.ModelNotionalUSD, st.ModelUSD)
+			if money <= 0 { // omitempty: a record from before Task 24, a stage that called no model, or a notional-only stage
 				continue
 			}
 			priced = true
 			k := previewKind{kind: st.Name, model: st.Model}
 			m := h.means[k]
-			m.total, m.stages = m.total+st.ModelUSD, m.stages+1
+			m.total, m.stages = m.total+money, m.stages+1
 			h.means[k] = m
 		}
 		if priced {
