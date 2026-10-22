@@ -80,6 +80,9 @@ func appAuth(appID string, key *rsa.PrivateKey, now func() time.Time) func(conte
 
 // tokenPermissions is what a run's installation token asks for (design
 // §6.1): no more than the run needs, even if the App was granted more.
+// RunTokenPermissions is its exported copy, for the caller outside this
+// package that mints a run's token itself (the credentials service, C2.1) and
+// must ask for exactly these and add none.
 var tokenPermissions = map[string]string{
 	"contents": "write", "pull_requests": "write", "issues": "read", "metadata": "read",
 }
@@ -91,6 +94,14 @@ var buildTokenPermissions = map[string]string{"contents": "read", "metadata": "r
 // BuildTokenPermissions are the permissions of an image build's token, a
 // copy the caller may keep.
 func BuildTokenPermissions() map[string]string { return maps.Clone(buildTokenPermissions) }
+
+// RunTokenPermissions are the permissions of a run's installation token, a
+// copy the caller may keep. It is the exported spelling of tokenPermissions,
+// which is the set the in-process provider mints with: a caller that mints a
+// run's token through MintInstallationToken (the credentials service, C2.1)
+// asks for this and adds nothing, so the two paths cannot drift into asking
+// GitHub for different reaches on the same run.
+func RunTokenPermissions() map[string]string { return maps.Clone(tokenPermissions) }
 
 // GitUsername is the HTTPS username git uses with an installation token.
 const GitUsername = gitUsername
