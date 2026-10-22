@@ -3,7 +3,11 @@ package credsvc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+
+	"github.com/dimipaun/fugaro/internal/budget/token"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // audit.go is C1.13: the service's audit log. One structured line per act of
@@ -200,11 +204,121 @@ func NewAuditor(log *slog.Logger, opts ...AuditOption) (*Auditor, error) {
 	return a, nil
 }
 
+// The line's message, and the message an act that could not be recorded leaves
+// behind: a reader greps `credsvc: audit` for the service's acts and reads the
+// rest of the line as JSON.
+const (
+	auditMessage        = "credsvc: audit"
+	auditRefusedMessage = "credsvc: audit event refused"
+)
+
 // Write records one audited act as one structured line, and returns an error
 // if the act could not be recorded — in which case the caller must not go on
 // with it (D143: an issuance that cannot be audited is not made).
+//
+// Every field is written, empty ones included: the line's shape is the
+// contract's, so a reader does not have to tell "not known" from "not there".
+// The order is the plan's, and every field goes through internal/safetext on
+// the way out — a slug, a job name, an account and a credential's name are all
+// text another writer chose.
 func (a *Auditor) Write(ctx context.Context, ev AuditEvent) error {
-	_ = ctx
-	_ = ev
+	ev, bad := a.checked(ev)
+	if bad != "" {
+		// One line saying the act was refused, naming the field and never
+		// what it held (the no-echo rule): the field name is this file's own
+		// text. The error says the same and no more.
+		a.log.WarnContext(ctx, auditRefusedMessage, "field", bad)
+		return fmt.Errorf("credsvc: the audit event's %s is not one this service can record", bad)
+	}
+	a.log.LogAttrs(ctx, slog.LevelInfo, auditMessage,
+		slog.String("run", safetext.OneLine(ev.Run)),
+		slog.String("repository", safetext.OneLine(ev.Repository)),
+		slog.String("job", safetext.OneLine(ev.Job)),
+		slog.String("caller", safetext.OneLine(ev.Caller)),
+		slog.String("credential", safetext.OneLine(ev.Credential)),
+		slog.String("purpose", safetext.OneLine(ev.Purpose)),
+		slog.String("tier", safetext.OneLine(ev.Tier)),
+		slog.String("status", safetext.OneLine(ev.Status)),
+	)
 	return nil
+}
+
+// checked holds an event to the rules of its fields, after the scrub has run,
+// and returns the name of the first field that is not one this service can
+// record — never what it held — or "" for an event that can be written.
+func (a *Auditor) checked(ev AuditEvent) (AuditEvent, string) {
+	ev = a.redact(ev)
+	switch {
+	case !ValidStatus(ev.Status):
+		return AuditEvent{}, "status"
+	case ev.Purpose != "" && !ValidPurpose(ev.Purpose):
+		return AuditEvent{}, "purpose"
+	case ev.Run != "" && !token.ValidSegment(ev.Run):
+		return AuditEvent{}, "run"
+	case ev.Repository != "" && !token.ValidSegment(ev.Repository):
+		return AuditEvent{}, "repository"
+	case (ev.Run == "") != (ev.Repository == ""):
+		// The identity carries both: a run id without the repository it
+		// belongs to is not a run this service can name.
+		return AuditEvent{}, "run"
+	case ev.Job != "" && !ValidJobName(ev.Job):
+		return AuditEvent{}, "job"
+	case ev.Caller != "" && !validAccount(ev.Caller):
+		return AuditEvent{}, "caller"
+	case (ev.Job == "") != (ev.Caller == ""):
+		return AuditEvent{}, "job"
+	case ev.Credential != "" && !ValidCredentialName(ev.Credential):
+		return AuditEvent{}, "credential"
+	case (ev.Credential == "") != (ev.Tier == ""):
+		// The both-or-neither rule the wire already keeps (SetCredentialHeaders,
+		// CredentialHeaders): a line naming one without the other is not one
+		// this service writes, and a reader that guessed the missing half
+		// would be reading an answer the service did not give.
+		return AuditEvent{}, "credential"
+	case ev.Tier != "" && !ValidTier(ev.Tier):
+		return AuditEvent{}, "tier"
+	}
+	// A line that says a credential was used names the whole act; a refusal
+	// carries only what was known when it was refused.
+	if ev.Status == StatusOK {
+		switch {
+		case ev.Purpose == "":
+			return AuditEvent{}, "purpose"
+		case ev.Run == "":
+			return AuditEvent{}, "run"
+		case ev.Job == "":
+			return AuditEvent{}, "job"
+		case ev.Credential == "":
+			return AuditEvent{}, "credential"
+		}
+	}
+	return ev, ""
+}
+
+// redact applies the service's own redaction to every field before any rule
+// looks at one, so a value the service holds reaches neither the line nor the
+// error a refused line returns (redactWriter's rule, F32).
+func (a *Auditor) redact(ev AuditEvent) AuditEvent {
+	if a.scrub == nil {
+		return ev
+	}
+	ev.Run = a.scrub(ev.Run)
+	ev.Repository = a.scrub(ev.Repository)
+	ev.Job = a.scrub(ev.Job)
+	ev.Caller = a.scrub(ev.Caller)
+	ev.Credential = a.scrub(ev.Credential)
+	ev.Tier = a.scrub(ev.Tier)
+	ev.Purpose = a.scrub(ev.Purpose)
+	ev.Status = a.scrub(ev.Status)
+	return ev
+}
+
+// validAccount reports whether s is an account this line may name: the
+// printable-ASCII address rule auth.go holds the installation's configured job
+// accounts to, and the rule a presented claim is matched by. A "caller" that
+// could not be one of those accounts is refused rather than recorded as if it
+// had been verified.
+func validAccount(s string) bool {
+	_, ok := foldEmail(s)
+	return ok
 }
