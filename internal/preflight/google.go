@@ -93,7 +93,7 @@ func billingAPIDisabled(ctx context.Context, crmSvc *crm.Service, quota, project
 	}
 	return Check{ID: "billing-api",
 		Problem: "the Cloud Billing API is disabled on " + quota + ", the quota project of your credentials, which is not " + project,
-		Fix:     line + shellword.Quote(quota) + " (on that project: ask an owner of it)"}
+		Fix:     line + shellword.Quote(quota) + "   # on that project: ask an owner of it"}
 }
 
 // quotaProjectIfDisabled reports the quota project the Cloud Billing API is
