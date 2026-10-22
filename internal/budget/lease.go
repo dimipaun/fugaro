@@ -643,11 +643,12 @@ func (s *Session) probeByTierKeys(ctx context.Context, upd map[string]any) (refu
 // that node's reservation -- the lifetime one against the run's whole
 // reservation, the day one against that day's. The two shared counters
 // bound one write by limits.maxReserveMicros. So the amount one tier moves
-// in a round is the smallest of those rooms: the four leaves of a round
-// move together and none can be refused for the others' sake. A tier with
-// no room keeps its amount pending and the round says more, and the split
-// is never tied to the total it splits: nothing decides anything on it
-// (admissions, switches and kill switches read spent and notional), so
+// in a round is the smallest of the run's lifetime room and that bound, and
+// each day leaf then takes what its own day's room allows: the run's room
+// bounds the round, the days' rooms only say how much of it lands where. A
+// tier with no room keeps its amount pending and the round says more, and
+// the split is never tied to the total it splits: nothing decides anything
+// on it (admissions, switches and kill switches read spent and notional), so
 // b + c above spent is a latitude this code does not create and does not
 // have to repair.
 func (s *Session) planByTier(ctx context.Context, p pending, ledger RunLedger, leased map[int64]bool, today int64, maxRes Micros, maxErr error, counterAt func(int64) (*dayCounters, error), upd map[string]any, took *pending, more *bool) error {
@@ -659,38 +660,25 @@ func (s *Session) planByTier(ctx context.Context, p pending, ledger RunLedger, l
 	}
 	slug, run := s.cfg.Slug, s.cfg.Run
 	// The days this run may split onto: today always, and yesterday only
-	// while it holds a lease there (the same rule the totals settle by).
-	days := []int64{today}
-	if leased[today-1] {
-		days = append(days, today-1)
-	}
-	shares := make(map[int64]RunLedger, len(days))
-	for _, day := range days {
-		var dr RunLedger
-		if _, err := s.db.Get(ctx, PathSpendRun(day, slug, run), &dr); err != nil {
-			return err
-		}
-		shares[day] = dr
-	}
+	// while it holds a lease there, oldest first (the same rule, order and
+	// reason the totals settle by).
+	days := []int64{today - 1, today}
 	for _, tier := range []string{TierB, TierC} {
 		want := p.byTier[tier]
 		if want <= 0 {
 			continue
 		}
 		cur := ledger.ByTier[tier].Spent
-		// The run's own lifetime ledger needs no bound of its own: every
-		// lease raises the run's reservation and the day's by the same
-		// amount, so the run's room is the sum of the days' and a day's room
-		// is never the larger of the two. What bounds the split there is
-		// this loop.
-		n := min(want, maxRes)
-		for _, day := range days {
-			if n <= 0 {
-				break
-			}
-			dr := shares[day]
-			n = min(n, dr.Reserved-dr.Released-dr.ByTier[tier].Spent)
-		}
+		// The run's lifetime leaf is bounded by the run's own room, and by
+		// that room only. A day's room is not a bound on it and must not be
+		// one: a spent day has none left for the rest of the run (its
+		// byTier leaf reaches reserved - released as it is spent, and
+		// released rises only at Close), so bounding the round by every
+		// candidate day's room would stop the split for good after the first
+		// day is spent -- silently, while spent kept landing, and with
+		// yesterday unable to receive anything either, today being first.
+		// What the days bound is the per-day leaves, each on its own below.
+		n := min(want, maxRes, ledger.Reserved-ledger.Released-cur)
 		if n <= 0 {
 			// Nothing to move onto this round: the run's own reservation is
 			// what the split waits for, and a lease that raises it (or the
@@ -698,26 +686,37 @@ func (s *Session) planByTier(ctx context.Context, p pending, ledger RunLedger, l
 			*more = true
 			continue
 		}
-		upd[PathRunByTier(slug, run, tier)+"/spent"] = add(cur, n)
 		left := n
 		for _, day := range days {
 			if left <= 0 {
 				break
 			}
-			dr := shares[day]
-			c, err := counterAt(day)
-			if err != nil {
+			if day != today && !leased[day] {
+				continue
+			}
+			var dr RunLedger
+			if _, err := s.db.Get(ctx, PathSpendRun(day, slug, run), &dr); err != nil {
 				return err
 			}
 			take := min(left, dr.Reserved-dr.Released-dr.ByTier[tier].Spent)
 			if take <= 0 {
 				continue
 			}
+			c, err := counterAt(day)
+			if err != nil {
+				return err
+			}
 			upd[PathSpendRunByTier(day, slug, run, tier)+"/spent"] = add(dr.ByTier[tier].Spent, take)
 			upd[PathSpendRepoByTier(day, slug, tier)+"/spent"] = add(c.repo.ByTier[tier].Spent, take)
 			upd[PathSpendGlobalByTier(day, tier)+"/spent"] = add(c.global.ByTier[tier].Spent, take)
 			left -= take
 		}
+		// The run's leaf moves the whole round's amount even when no day
+		// could take a part of it (a lease older than yesterday has room on
+		// the run's lifetime ledger and none on any day this run may write
+		// to): the run leaf's own rule asks only for the run's reservation,
+		// and the day leaves are validated apart from it.
+		upd[PathRunByTier(slug, run, tier)+"/spent"] = add(cur, n)
 		took.byTier[tier] = n
 		*more = *more || n < want
 	}

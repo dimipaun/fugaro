@@ -72,6 +72,70 @@ func TestByTierSplitCarriesTheSettledMoney(t *testing.T) {
 	}
 }
 
+// TestByTierSplitDoesNotStallOnTheDayThatIsSpent (C1.16): a run that crosses
+// UTC midnight keeps splitting. By then yesterday's room is gone -- a day's
+// by-tier leaf reaches its reservation as the day is spent, and released
+// rises only at Close -- so a round bounded by *every* candidate day's room
+// would write nothing at all, for the rest of the run, while `spent` kept
+// landing: the split a cascade run exists to show would stop, silently, at
+// the first midnight. What bounds the run's lifetime leaf is the run's own
+// room; the days' rooms only say how much of it lands where, and a day with
+// none of its own is skipped rather than allowed to bound the round.
+func TestByTierSplitDoesNotStallOnTheDayThatIsSpent(t *testing.T) {
+	f := newFixture(t)
+	s := f.started(budget.AgentEntry{Stage: "implement"})
+	ctx := context.Background()
+	d0 := today()
+	if _, err := s.Lease().Grant(ctx, 1_000_000); err != nil {
+		t.Fatal(err)
+	}
+	used := budget.Micros(1_000_000)
+	s.SetUsage(func() budget.Micros { return used })
+	runB := budget.PathRunByTier(slug, runID, budget.TierB) + "/spent"
+	if err := s.Lease().Report(ctx, gateway.StageReport{Calls: 1, Used: 1_000_000, ByTier: map[string]pricing.Micros{gateway.TierB: 1_000_000}}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the first day's whole split", func() bool { return f.num(runB) == 1_000_000 })
+	if f.share(d0, "spent") != 1_000_000 {
+		t.Fatalf("the first day settled %d", f.share(d0, "spent"))
+	}
+
+	// The day turns: d0 holds a reservation of 1000000, all of it spent and
+	// none of it released -- room 0 for the rest of the run. The grant that
+	// follows is the new day's (and the session sees the new day at once: it
+	// reads the day from the database's clock, the Date header of the answer
+	// to the read this grant begins with).
+	d1 := d0 + 1
+	f.db.SetClock(func() time.Time { return noon.Add(24 * time.Hour) })
+	if _, err := s.Lease().Grant(ctx, 500_000); err != nil {
+		t.Fatal(err)
+	}
+	used = 1_500_000
+	if err := s.Lease().Report(ctx, gateway.StageReport{Calls: 1, Used: 1_500_000, ByTier: map[string]pricing.Micros{gateway.TierB: 500_000}}); err != nil {
+		t.Fatal(err)
+	}
+	// The totals settle onto today (yesterday's share has no room left).
+	waitFor(t, "the new day's money to settle", func() bool { return f.run("spent") == 1_500_000 && f.share(d1, "spent") == 500_000 })
+	// The split follows the money, on the run's leaf and on the new day's
+	// three -- and it lands quickly: several heartbeats is many rounds.
+	time.Sleep(150 * time.Millisecond)
+	if got, want := byTier(f, d1, budget.TierB), [4]int64{1_500_000, 500_000, 500_000, 500_000}; got != want {
+		t.Fatalf("the new day's split = %v, want %v (run, share, repo, global)", got, want)
+	}
+	if got, want := byTier(f, d0, budget.TierB), [4]int64{1_500_000, 1_000_000, 1_000_000, 1_000_000}; got != want {
+		t.Fatalf("the spent day's split = %v, want %v: nothing may be moved onto it again, and the run's own leaf is where the whole split is", got, want)
+	}
+	// Nothing of it is pending any more: a split that stalled keeps writing
+	// what it could not write, and this one has nothing left to write.
+	time.Sleep(150 * time.Millisecond)
+	if got := f.num(runB); got != 1_500_000 {
+		t.Fatalf("the split moved past the money reported: %d", got)
+	}
+	if h, ok := f.nextHalt(100 * time.Millisecond); ok {
+		t.Fatalf("a run splitting across midnight was halted: %+v", h)
+	}
+}
+
 // TestByTierSplitMovesAtMostOneLargestLeasePerWrite (C1.16): the two shared
 // day counters validate an increase of at most limits.maxReserveMicros, and
 // the four leaves of one round are written in one atomic update, so one
