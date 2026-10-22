@@ -83,8 +83,8 @@ func ValidPurpose(purpose string) bool {
 const StatusOK = "ok"
 
 // ValidStatus reports whether status is one an audit line carries. A status is
-// the wire contract's own vocabulary plus StatusOK, and not a set of its own
-// (review of C1.13): the two are read together — the runner's halt message
+// the wire contract's own vocabulary plus StatusOK, and not a set of its own:
+// the two are read together — the runner's halt message
 // comes from the contract's error type, and the operator's line from this
 // field — so a status the contract cannot express is a status this service
 // cannot reach. The contract's reasons say why a credential was not used
