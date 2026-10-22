@@ -111,9 +111,38 @@ version of the task left to implement: the plan and the Terraform agree.
   own Verification line names `terraform fmt -check -recursive`,
   `go test -tags terraform ./internal/infra/...` and `terraform test` in both
   roots; running them here would be verifying code this run did not write, on a
-  base whose own CI (`ci.yml`'s terraform job) already owns that. The
-  repository-wide verification this run is required to record *was* run, and its
-  result is stated in the pull request body.
+  base whose own CI (`ci.yml`'s terraform job) already owns that.
+
+## The repository-wide verification, and the one failure it reports
+
+The run's configured build passes (`fugaro verify build`: exit 0). The
+configured test command **fails**, on one test, and that failure is on the base
+branch rather than in this pull request:
+
+```
+--- FAIL: TestDocsCoordinatorNumbersTableIsReadFromItsSources (0.03s)
+    docs_coordinator_test.go:1502: docs/coordinator/README.md's numbers section cites
+      docs/design/always-on-orchestrator.md in prose: the Check 110 row names the design
+      claiming that number; the design is in open PR #632 and not on main
+    docs_coordinator_test.go:1609: docs/coordinator/README.md's checks row says the highest
+      check section written is 90, and the register's highest `## Check` section is 91
+FAIL	github.com/dimipaun/fugaro/internal/cli
+```
+
+**It is pre-existing and it is not this change's.** The proof is direct: with
+this note — the pull request's only file — moved out of the tree and nothing else
+touched, `go test ./internal/cli -run TestDocsCoordinatorNumbersTableIsReadFromItsSources`
+fails with exactly those two lines, on `origin/integration-0.9.6`. Both lines are
+readings of *other* documents: the live-check register's new `## Check 91` section
+(which landed into the base with #727) against `docs/coordinator/README.md`'s
+"highest check" row, and a design document that is in open PR #632 and not on this
+branch. Neither file is one this task, or this note, has any business editing.
+
+Everything else the configured test command runs passes. **This note does not
+repair the failure**, because repairing it would mean editing `docs/coordinator/` —
+a change outside this task and one the task's own first step ("change nothing")
+rules out. It is reported here and in the pull request so that whoever owns that
+guard sees it; the pull request stays a draft for as long as the base is red.
 
 ## One observation for the owner, offered and not acted on
 
