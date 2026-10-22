@@ -67,7 +67,9 @@ const (
 
 	// mobileAuthPin is this file, by path: P0's own commit adds it, and the
 	// excuse list below is where that fact has to be recorded -- see the
-	// comment on mobileAuthWillCreate.
+	// comment on mobileAuthWillCreate. TestDocsMobileAuthCitationsResolve
+	// asserts both halves of that: the path is in the tree, and it is not an
+	// entry on the list.
 	mobileAuthPin = "internal/cli/docs_mobile_auth_test.go"
 
 	// mobileAuthAnswered is the line every decision carries under it: the
@@ -227,9 +229,20 @@ func mobileAuthDecisions(doc string) []mobileAuthDecision {
 	return out
 }
 
+// mobileAuthNoAlternative is the one decision that states no Alternative, and
+// it is named rather than left to the check below to skip: D235 asks what v1 is
+// and what is later, so it answers with a v1 list and a later list rather than
+// with a choice between two things -- there is no second option to price. Every
+// other decision states one, and a decision that loses its Alternative is a
+// recording that stopped being the weighing the owner answered: the plan exposes
+// the alternative it displaced so an answer against the recommendation is taken
+// with its cost in front of the owner.
+const mobileAuthNoAlternative = "D235"
+
 // TestDocsMobileAuthDecisionsAreNumbered: the decisions are D221-D236,
 // contiguous and in order, each recommendation-first with the alternative and
-// its cost after it, and each carrying the owner's answer of 2026-10-22.
+// its cost after it (D235 states none, and is the one named exception), and each
+// carrying the owner's answer of 2026-10-22.
 //
 // A decision number is an allocation the owner made, so a number that moves or
 // a gap that opens is not a formatting slip: it is this work claiming a number
@@ -239,7 +252,9 @@ func mobileAuthDecisions(doc string) []mobileAuthDecision {
 // takes for a plan they do not have.
 //
 // Mutation (verified, run and restored): renumber one decision (D236 to D237)
-// and this test fails naming the number and the position.
+// and this test fails naming the number and the position; delete a decision's
+// Alternative -- any but D235's, which has none -- and it fails naming the
+// decision that stopped pricing the option it displaced.
 func TestDocsMobileAuthDecisionsAreNumbered(t *testing.T) {
 	recon := readDoc(t, mobileAuthRecon)
 	decisions := mobileAuthDecisions(recon)
@@ -256,8 +271,12 @@ func TestDocsMobileAuthDecisionsAreNumbered(t *testing.T) {
 			t.Errorf("%s's %s states no Recommendation: every decision is written recommendation first, because the plan is written to the recommendation and a part whose answer went the other way is rewritten", mobileAuthRecon, d.number)
 			continue
 		}
-		if alt := strings.Index(d.body, "Alternative"); alt >= 0 && alt < rec {
+		alt := strings.Index(d.body, "Alternative")
+		switch {
+		case alt >= 0 && alt < rec:
 			t.Errorf("%s's %s states its Alternative before its Recommendation: the recommendation is the half the plan follows, so it comes first and the alternative and its cost follow it", mobileAuthRecon, d.number)
+		case alt < 0 && d.number != mobileAuthNoAlternative:
+			t.Errorf("%s's %s states no Alternative, and %s is the only decision that states none: an answer against the recommendation is taken with its cost in front of the owner, and a decision that dropped the option it displaced dropped that cost with it", mobileAuthRecon, d.number, mobileAuthNoAlternative)
 		}
 		if !strings.Contains(d.body, mobileAuthAnswered) {
 			t.Errorf("%s's %s carries no %q line: the owner answered all sixteen on 2026-10-22, and which answer each took is the one thing a reader of this section cannot infer from the text", mobileAuthRecon, d.number, mobileAuthAnswered)
@@ -429,6 +448,18 @@ func TestDocsMobileAuthCitationsResolve(t *testing.T) {
 			}
 		}
 	}
+	// This file is the third of this work's own three new paths, and it is
+	// deliberately not on the list: P0's own pull request is the one that landed
+	// it, so it was the one that owed the entry's deletion. That is the same
+	// rule as every entry below, read the other way, and it is asserted rather
+	// than left to the comment that says it.
+	if _, excused := mobileAuthWillCreate[mobileAuthPin]; excused {
+		t.Errorf("mobileAuthWillCreate excuses %s, which is this file: it was excused only while it did not exist, and the pull request that landed it -- the one this file is in -- owed its deletion", mobileAuthPin)
+	}
+	if _, err := os.Stat("../../" + mobileAuthPin); err != nil {
+		t.Errorf("%s is not in the tree: %v", mobileAuthPin, err)
+	}
+
 	for p, why := range mobileAuthWillCreate {
 		if !named[p] {
 			t.Errorf("mobileAuthWillCreate excuses %s (%s), which neither the reconciliation nor the plan cites any more: the list must only excuse a path the documents actually name", p, why)
