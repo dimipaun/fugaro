@@ -488,9 +488,10 @@ export function createMailboxClient(options = {}) {
   /**
    * What the consumer looked like at the last poll, re-judged NOW.
    *
-   * `null` means no poll has run, which is the one input the gate reads as "no
-   * observation" rather than as a refusal (`gate.js` says why). Everything else
-   * goes back through `presenceOf` with the current time, so a heartbeat that
+   * `null` means no poll has run, and P6.10's gate reads that as its own refusal
+   * (`consumer-unobserved`: nothing has looked, so nothing is known -- the
+   * review's M2, and `gate.js` says why it fails closed). Everything else goes
+   * back through `presenceOf` with the current time, so a heartbeat that
    * was fresh when it was read and has since gone quiet is `stale` or `offline`
    * at the moment the owner speaks -- which is the question, and not "was the
    * consumer up five minutes ago".
