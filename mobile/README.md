@@ -168,7 +168,7 @@ fences, are `src/demo/`'s; the words the owner pastes into the Play form are
 | `src/app/startup.js` | The guarded startup and the root error boundary (added 2026-10-21, after the Android launch crash): `startup.root(build)` builds the app inside a `try` and renders the failure screen if it throws, `report(error, what)` is the same door for a failure that arrives later, `guard(what, run)` wraps one step the app runs later -- a tap handler, an async startup step -- and catches **both** its synchronous throw and its rejected promise, because a handler runs from the platform's event loop and not from any `try` in this file, and `failureDetails`/`createFailureScreen` turn anything thrown -- a string, `undefined`, a circular object -- into what the phone shows: the step, the message, and a selectable "Copy details" line. `React` arrives as an argument that must carry `Component`, because an error boundary is a class. `src/app/startup.test.js` drives it with a fake React, a renderer and all. |
 | `src/app/first-screen.js` | The first screen: what the app is waiting for, the "Try the demo" control, and the slot (`pairingScreen`) where P6.8's pairing screen goes -- above the demo control, never instead of it. |
 | `src/demo/` | Demo mode (the owner's ruling of 2026-10-19): the fixed sample data (`sample.js`), the placeholder key source (`keys.js`), the transport that plants the consumer's side in the port double (`transport.js`), the controller (`index.js`) and the screen (`screen.js`). `safety.test.js` is the scan that holds the three fences (no network, no secure storage, no credential). |
-| `src/mailbox/` | The mailbox client: the write paths and their key rules (`paths.js`), the app's SHA-256 and HMAC (`sha256.js`, `mac.js`), the redactor's seam (`redact.js`), the database port and its double (`store.js`), the audio stub (`speaker.js`) and the client itself (`client.js`). `index.js` is the one door; `write-path.test.js` is the scan that enforces the one-write-path claim; `mutation-proof.sh` proves the guards; `README.md` is the module's own rule sheet. |
+| `src/mailbox/` | The mailbox client: the write paths and their key rules (`paths.js`), the app's SHA-256 and HMAC (`sha256.js`, `mac.js`), the redactor's seam (`redact.js`), the database port and its double (`store.js`), the connection port and its double and the offline gate's decision (`connection.js`, `gate.js` — P6.10/D167), the audio stub (`speaker.js`) and the client itself (`client.js`). `index.js` is the one door; `write-path.test.js` is the scan that enforces the one-write-path claim; `mutation-proof.sh` proves the guards; `README.md` is the module's own rule sheet. |
 | `src/feed/` | The feed reader: the four granted families and the gate every read passes (`paths.js`), the wire node shapes (`nodes.js`), the contract's document rules (`document.js`) and the two figures the phone recomputes (`recompute.js`), the screen's rules (`view.js`) and the reader itself (`reader.js`). `index.js` is the one door; `fixtures/nodes.js` is the synthetic recording the tests read. |
 | `src/jobs/` | The job list (P3.3): the field table (`fields.js`), the project's row (`row.js`), the heartbeat line (`heartbeat.js`), the list and its wiring (`list.js`), what the screen says (`lines.js`) and the scope scan (`scope.test.js`). `index.js` is the one door; the section below is the rule sheet. |
 | `src/audio/` | The voice ports and their fakes (P3.4): the capture path (`audio-in.js`), transcription (`stt.js`), speech output (`tts.js`), the transcript-to-message rule (`message.js`) and the pipeline that wires them (`pipeline.js`). **No engine, no device, no SDK**: `index.js` is the one door, and its test scans the directory for exactly that. |
@@ -1744,10 +1744,15 @@ because a phrase was expected.
   message and cannot make anything act.
 * **The mailbox against a real database, and its deployed rules.** P3.6's client
   is tested against the port's double, which models the two rules a re-send
-  meets and nothing else: no auth, no listeners, no quota, no project. Checks
-  **81** and **82** (the deployed rules' fence and the rules deploy) are
-  owner-run and have not been run, so *what the deployed rules do with a
-  re-write* is asserted here only as the double's model of them.
+  meets and, since P6.10, the SDK's **offline write queue** (`setOffline`,
+  `pendingWrites`, `flushQueue`, `cancelPending`) — which is not a rule of the
+  tree at all but a behaviour of the client library — and nothing else: no auth,
+  no listeners, no quota, no project. Checks **81** and **82** (the deployed
+  rules' fence and the rules deploy) are owner-run and have not been run, so
+  *what the deployed rules do with a re-write* is asserted here only as the
+  double's model of them. **No adapter is wired for either new port**: the
+  connection the gate reads is `MemoryConnection`, so the Firebase SDK's own
+  connection state is unverified here (no project, Global Constraint 10).
 * **Metro, and the `shared/` imports.** `src/mailbox/` imports
   `../../../shared/mailbox-schema/index.js`, `../../../shared/presence/index.js`
   and `../../../shared/digest/redact.js`; node resolves them (the tests run), the

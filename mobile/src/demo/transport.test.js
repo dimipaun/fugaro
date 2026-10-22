@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createMailboxClient } from '../mailbox/index.js';
+import { MemoryConnection, createMailboxClient } from '../mailbox/index.js';
 import { macOf } from '../mailbox/mac.js';
 import { demoKeySource, DEMO_KEY_ITEM, DEMO_PAIRING_KEY } from './keys.js';
 import { DEMO_ACCOUNT, DEMO_INTERVAL_MS, DEMO_NOW, DEMO_PROMPT, DEMO_REPLIES } from './sample.js';
@@ -95,6 +95,9 @@ test('a reply tagged with the wrong key is DROPPED by the app\'s own verifier', 
     account: DEMO_ACCOUNT,
     keys: demoKeySource(),
     store: transport.store,
+    // P6.10: the demo's phone has a connection -- mode
+    // runs on fakes and nothing here is ever sent anywhere.
+    connection: new MemoryConnection(),
     speaker: transport.speaker,
     now: () => DEMO_NOW,
     newId: demoIds(),
