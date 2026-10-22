@@ -4526,7 +4526,7 @@ grep -o '@media (width<=[0-9.]*rem)' website/dist/index.html | head -1
 # and `site.js` ask the same query, and `website/test/nav-hover.mjs` holds the two together).
 grep -o '@media (hover:hover) and (pointer:fine)' website/dist/index.html | head -1
 # The groups and links the menu shows, read out of the layout rather than typed: the names
-# steps 3 and 5 look for, and the nine links step 3 has to reach. Two group labels since the
+# steps 3 and 5 look for, and the ten links step 3 has to reach. Two group labels since the
 # owner's feedback of 2026-10-21 dropped the Reference group.
 sed -n '/^const NAV_GROUPS/,/^]/p' website/src/layouts/Base.astro | grep -o "label: '[^']*'"
 # The one-row header's height, out of the stylesheet and the markup rather than typed: the
@@ -4623,19 +4623,19 @@ grep -n 'width="47"' website/src/layouts/Base.astro
    none at any width now — the labels are the menu at every width, and what changes at the
    48 rem the method block reads is only where a group's list is drawn (across the header on a
    phone, a dropdown under its own label from there up). Read the groups: **they are dropdowns
-   at this width too** — two `<summary>` controls, each with its own links behind it (four
+   at this width too** — two `<summary>` controls, each with its own links behind it (five
    under *Product*, five under *Project*) and
    closed until the pointer arrives at it (step 6) or the focus lands on it (step 7) (D182's
    "top-level sections with dropdowns", the same two levels as the phone's menu, which is
-   what makes this a two-level menu rather than a row of nine links). **FACT:** the header's
-   height, the two group names, that no `Menu` control is on the page, and that the nine
+   what makes this a two-level menu rather than a row of ten links). **FACT:** the header's
+   height, the two group names, that no `Menu` control is on the page, and that the ten
    links are not printed in the row before anything is opened.
 
 6. **On a hovering pointer, the submenu opens when the pointer arrives (the owner's brief of
    2026-10-18, item 1 — the brief's acceptance line, and the reason `website/test/nav-hover.mjs`
    exists).** Still at 1280 × 900, with a mouse or a trackpad — a device that answers the
    `(hover: hover) and (pointer: fine)` query the method block reads out of the artifact.
-   Move the pointer onto **Product** and **do not click**: its four links appear under the
+   Move the pointer onto **Product** and **do not click**: its five links appear under the
    header's row immediately, and the header's height does not change (step 5's number again).
    Move the pointer **into the list**, onto one of its links: the submenu is still open —
    the pointer has not left the group, so nothing closes under it. Move the pointer **out of
@@ -4763,7 +4763,7 @@ dismissed it, which is what a handback that cannot tell the browser's close from
 looks like. Or, on the keyboard side of step 7, **a device that answers the hover query no
 whose menu the keyboard cannot enter** — a group whose submenu opens only when a hovering
 pointer arrives at it, which leaves the links inside it unreachable by Tab. The wide viewport's
-grouping of the nine links behind two summaries is *not* a
+grouping of the ten links behind two summaries is *not* a
 failure: the dropdowns are D182's decision, and the whole menu is two groups since the owner's
 feedback of 2026-10-21. The **structural** half of each of those is already
 refused by `website/test/base-styles.mjs` — `navLayoutFailures` holds the header to one row
@@ -6309,8 +6309,8 @@ all — no section, no heading, no frame and no picture-shaped hole — because 
 **yours** and arrive as files (D251, D240's second condition's counterpart in the design: a page
 that shows an empty box is a page whose picture looks broken). **And the page asks a reader for
 nothing**: D239's answer is "no waitlist", so there is no form, no email field, no button and no
-`mailto:` anywhere on it. What is **not** here is a date: nothing on the page says when the app
-will arrive, and that is the point of step 3 rather than a gap.
+`mailto:` anywhere in the page's own content. What is **not** here is a date: nothing on the page
+says when the app will arrive, and that is the point of step 3 rather than a gap.
 
 **What the gates hold, and what only your eyes can.** `website/test/mobile.mjs` holds the claims
 against the data file's rows — one card per row, in the list its own `state` names, with the same
@@ -6342,13 +6342,31 @@ grep -o 'data-claims="[a-z]*"' website/dist/mobile/index.html
 grep -o 'data-state="[a-z]*"' website/dist/mobile/index.html
 grep -o '<p class="mobile-claim-state"[^>]*>[^<]*' website/dist/mobile/index.html
 # The claims themselves, out of the data file rather than remembered: the texts step 2 reads back.
-sed -n 's/^ *state: *//p;s/^ *text: *//p' website/data/mobile-claims.yaml
+# The dash is part of the row's first line (`  - state: shipped`), so the pattern allows it.
+sed -n 's/^ *- *state: *//p;s/^ *text: *//p' website/data/mobile-claims.yaml
 # The screenshots file: one line, and the empty list is what step 6's first half reads.
 sed -n '/^screens:/p' website/data/mobile-screens.yaml
-# Nothing on the page asks a reader for anything: step 5. All four of these must print nothing.
-grep -o '<form\|<input\|<textarea\|<select\|<button' website/dist/mobile/index.html
-grep -o 'mailto:' website/dist/mobile/index.html
-grep -o 'https\?://[^"]*' website/dist/mobile/index.html | grep -v 'fugaro.dev\|www.w3.org'
+# Nothing on the page asks a reader for anything: step 5. All three of these must print nothing,
+# and each reads the page's own <main> rather than the whole document. An unscoped read finds the
+# layout's own furniture and reads a correct page as a failure: the consent banner's Accept and
+# Decline are two <button>s, and the footer carries googletagmanager.com and github.com. All of
+# that is on every page of the site and is check 69b's half of "nothing phones home", not this
+# one's (step 5's note). The built page is minified onto one line, so the extraction is a read
+# rather than a sed range — and it stops the block rather than going quiet, because an empty
+# extraction would make all three reads below pass by matching nothing.
+MAIN=$(python3 - <<'PY'
+import re, sys
+html = open("website/dist/mobile/index.html").read()
+m = re.search(r"<main\b.*?</main>", html, re.S)
+if not m:
+    sys.exit("Check 113 stopped: website/dist/mobile/index.html has no <main>, so the three reads below would pass by matching nothing")
+print(m.group(0))
+PY
+) || exit 1
+[ -n "$MAIN" ] || { echo "Check 113 stopped: the page's <main> read back empty" >&2; exit 1; }
+printf '%s' "$MAIN" | grep -o '<form\|<input\|<textarea\|<select\|<button'
+printf '%s' "$MAIN" | grep -o 'mailto:'
+printf '%s' "$MAIN" | grep -o 'https\?://[^"]*' | grep -v 'fugaro.dev\|www.w3.org'
 # The menu item, and the page it points at: step 7.
 grep -o 'href="/mobile/"' website/dist/index.html
 ```
@@ -6440,7 +6458,9 @@ with the list it stands in — a reader then believes the app has the roster tod
 false present tense D240's second condition exists to refuse; a year, a month or a season appears
 anywhere in the page's own words, its title or its description; the wake-word bullet stops saying
 where the recognition happens, or any speech service, engine or cloud is named on the page; a form,
-an email field, a button, a `mailto:` or a third party appears, or the page sends a request of its
+an email field, a button, a `mailto:` or a third party appears in the page's own content — the
+consent banner and the footer are the layout's and every page has them, which is why the Method
+block's three reads are scoped to the page's `<main>` — or the page sends a request of its
 own; the page draws an empty frame or a broken picture where a screenshot should be; the menu gains
 a third group, loses the Mobile item or puts it somewhere other than last in Product; or the page
 overflows a phone's column or draws its marks too small to read. **What failing looks like:** a page
