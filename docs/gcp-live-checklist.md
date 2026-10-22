@@ -323,17 +323,19 @@ verification first because a swap that does not survive a header change makes
 that plan's tier A wasted work, and Check 90's own header list **is** what its
 Task C1.7 is written against (the plan's "What must be sequential", item 1).
 **92** (the rules deployed) is written below by that plan's Task C1.5 — its row
-and its section, **NOT RUN** — and **94 to 99** (the service deployed, a run
-through it, GitHub tokens, the Batch backend, resume after job death, and the
-cascade end to end) belong to that plan's later tasks and are **reserved here
-and not written yet**, so their absence below is not a gap in the numbering.
+and its section, **NOT RUN** — and **94**, **95** and **99** (the service
+deployed, a run through it, and the cascade end to end) are written below too,
+by that plan's Task C1.23 — their rows and their sections, each **NOT RUN** —
+while **96 to 98** (GitHub tokens, the Batch backend, and resume after job
+death) belong to that plan's later tasks and are **reserved here and not
+written yet**, so their absence below is not a gap in the numbering.
 **93 is reserved and unused:** it was the declined in-runner cascade's
 end-to-end check, its subject is gone with the owner's O1 ruling of 2026-10-17,
 and a reserved number is never given a new subject. **This block collides with
 no earlier reservation.** The register's written rows ran to **89** before this
-block; **90, 91 and 92 are written below** (90 **RUN 2026-10-21: PASSED — TIER
-A VIABLE**; 91 and 92 **NOT RUN**), and 93 to 99 are
-the reserved numbers above; above 60
+block; **90, 91, 92, 94, 95 and 99 are written below** (90 **RUN 2026-10-21:
+PASSED — TIER A VIABLE**; 91, 92, 94, 95 and 99 **NOT RUN**), and **93** and
+**96 to 98** are the reserved numbers above; above 60
 the numbers are the website work's (**69 and up**, with its redesign's
 70a–70c) and the mobile work's (**80–89 carved out of that same range**,
 `docs/mobile/README.md`, the owner's allocation of 2026-10-16), and **90–99 is
@@ -420,8 +422,9 @@ the section, `scripts/live-checks/check90.sh` and its appendix — is in this tr
 now (PR #727), **in that same row and that same section**: one number has one
 row and one section here, never two. **Check 91's row and its section are in
 this file below**, written by Task C0.3 and **NOT RUN**. **92** (the rules
-deployed) is written below by that plan's Task C1.5 and **NOT RUN**, and **94 to
-99** belong to that plan's later tasks and are reserved here and unwritten;
+deployed) is written below by that plan's Task C1.5 and **NOT RUN**; **94**, **95**
+and **99** are written below by Task C1.23 and **NOT RUN** too, and **96 to 98**
+belong to that plan's later tasks and are reserved here and unwritten;
 **93 is reserved and unused** (the declined in-runner cascade's end-to-end
 check, its subject gone with the owner's O1 ruling of 2026-10-17). The block is
 carved out of the website work's range exactly as the mobile work's 80–89 is,
