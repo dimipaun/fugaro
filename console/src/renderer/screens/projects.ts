@@ -43,8 +43,10 @@
 // draws the *caps*, their binding scopes and the kill switches (the plan's
 // "caps, kill state"), and per-job cost only as the row's own ledger -- so two
 // screens cannot disagree about a dollar figure. The three accounts stay apart
-// here too: a job whose `model_basis` is `subscription` draws its model dollars
-// as `NOTIONAL~`, exactly as the Live and Spend screens do.
+// here too: a job draws the **billed** part of its model figure as its model
+// dollars -- `model_usd` minus `model_notional_usd`, C1.16/P12 -- and
+// `NOTIONAL~` only when that part is the plan's whole figure, exactly as the
+// Live and Spend screens do.
 //
 // Everything else is Task 2.0's two rules, unchanged: every number enters
 // through `readNumber` and is drawn through `putReading`, and every string from
@@ -413,15 +415,40 @@ function repoEntryOf(raw: unknown): RepoEntry | null {
   return { slug: slug ?? repo ?? '', repo }
 }
 
-/** costOf reads `runstore.Cost`'s four fields the console draws, with the
- * basis deciding the state of the model figure: a `subscription` basis is a
- * list price that was never billed, which is the notional account. */
+/** modelReading is this screen's model figure: the row's model dollars as
+ * **money** (C1.16, P12/D140), because `model_usd` is the whole model figure
+ * -- the money and the subscription's list price together -- and
+ * `model_notional_usd` is the part of it the plan paid. The billed dollars are
+ * the difference; the basis alone cannot make that split, since a mixed cascade
+ * run's basis is `api-list` for the whole run while part of its figure is the
+ * plan's. A row written before C1.16 carries no `model_notional_usd`, and then
+ * the subscription basis is the fallback: such a row's whole figure is the
+ * plan's, and that is the notional account.
+ *
+ * The state follows the figure: the money part when the row has one, and
+ * otherwise the notional figure marked notional -- the same figure and the same
+ * mark a subscription row drew before the key existed. The Run detail screen
+ * declares its own copy of this rule for its own document (`modelReading` in
+ * `run.ts`): the four screens are siblings and neither imports the other, so
+ * the two are held equal by their tests rather than by a shared module. */
+function modelReading(model: Reading, notional: Reading, basis: string | null): Reading {
+  if (model.value === null) return model
+  const plan = notional.value ?? (basis === 'subscription' ? model.value : 0)
+  const money = Math.max(0, model.value - plan)
+  if (money > 0) return { ...model, value: money }
+  if (plan > 0 || basis === 'subscription') return { ...model, value: plan, state: 'notional' }
+  return model
+}
+
+/** costOf reads `runstore.Cost`'s fields the console draws, with the model
+ * figure split into what was billed and what the plan paid (`modelReading`). */
 function costOf(raw: unknown, where: string): ProjectJobCost {
   const cost = objectAt(raw) ?? {}
   const basis = textAt(cost['model_basis'])
   const model = readNumber(cost['model_usd'], `${where}.model_usd`)
+  const notional = readNumber(cost['model_notional_usd'], `${where}.model_notional_usd`)
   return {
-    model: basis === 'subscription' && model.value !== null ? { ...model, state: 'notional' } : model,
+    model: modelReading(model, notional, basis),
     compute: computeReading(cost, `${where}.compute_usd`),
     total: readNumber(cost['total_usd'], `${where}.total_usd`),
   }
