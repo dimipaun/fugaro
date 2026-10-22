@@ -50,12 +50,27 @@ import (
 // one, and then via: auto under a Vertex credential — and a resolution no run
 // takes.
 func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
-	if !found || pp == nil || pp.Routing == nil || pp.Routing.Claude == nil {
-		return nil // absent means direct (D1b)
-	}
 	auth := ""
 	if r.cfg != nil {
 		auth = r.cfg.Agent.Auth
+	}
+	if auth == config.AuthCascade {
+		// O2 (the owner's ruling of 2026-10-17): a repository may ask for the
+		// cascade, and only the operator-written project policy enables it. A
+		// cascade workflow whose policy does not carry the switch is refused
+		// here, before the run opens anything, naming exactly what to set —
+		// `fugaro validate` refuses the same file on the author's own machine
+		// (C1.1's cascadeProblems), and this is the run's own side of it.
+		var via string
+		if found && pp != nil && pp.Routing != nil && pp.Routing.Claude != nil {
+			via = pp.Routing.Claude.ViaValue()
+		}
+		if via != config.RouteCascade {
+			return fmt.Errorf("agent.auth is %s and this project's policy does not turn the cascade on: set routing.claude: {via: %s} in the project policy (%s) and publish it (fugaro project policy publish) — a repository asks for the cascade, and only the operator can set it there (O2)", config.AuthCascade, config.RouteCascade, projectpolicy.PathShared())
+		}
+	}
+	if !found || pp == nil || pp.Routing == nil || pp.Routing.Claude == nil {
+		return nil // absent means direct (D1b)
 	}
 	block, sw := pp.Routing, pp.Routing.Claude
 	why := RoutingInertReason(sw, auth, r.gatewayOn(), envLookup(r.d.Env, "ANTHROPIC_API_KEY") != "")
@@ -102,7 +117,9 @@ func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
 // (validate, doctor): the gateway is what decides whether the switch has
 // anything to act on at all (design §6.2, D11).
 func GatewayOn(auth, mode string) bool {
-	if auth != "api-key" && auth != "vertex" {
+	switch auth {
+	case "api-key", "vertex", config.AuthCascade:
+	default:
 		return false
 	}
 	return mode == policy.ModeObserve || mode == policy.ModeEnforce
@@ -151,6 +168,13 @@ const (
 	// taken and the pins are left alone (D1b); with none the provider route is
 	// taken.
 	RoutingInertAutoKey RoutingInert = "auto-key"
+	// RoutingInertCascadeOtherAuth: the switch is via: cascade and this run's
+	// agent.auth is not cascade. The cascade decides which credential carries
+	// a call inside the credentials service (D133, D150) and names no model,
+	// so it routes nothing for a run that did not ask for it: an installation
+	// switches it on for its cascade workflows alone, and every other auth of
+	// the same project keeps the direct route it had.
+	RoutingInertCascadeOtherAuth RoutingInert = "cascade-other-auth"
 )
 
 // RoutingInertReason is the run's own decision about the switch: whether it
@@ -175,6 +199,14 @@ func RoutingInertReason(sw *config.RoutingClaude, auth string, gatewayOn, anthro
 	}
 	if sw.ViaValue() == config.RouteDirect {
 		return RoutingInertViaDirect
+	}
+	if sw.ViaValue() == config.RouteCascade && auth != config.AuthCascade {
+		// The cascade is a credential switch (D133, D150): it names no model
+		// and routes no call, so it acts only on the workflow that asked for
+		// the cascade. For every other auth it is inert, exactly as via:
+		// direct is — nothing changes for a run that did not opt in, which is
+		// the whole reason O3 chose a spelling of its own over via: auto.
+		return RoutingInertCascadeOtherAuth
 	}
 	if sw.ViaValue() == config.RouteAuto {
 		if auth == "vertex" {
