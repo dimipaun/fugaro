@@ -139,14 +139,25 @@ const (
 	// must read (the write-once outcome, the cascade's marks): a refusal, so
 	// the run halts budget_unavailable-style, and never a fallback (D143).
 	ErrorStateUnavailable = "state_unavailable"
+	// ErrorRequestRefused is the request itself being refused: the service
+	// applies the gateway's own request check before it reads a credential, so
+	// a caller that reached the service directly cannot name a model, a tool or
+	// a shape the in-runner gateway would have refused (the C1.11 follow-up).
+	// The message is the gateway's own sentence and it says that nothing was
+	// read; no credential value is in it, because none was touched.
+	ErrorRequestRefused = "request_refused"
 )
 
 // The statuses. An unverified caller is 403; everything the service cannot
-// answer now is 503, and the body's error type says which.
+// answer now is 503, and the body's error type says which. A request the
+// gateway's own rules refuse is 400 — the status the gateway answers the same
+// body with — so a caller that is refused for what it sent is not told to try
+// again.
 const (
 	StatusUnverified       = http.StatusForbidden
 	StatusUnavailable      = http.StatusServiceUnavailable
 	StatusExhaustedUntil   = http.StatusServiceUnavailable
+	StatusRequestRefused   = http.StatusBadRequest
 	contentTypeJSON        = "application/json"
 	maxCredentialNameBytes = 200
 	maxHeaderTokenBytes    = 512

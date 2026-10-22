@@ -417,3 +417,59 @@ type flushRecorder struct {
 }
 
 func (f *flushRecorder) Flush() { f.flushes++; f.ResponseWriter.(http.Flusher).Flush() }
+
+// TestExportedRequestRefusal: the exported request check answers with the
+// gateway's own sentences, and its pin is the caller's — an empty list pins
+// nothing, a list that does not name the model refuses it, and the refusal
+// names the caller's list (Where) rather than a stage.
+//
+// It is also the check's table-less shape: a caller with no price table and no
+// routes (the credentials service before it builds the project's table) is
+// judged by the embedded table and routes nothing, rather than panicking on a
+// nil table.
+//
+// Mutation (run, restore): drop the pin arm from checkRequest, and the
+// "not pinned" case below is green where it must be red.
+func TestExportedRequestRefusal(t *testing.T) {
+	const body = `{"model":"claude-sonnet-5-5","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`
+	const serverTool = `{"model":"claude-sonnet-5-5","max_tokens":16,"messages":[{"role":"user","content":"hi"}],` +
+		`"tools":[{"type":"web_search_20260209","name":"web_search"}]}`
+	pin := RequestPin{Models: []string{"claude-haiku-4-5"}, Where: "the project's model allow-list"}
+
+	cases := []struct {
+		name string
+		body string
+		pin  RequestPin
+		want string
+	}{
+		{name: "no pin accepts", body: body, want: ""},
+		{name: "the pin's own model accepts", body: body, pin: RequestPin{Models: []string{sonnet}, Where: "x"}, want: ""},
+		{
+			name: "another model is refused by name",
+			body: body, pin: pin,
+			want: "model claude-sonnet-5-5 is not pinned for the project's model allow-list",
+		},
+		{
+			name: "a server tool is refused whatever the pin",
+			body: serverTool, pin: RequestPin{Models: []string{sonnet}, Where: "x"},
+			want: `tool type web_search_20260209 is not allowed (the budget allows only client tools)`,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := RequestRefusal([]byte(c.body), "", c.pin, nil, nil)
+			if err != nil {
+				t.Fatalf("RequestRefusal: %v", err)
+			}
+			if got != c.want {
+				t.Errorf("RequestRefusal = %q, want %q", got, c.want)
+			}
+		})
+	}
+
+	// A body the gateway cannot read is an error and not a refusal: the
+	// caller's own path answers it as a 400 of its own.
+	if v, err := RequestRefusal([]byte(`{"model":"`+sonnet+`"}`), "", RequestPin{}, nil, nil); err == nil {
+		t.Errorf("RequestRefusal accepted a body with no max_tokens: %q", v)
+	}
+}

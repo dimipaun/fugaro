@@ -171,10 +171,16 @@ func checkRouteBaseURL(s string) error {
 
 // routeFor is the route that claims model, or nil: any model no route claims
 // goes to Options.Upstream (the direct Anthropic route); a CLAIMED Claude ID is not one of them: it matches its provider route first.
-func (s *Server) routeFor(model string) *Route {
-	for i := range s.o.Routes {
-		if s.o.Routes[i].matches(model) {
-			return &s.o.Routes[i]
+//
+// It is a function of the routes rather than of the Server because the request
+// check reads it (checkRequest, forward.go) and the check is shared with the
+// credentials service, which has no Server and no routes of its own
+// (RequestRefusal, export.go): one reading of "which route claims this model",
+// not a second one that could disagree.
+func routeFor(model string, routes []Route) *Route {
+	for i := range routes {
+		if routes[i].matches(model) {
+			return &routes[i]
 		}
 	}
 	return nil
@@ -209,7 +215,7 @@ func (r *Route) attachCredential(h http.Header) (key string, err error) {
 // withRoute points a call at the provider that claims model. It runs after
 // the pin check, so only a pinned model is ever sent to a provider.
 func (s *Server) withRoute(rt route, model string) route {
-	if pr := s.routeFor(model); pr != nil && rt.path != "" {
+	if pr := routeFor(model, s.o.Routes); pr != nil && rt.path != "" {
 		rt.provider = pr
 		rt.upstream = trimSlash(pr.BaseURL) + rt.path + rt.query
 	}
