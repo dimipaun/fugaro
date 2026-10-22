@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **1,478,107 bytes in a checkout with no tags** and to **1,478,107 bytes with the
+  commit builds to **1,478,292 bytes in a checkout with no tags** and to **1,478,292 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -1005,8 +1005,27 @@ added or removed without this sentence moving fails there:
     opens on it, and the stand-down a reader who has asked for less motion gets; the reading
     itself is the owner's, and that is Check 112 in `docs/gcp-live-checklist.md`.
 
-  - **JavaScript per page:** 308,034 bytes. Three times 102,678: the one script the site ships,
-    `public/scripts/site.js` (82,142 bytes), plus 25 %. What the file carries is the copy
+    **The review round on this pull request moved 185 bytes of it, and the three figures below
+    are the ones this build derives with those bytes in.** The section's fade was one-sided —
+    the level arriving snapped from nothing in the frame the level leaving began to fade, so
+    the reader watched the drawing materialise out of the page rather than out of the level
+    they were reading — so the transition carries `visibility 0s linear var(--duration-base)`
+    and the level on screen is the rule that takes that delay back off, which is the crossfade
+    the "zoom" is. The move, measured the same way: `dist/how-it-works/index.html` 53,646 →
+    **53,812** (**+166**, every byte of it the stylesheet Astro inlines into that one page) and
+    `dist/scripts/site.js` 82,142 → **82,161** (**+19**, a comment in the shared slider's own
+    `show()` that named the two stub DOMs as the reason a mark is written `true` or `false`
+    rather than added and removed — `removeAttribute` is a stub method now, and the reason is
+    the one the zoom section's markers share). So the site figure moves 1,478,107 → **1,478,292**,
+    the homepage, which fetches the script, 575,235 → **575,254**, and How It Works, which
+    carries the script *and* the stylesheet, 158,339 → **158,524**; the count of files stays
+    **28** and the count of pages **11**, and no word moves. `test/a11y.mjs`'s motion reading
+    unwraps the section's `no-preference` block **whole** now that the gate holds two rules —
+    the fade and the delay — because a plant that stopped at the first rule would leave the
+    second behind and pass on a reading of nothing.
+
+  - **JavaScript per page:** 308,106 bytes. Three times 102,702: the one script the site ships,
+    `public/scripts/site.js` (82,161 bytes), plus 25 %. What the file carries is the copy
     control, the menu, the consent gate, **both of the site's sliders** — the console page's,
     which the feedback-B round above added, and the homepage's, which the feedback-A round above
     it added — and **the pinned zoom section**, which the round at the end of this list added.
@@ -1064,10 +1083,10 @@ added or removed without this sentence moving fails there:
     and the menu still has a second level Tab has to be able to enter. Every page loads the
     file once, so it is the whole of a page's JavaScript, and the test keeps a case that says
     so over the built artifact.
-  - **Page weight per page:** 2,157,132 bytes. Three times 719,044: the heaviest page, the
-    homepage, at 575,235 bytes (its HTML, the four screenshots it renders, and the files
+  - **Page weight per page:** 2,157,204 bytes. Three times 719,068: the heaviest page, the
+    homepage, at 575,254 bytes (its HTML, the four screenshots it renders, and the files
     it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 5,542,902 bytes. Three times 1,847,634 (every file in `dist/`, 1,478,107
+  - **Whole site:** 5,543,595 bytes. Three times 1,847,865 (every file in `dist/`, 1,478,292
     bytes across 28 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 

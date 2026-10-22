@@ -1184,8 +1184,8 @@
 
     /** Show one slide: the block's name for it, and the mark on the dot that opens it. The
      *  mark is written as `true` or `false` rather than added and removed, because `false` is
-     *  what a link that is not current should say and the two stub DOMs that run this file
-     *  have no `removeAttribute`. */
+     *  what a link that is not current should say — which is how the zoom section's markers are
+     *  marked below, and for the same reason. */
     function show(slide) {
       for (var i = 0; i < slides.length; i++) if (slides[i] === slide) at = i
       block.setAttribute(ACTIVE, nameOf(slide))

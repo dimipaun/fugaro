@@ -579,7 +579,21 @@ const SYMBOLS: Record<string, string> = {
      who has asked for less motion is given no transition to have to neutralise. */
   @media (prefers-reduced-motion: no-preference) {
     .zoom[data-zoom-ready] .zoom-figure {
-      transition: opacity var(--duration-base) var(--ease-out), transform var(--duration-base) var(--ease-out);
+      transition:
+        opacity var(--duration-base) var(--ease-out),
+        transform var(--duration-base) var(--ease-out),
+        visibility 0s linear var(--duration-base);
+    }
+
+    /* The level arriving is on screen at once and fades in over the one leaving, which is still
+       fading out beneath it — a crossfade rather than a dip to the background. `visibility` is a
+       step and not a curve, so it is the delay that makes the two overlap: without it the level
+       leaving is gone in the same frame the next one starts from nothing, and the reader watches
+       the drawing materialise out of the page instead of out of the level they were reading. The
+       delay belongs to the level on its way out, which is why the rule naming the level on screen
+       is the one that takes it back off. */
+    .zoom[data-zoom-ready] .zoom-figure[data-zoom-shown] {
+      transition-delay: 0s;
     }
   }
 

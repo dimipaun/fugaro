@@ -1277,9 +1277,14 @@ test('the zoom section’s own transition is gated, and outside every path the c
   // `no-preference` around it. Both the unwrapping and the rule it left behind are asserted, so
   // a build whose stylesheet changes shape fails here rather than passing on a plant that did
   // nothing — which is the one way a plant of a built artifact goes quiet.
-  const GATE = /@media \(prefers-reduced-motion:no-preference\)\{([^{}]*\{[^{}]*\})\}/
+  // The block is unwrapped whole rather than one rule deep, because the section's transition is
+  // two rules now: the fade itself, and the `transition-delay` that puts the level arriving on
+  // screen over the one leaving. A pattern that stopped at the first rule would match neither and
+  // the plant below would silently do nothing.
+  const GATE = /@media \(prefers-reduced-motion:no-preference\)\{((?:[^{}]|\{[^{}]*\})*)\}/
   const ungated = css.replace(GATE, '$1')
   assert.notEqual(ungated, css, 'the built page carries no `no-preference` block of the shape the plant below unwraps')
+  assert.ok(!NO_PREFERENCE.test(ungated), 'the unwrapping left a `no-preference` gate behind, so the plant below is not about every rule that gate held')
   const SECTION_SELECTOR = '\\.zoom\\[data-astro-cid-[a-z0-9]+\\]\\[data-zoom-ready\\] \\.zoom-figure\\[data-astro-cid-[a-z0-9]+\\]'
   const SECTION_RULE = new RegExp(`${SECTION_SELECTOR}\\{transition:`)
   assert.match(ungated, SECTION_RULE, 'the unwrapping left no transition on the section\'s own rule, so the plant below is not about the section')
