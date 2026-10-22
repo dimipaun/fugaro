@@ -2768,11 +2768,15 @@ Attribution, as the records themselves state it:
     with runs ls.
 
 The money is model dollars, counted the way the budget screens count them. COUNTED
-$ is the model spend that counts toward the caps (a run on an API key or Vertex),
-and NOTIONAL $ the model spend of a run on a subscription (agent.auth oauth),
-which counts toward the plan's limits and is no one's bill: they are separate
-columns and are never summed. Compute is not attributed to a person: no run's
-compute is, and the budget database's own person view leaves it out too. AVG
+$ is the model spend that counts toward the caps: the money part of a run's model
+figure (model_usd minus model_notional_usd, C1.16/P12). NOTIONAL $ is the part of
+that figure a subscription paid -- a run on agent.auth oauth whole, and a cascade
+run's tier-A calls, whose run is otherwise an api-key one -- which counts toward
+the plan's limits and is no one's bill. The spend basis decides only a record
+written before that breakdown existed, which is what says a figure was never
+billed. They are separate columns and are never summed. Compute is not attributed
+to a person: no run's compute is, and the budget database's own person view
+leaves it out too. AVG
 $/RUN is COUNTED $ over COUNTED RUNS, the runs that settled a real-dollar cost;
 a notional run, a run with no readable record and a record from before the cost
 breakdown existed are none of them averaged in as a run that cost nothing.
