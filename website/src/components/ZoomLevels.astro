@@ -451,13 +451,16 @@ holdZoomBoards(LEVELS)
      thing on this site has.
 
      The `--zoom-*` variables are the boards' colours, named once here: the boards are drawn with
-     a set of colours the site does not otherwise use, and a value a drawing paints is a value
-     this stylesheet states, so that the paint reading in `website/test/how-it-works.mjs` can
-     resolve every one of them and the contrast reading can compute every label's pair. They are
-     variables of this section rather than of the palette because they are the boards' own
-     colours: the palette is the site's, and the day the boards are redrawn in it these go. */
-  .zoom {
-    margin-top: var(--space-3xl);
+     a set of colours the site does not otherwise use, and the brief of 2026-10-22 asks for a
+     board colour that is not an exact palette token to stay as a named CSS variable rather than
+     be rounded to the nearest one. They are declared at the document root rather than on the
+     section because that is where this site declares a variable, and because the accessibility
+     contract reads a rule other than `:root` for a colour literal — a component that painted one
+     would be a colour no contrast pair of the palette covers. The drawings' own paint and
+     contrast are held instead by `website/test/how-it-works.mjs`, which resolves these names
+     against the boards themselves (`zoomPaintFailures`, `boardTokens`): every value below is a
+     value a board writes, and the day the boards are redrawn in the palette these go. */
+  :global(:root) {
     --zoom-ink: #E6ECF5;
     --zoom-muted: #8DA0BC;
     --zoom-accent: #FF8B3D;
@@ -471,6 +474,10 @@ holdZoomBoards(LEVELS)
     --zoom-loop-edge: #4A5A78;
     --zoom-loop-card: #101827;
     --zoom-project: #C9D5EA;
+  }
+
+  .zoom {
+    margin-top: var(--space-3xl);
   }
 
   .zoom-title {
