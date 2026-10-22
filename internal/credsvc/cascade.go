@@ -194,15 +194,32 @@ func unsent(cands []creds.Credential, sent map[string]bool) []creds.Credential {
 // only while nothing has been streamed to the client. Both rules are why this
 // is a loop over a `sent` set rather than a retry inside `send`: the moment
 // the answer is the client's, the call is over.
-func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, sel *creds.Selector, run creds.Run, b *Bundle, cands []creds.Credential, notAdmitted []Tried) {
+func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, sel *creds.Selector, id Identity, b *Bundle, cands []creds.Credential, notAdmitted []Tried) {
 	tried := append([]Tried(nil), notAdmitted...)
 	sent := make(map[string]bool, len(cands))
+	// probed is what THIS call has already probed (C1.12): a name in it is
+	// never probed twice by the same call, which is what bounds the loop below
+	// when a probe leaves a credential the next selection still wants probed.
+	probed := make(map[string]bool, len(cands))
 	started, reason := "", ""
+	// The run is the identity's: the slug and the run id the service verified
+	// (C1.10) are what the cascade's nodes are keyed by, and taking them from
+	// anywhere else would be naming a run the service did not verify.
+	run := creds.Run{Slug: id.Slug, ID: id.Run}
 
 	pool := cands
 	for {
 		c, _, err := sel.Select(ctx, run, pool)
 		if err != nil {
+			// A probe being owed on the earliest candidate is the one answer
+			// this loop acts on rather than relays (C1.12): the credential is
+			// backed off with its wait passed, so it is asked whether it works
+			// and the selection is made again. Anything else — a real wait, a
+			// broken mark, an unreadable state — is the run's answer and is
+			// refused below.
+			if s.probeDue(ctx, sel, id, cl, b, pool, probed, err) {
+				continue
+			}
 			s.refuseSelection(w, err, tried)
 			return
 		}

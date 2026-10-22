@@ -494,6 +494,7 @@ type svc struct {
 	kills  *fakeKills
 	state  *fakeStore
 	nodes  *fakePatcher
+	probes *fakeProbes
 	logs   *logBuf
 }
 
@@ -526,10 +527,11 @@ func newSvcWith(t *testing.T, mutate func(*svc, *Config)) *svc {
 				f.slug: decodeTestChild(t, testChildDoc("default", testAccount)),
 			},
 		},
-		kills: &fakeKills{repos: map[string]bool{}},
-		state: newFakeStore(),
-		nodes: &fakePatcher{nodes: map[string]any{}},
-		logs:  &logBuf{},
+		kills:  &fakeKills{repos: map[string]bool{}},
+		state:  newFakeStore(),
+		nodes:  &fakePatcher{nodes: map[string]any{}},
+		probes: newFakeProbes(),
+		logs:   &logBuf{},
 	}
 	cfg := Config{
 		Auth:    f.auth,
@@ -545,6 +547,12 @@ func newSvcWith(t *testing.T, mutate func(*svc, *Config)) *svc {
 		Log:    slog.New(slog.NewTextHandler(s.logs, nil)),
 		Now:    func() time.Time { return f.now },
 		DB:     s.nodes,
+		Probes: s.probes,
+		// The audit lines are written as the JSON objects they are (C1.13), so
+		// a test that reads one reads it the way an operator's tooling does.
+		// They go to the same buffer as the service's own lines: the probe's
+		// tests take a buffer of their own where they need to read them apart.
+		AuditLog: slog.NewJSONHandler(s.logs, nil),
 	}
 	if mutate != nil {
 		mutate(s, &cfg)

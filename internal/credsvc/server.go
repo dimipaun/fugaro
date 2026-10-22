@@ -173,6 +173,22 @@ type Config struct {
 	// State because it is not a selection's business — creds.Store has no
 	// delete, deliberately, so that no selection can drop another call's mark.
 	DB Patcher
+	// Probes is the conditional write the probe's one-probe-at-a-time lease
+	// needs (C1.12). It is separate from DB for the same reason DB is separate
+	// from State: it is a different node and a different fact — a claim on
+	// probing a credential, which lapses on its own and is never deleted.
+	// *rtdb.Client is one.
+	Probes ProbeLeases
+	// AuditLog is where the service's audited acts are written (C1.13): the
+	// probe today (C1.12), and every act the service audits as the rest of this
+	// build wires one. The service builds its auditor from it, armed with the
+	// bundle loader's own redaction (NewProbeAuditor), so a credential's value
+	// cannot reach a line: the arming is not a caller's to forget.
+	//
+	// It is a handler and not a logger, deliberately — see NewAuditor: a logger
+	// carries whatever it was built with, and an attr or a group on an audit
+	// line is a field the contract does not have.
+	AuditLog slog.Handler
 	// JobAccounts binds a job service account to the repository whose runs
 	// are launched as it. It is the table the run-to-job binding is checked
 	// against (N1), so an empty one refuses every call.
@@ -262,10 +278,11 @@ func (k RTDBKills) Stop(ctx context.Context, slug string) (bool, string, error) 
 
 // Server is the credentials service: one http.Handler.
 type Server struct {
-	cfg  Config
-	log  *slog.Logger
-	now  func() time.Time
-	jobs map[string]JobAccount
+	cfg   Config
+	log   *slog.Logger
+	now   func() time.Time
+	jobs  map[string]JobAccount
+	audit *Auditor
 }
 
 // NewServer validates cfg and returns the service.
@@ -288,6 +305,21 @@ func NewServer(cfg Config) (*Server, error) {
 	if cfg.DB == nil {
 		return nil, errors.New("credsvc: the service cannot remove an ended run's placement")
 	}
+	if cfg.Probes == nil {
+		// A probe lease that cannot be written is a credential that can never
+		// be probed, and a backed-off credential is cleared by nothing else: it
+		// would be out of service for ever (C1.9's ProbeSucceeded is the only
+		// transition off that mark). A service that cannot take the lease is
+		// therefore not a service this build starts.
+		return nil, errors.New("credsvc: the service cannot take the probe's one-at-a-time lease, so a backed-off credential could never come back")
+	}
+	if cfg.AuditLog == nil {
+		// The same refusal for the same reason one step further along: a probe
+		// this service could not audit must not be made (D143), and one that
+		// cannot be audited at all is one that cannot be made at all — which is
+		// again a credential that never comes back.
+		return nil, errors.New("credsvc: the service has no audit handler, so it cannot record a probe and a backed-off credential could never come back")
+	}
 	if len(cfg.JobAccounts) == 0 {
 		return nil, errors.New("credsvc: the service has no job accounts, so it can bind no run to a repository")
 	}
@@ -302,7 +334,14 @@ func NewServer(cfg Config) (*Server, error) {
 	// never follows a redirect is applied to it here rather than trusted to its
 	// caller.
 	cfg.Client = upstreamClient(cfg.Client)
-	s := &Server{cfg: cfg, log: cfg.Log, now: cfg.Now, jobs: make(map[string]JobAccount, len(cfg.JobAccounts))}
+	// The auditor is built here and not taken from the configuration: it must
+	// be armed with this service's own bundle loader (NewProbeAuditor), which
+	// is the one place the values it redacts live.
+	audit, err := NewProbeAuditor(cfg.AuditLog, cfg.Bundles)
+	if err != nil {
+		return nil, err
+	}
+	s := &Server{cfg: cfg, log: cfg.Log, now: cfg.Now, jobs: make(map[string]JobAccount, len(cfg.JobAccounts)), audit: audit}
 	for _, ja := range cfg.JobAccounts {
 		if ja.Email == "" || ja.Slug == "" || ja.Repo == "" {
 			return nil, errors.New("credsvc: a job account with no email, slug or repository binds nothing")
@@ -398,7 +437,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sel := &creds.Selector{Store: s.cfg.State, Settings: settingsOf(shared), Now: s.now}
-	s.forward(ctx, w, cl, sel, creds.Run{Slug: id.Slug, ID: id.Run}, b, cands, notAdmitted)
+	s.forward(ctx, w, cl, sel, id, b, cands, notAdmitted)
 }
 
 // refuse writes one typed refusal. It is the only way this service answers a
