@@ -8,11 +8,14 @@ file:
 > **Files.** `internal/e2e/live_creds_rules_test.go` (**new**, build tag `live`,
 > on the `live_budget_test.go` precedent).
 
-It is already on the base (`origin/integration-0.9.6`). The plan's own
-first-check rule applies, so **nothing was implemented and nothing in the
-deliverable was changed**: this run adds only this note, so that the finding is
-recorded with its evidence. No code, rules, schema, Terraform, skill or workflow
-file is touched.
+It is already on the base (`origin/integration-0.9.6`). This run's brief directs
+that when the deliverable is already on the base, nothing is implemented and the
+finding is recorded in a docs-only note instead. So **nothing was implemented and
+nothing in the deliverable was changed**: this run adds only the note below. (The
+plan itself carries no first-check rule — not in conventions 1–11, Global
+Constraints 1–12, the Review Focus or the owner approval gate; the instruction is
+the brief's.) No code, rules, schema, Terraform, skill or workflow file is
+touched.
 
 ## What was checked, and what it answered
 
@@ -22,7 +25,7 @@ file is touched.
 | It declares `TestLiveCredsRules` | Present, `internal/e2e/live_creds_rules_test.go:164` |
 | Commit message `e2e: the owner-run live helper for Check 92` | `e186dd75` — *"e2e: the owner-run live helper for Check 92 (#733)"*, 2026-10-20 |
 | **Depends on.** C1.3 | C1.3 is on the base too (see below) |
-| **Verification.** `go vet -tags live ./internal/e2e/...` | Passes (run for this note; see below) |
+| **Verification.** `go vet -tags live ./internal/e2e/... && go test ./internal/e2e/... -count=1` (the untagged package still builds) | Both halves pass (run for this note; see below) |
 
 ## Evidence
 
@@ -163,16 +166,24 @@ the register disagree on it. This run does not touch it: the row is another
 work's document, and the plan's Global Constraint 1 scopes a credentials-service
 docs change to `docs/credentials-service/`.
 
-`fugaro verify test` excludes `internal/e2e` (its tests need Docker and a git
-checkout this container does not have; `fugaro.yaml` says so), so the plan's own
-C1.4 verification was run directly as supporting evidence:
+The plan's own C1.4 verification is both halves of its line, and both were run
+directly for this note:
 
 ```
 go vet -tags live ./internal/e2e/...   # PASSES: the live file compiles, and no check runs
+go test ./internal/e2e/... -count=1    # PASSES: ok, 47.8s — the untagged package builds
+                                       #   and its 66 tests pass
 ```
 
-The untagged `go test ./internal/e2e/...` the plan also names is CI's, not this
-container's, for the same Docker/checkout reason.
+The repository's configured test command leaves `internal/e2e` out, so
+`fugaro verify test` does not cover it. `fugaro.yaml` gives the reason as time:
+it names `internal/runner` and `internal/e2e` as "about 12 and 6 minutes each",
+and attaches the Docker-and-a-git-checkout clause to `internal/image` and
+`images` — the base-image builds, whose tests are the ones that cannot run in
+this container. The untagged `e2e` package needs neither Docker nor a checkout,
+which is why the two commands above run here at all. A first draft of this note
+called the untagged run "CI's, not this container's" and skipped it; that was
+wrong, and the commands are now run and reported as the plan writes them.
 
 ## What this run does not do
 
