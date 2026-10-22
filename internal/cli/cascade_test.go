@@ -52,6 +52,21 @@ func cascadePolicyWithMode(mode string) string {
 	return fmt.Sprintf(`{"version":%d,"allow_repos":["*"],"routing":{"claude":{"via":"cascade"}},"budget":{"mode":%q}}`, projectpolicy.RulesVersion, mode)
 }
 
+// cascadePolicyAllowList is the policy a project that really serves cascade
+// runs publishes: O3's switch, and the model allow-list the credentials service
+// holds every call of such a run to (the owner's ruling of 2026-10-22 — the
+// service refuses a project that publishes none, and the launch refuses it one
+// step earlier, cascadeLaunchRefusal). A policy that carries a budget block must
+// name a mode (projectpolicy.validBudget), so the allow-list never arrives
+// alone: the mode is the caller's, because the node's mode is a layer the
+// gateway rule and the run's own merge judge, and a test about either has to
+// spell the one it needs. The models are the ones cascadeLaunchYAML pins, which
+// is what a project serving that repository would list.
+func cascadePolicyAllowList(mode string) string {
+	return fmt.Sprintf(`{"version":%d,"allow_repos":["*"],"routing":{"claude":{"via":"cascade"}},`+
+		`"budget":{"mode":%q,"allowed_models":["claude-sonnet-5-5"]}}`, projectpolicy.RulesVersion, mode)
+}
+
 // cascadePolicyViaDirect is a policy whose switch is written with the value
 // D1b made the default: via: direct, an explicit "no route", which names the
 // direct path rather than leaving the block out. It is a *written* switch that
@@ -1012,10 +1027,11 @@ func TestCascadeRefusedWithoutService(t *testing.T) {
 // here, before anything is written, rather than in the job where the first
 // credential it records is denied.
 //
-// The policy is published with the switch (cascadePolicy), so the O2 refusal is
-// not the one that answers first: what this test is about is the state the
-// operator's own deploy leaves behind — the switch published, the installation's
-// rules still predating the credentials family.
+// The policy is published with the switch and the allow-list
+// (cascadePolicyAllowList), so neither the O2 refusal nor the allow-list
+// refusal is the one that answers first: what this test is about is the state
+// the operator's own deploy leaves behind — the switch published, the
+// installation's rules still predating the credentials family.
 //
 // Hand mutations this fails on: dropping the marker read (the launch goes on
 // and the job halts on HaltCredsRulesDenied); reading the marker as "found is
@@ -1028,7 +1044,7 @@ func TestCascadeRefusedWithoutService(t *testing.T) {
 // it.
 func TestCascadeRefusedWithoutCredsRulesMarker(t *testing.T) {
 	f := newProjectJobFixtureMode(t, "enforce")
-	publishPolicy(t, f.launchBudgetFixture, cascadePolicy())
+	publishPolicy(t, f.launchBudgetFixture, cascadePolicyAllowList("enforce"))
 	projectJobCheckoutYAML(t, cascadeLaunchYAML)
 	const run = "20261022-090000-ca5c"
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature")
@@ -1287,20 +1303,25 @@ func TestCascadeLaunchJudgesTheRefsModeNotTheWorkingTrees(t *testing.T) {
 // the same three layers the run merges (runner's resolvePolicy: the ceiling, the
 // default branch's policy and the ref's own file), because a layer can only
 // tighten and a mode raised by the default branch is a mode the run has. Here
-// the launch's ref says nothing, the ceiling says nothing, and origin/main — the
-// file the *run* reads as its middle layer — says observe: the run's gateway is
-// on, and the gate must not refuse it.
+// the launch's ref says nothing, the ceiling names off — the published node's
+// own mode, the loosest value there is — and origin/main, the file the *run*
+// reads as its middle layer, says observe: the run's gateway is on, and the gate
+// must not refuse it.
 //
 // The working tree agrees with the ref (both say nothing) so that the default
 // branch is the only layer that can answer: with it, the mode is observe and the
-// gate passes; without it the merge is empty and CheckCascadeGateway refuses
-// what the run would carry.
+// gate passes; without it the merge is off and CheckCascadeGateway refuses what
+// the run would carry.
 //
 // Mutation (run, restored): drop defaultBranchPolicyLayer from the merge and
 // this launch is refused ("budget.mode is off") although its run has a gateway.
 func TestCascadeLaunchMergesTheDefaultBranchesPolicy(t *testing.T) {
 	f := newProjectJobFixtureMode(t, "observe")
-	publishPolicy(t, f.launchBudgetFixture, cascadePolicy())
+	// The node's mode is off, so the default branch's observe is the layer that
+	// decides — and the allow-list is published with it, because a policy that
+	// carries a budget block must name a mode (projectpolicy.validBudget) and
+	// this gate refuses a cascade whose policy publishes no allow-list.
+	publishPolicy(t, f.launchBudgetFixture, cascadePolicyAllowList("off"))
 	withoutBudgetMode(t, f.cloudFixture)
 	f.db.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion)
 	cascadeCheckoutAt(t, "feature",
@@ -1312,6 +1333,84 @@ func TestCascadeLaunchMergesTheDefaultBranchesPolicy(t *testing.T) {
 	}
 	if err := cascadeLaunchRefusal(context.Background(), env, &task.Spec{Repo: "acme/app", Ref: "feature"}); err != nil {
 		t.Errorf("a cascade launch whose gateway the default branch's policy turns on: %v", err)
+	}
+}
+
+// TestCascadeLaunchRefusedWithoutAllowList (the owner's ruling of 2026-10-22):
+// the credentials service holds every call it carries to the project's
+// published budget.allowed_models and refuses a project that publishes none
+// (C1.11's request check, internal/credsvc's requestNoAllowList), so a cascade
+// run of such a project has every call refused and halts on the first (D143).
+// The launch refuses it here, one step earlier and for the same reason the O2
+// switch and the gateway rule are judged on this side: before the claim is
+// taken, before a task is stored and before a budget token is minted, so the
+// person at the terminal hears the fix rather than the job halting call by call.
+//
+// The policy is the state an installation really reaches: the switch published,
+// the budget mode on, and the budget block naming a mode and no allow-list —
+// projectpolicy.validBudget refuses an *empty* list, so "publishes none" is the
+// key left out, which is the node that keeps the allow-list the job's
+// environment was deployed with and is exactly the list the service cannot read
+// (H1). What is judged is that node and not the run's merged list: the ceiling
+// of the run's own environment carries no allow-list either here, and a launch
+// judged on the merge would still refuse — the test below pins the node's list
+// by publishing it there.
+//
+// Mutation (run, restored): drop the refusal and the launch below goes through
+// — the gate answers nil for the same fixture, and the run is left to be refused
+// call by call in the job.
+func TestCascadeLaunchRefusedWithoutAllowList(t *testing.T) {
+	f := newProjectJobFixtureMode(t, "enforce")
+	// The node's mode is the gateway rule's (observe), so the refusal that
+	// answers the cascade launch below is the allow-list's and not the mode's.
+	publishPolicy(t, f.launchBudgetFixture, cascadePolicyWithMode("observe"))
+	f.db.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion)
+	projectJobCheckoutYAML(t, cascadeLaunchYAML)
+	const run = "20261022-090000-ca5c"
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("a cascade launch whose policy publishes no allow-list: err = %v, want a refusal", err)
+	}
+	for _, want := range []string{
+		"cascade",
+		"budget.allowed_models",
+		"add the allow-list to the project layer",
+		"fugaro project policy publish",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions, want none: a refused cascade launch may start nothing", n)
+	}
+	if storedTask(t, f.cloudFixture) {
+		t.Error("a refused cascade launch stored a task")
+	}
+	if tok := readToken(t, f.cloudFixture, run); tok != "" {
+		t.Error("a refused cascade launch minted a budget token")
+	}
+
+	// The other auth, on the same installation and the same policy: an api-key
+	// workflow is not held to the project's allow-list by this gate, so the
+	// rule is the cascade's and not a launch's.
+	projectJobCheckoutYAML(t, projectJobRepoYAML)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261022-090001-ca5d", "Add a feature"); err != nil {
+		t.Errorf("an api-key launch of an installation whose policy publishes no allow-list: %v", err)
+	}
+
+	// The way out, and the same cascade admitted: the project publishes the
+	// allow-list the ruling requires, and nothing else about the fixture
+	// changes. What is asserted is the gate's own answer, since the rest of a
+	// launch needs a whole fixture (a claim, an image, a build record) that has
+	// nothing to do with the rule.
+	publishPolicy(t, f.launchBudgetFixture, cascadePolicyAllowList("enforce"))
+	env, err := openCloud(context.Background(), cloudOptions{stderr: discard})
+	if err != nil {
+		t.Fatalf("opening the fixture's cloud environment: %v", err)
+	}
+	if err := cascadeLaunchRefusal(context.Background(), env, &task.Spec{Repo: "acme/app"}); err != nil {
+		t.Errorf("a cascade launch whose policy publishes the allow-list: %v", err)
 	}
 }
 
