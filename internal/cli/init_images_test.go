@@ -527,27 +527,32 @@ func TestHistoryLatestNeedsReplaceImage(t *testing.T) {
 	}
 }
 
-// --replace-image names the intent only: a run that cannot take a typed
-// confirmation (--yes, --non-interactive, --json, a pipe, a coding agent)
-// leaves the replacement to the user with the one-line typed route, and moves
-// nothing. The real rule is in force here.
+// TestReplaceImageIsCoveredByYesInBothDoors: --replace-image names the intent
+// only, and D12's answer of 2026-10-20 makes replacing a registry tag an
+// ordinary covered row of both front doors — so `setup --yes` replaces the tag
+// with no typed confirmation, and the same call site in `update` does too
+// (update_test.go's TestUpdateAppliesTheFourStepsItOwns). A run that can take
+// neither --yes nor a typed confirmation (a pipe, --json, a coding agent's
+// session) leaves the replacement to the user with the one-line typed route and
+// moves nothing. The real rule is in force here.
 //
 // The kind it drives is history: a base kind is not copied anywhere any
 // more, so --replace-image names nothing for one (TestReplaceImageRefusesBase
 // is the refusal, and the base kind's own "never silently replaced" case is
 // gone with the copy).
-func TestReplaceImageIsNeverConfirmedByYes(t *testing.T) {
+func TestReplaceImageIsCoveredByYesInBothDoors(t *testing.T) {
 	const history = initProject + "/fugaro-base/history:latest"
 	for name, tc := range map[string]struct {
-		args  []string
-		env   string
-		stdin string
+		args    []string
+		env     string
+		stdin   string
+		covered bool
 	}{
-		"--yes":                    {[]string{"--yes"}, "", initProjectName + "\n"},
-		"--yes --non-interactive":  {[]string{"--yes", "--non-interactive"}, "", ""},
-		"--yes --json":             {[]string{"--yes", "--json"}, "", initProjectName + "\n"},
-		"a pipe, no flags":         {nil, "", initProjectName + "\n"},
-		"a coding agent, with yes": {[]string{"--yes"}, "CLAUDECODE", initProjectName + "\n"},
+		"--yes":                    {[]string{"--yes"}, "", "", true},
+		"--yes --non-interactive":  {[]string{"--yes", "--non-interactive"}, "", "", true},
+		"--yes --json":             {[]string{"--yes", "--json"}, "", "", true},
+		"a pipe, no flags":         {nil, "", initProjectName + "\n", false},
+		"a coding agent, with yes": {[]string{"--yes"}, "CLAUDECODE", initProjectName + "\n", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newImagesRig(t, "1.2.3")
@@ -570,6 +575,17 @@ func TestReplaceImageIsNeverConfirmedByYes(t *testing.T) {
 			}
 			out, errOut, err := executeStdin(t, tc.stdin, append([]string{"setup", "--firebase-project", fpID, "--replace-image", "history"}, tc.args...)...)
 			out += errOut // --json sends the account to stderr
+			if tc.covered {
+				// The covered row: the run's own confirmation replaced it,
+				// with nothing typed and nothing left for the user.
+				if err != nil || r.dst.tags[history] == other || r.dst.puts == puts {
+					t.Fatalf("--yes did not replace the tag: %v\n%s", err, out)
+				}
+				if !strings.Contains(out, "confirmed by --yes") {
+					t.Errorf("the covered replacement does not say how it was confirmed:\n%s", out)
+				}
+				return
+			}
 			if r.dst.tags[history] != other || r.dst.puts != puts {
 				t.Fatalf("the tag moved: %v\n%s", err, out)
 			}

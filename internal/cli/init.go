@@ -2022,12 +2022,13 @@ func (r *initRun) configOnly(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 // errNoState is a state bucket that doesn't exist yet.
 var errNoState = errors.New("no state bucket")
 
-// noInstallationRefusal is the one refusal of a run that looked for an installation
-// and found none: the sentence names the state bucket it looked for and the
-// door that makes one. It is one function because it is one fact in three
-// places — `update`'s converge (installRoot), `--repo`'s own gate and the
-// converge's, which reaches the same state bucket — and the sentence names
-// `fugaro setup`, the door a first installation is (D5, D12).
+// noInstallationRefusal is the one refusal of a run that looked for an
+// installation and found none: the sentence names the state bucket it looked
+// for and the door that makes one. It is one function because it is one fact in
+// two places — `update`'s converge, which would otherwise create the bucket and
+// then the whole installation (installRoot), and the `--repo` engine, which
+// reaches the same state bucket from a checkout — and both name `fugaro setup`,
+// the door a first installation is (D5, D12).
 func noInstallationRefusal(stateBucket string) error {
 	return userErr("there is no Terraform state bucket gs://%s, so no installation: run fugaro setup first", stateBucket)
 }
