@@ -4588,9 +4588,10 @@ grep -n 'width="47"' website/src/layouts/Base.astro
 
 3. **Every link in the two groups is reachable.** Tab to each group's label, open it, and
    reach each link inside it by keyboard alone, and follow one. The groups are **Product**
-   (How it works, Getting started, Caps and costs, Console) and **Project** (Docs, Security,
-   FAQ, Community, Changelog) — nine links between them, the same nine as before the Reference
-   group was dropped — and **Privacy is not among them** — it is a footer link
+   (How it works, Getting started, Caps and costs, Console, Mobile) and **Project** (Docs,
+   Security, FAQ, Community, Changelog) — ten links between them, the same nine as before the
+   Reference group was dropped plus the phone app's page (the zoom-diagrams plan, Part 3) —
+   and **Privacy is not among them** — it is a footer link
    (D182). **FACT:** the two group names as rendered, the links under each, and that Privacy
    is in the footer rather than the menu.
 
