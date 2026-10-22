@@ -279,3 +279,21 @@ func TestServiceTokensRequiresBothIdentities(t *testing.T) {
 		})
 	}
 }
+
+// TestServiceHeldKeyWinsOverAPassedKey: a provider told its tokens are the
+// service's never mints one in-job, even if a caller also handed it a key.
+// The wrong half of the pair is the one that would put a credential in the
+// job's hands, so the refusal is what comes of setting both.
+func TestServiceHeldKeyWinsOverAPassedKey(t *testing.T) {
+	key := key(t)
+	p, err := New(Options{Owner: "acme", Repo: "web", AppID: "1234", PrivateKey: key, ServiceHeldKey: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.GitAuth(context.Background(), 0); !errors.Is(err, ErrServiceTokensIdentity) {
+		t.Errorf("a service-held provider with a key in hand gave %v, want a refusal", err)
+	}
+	if p.app != nil {
+		t.Errorf("a service-held provider built an App-authenticated client")
+	}
+}

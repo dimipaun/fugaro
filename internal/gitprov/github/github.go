@@ -120,9 +120,13 @@ func New(o Options) (*Provider, error) {
 	// The App-authenticated client exists only where the key does: with the
 	// key held by the service this process cannot sign a JWT, and a client
 	// that could not authenticate would fail later, further from the reason.
+	// ServiceHeldKey wins over a PrivateKey that is somehow also passed: a
+	// provider told its tokens are the service's must not mint one in-job,
+	// whatever it was handed, so a caller that set both gets the refusal
+	// rather than the key's path.
 	var app *httpjson.Client
 	var tokens tokenMinter = noTokenSource{}
-	if o.PrivateKey != nil {
+	if o.PrivateKey != nil && !o.ServiceHeldKey {
 		app = &httpjson.Client{BaseURL: o.BaseURL, HTTP: o.HTTP, Header: header, Auth: appAuth(o.AppID, o.PrivateKey, o.Now)}
 		tokens = &tokenSource{app: app, owner: o.Owner, repo: o.Repo, now: o.Now}
 	}
