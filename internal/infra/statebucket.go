@@ -3,6 +3,7 @@ package infra
 import (
 	"context"
 	"fmt"
+	"io"
 	"slices"
 	"strconv"
 	"strings"
@@ -29,7 +30,7 @@ const projectViewerPrefix = "projectViewer:"
 
 // ProjectNumber is project's number, which its buckets carry. It is a
 // *ServiceDisabledError while the Cloud Resource Manager API is disabled
-// in the project, which fugaro init offers to fix.
+// in the project, which fugaro setup offers to fix.
 func ProjectNumber(ctx context.Context, c *Clients, project string) (uint64, error) {
 	p, err := c.CRM.Projects.Get(project).Context(ctx).Do()
 	if serviceDisabled(err, ServiceResourceManager, target{project: project}) {
@@ -162,21 +163,75 @@ func RemoveProjectViewers(ctx context.Context, c *Clients, bucket string, p *sto
 func isState(name string) bool { return strings.HasSuffix(name, ".tfstate") }
 
 // RepoStates lists the repository roots' state objects (*.tfstate) in the
-// state bucket: what init --repo --forget deletes, so a leftover lock
+// state bucket: what fugaro update --repo --forget deletes, so a leftover lock
 // doesn't count.
 func RepoStates(ctx context.Context, c *Clients, stateBucket string) ([]string, error) {
+	return StateObjects(ctx, c, stateBucket, StatePrefixRepos)
+}
+
+// StateObjects lists the state objects (*.tfstate) under prefix in the state
+// bucket, sorted, so two readers of the same bucket read the same list. An
+// empty prefix is the whole bucket, which is what the whole-project
+// inventory reads: every root this installation has applied — the
+// installation's, the Firebase project's, every repository's and (in the
+// managed state bucket D77 gives its own) the agent-authored one — holds the
+// resources the installation accounts for, and each of them is a state
+// object under one of infra's prefixes.
+//
+// Nothing here reads an object's contents, and nothing filters by the prefix
+// beyond the listing itself: what counts as state is the *.tfstate suffix,
+// exactly as it is for the repository roots.
+func StateObjects(ctx context.Context, c *Clients, stateBucket, prefix string) ([]string, error) {
 	var out []string
-	err := c.Storage.Objects.List(stateBucket).Prefix(StatePrefixRepos).Pages(ctx, func(o *storage.Objects) error {
+	call := c.Storage.Objects.List(stateBucket)
+	if prefix != "" {
+		call = call.Prefix(prefix)
+	}
+	if stateListPageSize > 0 {
+		call = call.MaxResults(stateListPageSize)
+	}
+	err := call.Pages(ctx, func(o *storage.Objects) error {
 		for _, it := range o.Items {
-			if isState(it.Name) {
+			if isState(it.Name) && !strings.HasSuffix(it.Name, "/") {
 				out = append(out, it.Name)
 			}
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("listing gs://%s/%s: %w", stateBucket, StatePrefixRepos, err)
+		return nil, fmt.Errorf("listing gs://%s/%s: %w", stateBucket, prefix, err)
 	}
 	slices.Sort(out)
 	return out, nil
+}
+
+// stateListPageSize is the page size StateObjects asks for; zero leaves it to
+// GCS. It is a variable only so a test can make the listing span pages and
+// see that every page is read.
+var stateListPageSize int64
+
+// maxStateObject is as much of a state object as this build reads. A root's
+// state is a few hundred kilobytes; anything of this size is not a state this
+// program wrote, and reading an object of unbounded size into memory to parse
+// it is a way for a bucket's contents to decide this program's memory.
+var maxStateObject = 64 << 20
+
+// ReadStateObject reads one state object's contents. Its size is bounded
+// rather than trusted: a state larger than maxStateObject is refused, and the
+// caller's direction on a read it could not make is the fallback (Global
+// Constraint 3), never a project reported clean because a state was skipped.
+func ReadStateObject(ctx context.Context, c *Clients, stateBucket, name string) ([]byte, error) {
+	resp, err := c.Storage.Objects.Get(stateBucket, name).Context(ctx).Download()
+	if err != nil {
+		return nil, fmt.Errorf("reading gs://%s/%s: %w", stateBucket, name, err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxStateObject)+1))
+	if err != nil {
+		return nil, fmt.Errorf("reading gs://%s/%s: %w", stateBucket, name, err)
+	}
+	if len(data) > maxStateObject {
+		return nil, fmt.Errorf("reading gs://%s/%s: it is larger than %d bytes, which is not a state this program writes", stateBucket, name, maxStateObject)
+	}
+	return data, nil
 }

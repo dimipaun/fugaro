@@ -3,7 +3,7 @@
 # Check it with: fugaro validate
 # If your project publishes a project layer, three lines are enough: version, project and gcp_project (fugaro config init). See docs/project-layer.md.
 version: 1
-# the Fugaro project; fugaro init --config-only writes your project config
+# the Fugaro project; fugaro update --config-only writes your project config
 project: example
 
 git:
@@ -33,7 +33,7 @@ agent:
   # review: /review           # a skill name, or a repo-relative prompt file
 
 # budget:                     # optional; the repository's cost and model policy. It can only tighten the
-#                             # project's ceiling (fugaro init --repo); the runner reads it from the default branch,
+#                             # project's ceiling (fugaro update); the runner reads it from the default branch,
 #                             # a branch's looser value is ignored with a warning
 #   mode: enforce             # off | observe | enforce; the strictest of the layers wins
 #   per_run_usd: 5            # a dollar cap per run; the lowest of the layers wins

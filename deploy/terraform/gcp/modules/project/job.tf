@@ -86,19 +86,31 @@ resource "google_cloud_run_v2_job" "this" {
     # FUGARO_GCP_PROJECT and FUGARO_REGION and errors when they are unset.
     precondition {
       condition     = lookup(var.job.env, "FUGARO_PROJECT", "") == var.fugaro_project
-      error_message = "the job's FUGARO_PROJECT must be the Fugaro project ${var.fugaro_project}; run fugaro init"
+      error_message = "the job's FUGARO_PROJECT must be the Fugaro project ${var.fugaro_project}; run fugaro update"
     }
     precondition {
       condition     = lookup(var.job.env, "FUGARO_GCP_PROJECT", "") == var.project
-      error_message = "the job's FUGARO_GCP_PROJECT must be the GCP project ${var.project}; run fugaro init"
+      error_message = "the job's FUGARO_GCP_PROJECT must be the GCP project ${var.project}; run fugaro update"
     }
     precondition {
       condition     = lookup(var.job.env, "FUGARO_REGION", "") == var.region
-      error_message = "the job's FUGARO_REGION must be ${var.region}; run fugaro init"
+      error_message = "the job's FUGARO_REGION must be ${var.region}; run fugaro update"
     }
     precondition {
       condition     = lookup(var.job.env, "FUGARO_RUN", "") == ""
       error_message = "the job must not set FUGARO_RUN: it is the launch override that says which run an execution is, so a job that carried one would run every execution as that run"
+    }
+    # The GitHub App's ID, which is not a secret (owner ruling of
+    # 2026-10-17): the profile mounts the App's private key through the
+    # github-app-key secret, and the runner's github provider is built from
+    # this variable, refusing to start without it — so a job that mounts the
+    # key and carries no ID halts every run it starts, at run time, in the
+    # credential. The value is computed by internal/infra from the App ID the
+    # installation's own configuration records (one App per project: a local
+    # config that records two is refused before this plan exists).
+    precondition {
+      condition     = var.job.provider != "github" || can(regex("^[0-9]{1,20}$", lookup(var.job.env, "FUGARO_GITHUB_APP_ID", "")))
+      error_message = "a shared job on the github provider must set FUGARO_GITHUB_APP_ID to the GitHub App's ID (1 to 20 digits, not a secret): its runs mint their git tokens from that App, and the runner refuses to build the provider without it. Run fugaro update in the checkout with --github-app-id <id> to record it, then fugaro update again"
     }
   }
 

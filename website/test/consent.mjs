@@ -128,7 +128,43 @@ const DOCUMENT_SELECTORS = new Map([
   ['[data-copy]', (el) => el.attrs.has('data-copy')],
   ['[data-copy-button]', (el) => el.attrs.has('data-copy-button')],
   ['[data-copy-status]', (el) => el.attrs.has('data-copy-status')],
+  // The site's sliders: one block per page, found by its own attribute and by nothing else —
+  // the console page's screenshot slider and the homepage's. `site.js` asks for this on every
+  // page it starts on, and the pages these cases run are the built ones, which include both.
+  // Nothing below reads a slider — a slider has nothing to do with consent — but the query is
+  // made on every page, and the stub's rule is that a selector is taught here rather than
+  // answered with nothing. What is inside a block is asked of the block, not of the document
+  // (the map below).
+  ['[data-slider]', (el) => el.attrs.has('data-slider')],
   ['.site-nav details[open]', (el) => el.name === 'details' && el.attrs.has('open')],
+  // The keyboard's way into a group asks for the groups themselves, whatever the device answers
+  // (the pointer's half above asks for the open ones). Every shipped page carries the menu, and
+  // this is the query that proves the keyboard's half is not behind the pointer's: the stub
+  // answers no `matchMedia`, so nothing hover-bound is ever bound here, and the groups are.
+  ['.site-nav-group details', (el) => el.name === 'details'],
+])
+
+// The selectors the site's one script file asks an *element* for, on the same terms as the
+// document's map above: refused rather than matched to nothing. The menu's keyboard half reads
+// each group's own control to know what opens it.
+const ELEMENT_SELECTORS = new Map([
+  ['[data-consent]', (el) => el.attrs.has('data-consent')],
+  ['summary', (el) => el.name === 'summary'],
+  // The two sliders' own hooks, read inside the block the script finds each by — both pages'
+  // sliders are one component since 2026-10-21, so both carry the same four: the track the
+  // console side scrolls (and the homepage side reads to know it is not a track), the slides
+  // it counts, the dots it marks, and the bar it reveals. Every one of them is asked for on a
+  // page that carries a slider — the built pages these cases run are the homepage and the
+  // console page, one of each — so every one of them is taught here. The slides and the dots
+  // are asked of the block rather than of the document, which is why they are here and not in
+  // the map above; the two step controls, which both sliders read, are taught below.
+  ['[data-slider-track]', (el) => el.attrs.has('data-slider-track')],
+  ['[data-slider-bar]', (el) => el.attrs.has('data-slider-bar')],
+  ['[data-slider-counter]', (el) => el.attrs.has('data-slider-counter')],
+  ['[data-slider-slide]', (el) => el.attrs.has('data-slider-slide')],
+  ['[data-slider-dot]', (el) => el.attrs.has('data-slider-dot')],
+  ['[data-slider-prev]', (el) => el.attrs.has('data-slider-prev')],
+  ['[data-slider-next]', (el) => el.attrs.has('data-slider-next')],
 ])
 
 // The address a stubbed page is "at", and the page it was reached from: both carry a query
@@ -261,6 +297,7 @@ function stubDOM(html, location = PAGE_LOCATION) {
       hidden: node.attrs.has('hidden'),
       handlers: new Map(),
       children: [],
+      parent: null,
       addEventListener(type, handler) {
         if (!this.handlers.has(type)) this.handlers.set(type, [])
         this.handlers.get(type).push(handler)
@@ -284,16 +321,38 @@ function stubDOM(html, location = PAGE_LOCATION) {
       classList: { contains: (name) => (node.attrs.get('class') ?? '').split(/\s+/).includes(name) },
       // The selectors the site's scripts use, over the element's own subtree.
       querySelectorAll(selector) {
-        assert.equal(selector, '[data-consent]', `a page script asks for ${selector} on an element: this stub reads only [data-consent]`)
+        const matches = ELEMENT_SELECTORS.get(selector)
+        assert.ok(
+          matches,
+          `a page script asks for ${selector} on an element: this stub reads ${[...ELEMENT_SELECTORS.keys()].join(', ')}, so a new one has to be taught here rather than silently matching nothing`,
+        )
         const out = []
         const walkFrom = (node) => {
           for (const child of node.children) {
-            if (child.attrs.has('data-consent')) out.push(child)
+            if (matches(child)) out.push(child)
             walkFrom(child)
           }
         }
         walkFrom(this)
         return out
+      },
+      // The nearest ancestor-or-self matching a selector, which is the rule the sliders are
+      // read by: an element belongs to a block only when `closest('[data-slider]')` is that
+      // block (`site.js`'s `own()`), and that is what keeps one slider's own slides out of the
+      // other's reading since the homepage's "See it" panel became the shared component. A
+      // selector neither map above teaches is refused here for the same reason as everywhere
+      // else in this stub: matching nothing is not the same as answering.
+      closest(selector) {
+        const matches = DOCUMENT_SELECTORS.get(selector) ?? ELEMENT_SELECTORS.get(selector)
+        assert.ok(
+          matches,
+          `a page script asks an element for the closest ${selector}: this stub reads ${[...DOCUMENT_SELECTORS.keys(), ...ELEMENT_SELECTORS.keys()].join(', ')}, so a new one has to be taught here rather than silently matching nothing`,
+        )
+        for (let node = this; node !== null; node = node.parent) if (matches(node)) return node
+        return null
+      },
+      querySelector(selector) {
+        return this.querySelectorAll(selector)[0] ?? null
       },
     }
     elements.push(el)
@@ -301,7 +360,9 @@ function stubDOM(html, location = PAGE_LOCATION) {
     if (id !== undefined) byId.set(id, el)
     for (const child of node.children ?? []) {
       if (child.name === undefined) continue
-      el.children.push(build(child))
+      const built = build(child)
+      built.parent = el
+      el.children.push(built)
     }
     return el
   }
@@ -1173,8 +1234,43 @@ test('the shipped scripts never take the keyboard: no preventDefault, no stopPro
 
 // ---- the privacy statement, and the claims it makes -------------------------------------
 
+/**
+ * The part of the privacy page that is about the SITE: everything inside `main` before the
+ * second `h2`, which is where "The software" begins (the page carries two named parts — the
+ * owner's request of 2026-10-19 — and only the first is about what the site collects).
+ *
+ * The vendor rule below is scoped to this part and not to the whole page, and the scoping is
+ * the correction the software part forced: the phone app signs in to the reader's OWN Firebase
+ * project, so the page names Firebase in the software part by design, and a scan of the whole
+ * page would read that as the site's measurement naming a vendor it does not have. The rule is
+ * unchanged for the part it was written about.
+ */
+function sitePartOf(html) {
+  const main = find(parse(html), 'main')
+  if (main === null) return ''
+  const nodes = [...walk(main)]
+  const h2s = nodes.filter((el) => el.name === 'h2')
+  if (h2s.length < 2) return textOf(main)
+  // The two part headings have to be SIBLINGS, at the same level, and this reader refuses a page
+  // where they are not: the site's part is everything between the first heading and the second,
+  // and that reading only means anything if the second one closes the first. A page whose
+  // "The software" heading is nested inside "The website" — or sits beside it in a container of
+  // its own — has no site part this reader can name, so it is refused rather than guessed at.
+  if (h2s[0].parent !== h2s[1].parent) {
+    throw new Error(
+      `the privacy page's two parts do not share a parent, so there is no site part to read: the part headings are siblings, one after the other — a nested or separately wrapped "The software" makes the site's scope unreadable (see website/test/privacy.mjs, which refuses the same page for the same reason)`,
+    )
+  }
+  // Document order, not sibling index: what the reader meets after the first heading and before
+  // the second is the site's part, whatever markup sits between the two.
+  return nodes
+    .slice(nodes.indexOf(h2s[0]) + 1, nodes.indexOf(h2s[1]))
+    .map(textOf)
+    .join(' ')
+}
+
 test('the privacy page states what is collected in the state the site is built in', () => {
-  const off = textOf(parse(pageOf(FLAG_OFF.pages, 'privacy/index.html')))
+  const off = sitePartOf(pageOf(FLAG_OFF.pages, 'privacy/index.html'))
   assert.match(off, /collects nothing/i, 'with analytics off the privacy page does not say that the site collects nothing')
   assert.ok(!/Google Analytics|Firebase|googletagmanager/i.test(off), 'the privacy page names the analytics vendor while analytics are switched off')
 
@@ -1184,6 +1280,45 @@ test('the privacy page states what is collected in the state the site is built i
   assert.match(on, /after you accept|after consent/i, 'the privacy page does not state that analytics load only after consent')
   assert.match(on, /Decline/, 'the privacy page does not say how consent is withdrawn')
   assert.match(on, new RegExp(CONSENT_KEY), 'the privacy page does not say where the choice is stored')
+})
+
+test('the vendor rule reads the site part, and a vendor named in it is still refused', () => {
+  // The scoping above is a correction and not a weakening: a vendor named in the site's own part
+  // is the thing the rule was written for, and a whole-page scan is what made the page's software
+  // part — where Firebase is the reader's own project, not the site's measurement — a finding.
+  const shell = (site, software) =>
+    `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>Privacy</h1><h2>The website</h2><p>${site}</p><h2>The software</h2><p>${software}</p></main></body></html>`
+
+  assert.match(sitePartOf(shell('Google Analytics counts visits.', 'Your own Firebase project.')), /Google Analytics/, 'a vendor named in the site part is not read, so the rule could not refuse one')
+  assert.ok(!/Google Analytics|Firebase|googletagmanager/i.test(sitePartOf(shell('This site collects nothing.', 'Your own Firebase project.'))), 'the vendor rule reads the software part, which is where the reader\'s own Firebase project is named')
+  assert.equal(sitePartOf('<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><p>no main</p></body></html>'), '', 'a page with no main is not a site part, and this reader must not invent one')
+
+  // The software part now names Google as the holder of the app's reports, in the shipped page's
+  // own words, and the site's part stays clean: naming Google or Firebase in the software part is
+  // allowed, and the rule still refuses each of them named as what the SITE loads.
+  const software = `The app reports to Google, which holds it as Firebase's processor, under Google's Firebase privacy policy.`
+  const off2 = sitePartOf(shell('This site collects nothing.', software))
+  assert.ok(!/Google|Firebase|googletagmanager/i.test(off2), 'naming Google in the software part makes the site part read as the site\'s vendor')
+  assert.match(sitePartOf(shell('Google Analytics counts visits.', software)), /Google Analytics/, 'a vendor named in the site part is still read when the software part also names one')
+  for (const vendor of ['Google Analytics', 'Firebase', 'googletagmanager']) {
+    assert.ok(!sitePartOf(shell('This site collects nothing.', `The app reports through ${vendor}.`)).includes(vendor), `${vendor} named in the software part is read into the site part, so the page cannot say what the app does without tripping the site's own rule`)
+  }
+})
+
+test('a page whose two part headings do not share a parent is refused, not guessed at', () => {
+  // The reader used to take the first heading's siblings and drop the last one, which reads a
+  // page where "The software" sits inside "The website" as though the site's part were the whole
+  // of main minus one heading. That is the defect this case exists for: a nested part has no
+  // scope to read, so the reader refuses the page.
+  const nested = `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>Privacy</h1><h2>The website</h2><div><p>site</p><h2>The software</h2><p>software</p></div></main></body></html>`
+  assert.throws(() => sitePartOf(nested), /two parts do not share a parent/, 'a page whose second part is nested under the first is read as though it had a site part')
+
+  const sectioned = `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>Privacy</h1><section><h2>The website</h2><p>site</p></section><section><h2>The software</h2><p>software</p></section></main></body></html>`
+  assert.throws(() => sitePartOf(sectioned), /two parts do not share a parent/, 'a page whose two parts are each in a container of their own is read as though it had a site part')
+
+  // The control: the shipped shape — two siblings — is read, and reads the site's part only.
+  const siblings = `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>Privacy</h1><h2>The website</h2><p>Google Analytics counts visits.</p><h2>The software</h2><p>Firebase is yours.</p></main></body></html>`
+  assert.match(sitePartOf(siblings), /Google Analytics/, 'the sibling shape the page is built in is not read at all')
 })
 
 /**

@@ -7,10 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 
 	terraform "github.com/dimipaun/fugaro/deploy/terraform"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
 // The files and state prefixes of a root's workdir.
@@ -44,34 +46,43 @@ var roots = map[string]bool{"installation": true, "repo": true, "firebase": true
 
 var projectIDRE = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]$`)
 
-// xdgDir is $<envVar> when it is absolute (the XDG spec ignores a relative
-// one), else $HOME/<fallback>.
-func xdgDir(getenv func(string) string, envVar, fallback string) (string, error) {
-	if d := getenv(envVar); filepath.IsAbs(d) {
-		return d, nil
+// stateDir and cacheDir are the two directories this package's workdirs are
+// built in, through localcfg.UserDir: $XDG_STATE_HOME and $XDG_CACHE_HOME
+// first, else the platform's own (%LOCALAPPDATA% on Windows), else
+// ~/.local/state and ~/.cache. localcfg owns that rule because it owns the
+// config directory the same way; this package used to carry a copy of the
+// XDG half of it.
+func stateDir(getenv func(string) string) (string, error) {
+	d, err := localcfg.UserDir(getenv, runtime.GOOS, localcfg.DirState)
+	if err != nil {
+		return "", fmt.Errorf("%w, so there is no state directory for the terraform workdirs", err)
 	}
-	home := getenv("HOME")
-	if !filepath.IsAbs(home) {
-		return "", fmt.Errorf("neither %s nor HOME is an absolute path", envVar)
-	}
-	return filepath.Join(home, fallback), nil
+	return d, nil
 }
 
-// InstallationWorkdir is where fugaro init plans the installation of
+func cacheDir(getenv func(string) string) (string, error) {
+	d, err := localcfg.UserDir(getenv, runtime.GOOS, localcfg.DirCache)
+	if err != nil {
+		return "", fmt.Errorf("%w, so there is no cache directory for terraform's provider cache", err)
+	}
+	return d, nil
+}
+
+// InstallationWorkdir is where fugaro update plans the installation of
 // project: $XDG_STATE_HOME/fugaro/terraform/<project>/installation, by
-// default under ~/.local/state.
+// default under ~/.local/state (%LOCALAPPDATA% on Windows).
 func InstallationWorkdir(getenv func(string) string, project string) (string, error) {
 	if !projectIDRE.MatchString(project) {
 		return "", fmt.Errorf("project %q is not a GCP project ID", project)
 	}
-	state, err := xdgDir(getenv, "XDG_STATE_HOME", filepath.Join(".local", "state"))
+	state, err := stateDir(getenv)
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(state, "fugaro", "terraform", project, "installation"), nil
 }
 
-// FirebaseWorkdir is where fugaro init --firebase plans the Firebase root of
+// FirebaseWorkdir is where fugaro update --firebase-project plans the Firebase root of
 // project: $XDG_STATE_HOME/fugaro/terraform/<project>/firebase. It is a
 // workdir of its own, so the installation's tfvars and saved plan are never
 // overwritten by the Firebase root's.
@@ -83,7 +94,7 @@ func FirebaseWorkdir(getenv func(string) string, project string) (string, error)
 	return filepath.Join(filepath.Dir(dir), "firebase"), nil
 }
 
-// InstallationOutputsWorkdir is where fugaro init --repo reads the
+// InstallationOutputsWorkdir is where fugaro update reads the
 // installation's outputs: a workdir of its own inside the installation's
 // (which keeps only its gcp tree and terraform's data directory), so the
 // installation's tfvars, imports and saved plan are never rewritten by a
@@ -97,9 +108,10 @@ func InstallationOutputsWorkdir(getenv func(string) string, project string) (str
 }
 
 // PluginCache is terraform's provider cache,
-// $XDG_CACHE_HOME/fugaro/terraform-plugins (by default under ~/.cache).
+// $XDG_CACHE_HOME/fugaro/terraform-plugins (by default under ~/.cache, or
+// %LOCALAPPDATA% on Windows).
 func PluginCache(getenv func(string) string) (string, error) {
-	cache, err := xdgDir(getenv, "XDG_CACHE_HOME", ".cache")
+	cache, err := cacheDir(getenv)
 	if err != nil {
 		return "", err
 	}
@@ -288,8 +300,13 @@ func lockBlocks(src string) (map[string]string, error) {
 
 // CopyRoot prepares dir as the workdir of an agent-authored root read from
 // src: the root's files are copied into dir/root afresh, so no file of an
-// earlier run (or an older fugaro) is planned, and terraform's data directory
-// (dir/root/.terraform) is kept, as PrepareWorkdir keeps it.
+// earlier run (or an older fugaro) is planned, and a .terraform directory
+// already there is left alone rather than deleted, as PrepareWorkdir leaves
+// the one beside its root. (That is not terraform's data directory here:
+// TF_DATA_DIR is <workdir>/.terraform — internal/infra/tf/env.go — and the
+// managed apply passes the workdir itself as that workdir while running
+// terraform in the root, so the directory this keeps is not the one terraform
+// reads.)
 //
 // The copy is not a convenience: the checkout belongs to the agent and to the
 // user, and terraform writes into the directory it runs in (a plan file, a
@@ -299,9 +316,9 @@ func lockBlocks(src string) (map[string]string, error) {
 //
 // What it refuses: src that is not a directory, a symlink in src (a file or a
 // directory — a managed apply reads the root's own tree, and a link out of it
-// is not that), and a src inside dir. What it does not do: it does not read
-// src's files, so what they contain is the preflight's question and not this
-// function's.
+// is not that), and a dir inside src — a workdir the copy would write while it
+// reads the root. What it does not do: it does not read src's files, so what
+// they contain is the preflight's question and not this function's.
 func CopyRoot(dir, src string) (*Workdir, error) {
 	if !filepath.IsAbs(dir) {
 		return nil, fmt.Errorf("the workdir %s is not an absolute path", dir)
@@ -327,9 +344,13 @@ func CopyRoot(dir, src string) (*Workdir, error) {
 	if err := os.Chmod(dir, 0o700); err != nil {
 		return nil, err
 	}
-	// The root's own directory is replaced, and terraform's data directory in
-	// it is kept: re-downloading every provider for every apply of the same
-	// root is minutes of a run's time for nothing.
+	// The root's own directory is replaced, and a .terraform directory in it is
+	// kept rather than deleted with the rest. It is not what saves the provider
+	// downloads: terraform consults TF_DATA_DIR, which this workdir's own
+	// directory is (the doc comment above), and the plugin cache the CLI config
+	// names (tf.terraformrc) is what reuses providers across applies. The skip
+	// is left as it stands, so this is the honest description of it rather than
+	// a reason.
 	data := filepath.Join(root, ".terraform")
 	if err := os.MkdirAll(data, 0o700); err != nil {
 		return nil, err

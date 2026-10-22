@@ -13,40 +13,60 @@
  *      (D100). The page is also the first reader-facing index of those files: `README.md`
  *      deliberately keeps no changelog section and points at the Releases page instead
  *      (finding 44).
- *   2. **The page writes nothing of its own.** Its heading names it and the component
- *      renders the files' lines — the newest releases' first Highlights lines as a summary
- *      above the list (the redesign's P4, D189), then every release's own bullets — and
- *      `website/test/changelog-page.mjs` fails on a sentence that is not in a release file:
- *      the page-level form of W0.6's file-level check. The summary is a rendering of those
- *      files' lines and not prose about them, which is what lets it exist at all.
+ *   2. **The page writes nothing of its own.** Its heading names it, the component renders
+ *      each release's end-user summary from `website/data/release-summaries.yaml` and then
+ *      the release file's own lines below it, and `website/test/changelog-page.mjs` fails on
+ *      a sentence that is in neither: the page-level form of W0.6's file-level check. Both
+ *      halves of an entry are text a file of this repository carries, which is what lets
+ *      them exist at all.
  *   3. **The repository the entries link is a fact.** It comes from `website/data/site.yaml`
  *      through the content pipeline (W0.2, W1.3), so the release URLs are built from the
  *      site's own fact and no host is typed into a template.
  *
  * Nothing here fetches anything: the build is network-free and reads this repository only
  * (Global Constraints 4 and 5).
+ *
+ * **The page's own look is the bold one, and it is the owner's brief of 2026-10-21** — the
+ * same look the owner approved on the home page (`website/design-ref/HomeV3.dc.html`,
+ * `src/pages/index.astro`) applied to this page, which has no board of its own. So the page
+ * opens with the display scale's largest step: `Changelog` at the weight, the tracking and the
+ * leading the boards set a headline in (`base.css`'s `.display-xl`), its word in the accent's
+ * gradient (`.gradient-text`, the same class the hero's last two words are drawn in), with the
+ * room under it a page's first block gets. **The page adds no words to do it**: the headline is
+ * still the page's one `h1` and the only text above the first release, which is why the page
+ * has no eyebrow, no pill and no lead paragraph — every sentence on this page is a release
+ * file's or a release summary's, and `website/test/changelog-page.mjs` refuses one that is
+ * neither. The entries under it are the cards `Changelog.astro` draws.
  */
 import path from 'node:path'
 import Base from '../layouts/Base.astro'
 import Changelog from '../components/Changelog.astro'
 import { buildChangelog } from '../lib/changelog.mjs'
-import { loadSite, REPO_ROOT } from '../content.ts'
+import { loadReleaseSummaries, loadSite, REPO_ROOT } from '../content.ts'
 
 // The releases, read from docs/releases/ at build time (W0.6): newest first, each entry
-// the file's own tag, bullets and operator steps, and its `released` flag from the tags of
-// the checkout this build ran in.
+// the file's own tag, bullets and operator steps, and its `released` flag from the plugin's
+// own version (the owner's brief of 2026-10-19) — never from the checkout's tags, which a
+// deploy build does not carry.
 //
-// **Why the directory and the checkout are passed rather than defaulted.** The generator
-// finds the repository by walking up from its own file, which is right when it is loaded
-// from `website/src/lib/` — as W0.6's own test loads it — and wrong inside a build: Astro
-// bundles it into a chunk under `website/dist/.prerender/`, where that walk lands on
-// `website/` and the release directory it looks for is `website/docs/releases/`, which does
-// not exist. `website/src/content.ts` solves exactly this problem for the site's facts
+// **Why the two files are passed rather than defaulted.** The generator finds the repository
+// by walking up from its own file, which is right when it is loaded from `website/src/lib/`
+// — as W0.6's own test loads it — and wrong inside a build: Astro bundles it into a chunk
+// under `website/dist/.prerender/`, where that walk lands on `website/` and the release
+// directory it looks for is `website/docs/releases/`, which does not exist.
+// `website/src/content.ts` solves exactly this problem for the site's facts
 // (`findSiteRoot`, W1.3) and exports the repository root it found, so the page passes the
-// one directory and the one checkout the generator should read, and the generator itself is
-// left as W0.6 wrote it.
+// directory of release files and the plugin manifest the generator should read, and the
+// generator itself is left as W0.6 wrote it.
 const releasesDir = path.join(REPO_ROOT, 'docs', 'releases')
-const entries = buildChangelog({ releasesDir, cwd: REPO_ROOT })
+const pluginFile = path.join(REPO_ROOT, 'plugin', '.claude-plugin', 'plugin.json')
+const entries = buildChangelog({ releasesDir, pluginFile })
+
+// The end-user summaries below each release's heading: the per-release lines the owner's
+// brief of 2026-10-19 asked for, read from the site's own data through the content pipeline
+// (W1.3) so the page writes no prose of its own. The component renders the summary it finds
+// and stops the build when a release has none.
+const summaries = loadReleaseSummaries()
 
 // The site's facts, through the same pipeline every page renders from: the repository is
 // the one fact this page needs, and `loadSite()` fails the build if the facts are not
@@ -55,6 +75,48 @@ const repository = loadSite().facts.repository
 ---
 
 <Base title="Changelog">
-  <h1>Changelog</h1>
-  <Changelog entries={entries} repository={repository} />
+  {/* The page's head: the headline, and the room under it. `header` inside `main` is not a
+      landmark (a banner is a `header` of the body, and `website/test/a11y.mjs` counts the
+      page-level ones), so it is a box and nothing more. */}
+  <header class="changelog-head">
+    {/* The boards' background: the grid and the two soft glows behind the top of a page,
+        drawn by `base.css`'s `.hero-glow` — the class the home page's hero opens with, used
+        here rather than a second drawing of the same thing. It is decoration and says so
+        (`aria-hidden`), and it paints no text. */}
+    <div class="hero-glow" aria-hidden="true"></div>
+    <h1 class="changelog-title display-xl">
+      <span class="gradient-text">Changelog</span>
+    </h1>
+  </header>
+  <Changelog entries={entries} summaries={summaries} repository={repository} />
 </Base>
+
+<style>
+  /* The page's head, in the page's own stylesheet: the headline, the room under it and the
+     boards' background behind it. **The room above it is `main`'s own padding and nothing
+     else** — the top of the block is `0`, so this page's headline sits at the offset every
+     other page's headline sits at (`main` is `--space-lg` there and `--space-xl` from 48 rem
+     up, `base.css`), and the gutter is `main`'s too. Only the step between the headline and
+     the first card is this block's, and it is a step of the spacing scale rather than a
+     number. The pages whose first block is a full container of its own — the home page's hero,
+     the security document — drop `main`'s padding instead (`main:has(> .hero, >
+     [data-security-page])`); this head is not one of those, so it keeps `main`'s padding and
+     adds no second one on top of it. `position: relative` and `overflow: hidden` are what the
+     glow layer needs (`base.css`, section 2c). */
+  .changelog-head {
+    position: relative;
+    overflow: hidden;
+    padding-block: 0 var(--space-2xl);
+  }
+
+  /* The headline paints above the glow: a positioned box paints after a static one, and the
+     glow is the head's first child (the hero's copy is positioned for the same reason). */
+  .changelog-title {
+    position: relative;
+    margin: 0;
+    /* The headline is one word, and the display scale's balance (`text-wrap: balance`) has
+       nothing to balance: it is set on one line at every width it fits, which the clamp in
+       `.display-xl` is what decides. */
+    max-width: 20ch;
+  }
+</style>

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"gocloud.dev/blob"
 
@@ -67,7 +68,10 @@ func TestLsNamedRunIsPendingNotError(t *testing.T) {
 	writeBuildRecord(t, f, otherSlug, "svc", release065)
 	variant := gcp.WorkflowVariant("svc", "acme-personal")
 	f.run.AddJob(gcp.JobName(otherSlug, variant), "2", "4Gi")
-	if _, _, err := execute(t, "run", "--run-id", "20261012-100000-b2b2", "--token", "acme-personal", "A task"); err != nil {
+	// A run minted inside ls's default --since window: a fixed date would
+	// age out of that window and fail here by the calendar (#651).
+	id := recentRunID(t, time.Minute, "b2b2")
+	if _, _, err := execute(t, "run", "--run-id", id, "--token", "acme-personal", "A task"); err != nil {
 		t.Fatal(err)
 	}
 	got, errOut := lsJSON(t, "--repo", "acme/other")
@@ -115,7 +119,12 @@ func TestFollowUpAfterRealNamedLaunch(t *testing.T) {
 	variant := gcp.WorkflowVariant("svc", "acme-personal")
 	f.run.AddJob(gcp.JobName(otherSlug, variant), "2", "4Gi")
 
-	rootID := "20261010-090000-c1c1"
+	// Both are minted inside run --pr's followUpLookback (90d) window, which
+	// resolvePR measures back from the wall clock: fixed dates would age out
+	// of it and make the follow-up report "not a Fugaro PR" by the calendar
+	// (#651). wallRunID, not recentRunID: this window is not a listing's, so
+	// the id has to be minted from the clock the command reads.
+	rootID := wallRunID(t, 2*time.Minute, "c1c1")
 	out, _, err := execute(t, "run", "--run-id", rootID, "--token", "acme-personal", "--json", "Add a feature")
 	if err != nil {
 		t.Fatalf("root launch: %v", err)
@@ -133,7 +142,7 @@ func TestFollowUpAfterRealNamedLaunch(t *testing.T) {
 		PR: &runstore.PRRef{Number: 7, URL: "https://github.com/acme/other/pull/7"}}
 	writeOtherRecord(t, f, rootID, rec)
 
-	fuID := "20261010-120000-c2c2"
+	fuID := wallRunID(t, time.Minute, "c2c2")
 	out, _, err = execute(t, "run", "--repo", "acme/other", "--pr", "7", "--run-id", fuID, "--json", "more work")
 	if err != nil {
 		t.Fatalf("follow-up: %v", err)

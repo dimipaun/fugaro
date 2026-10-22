@@ -197,7 +197,9 @@ This repository's site-wide rule is that a page renders a fact and never restate
 and it is enforced by construction: `ArchitectureDiagram.astro` throws, naming the file,
 when a caption is not a line of the document it cites; `docs.astro` renders the generated
 documents rather than quoting them; `TestWebsiteSecurityPageIsByteIdenticalToSecurityMd`
-holds a page to a file byte for byte.
+holds the generated copy of `SECURITY.md` to the document byte for byte — the page itself
+is not that copy, and since the brief of 2026-10-19 `website/test/security.mjs` holds the
+page to the document's own words instead (see the Global Constraint 12 row in §3).
 
 A terminal transcript is the easiest place in the site to break that rule: a job
 identifier, an elapsed time, a branch name, a run URL or a pull-request number shown in
@@ -322,12 +324,15 @@ under `reduce`, the page shows the finished transcript, still, in full.
 
 ### RF18 — **Wrong (confirmed by measurement)** — the accent does not match the logo
 
-Sampled from `brand/fugaro-logo.png` (1024 × 1024, RGBA; 115,370 pixels with alpha ≥ 250,
-of which 107,437 are not near-black) by the committed
-[sample-logo-hue.py](sample-logo-hue.py): the circular mean hue is **198.4°** at
-saturation ≥ 0.5, **199.5°** at ≥ 0.6, **201.4°** at ≥ 0.7 and **204.2°** at ≥ 0.8; the
-largest 5° bins are **200–204 (26.8 %)**, 195–199 (19.6 %), 205–209 (15.3 %). The logo's
-hue is a cyan-blue around **198–204°**.
+Sampled from `brand/fugaro-logo.png` (2048 × 2048, RGBA; 465,878 pixels with alpha ≥ 250,
+of which 431,842 are not near-black) by the committed
+[sample-logo-hue.py](sample-logo-hue.py): the circular mean hue is **199.0°** at
+saturation ≥ 0.5, **200.0°** at ≥ 0.6, **202.0°** at ≥ 0.7 and **205.0°** at ≥ 0.8; the
+largest 5° bins are **200–204 (26.8 %)**, 205–209 (18.5 %), 195–199 (16.2 %). The logo's
+hue is a cyan-blue around **199–205°**. (The owner replaced the source with a 2048 px one
+on 2026-10-20 — the same artwork with twice the real pixels — so §5.1's canvas, counts and
+means are the re-sample of that file; the derived palette of §5.2 did not move, and the
+accent it names is still within D180's 5° of the mean.)
 
 The palette in force: `--accent: #8B5CF6` (hue **258.3°**), `--accent-on-dark: #C4B5FD`
 (hue **252.5°**), `--warn: #F97316` (hue **24.6°**). **The accent is about 60° away from
@@ -398,10 +403,14 @@ found). Contents today:
   headings (`security.astro`, the `data-security-toc` nav) — measured, the `h1` ends at
   468 px at 1280 and 825 px at 390. A list of headings is not "a short summary of key
   points", and the brief names this very page as its example, so `/security/` needs one.
-  The page is held to `SECURITY.md` byte for byte below its title
-  (`TestWebsiteSecurityPageIsByteIdenticalToSecurityMd`, the first plan's Global
-  Constraint 12: "Security claims are never paraphrased"), so a summary written on the page
-  would be the paraphrase that rule forbids.
+  The page is held to `SECURITY.md` by the first plan's Global Constraint 12 ("Security
+  claims are never paraphrased"), whose shape is a byte-for-byte page under
+  `TestWebsiteSecurityPageIsByteIdenticalToSecurityMd`, so a summary written on the page
+  would be the paraphrase that rule forbids. **As shipped** (2026-10-19), that Go pin
+  reads the generated copy `website/content/security.md` and never a page, and the page
+  itself — the brief's three things, and the boundary diagram the owner's brief of 2026-10-20
+  put above them — is held to the document's own words by
+  `website/test/security.mjs`; the constraint table in §3 records the departure.
 - `/docs/` has a lead and a contents list, but its lead is the internal text of RF6 — so
   removing the meta paragraph removes the only summary the page has, and the part that
   removes it must put a real one in its place, drawn from the documents' own facts.
@@ -453,7 +462,7 @@ Global Constraints collide with the brief as well, and they are the last two row
 | **D107** (a video slot, empty until filled) | `features.video: false` | Untouched: the brief asks for "images or diagrams", and a video is neither, so the slot stays empty |
 | **D108** (four gates; the fourth is the owner's live checks) | Build, link check, drift tests, a11y/origins lint, plus live checks | **Extended, additively:** RF23's fold check and the "no internal text" gate are new gates, not a replacement. Whether the fold check is hermetic, browser-driven-in-repo or owner-run is D187 |
 | **Global Constraint 6** of the first plan ("A page never restates a document; it renders it or links it") | Enforced by construction and by `changelog-page.mjs` | **Collides** with the brief's "each opens with a short summary of key points" on `/security/`, `/changelog/` and `/docs/` (RF24): a summary written on the page is a restatement. **D189** |
-| **Global Constraint 12** ("Security claims are never paraphrased"; the page is `SECURITY.md` byte for byte below the title) | `TestWebsiteSecurityPageIsByteIdenticalToSecurityMd` | **Collides** with a `/security/` summary written on the page; D189's recommendation keeps the constraint by putting the summary in `SECURITY.md` itself |
+| **Global Constraint 12** ("Security claims are never paraphrased"; the page is `SECURITY.md` byte for byte below the title) | the generated copy by `TestWebsiteSecurityPageIsByteIdenticalToSecurityMd`; the page by `website/test/security.mjs` | **Collides** with a `/security/` summary written on the page; D189's recommendation keeps the constraint by putting the summary in `SECURITY.md` itself. **As shipped (2026-10-19) the second half of its shape departed**: the Go pin has always read the generated copy `website/content/security.md` rather than a page, and the page — now the brief's three things and, since the owner's brief of 2026-10-20, the boundary diagram above them (one inline SVG whose every label is a phrase of the document, the document's own facts as a list under it and its two limit lines below), with the document's cross-references resolved to the section that answers them (the page's own anchor where the page renders that section, a link into the repository otherwise) and a reference naming no heading rendered as its own text — is held by `website/test/security.mjs`, which reads each label back off the built page and refuses one that is in neither the document's "In short" section nor the words the diagram region carries beside the picture. The constraint's substance is kept, and the drawing is why it has to be stated more exactly than "every word of it is the document's": every word is — a label the document does not use stops the build — but a picture **arranges** the words it is made of, so the arrangement is the page's own decision, written down in `security.astro` (its decision 3) and read by no gate (the model-key card draws the document's conditional as the one sentence the document states it in, rather than setting the gateway and the key's place side by side). The departure is recorded in the plan's P4 note |
 | **W1.4's five stage names** (the first spec's `local dispatch`, `cloud job`, `cache`, `security boundary`, `PR or artifact collected back`) | `home.mjs`: "the spec's five stage names and no sixth" | **Changed** if D185 takes the brief's four steps: the test's five-names assertion is rewritten in P8 |
 
 ## 4. The CSP, the origins gate, and what the owner's ruling permits
@@ -484,13 +493,13 @@ copy rather than written in place.
 
 ### 5.1 What was sampled, and how
 
-`brand/fugaro-logo.png`, 1024 × 1024 RGBA, read pixel by pixel by
+`brand/fugaro-logo.png`, 2048 × 2048 RGBA, read pixel by pixel by
 [sample-logo-hue.py](sample-logo-hue.py) (Pillow only, like `scripts/gen-brand-icons.py`;
 run `python3 -I docs/website/redesign/sample-logo-hue.py brand/fugaro-logo.png` from the
 repository root):
 
 1. pixels with alpha below 250 and near-black pixels (HSV value below 0.05) are dropped —
-   the logo's ground is not its colour; 107,437 pixels remain;
+   the logo's ground is not its colour; 431,842 pixels remain;
 2. the remaining pixels are converted to HSV;
 3. for each saturation threshold, the hue is averaged **as a circular mean**
    (sin/cos sum, which is the only correct average for an angle, and which stops a few
@@ -499,31 +508,48 @@ repository root):
 
 | saturation ≥ | pixels | mean hue | weighted by saturation | mean saturation |
 | --- | --- | --- | --- | --- |
-| 0.5 | 83,028 | **198.4°** | 199.7° | 0.832 |
-| 0.6 | 77,323 | **199.5°** | 200.5° | 0.853 |
-| 0.7 | 68,005 | **201.4°** | 201.9° | 0.880 |
-| 0.8 | 51,926 | **204.2°** | 204.4° | 0.918 |
+| 0.5 | 336,810 | **199.0°** | 200.1° | 0.816 |
+| 0.6 | 316,337 | **200.0°** | 200.9° | 0.833 |
+| 0.7 | 279,066 | **202.0°** | 202.5° | 0.857 |
+| 0.8 | 209,422 | **205.0°** | 205.1° | 0.890 |
 
 The largest 5° bins over the pixels with saturation ≥ 0.7:
 
 | bin | share |
 | --- | --- |
-| 200–204° | 26.78 % |
-| 195–199° | 19.63 % |
-| 205–209° | 15.31 % |
-| 210–214° | 9.59 % |
-| 190–194° | 8.05 % |
-| 185–189° | 7.76 % |
+| 200–204° | 26.81 % |
+| 205–209° | 18.47 % |
+| 195–199° | 16.22 % |
+| 210–214° | 11.01 % |
+| 185–189° | 7.64 % |
+| 190–194° | 7.37 % |
 
 (The bins move by a point or two with the HSV implementation, because many pixels sit
 exactly on 200°; the means do not.) The logo's colour is a saturated cyan-blue centred on
-**198–202°**, its mass sitting between 185° and 214°.
+**199–205°**, its mass sitting between 185° and 214°.
+
+The source was 1024 × 1024 when this round first sampled it, and the owner replaced it with
+a 2048 × 2048 one on 2026-10-20: the same artwork with twice the real pixels, so the
+derived icons are no longer upscales. **Every figure above is the re-sample of that file**,
+and the movement is small but real — the canvas and every count scale with the resolution,
+and each mean hue moves up by about half a degree to three quarters of one (198.4 → 199.0 at
+saturation ≥ 0.5, 199.5 → 200.0 at ≥ 0.6, 201.4 → 202.0 at ≥ 0.7, 204.2 → 205.0 at ≥ 0.8,
+to the one decimal the script prints). Why the finer file reads a shade
+bluer is not something this sample settles: the pixels at the artwork's edges, which a
+1024 px render blends with the transparent ground and a 2048 px one resolves, are the
+likeliest place for it, and this document does not claim more than that. What did not move
+is the palette: `--accent` is 198.0°, inside D180's 5° of both samples, and §5.2 is
+otherwise the derivation it was.
 
 ### 5.2 The derived palette
 
-One accent hue (198°, the sampled mean), one derivation, and **exactly the ten tokens every
-palette file declares** (RF16: the palettes are one vocabulary, so a new token in one file
-alone fails `a11y.mjs`). It is written as a fourth palette file, `palette-logo.css`:
+One accent hue (199.0°, the sampled mean of the 2048 px source; 198.4° when this round
+sampled the 1024 px one), one derivation, and **exactly the ten tokens every palette file
+declares** (RF16: the palettes are one vocabulary, so a new token in one file alone fails
+`a11y.mjs`). The values below are the derivation this round made and did not move with the
+re-sample: `--accent` is 198.0°, inside D180's 5° of both samples, and the contrast matrix
+of §5.3 is computed from these literals and not from the logo. It is written as a fourth
+palette file, `palette-logo.css`:
 
 | token | value | hue | what it is |
 | --- | --- | --- | --- |
@@ -696,13 +722,15 @@ change nobody can review.
 | --- | --- | --- | --- | --- |
 | **D180** | **The accent and the palette** (§5) | Take the logo's own hue: `--accent #17A8E6` (198°), `--accent-on-dark #6FD8F5`, the ground moved to `#0A0E16` — §5.2's ten tokens, as a fourth palette file `palette-logo.css` made the palette in force; `palette-split.css` stays as the record of D104's option C | The brief says to sample the logo, and 198–204° is what the logo is; every pair `a11y.mjs` asserts passes (§5.3) | (a) keep `--accent #8B5CF6` and use the logo's hue only for the logo: cheapest, but the brief's complaint stands; (b) take the deep end of the sample (≈ 203°, `#0E7FC4`): calmer, less electric than the brief asks; (c) write the new values into `palette-split.css` instead of a new file: one file fewer, and the record of D104's choice is lost |
 | **D181** | **What happens to D104's warning colour** | Keep D104's *role* (a second colour for warnings and cost) and move it from `#F97316` to the amber `#F5A524` (37°) | Amber reads as "attention" without reading as "error", and it is the stronger text colour (9.46:1 on the new ground against 6.89:1). Both are near-complementary to the accent (161° and 174° away), so this is a judgement of tone, not of hue distance | (a) keep `#F97316` exactly: it still passes 6.89:1 on the new ground; (b) drop the second colour: loses the caps-and-costs page's "attention" signal |
-| **D182** | **The navigation's shape** | Three top-level sections with dropdowns — *Product* (How it works, Getting started, Caps and costs), *Reference* (Docs, Console, Changelog), *Project* (Security, FAQ, Community) — with Home as the logo link and a drawer on mobile; Privacy stays a footer link as today | Today's `NAV` is Home plus nine sections (`Base.astro:106-117`); three groups of three fit one row; Privacy is footer-only by the first line of work's choice (`FOOTER_NAV`) and nothing in the brief moves it | (a) five groups: more top-level items than a 390 px row holds; (b) two groups: long dropdowns, less scannable; (c) also put Privacy under *Project*: one more menu item, a change the brief does not ask for |
+| **D182** | **The navigation's shape** | Three top-level sections with dropdowns — *Product* (How it works, Getting started, Caps and costs), *Reference* (Docs, Console, Changelog), *Project* (Security, FAQ, Community) — with Home as the logo link and a drawer on mobile; Privacy stays a footer link as today. **Amended 2026-10-21 (the owner's feedback: "let's drop the top reference menu. We'll move the submenu console under product, and the rest go under Project"): the Reference group is dropped and the menu is two groups — *Product* (How it works, Getting started, Caps and costs, Console) and *Project* (Docs, Security, FAQ, Community, Changelog) — with Home as the menu's first item (the same day's earlier feedback) and Privacy still a footer link; the decision above stands as what was ruled on 2026-10-18** | Today's `NAV` is Home plus nine sections (`Base.astro:106-117`); three groups of three fit one row; Privacy is footer-only by the first line of work's choice (`FOOTER_NAV`) and nothing in the brief moves it | (a) five groups: more top-level items than a 390 px row holds; (b) two groups: long dropdowns, less scannable; (c) also put Privacy under *Project*: one more menu item, a change the brief does not ask for |
 | **D183** | **How the JavaScript is delivered** (RF15) | **A first-party file** (`website/public/scripts/site.js`): no inline script, no new `INLINE_SCRIPTS` entry, no CSP edit | The CSP and the allow-list stay exactly as they are; the file is counted by `budget.mjs` like any other asset and is cached across pages | (a) an inline script with its sha256 in `INLINE_SCRIPTS` **and** in `firebase.json`'s `script-src`: no extra request, a policy edit and a hash to re-derive on every edit; (b) both shapes: two mechanisms to keep honest |
 | **D184** | **What the homepage run animation may show** (RF10, RF11) | Lines the repository already writes — `fugaro run "…"` (today's command) and then the numbered steps of `README.md`'s `## How it works` (Start, Sync, Loop, Push and open the pull request), each held to the file at build time, with one caption saying it is the documented sequence and not a recording | It cannot go stale or invent a fact: the lines are held to the README exactly as the diagram's captions are | (a) **a real run's own output**, captured once from a sandbox run, committed as a fixture with its date and rendered verbatim: the closest reading of the brief's "a real Fugaro run", at the cost of identifiers (job id, branch, PR number) that are true of one past run and must be re-captured when the CLI's output changes; (b) a scripted illustration with invented ids, labelled as one: more sizzle, facts that are not facts; (c) keep the single command: leaves item 5 half-answered |
 | **D185** | **How It Works: the brief's four steps or the site's five stages** (RF12) | The brief's four steps — task submitted, ephemeral Cloud Run job, agent runs, pull request — each captioned by a short **quoted** line: the `fugaro run` invocation, "one execution per task, then gone", README step 3 ("Claude Code implements, writes tests, runs the build and tests"), "Push and open the pull request"; `cache` and `security boundary` stay as two annotations on the job step | It is the flow the brief draws, it adds the one step the diagram lacks (the agent), and every caption is still a substring of its source, which is what the component's check holds (RF12) | (a) keep the five stages as they are and only redraw them: no new caption, but "agent runs" stays missing; (b) six stages (the five plus the agent): complete, and longer than the brief's "one line per step" picture wants |
 | **D186** | **The "no internal text" rule** (RF5–RF8) | A new hermetic gate that refuses an explicit list of provenance phrases on every built page — "rendered from", "Nothing here is typed", "as it is generated", "generated rather than written", "rather than written here", "rather than described here", "points at those documents rather than repeating them" — stated as **a page must not explain why its own text exists** | A phrase list is checkable and mutation-provable, and it does not misfire on a link to `SECURITY.md` or on the docs hub naming the document each guide lives in; the banner of RF8 is never on a page and is untouched | (a) a rule over "names any repository file": fails on the legitimate citations; (b) no gate, a review habit: the brief's "Done when" asks for none to remain, and nothing would hold it |
 | **D187** | **How "above the fold" is checked** (RF23) | A hermetic **word ceiling** (D188) plus **one owner-run live check** for the fold itself (70b) | Hermetic gates cannot see a viewport and this site's gates are deliberately browser-free; the ceiling is mutation-provable and the fold is what the owner's eyes are for | (a) the repository's first browser-driven test (Playwright in `website/test/`): a real fold assertion, a new dev dependency and the end of the browser-free posture; (b) the ceiling only: "above the fold" stays unchecked |
 | **D188** | **The word ceiling as numbers** | Two numbers in `website/README.md`: **the lead** (visible text between the `h1` and the first `h2`, or the page's first section) **≤ 40 words on every page**; **the whole page ≤ 250 words** on every page except the three reference pages (`/docs/`, `/security/`, `/changelog/`), which have no whole-page ceiling | The lead is what sits above the fold, so it is the number that models the brief's principle; today's non-reference pages run 89–493 words, so 250 forces the cut on Getting Started (431), Caps and costs (487) and FAQ (493) without squeezing a page to a slogan | (a) one whole-page number, 150, and 400 for the reference pages' summary: stricter, cuts FAQ's six answers to about 25 words each, and needs a marker for where a reference page's summary ends; (b) a per-page table: precise, one more table to keep |
+| **D188 (amended 2026-10-19)** | **The whole-page ceiling, once the privacy statement became the store listings' privacy policy** (the owner's request of 2026-10-19) | The row above stands for every page **but one**: `/privacy/` is the App Store and Play listings' privacy policy, so it carries the software as well as the site, and its ceiling is **derived from its own count** — that page's words plus 25 % (D192's headroom), rounded up — the figures are `website/README.md`'s, and they moved three times on 2026-10-19 as the software part, the app's reporting and the deletion section's carve-out landed — while **every other page stays within the row's 250**. The derivation is `website/test/budget.mjs`'s `wordsCeilingFailures`, beside the byte figures' own | A ceiling raised for one page is a ceiling every page gains, and nothing would say so: the second half of the rule is what keeps D188's number true for the rest of the site, and the first half makes a sentence added to the statement re-derive the README in the commit that adds it | (a) keep 250 and cut the software part to fit: the store reviewer's half of the page becomes a summary of a page it cannot link to; (b) exempt the page as `/docs/` and the other two are exempt: no number at all, and the page a listing links would be the site's only unmeasured one |
+| **D188 (amended 2026-10-21)** | **The whole-page ceiling, once the bold redesign rebuilt the homepage** (the owner's board `website/design-ref/HomeV3.dc.html`, approved 2026-10-20) | The number is **500**, and it is the row above's rule read against the page the board draws: the homepage is five blocks — the hero, the slider, the run as a band of four steps, the grid of what a run leaves behind, and the closing call to action with the install command — and the five measure **468 words** on the built page, so the page was over the 300 the owner's feedback of 2026-10-19 had moved it to. The number stays a ceiling and not a target: the highest page that gained nothing from the board is How It Works at 279 words, and a page that wants the extra room has to carry a block its own brief or its own board requires. The lead ceiling is untouched and the homepage's lead **fell** from 23 words to 16, because the board's hero prints the request, the promise and the two links and the illustration below them is excluded whole. The figures are `website/test/budget.mjs`'s (`D188_WORDS`), read off the built page | The number has to be the smallest round ceiling above the page that carries every block its briefs and its boards require, or the ceiling is a page the owner has to shrink rather than a check on one that grew: 500 is that number for the five blocks, and the same rule that moved it to 300 on 2026-10-19 moves it again rather than being abandoned. The readings are `docs/website/redesign/README.md`'s | (a) keep 300 and cut a block the board draws: the approved board is the page, so the check would be red against the design the owner approved; (b) exempt the homepage: no number at all for the one page the site's own briefs give the most blocks, and every other page loses the ceiling it is held to |
 | **D189** | **Where the long pages' summaries come from** (RF24; Global Constraints 6 and 12) | Each summary is rendered from a file, never written on the page: **`/security/`** — a short "In short" section added at the top of `SECURITY.md` itself (written or approved by the owner, as every `SECURITY.md` change is), which the page renders like the rest; **`/changelog/`** — the first Highlights line of the newest few releases, selected from the release files, so `changelog-page.mjs` keeps passing; **`/docs/`** — the hub's existing one-line `answers` per guide, gathered at the top | It meets the brief without breaking the rule that a page renders and never restates, and leaves the byte-identity pin and the changelog's "no sentence of its own" test as they are | (a) summaries written on each page, with Global Constraint 6 amended for a marked summary block and `changelog-page.mjs` and the security pin given an exception for it: freer copy, the first restated facts on the site; (b) the security contents list counts as the summary: no work, and the brief's own example stays unanswered |
 | **D190** | **Where the approved design lives** (RF26) | In the owner's design tool; the repository keeps the spec, these documents, the capture script and a short `redesign/design.md` recording the numbers the design fixed (type scale, spacing, accent usage, the menu groups). Screenshots, before and after, are regenerated and never committed | A design project file is not a document; the numbers it fixes do belong in the tree, because every later page change has to keep them | (a) keep the design only in the tool: the "match" check has no record in the tree; (b) commit the design's exports and the screenshots: several MB of binaries per round in `docs/` (the "before" set alone was 7.8 MiB) |
 | **D191** | **Sequencing against the first line of work** | Redesign first, then the remaining `W2`/`W3` waves (the live checks, the deploy, analytics behind the banner) | The redesign changes `Base.astro`, `base.css`, the palette and several pages — the files `W3` deploys; doing it first deploys the finished look once | (a) finish `W3` first: the site goes live in its current look and the redesign is a second deploy; (b) interleave: two lines editing the same files |

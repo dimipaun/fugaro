@@ -1,4 +1,4 @@
-# Every name and member arrives from fugaro init's terraform.tfvars.json.
+# Every name and member arrives from fugaro update's terraform.tfvars.json.
 # The validation blocks check shapes only; nothing here derives a name. The
 # module is the Batch backend's installation-level provisioning (design
 # docs/design/compute-backend.md §3.2, §3.7, §8.1 task 6): the two APIs, the
@@ -57,7 +57,8 @@ variable "names" {
     # jobsEditor Condition is narrowed to it (§3.7).
     job_prefix = string
     # The reaper: the account the scheduled sweeper runs as, and the custom
-    # role carrying its six permissions.
+    # role carrying its five permissions (Task 9: never six -- batch.jobs.cancel
+    # is not a permission Google defines).
     reaper_account_id = string
     reaper_role_id    = string
     # The preload builder: the account the scheduled rebuild runs as, and the
@@ -95,7 +96,7 @@ variable "project_number" {
 }
 
 variable "manage_apis" {
-  description = "Whether this root enables the two APIs. Off, the project is left to be managed elsewhere (init --skip-apis)."
+  description = "Whether this root enables the two APIs. Off, the project's APIs are left to whoever else manages them (the Firebase root's `skip_apis`, set when the Firebase project is the installation's own; no CLI flag sets this false today)."
   type        = bool
   default     = true
 }

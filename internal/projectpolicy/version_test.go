@@ -19,31 +19,47 @@ func TestSkewMessagesShareTheSentence(t *testing.T) {
 			t.Errorf("%s does not start with Skew: %q", name, msg)
 		}
 	}
-	if Version != 2 {
+	if Version != 3 {
 		t.Errorf("Version = %d: a version bump needs the plan's skew handling, this test and the CLI's", Version)
 	}
 }
 
-// TestProfileGateIsVersionTwo: version 2 is the first version whose runner
-// enforces a profile's allow_repos (plan task 3.3). A runner of version 1
-// decodes the profiles block and ignores it, so a launcher that points a run
-// of a profile's job at another repository of the project's allow_repos would
-// get the profile's secrets from it. The bump is what makes such a runner
-// refuse the node instead: a version-1 reader meets version 2 and halts
-// (RunnerSkew), and this code refuses a version-1 node the same way rather
-// than reading it as one whose profiles were never enforced.
-func TestProfileGateIsVersionTwo(t *testing.T) {
+// TestTheProfileGateIsVersioned: a profile's own allow_repos is enforced by a
+// version-2 runner and its accounts by a version-3 one, and the bump is what
+// makes a reader that lacks either refuse the node with a remedy rather than
+// run past it (plan task 3.3, and project-named-oauth-tokens task 1). A runner
+// of version 1 has no profiles block at all — the key is top-level, so it
+// would list it in UnknownKeys and decode past it (P8) — and a launcher that
+// pointed a run of a profile's job at another repository of the project's
+// allow_repos would then get the profile's secrets from it. Version 3's case
+// is the other one: claude_accounts sits INSIDE a profile entry, which every
+// reader from version 2 on decodes with DisallowUnknownFields, so a version-2
+// reader refuses such a node as unreadable rather than reading a profile whose
+// own allow_repos would be the only gate. Either way the node is refused, and
+// the version is what decides whether the refusal is the documented skew.
+//
+// What this pins is the mechanism, not the number: a node below the version
+// this binary understands is refused as a skew (VersionError, with both
+// versions in it) rather than read as one whose profiles and accounts were
+// never enforced.
+func TestTheProfileGateIsVersioned(t *testing.T) {
 	_, _, err := Decode([]byte(`{"version":1,"allow_repos":["github/acme/*"],"profiles":{"standard":{"allow_repos":["github/acme/app"]}}}`))
 	var ve *VersionError
-	if !errors.As(err, &ve) || ve.Found != 1 || ve.Understood != 2 {
-		t.Fatalf("a version-1 node with profiles: err = %v, want a VersionError found 1, understood 2", err)
+	if !errors.As(err, &ve) || ve.Found != 1 || ve.Understood != Version {
+		t.Fatalf("a version-1 node with profiles: err = %v, want a VersionError found 1, understood %d", err, Version)
+	}
+	// And the version one below this one, which is the one that enforces a
+	// profile's allow_repos but not its accounts.
+	_, _, err = Decode([]byte(`{"version":2,"accounts":{"ops":{"allow_repos":["github/acme/infra"]}},"profiles":{"standard":{"allow_repos":["github/acme/infra"],"claude_accounts":["ops"]}}}`))
+	if !errors.As(err, &ve) || ve.Found != 2 || ve.Understood != Version {
+		t.Fatalf("a version-2 node with accounts: err = %v, want a VersionError found 2, understood %d", err, Version)
 	}
 }
 
 // TestTheCLISkewRemediesStayApart: the two CLI directions carry different
 // advice because they have different fixes, and each one is wrong for the other
 // direction — `fugaro upgrade` when this binary is already the newer side does
-// nothing, and `fugaro init --firebase` at an older binary redeploys this
+// nothing, and `fugaro update --firebase-project` at an older binary redeploys this
 // release's rules template over rules a newer Fugaro wrote. internal/cli picks
 // between them by Found > Understood (cliSkewSentence), which is why the pair
 // is pinned here beside the sentence they share.
@@ -54,13 +70,14 @@ func TestTheCLISkewRemediesStayApart(t *testing.T) {
 	if !strings.Contains(CLISkewNewer, "fugaro project policy publish --delete") || !strings.Contains(CLISkewNewer, "publish it again") {
 		t.Errorf("CLISkewNewer = %q, want the delete-then-publish remedy for the older node", CLISkewNewer)
 	}
-	// And not the remedy that cannot be carried out: fugaro init --firebase
-	// deploys this release's rules template and marker and never writes
-	// config/policy/shared, while this release's publish refuses to overwrite
-	// a node of another version (internal/cli's publishedPolicyOf) — so an
-	// operator sent to re-run init arrives back at this same refusal.
-	if strings.Contains(CLISkewNewer, "init --firebase") {
-		t.Errorf("CLISkewNewer = %q: init --firebase writes no policy node, so it cannot be the remedy for a node that is behind", CLISkewNewer)
+	// And not the remedy that cannot be carried out: fugaro update
+	// --firebase-project deploys this release's rules template and marker and
+	// never writes config/policy/shared, while this release's publish refuses
+	// to overwrite a node of another version (internal/cli's
+	// publishedPolicyOf) — so an operator sent to re-converge arrives back at
+	// this same refusal.
+	if strings.Contains(CLISkewNewer, "fugaro update --firebase-project") {
+		t.Errorf("CLISkewNewer = %q: fugaro update --firebase-project writes no policy node, so it cannot be the remedy for a node that is behind", CLISkewNewer)
 	}
 	for name, msg := range map[string]string{"CLISkew": CLISkew, "CLISkewNewer": CLISkewNewer} {
 		if strings.Contains(msg, "%!") || strings.Count(msg, "%") != 2 {
@@ -113,25 +130,25 @@ func TestSkewSentencePicksByDirectionAndReader(t *testing.T) {
 			// is removed and published again.
 			name: "an older node, the CLI", ve: olderNode, reader: ReaderCLI,
 			want:    []string{"version 0", understood, "fugaro project policy publish --delete", "publish it again"},
-			notWant: []string{"upgrade Fugaro", "fugaro upgrade", "init --firebase", "runner image"},
+			notWant: []string{"upgrade Fugaro", "fugaro upgrade", "fugaro update --firebase-project", "runner image"},
 		},
 		{
 			// The same node read by an image: the remedy is the operator's and
 			// the run cannot carry it out.
 			name: "an older node, the runner", ve: olderNode, reader: ReaderRunner,
 			want:    []string{"version 0", understood, "fugaro project policy publish --delete", "publishes one this image understands", "cannot do either mid-run"},
-			notWant: []string{"upgrade Fugaro", "fugaro upgrade", "init --firebase", "refresh the runner image"},
+			notWant: []string{"upgrade Fugaro", "fugaro upgrade", "fugaro update --firebase-project", "refresh the runner image"},
 		},
 		{
 			// The node is ahead of this binary: the upgrade is missing here.
 			name: "a newer node, the CLI", ve: newerNode, reader: ReaderCLI,
 			want:    []string{ahead, understood, "upgrade Fugaro"},
-			notWant: []string{"publish --delete", "init --firebase", "runner image"},
+			notWant: []string{"publish --delete", "fugaro update --firebase-project", "runner image"},
 		},
 		{
 			name: "a newer node, the runner", ve: newerNode, reader: ReaderRunner,
 			want:    []string{ahead, understood, "refresh the runner image", "fugaro upgrade"},
-			notWant: []string{"publish --delete", "init --firebase", "upgrade Fugaro ("},
+			notWant: []string{"publish --delete", "fugaro update --firebase-project", "upgrade Fugaro ("},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

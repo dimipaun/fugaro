@@ -10,18 +10,21 @@
 //    is no committed copy to go stale when a Highlights file lands on `main` before
 //    `scripts/release.sh` runs — which is the order the process requires.
 //  * **No date.** The files carry no title and no date, the site's build is network-free,
-//    and the newest file has no tag yet, so a date taken from a tag does not exist for the
-//    entry a reader sees first. The page prints the tag and links the entry to its GitHub
-//    release, where the date is GitHub's.
-//  * **Standard library only** (node:fs, node:path, node:child_process), so it runs under
-//    `node --test` before the site's toolchain exists, and no npm dependency is added.
+//    and the newest file is published last, so a date taken from a release's own history does
+//    not exist for the entry a reader sees first. The page prints the tag and links the entry
+//    to its GitHub release, where the date is GitHub's.
+//  * **Standard library only** (node:fs, node:path), so it runs under `node --test` before
+//    the site's toolchain exists, and no npm dependency is added.
 //
-// The one field that reads the checkout is `released`: true only where `git tag --list`
-// finds the tag in the checkout the build ran in. A shallow checkout has no tags at all, so
-// every entry there is `false` — the page's "not yet released" state, which is the honest
-// rendering of a file committed to `main` before its tag exists. No test pins it.
+// The one field that reads a file outside `docs/releases/` is `released`, and it reads the
+// **plugin's own version** (`plugin/.claude-plugin/plugin.json`): an entry is released when
+// its version is at or below that one. The release process merges the plugin's version bump to
+// `main` (`scripts/release.sh`'s "release: vX.Y.Z" PR) and only then pushes the tag, so on
+// `main` the version equals the latest published release — and a release file written ahead of
+// its bump is correctly not yet released. The number is a file in this repository rather than a
+// tag, which is deliberate: the deploy build checks out without tags, and a changelog that read
+// `git tag --list` printed "not yet released" for every release on the deployed site.
 
-import { execFileSync } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -30,6 +33,12 @@ import { fileURLToPath } from 'node:url'
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 
 export const RELEASES_DIR = path.join(REPO_ROOT, 'docs', 'releases')
+
+// The CLI plugin's own manifest: the one fact that says which release is the newest one
+// published. `scripts/release.sh` bumps it in the commit that cuts a release, which lands on
+// `main` before the tag exists — so the version here IS the latest released version, and a
+// release file for a higher version is one written ahead of its release.
+export const PLUGIN_FILE = path.join(REPO_ROOT, 'plugin', '.claude-plugin', 'plugin.json')
 
 // `docs/releases/README.md` describes the format; it is the one file in the directory that
 // is not a release, and it is skipped by name rather than by the pattern below. Every other
@@ -76,6 +85,45 @@ function newestFirst(a, b) {
   return 0
 }
 
+/** The version triple of `x.y.z`, or null for anything else. */
+function partsOf(version) {
+  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(version)
+  return m === null ? null : [Number(m[1]), Number(m[2]), Number(m[3])]
+}
+
+/** True when `parts` is at or below `other`, version for version. */
+function atOrBelow(parts, other) {
+  for (let i = 0; i < 3; i++) {
+    if (parts[i] !== other[i]) return parts[i] < other[i]
+  }
+  return true
+}
+
+// The plugin's version, read from its manifest. This is the number every entry's `released`
+// is compared with, so a manifest that is missing, is not JSON or carries no `x.y.z` version
+// stops the build naming the file: an unreadable version is not "nothing is released", and
+// guessing one would put a wrong "not yet released" on the page.
+function releasedVersion(pluginFile) {
+  let manifest
+  try {
+    manifest = JSON.parse(readFileSync(pluginFile, 'utf8'))
+  } catch (cause) {
+    throw new Error(
+      `${pluginFile} cannot be read as JSON: the changelog reads the plugin's own version ` +
+        `to decide which releases are published, and a version it cannot read is not a ` +
+        `changelog with nothing released (${cause.message}).`,
+    )
+  }
+  const parts = partsOf(manifest.version)
+  if (parts === null) {
+    throw new Error(
+      `${pluginFile} carries the version ${JSON.stringify(manifest.version)}: the changelog ` +
+        `compares each release's version with this one, and it is x.y.z.`,
+    )
+  }
+  return parts
+}
+
 // The lines a reader is meant to see: the file's own lines, with the authoring notes an
 // HTML comment wraps left out (v0.7.5's trailing `<!-- ... -->` block is notes for the
 // next release, not text of this one, and rendering it would put them in the page's HTML).
@@ -87,17 +135,6 @@ function contentLines(text) {
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
-}
-
-// The checkout's tags, read once. `git` absent, a shallow checkout or a non-repository
-// directory are all "no tags": every entry is then not yet released.
-function releasedTags(cwd) {
-  try {
-    const out = execFileSync('git', ['tag', '--list'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
-    return new Set(out.split('\n').map((line) => line.trim()).filter((line) => line.length > 0))
-  } catch {
-    return new Set()
-  }
 }
 
 // A file's content lines, split the way `docs/releases/README.md` describes the file: the
@@ -127,8 +164,13 @@ function splitSections(lines) {
 // heading (the 3 to 6 user-facing bullets), and `sections` is every section it writes after
 // that — its title, and its lines verbatim, in the order the file writes them — so no
 // sentence here is one the file does not carry.
-export function buildChangelog({ releasesDir = RELEASES_DIR, cwd = REPO_ROOT } = {}) {
-  const tags = releasedTags(cwd)
+//
+// `released` is the one field that is not the file's text, and it is the whole of what a
+// reader needs to tell a published release from a file written ahead of its release: the
+// entry's version against the plugin's own (see the header). Nothing here reads the checkout
+// the build runs in.
+export function buildChangelog({ releasesDir = RELEASES_DIR, pluginFile = PLUGIN_FILE } = {}) {
+  const published = releasedVersion(pluginFile)
 
   const files = readdirSync(releasesDir)
     .filter((fileName) => fileName !== NON_RELEASE)
@@ -152,7 +194,7 @@ export function buildChangelog({ releasesDir = RELEASES_DIR, cwd = REPO_ROOT } =
       return {
         tag: file.tag,
         version: file.version,
-        released: tags.has(file.tag),
+        released: atOrBelow(file.parts, published),
         highlights,
         sections,
       }

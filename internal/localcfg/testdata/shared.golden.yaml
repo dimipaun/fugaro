@@ -6,6 +6,17 @@ runs_bucket: my-runs
 registry_host: us-central1-docker.pkg.dev/my-project
 base_images:
     base: us-central1-docker.pkg.dev/my-project/fugaro-base/base:1
+batch:
+    image: us-central1-docker.pkg.dev/my-project/fugaro/acme-web:1.2.3
+    machine_type: e2-standard-4
+    boot_image: projects/my-project/global/images/family/fugaro-base-1
+    network: projects/my-project/global/networks/fugaro-runs
+    subnetwork: projects/my-project/regions/us-central1/subnetworks/fugaro-runs
+    service_account: fugaro-batch@my-project.iam.gserviceaccount.com
+    secrets:
+        GITHUB_TOKEN: projects/my-project/secrets/github-token
+    socket_gid: 412
+    task_timeout: 6h0m0s
 build:
     machine_type: E2_HIGHCPU_8
 budget:

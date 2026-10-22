@@ -11,10 +11,14 @@
 #     Fugaro-shaped job names, and actAs on the run accounts only. This is
 #     the coarsest grant in the design (§3.7) and the Condition is what
 #     narrows it — measured accepted by GCP on 2026-10-15.
-#   - the REAPER: six permissions in a custom role of its own, and nothing
+#   - the REAPER: five permissions in a custom role of its own, and nothing
 #     else. NOT roles/batch.jobsEditor and NOT roles/compute.instanceAdmin.v1:
-#     both are far wider than the six, and a reaper account that can create
-#     jobs and VMs is a second launcher, not a janitor (§3.7).
+#     both are far wider than the five, and a reaper account that can create
+#     jobs and VMs is a second launcher, not a janitor (§3.7). The list used
+#     to name six, one of them batch.jobs.cancel -- a permission Google does
+#     not define (the Batch API lists jobs.create, delete, get and list), so
+#     the role could never be created and --provision-batch was refused until
+#     it was fixed. The queue deadline deletes now: see the role below.
 #
 # No account here is the default Compute Engine service account, and none is
 # the installation's history account.
@@ -70,8 +74,8 @@ locals {
   # (cloudbuild.googleapis.com), NOT this module's apis.tf, which enables
   # compute and batch only: the builds this backend's preload runs are the
   # installation's, so an installation applied as the docs prescribe has the
-  # agent in place by the time this binding is applied. On the `--skip-apis`
-  # path (manage_apis = false on BOTH roots) NEITHER module enables it, so
+  # agent in place by the time this binding is applied. On the
+  # manage_apis = false path (set on BOTH roots) NEITHER module enables it, so
   # there is no agent for this binding to name and the scheduled rebuild has
   # no principal to run as; that path is the operator's to satisfy. What GCP
   # answers for a binding whose member does not exist is not asserted here.
@@ -177,22 +181,36 @@ resource "google_service_account" "reaper" {
   depends_on = [google_project_service.this]
 }
 
-# EXACTLY the six permissions the reaper's code uses, and no others
+# EXACTLY the five permissions the reaper's code uses, and no others
 # (internal/backend/batch/reap.go, design §3.7): list and get every decision
-# comes from, cancel for the queue deadline, delete for a stuck job and a
-# stuck DELETION_IN_PROGRESS, and the project-wide aggregated instance list
-# and delete for the instance pass. The role carries no create permission of
-# any kind: a reaper that can create jobs and VMs is a second launcher.
+# comes from, delete for the queue deadline, for a stuck job and for a stuck
+# DELETION_IN_PROGRESS, and the project-wide aggregated instance list and
+# delete for the instance pass. The role carries no create permission of any
+# kind: a reaper that can create jobs and VMs is a second launcher.
+#
+# NO batch.jobs.cancel, and there must never be one again. It is not a
+# permission Google has: the Batch API defines jobs.create, jobs.delete,
+# jobs.get and jobs.list and nothing else, so a custom role naming it cannot
+# be created at all (that is what kept --provision-batch refused). The queue
+# deadline -- a job that has sat in QUEUED past its deadline, which counts
+# against max_parallel and can wait out Batch's own 2-day ceiling -- is
+# cleared with jobs.delete instead, which this role already holds and which
+# is strictly the more destructive verb. What a cancel would have kept is the
+# job's record, and a job that never left QUEUED never ran a task: the run's
+# own launch.json and result.json in the runs bucket are what fugaro ls,
+# diagnose and watch read for it. internal/backend/batch's reaper reads a
+# queued job back before it deletes it, so a job that started in the meantime
+# -- a run whose record DOES matter -- is left to the next pass. The get
+# above is that read-back's permission.
 resource "google_project_iam_custom_role" "reaper" {
   project     = var.project
   role_id     = var.names.reaper_role_id
   title       = "Fugaro reaper"
-  description = "The scheduled sweeper's six permissions: read and end Batch jobs and the VMs of a run whose job is gone (design compute-backend §3.7)."
+  description = "The scheduled sweeper's five permissions: read and end Batch jobs and the VMs of a run whose job is gone (design compute-backend §3.7)."
 
   permissions = [
     "batch.jobs.list",
     "batch.jobs.get",
-    "batch.jobs.cancel",
     "batch.jobs.delete",
     "compute.instances.list",
     "compute.instances.delete",

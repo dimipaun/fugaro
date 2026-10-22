@@ -35,7 +35,7 @@ const GitProviderEnv = "FUGARO_GIT_PROVIDER"
 func (r *run) checkProject(ctx context.Context, cfg *config.Config) error {
 	if r.d.Project == "" {
 		if !r.d.Local {
-			return fmt.Errorf("job environment lacks FUGARO_PROJECT; run fugaro init --repo from the repository's checkout")
+			return fmt.Errorf("job environment lacks FUGARO_PROJECT; run fugaro update from the repository's checkout")
 		}
 		r.d.Log.Info("FUGARO_PROJECT is not set: not checking which project fugaro.yaml belongs to")
 		return nil

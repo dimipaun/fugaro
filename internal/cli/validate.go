@@ -27,7 +27,7 @@ import (
 // whether the secret has a version yet, so this is a note for the owner and
 // never a refusal (design docs/design/project-centric.md §6.1; the gateway
 // refuses such a call, by name, when no key is stored).
-const anthropicKeyNeeded = "needs a stored Anthropic API key: a pinned model goes direct to Anthropic, and the job mounts the key whenever the anthropic-api-key secret has a version (store one with `fugaro secrets set anthropic-api-key` and rerun `fugaro init --repo` if none does), or route the model through a provider"
+const anthropicKeyNeeded = "needs a stored Anthropic API key: a pinned model goes direct to Anthropic, and the job mounts the key whenever the anthropic-api-key secret has a version (store one with `fugaro secrets set anthropic-api-key` and rerun `fugaro update --repo` if none does), or route the model through a provider"
 
 // anthropicKeyNoEnforce is the same note when the budget isn't enforcing.
 // Only enforce routes a call to a provider (config.CheckProviderGateway
@@ -36,11 +36,11 @@ const anthropicKeyNeeded = "needs a stored Anthropic API key: a pinned model goe
 // exists and accounts for the spend but never routes to a provider, and under
 // off there is no gateway at all. The sharper fix, too: with no route to a
 // provider there is nothing to route around.
-const anthropicKeyNoEnforce = "needs a stored Anthropic API key: the budget isn't enforcing, so nothing routes a call to a provider (observing only accounts for the spend, and off has no gateway at all), and every call goes to Anthropic whatever the pins are (store one with `fugaro secrets set anthropic-api-key` and rerun `fugaro init --repo`)"
+const anthropicKeyNoEnforce = "needs a stored Anthropic API key: the budget isn't enforcing, so nothing routes a call to a provider (observing only accounts for the spend, and off has no gateway at all), and every call goes to Anthropic whatever the pins are (store one with `fugaro secrets set anthropic-api-key` and rerun `fugaro update --repo`)"
 
 // needsAnthropicKey is config.AnthropicKeyNeeded over the effective mode --
 // the project's ceiling merged with the file, exactly as the runner reads it.
-// The one place the CLI decides it, so init's hidden prompt, init --repo's
+// The one place the CLI decides it, so init's hidden prompt, update --repo's
 // "still missing" list and validate's note cannot disagree.
 //
 // The routes are the run's own (layerRoutes, over the layer this file resolved
@@ -60,7 +60,7 @@ func needsAnthropicKey(lc *localcfg.Config, cfg *config.Config, repo string) boo
 }
 
 // ceilingLayer is the owner's ceiling as the runner builds it from the job
-// environment init --repo sets from the project config: an "off" mode is no
+// environment update --repo sets from the project config: an "off" mode is no
 // mode at all.
 func ceilingLayer(lc *localcfg.Config) policy.Layer {
 	var l policy.Layer
@@ -91,7 +91,7 @@ func clampWarning(ig policy.Ignored) config.Problem {
 	return config.Problem{Path: runner.PolicyKeyPath(ig.Key), Message: msg}
 }
 
-// ceilingText is the ceiling in one line, for init --repo.
+// ceilingText is the ceiling in one line, for update --repo.
 func ceilingText(l policy.Layer) string {
 	var parts []string
 	if l.PerRunUSD > 0 {
@@ -145,7 +145,7 @@ func budgetProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config
 	// The day cap is the runner's to enforce; the database never sees it.
 	if cfg.Budget != nil && cfg.Budget.PerDayUSD > 0 {
 		warnings = append(warnings, config.Problem{Path: "budget.per_day_usd",
-			Message: "per_day_usd is enforced by the runner against this repository's day counter only while the project has the shared budget (init --firebase, mode observe or enforce); on a project without it nothing enforces it. A lower RTDB cap wins"})
+			Message: "per_day_usd is enforced by the runner against this repository's day counter only while the project has the shared budget (update --firebase-project, mode observe or enforce); on a project without it nothing enforces it. A lower RTDB cap wins"})
 	}
 	if lc == nil || lc.Name != cfg.Project {
 		// No ceiling to compare with, but a committed enforce is the
@@ -294,9 +294,19 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 	if lc == nil || lc.Name != cfg.Project {
 		return nil, nil, nil
 	}
+	// The reserved provider-key names, before anything that can return early
+	// and independently of the budget, the prices and the pins: a workflow
+	// secret named <entry>-api-key is a name the job's own spec refuses
+	// (infra.SecretMounts) and `fugaro secrets set` refuses to store
+	// (config.ReservedProviderSecret), and it is judged against the owner's
+	// providers, which is why Validate itself cannot make this call. claimed
+	// is the owner's whole table with the layer's claims written over the
+	// entries the run carries, so its key set is lc.Providers' — the same
+	// names, and so the same reservations.
+	problems = append(problems, config.CheckWorkflowProviderSecrets(cfg, claimed)...)
 	o, err := lc.Overrides()
 	if err != nil {
-		return nil, nil, nil // budgetProblems says so
+		return problems, nil, nil // budgetProblems says so
 	}
 	prices, err := priceTableFor(lc.Providers, o, budgetNow())
 	if err != nil {
@@ -339,6 +349,14 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 	for _, name := range config.OpenProviders(claimed) {
 		warnings = append(warnings, config.Problem{Path: "providers." + name, Message: claimed[name].OpenToEveryRepoReason()})
 	}
+	// The naming convention (owner ruling of 2026-10-18): a provider's key is
+	// named after its entry, <provider>-api-key. A key stored under any other
+	// name keeps working — nothing is renamed and nothing is migrated — so
+	// this is a warning, never a problem: the file stays valid, and the line
+	// names the entry, the name the key has and the name the convention gives
+	// it. The conventional name stays reserved for that provider either way
+	// (config.ReservedProviderSecret, which the write paths enforce).
+	warnings = append(warnings, config.ProviderSecretWarnings(claimed)...)
 	problems = append(problems, config.CheckProviderAuth(cfg.Agent, claimed)...)
 	agent := cfg.Agent
 	agent.Models.Background = config.EffectiveBackground(agent, claimed)
@@ -1070,7 +1088,7 @@ func switchListFilteredClause(sw *config.RoutingClaude, model, repo string, own,
 		// filter dropped: there is nothing to point the operator at.
 		return ""
 	}
-	return fmt.Sprintf(". The entry that claims it is %s, which serves %s: this repository's run does not carry that entry, because its allow_data_to (%s) does not name %s — add %s to it in the project config and run fugaro init --repo for this repository (the list a run reads is built into its job at deploy time)", entry, sent, `"`+strings.Join(p.AllowDataTo, `", "`)+`"`, repo, repo)
+	return fmt.Sprintf(". The entry that claims it is %s, which serves %s: this repository's run does not carry that entry, because its allow_data_to (%s) does not name %s — add %s to it in the project config and run fugaro update --repo for this repository (the list a run reads is built into its job at deploy time)", entry, sent, `"`+strings.Join(p.AllowDataTo, `", "`)+`"`, repo, repo)
 }
 
 // switchListPrefix is config.CheckRouting's own path for one entry of the
@@ -1513,13 +1531,18 @@ func usesProfiles(c *config.Config) bool {
 }
 
 // cloneWorkflowWarnings warns, one per workflow, that checkout: clone is
-// valid config but runs nothing yet: cloneSince's launch gate
-// (recipes_skew.go) refuses every checkout: clone launch until fugaro
-// cloneSince ships, since plan Task 17's runner side (the runner's own
-// FUGARO_CHECKOUT support) is in no tagged release yet. The config stays
-// valid — this is for later, once it ships — so it is a warning, not a
-// Problem from Check.
+// valid config but runs nothing yet — while cloneShipped is false
+// (recipes_skew.go): cloneSince's launch gate refuses every checkout: clone
+// launch then, since the runner side (generic-tool plan Task 17) is in no
+// tagged release yet. The config stays valid either way, so it is a
+// warning, not a Problem from Check. cloneShipped is true since 0.9.0, so
+// this reports nothing today; it stays for the flip-back the constant's
+// comment describes, and the check below is what makes that flip-back warn
+// again.
 func cloneWorkflowWarnings(c *config.Config) []config.Problem {
+	if cloneShipped {
+		return nil
+	}
 	var ps []config.Problem
 	for _, name := range slices.Sorted(maps.Keys(c.Workflows)) {
 		if c.Workflows[name].Checkout != config.CheckoutClone {

@@ -1,5 +1,5 @@
 # One (repository, workflow). The repository module calls this once per
-# workflow with its slice of fugaro init --repo's terraform.tfvars.json. The
+# workflow with its slice of fugaro update's terraform.tfvars.json. The
 # validation blocks check shapes only; nothing here derives a name.
 
 variable "project" {
@@ -70,6 +70,10 @@ variable "workflow" {
       title      = string
       expression = string
     })
+    token_condition = object({
+      title      = string
+      expression = string
+    })
     vertex     = bool
     deploy_job = bool
   })
@@ -92,6 +96,20 @@ variable "workflow" {
   validation {
     condition     = length(var.workflow.image) > 0 && length(var.workflow.cpu) > 0 && length(var.workflow.memory) > 0
     error_message = "workflow.image, cpu and memory must be set."
+  }
+
+  # The job's read-only grant on its own repository's budget token objects
+  # (gcp.TokenBucketCondition): exactly one tokens/<slug>/ clause, so the
+  # grant can never be widened past tokens/ or to another prefix, and the slug
+  # is the one the job's own runs/ condition names, so a job never reads
+  # another repository's tokens (docs/design/budget-token-channel.md §7.2).
+  validation {
+    condition = (
+      length(var.workflow.token_condition.title) > 0 && length(var.workflow.token_condition.title) <= 100 &&
+      can(regex("^resource\\.name\\.startsWith\\(\"projects/_/buckets/[a-z0-9._-]+/objects/tokens/[a-z0-9][a-z0-9_-]*/\"\\)$", var.workflow.token_condition.expression)) &&
+      try(regex("/objects/tokens/([a-z0-9][a-z0-9_-]*)/", var.workflow.token_condition.expression)[0] == regex("/objects/runs/([a-z0-9][a-z0-9_-]*)/", var.workflow.bucket_condition.expression)[0], false)
+    )
+    error_message = "workflow.token_condition must be one resource.name.startsWith clause on tokens/<slug>/ of the runs bucket, for the slug the job's own runs/ condition names (gcp.TokenBucketCondition)."
   }
 
   validation {

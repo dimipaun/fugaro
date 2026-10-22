@@ -1,66 +1,281 @@
 ---
 /**
- * website/src/components/Downloads.astro — the console's downloads section (website plan,
- * Task W1.6).
+ * website/src/components/Downloads.astro — the console's downloads, one card per platform
+ * (website plan, Task W1.6; the owner's approved board `website/design-ref/ConsoleV2.dc.html`,
+ * 2026-10-20).
  *
- * This is the section the spec asks for as *"per-OS download links (placeholder until the
- * console ships)"*, and the console has not shipped: `console/` holds two documents and no
- * code, and `docs/releases/v0.8.0.md` lists the desktop console under *"Not in this
- * release"* (finding 23). So the section ships as a placeholder whose links a test refuses
- * to emit (D95, Global Constraint 9) — the one outcome here with a real consequence for a
- * reader, because a download link to an unsigned or unreleased artifact either 404s or
- * points at something nobody has built.
+ * This is the section the spec asks for as *"per-OS download links"*, and the console has
+ * **shipped**: `console/` holds the application, its packaging and the workflow that signs,
+ * notarises and staples its macOS artifacts, that workflow created the `console-v0.9.0`
+ * release, and `site.yaml`'s `features.console_downloads` is true — so the section renders the
+ * release's own downloads (W3.1, 2026-10-19). The placeholder it used to render is still here,
+ * and it is what the unreleased branch below is: while `available` is false the section renders
+ * one sentence and nothing a reader can follow, which is the state a copy of the repository is
+ * built into and a test holds (`website/test/console.mjs`), rather than the state this checkout
+ * ships (finding 23, finding 25, D95, Global Constraint 9).
  *
- * **The rule is structural, not editorial.** The two states are one `if`: the link list is
- * rendered from `downloads.json`'s `downloads` array and *only* when `available` is true,
- * and the unavailable branch has no element a reader can follow. That is what makes "the
- * placeholder carries no link and no button" a property of the component rather than a
- * promise about its copy — and the page that renders this component refuses, in its own
- * build, a data file whose flag and URL list disagree (W1.6 steps 1 and 2).
+ * **The rule is structural, not editorial.** The two states are one `if`: the cards are
+ * rendered from `downloads.json`'s `downloads` array and *only* when `available` is true, and
+ * the unavailable branch has no element a reader can follow. That is what makes "the
+ * placeholder carries no link and no button" a property of the component rather than a promise
+ * about its copy — and the module that reads the data file refuses, in the build, a flag that
+ * disagrees with `site.yaml`'s (W1.6 steps 1 and 2).
  *
- * The facts come in as props rather than being read here, because the page owns the one
+ * **One card per platform, and a platform with nothing to download says so.** The board draws
+ * three cards — the platform the release ships for, and the two it does not — and the two it
+ * does not carry a "Not offered" pill and **no sentence of this file's own**: what a reader is
+ * owed about them is already the data file's sentence at the top of the section
+ * (`released.text`: "Windows and Linux builds do not exist yet."), and a card that repeated it,
+ * or that wrote the board's own "A Windows build does not exist yet.", would be this page
+ * saying a fact a second time in its own words (F37, Global Constraint 6). The platforms a card
+ * is drawn for are held to that sentence below, so the page can never name a platform no
+ * document of this repository speaks about.
+ *
+ * **The URLs are derived, not stored.** Each entry carries the name the release *serves* its
+ * asset under — the release's own files spell `Fugaro Console-X.Y.Z-universal.dmg` and GitHub
+ * serves `Fugaro.Console-X.Y.Z-universal.dmg` — and `src/lib/console-downloads.mjs` composes
+ * the URL from it, from the release's tag and from `site.yaml`'s repository. So no file under
+ * `website/` carries a download URL at all, and a version bump moves every button (the owner's
+ * changes spec of 2026-10-18, item 6; Global Constraint 9).
+ *
+ * **The label is the platform and the asset's own extension** (`macOS .dmg`), which the loader
+ * derives from the entry's `platform` and its file name: the site invents no distribution
+ * (D4, D11). The board draws the same two labels as buttons, and they are the same two strings.
+ *
+ * **What a reader gets.** The release's own sentence about the console (macOS only, one
+ * universal disk image and one archive, signed and Apple-notarised, the CLI first because the
+ * CLI is the data plane) and one link per published asset with the SHA-256 the release recorded
+ * for its bytes beside it. All of it comes from the data file: the checksum is the one fact
+ * here that is not derived, because it is a fact about bytes and no build can compute it.
+ *
+ * **The section carried a verification command until 2026-10-21 and does not any more.** It
+ * printed `shasum -a 256 Fugaro.Console-*` in a command block under the cards (P6's shape), and
+ * the owner, reading the live page on 2026-10-21, struck it: *"nuke this part: `shasum -a 256
+ * Fugaro.Console-*`"*. So the command block, its copy control and the `released.verify` line the
+ * data file carried are all gone, and **the checksums stay** — each one is still printed beside
+ * the link it belongs to, which is what a reader compares a download against. The data file
+ * refuses the key coming back (`src/lib/console-downloads.mjs`), so a round that wants the
+ * command again is a round that changes this file, the loader and this comment together.
+ *
+ * The facts come in as props rather than being read here, because the module owns the one
  * reader for them: `website/src/pages/console.astro` loads and validates
- * `website/content/downloads.json`, and this component renders what it was handed. Nothing
- * below is typed into the markup: the note is the data file's own sentence, and the
- * platform names are its own — the site invents no distribution (D4, D11).
+ * `website/content/downloads.json`, and this component renders what it was handed.
  */
+
 interface DownloadFacts {
-  /** The platform the artifact is for, as the data file names it (e.g. `macOS`). */
-  platform: string
+  /**
+   * The data file's own id for the asset (`macos-dmg`): the key a per-platform block's
+   * `assets` list names, which `console-downloads.mjs` resolves against this list. The
+   * section filters on it when it draws a block's own rows under that block rather than
+   * above it, so telling one row from another never needs the file names to be compared.
+   */
+  id: string
+  /** What a reader sees on the link: the platform and the asset's extension (`macOS .dmg`). */
+  label: string
   /** Where a reader downloads it from. Only ever rendered while `available` is true. */
   url: string
+  /** The SHA-256 of the published bytes, printed beside the link to check a download with. */
+  sha256: string
+  /** The platform the asset is built for (`macOS`), which is the card it is drawn on. */
+  platform: string
 }
 
-interface Props {
-  /** `downloads.json`'s `available`: the console's own artifact exists (W3.1 flips it). */
-  available: boolean
-  /** The data file's `not_released` sentence, rendered while `available` is false. */
-  note: string
-  /** The data file's `downloads` entries. Empty while `available` is false. */
+/**
+ * A platform whose own artifact exists but whose facts the released sentence above does not
+ * describe: Linux, whose build is unsigned and whose files are an AppImage and a `.deb` rather
+ * than disk images (the owner's ruling of 2026-10-20; `docs/design/desktop-console.md` D10).
+ */
+interface PlatformFacts {
+  /** The data file's own sentence for this platform — rendered, never restated here. */
+  text: string
+  /**
+   * The data file's own entries for the assets this block links, in the file's order. Every id
+   * the block names in `downloads.json` has been resolved to an entry of the file's `downloads`
+   * list by `src/lib/console-downloads.mjs`, so a link here is always a link to an asset the
+   * data file names — and the file refuses a block naming an id it does not carry.
+   */
   downloads: DownloadFacts[]
 }
 
-const { available, note, downloads } = Astro.props
+interface Props {
+  /** `downloads.json`'s `available`: the console's own artifact exists (W3.1 flipped it). */
+  available: boolean
+  /** The data file's `not_released` sentence, rendered while `available` is false. */
+  note: string
+  /**
+   * The data file's `released` block: what the console is once it has shipped (macOS only,
+   * signed and notarised, the CLI first). Rendered while `available` is true, and rendered
+   * from the data file rather than written here.
+   */
+  released: { text: string; source: string }
+  /**
+   * The data file's `downloads` entries: the release's published names, which the data file
+   * carries from the day they are known and not only once the console ships. They are rendered
+   * while `available` is true and never otherwise, which is what makes the unreleased state
+   * structural rather than editorial.
+   */
+  downloads: DownloadFacts[]
+  /**
+   * The data file's optional per-platform block, or `null` when it carries none — which is the
+   * state this checkout ships. It is rendered **only** when it is there, and while it is not
+   * there this component draws no block for it: no sentence, no link, and no word saying which
+   * platform is missing beyond the card's own name and its pill. So the page's sentence about
+   * the platform the release carries stays the only one it makes, without the markup having to
+   * say "and not Linux" (`src/lib/console-downloads.mjs`, D10).
+   */
+  linux: PlatformFacts | null
+}
+
+const { available, note, released, downloads, linux } = Astro.props
 
 // A label rather than a fact: the section's own heading, which is the navigation's word
 // for this page and not a claim about the product (the layout's nav carries the same one).
 const HEADING = 'Downloads'
+
+/**
+ * What a card with nothing to download says. It is the page's own word — the board draws it and
+ * it is the shortest true thing to say about a platform the release does not carry — and it is
+ * listed with the page's other new labels in the pull request for the owner to veto. It is a
+ * pill's label and not a sentence: the reason is the data file's own sentence above the cards.
+ */
+const NOT_OFFERED = 'Not offered'
+
+/**
+ * The platforms this section draws a card for and the release carries no asset for. It is this
+ * file's own list — the board draws both cards — and it is only safe because of the guard
+ * below: each name is held to the data file's own sentence about the state of the release, so a
+ * card here can never be about a platform no document of this repository mentions.
+ */
+const WITHOUT_ARTIFACTS = ['Windows', 'Linux']
+
+// The assets a platform block links are rendered *under that block* and not in the cards above
+// it: one asset of a release is one card, and a Linux artifact listed twice — once by the block
+// that explains it and once by the sentence about the disk images — would be two links to one
+// file with one of them under a sentence that does not describe it. With no block the cards
+// above are every asset the data file names, which is what the section renders today.
+const inBlock = new Set((linux?.downloads ?? []).map((download) => download.id))
+const listedAbove = downloads.filter((download) => !inBlock.has(download.id))
+
+/** The platforms the release's own entries are built for, once each and in the file's order. */
+const offered = [...new Set(listedAbove.map((download) => download.platform))]
+
+/** The platforms the release carries nothing for, minus the one a block of its own explains. */
+const missing = WITHOUT_ARTIFACTS.filter(
+  (platform) => !offered.includes(platform) && !(platform === 'Linux' && linux),
+)
+
+// Hold every card to the data file's own sentence about the release. The cards below are the
+// board's own three, and a card is a claim about a platform: the sentence the section renders
+// above them is where a reader is told why two of them have nothing to download. So a platform
+// this file draws a card for but that sentence does not name is the page saying something no
+// document of this repository says (Global Constraint 6) — and the day the release carries a
+// platform the sentence has stopped mentioning, this is what stops the build rather than
+// shipping a card with no reason above it.
+if (available) {
+  for (const platform of missing) {
+    if (!released.text.includes(platform)) {
+      throw new Error(
+        `website/src/components/Downloads.astro: the section draws a "${NOT_OFFERED}" card for ${platform} and ${JSON.stringify(released.text)} — the sentence it renders above the cards — does not name ${platform}: a card about a platform no document of this repository speaks about is a claim with nothing behind it (Global Constraint 6). Either the release's sentence was reworded or the card moved off it.`,
+      )
+    }
+  }
+}
+
+/**
+ * One card: a platform the release carries assets for (its rows and their checksums), the
+ * platform a block of the data file explains (the block's sentence and its rows), or a platform
+ * the release carries nothing for (the card's name and the pill, and nothing else).
+ */
+type Card =
+  | { platform: string; kind: 'offered'; downloads: DownloadFacts[] }
+  | { platform: string; kind: 'block'; text: string; downloads: DownloadFacts[] }
+  | { platform: string; kind: 'not-offered' }
+
+// The board's own order while the release carries one platform: the platform it ships for,
+// then the two it does not. A block of the data file is a platform that HAS assets, so it is
+// drawn beside the other offered one rather than at the end of the row.
+const cards: Card[] = [
+  ...offered.map((platform) => ({
+    platform,
+    kind: 'offered' as const,
+    downloads: listedAbove.filter((download) => download.platform === platform),
+  })),
+  ...(linux ? [{ platform: 'Linux', kind: 'block' as const, text: linux.text, downloads: linux.downloads }] : []),
+  ...missing.map((platform) => ({ platform, kind: 'not-offered' as const })),
+]
 ---
 
 <section id="downloads" aria-labelledby="downloads-heading">
-  <h2 id="downloads-heading">{HEADING}</h2>
+  <h2 id="downloads-heading" class="display-lg">{HEADING}</h2>
 
   {
     available ? (
-      <ul class="downloads">
-        {downloads.map((download) => (
-          <li>
-            <a href={download.url} rel="noopener">
-              {download.platform}
-            </a>
-          </li>
-        ))}
-      </ul>
+      <>
+        {/* What the console is now that it has shipped: the platform, the signing and
+            notarisation, and the CLI-first rule — the data file's own sentence, rendered
+            rather than written here. It is also the reason the cards below that carry no
+            download carry none, which is why no card repeats it. */}
+        <p class="downloads-released">{released.text}</p>
+
+        <ul class="download-cards">
+          {cards.map((card) => (
+            <li class="download-card card">
+              <div class="download-card-head">
+                <h3 class="download-card-platform">{card.platform}</h3>
+                {/* The one card state that is not a link or a download: the platform the
+                    release does not carry, said in one pill and no sentence of this file's
+                    own (the data file's sentence above is where the reason is). */}
+                {card.kind === 'not-offered' && (
+                  <span class="pill download-card-status">{NOT_OFFERED}</span>
+                )}
+              </div>
+
+              {card.kind === 'offered' && (
+                <ul class="downloads">
+                  {card.downloads.map((download) => (
+                    <li class="download-row">
+                      <a class="download-link" href={download.url} rel="noopener">
+                        {download.label}
+                      </a>{' '}
+                      {/* The published bytes' own checksum, beside the link it belongs to: a
+                          reader who has the file can see whether what arrived is what the
+                          release published, without trusting the transfer. The space above is
+                          a fact and not a style: the two elements are inline, so a
+                          whitespace-only text node between them is what Astro's compression
+                          drops — and the row would read "macOS .dmga434f3…"
+                          (website/test/spacing.mjs holds it). */}
+                      <code class="download-sha256">{download.sha256}</code>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {/* A platform whose artifact exists and whose facts the sentence above does not
+                  carry — Linux, unsigned, an AppImage and a `.deb` (D10). One expression and one
+                  condition: while the data file carries no block for it this renders nothing at
+                  all, and the rows it does render are the same rows as the cards above, from
+                  the same entries, so a link here can only ever be an asset the data file
+                  names. The `<div>` is the element `website/test/console.mjs` reads the block
+                  as, and its list is the last thing in it. */}
+              {card.kind === 'block' && (
+                <div class="downloads-linux">
+                  <p>{card.text}</p>
+                  <ul class="downloads">
+                    {card.downloads.map((download) => (
+                      <li class="download-row">
+                        <a class="download-link" href={download.url} rel="noopener">
+                          {download.label}
+                        </a>{' '}
+                        <code class="download-sha256">{download.sha256}</code>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      </>
     ) : (
       <div class="downloads-unreleased">
         {/* One paragraph, and nothing else: while the console is unreleased this branch
@@ -72,3 +287,140 @@ const HEADING = 'Downloads'
     )
   }
 </section>
+
+<style>
+  /* Tokens only (W1.2): every colour below is the palette in force, so the contrast check
+     in `website/test/a11y.mjs` is about the colours this section actually paints. */
+  .downloads-released {
+    max-width: 60ch;
+    color: var(--text-muted);
+    font-size: var(--font-size-lg);
+  }
+
+  /* The cards: one per platform, wrapping to one column on a phone. The grid is the site's
+     own shape (`repeat(auto-fit, minmax(…, 1fr))`, as the home page's two grids are), so a
+     second platform's card needs no rule of its own. It is what a viewport with no room for
+     the cards side by side gets, and the wide block below is what a desktop gets. */
+  .download-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    /* Equal heights: the cards of one row are one row of a grid, so they are as tall as the
+       tallest of them rather than as tall as their own text. Stated rather than left to the
+       grid's own default, because it is the thing the owner read the cards for on 2026-10-21
+       ("the cards should also keep equal heights") and a declaration is what a gate can read
+       (`website/test/console.mjs`). */
+    align-items: stretch;
+    gap: var(--space-md);
+    margin: var(--space-lg) 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  /* **One row on a desktop** (the owner's feedback of 2026-10-21: the platform cards "should
+     fit in ONE row on desktop (wrap only on narrow screens)"). Every card the data file draws
+     goes on one line at the same width, however many there are: no minimum column width to
+     run out of, and no count written here for the data file to outgrow. Below this width the
+     base rule above wraps them, which is what a phone and a narrow window get. */
+  @media (min-width: 60rem) {
+    .download-cards {
+      grid-template-columns: none;
+      grid-auto-flow: column;
+      grid-auto-columns: minmax(0, 1fr);
+    }
+  }
+
+  .download-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .download-card-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2xs);
+  }
+
+  .download-card-platform {
+    margin: 0;
+    font-size: var(--font-size-xl);
+    font-weight: var(--weight-black);
+    letter-spacing: var(--tracking-tight);
+  }
+
+  /* The pill the shared look already draws, in the warning tone: a platform the release does
+     not carry is the one card state a reader should be able to see from across the page. The
+     pair (`--warn` on `--panel`) is in `website/test/a11y.mjs`'s contrast set, so it is
+     computed rather than assumed. */
+  .download-card-status {
+    border-color: var(--warn);
+    color: var(--warn);
+  }
+
+  /* The rows of a card: one asset each, its label and its checksum. The rows are the same
+     markup in an offered card and in a block, because they are the same fact. */
+  .downloads {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .download-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-2xs);
+  }
+
+  /* The label is the link, and it is the accent's legible form — the same tone every other
+     link on the site is. Its box is at least 44 px tall so a thumb can hit it, which is the
+     one measurement the owner's brief of 2026-10-19 asks of every control. */
+  .download-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    color: var(--accent-on-dark);
+    font-weight: var(--weight-semibold);
+  }
+
+  /* The checksum: 64 characters with nowhere to break, so its rule is about wrapping rather
+     than about hiding it — the owner's feedback of 2026-10-21 was that the cards should "not
+     show the long checksum text breaking awkwardly (keep the checksum, wrap it cleanly with
+     word-break and a monospace smaller size)". So it is `word-break: break-all` (the same
+     declaration as before, kept and now held by a gate), the monospace stack rather than the
+     page's sans, one step below the running text's size, and it takes its own line under the
+     link it belongs to (`flex-basis: 100%` in the row above): a hash that starts where the
+     link ends breaks into columns of whatever room is left, which is the "awkwardly" the
+     owner read. The family is stated rather than inherited from `code`'s own rule in
+     `base.css`, because this is the one run of text on the page whose job is character-by-
+     character comparison. */
+  .download-sha256 {
+    flex: 1 1 100%;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    word-break: break-all;
+  }
+
+  /* The block a platform with its own sentence is drawn in: a rule down its left, so the
+     sentence and the rows under it read as one thing inside the card. */
+  .downloads-linux {
+    padding-left: var(--space-sm);
+    border-left: var(--border-width) solid var(--border);
+  }
+
+  .downloads-linux > p {
+    margin: 0 0 var(--space-2xs);
+    color: var(--text-muted);
+  }
+
+  .downloads-unreleased > p {
+    max-width: 60ch;
+    color: var(--text-muted);
+  }
+</style>

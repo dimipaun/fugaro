@@ -20,10 +20,11 @@
 # the amendment under plan Task W2.2); `analytics` to a state where the flag and
 # the measurement id agree, which holds whether or not W3.2 has turned it on --
 # that task sets the property and the flag together, behind W1.12's consent
-# gate; both `features` to false, because the console is designed and not
-# shipped and the explainer video does not exist yet (W3.1 flips the first with
-# the console's release, and W2.4 the second); and every entry of `allowed_hosts`
-# to a bare lowercase host.
+# gate; `features.console_downloads` to true, which W3.1 flipped with the
+# console's first release in the commit that extended the console-link test
+# below; `features.video` to false, because the explainer video
+# does not exist yet (W2.4 flips it); and every entry of `allowed_hosts` to a
+# bare lowercase host.
 #
 # Each of those pins names in its failure the task that changes the value, so a
 # later task meets a message that tells it what to do rather than one that
@@ -33,7 +34,10 @@
 # `features.console_downloads` is false, no file under website/ may carry a
 # release-asset download URL of this repository (Global Constraint 9, finding
 # 25) -- and this file states the rule without printing the shape it forbids,
-# because the scan reads it too.
+# because the scan reads it too. The flag is true now, and the rule the scan
+# enforces in that state is the release's own: a URL under website/ has to be an
+# asset of the console's release, which is why no file here carries one at all
+# (every download URL is derived at build time from `website/content/downloads.json`).
 #
 # Nothing under website/ is importable by the Go module, and the module gains no
 # dependency from the site: that boundary is a test (the console boundary test's
@@ -96,19 +100,20 @@ analytics:
   enabled: true
   measurement_id: "G-DZ4F35D3EH"
 
-# The features the site renders only when they exist. The console is designed
-# and not shipped (its release notes list it under "Not in this release"), so
-# its section renders as a placeholder with no link and no button, and the test
-# above refuses a download URL anywhere under website/ while this flag is false
-# (D95). The explainer video does not exist yet, so the hero carries no player,
-# no iframe, no poster and no play button (D107).
+# The features the site renders only when they exist. The console is published:
+# console/ holds the application, .github/workflows/console-release.yml signed,
+# notarised and stapled its .dmg and .zip, and its own release -- console-v0.9.0
+# -- carries them (website/content/downloads.json names the version and each
+# asset's SHA-256). So its section renders the release's own downloads, and the
+# test above holds every download URL to an asset of that release rather than
+# refusing one (W3.1). The explainer video does not exist yet, so the hero
+# carries no player, no iframe, no poster and no play button (D107).
 #
-# Two tasks turn these on, and each of them edits the boundary test in the same
-# commit (§7's file-conflict note): W3.1 flips `console_downloads` with the
-# console's first release, and W2.4 flips `video` when the owner produces the
-# video and the hero renders a slot for it.
+# W3.1 flipped `console_downloads` with the console's first release, in the same
+# commit that extended the boundary test (§7's file-conflict note); W2.4 flips
+# `video` when the owner produces the video and the hero renders a slot for it.
 features:
-  console_downloads: false
+  console_downloads: true
   video: false
 
 # D97's N: no figure the site publishes is drawn from fewer runs than this, and
@@ -124,12 +129,13 @@ min_runs: 20
 # site's build rather than reaching a reader's browser. It carries the hosts the
 # site actually links -- github.com for the repository, the Releases page and
 # the issue templates, raw.githubusercontent.com for the documents the docs hub
-# renders -- and the site's own canonical origin, and nothing else. The one
-# third-party origin the owner decided on (D93's analytics script, loaded only
-# after consent) is admitted by the consent task's own check, not by an entry
-# here.
+# renders, firebase.google.com for Google's own Firebase privacy policy, which
+# the privacy statement links rather than restating -- and the site's own
+# canonical origin, and nothing else. The one third-party origin the owner
+# decided on (D93's analytics script, loaded only after consent) is admitted by
+# the consent task's own check, not by an entry here.
 #
-# The third entry is the canonical URL's own host, so it moves with
+# The last entry is the canonical URL's own host, so it moves with
 # `canonical_url` above -- W2.2 replaced both lines in the same commit, which is
 # what the test above holds them to. It is the only entry that is the site's
 # own: every other entry is a host the site LINKS to, and a host the site does
@@ -137,4 +143,5 @@ min_runs: 20
 allowed_hosts:
   - github.com
   - raw.githubusercontent.com
+  - firebase.google.com
   - fugaro.dev

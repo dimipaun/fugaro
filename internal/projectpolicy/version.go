@@ -21,13 +21,47 @@ import (
 // CLI that published the policy. The bump makes that runner refuse the node
 // (RunnerSkew) instead of running past a gate it does not know. The shape is
 // version 1's; only what a runner must enforce changed.
-const Version = 2
+//
+// Version 3 (project-named-oauth-tokens, plan task 1) is the node that names
+// Claude accounts: profiles.<p>.claude_accounts (the accounts a profile
+// serves, one job per (profile, provider, account)) and the accounts block it
+// is gated by (accounts.<name>.allow_repos, the repositories that account's
+// token may be used by). What a version-3 runner enforces and a version-2 one
+// does not is that second list, and the pair of rules that hold a profile to
+// it: the profile writes exact allow_repos, every account it lists covers
+// every repository on that list, and no Anthropic API key is mounted beside
+// them. Such a node carries two keys a version-2 reader does not know, and
+// they are worth telling apart because only one of them is tolerated: the
+// accounts block is a top-level key, which it would merely list in
+// UnknownKeys and decode past (P8), and claude_accounts is a member INSIDE a
+// profile entry, which its Profile carrier does not have and which its own
+// profile decode refuses — entries are decoded with DisallowUnknownFields, the
+// rule the decoder states for a new profile field ("a newer profile field
+// bumps Version, which is what refuses a node this binary cannot read"), and
+// the rule the design's schema section cites for this bump. So a node whose
+// profile names accounts is unreadable to a version-2 reader whether or not
+// its version field said 3: the field is what makes it unreadable, and the
+// bump is what makes that refusal the documented one. The version check
+// answers first, with a VersionError and therefore with the remedy that fits
+// the direction (RunnerSkew on the job side, CLISkew on the operator's),
+// instead of an unknown-field decode error that names a field and no move. It
+// also states in the node which enforcement a reader must have, which is what
+// a version is for. The rules themselves ship in the
+// same release as this constant, and they have two doors: what admits an OAuth
+// launch onto such a job, or refuses it before the claim and before the token,
+// is internal/cli's projectJobAccountFor — with checkProjectJobAccount and
+// checkProjectJobAccountCovers behind it, the two its answer is computed with —
+// and the runner re-decides the same pair from the policy it read itself, in
+// internal/runner's own checkProjectJobAccount, before any stage, lease or
+// budget spend. The shape is version 2's; only what a runner must enforce
+// changed.
+const Version = 3
 
 // VersionSince names, for each policy version, the fugaro release that
 // introduced it: 1 is the model itself (0.8.0, internal/cli's policySince), 2
-// is the profile gate above (0.8.5). It sits beside Version because a bump of
-// Version adds its row in the same change (TestVersionSinceCoversEveryVersion
-// fails until it does; the 0.9.0 line's version 3 needs one too), and it is
+// is the profile gate above (0.8.5), 3 the account axis (0.9.0). It sits
+// beside Version because a bump of Version adds its row in the same change
+// (TestVersionSinceCoversEveryVersion fails until it does), and it is
 // read by every message about a node *ahead* of its reader (SkewSentence, so
 // the launch gate, the CLI's other reads, `fugaro project policy`, doctor and
 // the runner all answer from it): the release that reads such a node is the
@@ -41,6 +75,7 @@ const Version = 2
 var VersionSince = map[int]string{
 	1: "0.8.0",
 	2: "0.8.5",
+	3: "0.9.0",
 }
 
 // VersionRelease is the release that introduced policy version v, and false
@@ -112,9 +147,76 @@ const PolicyRulesVersion = 1
 // and the owner's deploy records generation 2 — not a reason for anything to
 // read below the policy generation and answer "no policy here".
 //
+// Generation 3 is P6.4 (mobile plan task P6.4, decisions D161, D165, D166,
+// D169, D171): the mailbox's message fields as P6.3's schema defines them (a
+// `mac` required on every message of every kind and on the heartbeat, with
+// `agent`, `kind`, `options`, `reply_to` and the action record beside it), the
+// device allowlist `config/admin/devices/<uid>` that USER now requires (D166),
+// and the two pairing nodes of D165. The generation moves for the device node
+// even where nothing else did: a phone on generation 2 cannot read its own
+// mailbox under a generation-3 document until its account is paired, so an
+// installation that deploys these rules and forgets `fugaro pair` finds every
+// app read refused — and `fugaro doctor` says nothing about it *afterwards*.
+// `policy-rules-skew` compares the deployed *document* with this binary's, so
+// it warns only **before** the deploy, while the marker still records
+// generation 2; the deploy that records generation 3 is what silences it, and
+// from then on the unpaired account is the app's own empty reads to diagnose
+// rather than a skew doctor reports. The warning is where the operator is told
+// to pair first (internal/cli's rulesMarkerOlderText says it in as many words),
+// and it is the deploy that takes it away.
+//
+// What the bump does to an existing installation, plainly. Runs and the
+// project policy are untouched: Read and the publish gate stay on
+// PolicyRulesVersion (1). Under a generation-2 marker this binary's doctor
+// warns policy-rules-skew until the owner deploys. Once generation 3 is
+// deployed: every phone is refused every read and write until its account has
+// a device node, and until `fugaro pair` (P6.6) ships the only way to write one
+// is by hand over IAM; every mailbox writer that does not send a `mac` (no code in this
+// repository writes the mailbox yet, so this reaches a hand-written consumer
+// or script only) is refused; and a 0.8.5 CLI
+// (generation 2) refuses `fugaro update --firebase-project` against the generation-3
+// marker rather than deploying its older rules over it, and its doctor warns.
+//
+// Generation 3 also carries the credentials children, and they deliberately
+// did not make a generation 4 (credentials-service plan, task C1.3): the
+// `/creds` node (denied to every run token — the service is its only writer,
+// D136/O1), the agent entry's `credential` (a name, never a value) and
+// `waiting_until`, and the by-tier split of real spend under the counters that
+// already exist. They are optional, validated children of nodes a run already
+// writes and only a `cascade` run writes them, so an installation that has not
+// opted in behaves identically — where a bump would make `projectpolicy.Read`
+// answer "not found" and drop every published policy (caps, `allow_repos`,
+// routing, prices) on any installation whose owner has not redeployed the
+// rules yet, and make the publish gate refuse there. The price of not bumping
+// is that this marker cannot answer "does the deployed document carry the
+// credentials children", so the same deploy records that generation separately:
+// `config/limits/credsRules` (`internal/budget/rules`.CredsRulesVersion, 1),
+// which a `cascade` launch, the service's init stage and doctor require, and
+// which the deploy refuses to put this binary's document under when it names a
+// newer one. The gap this leaves — an older Fugaro redeploying its own document
+// while its generation check does not fire and it does not know the new marker
+// — is a named halt at the run's first refused write (HaltCredsRulesDenied,
+// C1.17), never a silent drop; the plan's non-adopters section states it in
+// full.
+//
+// One thing that section and this one both have to say plainly, because it is
+// the direction the redeploy comes from: a release in *this* line that predates
+// the credentials children is generation 3 as well, so its `fugaro doctor` sees
+// the deployed document differ from the one it generates, warns
+// `policy-rules-skew` and prescribes "re-run `fugaro update --firebase-project`" — the
+// redeploy that takes the children away. It cannot be told otherwise from
+// where it stands: the marker reads 3, which is its own generation, and it
+// knows nothing of `config/limits/credsRules`. The "upgrade instead if the
+// rules came from a newer Fugaro" parenthetical in that fix text does not
+// reach it either, for the same reason. Only a binary that reads the second
+// marker beside the first can tell the two apart, which is what the doctor
+// work of C1.21 is for; this binary's doctor does not read it yet, so until
+// C1.21 the trap is recorded here and in `internal/budget/rules`'s KNOWN GAP
+// rather than reported.
+//
 // It is not Version: the policy schema and the rules that guard it move
 // independently.
-const RulesVersion = 2
+const RulesVersion = 3
 
 // VersionError is the refusal of a node written in a version this Fugaro does
 // not understand. It carries both versions, so each side prints its own
@@ -163,11 +265,11 @@ const (
 //     here can read it and the release that wrote the node is newer than the
 //     one calling this. `fugaro upgrade` is the whole remedy (for the image,
 //     "refresh the runner image" — it is not the CLI's binary), and neither of
-//     the other moves is one: `fugaro init --firebase` deploys this release's
+//     the other moves is one: `fugaro update --firebase-project` deploys this release's
 //     rules and marker, and the deploy's own plan refuses to put them over a
 //     newer Fugaro's (internal/infra's DB.Plan: a marker above this binary's
 //     RulesVersion stops the plan there — "the rules this database runs under
-//     came from a newer Fugaro, and 'fugaro init --firebase' would deploy this
+//     came from a newer Fugaro, and 'fugaro update --firebase-project' would deploy this
 //     binary's older rules over them. Upgrade Fugaro first" — which doctor's
 //     policy-rules-skew reports with the upgrade as its fix too, and which
 //     requirePolicyRules does *not* refuse: it reads a marker at or above
@@ -184,8 +286,8 @@ const (
 //     (internal/cli's publishedPolicyOf, which words the same refusal, and
 //     docs/project-layer.md and `fugaro doctor` carry it too), so the older
 //     node goes first, with `fugaro project policy publish --delete`, and the
-//     publish that follows writes a shape the reader understands. `fugaro init
-//     --firebase` is deliberately not named in either: it deploys this
+//     publish that follows writes a shape the reader understands. `fugaro update
+//     --firebase-project` is deliberately not named in either: it deploys this
 //     release's rules template and marker and never writes
 //     config/policy/shared, so an operator sent to re-run it would come back to
 //     the same refusal. A hand-written node, or one a release before this shape

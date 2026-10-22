@@ -1,5 +1,13 @@
 # website/data/install.yaml -- the one install source the site renders.
 #
+# The paths below are in the order a reader runs them, and the **first path that names a
+# system is that system's quick path**: `website/src/pages/getting-started.astro` draws one
+# card per platform marked supported below and puts under it the first path whose own
+# `platforms:` list carries that system's goos, with that path's command and copy control.
+# Every path no card carries is rendered further down in the page's Details section. So the
+# order is a fact about the page rather than a list, and a path moved above another is the
+# path the systems that name both of them are offered first.
+#
 # Read as bytes by internal/cli/docs_website_install_test.go, which pins:
 # every command below to the file its `source:` names (README.md's
 # "## Getting started" or docs/release.md), verbatim; `build` to
@@ -54,22 +62,21 @@ paths:
         brew install dimipaun/tap/fugaro
 
   - id: archive
-    name: The release archive
+    name: Archive
     source: README.md
     platforms: [darwin, linux]
     release_page: https://github.com/dimipaun/fugaro/releases
     name_template: "fugaro_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     extension: tar.gz
     note: >-
-      Download an archive for macOS or Linux (amd64 or arm64) and verify it
-      with cosign.
+      A tarball for macOS or Linux, amd64 or arm64.
 
   - id: cosign
-    name: Verify a release with cosign
+    name: Cosign
     source: docs/release.md
     platforms: [darwin, linux]
     note: >-
-      Check the archive against the release's checksums and signature bundle.
+      Check the archive against the release's checksums.
     commands:
       - |-
         V=X.Y.Z
@@ -81,9 +88,9 @@ paths:
           --certificate-identity "https://github.com/dimipaun/fugaro/.github/workflows/release.yml@refs/tags/v$V" \
           --certificate-oidc-issuer https://token.actions.githubusercontent.com
       - |-
-        grep " fugaro_${V}_" checksums.txt | shasum -a 256 -c -      # macOS
+        grep " fugaro_${V}_$(uname -s | tr A-Z a-z)_" checksums.txt | shasum -a 256 -c -      # macOS
       - |-
-        grep " fugaro_${V}_" checksums.txt | sha256sum -c -         # Linux
+        grep " fugaro_${V}_$(uname -s | tr A-Z a-z)_" checksums.txt | sha256sum -c -         # Linux
 
   - id: go-install
     name: Go install
@@ -98,17 +105,14 @@ paths:
         go install github.com/dimipaun/fugaro/cmd/fugaro@latest
 
   - id: plugin
-    name: The Fugaro plugin
+    name: Plugin
     source: README.md
     platforms: [darwin, linux]
     note: >-
-      fugaro init wires the plugin into the checkout's .claude/settings.json
-      and /fugaro:setup writes fugaro.yaml; a teammate who opens the folder
-      and trusts it gets the plugin too, and fugaro upgrade --local repairs it
-      when the skills are not listed.
+      The agent's skills; fugaro setup wires them into the checkout.
     commands:
       - |-
-        fugaro init
+        fugaro setup
       - |-
         /fugaro:setup
       - |-

@@ -58,6 +58,20 @@ type Batch struct {
 	// FailCreateWith, when non-zero, makes jobs.create answer that HTTP
 	// status, creating nothing.
 	FailCreateWith int
+	// FailDeleteWith, when non-zero, makes jobs.delete answer that HTTP
+	// status, deleting nothing (a permission refusal, say). It is separate
+	// from RefusePath because a delete shares its path with the read that
+	// precedes it, so a path refusal would refuse the read as well and the
+	// delete's own failure could not be reached.
+	FailDeleteWith int
+	// GetRace, keyed by job id, moves the job to that raw state as a
+	// single-job :get arrives, before the get is answered: the read-back a
+	// caller makes between a listing it decided from and the call that
+	// decision leads to, for a job whose state moved in between. A job's
+	// listing and its read-back read the same stored state otherwise, so this
+	// is the only way a test reaches that race (CancelRace is the same knob
+	// for :cancel, which has the same problem).
+	GetRace map[string]string
 	// AllowCancelOfTerminal, when set, makes :cancel of an already-terminal
 	// job answer OK and change nothing. Unset (the default), it answers 400
 	// FAILED_PRECONDITION, so the backend's tolerance of the race between a
@@ -472,6 +486,12 @@ func (f *Batch) get(w http.ResponseWriter, r *http.Request, p string) {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "job "+id+" not found")
 		return
 	}
+	if raced := f.GetRace[id]; raced != "" {
+		j.state = raced
+		if st, ok := j.body["status"].(map[string]any); ok {
+			st["state"] = raced
+		}
+	}
 	writeJSON(w, http.StatusOK, f.render(project, region, j))
 }
 
@@ -484,6 +504,10 @@ func (f *Batch) delete(w http.ResponseWriter, r *http.Request, p string) {
 	k := jobKey{project, region, id}
 	if f.jobs[k] == nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "job "+id+" not found")
+		return
+	}
+	if f.FailDeleteWith != 0 {
+		writeError(w, f.FailDeleteWith, http.StatusText(f.FailDeleteWith), "injected failure")
 		return
 	}
 	f.deletes = append(f.deletes, id)

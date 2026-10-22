@@ -45,6 +45,49 @@ func TestRunTokenRefusesWhenAuthIsNotOAuth(t *testing.T) {
 	}
 }
 
+// TestRunRefusesAnAgentAuthTheRepositoryDoesNotDefine: the account gate both
+// decides on agent.auth and prints it, and the two documents that value can
+// come from are not read alike. The checkout's own config is validated
+// (config.Validate: agent.auth is one of vertex, api-key, oauth), but the
+// fugaro.yaml at the ref the run checks out is read by config.AgentOf, which
+// decodes strictly and validates nothing — so a repository can commit an
+// agent.auth of its own spelling and have it reach the gate. Printed raw into
+// the refusal, a newline in it adds a line to what the operator reads
+// (safetext.MultiLine keeps newlines) and an escape sequence rewrites it; read
+// as "some auth that is not oauth", it is refused with a sentence about a
+// value nobody defined. Both halves are fixed: a value this Fugaro cannot
+// place is refused as such, escaped.
+//
+// Mutation (verified, run and restored): take the value as it comes (drop the
+// KnownAgentAuth branch, keeping the raw interpolation) — this test fails, the
+// refusal carrying the newline and the escape sequence, and naming no
+// expected value.
+func TestRunRefusesAnAgentAuthTheRepositoryDoesNotDefine(t *testing.T) {
+	f := newProjectJobFixture(t)
+	isolateCache(t)
+	// The ref commits an auth this Fugaro does not define: YAML's double
+	// quotes read "\n" and "\u001b[31m" as the characters themselves, which is
+	// exactly how a committed file delivers them. The working tree carries the
+	// same file with a real auth, so what refuses the launch below is the ref's
+	// value and not a file this launcher could not read.
+	projectJobCheckoutYAMLAt(t, projectJobRefRepoYAML("oauth"),
+		projectJobRefRepoYAML(`"oauth\nsecond line \u001b[31mred"`))
+
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261019-120000-cccc", "--token", "acme-personal", "A task")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("a launch whose ref names an undefined agent.auth: %v, want a user refusal", err)
+	}
+	if !strings.Contains(err.Error(), "agent.auth") || !strings.Contains(err.Error(), "api-key") {
+		t.Errorf("the refusal does not say what agent.auth may be: %v", err)
+	}
+	if strings.ContainsAny(err.Error(), "\n\x1b") {
+		t.Errorf("the refusal carries the repository's own text as itself, so it rewrites the lines around it: %q", err.Error())
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions, want none", n)
+	}
+}
+
 // TestFollowUpOutsideACheckoutRefusesDisallowedInheritedAccount is review
 // finding #2's follow-up half: a follow-up's inherited account name comes
 // from the previous run's own task.json, bucket data a launcher can write

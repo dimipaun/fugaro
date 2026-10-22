@@ -20,7 +20,7 @@ import (
 )
 
 // publishPolicy puts a policy node and the rules marker on the fixture's
-// database, as an owner's fugaro init --firebase (the marker) followed by a
+// database, as an owner's fugaro update --firebase-project (the marker) followed by a
 // policy publish do. An empty policy publishes the node alone, which is the
 // state a read must not confuse with "no policy at all".
 func publishPolicy(t *testing.T, f *launchBudgetFixture, policy string) {
@@ -68,7 +68,7 @@ func TestLaunchPolicyGatesRefusesASlugOfAnotherRepository(t *testing.T) {
 	f := newLaunchBudget(t, "off")
 	// The allow-list admits every repository, so what refuses below is the
 	// binding and not the policy.
-	publishPolicy(t, f, `{"version":2,"allow_repos":["*"]}`)
+	publishPolicy(t, f, `{"version":3,"allow_repos":["*"]}`)
 	env := memEnv(t, f.cloudFixture)
 	spec := &task.Spec{Version: 1, RunID: budgetRun, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
 
@@ -115,7 +115,7 @@ func TestProviderKindsAgreeWithTheConfigsList(t *testing.T) {
 // is the only reason an operator sees it now rather than as a failed run.
 func TestRunRefusesBeforeLaunch(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
-	publishPolicy(t, f, `{"version":2,"allow_repos":["github/other/*"]}`)
+	publishPolicy(t, f, `{"version":3,"allow_repos":["github/other/*"]}`)
 	_, _, err := runBudget(t)
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v (exit %d), want a user error", err, ExitCode(err))
@@ -190,7 +190,7 @@ func TestRunRefusesUnderAPolicyOfThePolicyGeneration(t *testing.T) {
 // batch the policy refuses.
 func TestRunAttemptsRefusesBeforeAnyLaunch(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
-	publishPolicy(t, f, `{"version":2,"allow_repos":["github/other/*"]}`)
+	publishPolicy(t, f, `{"version":3,"allow_repos":["github/other/*"]}`)
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "Add a feature")
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v (exit %d), want a user error from the policy gate", err, ExitCode(err))
@@ -223,10 +223,10 @@ func TestRunAttemptsRefusesBeforeAnyLaunch(t *testing.T) {
 // below.
 //
 // The remedy is the upgrading side's, and it is the only one this direction may
-// print: `fugaro init --firebase` is the wrong move here, and it is the deploy's
+// print: `fugaro update --firebase-project` is the wrong move here, and it is the deploy's
 // own plan that says so — a deployed rules marker above this binary's
 // RulesVersion stops the plan, "the rules this database runs under came from a
-// newer Fugaro, and 'fugaro init --firebase' would deploy this binary's older
+// newer Fugaro, and 'fugaro update --firebase-project' would deploy this binary's older
 // rules over them. Upgrade Fugaro first" (internal/infra's DB.Plan; doctor's
 // policy-rules-skew reports the same state, and requirePolicyRules reads a
 // marker at or above RulesVersion as one this Fugaro reads a policy under
@@ -255,7 +255,7 @@ func TestRunRefusesAPolicyNewerThanTheBinary(t *testing.T) {
 			t.Errorf("the refusal says %q, and version 99 is not %s's: the release a too-new refusal names is the one that introduced the version it found (projectpolicy.VersionSince), never policySince, which names the release the model ships in — an operator told to upgrade to a release they already run: %v", bad, bad, err)
 		}
 	}
-	for _, bad := range []string{"re-run init", "init --firebase"} {
+	for _, bad := range []string{"re-run init", "update --firebase-project"} {
 		if strings.Contains(err.Error(), bad) {
 			t.Errorf("the refusal tells an older binary to %q: the deploy's plan refuses to put this release's rules over a newer Fugaro's, so it is the operator's upgrade that is missing: %v", bad, err)
 		}
@@ -308,7 +308,7 @@ func TestRunRefusesAPolicyOlderThanTheBinary(t *testing.T) {
 	// on this machine is behind the node) and init, which deploys the rules
 	// template and marker but writes no policy node — an operator sent to
 	// re-run it would meet this refusal again.
-	for _, bad := range []string{"upgrade", "init --firebase"} {
+	for _, bad := range []string{"upgrade", "update --firebase-project"} {
 		if strings.Contains(err.Error(), bad) {
 			t.Errorf("the refusal tells the operator to %q, but this binary is the newer side: what is behind is the node, and the remedy is the delete: %v", bad, err)
 		}
@@ -338,12 +338,12 @@ func TestSkewSentencesSplitByDirection(t *testing.T) {
 		{
 			name: "the node is older", ve: older,
 			want:    []string{"version 0", understood, "fugaro project policy publish --delete", "publish it again"},
-			notWant: []string{"upgrade Fugaro", "fugaro upgrade", "init --firebase"},
+			notWant: []string{"upgrade Fugaro", "fugaro upgrade", "update --firebase-project"},
 		},
 		{
 			name: "the node is newer", ve: newer,
 			want:    []string{fmt.Sprintf("version %d", projectpolicy.Version+1), understood, "upgrade Fugaro"},
-			notWant: []string{"publish --delete", "init --firebase"},
+			notWant: []string{"publish --delete", "update --firebase-project"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

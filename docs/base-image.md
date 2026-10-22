@@ -2,7 +2,7 @@
 
 Every workflow's image is built on one base, `ghcr.io/dimipaun/fugaro-base` (for `linux/amd64` and `linux/arm64`), plus the repository's checkout, its runtimes and its dependencies. The base carries what Fugaro and the agents need, and a generous tool kit; **your project declares its language runtimes in `mise.toml`**, and the image installs them. The design is [design/base-image.md](design/base-image.md).
 
-**Published from 0.7.0.** `ghcr.io/dimipaun/fugaro-base` is built and published by the `images` workflow (`fugaro-base (amd64|arm64)` and `publish-base`) from the first release tag that carries it, 0.7.0; a development build or an earlier release has no released image to resolve, so `fugaro init --base base` and `fugaro image refresh` refuse with a clear error there; [Bring your own](#bring-your-own) below (your own build of `images/base/`) works with any build.
+**Published from 0.7.0.** `ghcr.io/dimipaun/fugaro-base` is built and published by the `images` workflow (`fugaro-base (amd64|arm64)` and `publish-base`) from the first release tag that carries it, 0.7.0; a development build or an earlier release has no released image to resolve, so `fugaro update --base base` and `fugaro image refresh` refuse with a clear error there; [Bring your own](#bring-your-own) below (your own build of `images/base/`) works with any build.
 
 ## What is in it
 
@@ -117,7 +117,7 @@ Run `fugaro image render --workflow <name>`, save it as `.fugaro/<name>.Dockerfi
 ## Bring your own
 
 - A Dockerfile (above) for anything the template can't express.
-- A base of your own: `fugaro init --base-image base=<image>` points the installation at it. It must keep the base contract the smoke test checks: the `fugaro` user (uid 1000), `tini` as entrypoint, `/work` with its modes, `/etc/claude-code` empty and owned by `fugaro`, `fugaro`, `claude`, `git`, `gh`, `mise` and `finalize-checkout` on their paths, no passwordless sudo, and no unexpected setuid, setgid or file capability. Check it with `fugaro image build --local --base <image>` first.
+- A base of your own: `fugaro update --base-image base=<image>` points the installation at it. It must keep the base contract the smoke test checks: the `fugaro` user (uid 1000), `tini` as entrypoint, `/work` with its modes, `/etc/claude-code` empty and owned by `fugaro`, `fugaro`, `claude`, `git`, `gh`, `mise` and `finalize-checkout` on their paths, no passwordless sudo, and no unexpected setuid, setgid or file capability. Check it with `fugaro image build --local --base <image>` first.
 - Another compute environment altogether is a backend ([backends.md](backends.md)).
 
 ## Coming from `go`, `web-node` or `java-services`

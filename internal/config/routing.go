@@ -22,6 +22,22 @@ const (
 	// the provider's — and the caller that knows whether a key version exists
 	// is the one that prefers the direct path (Task 1b.3).
 	RouteAuto = "auto"
+	// RouteCascade turns the credential cascade on for a workflow whose
+	// agent.auth is cascade (D133, D150, O3): an exhausted shared subscription
+	// token is replaced by the next usable credential *inside the credentials
+	// service*, so the switch changes which credential carries a call and never
+	// which route it takes. Tier C for Claude is off (C3.6), so every call
+	// still goes to Anthropic under Claude's own model IDs — which is why the
+	// switch resolves through no provider entry at all (O3: it "needs no
+	// provider route while tier C for Claude is off") and why it takes no
+	// models list (CheckRoutingShape).
+	//
+	// It is one switch with one key, as D150 requires: `routing.claude` stays
+	// the one place a Claude call's destination is written, and this value is
+	// the operator's way of saying "the cascade decides the credential here".
+	// For every other agent.auth the value routes nothing — like direct — and
+	// `via: auto` keeps exactly its old meaning (O3).
+	RouteCascade = "cascade"
 )
 
 // Routing is the routing switch of the operator's config and of the policy
@@ -52,11 +68,14 @@ type Routing struct {
 // ID per route entry, never a pattern, and the switch is only a second place
 // the same rule is written.
 type RoutingClaude struct {
-	// Via is direct, openrouter or auto; empty means direct (D1b).
+	// Via is direct, openrouter, auto or cascade; empty means direct (D1b).
 	Via string `yaml:"via,omitempty" json:"via,omitempty"`
 	// Models are the canonical Claude IDs this switch opts in. An ID the list
-	// does not name goes direct, and either open via with an empty list is
-	// refused: the opt-in is the list.
+	// does not name goes direct, and either provider via (openrouter, auto)
+	// with an empty list is refused: the opt-in is the list. `via: cascade`
+	// takes no list at all — it is the workflow-wide credential switch, not a
+	// per-model route — and `via: direct` reads one as inert (D1b's default
+	// said out loud).
 	Models []string `yaml:"models,omitempty" json:"models,omitempty"`
 }
 
@@ -94,12 +113,25 @@ func (p ModelProvider) AllowDataToWritten() bool { return len(p.AllowDataTo) > 0
 // openrouter and auto are held to D1a and D1b between them: an explicit list of
 // canonical Claude IDs, never a pattern; a list that is not empty under either
 // open via; and, for every ID the list names, a provider entry that claims
-// the route's own ID for it *and* has allow_data_to written.
+// the route's own ID for it *and* has allow_data_to written. via: cascade
+// resolves through no provider at all (O3), so the claim rules are not applied
+// to it: the cascade changes which credential carries a call, not where it
+// goes, and while tier C for Claude is off (C3.6) there is no third-party route
+// for a call to be sent on.
 func CheckRouting(r *Routing, providers map[string]ModelProvider, path string) []Problem {
 	ps := CheckRoutingShape(r, path)
 	if len(ps) > 0 || r == nil || r.Claude == nil || r.Claude.ViaValue() == RouteDirect {
 		return ps
 	}
+	// via: cascade reaches no provider claim, and it does so by carrying no list
+	// for the loop below to walk: CheckRoutingShape refuses a models list under
+	// it, so by the time this function gets past the guard above there is
+	// nothing left to hold to a claim. That is O3 — the cascade is switched on
+	// without the operator configuring a route it never uses — and it is one
+	// rule rather than two: the shape rule is the rule everywhere the object is
+	// written or read, and a second copy of "cascade needs no claim" here would
+	// be a second answer to drift from it.
+	//
 	// D1b's safeguard, per ID the switch names: the route must exist (exactly
 	// one provider entry claims it) and that provider's allow_data_to must be
 	// *written*.
@@ -119,7 +151,7 @@ func CheckRouting(r *Routing, providers map[string]ModelProvider, path string) [
 		claims := claudeClaimsFor(providers, m)
 		switch {
 		case len(claims) == 0:
-			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("%s is named by the switch but no provider entry claims it: a route entry lists the models it serves, and only the owner can add one, in the project config (or through the layer's claude_models claim, which only adds to a route the config defines) — never in a repository's fugaro.yaml. Where this table is a run's own routes, an entry that claims the model for other repositories is not among them at all: add this repository to that entry's allow_data_to, then run fugaro init --repo for it (the list a run reads is built into its job at deploy time)", m)})
+			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("%s is named by the switch but no provider entry claims it: a route entry lists the models it serves, and only the owner can add one, in the project config (or through the layer's claude_models claim, which only adds to a route the config defines) — never in a repository's fugaro.yaml. Where this table is a run's own routes, an entry that claims the model for other repositories is not among them at all: add this repository to that entry's allow_data_to, then run fugaro update for it (the list a run reads is built into its job at deploy time)", m)})
 		case len(claims) > 1:
 			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("%s is claimed by %d provider entries, %s: two spellings of one model are one model, and a switch that resolved to whichever name sorts first would route by provider name. Leave the claim on one entry and remove it from the others", m, len(claims), claimNames(claims))})
 		case reservedRouteName(claims[0].name):
@@ -206,10 +238,15 @@ func claimNames(claims []routeClaim) string {
 // routed, and D1b's default is that the direct route is where an unwritten
 // switch leaves every call.
 //
-// The two open vias are the other way round: they must carry a list. An empty
-// one under either is refused, because "route every Claude model through this
-// provider" is the pattern D1a forbids, and an empty list is that pattern
-// written by default rather than by name.
+// The two provider vias are the other way round: they must carry a list. An
+// empty one under either is refused, because "route every Claude model through
+// this provider" is the pattern D1a forbids, and an empty list is that pattern
+// written by default rather than by name. via: cascade is the third case, and
+// it carries no list at all: it is the workflow's credential switch (D133,
+// D150), not a per-model route, so a list under it would be a setting nothing
+// acts on — and an inert list here is not harmless, because the reader that
+// rewrites a run's pins would stop on a model the cascade "opts in" and cannot
+// resolve to a route.
 func CheckRoutingShape(r *Routing, path string) []Problem {
 	if r == nil || r.Claude == nil {
 		return nil
@@ -217,9 +254,9 @@ func CheckRoutingShape(r *Routing, path string) []Problem {
 	c := r.Claude
 	via := c.ViaValue()
 	switch via {
-	case RouteDirect, RouteOpenRouter, RouteAuto:
+	case RouteDirect, RouteOpenRouter, RouteAuto, RouteCascade:
 	default:
-		return []Problem{{Path: path + ".claude.via", Message: fmt.Sprintf("%q must be %s, %s or %s", c.Via, RouteDirect, RouteOpenRouter, RouteAuto)}}
+		return []Problem{{Path: path + ".claude.via", Message: fmt.Sprintf("%q must be %s, %s, %s or %s", c.Via, RouteDirect, RouteOpenRouter, RouteAuto, RouteCascade)}}
 	}
 	var ps []Problem
 	// A block written with an empty via is refused rather than read as the
@@ -229,7 +266,19 @@ func CheckRoutingShape(r *Routing, path string) []Problem {
 	// as direct — it is reached with a switch that passed this check, or with
 	// none at all.
 	if c.Via == "" {
-		ps = append(ps, Problem{Path: path + ".claude.via", Message: fmt.Sprintf("is written with no value: name %s, %s or %s, or remove the block — an absent switch is %s (D1b)", RouteDirect, RouteOpenRouter, RouteAuto, RouteDirect)})
+		ps = append(ps, Problem{Path: path + ".claude.via", Message: fmt.Sprintf("is written with no value: name %s, %s, %s or %s, or remove the block — an absent switch is %s (D1b)", RouteDirect, RouteOpenRouter, RouteAuto, RouteCascade, RouteDirect)})
+	}
+	if via == RouteCascade && len(c.Models) > 0 {
+		// The cascade changes which credential carries a call, never which
+		// route it takes: tier C for Claude is off (C3.6), so every cascaded
+		// call still goes to Anthropic under the ID a pin already names, and
+		// there is no route for a model list to opt into (O3). Refused rather
+		// than tolerated as an inert list, because the pin rewriter acts on the
+		// list it finds: a model this switch "names" has no route to resolve to
+		// and would halt every run of the project (internal/runner's
+		// applyRouting), while the operator who wrote it believed they were
+		// choosing which models cascade.
+		return []Problem{{Path: path + ".claude.models", Message: fmt.Sprintf("names %d model(s), and via: %s takes no list: the cascade is turned on for the whole run by the via alone — it decides which credential carries a call, never which route one takes, and while tier C for Claude is off every cascaded call still goes to Anthropic under the ID the pin already names (D133, D150, C3.6). Remove the list, or write the provider route the switch takes (via: %s with an explicit list of the IDs it carries)", len(c.Models), RouteCascade, RouteOpenRouter)}}
 	}
 	if (via == RouteOpenRouter || via == RouteAuto) && len(c.Models) == 0 {
 		ps = append(ps, Problem{Path: path + ".claude.models", Message: fmt.Sprintf("is empty, and an empty list with via: %s would opt every Claude model in: name the IDs this switch carries, one explicit Claude ID per entry, never a pattern (D1a, docs/design/mixed-credentials.md §4)", via)})
@@ -274,9 +323,22 @@ func CheckRoutingShape(r *Routing, path string) []Problem {
 //
 // A model the switch does not name goes direct whatever via says: the list is
 // the opt-in (D1a), so a Claude ID the operator did not write is untouched.
+//
+// via: cascade resolves every model to the direct route, and that is the
+// switch's whole answer here: the cascade decides which *credential* carries a
+// call inside the credentials service, not which route one takes, and while
+// tier C for Claude is off (C3.6) the ID a pin names is the ID Anthropic is
+// sent. There is deliberately no cascade value of route or sent to hand back —
+// a caller that acted on one would be a second place the cascade's choice is
+// made (D133: one explicit mode, and the service is what picks the
+// credential).
 func RoutingClaudeFor(c *RoutingClaude, model string, providers map[string]ModelProvider) (route, sent string, ok bool) {
 	switch {
 	case c.ViaValue() == RouteDirect:
+		return RouteDirect, model, true
+	case c.ViaValue() == RouteCascade:
+		// `sent` is the model as the pin names it: the cascade forwards the
+		// body it was given, so nothing about the call's model ID changes.
 		return RouteDirect, model, true
 	case !c.Names(model):
 		return RouteDirect, model, true

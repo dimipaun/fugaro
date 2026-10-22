@@ -1,7 +1,7 @@
 #!/bin/sh
 # verify-public.sh [--arm64] REF... proves every published image reference can
 # be pulled by someone with no registry login and has a linux/amd64 build,
-# which is what `fugaro init` (the mirror) and a plain `docker pull` need.
+# which is what `fugaro update` (the mirror) and a plain `docker pull` need.
 # --arm64 also requires a linux/arm64 entry in a multi-platform index, for
 # `fugaro-base`. It runs docker with an empty config directory so no
 # credentials can leak in, prints each image's digest, and exits 1 naming

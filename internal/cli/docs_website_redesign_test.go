@@ -1,0 +1,880 @@
+package cli
+
+// The website redesign's live check 70b, the gist above the fold (website redesign plan
+// docs/website/redesign/implementation-plan.md §3 and §8, part P5; decision D187;
+// reconciliation findings RF23 and RF5).
+//
+// 70b is the third of the redesign's three owner-run live checks and the one part P5 owed
+// the register: P5 merged in #603 and shipped the ordering gate (website/test/fold.mjs)
+// and its own revision of the word ceiling's lead reading (website/test/budget.mjs, which
+// now measures the lead as the region between the `h1` and the first `h2`), but not the
+// check that measures the fold itself, which the register's note under "Check 70 is the
+// website redesign's" recorded as not in the file yet. The ceilings themselves are P4's
+// (#572, D188), and the plan says so twice -- §2's constraint 4, "The word ceiling of P4
+// goes there too, beside the byte budgets" (§2 is the plan's own constraints; §3 is "The
+// parts" and has no numbered constraints), and P4's own section of §3, "**The word ceiling,
+// in `website/test/budget.mjs`**" -- while the reconciliation's RF23 puts it the other way
+// round ("part **P4** of the plan writes the word ceiling either way"). The check's section
+// attributes the gates to no part at all.
+//
+// The two tests on the entry pin its two halves the way TestWebsiteChecklistHasCheck69aAnd69b
+// pins the website plan's 69a and 69b -- the row a reader meets first and the section it
+// points at -- because a check that exists as a section but not as a row is a check nobody
+// reads first, and a row with no section is a command nobody can follow. The tests beside
+// them hold the facts this comment and the section's own wording rest on: the plan's
+// attribution of the ceilings to P4, the register's notes about its block of three and about
+// the commit each "the number was free" reading was taken at, the "as of main's commit" note
+// the three sections open with, and the selectors the check reads its numbers through.
+//
+// What the pair holds 70b to, beyond the shape every entry in the register has:
+//
+//   - **D187's answer is the check's shape.** The fold is a word ceiling plus one
+//     owner-run measurement, because this repository's gates are deliberately
+//     browser-free and no hermetic test can see a viewport. So the section reads its
+//     numbers out of the tree -- the measurement script's keys and viewports, the
+//     ceilings out of the README the gate reads, the provenance phrases out of the
+//     gate's own list -- rather than carrying numbers that can go stale, and it names
+//     the decision and the finding it answers.
+//   - **It is the owner's and no agent's.** A check written as something an agent runs
+//     is a check that will be run by an agent, and this one measures a first screen in
+//     a browser this repository does not drive.
+//   - **It changes nothing.** The section asks for no install into the tree and runs no
+//     `fugaro` command: D187 kept the site's dependency set (the capture tooling's
+//     browser is installed out of tree), and the fold is a fact about a page rather than
+//     about a project.
+
+import (
+	"io/fs"
+	"maps"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
+	"testing"
+)
+
+// checklist70bRow is the row's own prefix, and checklist70bHeading the section's: the two
+// halves this file pins, named once so the pair cannot drift apart.
+const (
+	checklist70bRow     = "| 70b |"
+	checklist70bHeading = "## Check 70b:"
+	// The redesign's other two checks, whose "as of" note is the same reading of the same
+	// page and is pinned with 70b's by TestWebsiteChecklist70NotesNameTheMergedMainCommit.
+	checklist70aHeading = "## Check 70a:"
+	checklist70cHeading = "## Check 70c:"
+)
+
+// TestWebsiteChecklistHasCheck70bRow pins the summary table's half: one row, in the
+// register's own place for it (after 70a and before 70c, because the numbers are read in
+// order), saying who runs the check, that no agent does, and pointing at the section.
+func TestWebsiteChecklistHasCheck70bRow(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+
+	var row string
+	for _, line := range strings.Split(doc, "\n") {
+		if !strings.HasPrefix(line, checklist70bRow) {
+			continue
+		}
+		if row != "" {
+			t.Errorf("%s has more than one %q row: one check, one row", path, "70b")
+		}
+		row = line
+	}
+	if row == "" {
+		// Not a Fatalf: the section is checked either way, so the failure names both
+		// halves of what is missing at once.
+		t.Errorf("the summary table has no %q row: the check is in the register's index or it is not in the register", "70b")
+	} else {
+		for _, want := range []string{
+			"USER-RUN, NOT RUN",
+			"run by you",
+			"No agent runs any step",
+			`See "Check 70b" below`,
+			"P5",   // the part that owes the check
+			"D187", // the decision that made it the owner's rather than a gate's
+			"RF23", // the finding it answers
+			"fold",
+			"40 words",
+			"250 words",
+			// The page ceiling is not the whole of it since 2026-10-19: the privacy
+			// statement is the store listings' privacy policy, so the row names it as
+			// the page whose own derived ceiling the README carries instead.
+			"privacy statement",
+		} {
+			if !strings.Contains(row, want) {
+				t.Errorf("the %q row does not carry %q: %s", "70b", want, row)
+			}
+		}
+	}
+
+	// The register's order, in the table: a row out of order is a reader following the
+	// numbers into the wrong place.
+	at := func(n string) int { return strings.Index(doc, "| "+n+" |") }
+	for _, pair := range [][2]string{{"70a", "70b"}, {"70b", "70c"}} {
+		if at(pair[0]) == -1 || at(pair[1]) == -1 || at(pair[0]) > at(pair[1]) {
+			t.Errorf("the summary table's rows are not in order: %s does not come before %s", pair[0], pair[1])
+		}
+	}
+}
+
+// TestWebsiteChecklistHasCheck70bSection pins the section's half: the banner naming the
+// part, the decision and the finding; the Method's reads out of the tree; a step list whose
+// every step ends in a FACT line; the pass, fail and paste-back blocks; and the closing
+// sentence that says the check changes nothing and no agent runs it. It also refuses the
+// two things this check may not ask for, so a later edit cannot quietly turn it into a
+// different check.
+func TestWebsiteChecklistHasCheck70bSection(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, checklist70bHeading)
+
+	// The register wraps its lines, so the phrases are looked for in the section read as
+	// one run of whitespace-collapsed text: a phrase that survives re-wrapping is the
+	// phrase, not the line breaks around it.
+	flat := strings.Join(strings.Fields(section), " ")
+
+	for _, want := range []string{
+		// Who runs it, and that no agent does. The section's own closing sentence is
+		// the register's lowercase form ("no agent runs any step of it"), which is
+		// what 70a and 70c close on; the row above carries the capitalised one.
+		"NOT RUN",
+		"run by you",
+		"no agent runs any step",
+		// The part, the decision and the findings it answers.
+		"part P5",
+		"D187",
+		"D188",
+		"RF23",
+		"RF5",
+		// The Method: what it reads out of the tree rather than remembers.
+		"website/dist/index.html",
+		"website/data/site.yaml",
+		"docs/website/redesign/capture-screenshots.mjs",
+		"h1Bottom",
+		"leadBottom",
+		"firstCommandBottom",
+		"390 × 844",
+		"1280 × 900",
+		// The word ceilings, from the site's own gate: the lead's 40, the 250 every page
+		// but the privacy statement and the three exempt ones is held to, and the
+		// privacy statement, whose ceiling the README derives from that page's own count.
+		"website/test/budget.mjs",
+		"40 words",
+		"250 words",
+		"privacy statement",
+		"/docs/",
+		"/security/",
+		"/changelog/",
+		// The exemption list, from the file the ceilings' gate imports it from.
+		"website/test/lib/exempt.mjs",
+		"DOCUMENT_PAGES",
+		// The provenance phrases, from the gate that refuses them.
+		"website/test/meta.mjs",
+		// The ordering gate the position rests on.
+		"website/test/fold.mjs",
+		// The homepage's own blocks, in the order the page renders them, the slider's tabs and
+		// panels, and the command the page's first `pre` belongs to.
+		"website/src/pages/index.astro",
+		"HomeSlider.astro",
+		"HomeInstall.astro",
+		"HOME_PATH",
+		"home-install-command",
+		"home-panel-",
+		"watch-block",
+		"watch-command",
+		// The banner that is over the first screen on a first visit.
+		"ConsentBanner.astro",
+		"position: fixed",
+		// The blocks every entry in the register ends with.
+		"FACT:",
+		"Passes when:",
+		"Fails when:",
+		"Paste back:",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("%s does not carry %q: a live check says who runs it, what to read and look at, when it passes and what failing looks like (plan §4)", checklist70bHeading, want)
+		}
+	}
+
+	// Every numbered step ends in its own FACT line: the register's steps are the numbers
+	// the owner pastes back, and a step that reads something without saying what it read
+	// is a step nobody can report on. The steps are the lines that start "N. **" at the
+	// section's own level, and each one's text runs to the next such line.
+	steps := 0
+	lines := strings.Split(section, "\n")
+	for i, line := range lines {
+		if !isNumberedStep(line) {
+			continue
+		}
+		steps++
+		end := len(lines)
+		for j := i + 1; j < len(lines); j++ {
+			if isNumberedStep(lines[j]) || strings.HasPrefix(lines[j], "**Passes when:") {
+				end = j
+				break
+			}
+		}
+		if !strings.Contains(strings.Join(lines[i:end], "\n"), "FACT:") {
+			t.Errorf("%s's step %q carries no FACT line: the step has to say which number the owner pastes back", checklist70bHeading, strings.TrimSpace(line))
+		}
+	}
+	if steps == 0 {
+		t.Errorf("%s carries no numbered step: the check is a list a person runs", checklist70bHeading)
+	}
+
+	// The two things this check may not ask for. D187 kept the site's dependency set (the
+	// capture tooling's browser is installed out of tree, so the fold costs the tree
+	// nothing), and the check is about a page rather than about a project: a step that
+	// installed a dependency or ran a `fugaro` command would be a different check, and a
+	// different bill.
+	for _, refuse := range []string{"npm install", "fugaro run"} {
+		if strings.Contains(flat, refuse) {
+			t.Errorf("%s carries %q: this check changes nothing -- it installs nothing into the tree and runs no `fugaro` command -- and a step that needs either belongs to a check that says so (D187)", checklist70bHeading, refuse)
+		}
+	}
+
+	// The section's place in the register, beside the rows' own order.
+	at := func(heading string) int { return strings.Index(doc, heading) }
+	for _, pair := range [][2]string{{"## Check 70a:", "## Check 70b:"}, {"## Check 70b:", "## Check 70c:"}} {
+		if at(pair[0]) == -1 || at(pair[1]) == -1 || at(pair[0]) > at(pair[1]) {
+			t.Errorf("the register's sections are not in order: %s does not come before %s", pair[0], pair[1])
+		}
+	}
+}
+
+// TestWebsiteRedesignPlanAttributesTheWordCeilingToP4 pins the fact the header comment above
+// rests on, in the documents' own words *and in the places the comment cites*: the word
+// ceilings (D188: 40 words in a page's lead, 250 per page except the three reference pages)
+// are part P4's work (#572). The plan says so in §2's constraint 4 -- §2 is "What is new in
+// this plan's constraints, on top of the first plan's §3", and its fourth constraint is "One
+// source of truth per fact", which puts the ceiling beside the byte budgets -- and again in
+// §3, "The parts", in P4's own section, where the gate that enforces it is named. The
+// reconciliation's RF23 says it too, where the finding is written.
+//
+// The sentence is read out of the section and the constraint rather than out of the whole
+// document, because a citation names a place: a sentence that moves to another section or
+// another constraint is a citation gone stale, and a test that only looks for the text
+// anywhere in the file cannot see it. The citation in the comment is checked too -- the
+// sentence was cited to §3, which is "The parts" and has no numbered constraints at all, for
+// a round of review -- because a comment is source no compiler reads.
+func TestWebsiteRedesignPlanAttributesTheWordCeilingToP4(t *testing.T) {
+	const planPath = "docs/website/redesign/implementation-plan.md"
+	const ceilingSentence = "The word ceiling of P4 goes there too, beside the byte budgets."
+	plan := readDoc(t, planPath)
+
+	// §2's constraint 4, and not another of its constraints: the section is cut at the next
+	// "## " heading and the constraint at the next numbered item, the way the document
+	// numbers them.
+	sec2 := docSection(t, planPath, plan, "## 2. What is new in this plan's constraints")
+	c4 := strings.Index(sec2, "\n4. **")
+	c5 := -1
+	if c4 != -1 {
+		c5 = strings.Index(sec2[c4+1:], "\n5. **")
+	}
+	if c4 == -1 || c5 == -1 {
+		t.Fatalf("%s's §2 has no constraint 4 followed by a constraint 5: the ceiling's sentence is cited to that constraint", planPath)
+	}
+	if item := sec2[c4+1 : c4+1+c5]; !strings.Contains(item, ceilingSentence) {
+		t.Errorf("%s's §2 constraint 4 does not carry %q: the ceilings are part P4's (#572, D188) and that constraint is the sentence's place", planPath, ceilingSentence)
+	}
+
+	// §3, "The parts", and P4's own section of it, where the gate the ceiling lives in is
+	// named.
+	sec3 := docSection(t, planPath, plan, "## 3. The parts")
+	p4 := strings.Index(sec3, "### P4 —")
+	if p4 == -1 {
+		t.Fatalf("%s's §3 has no P4 section: the ceiling is P4's, and §3's section for the part is where its gate is named", planPath)
+	}
+	partP4 := sec3[p4:]
+	if next := strings.Index(partP4, "\n### "); next != -1 {
+		partP4 = partP4[:next]
+	}
+	if want := "**The word ceiling, in `website/test/budget.mjs`**"; !strings.Contains(partP4, want) {
+		t.Errorf("%s's P4 section does not carry %q: the ceiling is enforced in that gate, which is what the comment cites §3 for", planPath, want)
+	}
+
+	// The reconciliation, where the finding is written and where the ceiling is P4's either
+	// way.
+	const recPath = "docs/website/redesign/reconciliation.md"
+	if want := "part **P4** of the plan writes the word ceiling either way"; !strings.Contains(strings.Join(strings.Fields(readDoc(t, recPath)), " "), want) {
+		t.Errorf("%s does not carry %q: RF23 is the finding this check answers, and it is where the ceiling is attributed to P4 in as many words", recPath, want)
+	}
+
+	// And the comment itself, which nothing else reads: it cites the sentence to §2's
+	// constraint 4, and this file is the only place that claim is written down. The header is
+	// this file's leading comment block -- it opens with the line below and runs to the blank
+	// line before `import` -- and the phrase is kept on one line there, so the citation is one
+	// string rather than a wrap.
+	src, err := os.ReadFile("docs_website_redesign_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	header := string(src)
+	i := strings.Index(header, "// The website redesign's live check 70b")
+	if i == -1 {
+		t.Fatalf("this file has no header comment opening %q: the citation this test guards is written there", "// The website redesign's live check 70b")
+	}
+	header = header[i:]
+	if j := strings.Index(header, "\n\n"); j != -1 {
+		header = header[:j]
+	}
+	if !strings.Contains(header, "§2's constraint 4") {
+		t.Errorf("this file's header no longer cites the ceiling's sentence to §2's constraint 4: §3 is \"The parts\" and has no numbered constraints, so a header that says §3 cites a place the sentence is not")
+	}
+}
+
+// checklist70Note opens the register's paragraph about the redesign's check 70, the paragraph
+// whose own sentence says what the block of three adds up to.
+const checklist70Note = "**Check 70 is the website redesign's"
+
+// TestWebsiteChecklist70NoteDoesNotClaimCheck69IsComplete pins the one sentence in the
+// register's note about Check 70 that was wrong. The note closes by saying what its block of
+// three adds up to, and the paragraph above it -- the one about Check 69 -- says in as many
+// words that 69c "is not in this file yet". A sentence reading "so the block 69a-69c arrived
+// in is complete" therefore contradicted the register sixteen lines above it; the true claim
+// is about the block *this* paragraph proposes, which is the one all three of whose sections
+// are in the file. The test holds both halves: the claim about 70, and the refusal of the
+// claim about 69.
+func TestWebsiteChecklist70NoteDoesNotClaimCheck69IsComplete(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+
+	i := strings.Index(doc, checklist70Note)
+	if i == -1 {
+		t.Fatalf("%s has no %q paragraph: the register's note about check 70 is where the redesign's sub-lettering is explained", path, checklist70Note)
+	}
+	note := doc[i:]
+	if j := strings.Index(note, "\n\n"); j != -1 {
+		note = note[:j]
+	}
+	flat := strings.Join(strings.Fields(note), " ")
+
+	// The completeness the paragraph may claim is its own: 70a, 70b and 70c are written below
+	// by P3, P5 and P6, and the register's own sections have to hold them for that to be true.
+	for _, want := range []string{"**70a**", "**70b**", "**70c**", "**P3**", "**P5**", "**P6**", "Check 69"} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("%s's note about check 70 does not carry %q: the paragraph says which parts wrote which of the three checks, and what the block adds up to", path, want)
+		}
+	}
+	for _, want := range []string{"## Check 70a:", "## Check 70b:", "## Check 70c:"} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s has no %q section: the note says the block is written below, so the register has to hold it", path, want)
+		}
+	}
+
+	// And it may not claim that the block Check 69 arrived in is complete: 69c is Task W2.3's
+	// and is not in this file, which the paragraph above the note says. The sentence is kept
+	// here as it was written, so the wording cannot drift back to it.
+	if strings.Contains(flat, "69a–69c arrived in is complete") {
+		t.Errorf("%s's note about check 70 says the block Check 69 arrived in is complete: it is not -- 69c is not in this file yet, as the paragraph above the note says", path)
+	}
+}
+
+// highestFreeClaim is the register's "the number was free when ... merged" claim, as the two
+// website notes write it: the part's merge and its pull request, the commit the reading was
+// taken at, and the highest `## Check N` section the file carried there.
+var highestFreeClaim = regexp.MustCompile("was free when (.+?) merged \\(`([0-9a-f]{7,40})`, #([0-9]+)\\): the highest written `## Check N` section in the file that commit merged into, read at `([0-9a-f]{7,40})\\^`, was \\*\\*([0-9a-z]+)\\*\\*")
+
+// TestWebsiteChecklistHighestWrittenClaimsReadAtTheCommitBeforeTheMerge pins the two register
+// notes that say a check number "was free when" a part merged -- the Check 69 note's sentence
+// for 69, and the Check 70 note's for 70. Each states the highest `## Check N` section the file
+// carried at that moment, and such a statement is true of the file *before* the merging commit:
+// the merge is what writes the part's own checks. A note that reads the state at the merge
+// commit itself gets the count and the reason wrong, which is how this test came to exist --
+// the Check 70 note read "the highest written `## Check N` section here was **69b**" as the
+// state "when P3 and P6 merged (and when P5 did)", and 70c was in the file at both of those
+// commits, written by the first of them.
+//
+// The shape is what makes the claim checkable rather than remembered: the merge and its pull
+// request are named, the reading says which commit it was taken at and that commit is the
+// merge's parent, the section the file ended at is named, and the file really carries it. Git
+// history is not readable from this test -- CI checks out with `fetch-depth: 2` -- so the pin is
+// on the text saying where its fact comes from; the derivation it stands for is
+// `git show <merge>^:docs/gcp-live-checklist.md | grep '^## Check'`.
+func TestWebsiteChecklistHighestWrittenClaimsReadAtTheCommitBeforeTheMerge(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	flat := strings.Join(strings.Fields(doc), " ")
+
+	found := highestFreeClaim.FindAllStringSubmatch(flat, -1)
+	if len(found) < 2 {
+		t.Fatalf("%s carries %d dated \"was free when ... merged\" claims, want the two the register's website notes make (Check 69's for 69, Check 70's for 70): a claim that says which section was the highest written one and does not say which commit it read is a claim about today, and today moves", path, len(found))
+	}
+
+	// The two readings, in the order the register writes them.
+	want := []struct {
+		merge, pr, number string
+	}{
+		{"4b6a45d", "535", "58"},  // W2.2, whose own commit writes 69a and 69b
+		{"b9c349a", "575", "69b"}, // P3 and P6, whose own commit writes 70a and 70c
+	}
+	for i, m := range found {
+		part, merge, pr, readAt, number := m[1], m[2], m[3], m[4], m[5]
+		if i < len(want) {
+			w := want[i]
+			if merge != w.merge || pr != w.pr || number != w.number {
+				t.Errorf("%s reads the claim about %s as %s's merge (`%s`, #%s) ending at `## Check %s`, want `%s` (#%s) ending at `## Check %s`: the number, the commit and the reading are one fact, so a correction edits all three", path, part, part, merge, pr, number, w.merge, w.pr, w.number)
+				continue
+			}
+		}
+		// The reading is the state the merge found, so it is taken at the merge's parent: at
+		// the merge itself the part's own checks are already written into the file.
+		if readAt != merge {
+			t.Errorf("%s reads the highest written section for %s at `%s^`, not at the merge it names, `%s`: the merge commit is what writes the part's own checks, so a reading taken there counts them as written and the number stops looking free", path, part, readAt, merge)
+		}
+		if !strings.Contains(doc, "## Check "+number+":") {
+			t.Errorf("%s says the file ended at `## Check %s` at `%s^`, and carries no `## Check %s:` section: the claim names a section a reader cannot find", path, number, readAt, number)
+		}
+	}
+
+	// The half the Check 70 note got wrong, pinned where it now stands: what the file ends at
+	// after each merge. #575's own commit writes 70a and 70c, so the file ends at 70c there,
+	// and it still ends at 70c at #603's -- which is why 70b, P5's own check, is the section
+	// written last, by the check-70b work, rather than by P5's merge.
+	for _, claim := range []string{
+		"so the file ends at `70c` there",
+		"it still ends at `70c` at P5's merge (`24ef3aef`, #603)",
+	} {
+		if !strings.Contains(flat, claim) {
+			t.Errorf("%s no longer carries %q: the Check 70 note has to say what the file ends at after the merges that took the number, because 70 was free for P5's check only while 70c was the highest written section", path, claim)
+		}
+	}
+}
+
+// TestWebsiteChecklistCheck70bReadsTheScriptsOwnSelectors pins the check's measurements to the
+// script's own. The three keys the section reads -- `h1Bottom`, `leadBottom` and
+// `firstCommandBottom` -- are defined in docs/website/redesign/capture-screenshots.mjs, and the
+// section says its numbers are read "the way the script reads them", so it has to read them
+// through the script's own selectors. The trap this guards is a look-alike: the script measures
+// the document's first `h1`, and `main h1` is a different element that happens to be the same
+// one on today's pages -- a check written against `main h1` would pass while measuring an
+// element the script does not.
+//
+// The command's key is the one that is not a plain `q(...)`: the homepage's slider keeps two of
+// its three panels hidden, and the page's first `pre` in document order is the `fugaro watch`
+// block inside one of them, so the script reads the first `pre` under `main` that has a
+// rectangle of its own -- and `document.querySelector('main pre')`, which is what it read while
+// every page's first `pre` was visible, is that key's look-alike: on today's homepage it is a
+// hidden box, and a reading taken from it is 0.
+func TestWebsiteChecklistCheck70bReadsTheScriptsOwnSelectors(t *testing.T) {
+	const scriptPath = "docs/website/redesign/capture-screenshots.mjs"
+	const path = "docs/gcp-live-checklist.md"
+	script := readDoc(t, scriptPath)
+	doc := readDoc(t, path)
+	flat := strings.Join(strings.Fields(docSection(t, path, doc, checklist70bHeading)), " ")
+
+	for _, m := range []struct{ key, inScript, inSection string }{
+		{"h1Bottom", "q('h1')", "document.querySelector('h1')"},           // the script's `const h1 = q('h1')`
+		{"leadBottom", "q('main p')", "document.querySelector('main p')"}, // q('main p')
+		// The first `pre` under `main` that has a box, which is not the first one in the HTML.
+		{"firstCommandBottom", "document.querySelectorAll('main pre')", "document.querySelectorAll('main pre')"},
+	} {
+		if !strings.Contains(script, m.inScript) {
+			t.Errorf("%s no longer measures %s with %s: the check's Method reads the script's keys out of it, so the key and the selector move together", scriptPath, m.key, m.inScript)
+		}
+		if !strings.Contains(flat, m.inSection) {
+			t.Errorf("%s's section does not read %s with %s, the script's own selector: the check reads its numbers \"the way the script reads them\"", path, m.key, m.inSection)
+		}
+	}
+
+	// The look-alike, refused: the script's `h1` is the document's first, not the one inside
+	// `main`, and the check may not quietly substitute one for the other.
+	if strings.Contains(flat, "document.querySelector('main h1')") {
+		t.Errorf("%s's section reads the h1 with document.querySelector('main h1'): the script reads the document's first `h1` (%s), and a check that measures a different element is not the script's measurement", path, scriptPath)
+	}
+}
+
+// TestWebsiteChecklistCheck70bNamesWhatTheTreeHas pins the identifiers the section's steps
+// name to the files that carry them. The section is prose about markup, so it can name a
+// class, a constant or a path that no longer exists and still read perfectly well -- which is
+// what happened to it: it read the homepage's first command out of `Hero.astro`'s
+// `HERO_PATHS` and `hero-install-command` for a round after #623 moved the install paths to
+// `HomeInstall.astro`'s `HOME_PATHS` and `.home-install-command` and left the hero with no
+// `<pre>` at all. Every name below is checked in the file that carries it, and the two the
+// page no longer has are refused, so a step cannot point an owner at markup that is gone.
+func TestWebsiteChecklistCheck70bNamesWhatTheTreeHas(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	flat := strings.Join(strings.Fields(docSection(t, path, doc, checklist70bHeading)), " ")
+
+	for _, m := range []struct{ name, file string }{
+		{"HOME_PATH", "website/src/components/HomeInstall.astro"},
+		{"home-install-command", "website/src/components/HomeInstall.astro"},
+		{"watch-block", "website/src/components/HomeSlider.astro"},
+		{"watch-command", "website/src/components/HomeSlider.astro"},
+		{"watch-shot", "website/src/components/HomeSlider.astro"},
+		{"home-panel-", "website/src/components/HomeSlider.astro"},
+		{"HomeInstall", "website/src/pages/index.astro"},
+		{"HomeSlider", "website/src/pages/index.astro"},
+		{"DOCUMENT_PAGES", "website/test/lib/exempt.mjs"},
+		{"flex-direction: row-reverse", "website/src/styles/base.css"},
+	} {
+		if !strings.Contains(flat, m.name) {
+			t.Errorf("%s's section does not name %q: the step that reads the page has to say what it reads it out of", path, m.name)
+		}
+		if !strings.Contains(readDoc(t, m.file), m.name) {
+			t.Errorf("%s names %q, and %s no longer carries it: the section reads the page out of the tree, so a name the tree does not have is a step an owner cannot run", path, m.name, m.file)
+		}
+	}
+
+	// The names of pages that are gone, refused: #623 moved the homepage's install paths out
+	// of the hero into their own section, and the draft of 2026-10-19 folded the chat and the
+	// diagram out of the page and the two install cards into one command — so a step that reads
+	// the homepage out of any of them reads a page that is not there.
+	for _, stale := range []string{
+		"HERO_PATHS",
+		"hero-install-command",
+		"AgentChat.astro",
+		"chat-watch",
+		"ArchitectureDiagram.astro",
+		"HOME_PATHS",
+	} {
+		if strings.Contains(flat, stale) {
+			t.Errorf("%s's section names %q, which no file in the tree carries: the homepage is the hero, the slider and the install block since the draft of 2026-10-19, and its command is HomeInstall.astro's HOME_PATH and .home-install-command", path, stale)
+		}
+	}
+}
+
+// reChecklistClassName is a class name as the three checks write it: a dotted name with a
+// hyphen in it. The hyphen is what tells a class from a file extension -- the sections also
+// write `website/test/fold.mjs`, `Hero.astro`, `base.css` and `site.yaml`, whose ends are
+// `.mjs`, `.astro`, `.css` and `.yaml` -- so the derivation below can run over a whole
+// section, and `.site-header`, `.command-block` and `.chat-shot` are read out of the prose
+// the owner follows rather than listed in this file.
+var reChecklistClassName = regexp.MustCompile(`\.([a-z][a-z0-9]*(?:-[a-z0-9]+)+)`)
+
+// reChecklistDataAttr is a data attribute as the checks write it: `[data-copy]` in Check
+// 70c's Fails-when, `data-copy-button` and `data-copy-status` in its Method. Check 70c names
+// no class at all -- what it is about is the wrapper the script finds and the button it
+// reveals -- so this is the form that keeps its case below from having nothing to hold.
+var reChecklistDataAttr = regexp.MustCompile(`\b(data-[a-z][a-z0-9]*(?:-[a-z0-9]+)*)`)
+
+// websiteSourceText is the site's own source, concatenated: every `.astro`, `.css`, `.js`,
+// `.mjs`, `.ts`, `.json` and `.yaml` file under `website/src` and `website/public`. It is
+// deliberately not the built artifact -- `website/dist/` exists only after `npm run check`,
+// and the Go tests run in CI with no Node and no build -- and not `node_modules`, which is a
+// toolchain's cache rather than the site.
+//
+// `website/test` is deliberately **not** walked, though it is the site's source too. The
+// gates keep the retired names as fixtures -- `website/test/base-styles.mjs` and
+// `website/test/nav-hover.mjs` hold `site-nav-toggle`, `site-nav-drawer` and `site-nav-panel`
+// as "must be gone" text, and they appear nowhere under `src` or `public` -- so a walk that
+// covered them would answer for exactly the names this case exists to catch, and a section
+// that re-added the retired drawer would pass. The case is about the site that ships; the
+// pages the gates build are checked from the other side, by `website/test/checklist.mjs` for
+// Check 70a.
+func websiteSourceText(t *testing.T) string {
+	t.Helper()
+	root := filepath.Join("..", "..", "website")
+	var b strings.Builder
+	for _, dir := range []string{"src", "public"} {
+		err := filepath.WalkDir(filepath.Join(root, dir), func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				return nil
+			}
+			switch filepath.Ext(p) {
+			case ".astro", ".css", ".js", ".mjs", ".ts", ".json", ".yaml":
+			default:
+				return nil
+			}
+			data, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			b.Write(data)
+			b.WriteByte('\n')
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("reading the site's sources under %s: %v", filepath.Join(root, dir), err)
+		}
+	}
+	if b.Len() == 0 {
+		t.Fatalf("no source file under %s: the names the three checks cite are held to the site, and a walk that read nothing would pass the test below by looking at nothing", root)
+	}
+	return b.String()
+}
+
+// TestWebsiteChecklist70SectionsNameClassesTheSiteCarries holds every class name and every
+// data attribute the website redesign's three live checks cite to the site's own sources.
+//
+// The defect this closes is the one the review of 2026-10-19 found in Check 70a -- the section
+// still told the reader to open a `Menu` drawer the brief had taken out -- and the same hole
+// one class over: a live check is prose, so it can name a selector the site has renamed and go
+// on reading perfectly well, and the owner is left deciding whether the check or the site is
+// wrong. `website/test/checklist.mjs` holds Check 70a's `.site-…` names to the **built** pages
+// and 70b's are named in the pair test above, but the names are the check's own text in all
+// three cases, and the sections cite classes and attributes (`chat-shot`, `data-copy`) that
+// nothing derived before this case did.
+//
+// The names are derived from the document and never listed here: a list of selectors written
+// into this file would be a second place to forget, and the subject is the checks' own text.
+// Each name has to be a whole word of some source file the site ships -- `website/src` or
+// `website/public`, never `website/test`, whose retired-name fixtures would answer for a
+// check that re-added them (see `websiteSourceText`) -- the boundary excludes `-`, so a
+// source that has `.chat-watch-block` does not answer for `.chat-watch`, and each section
+// has to contribute at least one, so a rewrite that dropped every name is refused rather than
+// passing an empty loop.
+func TestWebsiteChecklist70SectionsNameClassesTheSiteCarries(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	source := websiteSourceText(t)
+
+	for _, h := range []string{checklist70aHeading, checklist70bHeading, checklist70cHeading} {
+		section := docSection(t, path, doc, h)
+		names := map[string]bool{}
+		for _, m := range reChecklistClassName.FindAllStringSubmatch(section, -1) {
+			names[m[1]] = true
+		}
+		for _, m := range reChecklistDataAttr.FindAllStringSubmatch(section, -1) {
+			names[m[1]] = true
+		}
+		if len(names) == 0 {
+			t.Errorf("%s names no class and no data attribute at all: this case holds the names a section cites to the site's sources, and a section rewritten without any of them would pass it while telling the owner nothing they can read out of the page", h)
+			continue
+		}
+		for _, name := range slices.Sorted(maps.Keys(names)) {
+			carried := regexp.MustCompile(`(?:^|[^A-Za-z0-9_-])` + regexp.QuoteMeta(name) + `(?:$|[^A-Za-z0-9_-])`).MatchString(source)
+			if !carried {
+				t.Errorf("%s cites `%s`, and no source file under website/src or website/public carries that name: the section reads the page out of the tree, so a name the tree does not have is a step the owner cannot run -- rename it in docs/gcp-live-checklist.md in the commit that renames it in the site", h, name)
+			}
+		}
+	}
+}
+
+// methodLines returns the shell lines of the Method's own code block in a check's section.
+func methodLines(t *testing.T, heading, section string) []string {
+	t.Helper()
+	const open = "```bash\n"
+	i := strings.Index(section, open)
+	if i == -1 {
+		t.Fatalf("%s's Method has no ```bash block: the check reads its inputs out of the tree", heading)
+	}
+	rest := section[i+len(open):]
+	end := strings.Index(rest, "\n```")
+	if end == -1 {
+		t.Fatalf("%s's Method's ```bash block is never closed", heading)
+	}
+	return strings.Split(rest[:end], "\n")
+}
+
+// methodRead reads one Method line the way the shell would: a `grep` or a `sed` whose last
+// argument is a file the repository carries and whose quoted argument is the text it looks
+// for in that file. It reports ok=false for the lines that are not a read of a file in the
+// tree -- the guard, the server, a pipe, or a read of the built artifact under
+// `website/dist/`, which the check's own guard is what builds.
+func methodRead(line string) (file, pattern string, ok bool) {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "grep ") && !strings.HasPrefix(line, "sed ") {
+		return "", "", false
+	}
+	fields := strings.Fields(line)
+	file = fields[len(fields)-1]
+	if !reMethodFile.MatchString(file) || strings.HasPrefix(file, "website/dist/") {
+		return "", "", false
+	}
+	m := reMethodQuoted.FindStringSubmatch(line)
+	if m == nil {
+		return "", "", false
+	}
+	return file, m[1] + m[2], true
+}
+
+var (
+	// reMethodFile is a path a Method line can read: one of the tree's own file kinds.
+	reMethodFile = regexp.MustCompile(`^[A-Za-z0-9_./-]+\.(mjs|astro|css|js|yaml|json|html|md)$`)
+	// reMethodQuoted is the first quoted run of a Method line, either quote style.
+	reMethodQuoted = regexp.MustCompile(`'([^']*)'|"([^"]*)"`)
+	// reMethodLiteral is a word inside a pattern: the part of a `grep` or `sed` expression
+	// that is text to look for rather than regular-expression syntax around it.
+	reMethodLiteral = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_.-]{2,}`)
+)
+
+// checkMethodReads reads one check's Method the way a shell would and holds every read in it
+// to the file it names: the file is in the tree, and the text the line looks for is in that
+// file. This is the check the review asked for after `PAGE_EXEMPT` -- an identifier
+// `budget.mjs` has never had, the exemption set being `DOCUMENT_PAGES` in
+// `website/test/lib/exempt.mjs` -- was written into a Method that no test read, so an owner
+// running the block got an empty grep and a check that silently lost the exemption list it
+// was supposed to read.
+//
+// wantFiles are the files the section's own claims rest on, each of which one of its Method
+// lines has to read: a step that rests on a file the Method never opens is a step reading the
+// section's memory of the file instead of the file. The read is skipped for the lines that are
+// not a read of a source file -- the guard, the server, a pipe, or a read of the built
+// artifact under `website/dist/`, which only exists after `npm run check` -- so a section whose
+// Method reads nothing but the artifact fails the wantFiles half rather than passing empty.
+func checkMethodReads(t *testing.T, heading string, wantFiles []string) {
+	t.Helper()
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	lines := methodLines(t, heading, docSection(t, path, doc, heading))
+
+	var read []string
+	for _, line := range lines {
+		file, pattern, ok := methodRead(line)
+		if !ok {
+			continue
+		}
+		read = append(read, file)
+		body := readDoc(t, file)
+		for _, needle := range reMethodLiteral.FindAllString(pattern, -1) {
+			if !strings.Contains(body, needle) {
+				t.Errorf("%s's Method reads %q out of %s, which does not carry it: the line would print nothing, and the step below it would read a fact the owner was never shown", heading, needle, file)
+			}
+		}
+	}
+
+	got := strings.Join(read, "\n")
+	for _, want := range wantFiles {
+		if !strings.Contains(got, want) {
+			t.Errorf("%s's Method never reads %s: the step that rests on it is reading the section's memory of the file instead of the file", heading, want)
+		}
+	}
+}
+
+// TestWebsiteChecklistCheck70aMethodReadsExist holds Check 70a's Method to the tree the same
+// way 70b's below is held to it. 70a is the check that reads the header's own numbers, and the
+// files its steps rest on are the layout the labels are written in, the two stylesheets the
+// breakpoint, the target's height and the header's own padding come out of, and the site's
+// facts file the canonical origin is read from.
+func TestWebsiteChecklistCheck70aMethodReadsExist(t *testing.T) {
+	checkMethodReads(t, checklist70aHeading, []string{
+		"website/data/site.yaml",
+		"website/src/layouts/Base.astro",
+		"website/src/styles/base.css",
+		"website/src/styles/tokens.css",
+	})
+}
+
+// TestWebsiteChecklistCheck70bMethodReadsExist holds Check 70b's Method to the tree: the
+// site's facts, the measurement script, the README the ceilings live in, the exemption list
+// and the provenance list, and the page and the components the steps look at -- including the
+// chat's screenshot slot and the hero's call to action, which #655 and #656 put there.
+func TestWebsiteChecklistCheck70bMethodReadsExist(t *testing.T) {
+	checkMethodReads(t, checklist70bHeading, []string{
+		"website/data/site.yaml",
+		"docs/website/redesign/capture-screenshots.mjs",
+		"website/README.md",
+		"website/test/lib/exempt.mjs",
+		"website/test/meta.mjs",
+		"website/src/pages/index.astro",
+		"website/src/components/HomeSlider.astro",
+		"website/src/components/HomeInstall.astro",
+		"website/src/components/Hero.astro",
+		"website/src/components/ConsentBanner.astro",
+		"website/test/home.mjs",
+	})
+}
+
+// TestWebsiteChecklistCheck70cMethodReadsExist holds Check 70c's Method to the tree. Its
+// first three reads are of the built artifact -- the pages that carry a control, the count of
+// controls per page and the shipped script, none of which the Go tests can build -- so the
+// sources its claims rest on are read in the Method as well: the script that writes the
+// status line step 3 listens for, the markup helper that writes the `hidden` button step 4
+// looks for, and the facts file the four-line cosign invocation of step 1 comes from.
+func TestWebsiteChecklistCheck70cMethodReadsExist(t *testing.T) {
+	checkMethodReads(t, checklist70cHeading, []string{
+		"website/public/scripts/site.js",
+		"website/src/lib/copy-control.mjs",
+		"website/data/install.yaml",
+	})
+}
+
+// checklist70Reading is the commit the website redesign's three live checks were last read
+// against: main's tip as this branch merged it. The three notes are one reading of one site,
+// and an editor who merges a newer main re-reads them and moves this constant with them --
+// which is the point of pinning it once here rather than leaving three copies of a sha in the
+// document with nothing holding them together.
+//
+// It is `7731386f`: #656, the commit that rewrote Check 70a's menu section for the three
+// labels and that Check 70b's own page (the redesigned home, #623, with the chat's `fugaro
+// watch` screenshot, #655, in it) was built at.
+const checklist70Reading = "7731386f"
+
+// checklist70Merge is the merge that brought that commit into this branch, and the shape the
+// three notes say the reading is re-found with: `git rev-parse 0e555767^2`.
+const checklist70Merge = "0e555767"
+
+// TestWebsiteChecklist70NotesNameTheMergedMainCommit pins the "as of" note the website
+// redesign's three checks carry. The note is what tells an owner which site a section was
+// read against, and all three had it wrong twice: first each named `73a0c109`, a main commit
+// from before #623 — at which `website/src/components/HomeInstall.astro` does not exist and
+// the home page is the hero and the diagram alone — and then, after this branch merged a
+// newer main (#656), all three still named `3a233d57` and called it "the commit this branch
+// merged", which the merge `0e555767` had made false: its second parent is `7731386f`.
+//
+// **What this test cannot derive, and why the notes are worded as they are.** The reading the
+// review asked this pin to derive is "the commit all three name is an ancestor-or-equal of
+// `origin/main`, and the website files named did not change since it", and no assertion here
+// can make it: the derivation needs the commit objects, and neither clone this runs in has
+// them — CI's test job checks out one commit (no `fetch-depth`), and the `changes` job's
+// `fetch-depth: 2` reaches one parent and no further — so a test that tried would either fail
+// everywhere or pass vacuously, and this repository refuses the vacuous pass (the rules job's
+// FUGARO_REQUIRE_EMULATOR is the same ruling from the other side). So the pin is the **shape
+// of the reading** instead, and the notes are written so that the sha is not what they rest
+// on:
+//
+//   - the three sections each carry the note, and all three name one and the same commit;
+//   - that commit is the one the notes name as the reading, `checklist70Reading` — a wrong
+//     commit named consistently in all three is the one thing this pin cannot refuse, and
+//     pinning the sha it should be is what closes that hole;
+//   - each note says **whose** commit it is ("the commit this branch merged") and **how to
+//     re-find it** (`checklist70Merge`'s second parent, `git rev-parse 0e555767^2`), which is
+//     the reading a future edit repeats;
+//   - and each note says the commit is a **reading rather than a claim**, and that the names
+//     the steps read are held to the tree at test time. That is the clause that keeps the sha
+//     from rotting: what the owner follows is not the date but the names, and a site that has
+//     moved on fails TestWebsiteChecklist70SectionsNameClassesTheSiteCarries (and, for 70a's
+//     own names, `website/test/checklist.mjs`) rather than leaving a section describing a page
+//     that is gone.
+func TestWebsiteChecklist70NotesNameTheMergedMainCommit(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+
+	// `flat` strips the note's backticks along with the emphasis, so the sha is read bare.
+	note := regexp.MustCompile("As of main's commit ([0-9a-f]{7,40})")
+	type asOf struct{ heading, sha string }
+	var notes []asOf
+	for _, h := range []string{checklist70aHeading, checklist70bHeading, checklist70cHeading} {
+		section := flat(docSection(t, path, doc, h))
+		m := note.FindStringSubmatch(section)
+		if m == nil {
+			t.Errorf("%s carries no \"As of main's commit `…`\" note: the section describes a site, and the note is what says which commit's site it is", h)
+			continue
+		}
+		if m[1] != checklist70Reading {
+			t.Errorf("%s names commit %s, and the three notes are the reading taken at %s: an editor who merges a newer main re-reads the three sections and moves checklist70Reading with them", h, m[1], checklist70Reading)
+		}
+		if !strings.Contains(section, "the commit this branch merged") {
+			t.Errorf("%s names %s as the commit it was read against and does not say it is the commit this branch merged: a sha on its own does not say whose site the section describes", h, m[1])
+		}
+		if !strings.Contains(section, checklist70Merge+"'s second parent") {
+			t.Errorf("%s does not say the reading is re-found as %s's second parent (`git rev-parse %s^2`): the note has to say which merge it read main at, or the next editor has a sha and no way to check it", h, checklist70Merge, checklist70Merge)
+		}
+		if !strings.Contains(section, "reading") || !strings.Contains(section, "held to the tree at test time") {
+			t.Errorf("%s carries a sha and does not say it is a reading whose names are held to the tree at test time: the sha is a date, not the thing the section rests on, and a note that leaves it standing alone is the note that rotted twice already", h)
+		}
+		notes = append(notes, asOf{h, m[1]})
+	}
+	for i := 1; i < len(notes); i++ {
+		if notes[i].sha != notes[0].sha {
+			t.Errorf("%s names commit %s and %s names %s: the three notes are one reading of one site, so they name one commit", notes[0].heading, notes[0].sha, notes[i].heading, notes[i].sha)
+		}
+	}
+}
+
+// isNumberedStep reports whether a checklist line opens a numbered step of a Method
+// ("1. **At 390 × 844, …"), which is how every live check in the register writes its
+// steps.
+func isNumberedStep(line string) bool {
+	if len(line) < 5 || line[1] != '.' || line[2] != ' ' {
+		return false
+	}
+	return line[0] >= '1' && line[0] <= '9'
+}

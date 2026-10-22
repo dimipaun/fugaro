@@ -33,7 +33,7 @@ import (
 // readable prefix: 12 hex for jobs, 8 for service accounts (only 30
 // characters), 16 for secrets and images. A hash stops accidental
 // collisions; the control against a chosen one is the ownership check
-// fugaro init makes before adopting a job, service account or secret.
+// fugaro update makes before adopting a job, service account or secret.
 const (
 	maxJobName  = 49
 	maxSAID     = 30
@@ -533,13 +533,117 @@ func bucketPrefixClause(bucket, prefix, slug string) string {
 	return fmt.Sprintf(`resource.name.startsWith("projects/_/buckets/%s/objects/%s/%s/")`, bucket, prefix, slug)
 }
 
+// BucketConditionTitlePrefix is the fixed part of BucketConditionTitle: a
+// caller that must recognise the title rather than build it (internal/infra/tf
+// reads a plan's condition titles) takes it from here, so the two spellings
+// cannot drift apart.
+const BucketConditionTitlePrefix = "fugaro-"
+
 // BucketConditionTitle is the title of the bucket condition of the account
 // saID, as the bootstrap set it.
-func BucketConditionTitle(saID string) string { return "fugaro-" + saID }
+func BucketConditionTitle(saID string) string { return BucketConditionTitlePrefix + saID }
+
+// TokenBucketPrefix is the runs bucket prefix the budget token objects live
+// under (internal/budget/token's ObjectPrefix, pinned equal by a test): out of
+// runs/, so that a job account, which may write runs/, may only read it
+// (docs/design/budget-token-channel.md §7.2, D16). It is not one of
+// JobBucketPrefixes, and must never be: those are objectUser.
+const TokenBucketPrefix = "tokens"
+
+// TokenBucketCondition is the condition of a job account's read-only
+// (objectViewer) grant on the runs bucket: the repository's own token
+// objects, tokens/<slug>/, and nothing else. The per-run object cannot be
+// named by a condition without a binding per run (the design's rejected C3),
+// so the repository is the narrowest scope; what keeps one run from using
+// another's token is the seal (§7.1). Same shape and trailing slash as
+// BucketCondition, so a slug cannot reach another it is a prefix of.
+func TokenBucketCondition(bucket, slug string) string {
+	return BucketCondition(bucket, []string{TokenBucketPrefix}, slug)
+}
+
+// TokenBucketConditionTitlePrefix is the fixed part of
+// TokenBucketConditionTitle, for a caller that must recognise the title rather
+// than build it (internal/infra/tf, as for the project job's): the expression
+// a grant carries does not say whose grant it is, the title does.
+//
+// It is not a prefix of ProjectTokenBucketConditionTitlePrefix ("fugaro-project-tokens-"),
+// and the two must stay apart: a project job's whole-tokens/ binding must
+// never read as the per-repository job's own.
+const TokenBucketConditionTitlePrefix = "fugaro-tokens-"
+
+// TokenBucketConditionTitle is the title of that grant's condition for the
+// account saID: distinct from BucketConditionTitle, so the two bindings are
+// told apart by title as well as by role.
+func TokenBucketConditionTitle(saID string) string { return TokenBucketConditionTitlePrefix + saID }
+
+// ProjectTokenBucketCondition is the condition of a *project job's* read-only
+// (objectViewer) grant on the runs bucket: the whole of tokens/, with no slug,
+// the same widening ProjectBucketCondition makes on runs/, cache/ and locks/,
+// and for the same reason — a project job serves every repository admitted to
+// its profile, so the token object it must read is no longer inside one
+// repository's prefix (plan task 3.2 step 2; budget-token-channel.md §7.2,
+// where the sentence about Task 3.2's shared job names this grant).
+//
+//	resource.name.startsWith("projects/_/buckets/<b>/objects/tokens/")
+//
+// Read-only is what keeps it from being a widening of the same kind as the
+// objectUser one: objectViewer carries no create, no delete and no update, so
+// a project job can read a queued run's sealed token and can neither replace
+// nor remove it. What it reads is ciphertext, because the object is sealed
+// under a key only the execution the launch minted it for receives (§7.1), so
+// the reach is a capability over bytes and not over tokens. It is a separate
+// builder from TokenBucketCondition, which names one slug: the two must not be
+// confused, and neither may be built from the other by passing an empty slug.
+func ProjectTokenBucketCondition(bucket string) string {
+	return projectBucketPrefixClause(bucket, TokenBucketPrefix)
+}
+
+// ProjectTokenBucketConditionTitlePrefix is the fixed part of
+// ProjectTokenBucketConditionTitle, for a caller that must recognise the title
+// rather than build it (internal/infra/tf).
+const ProjectTokenBucketConditionTitlePrefix = "fugaro-project-tokens-"
+
+// ProjectTokenBucketConditionTitle is the title of that grant's condition for
+// the project job account saID, as ProjectBucketCondition's is for its own
+// grant: distinct from TokenBucketConditionTitle, so a project job's tokens/
+// binding is told apart from a per-repository job's by title as well as by
+// expression.
+func ProjectTokenBucketConditionTitle(saID string) string {
+	return ProjectTokenBucketConditionTitlePrefix + saID
+}
 
 // LauncherBucketConditionTitle is the title of the launchers' objectUser
-// grant on the runs bucket (docs/design/bucket-iam.md H5).
-const LauncherBucketConditionTitle = "fugaro-launchers-runs"
+// grant on the runs bucket (docs/design/bucket-iam.md H5). It names both
+// prefixes since the budget token moved to tokens/ (budget-token-channel.md
+// §7.2, D16): a new title, because the expression widened, so an
+// installation still carrying the runs/-only binding reads as a different
+// one rather than as this one.
+const LauncherBucketConditionTitle = "fugaro-launchers-runs-tokens"
+
+// LegacyLauncherBucketConditionTitle and LegacyLauncherBucketCondition are
+// the launchers' objectUser grant as every release before 0.9.0 wrote it:
+// the runs/-only expression under the old title (H5, before the widening
+// above). No release writes them any more — the installation module's
+// precondition refuses them, so an apply replaces the binding — but a
+// reader that must judge an *installed* policy meets them for as long as an
+// installation has not been re-initialised, and must read them as this
+// grant's old form rather than as a stranger's condition
+// (internal/infra's RunsBucketFindings; a removal suggested for it would
+// take away the runs/ write a launcher is supposed to hold). They are
+// defined here, beside their replacement, so the two spellings cannot drift
+// apart.
+const LegacyLauncherBucketConditionTitle = "fugaro-launchers-runs"
+
+// LegacyLauncherBucketCondition is the expression LauncherBucketCondition
+// built before the budget token moved to tokens/, and the title above is its
+// title. It embeds bucket unescaped exactly as LauncherBucketCondition does,
+// and panics for the same reason on a name outside [a-z0-9._-].
+func LegacyLauncherBucketCondition(bucket string) string {
+	if !bucketNameRE.MatchString(bucket) {
+		panic(fmt.Sprintf("gcp.LegacyLauncherBucketCondition: bucket name %q has a byte outside [a-z0-9._-]", bucket))
+	}
+	return fmt.Sprintf(`resource.name.startsWith("projects/_/buckets/%s/objects/runs/")`, bucket)
+}
 
 // bucketNameRE is the charset LauncherBucketCondition accepts: narrower than
 // GCS's own bucket name rules, but every bucket Fugaro creates or accepts
@@ -556,7 +660,12 @@ var bucketNameRE = regexp.MustCompile(`^[a-z0-9._-]+$`)
 func ValidBucketName(bucket string) bool { return bucketNameRE.MatchString(bucket) }
 
 // LauncherBucketCondition limits the launchers' objectUser grant on bucket
-// to runs/, every repository's (H2). Every launcher carries this exact
+// to runs/ and tokens/, every repository's (H2): runs/ for the task, the
+// claim, the launch record and the cancel marker, tokens/ for the sealed
+// budget token the launcher writes, replaces on a retry and deletes after a
+// launch that did not start (budget-token-channel.md §7.2: the deliberate
+// widening D16 names, still one condition on two prefixes and not a role on
+// the bucket). Every launcher carries this exact
 // string and LauncherBucketConditionTitle, with no description, so IAM keeps
 // them in one conditional binding. The installation module, the install
 // guard and doctor all compare against it: this is its one definition.
@@ -570,7 +679,7 @@ func LauncherBucketCondition(bucket string) string {
 	if !bucketNameRE.MatchString(bucket) {
 		panic(fmt.Sprintf("gcp.LauncherBucketCondition: bucket name %q has a byte outside [a-z0-9._-]", bucket))
 	}
-	return fmt.Sprintf(`resource.name.startsWith("projects/_/buckets/%s/objects/runs/")`, bucket)
+	return fmt.Sprintf(`resource.name.startsWith("projects/_/buckets/%s/objects/runs/") || resource.name.startsWith("projects/_/buckets/%s/objects/%s/")`, bucket, bucket, TokenBucketPrefix)
 }
 
 // BatchJobPrefix is the prefix every Fugaro Batch job's name starts with

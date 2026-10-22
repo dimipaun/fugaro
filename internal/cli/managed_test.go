@@ -48,7 +48,7 @@ import (
 //     flags and terminal is a literal table (confirmTable);
 //   - which environment variables are a coding agent's is a literal list
 //     (expectedAgentMarkers), not agentMarkers;
-//   - every flag of `fugaro init` has a written entry (initFlagCases).
+//   - every flag of `fugaro setup` has a written entry (initFlagCases).
 //
 // The decision is computed over the program's real paths: the managed read
 // (managed.IsManaged over internal/gcpfake), combined with initRun.ask (the
@@ -181,8 +181,8 @@ var confirmClasses = []struct {
 	name  string
 	class initflow.ConfirmClass
 }{
-	{"YesOrTyped", initflow.YesOrTyped},
 	{"Typed", initflow.Typed},
+	{"YesOrTyped", initflow.YesOrTyped},
 }
 
 // declaredConfirmClasses reads the ConfirmClass constants out of
@@ -203,7 +203,7 @@ func declaredConfirmClasses(t *testing.T) []string {
 			continue
 		}
 		// A const spec with neither a type nor a value repeats the one before
-		// it (`Typed` after `YesOrTyped ConfirmClass = iota`), so the block is
+		// it (`YesOrTyped` after `Typed ConfirmClass = iota`), so the block is
 		// tracked rather than each spec.
 		var class bool
 		for _, spec := range gd.Specs {
@@ -261,11 +261,17 @@ type managedWorldOpts struct {
 	noBucket     bool
 	bucketNumber uint64
 	noLabel      bool
-	object       []byte // nil: the right marker; use noObject for none
-	noObject     bool
-	refuseObject int // a status for the marker object's read, 0 for none
-	refuseGCS    int // a status for every storage call, 0 for none
-	refuseCRM    int // a status for every Resource Manager call, 0 for none
+	// projectLabels are the GCP project's own labels (Task 3.0), nil for the
+	// one the creating run writes: managed.ProjectLabelKey=ProjectLabelValue
+	// beside the fact. A row that sets it is a row about the project's half
+	// of the fact — its absence (the state of everything marked before Task
+	// 3.0) or a value that is not the one this build writes.
+	projectLabels map[string]string
+	object        []byte // nil: the right marker; use noObject for none
+	noObject      bool
+	refuseObject  int // a status for the marker object's read, 0 for none
+	refuseGCS     int // a status for every storage call, 0 for none
+	refuseCRM     int // a status for every Resource Manager call, 0 for none
 }
 
 func managedWorld(o managedWorldOpts) func(t *testing.T) (*storage.Service, *crm.Service) {
@@ -298,6 +304,11 @@ func managedWorld(o managedWorldOpts) func(t *testing.T) (*storage.Service, *crm
 		}
 		cf := gcpfake.NewCRM(t)
 		cf.AddProject(managedPropertyGCP, managedPropertyNumber)
+		labels := o.projectLabels
+		if labels == nil {
+			labels = map[string]string{managed.ProjectLabelKey: managed.ProjectLabelValue}
+		}
+		cf.SetLabels(managedPropertyGCP, labels)
 		if o.refuseCRM != 0 {
 			cf.Refuse(o.refuseCRM, "INTERNAL", "", "backend error")
 		}
@@ -309,8 +320,25 @@ func managedWorld(o managedWorldOpts) func(t *testing.T) (*storage.Service, *crm
 // one is managed.
 func managedPropertyWorlds() []managedPropertyWorld {
 	return []managedPropertyWorld{
-		{"the creation fact is there (marker, right project number, label)", true, managedWorld(managedWorldOpts{})},
-		{"the fugaro=managed label alone, no creation fact", false, managedWorld(managedWorldOpts{noObject: true})},
+		{"the creation fact is there (marker, right project number, both labels)", true, managedWorld(managedWorldOpts{})},
+		// The bucket's own fugaro=managed label and nothing else: the project
+		// carries unrelated labels, so this is the bucket mark alone and not
+		// the project's label with it (the row below is that one).
+		{"the runs bucket's fugaro=managed label alone, no creation fact", false, managedWorld(managedWorldOpts{noObject: true,
+			projectLabels: map[string]string{"environment": "prod"}})},
+		// Task 3.0's two halves of the same fact, each alone: the project's
+		// own label with no object is not managed (the label comes off one
+		// project get and is a property of the project, not a second way in),
+		// and the object with the project's label taken away is not managed
+		// either — that is the state of every project marked before this
+		// task, and it fails closed until the owner-run backfill of
+		// docs/gcp-setup.md puts the label back.
+		{"the project's fugaro_managed label alone, no creation fact", false, managedWorld(managedWorldOpts{noObject: true,
+			projectLabels: map[string]string{managed.ProjectLabelKey: managed.ProjectLabelValue}})},
+		{"the creation fact with the project's label taken away", false, managedWorld(managedWorldOpts{
+			projectLabels: map[string]string{"environment": "prod"}})},
+		{"the creation fact with the project's label saying something else", false, managedWorld(managedWorldOpts{
+			projectLabels: map[string]string{managed.ProjectLabelKey: "no"}})},
 		{"a creation fact that cannot be read (403)", false, managedWorld(managedWorldOpts{refuseObject: http.StatusForbidden})},
 		{"a creation fact whose read fails (500)", false, managedWorld(managedWorldOpts{refuseObject: http.StatusInternalServerError})},
 		{"a malformed creation fact", false, managedWorld(managedWorldOpts{object: []byte(`{"version":1,"gcp_project":`)})},
@@ -400,6 +428,50 @@ func TestManagedReadReturnsTheHandWrittenVerdict(t *testing.T) {
 	}
 	if managedN != 1 || notManaged < 2 {
 		t.Fatalf("the worlds hold %d managed and %d not managed: the oracle is one managed world against every way of not being one", managedN, notManaged)
+	}
+}
+
+// TestManagedWorldsWithDifferentNamesAreDifferentWorlds: a row of
+// managedPropertyWorlds asserts a state, and the state is what its name
+// says. Two rows building the same world assert the same thing twice and
+// leave the state one of the names promises untested — which is what happens
+// quietly here, because managedWorld defaults the project's label in and only
+// a row that overrides projectLabels takes it away.
+//
+// The pair it pins is Task 3.0's: the runs bucket's own fugaro=managed label
+// alone (the project carries nothing) against the project's fugaro_managed
+// label alone (the bucket mark present, no creation fact). Both are not
+// managed, and for different reasons — the first is missing the project
+// label the read asks for, the second has it and no fact — so a build that
+// makes them one world leaves one of those two reasons unread.
+func TestManagedWorldsWithDifferentNamesAreDifferentWorlds(t *testing.T) {
+	byName := map[string]managedPropertyWorld{}
+	for _, w := range managedPropertyWorlds() {
+		if _, dup := byName[w.name]; dup {
+			t.Errorf("two worlds are named %q", w.name)
+		}
+		byName[w.name] = w
+	}
+	const inTheBucket = "the runs bucket's fugaro=managed label alone, no creation fact"
+	const onTheProject = "the project's fugaro_managed label alone, no creation fact"
+	a, b := byName[inTheBucket], byName[onTheProject]
+	if a.build == nil || b.build == nil {
+		t.Fatalf("the two label-alone worlds are gone: %q=%v, %q=%v", inTheBucket, a.build != nil, onTheProject, b.build != nil)
+	}
+	// What the read answers, and why, is what a row asserts. Two worlds that
+	// answer with the same reason are one world: the row whose name promises
+	// the other state is asserting what its neighbour already asserts.
+	var reasons []string
+	for _, w := range []managedPropertyWorld{a, b} {
+		s, c := w.build(t)
+		ok, reason, err := managed.IsManaged(context.Background(), s, c, managedPropertyProject, managedPropertyGCP)
+		if ok || err != nil {
+			t.Fatalf("%s: ok=%v err=%v, and both of these worlds are not managed", w.name, ok, err)
+		}
+		reasons = append(reasons, reason)
+	}
+	if reasons[0] == reasons[1] {
+		t.Errorf("%q and %q are answered with the same reason (%q), so one of the two names describes the other's world", inTheBucket, onTheProject, reasons[0])
 	}
 }
 
@@ -631,7 +703,7 @@ var inlineAgentSites = []inlineAgentSite{
 		return a == authOK && err == nil
 	}},
 	{"init_repo_gate.go onboardLeft", "init_repo_gate.go onboardLeft (the flag offered as the route)", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
-		l := onboardLeft(originInfo{Repo: "acme/app", Host: "github.com"})
+		l := onboardLeft(originInfo{Repo: "acme/app", Host: "github.com"}, "setup")
 		return l.Kind == initflow.LeftCommand && strings.Contains(l.Text, "--onboard-repo")
 	}},
 	{"initsecrets.go Left", "initsecrets.go Left (the wording of the secrets route)", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
@@ -663,10 +735,11 @@ var propertyAgentSites = map[string]string{
 // outsideAgentSites are the agent-marker sites the property does not cover,
 // each with the reason.
 var outsideAgentSites = map[string]string{
-	"init.go runInit":             "OUTSIDE: --publish-config's refusal before any write; not a confirmation (initFlagCases: publish-config)",
-	"init.go publishSharedConfig": "OUTSIDE: the shared-config publish after the local config is written; not a confirmation, it skips with a note under a marker",
-	"initsecrets.go agentEnv":     "OUTSIDE: the definition of agentEnv itself (TestManagedAgentMarkersAreTheExpectedSix pins agentMarker)",
-	"initsecrets.go Check":        "OUTSIDE: the wording of the secrets stage's detail; whether it prompts is canPrompt (an inline site)",
+	"init.go runInit":                 "OUTSIDE: --publish-config's refusal before any write; not a confirmation (initFlagCases: publish-config)",
+	"init.go publishSharedConfig":     "OUTSIDE: the shared-config publish after the local config is written; not a confirmation, it skips with a note under a marker",
+	"initsecrets.go agentEnv":         "OUTSIDE: the definition of agentEnv itself (TestManagedAgentMarkersAreTheExpectedSix pins agentMarker)",
+	"initsecrets.go Check":            "OUTSIDE: the wording of the secrets stage's detail; whether it prompts is canPrompt (an inline site)",
+	"init_repo_gate.go convergeOptIn": "OUTSIDE: the wording of the repository gate's detail — it says whether --yes is named as a way in; whether the run may onboard at all is authState/onboardCovered (inline sites)",
 }
 
 // Every inline decision refuses under each marker, and only under a marker:
@@ -717,7 +790,7 @@ func TestManagedAgentMarkersAreTheExpectedSix(t *testing.T) {
 	}
 }
 
-// initFlagCases is every flag of `fugaro init` and its relationship to the
+// initFlagCases is every flag of `fugaro setup` and its relationship to the
 // confirmations the property is about. A flag with no entry fails
 // TestManagedEveryInitFlagHasACase: a new flag is a new condition until
 // someone writes down what it does to a confirmation.
@@ -734,11 +807,11 @@ var initFlagCases = map[string]string{
 	"replace-image":    "names the intent only; replacing confirms through askTyped (covered)",
 	"retire":           "both confirmations are askTyped; retireConfirm's agent refusal is an inline site (covered)",
 	"repo":             "the repository's applies confirm through ask/askOrdinary (covered)",
-	"firebase":         "its applies confirm through ask, its Firestore location through the Typed class (covered)",
+	"firebase-project": "its applies confirm through ask, its Firestore location through the Typed class (covered)",
 	"forget":           "its state removals confirm through ask (covered)",
 	"config-only":      "writes the local config; any confirmation is ask's (covered)",
 	"onboard-repo":     "an opt-in in place of the typed owner/name: refused under a marker (checkOnboardRepo, authState: inline sites, covered); for a non-managed project without a marker it opts in without typing, which is NOT in the table",
-	"anchor":           "OUTSIDE the property: edits only the checkout's fugaro.yaml and honours --yes under a marker by design (init --help)",
+	"anchor":           "OUTSIDE the property: edits only the checkout's fugaro.yaml and honours --yes under a marker by design (fugaro setup --help)",
 	"publish-config":   "OUTSIDE the property: refused under a marker in init.go before any write; no confirmation",
 	"check-github-app": "OUTSIDE the property: a secret read, refused under a marker (githubapp.go); no confirmation",
 	"allow-delete":     "OUTSIDE the property: feeds tf.Guard, not a confirmation (D74, Task 1.4, is the managed case)",
@@ -746,30 +819,31 @@ var initFlagCases = map[string]string{
 	"allow-fork":       "OUTSIDE the property: lets plugin wiring move a ref; the wiring's apply still confirms through ask",
 	"print-vars":       "no cloud call and no confirmation (canAsk is false under it)",
 	"no-build":         "only drops the first image build's offer (a Typed step); takes nothing away from a confirmation",
-	"provision-batch":  "main's compute stage (0.9.0, init_compute.go): registered noYes, its confirmation is the project's name typed (initflow.Typed), so --yes never covers it; added on the merge of main into next-0.8.5, the confirm table does not drive this stage itself",
+	"provision-batch":  "main's compute stage (0.9.5, init_compute.go): registered noYes, its confirmation is the project's name typed (initflow.Typed), so --yes never covers it; added on the merge of main into next-0.8.5, the confirm table does not drive this stage itself",
 	// Values a confirmed step carries: they change what is confirmed, never whether.
 	"alert-email": "value", "base": "value", "base-image": "value", "billing-account": "value", "budget": "value",
 	"budget-admin": "value", "budget-currency": "value", "budget-mode": "value", "config": "value",
 	"display-name": "value", "expect-digest": "value", "gcp-project": "value", "github-app-id": "value",
 	"image-source": "value", "launcher": "value", "name": "value", "no-log-isolation": "value",
 	"operator": "value", "parent": "value", "project": "value", "region": "value",
-	"registry-cleanup": "value", "runs-bucket": "value", "scheduler-region": "value", "state-bucket": "value",
+	"registry-cleanup": "value", "runs-bucket": "value", "scheduler-region": "value",
+	"state-bucket": "value; under --managed the value must be the derived fugaro-tfstate-<gcp-project> and anything else refuses the creation before the project stage (checkManagedStateBucket, Task 4.5/D59), the way a bad --budget-currency refuses it",
 }
 
-// Every flag `fugaro init` declares has an entry above, and every entry is a
+// Every flag `fugaro setup` declares has an entry above, and every entry is a
 // flag init declares: the enumeration is the command's own flag set, so a
 // flag added without a case fails here.
 func TestManagedEveryInitFlagHasACase(t *testing.T) {
 	seen := map[string]bool{}
-	newInitCmd().Flags().VisitAll(func(f *pflag.Flag) {
+	newSetupCmd().Flags().VisitAll(func(f *pflag.Flag) {
 		seen[f.Name] = true
 		if _, ok := initFlagCases[f.Name]; !ok {
-			t.Errorf("fugaro init --%s has no case in initFlagCases: say what it does to a confirmation, and add it to the table if it is a condition", f.Name)
+			t.Errorf("fugaro setup --%s has no case in initFlagCases: say what it does to a confirmation, and add it to the table if it is a condition", f.Name)
 		}
 	})
 	for name := range initFlagCases {
 		if !seen[name] {
-			t.Errorf("initFlagCases names --%s, which fugaro init does not declare", name)
+			t.Errorf("initFlagCases names --%s, which fugaro setup does not declare", name)
 		}
 	}
 	for _, d := range []string{"yes", "non-interactive", "json", "plan-only"} {
@@ -925,7 +999,7 @@ func TestManagedEveryAgentSiteInInitHasACase(t *testing.T) {
 	}
 }
 
-// The failing combination the stage loop's gate stops: `fugaro init --yes` (or
+// The failing combination the stage loop's gate stops: `fugaro setup --yes` (or
 // a typed "y" at a terminal) in a coding agent's session, on a project that
 // is not managed whose checkout's plugin wiring is out of date. The plugin
 // stage is driven through the real loop with the options init builds

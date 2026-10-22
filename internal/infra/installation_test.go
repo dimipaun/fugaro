@@ -50,9 +50,9 @@ func jsonKeys(t *testing.T, data []byte) []string {
 	return slices.Sorted(maps.Keys(doc))
 }
 
-// The tfvars fugaro init writes are exactly the root's variables: a key
+// The tfvars fugaro update writes are exactly the root's variables: a key
 // the root lacks fails the plan, and a required variable without a key
-// fails it too. The outputs fugaro init reads are exactly the root's.
+// fails it too. The outputs fugaro update reads are exactly the root's.
 func TestInstallationVarsMatchModule(t *testing.T) {
 	vars := rootVariables(t)
 	spec := installationSpec(t)
@@ -292,9 +292,37 @@ func TestDeleteHintsAPIs(t *testing.T) {
 	if len(hints) != 1 {
 		t.Fatalf("hints = %q, want one about the APIs", hints)
 	}
-	for _, want := range []string{"Vertex AI", "repos.<repo>.vertex", "fugaro init --repo", "--budget"} {
+	for _, want := range []string{"Vertex AI", "repos.<repo>.vertex", "fugaro update", "--budget"} {
 		if !strings.Contains(hints[0], want) {
 			t.Errorf("the APIs' hint lacks %q: %q", want, hints[0])
 		}
+	}
+}
+
+// managed_deployer_scoped is left out of the tfvars unless the installation
+// opts in, so a default installation's tfvars are the same bytes as before the
+// variable existed and its plan has no scoped deployer role or binding (0.8.6
+// gates them off: deploy/terraform/gcp/modules/installation/deployer.tf). The
+// opt-in writes the key, which must be a variable of the installation root.
+func TestInstallationManagedDeployerScopedIsOptIn(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+m5Additions)
+	s, err := Installation(lc, InstallOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := InstallationVars(s)
+	if strings.Contains(string(data), "managed_deployer_scoped") {
+		t.Errorf("the default tfvars name managed_deployer_scoped:\n%s", data)
+	}
+	s, err = Installation(lc, InstallOptions{ManagedDeployerScoped: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ = InstallationVars(s)
+	if !slices.Contains(jsonKeys(t, data), "managed_deployer_scoped") || !strings.Contains(string(data), `"managed_deployer_scoped": true`) {
+		t.Errorf("the opt-in's tfvars do not set managed_deployer_scoped to true:\n%s", data)
+	}
+	if _, ok := rootVariables(t)["managed_deployer_scoped"]; !ok {
+		t.Error("managed_deployer_scoped is not a variable of the installation root")
 	}
 }

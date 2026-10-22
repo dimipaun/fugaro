@@ -26,7 +26,8 @@ func writeDenied(err error) bool {
 
 // operatorWriteErr is the refusal of a write to the runs bucket that only
 // operators may make (docs/design/bucket-iam.md H8): since 0.7.0 launchers
-// read the whole bucket but write only runs/. A 403 is a user error (exit 1)
+// read the whole bucket but write only runs/ and tokens/ (the sealed budget
+// token, since 0.9.0). A 403 is a user error (exit 1)
 // naming the object, the bucket and what to do; any other error is returned
 // unchanged, for the caller's own wrapping.
 //
@@ -42,7 +43,7 @@ func operatorWriteErr(url, key string, err error, lead ...string) error {
 	if len(lead) > 0 {
 		open = lead[0]
 	}
-	return userErr("%s: writing %s in %s needs the operator role (since 0.7.0 launchers read the runs bucket but write only runs/); ask an operator to publish it, or to add you with fugaro init --operator", open, key, url)
+	return userErr("%s: writing %s in %s needs the operator role (since 0.7.0 launchers read the runs bucket but write only runs/, and since 0.9.0 tokens/); ask an operator to publish it, or to add you with fugaro update --operator", open, key, url)
 }
 
 // checkWriteErr is writeState's refusal of a check.json write the daily
@@ -52,7 +53,7 @@ func operatorWriteErr(url, key string, err error, lead ...string) error {
 // operatorWriteErr explains: unlike every other operatorWriteErr caller,
 // the account refused here is never a launcher asking to publish something,
 // so operatorWriteErr's "ask an operator to publish it, or to add you with
-// fugaro init --operator" would send whoever reads the job's log looking in
+// fugaro update --operator" would send whoever reads the job's log looking in
 // the wrong place. A 403 almost always means that account's grant is
 // missing or broken, which only an operator fixes in Terraform. (A person
 // who ran `fugaro image check --job` directly, impersonating the job with

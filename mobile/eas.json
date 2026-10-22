@@ -1,0 +1,35 @@
+{
+  "cli": {
+    "appVersionSource": "remote",
+    "requireCommit": true
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "environment": "development"
+    },
+    "preview": {
+      "distribution": "internal",
+      "environment": "preview"
+    },
+    "internal": {
+      "distribution": "store",
+      "autoIncrement": true,
+      "environment": "production",
+      "android": {
+        "buildType": "app-bundle"
+      }
+    }
+  },
+  "submit": {
+    "internal": {
+      "ios": {
+        "ascAppId": "6824584935"
+      },
+      "android": {
+        "track": "internal"
+      }
+    }
+  }
+}

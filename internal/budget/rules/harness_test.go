@@ -4,7 +4,7 @@ package rules
 
 // The emulator harness: starts the Realtime Database emulator of the pinned
 // firebase-tools (emulator/package-lock.json), loads the generated rules over
-// the same REST call `fugaro init` uses, and drives them with internal/rtdb as
+// the same REST call `fugaro update` uses, and drives them with internal/rtdb as
 // a run would. Nothing here contacts Firebase: the project id is a demo- id,
 // which the emulator treats as fully local, and tokens are unsigned.
 //
@@ -224,7 +224,7 @@ func newHarness(t *testing.T) *harness {
 	h := &harness{t: t, ns: fmt.Sprintf("%s-%d-%d", project, time.Now().UnixNano()%1_000_000_000, nsCounter.Add(1))}
 	h.hc = &http.Client{Transport: nsTransport{h.ns}, Timeout: 30 * time.Second}
 	h.admin = h.client(rtdb.Auth{Source: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "owner"})})
-	// Deploy exactly as `fugaro init` does: PUT /.settings/rules.json.
+	// Deploy exactly as `fugaro update` does: PUT /.settings/rules.json.
 	req, _ := http.NewRequest(http.MethodPut, emuURL+"/.settings/rules.json", bytes.NewReader(rules))
 	req.Header.Set("Authorization", "Bearer owner")
 	resp, err := h.hc.Do(req)
@@ -250,12 +250,13 @@ func (h *harness) client(a rtdb.Auth) *rtdb.Client {
 
 // claims of a token. Zero fields take the usual values.
 //
-// The first four are a run's; the last three are the mailbox identities
-// (mobile plan D112, D113b), which are what the rules *read* and never mint.
-// A token normally carries none of the three, and that is the point of
-// keeping them separate fields rather than a mode: a phone's token is one
-// whose mu names an account, a consumer's is one whose mc does, and a plain
-// signed-in user's is one with neither — admitted nowhere.
+// The first four are a run's; the rest are the mailbox identities (mobile plan
+// D112, D113b, D165), which are what the rules *read* and never mint. A token
+// normally carries none of them, and that is the point of keeping them separate
+// fields rather than a mode: a phone's token is one whose mu names an account,
+// a consumer's is one whose mc does, a pairing session's is one whose pu names
+// the one-shot pairing uid, and a plain signed-in user's is one with none of
+// them — admitted nowhere.
 type claims struct {
 	slug, run string
 	fx        int64  // deadline in ms; 0 = an hour from now
@@ -263,7 +264,8 @@ type claims struct {
 	rb        string // "" = alice@example.invalid; "-" = no rb claim
 	mu        string // "" = no mu claim; otherwise the mailbox the token owns
 	mc        string // "" = no mc claim; otherwise the mailbox it serves
-	uid       string // "" = derived (mu when set, else r~slug~run); the raw uid
+	pu        string // "" = no pu claim; otherwise the pairing uid it names
+	uid       string // "" = derived (mu, pu, else r~slug~run); the raw uid
 }
 
 func (c claims) token() string {
@@ -272,6 +274,9 @@ func (c claims) token() string {
 		uid = "r~" + c.slug + "~" + c.run
 		if c.mu != "" {
 			uid = c.mu
+		}
+		if c.pu != "" {
+			uid = c.pu
 		}
 	}
 	m := map[string]any{"uid": uid, "fs": c.slug, "fr": c.run}
@@ -299,6 +304,9 @@ func (c claims) token() string {
 	if c.mc != "" {
 		m["mc"] = c.mc
 	}
+	if c.pu != "" {
+		m["pu"] = c.pu
+	}
 	return unsignedToken(m)
 }
 
@@ -320,12 +328,56 @@ func (h *harness) run(slug, run string) *rtdb.Client { return h.as(claims{slug: 
 // run's fp/fs/fr. That matters to the tests, not just to the picture — a token
 // that also carried fp would satisfy TOKEN and read the project's families as
 // a run does, which would make a read case pass for the wrong reason.
-func (h *harness) phone(mb string) *rtdb.Client { return h.as(claims{mu: mb, fp: "-"}) }
+//
+// It pairs the account first (pairDevice), because D166's USER conjunct means
+// an account with no device node is admitted nowhere: a phone that could not
+// read its own caps would make every positive control in these tests fail for
+// a reason that has nothing to do with the case it names. The unpaired case has
+// its own helper, unpaired.
+func (h *harness) phone(mb string) *rtdb.Client {
+	h.pairDevice(mb)
+	return h.as(claims{mu: mb, fp: "-"})
+}
+
+// unpaired is a phone token for mb whose device node was never written: the
+// account signed in, and its device is not in the allowlist (D166). Every
+// family USER reaches is refused, which is the state P6.4's verification calls
+// "a session whose device node was never written denied everything".
+func (h *harness) unpaired(mb string) *rtdb.Client { return h.as(claims{mu: mb, fp: "-"}) }
+
+// pairDevice writes the device allowlist node of D166 as the operator does
+// (`fugaro pair` over IAM, plan task P6.6): config/admin/devices/<uid>. The
+// rules deny every client a write there, so only this admin path can create
+// one — and only a delete through it revokes.
+func (h *harness) pairDevice(uid string) {
+	h.set(PathDevices+"/"+uid, map[string]any{"pairedAt": msgAt})
+}
+
+// unpairDevice is `fugaro pair revoke`'s write: the child is deleted, and the
+// account's every grant is gone from the next request on, with no ID token
+// expiring first.
+func (h *harness) unpairDevice(uid string) {
+	h.adminDo(http.MethodDelete, PathDevices+"/"+uid, nil)
+}
+
+// pairing is a pairing session's client (D165): a token whose pu claim names
+// the one-shot pairing uid, with auth.uid equal to it. There is no device node
+// for it and none is needed — the pairing nodes are what a phone reaches
+// *before* it has a device, and they are the only two locations this claim
+// opens.
+func (h *harness) pairing(uid string) *rtdb.Client { return h.as(claims{pu: uid, fp: "-"}) }
 
 // consumer is the mailbox consumer's client for the mailbox it serves
 // (D113b): an mc claim and no mailbox of its own, and no fp for the same
 // reason.
 func (h *harness) consumer(mb string) *rtdb.Client { return h.as(claims{mc: mb, fp: "-"}) }
+
+// aMac is a well-formed tag: 64 lowercase hex characters, the shape both the
+// shared schema and the rules require of every message and of the heartbeat
+// (D169, D171, O7). It is not a valid tag over anything — nothing here has the
+// key, and neither do the rules: they check the field's shape, and P6.7 is what
+// verifies the value.
+const aMac = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
 
 // set writes a value with admin rights (which bypass the rules, as IAM does).
 func (h *harness) set(path string, v any) {

@@ -314,7 +314,7 @@ func TestInventoryCloudAssetsListsTheProject(t *testing.T) {
 
 // A SERVICE_DISABLED for a service that is not the one this read goes through
 // is not this API being disabled: the answer names the other service, and
-// sending the operator to fugaro init for it would be a wrong sentence about
+// sending the operator to fugaro update for it would be a wrong sentence about
 // their project. It is the read failing, with the answer's own words in the
 // warning — the same reading internal/infra's serviceDisabled makes of the
 // detail's service.
@@ -381,7 +381,7 @@ func TestInventoryCloudAssetAPIAndGrantAreTheModules(t *testing.T) {
 	// And the gate admits the grant the module makes, which is the coupling
 	// that makes the grant real rather than decorative: internal/infra/tf's
 	// grantRules is an allowlist, so a module grant the table does not name
-	// makes fugaro init refuse the installation's own plan — and the identity
+	// makes fugaro update refuse the installation's own plan — and the identity
 	// the read needs would then never exist.
 	op := "user:operator@example.com"
 	plan := &tf.Plan{ResourceChanges: []tf.ResourceChange{{
@@ -816,5 +816,144 @@ func TestInventoryNeverIgnoresAnAccountUnderTheProjectsOwnDomain(t *testing.T) {
 		Accounted: []StateResource{{Type: "storage.googleapis.com/Bucket", Name: "fugaro-runs-" + pid}}}
 	if d := in.Check(context.Background()); !d.Fallback || d.Cause != CauseForeign {
 		t.Fatalf("an account under %s's own domain decided %+v, want a foreign fallback", pid, d)
+	}
+}
+
+// The third thing that is not foreign: the resources Fugaro's own owner-run
+// commands created and no state accounts for — the installation's state bucket
+// (infra.CreateStateBucket), D77's managed state bucket, and the default
+// Firestore database Firebase provisions when the project is created
+// (infra.AddFirebase). The whole-project read lists every one of them, and
+// without this the accounted side could never cover them: a real managed
+// project would fall back on every apply and the agent apply the budget gate
+// opens would ask for a confirmation every time.
+//
+// Each is asserted on its own, with the project's accounted runs bucket beside
+// it, so the listing is otherwise clean.
+//
+// The names are spelled out rather than built with the functions
+// installationCreated calls (InstallationsStateBucket, ManagedStateBucketName):
+// a fixture the code's own helper produced is the helper agreeing with itself,
+// and it cannot catch a derivation that stopped naming what GCP actually holds.
+// `fugaro-tfstate-`, `fugaro-managed-tfstate-` and `fugaro-runs-` are the names
+// the documents state (internal/managed/statebucket.go, internal/infra), so a
+// change to one of them has to move this test — that is the point of writing
+// them here.
+func TestInventoryIgnoresWhatTheInstallationItselfCreated(t *testing.T) {
+	runs := StateResource{Type: "storage.googleapis.com/Bucket", Name: "fugaro-runs-" + gcpProject}
+	runsName := "//storage.googleapis.com/projects/_/buckets/fugaro-runs-" + gcpProject
+
+	for _, tc := range []struct {
+		what  string
+		asset Asset
+	}{
+		{"the installation's own state bucket",
+			listed("//storage.googleapis.com/fugaro-tfstate-"+gcpProject, "storage.googleapis.com/Bucket")},
+		{"D77's managed state bucket",
+			listed("//storage.googleapis.com/fugaro-managed-tfstate-"+gcpProject, "storage.googleapis.com/Bucket")},
+		{"the default Firestore database Firebase provisions",
+			listed("//firestore.googleapis.com/projects/"+gcpProject+"/databases/(default)", "firestore.googleapis.com/Database")},
+		{"the Firebase project infra.AddFirebase adds to every created project",
+			listed("//firebase.googleapis.com/projects/"+gcpProject, "firebase.googleapis.com/FirebaseProject")},
+		{"the creation fact the owner's run writes into the runs bucket",
+			listed("//storage.googleapis.com/projects/_/buckets/fugaro-runs-"+gcpProject+"/objects/fugaro/managed.json",
+				"storage.googleapis.com/Object")},
+		{"the owner's allow-delete list, beside the creation fact",
+			listed("//storage.googleapis.com/projects/_/buckets/fugaro-runs-"+gcpProject+"/objects/fugaro/allow-delete.json",
+				"storage.googleapis.com/Object")},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			a := &fakeAssets{assets: []Asset{tc.asset, listed(runsName, "storage.googleapis.com/Bucket")}}
+			d := inventory(a, runs).Check(context.Background())
+			if d.Fallback {
+				t.Fatalf("a project holding only %s and its accounted bucket fell the run back: %s", tc.what, d.Why)
+			}
+		})
+	}
+	// The names are this project's, so with no project id nothing is claimed:
+	// the direction a caller that did not read the id must take (Check refuses
+	// such an inventory before it lists anything, so this is asserted on the
+	// rule itself).
+	//
+	// The fixtures are the names the derivation produces WHEN there is no id —
+	// the empty suffixes — because that is the only fixture that can catch the
+	// guard's removal: a name carrying proj-1234 matches nothing the derivation
+	// builds from "", so these six assertions passed whether or not
+	// installationCreated began with its `GCPProject == ""` line, which is a
+	// guard no test held. With the guard gone each of these is claimed, and the
+	// failure below is what says so.
+	none := Inventory{Project: project}
+	for _, asset := range []Asset{
+		listed("//storage.googleapis.com/fugaro-tfstate-", "storage.googleapis.com/Bucket"),
+		listed("//storage.googleapis.com/fugaro-managed-tfstate-", "storage.googleapis.com/Bucket"),
+		listed("//firestore.googleapis.com/projects//databases/(default)", "firestore.googleapis.com/Database"),
+		listed("//firebase.googleapis.com/projects/", "firebase.googleapis.com/FirebaseProject"),
+		listed("//storage.googleapis.com/projects/_/buckets/fugaro-runs-/objects/fugaro/managed.json",
+			"storage.googleapis.com/Object"),
+		listed("//storage.googleapis.com/projects/_/buckets/fugaro-runs-/objects/fugaro/allow-delete.json",
+			"storage.googleapis.com/Object"),
+	} {
+		if none.installationCreated(asset) {
+			t.Errorf("with no project id %s was claimed as the installation's own", asset.Name)
+		}
+	}
+}
+
+// And the other direction, which is the one that matters: only the exact names
+// are claimed. A bucket or database that merely borrows their shape is one
+// somebody created in the project, and the project is single-purpose (D59)
+// whatever else it holds.
+func TestInventoryStillForeignWhatTheInstallationDidNotCreate(t *testing.T) {
+	runs := StateResource{Type: "storage.googleapis.com/Bucket", Name: "fugaro-runs-" + gcpProject}
+	runsName := "//storage.googleapis.com/projects/_/buckets/fugaro-runs-" + gcpProject
+
+	for _, tc := range []struct {
+		what  string
+		asset Asset
+	}{
+		{"another project's state bucket",
+			listed("//storage.googleapis.com/"+InstallationsStateBucket("other-proj"), "storage.googleapis.com/Bucket")},
+		{"another project's managed state bucket",
+			listed("//storage.googleapis.com/"+ManagedStateBucketName("other-proj"), "storage.googleapis.com/Bucket")},
+		{"a bucket named like this project's state bucket with a suffix",
+			listed("//storage.googleapis.com/"+InstallationsStateBucket(gcpProject)+"-backup", "storage.googleapis.com/Bucket")},
+		{"a bucket named like this project's managed state bucket with a suffix",
+			listed("//storage.googleapis.com/"+ManagedStateBucketName(gcpProject)+"-backup", "storage.googleapis.com/Bucket")},
+		{"a Firestore database somebody created",
+			listed("//firestore.googleapis.com/projects/"+gcpProject+"/databases/agent-db", "firestore.googleapis.com/Database")},
+		{"another project's default Firestore database",
+			listed("//firestore.googleapis.com/projects/other-proj/databases/(default)", "firestore.googleapis.com/Database")},
+		{"a database of another type in this project",
+			listed("//firebasedatabase.googleapis.com/projects/"+gcpProject+"/locations/us-east5/instances/rtdb", "firebasedatabase.googleapis.com/Instance")},
+		{"another project's Firebase project",
+			listed("//firebase.googleapis.com/projects/other-proj", "firebase.googleapis.com/FirebaseProject")},
+		{"a Firebase project nested under this one's path",
+			listed("//firebase.googleapis.com/projects/"+gcpProject+"/extra/"+gcpProject, "firebase.googleapis.com/FirebaseProject")},
+		{"a creation fact in another project's runs bucket",
+			listed("//storage.googleapis.com/projects/_/buckets/fugaro-runs-other-proj/objects/fugaro/managed.json",
+				"storage.googleapis.com/Object")},
+		{"an allow-delete list in another project's runs bucket",
+			listed("//storage.googleapis.com/projects/_/buckets/fugaro-runs-other-proj/objects/fugaro/allow-delete.json",
+				"storage.googleapis.com/Object")},
+		{"another object under fugaro/ in this project's runs bucket",
+			listed("//storage.googleapis.com/projects/_/buckets/fugaro-runs-"+gcpProject+"/objects/fugaro/notes.json",
+				"storage.googleapis.com/Object")},
+		{"a run's own record in this project's runs bucket",
+			listed("//storage.googleapis.com/projects/_/buckets/fugaro-runs-"+gcpProject+"/objects/runs/2026-10-19/abc.json",
+				"storage.googleapis.com/Object")},
+		{"a creation fact in a bucket of this project that is not the runs bucket",
+			listed("//storage.googleapis.com/projects/_/buckets/"+InstallationsStateBucket(gcpProject)+"/objects/fugaro/managed.json",
+				"storage.googleapis.com/Object")},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			a := &fakeAssets{assets: []Asset{tc.asset, listed(runsName, "storage.googleapis.com/Bucket")}}
+			d := inventory(a, runs).Check(context.Background())
+			if !d.Fallback || d.Cause != CauseForeign {
+				t.Fatalf("%s decided %+v, want a fallback with cause %q", tc.what, d, CauseForeign)
+			}
+			if len(d.Foreign) != 1 || d.Foreign[0].Name != tc.asset.Name {
+				t.Errorf("Foreign = %+v, want only %s", d.Foreign, tc.asset.Name)
+			}
+		})
 	}
 }

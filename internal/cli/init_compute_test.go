@@ -32,6 +32,13 @@ import (
 // root to have anything to build from.
 const computePin = "us-east5-docker.pkg.dev/proj-1234/" + infra.GhcrRegistry + "/acme/fugaro-base:1.2.3"
 
+// computeSocketGIDLabel is the label name the stage reads back through the
+// root's outputs (infra.ComputeOutputs.PreloadSocketGIDLabel). It is spelled
+// here rather than imported because it is the module's string and not this
+// package's: the module publishes it and
+// TestComputeModuleRecordsTheSocketGID holds the three files together.
+const computeSocketGIDLabel = "socket-gid"
+
 // computeRig is the ordinary init rig with a state bucket, a base pin, a run
 // account and the preload rebuild's job, ready for --provision-batch.
 func computeRig(t *testing.T) *initRig {
@@ -60,13 +67,18 @@ func computeRig(t *testing.T) *initRig {
 func computeOutputsJSON(t *testing.T) string {
 	t.Helper()
 	vals := map[string]string{
-		"preload_image":         infra.PreloadedImage(computePin),
-		"reaper_account":        infra.ReaperAccountID + "@" + initProject + ".iam.gserviceaccount.com",
-		"reaper_role":           "projects/" + initProject + "/roles/" + infra.ReaperRoleID,
-		"preload_account":       infra.PreloadAccountID + "@" + initProject + ".iam.gserviceaccount.com",
-		"preload_scheduler_job": infra.PreloadSchedulerJob,
-		"network":               infra.DefaultNetwork(initProject),
-		"subnetwork":            infra.DefaultSubnetwork(initProject, "us-east5"),
+		"preload_image": infra.PreloadedImage(computePin),
+		// The label each generation records its socket gid under. A name and
+		// not a value: the gid is read off the builder VM by the build and
+		// written onto the image it makes (preload.sh), so no root output can
+		// carry it and this root's answer is the key the read-back needs.
+		"preload_socket_gid_label": computeSocketGIDLabel,
+		"reaper_account":           infra.ReaperAccountID + "@" + initProject + ".iam.gserviceaccount.com",
+		"reaper_role":              "projects/" + initProject + "/roles/" + infra.ReaperRoleID,
+		"preload_account":          infra.PreloadAccountID + "@" + initProject + ".iam.gserviceaccount.com",
+		"preload_scheduler_job":    infra.PreloadSchedulerJob,
+		"network":                  infra.DefaultNetwork(initProject),
+		"subnetwork":               infra.DefaultSubnetwork(initProject, "us-east5"),
 	}
 	out := map[string]any{}
 	for k, v := range vals {
@@ -146,7 +158,7 @@ func TestComputeStageProvisionsAfterATypedConfirmation(t *testing.T) {
 	typedThroughYes(t) // about the provisioning, not about who may confirm it
 	r := computeRig(t)
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-batch")
+	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-batch")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -173,6 +185,14 @@ func TestComputeStageProvisionsAfterATypedConfirmation(t *testing.T) {
 	}
 	if !strings.Contains(out, infra.PreloadedImage(computePin)) {
 		t.Errorf("the preloaded image's name was not reported:\n%s", out)
+	}
+	// The socket gid's label travels with the image's name, and the stage says
+	// so on the screen that reports the provisioning: a run's `--group-add`
+	// needs the gid the image records under that label, and a stage that
+	// dropped the key would leave the read-back (Check 57b, `doctor`) with the
+	// family alone. The value itself is the build's, never the stage's.
+	if !strings.Contains(out, computeSocketGIDLabel) {
+		t.Errorf("the socket gid's label was not reported:\n%s", out)
 	}
 	// The tfvars are the installation's own readings, not the defaults: the
 	// run accounts come from the project, the repository and the roles from
@@ -216,7 +236,7 @@ func TestComputeStageFindsItsWorkdirThroughASymlink(t *testing.T) {
 	}
 	t.Setenv("XDG_STATE_HOME", filepath.Join(link, "xdg_state_home"))
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-batch")
+	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-batch")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -256,7 +276,7 @@ func equalJSON(a, b any) bool {
 func TestComputeStageNeverTakesYes(t *testing.T) {
 	r := computeRig(t)
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, "", "init", "--yes", "--provision-batch")
+	out, _, err := executeStdin(t, "", "setup", "--yes", "--provision-batch")
 	if err == nil || !strings.Contains(err.Error(), "left for you") {
 		t.Fatalf("err = %v, want the step left for the owner\n%s", err, out)
 	}
@@ -286,7 +306,7 @@ func TestComputeStageNeverTakesYes(t *testing.T) {
 // this test exists.
 func TestComputeStageIsLeftUnenteredWithoutATerminal(t *testing.T) {
 	r := computeRig(t)
-	out, _, err := executeStdin(t, "", "init", "--yes", "--provision-batch")
+	out, _, err := executeStdin(t, "", "setup", "--yes", "--provision-batch")
 	if err == nil || !strings.Contains(err.Error(), "left for you") {
 		t.Fatalf("err = %v, want the step left for the owner\n%s", err, out)
 	}
@@ -314,8 +334,8 @@ func TestComputeStageGuardsDeletes(t *testing.T) {
 		name string
 		args []string
 	}{
-		{"the plan view", []string{"init", "--yes", "--plan-only", "--provision-batch"}},
-		{"the apply", []string{"init", "--yes", "--provision-batch"}},
+		{"the plan view", []string{"setup", "--yes", "--plan-only", "--provision-batch"}},
+		{"the apply", []string{"setup", "--yes", "--provision-batch"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := computeRig(t)
@@ -342,7 +362,7 @@ func TestComputeStageNoChanges(t *testing.T) {
 	r.script["plan"] = map[string]any{"exit": 0} // an empty plan, everywhere
 	r.save(t)
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-batch")
+	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-batch")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -354,16 +374,35 @@ func TestComputeStageNoChanges(t *testing.T) {
 	}
 }
 
-// --plan-only applies nothing, --provision-batch or not.
+// --plan-only applies nothing, --provision-batch or not -- and it starts
+// nothing either: the preload rebuild is the apply's own last act, and it is a
+// billable Cloud Build, so a plan view that started one would spend money the
+// operator only asked to look at. The stage's Plan reaches the root's plan and
+// stops there (the calls below are read in the compute root's own workdir, so
+// a run that never reached the root would not pass this test vacuously: the
+// plan call is what puts a line in that log).
 func TestComputeStagePlanOnlyAppliesNothing(t *testing.T) {
 	r := computeRig(t)
+	// The installation plans cleanly, so the run reaches the compute stage:
+	// without this the installation is still to-do and the compute stage is
+	// deferred behind it ("plans when applied (after installation)"), which
+	// left the original assertions reading an empty call log and passing for a
+	// reason they did not name.
+	r.setPlanAt(t, "installation")
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, "", "init", "--yes", "--plan-only", "--provision-batch")
+	out, _, err := executeStdin(t, "", "setup", "--yes", "--plan-only", "--provision-batch")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if calls := subcommands(computeCalls(t, r)); slices.Contains(calls, "apply") {
+	calls := subcommands(computeCalls(t, r))
+	if slices.Contains(calls, "apply") {
 		t.Fatalf("--plan-only applied: %q", calls)
+	}
+	if !slices.Contains(calls, "plan") {
+		t.Fatalf("--plan-only did not plan the compute root: %q\n%s", calls, out)
+	}
+	if runs := r.sched.Runs(); len(runs) != 0 {
+		t.Errorf("--plan-only started the preload rebuild (the image build): %v", runs)
 	}
 }
 
@@ -373,7 +412,7 @@ func TestComputeStagePlanOnlyAppliesNothing(t *testing.T) {
 func TestComputeStageIsBehindItsFlag(t *testing.T) {
 	r := computeRig(t)
 	fakeTerminal(t)
-	if _, _, err := executeStdin(t, "", "init", "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "", "setup", "--yes"); err != nil {
 		t.Fatal(err)
 	}
 	if calls := computeCalls(t, r); len(calls) != 0 {
@@ -396,6 +435,23 @@ func TestProvisionBatchFlagIsRefusedWhereItCannotApply(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "--provision-batch") {
 			t.Errorf("%+v: err = %v, want it refused", o, err)
 		}
+	}
+}
+
+// The --repo run's own check, and the one place a --repo run validates: it
+// never reaches check(), which is why the pair has to be refused here too.
+// Left unrefused, `fugaro update --repo --provision-batch` onboarded the
+// repository and dropped the flag silently -- the user asked for an apply that
+// costs money and got no apply and no word about it. The flag's own help says
+// it excludes --repo, so the refusal names both.
+func TestProvisionBatchIsRefusedOnTheRepoPath(t *testing.T) {
+	o := &initOptions{provisionBatch: true, repo: true}
+	err := o.checkRepo()
+	if err == nil {
+		t.Fatal("fugaro update --repo --provision-batch was accepted: the flag excludes --repo, and a flag that does nothing here must be refused, not ignored")
+	}
+	if !strings.Contains(err.Error(), "--provision-batch") || !strings.Contains(err.Error(), "--repo") {
+		t.Fatalf("err = %v, want a refusal naming --provision-batch and --repo", err)
 	}
 }
 
@@ -450,8 +506,8 @@ func TestComputeStageHoldsItsGrantsToTheCover(t *testing.T) {
 		name string
 		args []string
 	}{
-		{"the plan view", []string{"init", "--yes", "--plan-only", "--provision-batch"}},
-		{"the apply", []string{"init", "--yes", "--provision-batch"}},
+		{"the plan view", []string{"setup", "--yes", "--plan-only", "--provision-batch"}},
+		{"the apply", []string{"setup", "--yes", "--provision-batch"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			typedThroughYes(t)
@@ -488,7 +544,7 @@ func TestComputeStageRetriesIAMPropagation(t *testing.T) {
 	r.script["apply@compute"] = []any{map[string]any{"exit": 1, "stderr": propagationStderr}, map[string]any{"exit": 0}}
 	r.save(t)
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-batch")
+	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-batch")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -513,7 +569,7 @@ func TestComputeStageRetriesOnlyPropagation(t *testing.T) {
 		r.script["apply@compute"] = map[string]any{"exit": 1, "stderr": "Error: quota exceeded"}
 		r.save(t)
 		fakeTerminal(t)
-		_, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-batch")
+		_, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-batch")
 		if err == nil {
 			t.Fatal("a failed apply succeeded")
 		}
@@ -528,7 +584,7 @@ func TestComputeStageRetriesOnlyPropagation(t *testing.T) {
 		r.script["apply@compute"] = map[string]any{"exit": 1, "stderr": propagationStderr}
 		r.save(t)
 		fakeTerminal(t)
-		_, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-batch")
+		_, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-batch")
 		if err == nil || !strings.Contains(err.Error(), "does not exist") {
 			t.Fatalf("err = %v, want the last propagation error", err)
 		}
@@ -546,7 +602,7 @@ func TestComputeStageRetriesOnlyPropagation(t *testing.T) {
 		r.script["apply@compute"] = []any{map[string]any{"exit": 1, "stderr": propagationStderr}, map[string]any{"exit": 0}}
 		r.save(t)
 		fakeTerminal(t)
-		_, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-batch")
+		_, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-batch")
 		if err == nil || !strings.Contains(err.Error(), "google_compute_firewall.extra") {
 			t.Fatalf("err = %v, want the retry refused for the change nobody confirmed", err)
 		}

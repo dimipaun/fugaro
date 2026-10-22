@@ -71,12 +71,11 @@ func TestCheckRecipeImage(t *testing.T) {
 // workflow's job has no derived image and so no build record to judge. One
 // row per threshold it backs (recipesSince, layeredSince, each refusing an
 // image that predates it), plus a dev/custom ref under one of those other
-// thresholds (warned about, not refused: its release is unknown — this
-// behaviour is unchanged by the 0.7.0 safety fix). cloneSince itself gets
-// its own wording, pinned separately in TestCheckCloneImageSinceRefusedUntilCloneSince,
-// since the gate always refuses today (no release ships plan Task 17 yet,
-// and that includes a dev/custom ref too): folding it into this generic
-// loop would require asserting two different message shapes here.
+// thresholds (warned about, not refused: its release is unknown). cloneSince
+// itself is pinned separately, in TestCheckCloneImageSinceAtCloneSince, with
+// the message shape the cloneShipped flip gave it (the ordinary "upgrade
+// your base image" refusal); folding it into this generic loop would mean
+// asserting two different shapes here.
 func TestCheckCloneImageSince(t *testing.T) {
 	f := newCloudFixture(t)
 	env := fileEnv(t, f)
@@ -110,7 +109,7 @@ func TestCheckCloneImageSince(t *testing.T) {
 			if tc.wantErr != "" && err != nil {
 				for _, want := range []string{
 					"the project layer needs a job image whose runner knows the project layer (fugaro " + tc.since + " or later)",
-					"checkout: clone job image of acme/app workflow web", "fugaro init --base base",
+					"checkout: clone job image of acme/app workflow web", "fugaro update --base base",
 				} {
 					if !strings.Contains(err.Error(), want) {
 						t.Errorf("%v lacks %q", err, want)
@@ -121,24 +120,23 @@ func TestCheckCloneImageSince(t *testing.T) {
 	}
 }
 
-// TestCheckCloneImageSinceRefusedUntilCloneSince (0.7.0 safety fix, review
-// finding: tagging 0.7.0 with cloneSince = "0.7.0" would let a checkout:
-// clone workflow pass this gate and then fail every run at bootstrap,
-// since plan Task 17's runner side — the only thing that reads
-// FUGARO_CHECKOUT — has not shipped). A checkout: clone launch must be
-// refused on any image's release, including today's current release
-// (0.7.0), with guidance that says plainly the runner side is not released
-// yet and names checkout: baked as the way to run the workflow today; only
-// an image built from cloneSince itself (0.7.5, the release that will ship
-// Task 17) passes.
+// TestCheckCloneImageSinceAtCloneSince: cloneSince's own threshold, with
+// cloneShipped true (0.9.0 shipped the flip) — the case the flip changed.
+// Before it, no release ran FUGARO_CHECKOUT at all, so this gate refused a
+// checkout: clone launch on every image, dev refs included, with wording
+// saying the runner side was not released yet. Now it judges cloneSince the
+// way every other *Since gate judges its release: an image older than
+// 0.7.5 (the release whose runner reads FUGARO_CHECKOUT and makes the
+// blobless clone) is refused with the ordinary "upgrade your base image"
+// line, a ref with no release tag is warned about and let through, and an
+// image at cloneSince or later passes.
 //
-// A non-release ref (dev, hand-pushed, --image-source) gets the same
-// refusal, not just a warning (0.7.0 safety fix round 2, review finding:
-// while cloneShipped is false, no build of any kind — release or not —
-// reads FUGARO_CHECKOUT, so a dev ref cannot make the launch work either;
-// warning and letting it through used to contradict that and fail the run
-// at bootstrap just the same).
-func TestCheckCloneImageSinceRefusedUntilCloneSince(t *testing.T) {
+// Mutation (run, restore): set cloneShipped back to false in
+// recipes_skew.go, and the 0.7.0 row and the dev-ref row both fail — the
+// refusal comes back with the not-released-yet wording, and the dev ref is
+// refused where this test wants a warning. That is what makes this the
+// enabled-state pin for the launch gate.
+func TestCheckCloneImageSinceAtCloneSince(t *testing.T) {
 	f := newCloudFixture(t)
 	env := fileEnv(t, f)
 	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
@@ -147,47 +145,53 @@ func TestCheckCloneImageSinceRefusedUntilCloneSince(t *testing.T) {
 	var warn bytes.Buffer
 	err := checkCloneImageSince(&lc, spec, cloneSince, "this checkout: clone workflow", "how to provision a blobless clone (FUGARO_CHECKOUT)", "", &warn)
 	if err == nil || ExitCode(err) != ExitUserError {
-		t.Fatalf("0.7.0 (today's current release): err = %v, want refused", err)
+		t.Fatalf("0.7.0 (below cloneSince): err = %v, want refused", err)
 	}
 	for _, want := range []string{
 		"this checkout: clone workflow needs a job image whose runner knows how to provision a blobless clone (FUGARO_CHECKOUT) (fugaro 0.7.5 or later)",
-		"checkout: clone's own runner side is not released yet",
-		"generic-tool plan Task 17",
 		"acme/app workflow web",
-		"ghcr.io/dimipaun/fugaro-base:0.7.0, release 0.7.0",
-		"checkout: baked",
-		"today",
+		"is ghcr.io/dimipaun/fugaro-base:0.7.0, release 0.7.0",
+		"fugaro update --base base",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("%v lacks %q", err, want)
 		}
 	}
-	// A dev ref: still refused, not merely warned about, while cloneShipped
-	// is false.
-	lc.BaseImages["base"] = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c"
-	warn.Reset()
-	err = checkCloneImageSince(&lc, spec, cloneSince, "this checkout: clone workflow", "how to provision a blobless clone (FUGARO_CHECKOUT)", "", &warn)
-	if err == nil || ExitCode(err) != ExitUserError {
-		t.Fatalf("dev ref: err = %v, want refused", err)
-	}
-	if warn.Len() != 0 {
-		t.Errorf("dev ref: warn = %q, want none (refused, not warned)", warn.String())
-	}
-	for _, want := range []string{
-		"checkout: clone's own runner side is not released yet",
-		"generic-tool plan Task 17",
-		"us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c",
-		"checkout: baked",
-		"today",
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("dev ref: %v lacks %q", err, want)
+	// The disabled state's wording is gone with the flip: an older image is
+	// told to move its base image, not that the runner side is unreleased.
+	for _, not := range []string{"is not released yet", "generic-tool plan Task 17", "checkout: baked", "today"} {
+		if strings.Contains(err.Error(), not) {
+			t.Errorf("a shipped gate still says %q: %v", not, err)
 		}
 	}
-	lc.BaseImages["base"] = "ghcr.io/dimipaun/fugaro-base:0.7.5"
+	if warn.Len() != 0 {
+		t.Errorf("a release below cloneSince warns as well as refusing: %q", warn.String())
+	}
+	// A dev ref: judged the way every other *Since gate judges one — warned
+	// about, not refused. Nothing can tell what its runner knows.
+	lc.BaseImages["base"] = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c"
 	warn.Reset()
 	if err := checkCloneImageSince(&lc, spec, cloneSince, "this checkout: clone workflow", "how to provision a blobless clone (FUGARO_CHECKOUT)", "", &warn); err != nil {
-		t.Fatalf("0.7.5 (ships Task 17): %v", err)
+		t.Fatalf("dev ref: err = %v, want none (warned about, not refused)", err)
+	}
+	for _, want := range []string{
+		"us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c",
+		"not a release base image",
+	} {
+		if !strings.Contains(warn.String(), want) {
+			t.Errorf("dev ref: warning %q lacks %q", warn.String(), want)
+		}
+	}
+	// cloneSince itself, and a release past it, both pass.
+	for _, ref := range []string{"ghcr.io/dimipaun/fugaro-base:0.7.5", "ghcr.io/dimipaun/fugaro-base:0.9.0"} {
+		lc.BaseImages["base"] = ref
+		warn.Reset()
+		if err := checkCloneImageSince(&lc, spec, cloneSince, "this checkout: clone workflow", "how to provision a blobless clone (FUGARO_CHECKOUT)", "", &warn); err != nil {
+			t.Fatalf("%s: %v", ref, err)
+		}
+		if warn.Len() != 0 {
+			t.Errorf("%s: warn = %q, want none", ref, warn.String())
+		}
 	}
 }
 
@@ -210,7 +214,7 @@ func TestCheckCloneRecipeImage(t *testing.T) {
 	}
 	for _, want := range []string{
 		"recipe mine needs a job image whose runner knows recipes (fugaro 0.5.0 or later)",
-		"is ghcr.io/dimipaun/fugaro-base:0.4.1, release 0.4.1", "--recipe default", "fugaro init --base base",
+		"is ghcr.io/dimipaun/fugaro-base:0.4.1, release 0.4.1", "--recipe default", "fugaro update --base base",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("%v lacks %q", err, want)
@@ -310,7 +314,7 @@ func TestCloneRecipeV07NeedsA07Image(t *testing.T) {
 // (internal/runner/providers.go) and a decode failure is a hard bootstrap
 // error, so a route that sets require_zdr or price_policy — at any value,
 // default or not: the omitempty tags write the key whenever the owner set it
-// — cannot be deployed while no release reads it. init --repo refuses it
+// — cannot be deployed while no release reads it. update --repo refuses it
 // before any cloud effect, naming the release that will read it and both ways
 // out (leave it unset, or price the model under model_prices); a route that
 // sets neither passes, and so does a repository with no provider at all.
@@ -360,7 +364,7 @@ func TestRefuseCatalogSwitches(t *testing.T) {
 				t.Fatalf("err = %v, want refused", err)
 			}
 			for _, want := range []string{
-				"fugaro init --repo refuses to deploy acme/app's provider openrouter",
+				"fugaro update --repo refuses to deploy acme/app's provider openrouter",
 				"require_zdr or price_policy",
 				"fugaro " + catalogSince,
 				"model_prices",
@@ -414,7 +418,7 @@ func TestRefuseCatalogSwitches(t *testing.T) {
 		"the provider openrouter of acme/app sets require_zdr or price_policy",
 		"fugaro " + catalogSince + " or later",
 		"ghcr.io/dimipaun/fugaro-base:0.7.0, release 0.7.0",
-		"fugaro init --base base",
+		"fugaro update --base base",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("%v lacks %q", err, want)

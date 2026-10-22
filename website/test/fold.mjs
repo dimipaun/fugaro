@@ -12,15 +12,30 @@
 // What a hermetic test *can* prove is the ordering and the content the fold claim rests on,
 // and that is what this file does — on the built artifact, which is what a reader receives:
 //
-//   1. **The homepage's lead is the promise and nothing else.** Between the page's `h1` and
-//      its first `h2` there is one element, and it is the lead paragraph. This is the shape
-//      P5 gave the hero: the install section's heading sits above the commands, so the
-//      promise is the whole of the text a reader meets before the first section — and so the
-//      lead ceiling in `budget.mjs` is a ceiling on the promise rather than on the commands
-//      (D188's lead is the region between the two headings, wherever each of them sits).
-//      A hero whose install block sat between the promise and the heading would put the
-//      commands, the terminal and the "every install path" link inside the lead, and the page
-//      would say nothing about the promise above them.
+//   1. **The homepage's lead is the promise, its prompt line and its call to action, and
+//      nothing else.** Between the page's `h1` and its first `h2` there are exactly three
+//      elements: the prompt line the owner's feedback of 2026-10-19 puts under the headline
+//      (item 1), the lead paragraph and the row of links under it. This is the shape P5 gave
+//      the hero, with the one thing the changes spec of 2026-10-18 adds to it (item 4: the
+//      promise, its primary call to action, then the picture) and the one thing the feedback
+//      of 2026-10-19 adds (the request, in the reader's own words, as the centrepiece of
+//      what the page says about driving Fugaro through their agent) — so the promise and the
+//      one line it is made of are the whole of the prose a reader meets before the first
+//      heading, and so the lead ceiling in `budget.mjs` is a ceiling on the two of them rather
+//      than on the commands (D188's lead is the region between the two headings, wherever each
+//      of them sits). The first `h2` is the slider's own first panel title, "Easy to use" — the
+//      slider is the first block under the promise (the owner's approved draft of 2026-10-19,
+//      "Home, draft 2 (slider)") and that heading is inside its first panel — which is
+//      what lets that block sit directly under the promise without entering the lead region:
+//      the block the first `h2` belongs to is taken out of the region whole, so a panel that
+//      lost its heading would push the whole of itself into the lead and be refused here. The
+//      hero's illustration — `figure.hero-shot`, the terminal card the bold redesign draws
+//      beside the copy — is taken out the same way and for the same reason: the request and
+//      the three jobs are drawn inside the picture, the caption says it is an illustration,
+//      and it is not prose the page promises anything with (the owner's approved board,
+//      `website/design-ref/HomeV3.dc.html`). A hero whose install block sat between the
+//      promise and that heading would put the commands, the slider and the "every install
+//      path" link inside the lead, and the page would say nothing about the promise above them.
 //   2. **Getting Started's first section opens with its commands.** Inside `#install`, no
 //      paragraph of the section's own precedes the first command block, and the section's
 //      own sentence is still there, after the paths. P5 moved that sentence from under the
@@ -28,10 +43,21 @@
 //      command they run met a sentence about the page first, which is the ordering the plan
 //      asks this part to fix.
 //   3. **Every page that prints a command prints it under a heading.** The page's first `h2`
-//      comes before its first `pre`, on every route that prints one — three of the eleven
+//      comes before its first `pre`, on every route that prints one — three of the thirteen
 //      today — so no page opens with a command that nothing above it names. This is the
 //      general form of the two cases above and the rule a future page keeps: a command block
 //      belongs to a section, and the section's heading is what a reader reads before it.
+//   4. **Getting Started is three bands, in the order a reader reads them** (the owner's
+//      feedback of 2026-10-19, which is what the bands are for): `#install` — the command and
+//      the console, which is what the fold claim above is about — then `#setup`, what a real
+//      installation needs in order, then `#details`, everything else. The middle band is an
+//      `ol` and every step in it names the document that carries its detail, so a step is a
+//      line a reader can act on rather than a line about a document. The order is the whole
+//      of what this rule says: how tall each band is, and whether it fits a first screen, is
+//      still 70b's measurement and the word ceilings' business (D187, D188). The rule is what
+//      keeps the three from drifting back into one list: the page was a single install section
+//      with every path in it, and a reader who came for the command had to read past four
+//      paths, a note each and a platform list to find the two steps that come after it.
 //
 // The pages are read from `dist/`, which `npm run check` builds before it runs this file, and
 // `foldFailures()` is the whole of the gate: one function over one directory, so the refusals
@@ -47,10 +73,29 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DIST, builtPages, find, parse, textOf, walk } from './lib/html.mjs'
 
-/** The elements of a built page's `main`, in document order; `null` when it has no `main`. */
+/**
+ * The elements of a built page's `main`, in document order, with `main` beside them; `null`
+ * when the page has no `main`. `main` comes back too because rule 1 needs the page's own
+ * top-level blocks: the homepage's first `h2` is the slider's own first panel title, and the
+ * slider — its tab bar, its three panels and the watch block inside the third — sits between
+ * the `h1` and that heading without being the lead.
+ */
 function elementsOf(page) {
   const main = find(parse(page.html), 'main')
-  return main === null ? null : [...walk(main)]
+  return main === null ? null : { main, els: [...walk(main)] }
+}
+
+/** True when `el` is `block` or sits inside it. */
+function within(el, block) {
+  for (let node = el; node !== null; node = node.parent) if (node === block) return true
+  return false
+}
+
+/** The direct child of `main` an element belongs to: the top-level block it is part of. */
+function blockOf(el, main) {
+  let node = el
+  while (node.parent !== null && node.parent !== main) node = node.parent
+  return node
 }
 
 /**
@@ -66,8 +111,9 @@ export function foldFailures(dist) {
   const out = []
 
   for (const page of builtPages(dist)) {
-    const els = elementsOf(page)
-    if (els === null) continue
+    const read = elementsOf(page)
+    if (read === null) continue
+    const { main, els } = read
 
     const firstH2 = els.findIndex((el) => el.name === 'h2')
     const firstPre = els.findIndex((el) => el.name === 'pre')
@@ -80,18 +126,53 @@ export function foldFailures(dist) {
       )
     }
 
-    // Rule 1: the lead region of the homepage is the promise, and nothing else.
+    // Rule 1: the lead region of the homepage is the promise and its call to action, and
+    // nothing else.
     if (page.url === '/') {
       const h1 = els.findIndex((el) => el.name === 'h1')
       if (h1 !== -1 && firstH2 !== -1) {
-        const lead = els.slice(h1 + 1, firstH2)
-        const shape = lead.map((el) => el.name + (el.attrs.get('class') ? `.${el.attrs.get('class')}` : '')).join(', ')
-        if (shape !== 'p.hero-lead') {
+        // The region between the `h1` and the first `h2`, with the elements of the block that
+        // `h2` belongs to taken out. On the homepage that heading is the slider's first panel
+        // title, so the tab bar and the three panels under it sit between the `h1` and it:
+        // they are the block the page puts directly under the promise (the owner's approved
+        // draft of 2026-10-19, "Home, draft 2 (slider)"), and none of them is the lead.
+        const owner = blockOf(els[firstH2], main)
+        // The hero's illustration is taken out whole as well, on the same principle and by the
+        // same shape: the bold redesign draws the terminal card beside the copy (the owner's
+        // approved board `website/design-ref/HomeV3.dc.html`), so the request a reader types
+        // and the three jobs it starts are *inside* the picture rather than a line of the lead
+        // — the card is captioned as an illustration and it is not prose the page promises
+        // anything with. It is one `figure` the page draws once; the promise, the lead and the
+        // links stay in the region and stay the whole of what it may hold.
+        const picture = els.find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-shot'))
+        const lead = els
+          .slice(h1 + 1, firstH2)
+          .filter((el) => !within(el, owner) && (picture === undefined || !within(el, picture)))
+        const shape = lead.map((el) => el.name + (el.attrs.get('class') ? `.${el.attrs.get('class')}` : ''))
+        // What the lead region may hold: the promise — including the words of it the stylesheet
+        // paints with the gradient, which are a `span` inside the `h1` rather than a second
+        // thing in the region — the prompt line the owner's feedback of 2026-10-19 puts under
+        // the headline — with the `>` mark that draws it as something a reader types, which is
+        // a span inside that line — the row of links under them, and the links in that row.
+        // Nothing else. A `figure`, an `ol`, a `pre` or a section's own paragraph is what the
+        // refusal below is about, and the first of them is named in it.
+        const allowed = [
+          'span.gradient-text',
+          'p.hero-prompt',
+          'span.hero-prompt-mark',
+          'p.hero-lead',
+          'p.hero-actions',
+          'a.hero-cta',
+          'a.hero-cta-quiet',
+        ]
+        const foreign = shape.filter((element) => !allowed.includes(element))
+        if (foreign.length > 0) {
           out.push(
-            `${page.rel} holds ${lead.length} element(s) between its \`h1\` and its first \`h2\` (${shape}): the promise is the whole of the page's gist above the fold, so the install block, the terminal and the link after them belong to the section the heading opens (P5, D188)`,
+            `${page.rel} holds ${lead.length} element(s) between its \`h1\` and its first \`h2\` (${shape.join(', ')}), and ${JSON.stringify(foreign[0])} is not the promise, its prompt line or its call to action: the request the page is about, the lead paragraph and the links under them are the whole of the page's gist above the fold, so the diagram, the slider and the install block belong below it (changes spec 2026-10-18, item 4; the owner's feedback of 2026-10-19; P5, D188)`,
           )
         }
-        if (lead.length === 1 && textOf(lead[0]).trim() === '') {
+        const promise = lead.find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-lead'))
+        if (promise !== undefined && textOf(promise).trim() === '') {
           out.push(`${page.rel} opens with an empty lead paragraph: the page's gist above the fold is its tagline and nothing else (P5, RF5)`)
         }
       } else if (h1 !== -1) {
@@ -117,6 +198,33 @@ export function foldFailures(dist) {
           if (inside.slice(pre + 1).filter((el) => el.name === 'p' && el.parent === section).length === 0) {
             out.push(
               `${page.rel}'s #install section carries no sentence of its own after the commands: the section's own note belongs at its end, and a gate that only refused prose before them would pass a page that dropped it (P5)`,
+            )
+          }
+        }
+      }
+
+      // Rule 4: the page's three bands, in the order a reader reads them, and the steps of the
+      // middle one each naming where their detail lives (the owner's brief of 2026-10-19). The
+      // ids are compared as one list rather than searched for one by one, because the order IS
+      // the rule: a page that moved the steps under the details would pass every "does this
+      // section exist" check and put the two things a reader came for at the bottom.
+      const bands = els.filter((el) => el.name === 'section' && el.attrs.has('id'))
+      const order = bands.map((el) => el.attrs.get('id'))
+      if (order.join(',') !== 'install,setup,details') {
+        out.push(
+          `${page.rel} does not carry its three bands in the order a reader reads them: its sections are ${JSON.stringify(order)}, where the page is the command and the console above the fold (#install), then what a real installation needs in order (#setup), then everything else (#details) (the owner's brief of 2026-10-19)`,
+        )
+      } else {
+        const setup = bands[1]
+        if (![...walk(setup)].some((el) => el.name === 'ol')) {
+          out.push(
+            `${page.rel}'s #setup section lists no steps in order: the steps a real installation takes are a sequence, and an \`ol\` is what a sequence is written as (the owner's brief of 2026-10-19)`,
+          )
+        }
+        for (const step of [...walk(setup)].filter((el) => el.name === 'li')) {
+          if (![...walk(step)].some((el) => el.name === 'a')) {
+            out.push(
+              `${page.rel}'s #setup section carries a step with nothing to click (${JSON.stringify(textOf(step).trim())}): each step names the document that carries its detail, and a step that links nowhere is a line the reader cannot act on (the owner's brief of 2026-10-19)`,
             )
           }
         }
@@ -152,19 +260,30 @@ function distOf(t, files) {
 
 const page = (body) => `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main>${body}</main></body></html>`
 
+// The two bands that follow the install band on a page rule 4 is about, in the shape rule 4
+// asks for: the steps a real installation takes, each naming the document behind it, and the
+// details after them. A fixture that plants a defect in the install band wraps that band in
+// this, so the page is refused for the defect it planted and not for the bands around it.
+const SETUP_STEP = '<ol><li><a href="/docs/">a step</a></li></ol>'
+const afterInstall = (install) =>
+  `${install}<section id="setup"><h2>Set up your installation</h2>${SETUP_STEP}</section><section id="details"><h2>Details</h2></section>`
+
 test('each rule refuses the ordering it is about, and passes the page that keeps it', (t) => {
   // The three defects are the three orderings P5 fixed, planted one per rule, beside a page
   // that keeps every one of them: the gate has to report each defect and leave the good page
   // alone, or it is a gate whose refusals have never been seen to fire.
   const dist = distOf(t, {
-    // The homepage with its install block above the section heading: the command is in the
-    // lead, and above the heading that names it (rules 1 and 3).
-    'index.html': page('<h1>t</h1><p class="hero-lead">the promise</p><pre>brew install fugaro</pre><h2>Install</h2>'),
+    // The homepage with its install block above the section heading: the promise and its call
+    // to action are the lead, and the command is neither — it is in the lead region and above
+    // the heading that names it (rules 1 and 3).
+    'index.html': page(
+      '<h1>t</h1><p class="hero-lead">the promise</p><p class="hero-actions"><a class="hero-cta" href="/getting-started/">Get started</a></p><pre>brew install fugaro</pre><h2>Install</h2>',
+    ),
     // The install section with a sentence about itself under its heading, before the paths
     // (rule 2, the ordering P5 changed). Its own closing sentence is there as well, so the
     // one failure this page earns is the ordering and not the other half of the rule.
     'getting-started/index.html': page(
-      '<h1>t</h1><section id="install"><h2>Install</h2><p>a sentence about the section</p><pre>brew install fugaro</pre><p>and the section\'s own sentence</p></section>',
+      `<h1>t</h1>${afterInstall('<section id="install"><h2>Install</h2><p>a sentence about the section</p><pre>brew install fugaro</pre><p>and the section\'s own sentence</p></section>')}`,
     ),
     // And a page that keeps all three rules: a promise, then the heading, then the command,
     // then the section's own sentence.
@@ -178,7 +297,10 @@ test('each rule refuses the ordering it is about, and passes the page that keeps
 
   assert.equal(of('index.html').length, 2, `the homepage's two broken rules are not both reported:\n${failures.join('\n')}`)
   assert.match(of('index.html')[0], /prints a command before its first `h2`/)
-  assert.match(of('index.html')[1], /holds 2 element\(s\) between its `h1` and its first `h2` \(p\.hero-lead, pre\)/)
+  assert.match(
+    of('index.html')[1],
+    /holds 4 element\(s\) between its `h1` and its first `h2` \(p\.hero-lead, p\.hero-actions, a\.hero-cta, pre\), and "pre" is not the promise, its prompt line or its call to action/,
+  )
 
   assert.equal(of('getting-started/index.html').length, 1, `the install section's broken ordering is not reported:\n${failures.join('\n')}`)
   assert.match(of('getting-started/index.html')[0], /opens with a sentence of its own before its first command/)
@@ -196,12 +318,87 @@ test('a page that drops the install section\'s own sentence is refused too', (t)
   // pass a page that deleted it, which is the failure a "the section opens with the commands"
   // check is most likely to have.
   const dist = distOf(t, {
-    'getting-started/index.html': page('<h1>t</h1><section id="install"><h2>Install</h2><pre>brew install fugaro</pre></section>'),
+    'getting-started/index.html': page(`<h1>t</h1>${afterInstall('<section id="install"><h2>Install</h2><pre>brew install fugaro</pre></section>')}`),
   })
   const failures = foldFailures(dist)
 
   assert.equal(failures.length, 1, failures.join('\n'))
   assert.match(failures[0], /carries no sentence of its own after the commands/)
+})
+
+test('the three bands are refused when they are out of order, or missing, or a step has no document behind it', (t) => {
+  // Rule 4, planted one defect at a time: the steps under the details, no steps at all, a
+  // step with no link, and the steps as a bulleted list. Each page keeps every other rule, so
+  // the one failure it earns is the one it planted — and the install band is the one the other
+  // cases above use, so a failure here is never one of theirs.
+  const install = '<section id="install"><h2>Install</h2><pre>brew install fugaro</pre><p>Then set up your installation.</p></section>'
+  const details = '<section id="details"><h2>Details</h2></section>'
+  const steps = (inner) => `<section id="setup"><h2>Set up your installation</h2>${inner}</section>`
+  const failuresOf = (html) => {
+    const failures = foldFailures(distOf(t, { 'getting-started/index.html': page(`<h1>t</h1>${html}`) }))
+    assert.equal(failures.length, 1, `the planted defect is not the only one reported:\n${failures.join('\n')}`)
+    return failures[0]
+  }
+
+  assert.match(
+    failuresOf(`${install}${details}${steps(SETUP_STEP)}`),
+    /does not carry its three bands in the order a reader reads them: its sections are \["install","details","setup"\]/,
+  )
+  assert.match(
+    failuresOf(`${install}${details}`),
+    /does not carry its three bands in the order a reader reads them: its sections are \["install","details"\]/,
+  )
+  assert.match(
+    failuresOf(`${install}${steps('<ol><li><a href="/docs/">a step</a></li><li>A step with no document behind it.</li></ol>')}${details}`),
+    /carries a step with nothing to click \("A step with no document behind it\."\)/,
+  )
+  assert.match(
+    failuresOf(`${install}${steps('<ul><li><a href="/docs/">a step</a></li></ul>')}${details}`),
+    /lists no steps in order/,
+  )
+})
+
+test('the promise, its prompt line and its call to action above the fold are enough, and nothing else is', (t) => {
+  // The shape the changes spec of 2026-10-18 asks for (item 4: the promise, its call to
+  // action, then the picture) with the one element the owner's feedback of 2026-10-19 adds to it
+  // (item 1: the request, under the headline), on its own: the lead region holds the prompt
+  // line, the promise and the row of links, the first `h2` opens the block below it — the
+  // slider's first panel title, on the homepage as it now stands — and the gate passes it. The
+  // case beside this one plants the same page with a command block added, so the two together
+  // are what makes "the prompt line and the call to action are allowed and the command is not"
+  // a checked rule rather than a description of today's markup.
+  const dist = distOf(t, {
+    'index.html': page(
+      '<h1>t</h1><p class="hero-prompt"><span class="hero-prompt-mark" aria-hidden="true">&gt;</span> Fan out these three bug fixes.</p><p class="hero-lead">the promise</p><p class="hero-actions"><a class="hero-cta" href="/getting-started/">Get started</a><a class="hero-cta-quiet" href="/how-it-works/">How it works</a></p><section class="home-slider" data-slider><ul class="slider-dots"><li class="slider-dot-item"><a class="slider-dot" href="#home-panel-easy" aria-label="Slide 1 of 3: Easy to use"></a></li></ul><div class="panels"><div class="panel" id="home-panel-easy"><h2 class="panel-title">Easy to use</h2></div></div></section>',
+    ),
+  })
+  assert.deepEqual(foldFailures(dist), [], 'a homepage that keeps the prompt line, the promise and its call to action as its whole lead region was refused')
+})
+
+test('the hero’s illustration is taken out of the lead region whole, and only it', (t) => {
+  // The bold redesign draws the terminal card in the hero: the request, the three jobs and the
+  // caption are inside one `figure`, and the card is a picture rather than a paragraph of the
+  // lead. The case below is the same page with the picture in it — the region is read exactly
+  // as it was before the card existed, and the card's own elements are neither counted nor
+  // refused. The second half plants the same markup *outside* the figure, which is the defect
+  // the exclusion must not hide: a command block beside the promise rather than inside a
+  // picture is still a command block in the lead.
+  const slider =
+    '<section class="home-slider" data-slider><ul class="slider-dots"><li class="slider-dot-item"><a class="slider-dot" href="#home-panel-easy" aria-label="Slide 1 of 3: Easy to use"></a></li></ul><div class="panels"><div class="panel" id="home-panel-easy"><h2 class="panel-title">Easy to use</h2></div></div></section>'
+  const hero = (picture) =>
+    `<h1>t <span class="gradient-text">coding agents</span></h1><p class="hero-lead">the promise</p><p class="hero-actions"><a class="hero-cta" href="/getting-started/">Get started</a></p>${picture}${slider}`
+  const card =
+    '<figure class="hero-shot"><div class="hero-shot-frame"><p class="hero-prompt"><span class="hero-prompt-mark" aria-hidden="true">&gt;</span> Fan out these three bug fixes.</p><p class="hero-shot-status"><span class="hero-shot-status-mark" aria-hidden="true"></span>Fugaro: launching 3 jobs</p><ol class="hero-shot-jobs"><li class="hero-shot-job">Pull request 1 of 3</li></ol></div><figcaption class="hero-shot-caption">An illustration, not a recording of a session.</figcaption></figure>'
+
+  assert.deepEqual(
+    foldFailures(distOf(t, { 'index.html': page(hero(card)) })),
+    [],
+    'a hero that draws its request inside the illustration card was refused as if the card were prose in the lead',
+  )
+
+  const loose = foldFailures(distOf(t, { 'index.html': page(hero('<p class="hero-prompt">&gt; Fan out these three bug fixes.</p><ol class="hero-shot-jobs"><li>Pull request 1 of 3</li></ol>')) }))
+  assert.equal(loose.length, 1, loose.join('\n'))
+  assert.match(loose[0], /and "ol\.hero-shot-jobs" is not the promise, its prompt line or its call to action/)
 })
 
 test('a homepage with an empty lead, or with no section after its h1, is refused', (t) => {

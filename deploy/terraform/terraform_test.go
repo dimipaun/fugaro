@@ -18,7 +18,64 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
-// The embedded tree is what fugaro init writes into its workdir, so every
+// TestProjectJobTftestTitlesAreTheOnesInternalInfraWrites: the project job's
+// tftest supplies the two IAM condition titles as input variables and asserts
+// the module passes them through, so a title internal/infra never writes is
+// nothing but consistent with itself. The 2026-10-19 review found exactly that
+// there: the bucket condition's title read "fugaro-project-job-runs", a string
+// that occurs nowhere else in the repository, while internal/infra writes
+// gcp.BucketConditionTitle(saID) = "fugaro-" + saID (the golden tfvars carry
+// "fugaro-fugaro-p-standard-git-0ca96e64",
+// internal/infra/testdata/installation-budget-job.tfvars.json) and
+// internal/infra/tf's own plan review requires title ==
+// BucketConditionTitlePrefix + <account id>, so a plan carrying the literal
+// would have been rejected by it. Each title is derived here instead, from the
+// account id of the block it sits in, through the two functions internal/infra
+// builds them with.
+func TestProjectJobTftestTitlesAreTheOnesInternalInfraWrites(t *testing.T) {
+	const path = "gcp/roots/installation/tests/project_job.tftest.hcl"
+	data, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	text := string(data)
+	// An assignment, not a comparison: the same file asserts on
+	// google_service_account.job.account_id == "..." and on a condition's own
+	// title == "...", and those are the module's values read back, not the
+	// variables this test is about.
+	reAccount := regexp.MustCompile(`account_id\s*=\s*"([^"]+)"`)
+	reBucketTitle := regexp.MustCompile(`bucket_condition\s*=\s*\{[^}]*?title\s*=\s*"([^"]+)"`)
+	reTokenTitle := regexp.MustCompile(`token_condition\s*=\s*\{[^}]*?title\s*=\s*"([^"]+)"`)
+
+	accounts := reAccount.FindAllStringSubmatchIndex(text, -1)
+	if len(accounts) == 0 {
+		t.Fatalf("%s declares no job account: the test file this checks is gone or reworded", path)
+	}
+	for n, a := range accounts {
+		// Each block's own account id, its titles following it and the next
+		// block's account id the boundary.
+		end := len(text)
+		if n+1 < len(accounts) {
+			end = accounts[n+1][0]
+		}
+		sec := text[a[0]:end]
+		id := text[a[2]:a[3]]
+		bucket := reBucketTitle.FindStringSubmatch(sec)
+		token := reTokenTitle.FindStringSubmatch(sec)
+		if bucket == nil || token == nil {
+			t.Errorf("%s: the block whose account id is %q declares no bucket_condition/token_condition title of its own (bucket %v, token %v): this test pairs each account with the titles that follow it, so a reworded block must not leave it pairing the wrong two", path, id, bucket, token)
+			continue
+		}
+		if want := gcp.BucketConditionTitle(id); bucket[1] != want {
+			t.Errorf("%s: the block whose account id is %q gives its bucket condition the title %q, want %q (gcp.BucketConditionTitle, the title internal/infra writes into the tfvars and its plan review requires): a plan carrying the other would be rejected by internal/infra/tf/cover.go, and nothing else in the repository spells that string", path, id, bucket[1], want)
+		}
+		if want := gcp.ProjectTokenBucketConditionTitle(id); token[1] != want {
+			t.Errorf("%s: the block whose account id is %q gives its tokens/ condition the title %q, want %q (gcp.ProjectTokenBucketConditionTitle)", path, id, token[1], want)
+		}
+	}
+}
+
+// The embedded tree is what fugaro update writes into its workdir, so every
 // root, module and lock file it needs must be in it. Each task that adds a
 // root or module adds its paths here.
 func TestEmbeddedTree(t *testing.T) {
@@ -57,6 +114,11 @@ func TestEmbeddedTree(t *testing.T) {
 		"gcp/roots/repo/.terraform.lock.hcl",
 		"gcp/roots/repo/tests/repo.tftest.hcl",
 		"gcp/roots/repo/tests/testdata/bitbucket-oauth.tfvars.json",
+		// The shared project job's plan test (design project-centric §4.1,
+		// plan tasks 3.2 and 3.5), in the installation root's own test
+		// directory beside installation.tftest.hcl: what a task that adds a
+		// root's test file owes this list.
+		"gcp/roots/installation/tests/project_job.tftest.hcl",
 		"gcp/roots/repo/tests/testdata/github-vertex.tfvars.json",
 		"gcp/modules/installation/history.tf",
 		"gcp/modules/firebase/versions.tf",
@@ -179,7 +241,7 @@ func TestTagMoverRoleIsTagsDeleteOnly(t *testing.T) {
 	}
 }
 
-// The base images are copied into fugaro-base by init, as the person running
+// The base images are copied into fugaro-base by fugaro update, as the person running
 // it (design m11 §3.3): a build account must never be able to write that
 // registry, since the image every repository's credential step runs comes
 // from it. So the only grant on the base registry that is not a reader's is
@@ -950,7 +1012,7 @@ func TestNoFirestoreDatabaseResource(t *testing.T) {
 		code := stripComments(string(b))
 		for _, bad := range []string{`"google_firestore_database"`, `"google_firebase_rules_`, `"google_firestore_`} {
 			if strings.Contains(code, bad) {
-				t.Errorf("%s declares %s: the database and its rules are init --firebase's REST steps", path, bad)
+				t.Errorf("%s declares %s: the database and its rules are fugaro update's REST steps", path, bad)
 			}
 		}
 	})
@@ -1090,7 +1152,7 @@ var (
 	// scanned the same way.
 	// The compute module's two roles and its build-submitter reference are on
 	// the allowlist knowingly: each is created by that module with a pinned
-	// permission list (TestComputeReaperRoleIsExactlySix and
+	// permission list (TestComputeReaperRoleIsExactlyFive and
 	// TestComputePreloadBuilderRoleAreExactlyTheBuild), and the
 	// build-submitter id is the installation's own role.
 	allowedRoleExprs = regexp.MustCompile(`^(each\.value(\.role)?|var\.job_runner_role|var\.installation\.role_ids\.(tag_mover|build_submitter)|var\.build_submitter_role|google_project_iam_custom_role\.(launcher|build_submitter|token_minter|job_runner|reaper|preload_builder)\.name|google_project_iam_custom_role\.history\[0\]\.name)$`)
@@ -1208,6 +1270,125 @@ func firstAttr(body, name string) string {
 	return m[1]
 }
 
+// TestServiceAccountTokenCreatorIsTheDeployersImpersonationGrant pins the
+// claim D75 makes in prose — serviceAccountTokenCreator is "one grant on that
+// account, for var.operators" — as a property of the whole tree, because the
+// role scanner does not hold it. checkLiteralRole exempts
+// roles/iam.serviceAccountTokenCreator beside roles/iam.serviceAccountUser so
+// the deployer's impersonation grant is allowed at all, and an exemption
+// cannot tell an operator impersonating the deployer from the same role on a
+// job account, which is a credential that runs as that account. A literal
+// token-creator grant is therefore allowed in exactly one place, and it is the
+// deployer's own block: the deployer account, written as a literal path, for
+// var.operators.
+//
+// Its members are people on the review screen (internal/infra/tf's grantRules)
+// and the plan itself is screened again by Cover.deployerTokenCreator, so what
+// this test is the file-level half of is: no second block anywhere grants the
+// role, and the one that does is the one D75 describes.
+func TestServiceAccountTokenCreatorIsTheDeployersImpersonationGrant(t *testing.T) {
+	const (
+		role = "roles/iam.serviceAccountTokenCreator"
+		// The install module's deployer account, as deployer.tf writes it.
+		account = `"projects/${var.project}/serviceAccounts/fugaro-deployer@${var.project}.iam.gserviceaccount.com"`
+		file    = "gcp/modules/installation/deployer.tf"
+		block   = "google_service_account_iam_member.fugaro_deployer_token_creator"
+	)
+	var sites []string
+	walk(t, func(path string, b []byte) {
+		code := stripComments(string(b))
+		for _, m := range quotedRoleRE.FindAllStringSubmatch(code, -1) {
+			if m[1] == role {
+				sites = append(sites, path)
+			}
+		}
+	})
+	if len(sites) != 1 || sites[0] != file {
+		t.Errorf("the literal %s appears in %v; want once, in %s (D75's impersonation grant, and nothing else in the tree)", role, sites, file)
+	}
+
+	var found bool
+	walk(t, func(path string, b []byte) {
+		if path != file {
+			return
+		}
+		for _, blk := range allResourceBlocks(t, path, b) {
+			if blk.name != block {
+				continue
+			}
+			found = true
+			if !hasAttr(blk.body, "service_account_id", account) {
+				t.Errorf("%s: %s does not name the deployer account as the literal %s: a grant whose account is computed is a grant nobody can check, and this is the account an operator is impersonating", path, blk.name, account)
+			}
+			if !hasAttr(blk.body, "for_each", "toset(var.operators)") {
+				t.Errorf("%s: %s is not for var.operators, the people the owner names at setup", path, blk.name)
+			}
+			if !hasAttr(blk.body, "member", "each.value") {
+				t.Errorf("%s: %s does not grant the role to each.value", path, blk.name)
+			}
+		}
+	})
+	if !found {
+		t.Fatalf("%s has no %s", file, block)
+	}
+}
+
+// TestInstallationServiceAccountGrantsNameTheirAccount pins the one shape the
+// installation module's service-account grants have to have: the account is a
+// literal path built from var.project, never read from the account resource's
+// own name attribute.
+//
+// Why it is a rule and not a preference. The installation module is the one
+// that creates the deployer account (D75), and the review that screens the
+// apply — internal/infra/tf's Cover.onDeployer — refuses every
+// service-account grant in a deployer-creating module whose account is
+// computed, because a computed account there could be the deployer, and actAs
+// on the deployer is a job that runs as the deployer. A grant written as
+// google_service_account.<x>.name is therefore not merely unreadable: it makes
+// the installation apply stop riding the run's one confirmation and ask for
+// its own, printing a reason that is false about the module's own grant. The
+// operators' actAs on the scheduler account did exactly that (scheduler.tf),
+// which is what this test was added for.
+//
+// deployer.tf's token-creator grant gives the same reason for the same choice
+// in its own comment; this holds the whole module to it. The other modules are
+// not held to it: none of them creates the deployer, so a grant there may read
+// its account from the resource, and most of them do.
+func TestInstallationServiceAccountGrantsNameTheirAccount(t *testing.T) {
+	const dir = "gcp/modules/installation/"
+	// The literal form: var.project twice — the account path and its own
+	// domain — and the account's ID, either written out or read from a
+	// variable the module validates as a service account ID. What the pattern
+	// is here to refuse is an account read from the account RESOURCE's own
+	// name attribute (google_service_account.<x>.name), which is the shape
+	// that is unknown at plan time.
+	literalSA := regexp.MustCompile(`^"projects/\$\{var\.project\}/serviceAccounts/([a-z][a-z0-9-]*|\$\{var\.[A-Za-z0-9_.\[\]]+\})@\$\{var\.project\}\.iam\.gserviceaccount\.com"$`)
+	n := 0
+	walk(t, func(path string, b []byte) {
+		if !strings.HasPrefix(path, dir) {
+			return
+		}
+		for _, blk := range allResourceBlocks(t, path, b) {
+			if blk.typ != "google_service_account_iam_member" {
+				continue
+			}
+			n++
+			id := firstAttr(blk.body, "service_account_id")
+			// Only deployer.tf grants on the deployer (the token-creator
+			// rule); another file's grant naming it is actAs on the deployer.
+			if m := literalSA.FindStringSubmatch(id); m != nil && m[1] == "fugaro-deployer" && !strings.HasSuffix(path, "/deployer.tf") {
+				t.Errorf("%s: %s grants on the deployer account outside deployer.tf (%q)", path, blk.name, id)
+			}
+			if !literalSA.MatchString(id) {
+				t.Errorf("%s: %s names its account as %q: a service-account grant in the installation module must name its account as a literal path, because this module creates the deployer account and cover.onDeployer refuses a computed account beside it — the apply then asks its own confirmation and refuses the module's own grant", path, blk.name, id)
+			}
+		}
+	})
+	if n < 2 {
+		t.Errorf("found only %d service-account grants in %s: the scan is not seeing the module's own grants", n, dir)
+	}
+}
+
 // REGRESSION (same-project layout): the project-level roles any job, build or
 // scheduler account holds are exactly these, in every module and IAM resource
 // type. None gives access to the RTDB, Firestore, Identity Platform or the
@@ -1262,7 +1443,7 @@ func TestCustomRolesNeverReachTheBackend(t *testing.T) {
 			}
 			// The compute module's two roles are the one knowing exception to
 			// the compute ban, and each is pinned to its exact permission
-			// list by TestComputeReaperRoleIsExactlySix and
+			// list by TestComputeReaperRoleIsExactlyFive and
 			// TestComputePreloadBuilderRoleAreExactlyTheBuild: the reaper ends
 			// Batch jobs and VMs and creates nothing, and the builder boots,
 			// reads, stops, images and deletes one VM. Neither reaches the
@@ -1273,7 +1454,7 @@ func TestCustomRolesNeverReachTheBackend(t *testing.T) {
 				}
 				for _, p := range quotedPerm.FindAllStringSubmatch(m[1], -1) {
 					if !strings.HasPrefix(p[1], "compute.") && !strings.HasPrefix(p[1], "batch.jobs.") {
-						t.Errorf("%s: %s holds %s, which is neither the reaper's six nor the preload builder's build", path, blk.name, p[1])
+						t.Errorf("%s: %s holds %s, which is neither the reaper's five nor the preload builder's build", path, blk.name, p[1])
 					}
 				}
 				continue
@@ -1323,6 +1504,97 @@ var quotedPerm = regexp.MustCompile(`"([^"]+)"`)
 // what condition -- are what a reviewer has to read, and a plan assertion
 // only ever sees the inputs a test hands it.
 
+// The socket gid's round trip, file by file (design §2.2, C2; the plan's
+// Task 9 step 3). A run reaches the VM's Docker socket through
+// `--group-add <gid>` and the gid belongs to the boot image, so the one place
+// it can come from is the image itself: the build reads it off the builder VM
+// and labels every generation it makes with it, and the module publishes the
+// label's name for whatever reads it back (Check 57b today, `doctor` later).
+//
+// It is a text test because no plan can see it: the image is built out of
+// band by a script, so terraform's refresh covers none of it and no resource
+// holds the value. What the test can hold is that the three files agree on the
+// chain rather than merely each looking right -- and that no gid is a literal
+// anywhere in this tree, because a gid written here would be a guess about
+// whatever boot image an installation runs. The value the fake in
+// internal/cli/init_compute_test.go uses stands in for one: `testSocketGID`
+// (998) is internal/backend/batch's, and 412 -- the gid Check 57a-6 measured
+// on the COS image it used -- appears in no file this test reads.
+func TestComputeModuleRecordsTheSocketGID(t *testing.T) {
+	const (
+		script  = "gcp/modules/compute/preload.sh"
+		preload = "gcp/modules/compute/preload.tf"
+		outputs = "gcp/modules/compute/outputs.tf"
+	)
+	read := func(path string) string {
+		t.Helper()
+		b, err := fs.ReadFile(FS, path)
+		if err != nil {
+			t.Fatalf("reading %s: %v", path, err)
+		}
+		return string(b)
+	}
+	sh := read(script)
+	for _, want := range []struct{ what, text string }{
+		{"the read off the builder VM", "stat -c %g /var/run/docker.sock"},
+		{"the marker the build parses it back out of", "GID_MARKER="},
+		{"the label written onto the image the build creates", `"${SOCKET_GID_LABEL}=${SOCKET_GID}"`},
+		{"the refusal of a gid that is not one", "*[!0-9]*"},
+		{"the refusal of gid 0, which no container can be added to", "socket gid is 0"},
+		{"the label's name taken from the build rather than spelled here", "${SOCKET_GID_LABEL:?}"},
+	} {
+		if !strings.Contains(sh, want.text) {
+			t.Errorf("%s no longer carries %s (%q): the gid is read off the VM, recorded on the image the build makes, and the label it is recorded under is the build's to name", script, want.what, want.text)
+		}
+	}
+	// The read has to happen ON the VM (the build step cannot reach the
+	// socket), so it sits in the builder's own startup script, and the label
+	// has to be written by the create that makes the generation (an image
+	// labelled afterwards is an image a run can reach a socket through with a
+	// gid nothing recorded).
+	// LastIndex, not Index: the header comment above quotes the same command,
+	// and a check that read the comment would pass on a file whose script no
+	// longer reads the socket at all.
+	if i, j := strings.LastIndex(sh, "stat -c %g /var/run/docker.sock"), strings.Index(sh, "--metadata=startup-script="); i < 0 || j < 0 || i < j {
+		t.Errorf("%s reads the gid outside the builder VM's startup script: the build step runs in Cloud Build and has no socket to stat", script)
+	}
+	if i, j := strings.Index(sh, `"${SOCKET_GID_LABEL}=${SOCKET_GID}"`), strings.Index(sh, "gcloud compute images create"); i < 0 || j < 0 || i < j {
+		t.Errorf("%s writes the gid's label before the image it belongs to is created", script)
+	}
+	tf := read(preload)
+	// One name for the label, and both ends of the chain reading it: the
+	// build's substitution carries it into the step, and the output publishes
+	// the same local.
+	for _, want := range []struct{ what, text string }{
+		{"the single local the label's name is written in", `socket_gid_label = "socket-gid"`},
+		{"the build substitution the step reads it from", "_SOCKET_GID_LABEL = local.socket_gid_label"},
+		// `$${` is the escape terraform needs: `${` alone is terraform reading
+		// a variable, and the build config is what has to carry the
+		// substitution's name (terraform validate refuses the unescaped form).
+		{"the step's own environment", "SOCKET_GID_LABEL=$${_SOCKET_GID_LABEL}"},
+	} {
+		if !strings.Contains(tf, want.text) {
+			t.Errorf("%s no longer carries %s (%q): the writer and the reader would then be two spellings of one name", preload, want.what, want.text)
+		}
+	}
+	if n := strings.Count(tf, `"socket-gid"`); n != 1 {
+		t.Errorf("%s spells the label's name %d times, want once (in the local): a second literal is a name that can drift from the output below", preload, n)
+	}
+	if !strings.Contains(read(outputs), "preload_socket_gid_label") {
+		t.Errorf("%s publishes no preload_socket_gid_label: the stage and a later doctor check read the label's name from the root's outputs, together with the image's family (infra.ComputeOutputs)", outputs)
+	}
+	// And no gid is a literal in any of the three, in the root the stage reads
+	// back, or in the Go struct that decodes it.
+	for _, path := range []string{script, preload, outputs,
+		"gcp/roots/compute/outputs.tf", "gcp/roots/compute/main.tf"} {
+		for _, gid := range []string{"412", "998"} {
+			if strings.Contains(read(path), gid) {
+				t.Errorf("%s carries the literal %s: a gid written into this tree is a guess about whatever boot image an installation runs -- the build reads it off the VM it builds the image on", path, gid)
+			}
+		}
+	}
+}
+
 // permissionsOf returns the literal permissions a custom role block holds.
 func permissionsOf(t *testing.T, path string, blk block) []string {
 	t.Helper()
@@ -1338,16 +1610,24 @@ func permissionsOf(t *testing.T, path string, blk block) []string {
 	return perms
 }
 
-// The reaper's role is the SIX permissions the reaper's code uses, and
-// nothing else: list, get, cancel and delete a job, and list and delete an
-// instance. It carries no create permission of any kind, and the two built-in
-// roles Google's own pages name for the same calls -- batch.jobsEditor (which
-// also carries batch.jobs.create) and compute.instanceAdmin.v1 (which carries
-// the whole instance lifecycle, setMetadata included) -- are granted nowhere
-// in the tree.
-func TestComputeReaperRoleIsExactlySix(t *testing.T) {
+// The reaper's role is the FIVE permissions the reaper's code uses, and
+// nothing else: list, get and delete a job, and list and delete an instance.
+// It carries no create permission of any kind, and the two built-in roles
+// Google's own pages name for the same calls -- batch.jobsEditor (which also
+// carries batch.jobs.create) and compute.instanceAdmin.v1 (which carries the
+// whole instance lifecycle, setMetadata included) -- are granted nowhere in
+// the tree.
+//
+// It named six until 0.9.5, the sixth being batch.jobs.cancel. That is not a
+// permission Google defines -- the Batch API has jobs.create, jobs.delete,
+// jobs.get and jobs.list, which is what TestCustomRolePermissionsAreAllowed-
+// ByGoogle's snapshot says -- so the role could not be created at all and
+// --provision-batch was refused for it. It must not come back: the reaper's
+// package has no cancel action to emit either
+// (internal/backend/batch/reap.go), because a permission nothing uses is a
+// permission someone re-adds.
+func TestComputeReaperRoleIsExactlyFive(t *testing.T) {
 	want := []string{
-		"batch.jobs.cancel",
 		"batch.jobs.delete",
 		"batch.jobs.get",
 		"batch.jobs.list",
@@ -1375,7 +1655,7 @@ func TestComputeReaperRoleIsExactlySix(t *testing.T) {
 			grants++
 			if blk.name != "google_project_iam_member.reaper" ||
 				firstAttr(blk.body, "role") != "google_project_iam_custom_role.reaper.name" {
-				t.Errorf("%s: %s grants the reaper something other than its own six-permission role", path, blk.name)
+				t.Errorf("%s: %s grants the reaper something other than its own five-permission role", path, blk.name)
 			}
 		}
 	})
@@ -1759,8 +2039,12 @@ func TestComputePreloadRebuildsAStaleImage(t *testing.T) {
 	}
 	sh := string(b)
 	for _, want := range []string{
-		`--format='csv[no-heading](name,labels.fugaro,labels.base-release,creationTimestamp)'`, // the four answers the decision reads
-		"IFS=, read -r",                         // and read as four columns, not one joined line
+		// The five answers the decision reads: the release it was built from,
+		// its age, and the socket gid it recorded (Task 9 -- a generation with
+		// no gid recorded is replaced whatever its age, so a run's
+		// `--group-add` is never a guess).
+		"csv[no-heading](name,labels.fugaro,labels.base-release,creationTimestamp,labels.${SOCKET_GID_LABEL})",
+		"IFS=, read -r",                         // and read as columns, not one joined line
 		"REFRESH_DAYS:?",                        // the window is an input, not a literal
 		`--labels=fugaro=managed,base-release=`, // what the generation was built from is recorded on it
 		`--family="$IMAGE_FAMILY"`,              // the new generation joins the family the runs boot
@@ -2300,6 +2584,9 @@ func preloadFixture(t *testing.T, env map[string]string) (out string, err error,
 		"NETWORK=projects/proj-1234/global/networks/default",
 		"SUBNETWORK=projects/proj-1234/regions/us-east5/subnetworks/default",
 		"REFRESH_DAYS=30",
+		// The socket gid's label, as the build's substitution carries it
+		// (preload.tf). preload.sh refuses to run without it.
+		"SOCKET_GID_LABEL=socket-gid",
 	)
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, k+"="+v)
@@ -2341,7 +2628,17 @@ case "$args" in
       esac
       exit 0;;
   *"instances create "*) exit 0;;
-  *"instances get-serial-port-output "*) printf '%s\n' "$MARKER"; exit 0;;
+  *"instances get-serial-port-output "*)
+      # The builder VM's serial output, as its startup script writes it: the
+      # gid it read off its own socket, then the marker the build waits for.
+      # NO_SOCKET_GID drops the first line, which is a build whose VM never
+      # printed a gid. SERIAL_CRLF ends the lines the way the real serial
+      # console does (a tty, so CRLF), which is the shape the gid parse has to
+      # survive -- see the carriage-return case in the rebuild test.
+      crlf=""
+      if [ -n "$SERIAL_CRLF" ]; then crlf="$(printf '\r')"; fi
+      if [ -z "$NO_SOCKET_GID" ]; then printf '%s%s\n' "${SOCKET_GID_LINE:-fugaro-preload-socket-gid=998}" "$crlf"; fi
+      printf '%s%s\n' "$MARKER" "$crlf"; exit 0;;
   *"instances stop "*) exit 0;;
   *"instances delete "*)
       # A delete that will not go: step 7 tolerates it, and the flag it reads
@@ -2388,9 +2685,16 @@ func gcloudCalls(t *testing.T, calls []string, sub string) [][]string {
 
 // staleRow and currentRow are the API's answers about the family's newest
 // generation, as csv[no-heading]: name, the ownership label, the release it was
-// built from, its creation stamp. The release is the fixture's, and the stamps
-// are computed here rather than by the host's date, so the age the script reads
-// is the age this test means.
+// built from, its creation stamp, and the socket gid the generation recorded.
+// The release is the fixture's, and the stamps are computed here rather than by
+// the host's date, so the age the script reads is the age this test means.
+//
+// The gid column is preloadSocketGID and never 412: 412 is what Check 57a-6
+// measured on the COS image it used, and a gid written into this tree would be
+// a guess about whatever boot image an installation runs
+// (TestComputeModuleRecordsTheSocketGID refuses both numbers in the module's
+// files). A row without it stands for a generation built before the label
+// existed, which the build replaces rather than keeps.
 func preloadRow(t *testing.T, release string, age time.Duration) string {
 	t.Helper()
 	return preloadRowOwned(t, "managed", release, age)
@@ -2401,9 +2705,21 @@ func preloadRow(t *testing.T, release string, age time.Duration) string {
 // before the label existed.
 func preloadRowOwned(t *testing.T, owner, release string, age time.Duration) string {
 	t.Helper()
+	return preloadRowGID(t, owner, release, age, preloadSocketGID)
+}
+
+// preloadSocketGID is the gid the fake VM's socket reports, and the one a
+// generation's label carries back: any positive integer but 412, which is the
+// measurement's and not an installation's (see preloadRow).
+const preloadSocketGID = "998"
+
+// preloadRowGID is preloadRowOwned with the gid column spelled out, for a row
+// that records none.
+func preloadRowGID(t *testing.T, owner, release string, age time.Duration, gid string) string {
+	t.Helper()
 	now := time.Now().UTC()
-	return fmt.Sprintf("%s-%s,%s,%s,%s", "fugaro-preload-a0b6aca0",
-		now.Add(-age).Format("20060102T150405"), owner, release, now.Add(-age).Format(time.RFC3339))
+	return fmt.Sprintf("%s-%s,%s,%s,%s,%s", "fugaro-preload-a0b6aca0",
+		now.Add(-age).Format("20060102T150405"), owner, release, now.Add(-age).Format(time.RFC3339), gid)
 }
 
 // imageListCall is the one `gcloud compute images list` the sweep makes, as
@@ -2500,6 +2816,100 @@ func TestComputePreloadShellDecidesAndReplaces(t *testing.T) {
 		il := len(gcloudCalls(t, calls, "instances delete"))
 		if il == 0 {
 			t.Error("the rebuild left its builder VM behind")
+		}
+	})
+
+	t.Run("a generation that records no socket gid is replaced", func(t *testing.T) {
+		// Current by release and by age, and still replaced: an image built
+		// before this label existed records no gid, and a run's `--group-add`
+		// against it would be a guess. This is the half of "every rebuild
+		// re-reads it" that a build deciding from the age alone would miss.
+		out, err, calls := preloadFixture(t, map[string]string{
+			"IMAGE_ROW":  preloadRowGID(t, "managed", baseRelease, 48*time.Hour, ""),
+			"IMAGE_LIST": "fugaro-preload-a0b6aca0-20200101T030000,fugaro-preload-a0b6aca0\n",
+			"MARKER":     "fugaro-preload-built",
+		})
+		if err != nil {
+			t.Fatalf("preload.sh exited %v:\n%s", err, out)
+		}
+		if !strings.Contains(out, "records no socket-gid label") {
+			t.Errorf("preload.sh did not say why a current generation is being replaced:\n%s", out)
+		}
+		created := gcloudCalls(t, calls, "images create")
+		if len(created) != 1 {
+			t.Fatalf("the rebuild made %d generations, want 1: an image with no recorded gid is not one to keep\n%s", len(created), strings.Join(calls, "\n"))
+		}
+		// And the generation it makes carries the gid the VM reported, under
+		// the label the build was given.
+		if !slices.Contains(created[0], "--labels=fugaro=managed,base-release="+baseRelease+",socket-gid="+preloadSocketGID) {
+			t.Errorf("the new generation does not record the socket gid it read: %s", strings.Join(created[0], " "))
+		}
+	})
+
+	t.Run("a builder VM that prints no gid makes no image", func(t *testing.T) {
+		out, err, calls := preloadFixture(t, map[string]string{
+			"IMAGE_ROW":     preloadRow(t, "batch-cos-stable-official-2020-01-01-00-00-00", 200*24*time.Hour),
+			"IMAGE_LIST":    "",
+			"MARKER":        "fugaro-preload-built",
+			"NO_SOCKET_GID": "1",
+		})
+		if err == nil {
+			t.Fatalf("preload.sh succeeded with no socket gid to record:\n%s", out)
+		}
+		if !strings.Contains(out, "printed no usable socket gid") {
+			t.Errorf("the refusal was not reported:\n%s", out)
+		}
+		if c := gcloudCalls(t, calls, "images create"); len(c) != 0 {
+			t.Errorf("an image was created with no gid recorded on it:\n%s", strings.Join(calls, "\n"))
+		}
+		// The family keeps serving the generation it has, and the builder VM
+		// still goes: the build failed, and a failed build is not a leak.
+		if d := gcloudCalls(t, calls, "instances delete"); len(d) == 0 {
+			t.Errorf("the builder VM was left behind by a build that made no image:\n%s", strings.Join(calls, "\n"))
+		}
+	})
+
+	t.Run("a gid line ending CRLF is still a gid", func(t *testing.T) {
+		// The serial console is a tty: its lines end CRLF, so the marker
+		// match's last line is "998\r", and a parse that does not strip the
+		// carriage return reads that as "not a number" and refuses -- on a
+		// real GCP build, every time, while a fixture printing LF stays green.
+		// This is the fixture printing what the console prints.
+		out, err, calls := preloadFixture(t, map[string]string{
+			"IMAGE_ROW":   preloadRow(t, "batch-cos-stable-official-2020-01-01-00-00-00", 200*24*time.Hour),
+			"IMAGE_LIST":  "",
+			"MARKER":      "fugaro-preload-built",
+			"SERIAL_CRLF": "1",
+		})
+		if err != nil {
+			t.Fatalf("preload.sh exited %v on CRLF serial output:\n%s", err, out)
+		}
+		if strings.Contains(out, "no usable socket gid") {
+			t.Errorf("preload.sh read the carriage return as part of the gid:\n%s", out)
+		}
+		created := gcloudCalls(t, calls, "images create")
+		if len(created) != 1 {
+			t.Fatalf("the rebuild made %d generations on CRLF serial output, want 1:\n%s", len(created), strings.Join(calls, "\n"))
+		}
+		if !slices.Contains(created[0], "--labels=fugaro=managed,base-release="+baseRelease+",socket-gid="+preloadSocketGID) {
+			t.Errorf("the generation built from CRLF serial output does not record the gid: %s", strings.Join(created[0], " "))
+		}
+	})
+
+	t.Run("a builder VM that prints a gid that is not one makes no image", func(t *testing.T) {
+		for _, gid := range []string{"socket-gid: no such file", "0"} {
+			out, err, calls := preloadFixture(t, map[string]string{
+				"IMAGE_ROW":       preloadRow(t, "batch-cos-stable-official-2020-01-01-00-00-00", 200*24*time.Hour),
+				"IMAGE_LIST":      "",
+				"MARKER":          "fugaro-preload-built",
+				"SOCKET_GID_LINE": "fugaro-preload-socket-gid=" + gid,
+			})
+			if err == nil {
+				t.Fatalf("preload.sh accepted the socket gid %q:\n%s", gid, out)
+			}
+			if c := gcloudCalls(t, calls, "images create"); len(c) != 0 {
+				t.Errorf("an image was created for the socket gid %q:\n%s", gid, strings.Join(calls, "\n"))
+			}
 		}
 	})
 
@@ -2694,4 +3104,359 @@ func allResourceBlocks(t *testing.T, path string, src []byte) []block {
 		out = append(out, block{typ: typ, name: typ + "." + code[m[4]:m[5]], body: code[open+1 : end]})
 	}
 	return out
+}
+
+// TestLauncherConditionPreconditionMatchesGo pins the installation module's
+// runs_launcher precondition to gcp.LauncherBucketCondition and its title:
+// the launchers' write is widened to tokens/ (the budget token's move,
+// docs/design/budget-token-channel.md §7.2, D16) in the Go that writes the
+// tfvars, the install guard and the plan cover, and in this precondition, and
+// a change that moved one without the other would refuse every installation
+// or, worse, let a different condition through. The precondition is rendered
+// for a bucket and compared with Go's own strings.
+func TestLauncherConditionPreconditionMatchesGo(t *testing.T) {
+	const bucket = "fugaro-runs-proj-1234"
+	b, err := os.ReadFile("gcp/modules/installation/iam.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`condition\s*=\s*var\.launcher_bucket_condition\.title == "([^"]*)" && var\.launcher_bucket_condition\.expression == "((?:[^"\\]|\\.)*)"\n`).FindSubmatch(b)
+	if m == nil {
+		t.Fatal("no runs_launcher precondition of the expected shape in modules/installation/iam.tf")
+	}
+	title := string(m[1])
+	expr := strings.ReplaceAll(strings.ReplaceAll(string(m[2]), `\"`, `"`), "${var.runs_bucket}", bucket)
+	if title != gcp.LauncherBucketConditionTitle || expr != gcp.LauncherBucketCondition(bucket) {
+		t.Fatalf("the precondition pins\n  %q / %q\nand Go writes\n  %q / %q", title, expr, gcp.LauncherBucketConditionTitle, gcp.LauncherBucketCondition(bucket))
+	}
+}
+
+// TestJobTokenGrantIsReadOnlyOnTokens pins both job modules' job_tokens
+// grants — the per-repository job's (modules/workflow, gcp.TokenBucketCondition)
+// and the shared project job's (modules/project,
+// gcp.ProjectTokenBucketCondition) — to objectViewer (no create, no delete: a
+// peer run cannot remove or replace a queued run's token, D16), with a
+// precondition on tokens/ of this runs bucket in one clause, and the jobs'
+// objectUser grants never naming tokens/. The project module's grant is
+// otherwise pinned only by the recorded installation golden plan, which a
+// change to the module does not regenerate, so without this a role widened to
+// objectUser there passed every test.
+func TestJobTokenGrantIsReadOnlyOnTokens(t *testing.T) {
+	for _, tc := range []struct{ file, variable string }{
+		{"gcp/modules/workflow/sa.tf", "var.workflow"},
+		{"gcp/modules/project/sa.tf", "var.job"},
+	} {
+		b, err := os.ReadFile(tc.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src := string(b)
+		i := strings.Index(src, `resource "google_storage_bucket_iam_member" "job_tokens" {`)
+		if i < 0 {
+			t.Errorf("no job_tokens grant in %s", tc.file)
+			continue
+		}
+		block := src[i:]
+		block = block[:strings.Index(block, "\n}\n")]
+		if !strings.Contains(block, `role   = "roles/storage.objectViewer"`) {
+			t.Errorf("%s: the job's tokens/ grant is not objectViewer:\n%s", tc.file, block)
+		}
+		if !strings.Contains(block, `objects/`+gcp.TokenBucketPrefix+`/")`) || !strings.Contains(block, `!strcontains(`+tc.variable+`.token_condition.expression, "||")`) {
+			t.Errorf("%s: the job's tokens/ grant has no precondition on one tokens/ clause:\n%s", tc.file, block)
+		}
+	}
+	if strings.Contains(gcp.BucketCondition("b", gcp.JobBucketPrefixes, "s"), "/"+gcp.TokenBucketPrefix+"/") {
+		t.Error("the job's objectUser condition reaches tokens/")
+	}
+	if strings.Contains(gcp.ProjectBucketCondition("b", gcp.JobBucketPrefixes), "/"+gcp.TokenBucketPrefix+"/") {
+		t.Error("the project job's objectUser condition reaches tokens/")
+	}
+}
+
+// TestProjectJobSecretGrantFollowsTheMount pins the one property that makes a
+// project job's account axis a credential boundary rather than a label: the
+// module grants secretmanager.secretAccessor on each secret the job's *own*
+// secret_env names, to that job's own account, at the secret level — one
+// member per (job, mounted secret), never a project-wide role, never another
+// job's secret — and the container mounts exactly those entries through
+// secret_key_ref (design project-named-oauth-tokens §4.3 and D2, plan task 2).
+//
+// The grant and the mount are one list, which is what makes the credentials
+// service a clean swap (§4.6): removing an account's one secret_env entry
+// removes its member with it and moves nothing else — not the job's name, not
+// its account, not its profile.
+//
+// Mutation (run, restore): iterate anything but var.job.secret_env in the
+// member's for_each (a literal set, var.secrets, another variable) — the
+// member and the mount then describe different secrets, and this fails.
+func TestProjectJobSecretGrantFollowsTheMount(t *testing.T) {
+	path := "gcp/modules/project/sa.tf"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := resourceBlocks(t, path, b, "google_secret_manager_secret_iam_member")
+	if len(blocks) != 1 {
+		t.Fatalf("%s has %d secretAccessor resources, want the one the project job's mounts drive", path, len(blocks))
+	}
+	body := blocks[0].body
+	for _, want := range []string{
+		// One member per secret this job mounts, and none for a secret it
+		// does not: the list is the job's own secret_env, not the
+		// installation's secrets and not another job's.
+		"for_each = toset(values(var.job.secret_env))",
+		// The secret's own ID, at the secret level: never the project.
+		"secret_id = var.secrets[each.value]",
+		"role      = \"roles/secretmanager.secretAccessor\"",
+		// The job's own account and no other member, ever.
+		"member    = google_service_account.job.member",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%s: google_secret_manager_secret_iam_member.job does not hold %q:\n%s", path, want, body)
+		}
+	}
+	if strings.Contains(body, "var.project_number") || strings.Contains(body, `"allUsers"`) || strings.Contains(body, `"allAuthenticatedUsers"`) {
+		t.Errorf("%s: the job's secret grant names something wider than the job's own account:\n%s", path, body)
+	}
+
+	// And the container mounts each of those entries, as a secret_key_ref to
+	// the same container: the mount is the carrier, so a secret_env entry the
+	// job does not mount would be a grant with no reader, and a mount with no
+	// entry would be a variable the job's account cannot read.
+	jobPath := "gcp/modules/project/job.tf"
+	jb, err := os.ReadFile(jobPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs := resourceBlocks(t, jobPath, jb, "google_cloud_run_v2_job")
+	if len(jobs) != 1 {
+		t.Fatalf("%s has %d jobs, want the one shared project job", jobPath, len(jobs))
+	}
+	for _, want := range []string{
+		"for_each = var.job.secret_env",
+		"secret  = var.secrets[env.value]",
+		`version = "latest"`,
+	} {
+		if !strings.Contains(jobs[0].body, want) {
+			t.Errorf("%s: the job's container does not mount its secret_env through %q:\n%s", jobPath, want, jobs[0].body)
+		}
+	}
+	// The values never travel in the plain environment: every secret the job
+	// mounts is a value_source, and the plain env is the profile's own.
+	if strings.Contains(jobs[0].body, "value = var.secrets") {
+		t.Errorf("%s: a secret's value is written into the job's plain environment", jobPath)
+	}
+}
+
+// customRolePermissions is the snapshot of the permissions Google allows in a
+// custom role (GA, customRolesSupportLevel empty), for the service prefixes
+// the modules use. See the header of the file for how it is made and refreshed.
+const customRolePermissionsSnapshot = "testdata/custom-role-permissions.txt"
+
+var (
+	customRoleType       = regexp.MustCompile(`^google_[a-z0-9_]*iam_custom_role$`)
+	permissionsAttr      = regexp.MustCompile(`(?m)^\s*permissions\s*=`)
+	permissionsLiteral   = regexp.MustCompile(`(?s)^\s*permissions\s*=\s*\[([^\]]*)\]`)
+	literalPermissionSeq = regexp.MustCompile(`^(?:\s*"[^"\\$]*"\s*,?)*\s*$`)
+	quotedString         = regexp.MustCompile(`"([^"\\]*)"`)
+)
+
+// permissionStrings returns, for every custom role resource in a .tf file
+// (google_*_iam_custom_role), the role and the entries of its `permissions`
+// list. Comments of all three kinds (#, // and /* */) are dropped first, by
+// the same stripComments the other tests use, so a permission written in a
+// comment is never read as one.
+//
+// It reads literal lists only, and a role whose permissions are anything else
+// is an error rather than a role with nothing to check: a local, a variable or
+// a concat() could carry any permission past the test. A custom role with no
+// permissions attribute, or with two, is an error too.
+func permissionStrings(src string) (out []struct{ Role, Permission string }, errs []string) {
+	code := stripComments(src)
+	for _, m := range resourceHeader.FindAllStringSubmatchIndex(code, -1) {
+		typ := code[m[2]:m[3]]
+		if !customRoleType.MatchString(typ) {
+			continue
+		}
+		role := typ + "." + code[m[4]:m[5]]
+		open := m[1] - 1
+		end := matchBrace(code, open)
+		if end < 0 {
+			errs = append(errs, role+": unbalanced braces")
+			continue
+		}
+		body := code[open+1 : end]
+		attrs := permissionsAttr.FindAllStringIndex(body, -1)
+		if len(attrs) != 1 {
+			errs = append(errs, fmt.Sprintf("%s: %d permissions attributes, want exactly one literal list", role, len(attrs)))
+			continue
+		}
+		lit := permissionsLiteral.FindStringSubmatch(body[attrs[0][0]:])
+		if lit == nil || !literalPermissionSeq.MatchString(lit[1]) {
+			errs = append(errs, role+": permissions is not a literal list of quoted permissions (a local, a variable or a concat() cannot be checked)")
+			continue
+		}
+		for _, q := range quotedString.FindAllStringSubmatch(lit[1], -1) {
+			out = append(out, struct{ Role, Permission string }{role, q[1]})
+		}
+	}
+	return out, errs
+}
+
+func loadPermissionSnapshot(t *testing.T) map[string]bool {
+	t.Helper()
+	b, err := os.ReadFile(customRolePermissionsSnapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed := map[string]bool{}
+	for _, l := range strings.Split(string(b), "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.HasPrefix(l, "#") {
+			continue
+		}
+		allowed[l] = true
+	}
+	return allowed
+}
+
+// 0.8.5 shipped with a custom role naming cloudscheduler.jobs.resume, which
+// does not exist (Google names it cloudscheduler.jobs.enable), so creating the
+// role failed at apply. Every permission any module puts in a custom role
+// must be one Google allows in a custom role.
+func TestCustomRolePermissionsAreAllowedByGoogle(t *testing.T) {
+	// Known-invalid entries not fixed by this change, keyed "file|permission".
+	// It is empty, and 0.9.5 is what emptied it: the compute module's reaper
+	// role named batch.jobs.cancel, which Google does not define (it lists
+	// batch.jobs.create/delete/get/list only), so the role could not be
+	// created and --provision-batch refused before any cloud call. The role
+	// is five permissions now and the reaper's queue deadline deletes. A new
+	// entry belongs here only with a reason and a task that removes it: the
+	// test fails while an entry is stale.
+	knownInvalid := map[string]string{}
+	usedKnown := map[string]bool{}
+	allowed := loadPermissionSnapshot(t)
+	if len(allowed) < 100 {
+		t.Fatalf("%s has %d permissions: the snapshot is missing or truncated", customRolePermissionsSnapshot, len(allowed))
+	}
+	checked := 0
+	err := filepath.WalkDir("gcp", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".tf") {
+			return err
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		perms, errs := permissionStrings(string(b))
+		for _, e := range errs {
+			t.Errorf("%s: %s", p, e)
+		}
+		for _, ps := range perms {
+			checked++
+			key := filepath.ToSlash(p) + "|" + ps.Permission
+			if _, ok := knownInvalid[key]; ok {
+				usedKnown[key] = true
+				if allowed[ps.Permission] {
+					t.Errorf("%s is allowed by Google now: remove it from knownInvalid", key)
+				}
+				continue
+			}
+			if !allowed[ps.Permission] {
+				t.Errorf("%s: %s names permission %q, which is not in %s (not a permission Google allows in a custom role, or a restricted/testing one); if it is valid, refresh the snapshot as its header says",
+					p, ps.Role, ps.Permission, customRolePermissionsSnapshot)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k := range knownInvalid {
+		if !usedKnown[k] {
+			t.Errorf("knownInvalid entry %q matches nothing: remove it", k)
+		}
+	}
+	if checked < 30 {
+		t.Fatalf("only %d permission strings found in deploy/terraform: the extraction is broken", checked)
+	}
+}
+
+func TestPermissionStringsExtraction(t *testing.T) {
+	src := `resource "google_project_iam_custom_role" "a" {
+  permissions = [
+    "x.y.z", # "no.pe.rm"
+    "x.y.w", // "no.pe.rm2"
+    /* "no.pe.rm3", */
+  ]
+}
+/*
+resource "google_project_iam_custom_role" "commented" {
+  permissions = ["no.pe.rm4"]
+}
+*/
+// resource "google_project_iam_custom_role" "commented2" { permissions = ["no.pe.rm5"] }
+resource "google_project_iam_custom_role" "b" {
+  permissions = ["p.q.r", "p.q.s"]
+}
+resource "google_organization_iam_custom_role" "c" {
+  permissions = ["o.r.g"]
+}
+resource "google_storage_bucket" "notarole" {
+  permissions = ["n.o.t"]
+}
+`
+	got, errs := permissionStrings(src)
+	if len(errs) != 0 {
+		t.Fatalf("errors on a literal source: %v", errs)
+	}
+	want := []string{"google_project_iam_custom_role.a/x.y.z", "google_project_iam_custom_role.a/x.y.w", "google_project_iam_custom_role.b/p.q.r", "google_project_iam_custom_role.b/p.q.s", "google_organization_iam_custom_role.c/o.r.g"}
+	var have []string
+	for _, g := range got {
+		have = append(have, g.Role+"/"+g.Permission)
+	}
+	if !slices.Equal(have, want) {
+		t.Fatalf("got %v want %v", have, want)
+	}
+
+	// A custom role whose permissions are not a literal list must fail loudly,
+	// never be skipped: each of these once passed the test with an invalid
+	// permission in it.
+	for name, body := range map[string]string{
+		"local":           `permissions = local.sneaky`,
+		"variable":        `permissions = var.perms`,
+		"concat":          `permissions = concat(["run.jobs.get"], ["bogus.perm.x"])`,
+		"list with local": `permissions = ["run.jobs.get", local.more]`,
+		"interpolation":   `permissions = ["${local.p}"]`,
+		"no permissions":  `title = "x"`,
+		"two attributes":  "permissions = [\"a.b.c\"]\n  permissions = [\"d.e.f\"]",
+	} {
+		t.Run(name, func(t *testing.T) {
+			src := "resource \"google_project_iam_custom_role\" \"r\" {\n  " + body + "\n}\n"
+			if _, errs := permissionStrings(src); len(errs) == 0 {
+				t.Errorf("%q was not refused", body)
+			}
+		})
+	}
+}
+
+// TestRootManagedDeployerScopedDefaultsOff pins the installation root's
+// default for managed_deployer_scoped. The tftest runs plan the module
+// directly (assertions cannot reach into a child module from the root), so
+// nothing else fails if the root's default flips to true and the scoped role
+// and its binding return to every plan.
+func TestRootManagedDeployerScopedDefaultsOff(t *testing.T) {
+	b, err := fs.ReadFile(FS, "gcp/roots/installation/variables.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+	m := regexp.MustCompile(`(?m)^\s*variable\s+"managed_deployer_scoped"\s*\{`).FindStringIndex(code)
+	if m == nil {
+		t.Fatal("the installation root declares no managed_deployer_scoped variable")
+	}
+	body := code[m[1]:matchBrace(code, m[1]-1)]
+	if !hasAttr(body, "default", "false") {
+		t.Errorf("the root's managed_deployer_scoped must default to false; fugaro update never sets it in 0.8.6:\n%s", body)
+	}
 }

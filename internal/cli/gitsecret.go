@@ -111,7 +111,7 @@ type driftError struct {
 }
 
 func (e *driftError) Error() string {
-	return fmt.Sprintf("%s reads %s from %s, but the build account %s is granted %s: the secret's scope changed since %s was last applied, and a build's clone would read a secret that account may not. Run %s init --repo %s in its checkout first, so the mounts and the grants agree again",
+	return fmt.Sprintf("%s reads %s from %s, but the build account %s is granted %s: the secret's scope changed since %s was last applied, and a build's clone would read a secret that account may not. Run %s update --repo %s in its checkout first, so the mounts and the grants agree again",
 		e.what, e.logical, e.resolved, e.buildSA, e.granted, e.repo, selfCommand(), e.repo)
 }
 

@@ -2,24 +2,28 @@ package cli
 
 // The security page's source (website plan, Task W0.5).
 //
-// The site's security page is SECURITY.md rendered, and nothing else. The
+// website/content/security.md is SECURITY.md rendered, and nothing else. The
 // reconciliation refuses a paraphrase of a security claim (finding 41, D99)
 // because the document's value is that its limits are stated exactly: it
 // places "an agent doing harmful things inside its own container with the
 // credentials that job's service account is allowed to hold" out of scope,
 // and it says a trusted author's own prompt injection is "still code
-// execution under --dangerously-skip-permissions". A page that softens
-// either sentence is a false claim about the product, and a summary is
-// exactly where the softening happens.
+// execution under --dangerously-skip-permissions". A generated file that
+// softens either sentence is a false claim about the product, and a summary
+// is exactly where the softening happens.
 //
-// So website/content/security.md is generated: internal/clidoc's secdoc.go
-// writes a header and then SECURITY.md's own bytes, title, headings, links
-// and all, and `go run ./internal/clidoc` from the repository root is the
-// whole regeneration step. The three tests below hold the committed page to
-// SECURITY.md -- they read the source document, never the generator's
-// output, because a test written against the generator agrees with whatever
-// the generator does, which is the one thing a drift test must not do (plan
-// Review Focus).
+// The owner's brief of 2026-10-19 changed what the page RENDERS of this
+// document -- /security/ now carries the document's own "In short" section,
+// its own "Reporting a vulnerability" section and a link to the policy, and
+// the owner's brief of 2026-10-20 put a boundary diagram of the trust
+// boundaries above them, drawn in the document's own words
+// (website/src/pages/security.astro, held to that shape by
+// website/test/security.mjs) -- but not the generated file these tests read:
+// it is still SECURITY.md byte for byte, and the pipeline still validates it.
+// What the three tests below hold is the copy, not the page: they read the
+// source document, never the generator's output, because a test written
+// against the generator agrees with whatever the generator does, which is the
+// one thing a drift test must not do (plan Review Focus).
 //
 // The expected header block is written out again here instead of being read
 // from the generator: that program is a command, not a package a test can
@@ -132,7 +136,7 @@ func TestWebsiteSecurityPageKeepsEveryHeading(t *testing.T) {
 // TestWebsiteSecurityPageAddsNoSentenceOfItsOwn states D99's rule the other
 // way round from the byte test, and it is the half that notices the one edit
 // a page is always tempted by: a lead sentence saying what the security model
-// "really" means. Every paragraph on the page has to be a paragraph
+// "really" means. Every paragraph on the generated file has to be a paragraph
 // SECURITY.md carries -- which the generated file satisfies trivially, and a
 // page someone edited by hand almost never does.
 func TestWebsiteSecurityPageAddsNoSentenceOfItsOwn(t *testing.T) {

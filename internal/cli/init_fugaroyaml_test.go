@@ -189,7 +189,7 @@ const cliCaution = "Every teammate's CLI and every CI job or pin that runs fugar
 func warnedLine(msg string) string { return "warning: " + msg + "\n" }
 
 // stageWarn is the stage's one warning about acme/app's workflow app (the
-// base kind): the same text as fugaro init --anchor's FAIL line.
+// base kind): the same text as fugaro update --anchor's FAIL line.
 func stageWarn(lcPath string, customBase bool, reasons ...string) string {
 	return warnedLine(anchorProblemText("acme/app", "app", "base", lcPath, reasons, customBase))
 }
@@ -330,7 +330,7 @@ func TestRepoStageAnchorDiffersRefused(t *testing.T) {
 	s, _, dir := anchorRig(t, anchorLC(), yaml, "")
 	_, err := s.Apply(t.Context(), initflow.Env{Yes: true})
 	if err == nil || !strings.Contains(err.Error(), "the repository is onboarded; only the gcp_project line of fugaro.yaml was not written") ||
-		!strings.Contains(err.Error(), "gcp_project: fugaro-other, not fugaro-aurora") || !strings.Contains(err.Error(), "rerunning fugaro init is safe") {
+		!strings.Contains(err.Error(), "gcp_project: fugaro-other, not fugaro-aurora") || !strings.Contains(err.Error(), "rerunning fugaro setup is safe") {
 		t.Fatalf("err = %v", err)
 	}
 	if ExitCode(err) != ExitUserError || readYAML(t, dir) != yaml {
@@ -419,7 +419,7 @@ func TestRepoStageAnchorUnreadableRecord(t *testing.T) {
 	}
 	got := out.String()
 	if !strings.Contains(got, "its build record could not be read (") || !strings.Contains(got, "so its age is unknown") ||
-		!strings.HasSuffix(got, "(1) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it verifies this release's base base image and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image), (2) fugaro init --anchor, before you merge a change that adds gcp_project\n") {
+		!strings.HasSuffix(got, "(1) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it verifies this release's base base image and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image), (2) fugaro update --anchor, before you merge a change that adds gcp_project\n") {
 		t.Errorf("output:\n%s", got)
 	}
 }

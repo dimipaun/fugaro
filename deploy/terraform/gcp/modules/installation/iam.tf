@@ -161,8 +161,12 @@ resource "google_storage_bucket_iam_member" "runs_reader" {
   member = each.value
 }
 
-# Launchers write runs/ only. objectUser, not objectCreator: the launch
-# claim's takeover overwrites and its release deletes. The condition is the
+# Launchers write runs/ and tokens/ only. objectUser, not objectCreator: the
+# launch claim's takeover overwrites and its release deletes, and the sealed
+# budget token in tokens/ is replaced on a retry and deleted after a launch
+# that did not start (docs/design/budget-token-channel.md section 7.2, D16:
+# the deliberate widening that came with moving the token out of runs/, still
+# one condition and not a role on the bucket). The condition is the
 # input byte for byte, the same for every launcher, so IAM keeps them in one
 # binding; no description, like the job accounts' conditions.
 resource "google_storage_bucket_iam_member" "runs_launcher" {
@@ -179,13 +183,13 @@ resource "google_storage_bucket_iam_member" "runs_launcher" {
 
   lifecycle {
     precondition {
-      condition     = var.launcher_bucket_condition.title == "fugaro-launchers-runs" && var.launcher_bucket_condition.expression == "resource.name.startsWith(\"projects/_/buckets/${var.runs_bucket}/objects/runs/\")"
-      error_message = "launcher_bucket_condition must be runs/ of the runs bucket, titled fugaro-launchers-runs (gcp.LauncherBucketCondition)."
+      condition     = var.launcher_bucket_condition.title == "fugaro-launchers-runs-tokens" && var.launcher_bucket_condition.expression == "resource.name.startsWith(\"projects/_/buckets/${var.runs_bucket}/objects/runs/\") || resource.name.startsWith(\"projects/_/buckets/${var.runs_bucket}/objects/tokens/\")"
+      error_message = "launcher_bucket_condition must be runs/ and tokens/ of the runs bucket, titled fugaro-launchers-runs-tokens (gcp.LauncherBucketCondition)."
     }
   }
 }
 
-# The state bucket isn't managed here (fugaro init creates it before any
+# The state bucket isn't managed here (fugaro setup creates it before any
 # Terraform runs), but operators added later need to read and lock the state.
 resource "google_storage_bucket_iam_member" "state" {
   for_each = toset(var.operators)
@@ -209,7 +213,7 @@ resource "google_artifact_registry_repository_iam_member" "base_writer" {
 
 # The remote repository is read, never written: it proxies the public
 # ghcr.io packages this installation's jobs and builds run (design §3.2,
-# §6). The operators' own credentials are what fugaro init uses to read
+# §6). The operators' own credentials are what fugaro update uses to read
 # the verified digest back through it before it pins anything.
 resource "google_artifact_registry_repository_iam_member" "ghcr_reader" {
   for_each = toset(var.operators)

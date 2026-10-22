@@ -66,7 +66,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { _electron as electron, expect, test } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
 import type { JSONDoc } from '../../src/source/source'
@@ -75,6 +75,7 @@ import { SPEND_DEFAULT_CONTROLS, SPEND_THEMES, personView } from '../../src/rend
 import type { SpendControls } from '../../src/renderer/screens/spend'
 import { inRangeCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
+import { launchConsole } from '../support/launch'
 
 // The console's own directory, from this file's location: `test/e2e/x.spec.ts`
 // is two levels below it.
@@ -544,13 +545,13 @@ test.describe('the Spend screen', () => {
     // opens when no installation is chosen -- is not, and no spec touches the
     // machine's own console profile.
     cli.seedActiveInstallation()
-    app = await electron.launch({ args: cli.launchArgs(consoleDir), env: cli.env })
+    app = await launchConsole({ args: cli.launchArgs(consoleDir), env: cli.env })
     page = await app.firstWindow()
     await page.waitForLoadState('domcontentloaded')
   })
 
   test.afterAll(async () => {
-    await app.close()
+    await app?.close()
     cli.remove()
   })
 
@@ -786,5 +787,40 @@ test.describe('the Spend screen', () => {
       SPEND_THEMES.map((theme) => `${theme}-${process.platform}.png`).sort(),
     )
     for (const file of present) expect(file).toMatch(new RegExp(`^(${SPEND_THEMES.join('|')})-(darwin|linux)\\.png$`))
+  })
+
+  test('keeps its state words and its row boundary under forced colors (design section 6.4)', async () => {
+    // The Spend screen's half of the forced-colors smoke (section 4.4, in the half
+    // section 6.4 gives this task): the words this screen states its honesty with --
+    // `(partial)`, the gap's em dash, and the notional marker -- are still in the DOM,
+    // the figure row still has a boundary, and the numbers still carry tabular figures.
+    // The chrome's half is `entry.spec.ts`'s; a smoke, not a golden.
+    await mount(REPORT, BUDGET, 'light')
+    await page.emulateMedia({ forcedColors: 'active', colorScheme: 'light' })
+    expect(await page.evaluate(() => matchMedia('(forced-colors: active)').matches)).toBe(true)
+
+    const forced = await page.evaluate(() => {
+      const scope: ParentNode = document.getElementById('spend-mount') ?? document.createDocumentFragment()
+      const row = scope.querySelector('li.spend-row') ?? scope.querySelector('li.spend-point')
+      const computed = row === null ? null : getComputedStyle(row)
+      const number = scope.querySelector('.spend-num')
+      return {
+        words: document.getElementById('spend-mount')?.textContent ?? '',
+        rowVisibility: computed?.visibility ?? null,
+        rowWidth: computed?.borderBottomWidth ?? null,
+        rowColour: computed?.borderBottomColor ?? null,
+        tabular: number === null ? null : getComputedStyle(number).fontVariantNumeric,
+      }
+    })
+
+    expect(forced.words, 'a partial day lost its marker').toContain('(partial)')
+    expect(forced.words, 'the chart lost its gap mark').toContain('—')
+    expect(forced.words, 'a cap that cannot be read lost its mark').toContain('n/a')
+    expect(forced.rowVisibility).toBe('visible')
+    expect(forced.rowWidth, 'the figure row’s boundary collapsed under forced colors').not.toBe('0px')
+    expect(forced.rowColour).not.toBe('rgba(0, 0, 0, 0)')
+    expect(forced.tabular, 'the numbers lost their tabular figures').toContain('tabular-nums')
+
+    await page.emulateMedia({ forcedColors: 'none' })
   })
 })

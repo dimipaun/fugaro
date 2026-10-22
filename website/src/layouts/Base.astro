@@ -8,8 +8,9 @@
  *   1. **The head's facts.** The canonical URL, the sitemap hint and the OpenGraph tags
  *      are composed from `website/data/site.yaml` — the one absolute origin the site
  *      knows — and never hard-coded, so W2.2's domain change is one line in that file and
- *      a rebuild (D92, step 1). The description is README.md's own tagline line, for the
- *      same reason.
+ *      a rebuild (D92, step 1). The homepage's title carries README.md's own headline and
+ *      the description is the README's subline, for the same reason: the promise is a fact
+ *      of the repository, read and not restated (changes spec item 2).
  *   2. **The content pipeline.** `loadSite()` reads every generated file and every fact
  *      the site renders, and throws — naming the file — when one is missing or malformed.
  *      Calling it here means a build that renders a page has checked the whole generated
@@ -30,8 +31,11 @@
  *      is the only place the exception is written down.
  *
  *   5. **The site's one script.** `public/scripts/site.js` (D183) is loaded here, once, for
- *      every page: it is the copy control on the command blocks (P6), and it is the only
- *      script file the artifact carries. `defer` is the load's whole contract — the script
+ *      every page: it is the copy control on the command blocks (P6), the menu's Escape and
+ *      outside-click close and its hover-open on a pointer that hovers (P3, and the owner's
+ *      brief of 2026-10-18 item 1), and the consent gate's banner and analytics bootstrap
+ *      (W3.2), and it is the only script file the artifact carries. `defer` is the load's
+ *      whole contract — the script
  *      runs after the document is parsed, so every block it drives is already in the tree —
  *      and nothing on any page depends on it: the commands are in the markup in full and the
  *      controls are emitted `hidden` and revealed by it.
@@ -55,7 +59,7 @@ import '../styles/base.css'
 interface Props {
   /** The page's `<title>` suffix and its `og:title`: the page names itself. */
   title: string
-  /** The page's description, when the tagline is not the right one. */
+  /** The page's description, when the subline is not the right one. */
   description?: string
   /**
    * Offer the analytics choice even when a decision is already stored. The privacy page sets
@@ -78,8 +82,26 @@ const facts = site.facts
 // word.
 const SITE_NAME = 'Fugaro'
 
-const pageTitle = title === SITE_NAME ? title : `${title} · ${SITE_NAME}`
-const pageDescription = description ?? site.tagline
+// The footer's link to the repository, labelled with the repository's own name rather than
+// with its address (review round 5: the raw URL as link text ran the width of the footer's
+// first column and read as a fact about the address, next to labels that are three words
+// long). The label is **derived from `site.yaml`'s URL**, not written here: `owner/name` is
+// the last two segments of it, so a repository that moved would move its own label with it,
+// and this file still holds no fact the data file does not.
+const REPOSITORY_LABEL = new URL(facts.repository).pathname.replace(/^\/+|\/+$/g, '') || facts.repository
+
+// The `<title>`, and the two card titles with it. The homepage is the one page whose title
+// is the promise rather than a section's name — there is no section to name, the page IS
+// the headline — so it carries the site's name and the headline, and the changes spec's
+// item 2 puts the headline there (the home hero, the `<title>`, the cards). Every other
+// page names itself, and the site's name is the suffix: `Getting started · Fugaro`.
+const pageTitle = title === SITE_NAME ? `${SITE_NAME} — ${site.tagline}` : `${title} · ${SITE_NAME}`
+
+// The description is README.md's subline — the one sentence under the tagline — unless the
+// page names its own. The subline and not the tagline: a description is a sentence about
+// what the product is, which is what the subline is, and the headline is four words with
+// no verb in them (changes spec item 2).
+const pageDescription = description ?? site.subline
 
 // The canonical URL: the origin from site.yaml and the path of the page being built.
 // `Astro.url` carries the build's own origin — the dev server's `localhost` address,
@@ -88,6 +110,7 @@ const pageDescription = description ?? site.tagline
 // `website/test/layout.mjs` holds it to that (step 1).
 const pagePath = Astro.url.pathname.endsWith('/') ? Astro.url.pathname : `${Astro.url.pathname}/`
 const canonicalHref = new URL(pagePath, facts.canonicalURL).href
+const ogImageHref = new URL('/og-image.png', facts.canonicalURL).href
 
 // The sitemap hint, emitted only when the build actually produces a sitemap. No Part 1
 // task adds the integration that writes one, so today this renders nothing: a `<link>` to
@@ -101,35 +124,54 @@ const sitemapHref = site.sitemapHref
 // the page, and one aimed at a file that is not there is a request for nothing.
 const fonts = site.fonts
 
-// The sections of the site, in three groups of three (P3, D182: Product, Reference, Project).
-// The routes are the ones the plan's page list fixes (how-it-works, getting-started,
-// caps-and-costs, console, docs, security, changelog, faq, community) and each label is the
-// route's own words rather than a copy of a page's title — a nav that restated the pages
-// would be a second copy of them to keep in step. Home is not one of them: the wordmark
-// below is the link home, so `/` is listed once, as the logo.
+// The sections of the site, in two groups (P3's menu, D182, **with the Reference group dropped
+// by the owner's feedback of 2026-10-21**: "let's drop the top reference menu. We'll move the
+// submenu console under product, and the rest go under Project"). The routes are the ones the
+// plan's page list fixes (how-it-works, why-gcp, getting-started, caps-and-costs, console,
+// mobile, docs, security, changelog, faq, community) and each label is the route's own words
+// rather than a copy of a page's title — a nav that restated the pages would be a second copy
+// of them to keep in step. The groups' six-and-five split is the feedback's, not a symmetry:
+// *Product* carries the pages about running the thing the visitor came for — how it works and
+// where it runs, how to start, what it costs, the console and the phone app — and *Project*
+// the five about the project itself, Docs and Changelog included. **Why GCP is the second
+// *Product* item** (D238, the zoom-diagrams plan's Part 2): the brief puts it "right after the
+// zoom diagrams", because the fourth level is the picture of everything in one project and
+// the page is the argument for it.
+//
+// **Mobile is the sixth of them** (the zoom-diagrams plan §3, Part 3, item 6, with the owner's
+// answers of 2026-10-21 under it): the phone app's page is the console page's sister, and
+// Console is a Product item, so the new item goes beside it rather than into Project. The two
+// groups stay two — the plan's Part 3 asks for one item and not a third group — and
+// `website/test/base-styles.mjs`'s `GROUPS_WANTED` is what holds both to that.
+//
+// **Home is not one of them, and it is in the menu all the same** (the owner's feedback of
+// 2026-10-21: "I think we need a 'Home' as the first menu"). D182 took Home out of the menu
+// and left the wordmark as the one link to `/`; the feedback puts it back, as the item in
+// front of the groups, and the wordmark stays the way home it has always been — the two
+// links say the same thing to a reader who reaches for either. `/` is therefore listed twice,
+// which is why the current-page mark is not decided here: `isCurrent('/')` marks the menu's
+// Home link and nothing else on the page, because a page carries exactly one
+// `aria-current="page"` (RF4) and the link a reader looks for in a menu is the one to mark.
 const NAV_GROUPS = [
   {
     label: 'Product',
     items: [
       { href: '/how-it-works/', label: 'How it works' },
+      { href: '/why-gcp/', label: 'Why GCP' },
       { href: '/getting-started/', label: 'Getting started' },
       { href: '/caps-and-costs/', label: 'Caps and costs' },
-    ],
-  },
-  {
-    label: 'Reference',
-    items: [
-      { href: '/docs/', label: 'Docs' },
       { href: '/console/', label: 'Console' },
-      { href: '/changelog/', label: 'Changelog' },
+      { href: '/mobile/', label: 'Mobile' },
     ],
   },
   {
     label: 'Project',
     items: [
+      { href: '/docs/', label: 'Docs' },
       { href: '/security/', label: 'Security' },
       { href: '/faq/', label: 'FAQ' },
       { href: '/community/', label: 'Community' },
+      { href: '/changelog/', label: 'Changelog' },
     ],
   },
 ]
@@ -151,7 +193,10 @@ function navItem(href: string) {
 const FOOTER_NAV = [...['/security/', '/changelog/'].map(navItem), { href: '/privacy/', label: 'Privacy' }]
 
 // Whether a route is the page being built, for the one `aria-current="page"` a page carries:
-// the wordmark on the home page, the menu link on every other page it lists (P3, RF4).
+// the menu's own link to it on every page the menu lists, which is every page of the site
+// since the owner's feedback of 2026-10-21 put Home back in the menu (P3, RF4). The wordmark
+// carries no mark of its own any more: it links the same route the menu's first item links,
+// and two marks on the home page would be two claims about which page is being read.
 const isCurrent = (href: string) => pagePath === href
 
 // Analytics (D93, D106; the owner's ruling of 2026-10-18 in the amendment under plan Task
@@ -179,15 +224,21 @@ const analyticsEnabled = facts.analytics.enabled
 
     {sitemapHref && <link rel="sitemap" type="application/xml" href={sitemapHref} />}
 
-    {/* OpenGraph and Twitter cards, from the same facts as the tags above. There is no
-        og:image: the site ships no image, and a card that points at a file the build does
-        not produce is a broken pointer rather than a card. */}
+    {/* OpenGraph and Twitter cards, from the same facts as the tags above. The card's
+        picture is public/og-image.png (1200x630: the logo, the tagline and the subline),
+        a file this site ships, named by an absolute URL because a card reader fetches it
+        from outside the page. */}
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content={SITE_NAME} />
     <meta property="og:title" content={pageTitle} />
     <meta property="og:description" content={pageDescription} />
     <meta property="og:url" content={canonicalHref} />
-    <meta name="twitter:card" content="summary" />
+    <meta property="og:image" content={ogImageHref} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content={`${SITE_NAME}: ${site.tagline}`} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content={ogImageHref} />
 
     {/* The icons and the manifest, all derived from brand/fugaro-logo.png by
         scripts/gen-brand-icons.py and served from public/, so no icon is fetched from
@@ -209,8 +260,8 @@ const analyticsEnabled = facts.analytics.enabled
          transition on the page immediately, rather than having to be given a second
          reduced-motion stylesheet by each component's author. The durations are 1ms rather
          than 0 because a zero-duration animation with `fill-mode: both` still fires its end
-         state, and 1ms keeps `animationend` and `transitionend` listeners working — the
-         site's own terminal (W1.4) reaches its finished frame through exactly that. */
+         state, and 1ms keeps `animationend` and `transitionend` listeners working, so a
+         component that reveals something over time still lands on its finished frame. */
       @media (prefers-reduced-motion: reduce) {
         *,
         *::before,
@@ -243,12 +294,15 @@ const analyticsEnabled = facts.analytics.enabled
       }
 
       /* The skip link, hidden until it is focused: the first thing a keyboard reaches on
-         every page is the way past the navigation (W1.11 checks the site's anchors). */
+         every page is the way past the navigation (W1.11 checks the site's anchors). Its
+         layer is the chrome's, above the header it skips past (tokens.css names the scale):
+         the header has a layer of its own now, so a skip link without one would be drawn
+         under the row it is about to skip. */
       .skip-link {
         position: absolute;
         left: -9999px;
         top: 0;
-        z-index: 100;
+        z-index: var(--z-chrome);
       }
 
       .skip-link:focus {
@@ -284,65 +338,85 @@ const analyticsEnabled = facts.analytics.enabled
     <header class="site-header">
       {/* The logo is decoration beside the name, so its alt is empty: the link's
           accessible name is the word "Fugaro", said once. The file is 2x the size drawn.
-          The link is also the way home: D182 takes Home out of the menu and leaves the
-          wordmark as the one link to `/`, marked as the current page when the page being
-          read is the home page, so every page still carries exactly one
-          `aria-current="page"` (P3, RF4). */}
-      <a class="site-wordmark" href="/" rel="home" aria-current={isCurrent('/') ? 'page' : undefined}>
-        <img src="/logo.png" alt="" width="47" height="32" decoding="async" />{SITE_NAME}
+          The link is also a way home — the other is the menu's first item (the owner's
+          feedback of 2026-10-21) — and it carries no `aria-current` of its own: the mark is
+          on the menu's Home link, so every page still carries exactly one
+          `aria-current="page"` (P3, RF4).
+
+          The name is in its own `<span>` because on a phone it is the name — and not the
+          group labels beside it — that gives way (the owner's brief of 2026-10-19,
+          item 1: the menu's labels stay in the header's row at 375 px, and the wordmark's
+          text is hidden below about 380 px, the mark alone standing for the way home).
+          `base.css` hides it from the eye and not from a screen reader, so the link keeps
+          its name at every width. */}
+      <a class="site-wordmark" href="/" rel="home">
+        <img src="/logo.png" alt="" width="47" height="32" decoding="async" /><span class="site-wordmark-name">{SITE_NAME}</span>
       </a>
 
-      {/* The menu: three groups of three (P3, D182). On a wide viewport they are three
-          dropdowns in the header's one row; on a narrow one the whole menu is behind the
-          drawer toggle above the panel. Both levels are `<details>`, so both open and close
-          with JavaScript off, need no CSP decision and cost nothing of the JavaScript budget;
-          `public/scripts/site.js` adds only what `<details>` does not do by itself — Escape
-          and a click outside close what is open.
+      {/* The menu: the way home and then the site's groups (P3, D182, the Reference group
+          dropped by the owner's feedback of 2026-10-21; the owner's feedback of the same day,
+          item 2, put Home at the front of it). Home is a plain
+          link and not a group — it is one page, and it has nothing under it — and it is drawn
+          in the same row as the labels, on a phone and on a wide viewport alike: the
+          brief's "first menu" is the first item of the one menu the site has, and the phone
+          shows that menu rather than a collapsed version of it (the owner's brief of
+          2026-10-19, item 1). The group labels are in the header's one row at every
+          width, and each one opens its own panel of links: on a wide viewport a dropdown
+          under its label, on a phone a drawer across the header's full width. There is no
+          toggle standing in front of the whole menu — the brief of 2026-10-19 took the single
+          "Menu" button away, so a phone reaches any section in one tap rather than two.
 
-          **The panel is the toggle's next sibling, not its child, and that is the one
-          structural decision here.** A closed `<details>` hides its own children in a way
-          author CSS cannot portably override — the engines that hide them with
-          `display: none` and the ones that hide them with `::details-content` need different
-          overrides, and getting it wrong on a wide viewport would hide the whole menu. As
-          siblings, `base.css` reads the toggle's `open` attribute and shows the panel with a
-          sibling combinator: no override, in any engine, below the breakpoint. Up here the
-          panel is not behind the drawer at all — `base.css`'s 48rem block displays it and
-          takes the drawer away in the same breath, so there is no `open` attribute to read
-          and none is wanted: the wide layout shows the same panel without opening anything,
-          because the wide rule says `display: block`. Dropping that one declaration hides
-          the whole menu at every width at or above 48rem, which is the failure
-          `base-styles.mjs` keeps a case for.
+          Both levels are `<details>`, so both open and close with JavaScript off, need no
+          CSP decision and cost nothing of the JavaScript budget; `public/scripts/site.js`
+          adds only what `<details>` does not do by itself — Escape and a click outside close
+          what is open; on a device whose pointer hovers, a group's submenu opens when the
+          pointer arrives at it (the owner's brief of 2026-10-18, item 1); the keyboard's
+          focus arriving at a trigger opens its group, so Tab reaches the links inside a
+          closed one, while the focus a click or a tap moves opens nothing — the click that
+          brought it toggles the group itself; the trigger's `aria-expanded` is kept in step
+          with the group; and a close that would strand the reader's focus hands it back to
+          the trigger. Two things decide the hover, and the script asks both: `matchMedia` for
+          whether the device's pointer hovers at all — watched, not sampled once, so a pointer
+          plugged in or taken away after the page loaded is answered too — and the event's own
+          pointer, so that a mouse or a pen opens the group and a finger never does, whatever
+          the device answers. A tap therefore goes through the click the `<summary>` already
+          has, on every device.
 
-          Because the panel is not inside the toggle, the toggle names it: `aria-controls`
-          is the one programmatic link between the drawer's expanded state (which the
-          `<summary>` exposes by itself) and the panel that state shows. And the three groups
-          share one `name`, which makes them an exclusive set without a line of script:
-          opening *Reference* closes *Product*, so two dropdowns never hang over each other. */}
+          **A group's list is the `<details>`'s own child, and that is the one structural
+          decision here.** A closed `<details>` hides its children in a way author CSS cannot
+          portably override — the engines that hide them with `display: none` and the ones
+          that hide them with `::details-content` need different overrides — so the menu does
+          not fight it: `base.css` positions the list (out of the header's flow, so opening
+          one never grows the header's one row) and lets the `<details>` decide whether it is
+          drawn at all. Nothing has to be shown without an `open` attribute at any width,
+          which is what the toggle-and-sibling-panel arrangement used to need, and the drawer
+          it belonged to is gone with it.
+
+          The groups share one `name`, which makes them an exclusive set without a line
+          of script: opening *Project* closes *Product*, so two panels never hang over each
+          other. */}
       <nav class="site-nav" aria-label="Sections">
-        <details class="site-nav-drawer">
-          <summary class="site-nav-toggle" aria-controls="site-nav-panel">Menu</summary>
-        </details>
-
-        <div class="site-nav-panel" id="site-nav-panel">
-          <ul class="site-nav-groups">
-            {NAV_GROUPS.map((group) => (
-              <li class="site-nav-group">
-                <details name="site-nav-group" data-current={group.items.some((item) => isCurrent(item.href)) ? '' : undefined}>
-                  <summary>{group.label}</summary>
-                  <ul>
-                    {group.items.map((item) => (
-                      <li>
-                        <a href={item.href} aria-current={isCurrent(item.href) ? 'page' : undefined}>
-                          {item.label}
-                        </a>
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              </li>
-            ))}
-          </ul>
-        </div>
+        <ul class="site-nav-groups">
+          <li class="site-nav-home">
+            <a href="/" aria-current={isCurrent('/') ? 'page' : undefined}>Home</a>
+          </li>
+          {NAV_GROUPS.map((group) => (
+            <li class="site-nav-group">
+              <details name="site-nav-group" data-current={group.items.some((item) => isCurrent(item.href)) ? '' : undefined}>
+                <summary>{group.label}</summary>
+                <ul>
+                  {group.items.map((item) => (
+                    <li>
+                      <a href={item.href} aria-current={isCurrent(item.href) ? 'page' : undefined}>
+                        {item.label}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            </li>
+          ))}
+        </ul>
       </nav>
     </header>
 
@@ -354,11 +428,12 @@ const analyticsEnabled = facts.analytics.enabled
       {/* The repository, from site.yaml, and two of the site's own sections from NAV above:
           the security policy and the changelog, the two pages a reader looks for at the foot
           of a project's site. No fact is written here that the layout did not already hold
-          (W1.7 links the same repository from the docs hub). */}
+          (W1.7 links the same repository from the docs hub) — including the link's label,
+          which is the repository's own name read off that URL. */}
       <nav aria-label="Footer">
         <ul>
           <li>
-            <a href={facts.repository} rel="noopener">{facts.repository}</a>
+            <a href={facts.repository} rel="noopener">{REPOSITORY_LABEL}</a>
           </li>
           {FOOTER_NAV.map((item) => (
             <li>

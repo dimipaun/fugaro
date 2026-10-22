@@ -107,12 +107,12 @@ func putSecret(t *testing.T, sm *gcpfake.Secrets, project, slug, name string, va
 }
 
 // TestDoctorWithNoInstallationSaysRunInit: with no project config anywhere,
-// doctor says so and names fugaro init as the fix, rather than guessing at
+// doctor says so and names fugaro setup as the fix, rather than guessing at
 // one or crashing.
 func TestDoctorWithNoInstallationSaysRunInit(t *testing.T) {
 	isolateProjects(t, t.TempDir())
 	out, _, err := execute(t, "doctor", "--dir", t.TempDir())
-	if ExitCode(err) != ExitUserError || !strings.Contains(out, "fugaro init") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "fugaro setup") {
 		t.Fatalf("exit %d, err %v, out %q", ExitCode(err), err, out)
 	}
 
@@ -125,7 +125,7 @@ func TestDoctorWithNoInstallationSaysRunInit(t *testing.T) {
 		t.Fatalf("json: %v\n%s", jerr, out)
 	}
 	c, ok := doctorCheckByID(o.Checks, "installation")
-	if !ok || c.OK || !strings.Contains(c.Fix, "fugaro init") {
+	if !ok || c.OK || !strings.Contains(c.Fix, "fugaro setup") {
 		t.Fatalf("installation check = %+v", c)
 	}
 }
@@ -360,8 +360,76 @@ func TestDoctorOpenProvidersIsInformational(t *testing.T) {
 	if !strings.Contains(c.Problem, "provider openrouter has no allow_data_to") || !strings.Contains(c.Problem, "may mount its key") {
 		t.Fatalf("problem = %q", c.Problem)
 	}
-	if !strings.Contains(c.Fix, "allow_data_to") || !strings.Contains(c.Fix, "init --repo") {
+	if !strings.Contains(c.Fix, "allow_data_to") || !strings.Contains(c.Fix, "update --repo") {
 		t.Fatalf("fix = %q", c.Fix)
+	}
+	if !o.OK {
+		t.Fatalf("an informational state failed doctor: %+v", o)
+	}
+	if after := failing(t); !maps.Equal(before, after) {
+		t.Fatalf("--strict: the finding changed the verdict: before %v, after %v", before, after)
+	}
+}
+
+// TestDoctorProviderSecretNameIsInformational: doctor names every provider
+// whose key is not stored under the name the convention gives it
+// (<provider>-api-key), as an informational finding, and says the two halves
+// that make it information rather than a failure: nothing is renamed, and the
+// conventional name is reserved for that provider either way. The owner ruled
+// the off-convention state valid (2026-10-18), so it never fails doctor, with
+// --strict or without, and an on-convention installation reports nothing at
+// all.
+func TestDoctorProviderSecretNameIsInformational(t *testing.T) {
+	r := newDoctorRig(t)
+	// The rig has failures of its own (no checkout for plugin-pin, no base
+	// image), so strictness is compared rather than expected to pass: the set
+	// of checks that fail under --strict must be the same one as before the
+	// provider existed.
+	failing := func(t *testing.T) map[string]string {
+		t.Helper()
+		out, _, _ := execute(t, "doctor", "--strict", "--json", "--dir", t.TempDir())
+		var o doctorOutput
+		if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+			t.Fatalf("json: %v\n%s", jerr, out)
+		}
+		m := map[string]string{}
+		for _, c := range o.Checks {
+			if !c.OK && c.Severity != "info" {
+				m[c.ID] = c.Severity
+			}
+		}
+		return m
+	}
+	before := failing(t)
+	// On convention: openrouter's key IS openrouter-api-key, and deepseek's
+	// entry spells the algorithm it means, so nothing is reported -- the
+	// warning is about a name, not about a provider existing.
+	addLocalLines(t, r, "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n"+
+		"    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n")
+	if _, ok := doctorCheckByID(doctorJSON(t).Checks, "provider-secret-name"); ok {
+		t.Fatal("an on-convention key was reported")
+	}
+	// Off convention: the finding names the entry, the name it uses and the
+	// name the convention gives it.
+	addLocalLines(t, r, "  deepseek:\n    kind: anthropic-compat\n    base_url: https://api.deepseek.com/anthropic\n"+
+		"    auth: bearer\n    secret: ds-key\n    models: [\"deepseek-chat\"]\n")
+	o := doctorJSON(t)
+	c, ok := doctorCheckByID(o.Checks, "provider-secret-name")
+	if !ok || c.OK || c.Severity != "info" {
+		t.Fatalf("provider-secret-name = %+v", c)
+	}
+	for _, want := range []string{"deepseek", "ds-key", "deepseek-api-key"} {
+		if !strings.Contains(c.Problem, want) {
+			t.Errorf("the problem does not say %q: %s", want, c.Problem)
+		}
+	}
+	if strings.Contains(c.Problem, "openrouter") {
+		t.Errorf("an on-convention provider is named: %s", c.Problem)
+	}
+	for _, want := range []string{"rename nothing", "reserved"} {
+		if !strings.Contains(c.Fix, want) {
+			t.Errorf("the fix does not say %q: %s", want, c.Fix)
+		}
 	}
 	if !o.OK {
 		t.Fatalf("an informational state failed doctor: %+v", o)
@@ -667,7 +735,7 @@ func TestDoctorGitHubAppCheckRefusesOnGrantMismatch(t *testing.T) {
 	if !ok || c.OK || c.Severity != "warning" {
 		t.Fatalf("github-app:acme/app = %+v (%v)", c, ok)
 	}
-	if !strings.Contains(c.Problem, repoID) || !strings.Contains(c.Problem, projectID) || !strings.Contains(c.Fix, "init --repo") {
+	if !strings.Contains(c.Problem, repoID) || !strings.Contains(c.Problem, projectID) || !strings.Contains(c.Fix, "update --repo") {
 		t.Fatalf("the warning names neither ID nor the fix: %+v", c)
 	}
 }
@@ -1418,7 +1486,7 @@ func TestDoctorZDRCheckSaysUnverified(t *testing.T) {
 
 // addLocalLines appends configuration to the rig's local config file, as an
 // owner's own hand edit would (project_secrets and repos are local-config-only
-// and never written by a Fugaro command other than init --repo).
+// and never written by a Fugaro command other than update --repo).
 func addLocalLines(t *testing.T, r *doctorRig, yaml string) {
 	t.Helper()
 	data, err := os.ReadFile(r.cfgPath)
@@ -1431,7 +1499,7 @@ func addLocalLines(t *testing.T, r *doctorRig, yaml string) {
 }
 
 // repoLabel is the fugaro_repo label of a repository slug, for seeding the
-// fake Secret Manager with a container that looks like init --repo's own.
+// fake Secret Manager with a container that looks like update --repo's own.
 func repoLabel(t *testing.T, slug string) string {
 	t.Helper()
 	l, err := gcp.RepoLabel(slug)
@@ -1448,7 +1516,7 @@ func projectLabels(fugaroProject, name string) map[string]string {
 }
 
 // seedProjectSecret creates the project-wide container of name with no
-// version at all: init --repo created it (or a hand edit did), and nothing
+// version at all: update --repo created it (or a hand edit did), and nothing
 // has ever been stored.
 func seedProjectSecret(t *testing.T, sm *gcpfake.Secrets, fugaroProject, name string) string {
 	t.Helper()
@@ -1499,7 +1567,7 @@ func projectSecretsRig(t *testing.T) *doctorRig {
 func TestDoctorFlagsUnstoredProjectSecret(t *testing.T) {
 	r := projectSecretsRig(t)
 	slug := mustSlug("github", "acme/app")
-	// Both containers exist (init --repo created them) and neither has an
+	// Both containers exist (update --repo created them) and neither has an
 	// enabled version: a container with no version can never be mounted.
 	r.sm.Seed(gcp.SecretID(slug, "github-app-key"), map[string]string{
 		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, slug), gcp.LabelSecret: "github-app-key"}, nil)
@@ -1688,7 +1756,7 @@ func TestDoctorFlagsStaleScope(t *testing.T) {
 	if !strings.Contains(c.Problem, "github-app-key") || !strings.Contains(c.Problem, projID) || !strings.Contains(c.Problem, repoID) {
 		t.Fatalf("problem doesn't name the secret and both copies: %q", c.Problem)
 	}
-	if !strings.Contains(c.Fix, "fugaro init --repo") {
+	if !strings.Contains(c.Fix, "fugaro update --repo") {
 		t.Fatalf("fix doesn't name the command that re-applies it: %q", c.Fix)
 	}
 }
@@ -1981,7 +2049,7 @@ func TestDoctorSecretScopeSaysNoEnabledCopyNotNoCopyStored(t *testing.T) {
 // with an enabled version wins over the project's forever (design
 // project-secrets.md §5, the footgun `fugaro secrets set` warns about at
 // store time), so the project's value never reaches this repository. A
-// warning, not red: the next fugaro init --repo cannot change it, and the
+// warning, not red: the next fugaro update --repo cannot change it, and the
 // value the repository mounts is the one its own copy holds.
 func TestDoctorWarnsOnAShadowedProjectName(t *testing.T) {
 	r := projectSecretsRig(t)
@@ -2129,7 +2197,7 @@ func TestDoctorFlagsExtraProjectSecretAccessor(t *testing.T) {
 	if !strings.Contains(c.Problem, "acme/old") || !strings.Contains(c.Problem, "github-app-key") {
 		t.Fatalf("problem doesn't name the repository and the secret: %q", c.Problem)
 	}
-	if !strings.Contains(c.Fix, "fugaro init --repo") || !strings.Contains(c.Fix, "--allow-delete") {
+	if !strings.Contains(c.Fix, "fugaro update --repo") || !strings.Contains(c.Fix, "--allow-delete") {
 		t.Fatalf("fix doesn't name the follow-up command and its flag: %q", c.Fix)
 	}
 	if strings.Contains(out, "project-value") {
@@ -2315,5 +2383,178 @@ func TestDoctorChecksTheCosignVerifier(t *testing.T) {
 	c := check(t, run(t))
 	if c.OK || c.Severity != "info" || !strings.Contains(c.Problem, "cosign is not on PATH") || !strings.Contains(c.Fix, "install cosign") {
 		t.Errorf("with no cosign: %+v", c)
+	}
+}
+
+// projectAccountsConfig is the local config the project-account rigs add: a
+// project-wide container for the named account acme-personal and one for the
+// default account, and the standard profile serving both — the two jobs
+// config.ProjectJobAccounts computes for that profile, each holding one
+// account's token (config.ProjectJobTokenAccount: the named account on a job
+// of its own, the default account on the profile's no-account job, D5).
+const projectAccountsConfig = "claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/app]\n" +
+	"project_secrets:\n  claude-oauth-token:\n    allow_data_to: [acme/app]\n" +
+	"profiles:\n  standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h, claude_accounts: [acme-personal, default] }\n"
+
+// projectAccountRig is a doctor rig inside a checkout of github.com/acme/app
+// whose project serves two Claude account jobs.
+func projectAccountRig(t *testing.T) *doctorRig {
+	t.Helper()
+	r := newDoctorRig(t)
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	addClaudeAccounts(t, r, projectAccountsConfig)
+	return r
+}
+
+// doctorProjectAccounts is doctor --json on the rig above, the checks by ID.
+func doctorProjectAccounts(t *testing.T, r *doctorRig) (string, []doctorCheck) {
+	t.Helper()
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	if a := r.sm.Accessed(); len(a) != 0 {
+		t.Fatalf("doctor read a secret value: %v", a)
+	}
+	return out, o.Checks
+}
+
+// TestDoctorProjectAccountStored: every shared job a profile serves for a
+// Claude account mounts that account's token by a static secret_env entry, so
+// the project-wide container the job names must have a stored version —
+// otherwise every run of that job starts with a credential that is not
+// there. doctor fails, names the job, the account and the container of each
+// one, states the default account's reach, and hands over the commands that
+// store them; no secret value is ever read.
+//
+// Mutation (run, restored): read the version out of the array instead of the
+// label (treat a stored secret as missing) or skip the default account's
+// entry (config.ProjectJobTokenAccount's no-account case): this test fails on
+// the container it stops naming.
+func TestDoctorProjectAccountStored(t *testing.T) {
+	r := projectAccountRig(t)
+	out, _, err := execute(t, "doctor", "--json")
+	if err == nil {
+		t.Fatal("want doctor to fail: no account job's token is stored")
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "project-account-stored")
+	if !ok || c.OK || c.Severity != "" {
+		t.Fatalf("project-account-stored = %+v", c)
+	}
+	accountJob, defaultJob := gcp.ProjectJobName("standard", "github", "acme-personal"), gcp.ProjectJobName("standard", "github", "")
+	for _, want := range []string{accountJob, defaultJob, "acme-personal", "default",
+		"claude-oauth-token-acme-personal", "claude-oauth-token"} {
+		if !strings.Contains(c.Problem, want) {
+			t.Errorf("the problem %q lacks %q", c.Problem, want)
+		}
+	}
+	// The default account's reach is the sentence this check owes the owner:
+	// its token rides the no-account job, so every run of that job holds it
+	// (D5, SECURITY.md's residual), and doctor states it rather than gating it.
+	if !strings.Contains(c.Problem, "every run of that job holds it") || !strings.Contains(c.Problem, "agent.auth is not oauth") {
+		t.Errorf("the problem does not state the default account's reach: %q", c.Problem)
+	}
+	for _, want := range []string{"claude setup-token", "secrets set claude-oauth-token-acme-personal --project-wide", "secrets set claude-oauth-token --project-wide"} {
+		if !strings.Contains(c.Fix, want) {
+			t.Errorf("the fix %q lacks %q", c.Fix, want)
+		}
+	}
+	if a := r.sm.Accessed(); len(a) != 0 {
+		t.Fatalf("doctor read a secret value: %v", a)
+	}
+}
+
+// TestDoctorProjectAccountStoredPresent: with both containers stored the
+// check passes, and it reports each account job's reach — the job, the
+// account, the container it mounts and the repositories that token may be
+// used by — since that list is what the token's blast radius is (design
+// §6.1). A repository's own copy does not satisfy it: a shared job mounts
+// the project-wide container its secret_env names.
+func TestDoctorProjectAccountStoredPresent(t *testing.T) {
+	r := projectAccountRig(t)
+	putProjectSecret(t, r.sm, "aurora", "claude-oauth-token-acme-personal", []byte("fake-token-0123456789"))
+	putProjectSecret(t, r.sm, "aurora", "claude-oauth-token", []byte("fake-token-9876543210"))
+	out, checks := doctorProjectAccounts(t, r)
+	c, ok := doctorCheckByID(checks, "project-account-stored")
+	if !ok || !c.OK || c.Severity != "info" {
+		t.Fatalf("project-account-stored = %+v", c)
+	}
+	for _, want := range []string{
+		gcp.ProjectJobName("standard", "github", "acme-personal"), "account acme-personal",
+		"token claude-oauth-token-acme-personal", "repositories acme/app in claude_accounts.acme-personal.allow_data_to",
+		gcp.ProjectJobName("standard", "github", ""), "account default",
+		"token claude-oauth-token", "in project_secrets.claude-oauth-token.allow_data_to",
+		"every run of that job holds it",
+	} {
+		if !strings.Contains(c.Problem, want) {
+			t.Errorf("the reach line %q lacks %q", c.Problem, want)
+		}
+	}
+	if !strings.Contains(c.Fix, "launcher-jobs") {
+		t.Errorf("the check does not point at the launcher's own reach: %q", c.Fix)
+	}
+	if strings.Contains(out, "fake-token") {
+		t.Fatalf("a value leaked into doctor's output:\n%s", out)
+	}
+}
+
+// TestDoctorProjectAccountStoredSilentWithNoAccounts: an installation whose
+// profiles serve no Claude account gets no new check — byte-identical output
+// to the release before this one, the same silence claude-accounts-stored
+// keeps for an installation with no claude_accounts.
+func TestDoctorProjectAccountStoredSilentWithNoAccounts(t *testing.T) {
+	newDoctorRig(t)
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	_, checks := doctorProjectAccounts(t, newDoctorRig(t))
+	if c, ok := doctorCheckByID(checks, "project-account-stored"); ok {
+		t.Fatalf("an installation serving no account job got a new check: %+v", c)
+	}
+}
+
+// TestDoctorProjectAccountStoredFailsClosedWhenUnreachable: the profile
+// serves an account and the secrets list could not be read, so whether the
+// container has a version is unknown, not no. doctor warns rather than going
+// silent, the discipline claude-accounts-stored keeps (fail closed).
+//
+// Mutation (run, restored): return nil instead of a warning when the listing
+// is unavailable. This test finds no check at all.
+func TestDoctorProjectAccountStoredFailsClosedWhenUnreachable(t *testing.T) {
+	r := projectAccountRig(t)
+	data, err := os.ReadFile(r.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken := strings.Replace(string(data), r.sm.URL, "http://127.0.0.1:1", 1)
+	if broken == string(data) {
+		t.Fatal("secret_manager endpoint not found in the local config to break")
+	}
+	if err := os.WriteFile(r.cfgPath, []byte(broken), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("a listing that could not be read must warn, not fail: %v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "project-account-stored")
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("project-account-stored = %+v", c)
+	}
+	if !strings.Contains(c.Problem, "could not list the project's secrets") ||
+		!strings.Contains(c.Problem, gcp.ProjectJobName("standard", "github", "acme-personal")) {
+		t.Fatalf("the warning does not say what could not be checked: %+v", c)
 	}
 }

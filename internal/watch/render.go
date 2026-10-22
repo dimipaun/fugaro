@@ -376,10 +376,20 @@ func (r *rend) viewport(body []string, h, scroll, selTop, selBottom int, follow 
 		if selTop < scroll {
 			scroll = selTop
 		} else if n := rows(scroll); selBottom >= scroll+n {
-			scroll = min(max(selBottom-(h-3), 0), maxScroll)
-			if scroll > selTop { // never scroll the top of the selection off screen
-				scroll = selTop
+			// Bring the selection's bottom into view, leaving the two rows
+			// below it the fudge asks for when the window has them to spare.
+			want := min(max(selBottom-(h-3), 0), maxScroll)
+			// The top of the selection wins when the window at selTop
+			// already reaches the bottom: an expanded run keeps its own row
+			// on screen whenever both ends can be shown at once. When they
+			// cannot — a run whose detail is taller than the rows the two
+			// "more" lines leave — the bottom wins, because the detail is
+			// what the row was expanded for; the run's own row goes off the
+			// top, and the "more above" row is what says so.
+			if want > selTop && selBottom < selTop+rows(selTop) {
+				want = selTop
 			}
+			scroll = want
 		}
 	}
 	n := rows(scroll)
@@ -784,10 +794,12 @@ func (r *rend) runRows(tier int, c runCols, run RunRow, selected bool) []string 
 
 // detail is a selected run's expanded lines (design generic-tool §10.2):
 // stage and round, verify, the PR, spent (or notional) dollars, the stage
-// deadline, and the models with the recipe. The design also lists the last
-// action and the token counts; the registry has no action or tokens field
-// yet (that is plan Task 3, held out of this release), so those two lines
-// are left out rather than guessed.
+// deadline, and the models with the recipe. It also names the launcher: the
+// compact run table has no column for it, and several people start runs on one
+// project at once, so who started this one is what the expanded row is for.
+// The design also lists the last action and the token counts; the registry has
+// no action or tokens field yet (that is plan Task 3, held out of this
+// release), so those two lines are left out rather than guessed.
 func (r *rend) detail(run RunRow) []string {
 	rnd := "-"
 	if run.Round != "-" {
@@ -812,8 +824,14 @@ func (r *rend) detail(run RunRow) []string {
 	if run.Recipe != "" {
 		models += " · " + run.Recipe
 	}
+	// The launcher is shown whole here, where the plain tables' BY column shows
+	// only the part before an address's @: the detail has the room, and the
+	// whole value is what tells a person from an automated launch (a service
+	// account's full address). A run whose launch.json recorded no launcher
+	// shows the dash, like every other line with nothing to say.
 	rows := [][2]string{
 		{"stage", run.Stage + " " + rnd},
+		{"by", dashIfEmpty(run.LaunchedBy)},
 		{"verify", run.Verify},
 		{"PR", pr},
 		{"spent", sp},

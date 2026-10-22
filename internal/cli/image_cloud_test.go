@@ -59,12 +59,12 @@ func buildPosts(fb *gcpfake.Build) int {
 }
 
 // TestImageBuildCloudNeedsRegistry: the build pushes to the repository's
-// own registry, which fugaro init --repo creates; without it, nothing is
+// own registry, which fugaro update --repo creates; without it, nothing is
 // submitted.
 func TestImageBuildCloudNeedsRegistry(t *testing.T) {
 	fb, _ := cloudBuildCheckout(t, true)
 	_, _, err := executeBuild(t, "image", "build", "--base", "b:1")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro init --repo") || !strings.Contains(err.Error(), "proj-1234") ||
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro update --repo") || !strings.Contains(err.Error(), "proj-1234") ||
 		!strings.Contains(err.Error(), gcp.RegistryRepoID(mustSlug("bitbucket", "acme/app"))) {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -728,6 +728,12 @@ func TestImageRenderCloudOutputs(t *testing.T) {
 		rec.Image != "" || rec.ImageDigest != "" || rec.Adopted {
 		t.Errorf("record.json = %+v", rec)
 	}
+	// The render step runs the BASE image's own fugaro, so this field is the
+	// base's statement that its runner reads the sealed budget token: the
+	// statement the seal gate trusts for a development base (sealDevRefusal).
+	if !rec.SealedBudgetToken {
+		t.Error("record.json does not say this runner reads the sealed budget token")
+	}
 	for name, want := range map[string]string{"source-commit": commit + "\n", "built-at": rec.BuiltAt.Format(time.RFC3339) + "\n"} {
 		if got, _ := os.ReadFile(filepath.Join(ws, name)); string(got) != want {
 			t.Errorf("%s = %q, want %q", name, got, want)
@@ -782,5 +788,34 @@ func TestImageRenderCloudOutputsUseGitBlobIDs(t *testing.T) {
 	}
 	if want := testutil.Git(t, ".", "rev-parse", "HEAD:package-lock.json"); rec.KeyFiles["package-lock.json"] != want {
 		t.Errorf("key file ID = %s, want git's %s", rec.KeyFiles["package-lock.json"], want)
+	}
+}
+
+// TestImageRecordKeepsSealedBudgetToken: the record step writes what render
+// said about the seal, unchanged. Dropping it would only make the seal gate
+// warn (the safe direction), but the field is the one statement a
+// development base makes about the seal, so losing it is pinned too.
+//
+// Mutation (run, restored): clear rec.SealedBudgetToken in the record step —
+// this test fails.
+func TestImageRecordKeepsSealedBudgetToken(t *testing.T) {
+	checkoutWith(t, npmFiles())
+	testutil.Git(t, ".", "remote", "set-url", "origin", "https://bitbucket.org/acme/app.git")
+	ws, bucket := t.TempDir(), "file://"+t.TempDir()
+	if _, stderr, err := execute(t, "image", "render", "--workflow", "app", "--cloud-outputs", ws); err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	testutil.WriteFiles(t, ws, map[string]string{"image-digest": "sha256:" + strings.Repeat("1", 64) + "\n", "base-digest": "b@sha256:" + strings.Repeat("2", 64) + "\n"})
+	slug := mustSlug("bitbucket", "acme/app")
+	if _, _, err := execute(t, "image", "gate", "--record", filepath.Join(ws, "record.json"), "--slug", slug, "--bucket", bucket); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execute(t, "image", "record", "--in", filepath.Join(ws, "record.json"), "--digest-from", filepath.Join(ws, "image-digest"),
+		"--base-digest-from", filepath.Join(ws, "base-digest"), "--image", "img", "--base", "b:1", "--build-id", "b1", "--slug", slug, "--bucket", bucket); err != nil {
+		t.Fatal(err)
+	}
+	rec := readImageRecord(t, bucket)
+	if rec == nil || !rec.SealedBudgetToken {
+		t.Fatalf("the recorded record lost sealed_budget_token: %+v", rec)
 	}
 }

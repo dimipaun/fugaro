@@ -226,7 +226,7 @@ func TestFetchSharedMissingConfigObject(t *testing.T) {
 	r := newFetchRig(t)
 	r.marker(t, "belong", "fugaro-belong")
 	_, _, err := r.fetch(fetchT0)
-	if err == nil || !strings.Contains(err.Error(), "has not published a shared config; ask an operator to run fugaro init") {
+	if err == nil || !strings.Contains(err.Error(), "has not published a shared config; ask an operator to run fugaro update") {
 		t.Fatalf("err = %v", err)
 	}
 	if !strings.Contains(err.Error(), "belong") || ExitCode(err) != ExitUserError {
@@ -534,7 +534,10 @@ func TestFetchSharedIgnoresACacheOfAnotherProjectOrBucket(t *testing.T) {
 		"other gcp project": {GCPProject: "fugaro-other", Bucket: "fugaro-runs-fugaro-belong", CheckedAt: fetchT0, YAML: foreign},
 		"other bucket":      {GCPProject: "fugaro-belong", Bucket: "fugaro-runs-elsewhere", CheckedAt: fetchT0, YAML: foreign},
 		"from the future":   {GCPProject: "fugaro-belong", Bucket: "fugaro-runs-fugaro-belong", CheckedAt: fetchT0.Add(time.Hour), YAML: foreign},
-		"tampered":          {GCPProject: "fugaro-belong", Bucket: "fugaro-runs-fugaro-belong", CheckedAt: fetchT0, YAML: strings.Replace(foreign, "projects/fugaro-belong/", "projects/evil-proj/", 1)},
+		// The log view, named in full: the batch block's own resource names
+		// carry "projects/fugaro-belong/" as well, and the first match in the
+		// file is not the value this case tampers with.
+		"tampered": {GCPProject: "fugaro-belong", Bucket: "fugaro-runs-fugaro-belong", CheckedAt: fetchT0, YAML: strings.Replace(foreign, "log_view: projects/fugaro-belong/", "log_view: projects/evil-proj/", 1)},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newFetchRig(t)

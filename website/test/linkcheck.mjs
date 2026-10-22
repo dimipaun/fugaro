@@ -20,14 +20,14 @@
 //      Release tags are not checked: a hermetic test has no tags to read (D100).
 //   4. `javascript:`, `data:`, protocol-relative `//host` and every other scheme are refused.
 //
-// One recorded exception, and it is a DEFECT rather than a rule: the security page renders
-// SECURITY.md byte for byte (D99), and SECURITY.md links its neighbours relatively
-// (`docs/design/v1.md#6-security-model`). On the site those resolve under `/security/` and
-// are not served. W1.11 may not edit the security page (W1.8's file), so the case below
-// accepts exactly those links — only on that page, and only when the path exists in the
-// repository and the anchor is one of its headings — and fails the moment they are gone, so
-// the exception is deleted with the fix rather than outliving it. The fix belongs to the
-// security page (rewrite a repository-relative href to its GitHub URL at render time).
+// **The one recorded exception this file used to carry is gone, and this is the change that
+// removed it** (the owner's brief of 2026-10-19). The security page rendered `SECURITY.md`
+// byte for byte (D99), and SECURITY.md links its neighbours relatively
+// (`docs/design/v1.md#6-security-model`), which on the site resolved under `/security/` and
+// were not served — a defect W1.11 was not allowed to fix in W1.8's file. The page now
+// renders the document's own reporting section (which carries no link) instead of the whole
+// document, so the repository-relative links are no longer on any page and every one of them
+// fails here again, as it should.
 //
 // It reads `dist/`, which `npm run check` builds first (`FUGARO_GATES_DIST` points it at a
 // copy, which is how each refusal was mutation-proved). Standard library only; no network.
@@ -45,12 +45,6 @@ function repositoryPath(siteYAML = readFileSync(path.join(SITE, 'data', 'site.ya
   const m = /^repository:\s*"?https:\/\/github\.com\/([^"\s#]+?)\/?"?\s*(#.*)?$/m.exec(siteYAML)
   if (!m) throw new Error('site.yaml has no repository: https://github.com/<owner>/<name> line')
   return m[1]
-}
-
-// The page that carries the recorded defect described in the header, and why.
-export const REPO_RELATIVE_DEFECT = {
-  page: 'security/index.html',
-  why: 'SECURITY.md links its neighbours relatively; rendered byte for byte at /security/ those hrefs resolve under /security/ and are not served (fix: the security page rewrites them to GitHub URLs)',
 }
 
 // ---- the anchors of a markdown file, as GitHub renders them ----------------------------
@@ -123,14 +117,14 @@ function urlsOf(el) {
 }
 
 /**
- * Every link failure of a built artifact. Returns { failures, defects }: `defects` are the
- * repository-relative links on the recorded page that were accepted as the known defect.
+ * Every link failure of a built artifact: the links that go nowhere and the links that go
+ * somewhere they may not. It returns them, so a caller can assert the list is empty and a
+ * fixture can watch one arrive.
  */
 export function linkFailures(dist, facts, repository) {
   const pages = builtPages(dist)
   const docs = new Map()
   const failures = []
-  const defects = []
   for (const page of pages) {
     try {
       docs.set(page.rel, parse(page.html))
@@ -198,17 +192,6 @@ export function linkFailures(dist, facts, repository) {
         // This site.
         const served = servedFile(dist, url.pathname)
         if (served === null) {
-          const asWritten = !scheme && !value.startsWith('/') ? value.split('#')[0] : null
-          if (page.rel === REPO_RELATIVE_DEFECT.page && asWritten) {
-            const rel = decodeURIComponent(asWritten)
-            const why = repoPathFailure(rel, 'blob') ?? repoFragmentFailure(path.join(REPO, rel), fragment)
-            if (!why) {
-              defects.push(`${page.rel}: ${value}`)
-              continue
-            }
-            failures.push(`${where}: resolves to ${url.pathname}, which the build did not produce, and as a repository path ${why}`)
-            continue
-          }
           failures.push(`${where}: resolves to ${url.pathname}, which the build did not produce`)
           continue
         }
@@ -223,7 +206,7 @@ export function linkFailures(dist, facts, repository) {
       }
     }
   }
-  return { failures, defects }
+  return { failures }
 }
 
 // ---- the gate --------------------------------------------------------------------------
@@ -234,15 +217,6 @@ const REPOSITORY = repositoryPath()
 test('every link on the built site resolves: pages, assets, anchors, and allowed hosts only', () => {
   const { failures } = linkFailures(DIST, FACTS, REPOSITORY)
   assert.deepEqual(failures, [], `the built site carries a link that goes nowhere or somewhere it may not:\n  ${failures.join('\n  ')}`)
-})
-
-test('the recorded repository-relative defect on the security page is still real, so its exception is still needed', () => {
-  const { defects } = linkFailures(DIST, FACTS, REPOSITORY)
-  assert.ok(
-    defects.length > 0,
-    `no repository-relative link is left on ${REPO_RELATIVE_DEFECT.page}: the defect is fixed, so delete REPO_RELATIVE_DEFECT and its branch in website/test/linkcheck.mjs and let every such link fail again`,
-  )
-  for (const d of defects) assert.ok(d.startsWith(REPO_RELATIVE_DEFECT.page), d)
 })
 
 // ---- the refusals, kept ----------------------------------------------------------------

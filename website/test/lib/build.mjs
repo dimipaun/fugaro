@@ -19,8 +19,20 @@ import { REPO, SITE } from './html.mjs'
 
 // What a site build cannot read: the Go module's tree and test data, the console, and the
 // installed and built directories of the site.
-const SKIP = new Set(['.git', 'internal', 'cmd', 'console', 'plugin', 'schemas', 'deploy', 'testdata'])
+const SKIP = new Set(['.git', 'internal', 'cmd', 'console', 'schemas', 'deploy', 'testdata'])
 const SKIP_UNDER_WEBSITE = new Set(['node_modules', 'dist', '.astro'])
+
+// The parts of `plugin/` a site build does read, and the reason `plugin` is no longer a skip
+// of its own: the slider's "See it" panel quotes the skills the reader's agent reads
+// (`website/src/components/HomeSlider.astro` reads `plugin/skills/working/SKILL.md`, changes
+// spec of 2026-10-18 item 3), so a copy of the repository has to carry `plugin/skills`; and
+// the changelog decides which releases are
+// published from the plugin's own version (`src/lib/changelog.mjs`, the owner's brief of
+// 2026-10-19), so it carries `plugin/.claude-plugin` too — a copy without it would fail the
+// build rather than build a site. The plugin's Go sources and its fixtures are what a build
+// does not read, and every copy of the repository — this one and the five test files that
+// stage their own — leaves those out through this constant.
+export const READ_UNDER_PLUGIN = new Set(['.claude-plugin', 'skills'])
 // The caches a build writes inside node_modules, which each copy must own.
 const CACHES = new Set(['.vite', '.astro'])
 
@@ -45,6 +57,7 @@ export function copyRepository(root) {
     filter: (src) => {
       const name = path.basename(src)
       if (path.dirname(src) === REPO && SKIP.has(name)) return false
+      if (path.basename(path.dirname(src)) === 'plugin' && !READ_UNDER_PLUGIN.has(name)) return false
       if (path.dirname(src) === SITE && SKIP_UNDER_WEBSITE.has(name)) return false
       return true
     },

@@ -1,24 +1,17 @@
 ---
 /**
- * website/src/pages/caps-and-costs.astro — the caps-and-costs guide (website plan, Task
- * W1.5).
+ * website/src/pages/caps-and-costs.astro — the route (website plan, Task W1.5).
  *
- * The page is a heading and the guide itself: what a cap is and how to set it, and what
- * runs actually cost are `src/components/CapsCosts.astro`, which renders the CLI's own
- * reference and the owner-run aggregation's own output. Nothing is written here, and
- * nothing on this page is a figure the aggregation did not produce (F26, F31, F33, D96,
- * D97).
+ * The page is the component: `CapsCosts.astro` carries the hero, the figures, the caps and
+ * every rule they are read under, and this file is the route and its title. The bold redesign
+ * of 2026-10-21 (the owner's board `website/design-ref/CapsAndCostsV2.dc.html`) moved the
+ * page's own `h1` and its lead into the component's hero band, so there is nothing left here
+ * to lay out — which is what keeps the hero's copy and the figures it promises in one file.
  */
 import Base from '../layouts/Base.astro'
 import CapsCosts from '../components/CapsCosts.astro'
 ---
 
 <Base title="Caps and costs">
-  <h1>Caps and costs</h1>
-
-  <p>
-    What a run may spend, the commands that set the caps, and what runs cost.
-  </p>
-
   <CapsCosts />
 </Base>

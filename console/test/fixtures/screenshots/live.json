@@ -1,0 +1,832 @@
+{
+  "frames": [
+    {
+      "project": "acme-platform",
+      "mode": "enforce",
+      "day": "2026-10-20",
+      "now": "2026-10-20T14:29:40Z",
+      "connection": {
+        "state": "live",
+        "age_seconds": 2
+      },
+      "total": {
+        "counted_usd": 41.82,
+        "spent_usd": 12.4,
+        "notional_usd": 96.5,
+        "daily_cap_usd": 120,
+        "percent": 34.85,
+        "burn": {
+          "known": true,
+          "usd_per_min": 0.31,
+          "fast": false
+        },
+        "kill": null,
+        "runs": 5,
+        "run_hours": 6.75
+      },
+      "repos": [
+        {
+          "slug": "acme-platform-core",
+          "repo": "acme/platform-core",
+          "counted_usd": 27.4,
+          "spent_usd": 8.9,
+          "notional_usd": 61.2,
+          "daily_cap_usd": 80,
+          "percent": 34.25,
+          "burn": {
+            "known": true,
+            "usd_per_min": 0.21,
+            "fast": false
+          },
+          "kill": null
+        },
+        {
+          "slug": "acme-platform-cli",
+          "repo": "acme/platform-cli",
+          "counted_usd": 14.42,
+          "spent_usd": 3.5,
+          "notional_usd": 35.3,
+          "daily_cap_usd": 40,
+          "percent": 36.05,
+          "burn": {
+            "known": true,
+            "usd_per_min": 0.1,
+            "fast": false
+          },
+          "kill": null
+        }
+      ],
+      "runs": [
+        {
+          "run": "20261020-103045-aa01",
+          "slug": "acme-platform-core",
+          "repo": "acme/platform-core",
+          "title": "port the scheduler to the new queue",
+          "stage": "review",
+          "round": "2",
+          "verify": "passed",
+          "models": "claude-sonnet-4-5-20250929",
+          "recipe": "fugaro-default",
+          "auth": "oauth",
+          "notional": true,
+          "spent_usd": 6.42,
+          "age_seconds": 1801,
+          "health": "ok",
+          "deadline": "ok"
+        },
+        {
+          "run": "20261020-104512-aa02",
+          "slug": "acme-platform-cli",
+          "repo": "acme/platform-cli",
+          "title": "add the --dry-run flag to the plan command",
+          "stage": "review",
+          "round": "1",
+          "verify": "passed",
+          "models": "claude-sonnet-4-5-20250929 / claude-opus-4-1",
+          "recipe": "review-heavy",
+          "auth": "oauth",
+          "notional": true,
+          "spent_usd": 5.98,
+          "age_seconds": 941,
+          "health": "ok",
+          "deadline": "near"
+        },
+        {
+          "run": "20261020-110530-aa03",
+          "slug": "acme-platform-core",
+          "repo": "acme/platform-core",
+          "title": "re-run the flaky integration suite",
+          "stage": "queued",
+          "round": "-",
+          "verify": "pending",
+          "models": "",
+          "recipe": "fugaro-default",
+          "auth": "oauth",
+          "notional": true,
+          "spent_usd": null,
+          "age_seconds": 402,
+          "health": "ok",
+          "deadline": "ok",
+          "queued": true
+        }
+      ],
+      "finished": [
+        {
+          "run": "20261020-081500-aa04",
+          "slug": "acme-platform-core",
+          "repo": "acme/platform-core",
+          "title": "drop the legacy retry table",
+          "status": "ready",
+          "outcome": "ready",
+          "failed": false,
+          "pr_url": "https://github.com/acme/platform-core/pull/412",
+          "pr_number": 412,
+          "age_seconds": 6400
+        },
+        {
+          "run": "20261020-071020-aa05",
+          "slug": "acme-platform-cli",
+          "repo": "acme/platform-cli",
+          "title": "make the config loader tolerate an empty file",
+          "status": "failed",
+          "outcome": "failed",
+          "failed": true,
+          "pr_url": null,
+          "pr_number": null,
+          "age_seconds": 9205
+        }
+      ],
+      "ready": []
+    },
+    {
+      "project": "acme-platform",
+      "mode": "enforce",
+      "day": "2026-10-20",
+      "now": "2026-10-20T14:30:10Z",
+      "connection": {
+        "state": "live",
+        "age_seconds": 3
+      },
+      "total": {
+        "counted_usd": 41.82,
+        "spent_usd": 12.4,
+        "notional_usd": 96.5,
+        "daily_cap_usd": 120,
+        "percent": 34.85,
+        "burn": {
+          "known": true,
+          "usd_per_min": 0.36,
+          "fast": false
+        },
+        "kill": null,
+        "runs": 5,
+        "run_hours": 6.75
+      },
+      "repos": [
+        {
+          "slug": "acme-platform-core",
+          "repo": "acme/platform-core",
+          "counted_usd": 27.4,
+          "spent_usd": 8.9,
+          "notional_usd": 61.2,
+          "daily_cap_usd": 80,
+          "percent": 34.25,
+          "burn": {
+            "known": true,
+            "usd_per_min": 0.25,
+            "fast": false
+          },
+          "kill": null
+        },
+        {
+          "slug": "acme-platform-cli",
+          "repo": "acme/platform-cli",
+          "counted_usd": 14.42,
+          "spent_usd": 3.5,
+          "notional_usd": 35.3,
+          "daily_cap_usd": 40,
+          "percent": 36.05,
+          "burn": {
+            "known": true,
+            "usd_per_min": 0.11,
+            "fast": false
+          },
+          "kill": null
+        }
+      ],
+      "runs": [
+        {
+          "run": "20261020-103045-aa01",
+          "slug": "acme-platform-core",
+          "repo": "acme/platform-core",
+          "title": "port the scheduler to the new queue",
+          "stage": "review",
+          "round": "2",
+          "verify": "passed",
+          "models": "claude-sonnet-4-5-20250929",
+          "recipe": "fugaro-default",
+          "auth": "oauth",
+          "notional": true,
+          "spent_usd": 6.42,
+          "age_seconds": 1801,
+          "health": "ok",
+          "deadline": "ok"
+        },
+        {
+          "run": "20261020-104512-aa02",
+          "slug": "acme-platform-cli",
+          "repo": "acme/platform-cli",
+          "title": "add the --dry-run flag to the plan command",
+          "stage": "review",
+          "round": "1",
+          "verify": "passed",
+          "models": "claude-sonnet-4-5-20250929 / claude-opus-4-1",
+          "recipe": "review-heavy",
+          "auth": "oauth",
+          "notional": true,
+          "spent_usd": 5.98,
+          "age_seconds": 941,
+          "health": "ok",
+          "deadline": "near"
+        },
+        {
+          "run": "20261020-110530-aa03",
+          "slug": "acme-platform-core",
+          "repo": "acme/platform-core",
+          "title": "re-run the flaky integration suite",
+          "stage": "queued",
+          "round": "-",
+          "verify": "pending",
+          "models": "",
+          "recipe": "fugaro-default",
+          "auth": "oauth",
+          "notional": true,
+          "spent_usd": null,
+          "age_seconds": 402,
+          "health": "ok",
+          "deadline": "ok",
+          "queued": true
+        }
+      ],
+      "finished": [
+        {
+          "run": "20261020-081500-aa04",
+          "slug": "acme-platform-core",
+          "repo": "acme/platform-core",
+          "title": "drop the legacy retry table",
+          "status": "ready",
+          "outcome": "ready",
+          "failed": false,
+          "pr_url": "https://github.com/acme/platform-core/pull/412",
+          "pr_number": 412,
+          "age_seconds": 6400
+        },
+        {
+          "run": "20261020-071020-aa05",
+          "slug": "acme-platform-cli",
+          "repo": "acme/platform-cli",
+          "title": "make the config loader tolerate an empty file",
+          "status": "failed",
+          "outcome": "failed",
+          "failed": true,
+          "pr_url": null,
+          "pr_number": null,
+          "age_seconds": 9205
+        }
+      ],
+      "ready": []
+    },
+    {
+      "project": "acme-platform",
+      "mode": "enforce",
+      "day": "2026-10-20",
+      "now": "2026-10-20T14:30:40Z",
+      "connection": {
+        "state": "live",
+        "age_seconds": 4
+      },
+      "total": {
+        "counted_usd": 41.82,
+        "spent_usd": 12.4,
+        "notional_usd": 96.5,
+        "daily_cap_usd": 120,
+        "percent": 34.85,
+        "burn": {
+          "known": true,
+          "usd_per_min": 0.33,
+          "fast": false
+        },
+        "kill": null,
+        "runs": 5,
+        "run_hours": 6.75
+      },
+      "repos": [
+        {
+          "slug": "acme-platform-core",
+          "repo": "acme/platform-core",
+          "counted_usd": 27.4,
+          "spent_usd": 8.9,
+          "notional_usd": 61.2,
+          "daily_cap_usd": 80,
+          "percent": 34.25,
+          "burn": {
+            "known": true,
+            "usd_per_min": 0.23,
+            "fast": false
+          },
+          "kill": null
+        },
+        {
+          "slug": "acme-platform-cli",
+          "repo": "acme/platform-cli",
+          "counted_usd": 14.42,
+          "spent_usd": 3.5,
+          "notional_usd": 35.3,
+          "daily_cap_usd": 40,
+          "percent": 36.05,
+          "burn": {
+            "known": true,
+            "usd_per_min": 0.1,
+            "fast": false
+          },
+          "kill": null
+        }
+      ],
+      "runs": [
+        {
+          "run": "20261020-103045-aa01",
+          "slug": "acme-platform-core",
+          "repo": "acme/platform-core",
+          "title": "port the scheduler to the new queue",
+          "stage": "review",
+          "round": "2",
+          "verify": "passed",
+          "models": "claude-sonnet-4-5-20250929",
+          "recipe": "fugaro-default",
+          "auth": "oauth",
+          "notional": true,
+          "spent_usd": 6.42,
+          "age_seconds": 1801,
+          "health": "ok",
+          "deadline": "ok"
+        },
+        {
+          "run": "20261020-104512-aa02",
+          "slug": "acme-platform-cli",
+          "repo": "acme/platform-cli",
+          "title": "add the --dry-run flag to the plan command",
+          "stage": "review",
+          "round": "1",
+          "verify": "passed",
+          "models": "claude-sonnet-4-5-20250929 / claude-opus-4-1",
+          "recipe": "review-heavy",
+          "auth": "oauth",
+          "notional": true,
+          "spent_usd": 5.98,
+          "age_seconds": 941,
+          "health": "ok",
+          "deadline": "near"
+        },
+        {
+          "run": "20261020-110530-aa03",
+          "slug": "acme-platform-core",
+          "repo": "acme/platform-core",
+          "title": "re-run the flaky integration suite",
+          "stage": "queued",
+          "round": "-",
+          "verify": "pending",
+          "models": "",
+          "recipe": "fugaro-default",
+          "auth": "oauth",
+          "notional": true,
+          "spent_usd": null,
+          "age_seconds": 402,
+          "health": "ok",
+          "deadline": "ok",
+          "queued": true
+        }
+      ],
+      "finished": [
+        {
+          "run": "20261020-081500-aa04",
+          "slug": "acme-platform-core",
+          "repo": "acme/platform-core",
+          "title": "drop the legacy retry table",
+          "status": "ready",
+          "outcome": "ready",
+          "failed": false,
+          "pr_url": "https://github.com/acme/platform-core/pull/412",
+          "pr_number": 412,
+          "age_seconds": 6400
+        },
+        {
+          "run": "20261020-071020-aa05",
+          "slug": "acme-platform-cli",
+          "repo": "acme/platform-cli",
+          "title": "make the config loader tolerate an empty file",
+          "status": "failed",
+          "outcome": "failed",
+          "failed": true,
+          "pr_url": null,
+          "pr_number": null,
+          "age_seconds": 9205
+        }
+      ],
+      "ready": []
+    },
+    {
+      "project": "acme-platform",
+      "mode": "enforce",
+      "day": "2026-10-20",
+      "now": "2026-10-20T14:31:10Z",
+      "connection": {
+        "state": "live",
+        "age_seconds": 5
+      },
+      "total": {
+        "counted_usd": 41.82,
+        "spent_usd": 12.4,
+        "notional_usd": 96.5,
+        "daily_cap_usd": 120,
+        "percent": 34.85,
+        "burn": {
+          "known": true,
+          "usd_per_min": 0.41,
+          "fast": false
+        },
+        "kill": null,
+        "runs": 5,
+        "run_hours": 6.75
+      },
+      "repos": [
+        {
+          "slug": "acme-platform-core",
+          "repo": "acme/platform-core",
+          "counted_usd": 27.4,
+          "spent_usd": 8.9,
+          "notional_usd": 61.2,
+          "daily_cap_usd": 80,
+          "percent": 34.25,
+          "burn": {
+            "known": true,
+            "usd_per_min": 0.28,
+            "fast": false
+          },
+          "kill": null
+        },
+        {
+          "slug": "acme-platform-cli",
+          "repo": "acme/platform-cli",
+          "counted_usd": 14.42,
+          "spent_usd": 3.5,
+          "notional_usd": 35.3,
+          "daily_cap_usd": 40,
+          "percent": 36.05,
+          "burn": {
+            "known": true,
+            "usd_per_min": 0.13,
+            "fast": false
+          },
+          "kill": null
+        }
+      ],
+      "runs": [
+        {
+          "run": "20261020-103045-aa01",
+          "slug": "acme-platform-core",
+          "repo": "acme/platform-core",
+          "title": "port the scheduler to the new queue",
+          "stage": "review",
+          "round": "2",
+          "verify": "passed",
+          "models": "claude-sonnet-4-5-20250929",
+          "recipe": "fugaro-default",
+          "auth": "oauth",
+          "notional": true,
+          "spent_usd": 6.42,
+          "age_seconds": 1801,
+          "health": "ok",
+          "deadline": "ok"
+        },
+        {
+          "run": "20261020-104512-aa02",
+          "slug": "acme-platform-cli",
+          "repo": "acme/platform-cli",
+          "title": "add the --dry-run flag to the plan command",
+          "stage": "review",
+          "round": "1",
+          "verify": "passed",
+          "models": "claude-sonnet-4-5-20250929 / claude-opus-4-1",
+          "recipe": "review-heavy",
+          "auth": "oauth",
+          "notional": true,
+          "spent_usd": 5.98,
+          "age_seconds": 941,
+          "health": "ok",
+          "deadline": "near"
+        },
+        {
+          "run": "20261020-110530-aa03",
+          "slug": "acme-platform-core",
+          "repo": "acme/platform-core",
+          "title": "re-run the flaky integration suite",
+          "stage": "queued",
+          "round": "-",
+          "verify": "pending",
+          "models": "",
+          "recipe": "fugaro-default",
+          "auth": "oauth",
+          "notional": true,
+          "spent_usd": null,
+          "age_seconds": 402,
+          "health": "ok",
+          "deadline": "ok",
+          "queued": true
+        }
+      ],
+      "finished": [
+        {
+          "run": "20261020-081500-aa04",
+          "slug": "acme-platform-core",
+          "repo": "acme/platform-core",
+          "title": "drop the legacy retry table",
+          "status": "ready",
+          "outcome": "ready",
+          "failed": false,
+          "pr_url": "https://github.com/acme/platform-core/pull/412",
+          "pr_number": 412,
+          "age_seconds": 6400
+        },
+        {
+          "run": "20261020-071020-aa05",
+          "slug": "acme-platform-cli",
+          "repo": "acme/platform-cli",
+          "title": "make the config loader tolerate an empty file",
+          "status": "failed",
+          "outcome": "failed",
+          "failed": true,
+          "pr_url": null,
+          "pr_number": null,
+          "age_seconds": 9205
+        }
+      ],
+      "ready": []
+    },
+    {
+      "project": "acme-platform",
+      "mode": "enforce",
+      "day": "2026-10-20",
+      "now": "2026-10-20T14:31:40Z",
+      "connection": {
+        "state": "live",
+        "age_seconds": 6
+      },
+      "total": {
+        "counted_usd": 41.82,
+        "spent_usd": 12.4,
+        "notional_usd": 96.5,
+        "daily_cap_usd": 120,
+        "percent": 34.85,
+        "burn": {
+          "known": true,
+          "usd_per_min": 0.38,
+          "fast": false
+        },
+        "kill": null,
+        "runs": 5,
+        "run_hours": 6.75
+      },
+      "repos": [
+        {
+          "slug": "acme-platform-core",
+          "repo": "acme/platform-core",
+          "counted_usd": 27.4,
+          "spent_usd": 8.9,
+          "notional_usd": 61.2,
+          "daily_cap_usd": 80,
+          "percent": 34.25,
+          "burn": {
+            "known": true,
+            "usd_per_min": 0.26,
+            "fast": false
+          },
+          "kill": null
+        },
+        {
+          "slug": "acme-platform-cli",
+          "repo": "acme/platform-cli",
+          "counted_usd": 14.42,
+          "spent_usd": 3.5,
+          "notional_usd": 35.3,
+          "daily_cap_usd": 40,
+          "percent": 36.05,
+          "burn": {
+            "known": true,
+            "usd_per_min": 0.12,
+            "fast": false
+          },
+          "kill": null
+        }
+      ],
+      "runs": [
+        {
+          "run": "20261020-103045-aa01",
+          "slug": "acme-platform-core",
+          "repo": "acme/platform-core",
+          "title": "port the scheduler to the new queue",
+          "stage": "review",
+          "round": "2",
+          "verify": "passed",
+          "models": "claude-sonnet-4-5-20250929",
+          "recipe": "fugaro-default",
+          "auth": "oauth",
+          "notional": true,
+          "spent_usd": 6.42,
+          "age_seconds": 1801,
+          "health": "ok",
+          "deadline": "ok"
+        },
+        {
+          "run": "20261020-104512-aa02",
+          "slug": "acme-platform-cli",
+          "repo": "acme/platform-cli",
+          "title": "add the --dry-run flag to the plan command",
+          "stage": "review",
+          "round": "1",
+          "verify": "passed",
+          "models": "claude-sonnet-4-5-20250929 / claude-opus-4-1",
+          "recipe": "review-heavy",
+          "auth": "oauth",
+          "notional": true,
+          "spent_usd": 5.98,
+          "age_seconds": 941,
+          "health": "ok",
+          "deadline": "near"
+        },
+        {
+          "run": "20261020-110530-aa03",
+          "slug": "acme-platform-core",
+          "repo": "acme/platform-core",
+          "title": "re-run the flaky integration suite",
+          "stage": "queued",
+          "round": "-",
+          "verify": "pending",
+          "models": "",
+          "recipe": "fugaro-default",
+          "auth": "oauth",
+          "notional": true,
+          "spent_usd": null,
+          "age_seconds": 402,
+          "health": "ok",
+          "deadline": "ok",
+          "queued": true
+        }
+      ],
+      "finished": [
+        {
+          "run": "20261020-081500-aa04",
+          "slug": "acme-platform-core",
+          "repo": "acme/platform-core",
+          "title": "drop the legacy retry table",
+          "status": "ready",
+          "outcome": "ready",
+          "failed": false,
+          "pr_url": "https://github.com/acme/platform-core/pull/412",
+          "pr_number": 412,
+          "age_seconds": 6400
+        },
+        {
+          "run": "20261020-071020-aa05",
+          "slug": "acme-platform-cli",
+          "repo": "acme/platform-cli",
+          "title": "make the config loader tolerate an empty file",
+          "status": "failed",
+          "outcome": "failed",
+          "failed": true,
+          "pr_url": null,
+          "pr_number": null,
+          "age_seconds": 9205
+        }
+      ],
+      "ready": []
+    },
+    {
+      "project": "acme-platform",
+      "mode": "enforce",
+      "day": "2026-10-20",
+      "now": "2026-10-20T14:32:10Z",
+      "connection": {
+        "state": "live",
+        "age_seconds": 7
+      },
+      "total": {
+        "counted_usd": 41.82,
+        "spent_usd": 12.4,
+        "notional_usd": 96.5,
+        "daily_cap_usd": 120,
+        "percent": 34.85,
+        "burn": {
+          "known": true,
+          "usd_per_min": 0.42,
+          "fast": false
+        },
+        "kill": null,
+        "runs": 5,
+        "run_hours": 6.75
+      },
+      "repos": [
+        {
+          "slug": "acme-platform-core",
+          "repo": "acme/platform-core",
+          "counted_usd": 27.4,
+          "spent_usd": 8.9,
+          "notional_usd": 61.2,
+          "daily_cap_usd": 80,
+          "percent": 34.25,
+          "burn": {
+            "known": true,
+            "usd_per_min": 0.28,
+            "fast": false
+          },
+          "kill": null
+        },
+        {
+          "slug": "acme-platform-cli",
+          "repo": "acme/platform-cli",
+          "counted_usd": 14.42,
+          "spent_usd": 3.5,
+          "notional_usd": 35.3,
+          "daily_cap_usd": 40,
+          "percent": 36.05,
+          "burn": {
+            "known": true,
+            "usd_per_min": 0.14,
+            "fast": false
+          },
+          "kill": null
+        }
+      ],
+      "runs": [
+        {
+          "run": "20261020-103045-aa01",
+          "slug": "acme-platform-core",
+          "repo": "acme/platform-core",
+          "title": "port the scheduler to the new queue",
+          "stage": "review",
+          "round": "2",
+          "verify": "passed",
+          "models": "claude-sonnet-4-5-20250929",
+          "recipe": "fugaro-default",
+          "auth": "oauth",
+          "notional": true,
+          "spent_usd": 6.42,
+          "age_seconds": 1801,
+          "health": "ok",
+          "deadline": "ok"
+        },
+        {
+          "run": "20261020-104512-aa02",
+          "slug": "acme-platform-cli",
+          "repo": "acme/platform-cli",
+          "title": "add the --dry-run flag to the plan command",
+          "stage": "review",
+          "round": "1",
+          "verify": "passed",
+          "models": "claude-sonnet-4-5-20250929 / claude-opus-4-1",
+          "recipe": "review-heavy",
+          "auth": "oauth",
+          "notional": true,
+          "spent_usd": 5.98,
+          "age_seconds": 941,
+          "health": "ok",
+          "deadline": "near"
+        },
+        {
+          "run": "20261020-110530-aa03",
+          "slug": "acme-platform-core",
+          "repo": "acme/platform-core",
+          "title": "re-run the flaky integration suite",
+          "stage": "queued",
+          "round": "-",
+          "verify": "pending",
+          "models": "",
+          "recipe": "fugaro-default",
+          "auth": "oauth",
+          "notional": true,
+          "spent_usd": null,
+          "age_seconds": 402,
+          "health": "ok",
+          "deadline": "ok",
+          "queued": true
+        }
+      ],
+      "finished": [
+        {
+          "run": "20261020-081500-aa04",
+          "slug": "acme-platform-core",
+          "repo": "acme/platform-core",
+          "title": "drop the legacy retry table",
+          "status": "ready",
+          "outcome": "ready",
+          "failed": false,
+          "pr_url": "https://github.com/acme/platform-core/pull/412",
+          "pr_number": 412,
+          "age_seconds": 6400
+        },
+        {
+          "run": "20261020-071020-aa05",
+          "slug": "acme-platform-cli",
+          "repo": "acme/platform-cli",
+          "title": "make the config loader tolerate an empty file",
+          "status": "failed",
+          "outcome": "failed",
+          "failed": true,
+          "pr_url": null,
+          "pr_number": null,
+          "age_seconds": 9205
+        }
+      ],
+      "ready": []
+    }
+  ]
+}

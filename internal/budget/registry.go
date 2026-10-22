@@ -22,6 +22,13 @@ const maxEntryString = 200
 // both) pins the two together.
 const MaxEntryTokens = 1_000_000_000
 
+// MaxEntryTimestamp bounds AgentEntry.WaitingUntil; it must equal
+// rules.MaxTimestamp (internal/budget/rules/rules.go), the bound the template's
+// TIMESTAMP validator applies to `waiting_until`. It is duplicated for the same
+// import-cycle reason as MaxEntryTokens, and TestMaxEntryTimestampMatchesRules
+// (package budget_test, which can import both) pins the two together.
+const MaxEntryTimestamp int64 = 1<<53 - 1
+
 // clipString makes s one clean line of at most 200 bytes: the rules refuse
 // longer strings, and registry text is untrusted anyway. safetext.Strip
 // drops every control, BiDi override and zero-width character (not just
@@ -36,7 +43,7 @@ func clipString(s string) string {
 }
 
 func clipEntry(e *AgentEntry) {
-	for _, p := range []*string{&e.Repo, &e.Workflow, &e.Title, &e.Stage, &e.Verify, &e.Coder, &e.Reviewer, &e.Recipe, &e.Auth, &e.PRURL, &e.Halted, &e.Action} {
+	for _, p := range []*string{&e.Repo, &e.Workflow, &e.Title, &e.Stage, &e.Verify, &e.Coder, &e.Reviewer, &e.Recipe, &e.Auth, &e.PRURL, &e.Halted, &e.Action, &e.Credential} {
 		*p = clipString(*p)
 	}
 	// The rules refuse the whole entry for a tokens value outside
@@ -44,6 +51,12 @@ func clipEntry(e *AgentEntry) {
 	// miscounts (or a negative figure from a bug) can't silently stop every
 	// later heartbeat the way an unclamped value would (review focus 4).
 	e.Tokens = min(max(e.Tokens, 0), MaxEntryTokens)
+	// waiting_until is bounded the same way and for the same reason: the
+	// template's TIMESTAMP validator refuses the entire entry for an instant
+	// outside [0, MaxEntryTimestamp], and the writer that records it (C1.16)
+	// would otherwise freeze the run's registry on one bad clock reading. Zero
+	// means nothing is pending, so a negative instant clamps to an absent node.
+	e.WaitingUntil = min(max(e.WaitingUntil, 0), MaxEntryTimestamp)
 }
 
 // Start creates the run's registry entry and its ledger's exp, then begins
@@ -73,7 +86,7 @@ func (s *Session) Start(ctx context.Context, entry AgentEntry) error {
 		s.mu.Unlock()
 		err = s.retryBoot(ctx, "registry", write)
 		if err == nil {
-			s.log.Warn("budget: the database's rules predate recipes, so the registry entry goes without the recipe; run fugaro init --firebase <firebase-project-id> to update the rules")
+			s.log.Warn("budget: the database's rules predate recipes, so the registry entry goes without the recipe; run fugaro update --firebase-project <firebase-project-id> to update the rules")
 		}
 	}
 	if err != nil {
@@ -197,7 +210,7 @@ func (s *Session) checkNewKeys(ctx context.Context) {
 	s.entry.Action, s.entry.Tokens = "", 0
 	s.mu.Unlock()
 	s.dbOK()
-	s.log.Warn("budget: the dashboard rules predate 0.7.0, so the last action and token count are not shown; run fugaro init --firebase <firebase-project-id> to update them")
+	s.log.Warn("budget: the dashboard rules predate 0.7.0, so the last action and token count are not shown; run fugaro update --firebase-project <firebase-project-id> to update them")
 }
 
 // snapshotEntry is the entry as the next heartbeat sends it.

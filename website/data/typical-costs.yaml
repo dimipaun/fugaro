@@ -1,0 +1,105 @@
+# website/data/typical-costs.yaml -- what a job costs, measured on Fugaro's own development
+# runs (owner's brief, 2026-10-19).
+#
+# This is the one source of truth for the figures the caps-and-costs page leads with, and the
+# rule it is written to is the site's (Global Constraint 6): a page renders a fact, it never
+# restates one. `website/src/content.ts` reads this file, `website/src/components/CapsCosts.astro`
+# renders it row by row, and `website/test/caps-and-costs.mjs` holds the built page to it --
+# every figure here is on the page, and no figure on the page is one this file does not carry.
+# A figure is refreshed by editing this file, never by editing a page.
+#
+# Where the numbers come from: the owner's own cloud runs of this project, over the window
+# below, as the owner measured and recorded them. They are **cost = model plus compute, per
+# finished run, in US dollars, an estimate** -- not a quote, not a price list, and not a
+# promise about another run. The models behind most of them were DeepSeek's through OpenRouter,
+# which is cheap; a run on a Claude model costs more. The caps a project sets are the safety
+# net: the per-run cap below is what stops a run that loops.
+#
+# What an entry is, and what each field is for:
+#
+#   version                 1, and this reader knows version 1 (W1.3).
+#   window.from / window.to the days the runs were taken from, and `window.runs` how many
+#                           finished in that window. `window.to` is the day the figures were
+#                           taken as well as the window's last day, and the page prints all
+#                           three, so a reader can tell how old the numbers are.
+#   jobs[].id               the row's name in a build error, and the page's `data-job`.
+#   jobs[].name             the row's label, as a reader reads it.
+#   jobs[].runs             the sample the row's figures were drawn from. Printed, always:
+#                           a figure without its sample size is the anecdote D96 refuses.
+#   jobs[].median_usd       the median run's cost.
+#   jobs[].middle_half_usd  the range the middle half of the runs fell in, or nothing at all
+#                           when the owner measured none for that row. Omitted is rendered as
+#                           a dash; a made-up range is not.
+#   jobs[].nine_in_ten_under_usd  the figure nine runs in ten stayed under.
+#   jobs[].worst_usd        the most expensive single run of that kind, or nothing at all.
+#   per_run_cap_usd         the per-run cap Fugaro's own installation sets today: the ceiling a
+#                           looping run meets, and the safety net rather than a price. It is NOT
+#                           a CLI default: `fugaro budget set --per-run N` sets it, and an
+#                           enforcing project with no per-run cap anywhere refuses every lease
+#                           (docs/gcp-setup.md, "Set caps"). A refresh confirms this figure with
+#                           the installation rather than assuming it.
+#   per_run_cap_since       the day that cap took effect, as `YYYY-MM-DD`. Printed beside it:
+#                           a cap is a decision with a date, and the page says which cap was in
+#                           force when the figures above were measured.
+#   measured_under_cap_usd  the per-run cap the figures above were measured under. It is a
+#                           second figure and not a copy of the one above: the runs in the
+#                           window finished under an earlier cap, the owner lowered the cap on
+#                           the date above, and a page that printed today's cap as the one these
+#                           runs ran under would be claiming a measurement under a cap that did
+#                           not exist yet. The bars are drawn against **this** cap, so every
+#                           mark sits inside its track, and today's cap is the callout's own.
+#
+# A row is never added without a sample behind it, and a figure is never rounded here: the page
+# prints the value in this file, and a value that is not in this file is a page's own invention
+# (D96, D97). The same rule the aggregation's published ranges are held to applies to these:
+# the sample size is printed beside every figure.
+version: 1
+
+# The window the runs were taken from, and how many finished in it. `to` is also the day the
+# figures were taken: a refresh moves both dates and the counts with them.
+window:
+  from: 2026-10-04
+  to: 2026-10-19
+  runs: 980
+
+# One row per kind of run: a first task run, a follow-up round on a pull request, and a run
+# that only reviews. `middle_half_usd` and `worst_usd` are absent where the owner measured
+# none, and the page renders a dash for them rather than a number nobody measured.
+jobs:
+  - id: task
+    name: A first task run
+    runs: 396
+    median_usd: 0.36
+    middle_half_usd: [0.15, 0.68]
+    nine_in_ten_under_usd: 1.27
+    worst_usd: 5.24
+  - id: follow_up
+    name: A follow-up round on a pull request
+    runs: 531
+    median_usd: 0.35
+    middle_half_usd: [0.17, 0.59]
+    nine_in_ten_under_usd: 1.00
+    worst_usd: 8.36
+  - id: review
+    name: An independent review-only run
+    runs: 53
+    median_usd: 0.11
+    nine_in_ten_under_usd: 0.22
+
+# The per-run cap Fugaro's own installation sets today: the ceiling that stops a run which
+# loops, and the safety net rather than a price. It is not a CLI default. The CLI's `--per-run`
+# defaults to 0, which sets no cap, and an enforcing project with no per-run cap anywhere
+# refuses every lease, so the figure below is a property of this installation and is confirmed
+# with it, never assumed. The daily cap is the other half of the same safety net, and
+# `fugaro budget set` changes both. The owner lowered this cap from $10 to $5 on 2026-10-21
+# (the date below) because the cap is only the net under a looping run, which is why the
+# figures above were measured under a different one.
+per_run_cap_usd: 5
+per_run_cap_since: 2026-10-21
+
+# The per-run cap the figures above ran under, and the reason the page prints two of them: the
+# window closed on 2026-10-19, two days before the cap above took effect, so every run behind
+# every figure above finished under this cap. The bars are drawn against this one — a figure
+# placed against a cap that did not exist when it was measured is a figure the page has
+# misread — and the callout above the commands states the cap in force today.
+measured_under_cap_usd: 10

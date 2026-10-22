@@ -3,8 +3,8 @@
 # (internal/pricing/catalog/catalog.json) from OpenRouter's public API and
 # prints what changed (design provider-price-catalog.md §5).
 #
-#   scripts/gen-price-catalog.sh -date 2026-10-14
-#   scripts/gen-price-catalog.sh -from internal/pricing/catalog/testdata/openrouter -date 2026-10-14
+#   scripts/gen-price-catalog.sh -date 2026-10-20
+#   scripts/gen-price-catalog.sh -from internal/pricing/catalog/testdata/openrouter -date 2026-10-20
 #
 # The second form reads the snapshots the checked-in file was generated
 # from, so a reviewer can regenerate it offline and get identical bytes.

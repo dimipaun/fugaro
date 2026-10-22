@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math/rand/v2"
 	"os"
 	"strings"
@@ -51,6 +52,14 @@ var queuedNextPoll = func() time.Duration {
 // printing without queued rows (and with a note). A var so tests can
 // shrink it.
 var queuedOnceWait = 3 * time.Second
+
+// watchNow is the clock watch's recency windows are measured back from: the
+// queued scan's (queuedLookback, finishedLookback; the scanner reads it
+// through its own now field, which newQueuedScanner defaults to this) and the
+// degraded view's (degradedSince). A var so a test can pin it, the way ls
+// tests pin lsNow; runID (watch_queued_test.go) mints against it, so a test
+// that pins it mints and lists against the same time.
+var watchNow = time.Now
 
 // queuedLookback bounds how long a run shows queued: until this long after
 // its launch claim or launch.json (by their own timestamps). A launch older
@@ -156,6 +165,16 @@ type scanResult struct {
 	IsQueued   bool
 	Finished   watch.FinishedRun
 	IsFinished bool
+	// Facts is what the run's own launch.json says about it: the Cloud Run job
+	// it names, and who started the run — reported for every run the scan read
+	// one for, a live run's included, whose RTDB registry entry carries
+	// neither and could not be trusted with either (a launcher writes a job's
+	// environment and its own launch.json, never the job's name or the
+	// registry). Job is "" when there is no launch.json to read, and
+	// LaunchedBy too (a launch that recorded no launcher: the recovery
+	// backfill, a local run with no execution, or `fugaro logs`'s synthetic
+	// launch).
+	Facts watch.RunFacts
 }
 
 // scanRun reads one run and says what the scanner should report about it:
@@ -171,6 +190,25 @@ func scanRun(ctx context.Context, env *cloudEnv, slug, id string, w scanWindow, 
 	if in.Problem != "" {
 		return scanResult{}, errors.New(in.Problem) // a corrupt object: ls's error row
 	}
+	// The job and the launcher come from launch.json and are attached whichever
+	// row this run produces — queued, finished, or neither (a live run, which
+	// this scan still read): one run's launch.json is one run's, and the rows
+	// it is stamped onto are the view's, not this function's
+	// (watch.MergeFacts).
+	facts := watch.RunFacts{}
+	if in.Launch != nil {
+		facts.Job, facts.LaunchedBy = in.Launch.Job, in.Launch.LaunchedBy
+	}
+	res, err := scanRow(ctx, env, ro, in, w, now)
+	if err != nil {
+		return scanResult{}, err
+	}
+	res.Facts = facts
+	return res, nil
+}
+
+// scanRow is what the scan says about in: finished, queued, or neither.
+func scanRow(ctx context.Context, env *cloudEnv, ro runObjects, in runview.Input, w scanWindow, now time.Time) (scanResult, error) {
 	if in.Record != nil {
 		return finishedResult(in, w.FinishedSince, now), nil
 	}
@@ -179,7 +217,7 @@ func scanRun(ctx context.Context, env *cloudEnv, slug, id string, w scanWindow, 
 		// launch.json; a run cancelled while pending has both.
 		cancelled, err := ro.store.CancelRequested(ctx)
 		if err != nil {
-			return scanResult{}, fmt.Errorf("checking %s/%s's cancel marker: %w", slug, id, err)
+			return scanResult{}, fmt.Errorf("checking %s/%s's cancel marker: %w", in.Slug, in.RunID, err)
 		}
 		if cancelled {
 			return scanResult{}, nil
@@ -208,6 +246,7 @@ func finishedResult(in runview.Input, finishedSince, now time.Time) scanResult {
 	return scanResult{IsFinished: true, Finished: watch.FinishedRun{
 		Run: in.RunID, Slug: in.Slug, Title: runTitle(in.Task), Workflow: row.Workflow,
 		Status: row.Status, Outcome: row.Outcome, PRNumber: row.PR, PRURL: row.PRURL,
+		LaunchedBy: row.LaunchedBy,
 		FinishedAt: finishedAt,
 	}}
 }
@@ -256,7 +295,7 @@ func queuedResult(in runview.Input, queuedSince, queuedMinted, now time.Time) sc
 	}
 	return scanResult{IsQueued: true, Queued: watch.QueuedRun{
 		Run: in.RunID, Slug: in.Slug, Title: runTitle(in.Task), Workflow: row.Workflow, Recipe: row.Recipe,
-		RequestedBy: row.RequestedBy, LaunchedAt: at, Stale: stale,
+		RequestedBy: row.RequestedBy, LaunchedBy: row.LaunchedBy, LaunchedAt: at, Stale: stale,
 	}}
 }
 
@@ -297,15 +336,28 @@ type queuedScanner struct {
 	// "slug/runID": once a run's record is no longer running it never
 	// changes again (nothing in this codebase writes result.json after a
 	// run has finalized), so a later scan reuses the cached row instead of
-	// re-reading task.json, launch.json and result.json for it. cacheMu
-	// guards it: scanRepo runs concurrently across repositories and within
-	// one repository's run reads. pruneFinishedCache drops entries whose
-	// FinishedAt has aged out of finishedLookback, so the cache never
+	// re-reading task.json, launch.json and result.json for it. The facts
+	// the same read found (the job and the launcher, scanResult.Facts) are
+	// cached with the row: a cache hit reads no launch.json, so keeping only
+	// the row would lose them from every frame after the first scan.
+	// cacheMu guards it: scanRepo runs concurrently across repositories and
+	// within one repository's run reads. pruneFinishedCache drops entries
+	// whose FinishedAt has aged out of finishedLookback, so the cache never
 	// grows past what one scan's window could hold.
 	cacheMu       sync.Mutex
-	finishedCache map[string]watch.FinishedRun
+	finishedCache map[string]cachedFinishedRun
 
 	env *cloudEnv
+	// index places the job names the runs' launch.json records, when the
+	// command has one (a live watch reads the published policy once; a unit
+	// test of the scanner alone has none, and every job is then a bare name).
+	index *projectJobIndex
+	// facts is the job and launcher of each run the last scan read, by the
+	// run's key. It is written at the end of a scan and read by Facts, both on
+	// the scanning goroutine, so it needs no lock of its own: what guards it
+	// against a reader on another goroutine is queuedSource's own mutex, which
+	// the frame's Get holds.
+	facts watch.Facts
 	// opening is the open in flight, nil when none.
 	opening chan openResult
 	// openFails counts opens failed in a row; until nextOpen no new open
@@ -327,7 +379,7 @@ func newQueuedScanner(lc *localcfg.Config, repo string) *queuedScanner {
 			return lsSlugs(ctx, env, &lsOptions{repo: repo}, io.Discard)
 		},
 		listIDs: runstore.ListRunIDs,
-		now:     time.Now,
+		now:     watchNow,
 		readRun: scanRun,
 		workers: queuedWorkers, repoTimeout: queuedRepoTimeout, openTimeout: queuedOpenTimeout,
 	}
@@ -407,22 +459,30 @@ func (s *queuedScanner) connect(ctx context.Context) (*cloudEnv, error) {
 	}
 }
 
-// cachedFinished is key's cached finished run, if any.
-func (s *queuedScanner) cachedFinished(key string) (watch.FinishedRun, bool) {
-	s.cacheMu.Lock()
-	defer s.cacheMu.Unlock()
-	f, ok := s.finishedCache[key]
-	return f, ok
+// cachedFinishedRun is one entry of the finished cache: the row a read
+// produced, and the facts (the job and the launcher) the same read found for
+// it. The two travel together because a cache hit reads no launch.json.
+type cachedFinishedRun struct {
+	row   watch.FinishedRun
+	facts watch.RunFacts
 }
 
-// cacheFinished remembers f under key, so a later scan does not re-read it.
-func (s *queuedScanner) cacheFinished(key string, f watch.FinishedRun) {
+// cachedFinished is key's cached finished run, if any.
+func (s *queuedScanner) cachedFinished(key string) (cachedFinishedRun, bool) {
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	c, ok := s.finishedCache[key]
+	return c, ok
+}
+
+// cacheFinished remembers c under key, so a later scan does not re-read it.
+func (s *queuedScanner) cacheFinished(key string, c cachedFinishedRun) {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
 	if s.finishedCache == nil {
-		s.finishedCache = map[string]watch.FinishedRun{}
+		s.finishedCache = map[string]cachedFinishedRun{}
 	}
-	s.finishedCache[key] = f
+	s.finishedCache[key] = c
 }
 
 // pruneFinishedCache drops every cached entry whose FinishedAt is before
@@ -432,8 +492,8 @@ func (s *queuedScanner) cacheFinished(key string, f watch.FinishedRun) {
 func (s *queuedScanner) pruneFinishedCache(finishedSince time.Time) {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
-	for key, f := range s.finishedCache {
-		if f.FinishedAt.Before(finishedSince) {
+	for key, c := range s.finishedCache {
+		if c.row.FinishedAt.Before(finishedSince) {
 			delete(s.finishedCache, key)
 		}
 	}
@@ -443,11 +503,12 @@ func (s *queuedScanner) pruneFinishedCache(finishedSince time.Time) {
 type repoScan struct {
 	queued     []watch.QueuedRun
 	finished   []watch.FinishedRun
-	unreadable int   // runs left out (failed reads)
-	runErr     error // the first of them's error
-	cutOff     int   // runs not read before the repository's deadline
-	total      int   // runs listed
-	err        error // the repository could not be listed: rows is nil
+	facts      watch.Facts // the job and launcher of each run read, by the run's key
+	unreadable int         // runs left out (failed reads)
+	runErr     error       // the first of them's error
+	cutOff     int         // runs not read before the repository's deadline
+	total      int         // runs listed
+	err        error       // the repository could not be listed: rows is nil
 }
 
 // scanRepo reads slug's queued and finished runs under its own deadline:
@@ -472,8 +533,8 @@ func (s *queuedScanner) scanRepo(ctx context.Context, env *cloudEnv, slug string
 	results := make([]result, len(ids))
 	var toRead []int
 	for i, id := range ids {
-		if f, ok := s.cachedFinished(slug + "/" + id); ok {
-			results[i] = result{scanResult{IsFinished: true, Finished: f}, nil, true}
+		if c, ok := s.cachedFinished(slug + "/" + id); ok {
+			results[i] = result{scanResult{IsFinished: true, Finished: c.row, Facts: c.facts}, nil, true}
 			continue
 		}
 		toRead = append(toRead, i)
@@ -490,7 +551,7 @@ func (s *queuedScanner) scanRepo(ctx context.Context, env *cloudEnv, slug string
 					continue // cut off: the result is not trusted
 				}
 				if res.IsFinished {
-					s.cacheFinished(slug+"/"+ids[i], res.Finished)
+					s.cacheFinished(slug+"/"+ids[i], cachedFinishedRun{row: res.Finished, facts: res.Facts})
 				}
 				results[i] = result{res, err, true}
 			}
@@ -508,7 +569,16 @@ feed:
 	wg.Wait()
 
 	r := repoScan{total: len(ids)}
-	for _, res := range results {
+	for i, res := range results {
+		if res.done && res.err == nil && (res.res.Facts.Job != "" || res.res.Facts.LaunchedBy != "") {
+			if r.facts == nil {
+				r.facts = watch.Facts{}
+			}
+			// watch.RunKeyOf applies the same normalisation the rows carry
+			// (the wire slug key, the cleaned run id), so the reader that
+			// stamps the view never reproduces either rule.
+			r.facts[watch.RunKeyOf(slug, ids[i])] = s.factsOf(res.res.Facts)
+		}
 		switch {
 		case !res.done:
 			r.cutOff++
@@ -556,13 +626,13 @@ func (s *queuedScanner) scan(ctx context.Context) (queued []watch.QueuedRun, fin
 	s.pruneFinishedCache(w.FinishedSince)
 
 	results := make([]repoScan, len(slugs))
-	jobs := make(chan int)
+	repoJobs := make(chan int)
 	var wg sync.WaitGroup
 	for range min(s.workers, len(slugs)) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for i := range jobs {
+			for i := range repoJobs {
 				results[i] = s.scanRepo(ctx, env, slugs[i], listMinted, w, now)
 			}
 		}()
@@ -570,17 +640,18 @@ func (s *queuedScanner) scan(ctx context.Context) (queued []watch.QueuedRun, fin
 feed:
 	for i := range slugs {
 		select {
-		case jobs <- i:
+		case repoJobs <- i:
 		case <-ctx.Done():
 			break feed
 		}
 	}
-	close(jobs)
+	close(repoJobs)
 	wg.Wait()
 	if ctx.Err() != nil {
 		return nil, nil, "", ctx.Err() // shutting down
 	}
 
+	jobs := watch.Facts{}
 	var parts []string
 	unreadRepos, unreadRuns := 0, 0
 	var repoErr, runErr, cutOff string
@@ -595,6 +666,7 @@ feed:
 		}
 		queued = append(queued, r.queued...)
 		finished = append(finished, r.finished...)
+		maps.Copy(jobs, r.facts)
 		if r.cutOff > 0 {
 			if cutRepos == 0 {
 				cutOff = fmt.Sprintf("%s: %d of %d runs not read (%s)", slugs[i], r.cutOff, r.total, errText(context.DeadlineExceeded, s.repoTimeout))
@@ -622,21 +694,43 @@ feed:
 	if len(parts) > 0 {
 		note = "runs: " + strings.Join(parts, "; ")
 	}
+	s.facts = jobs
 	return queued, finished, note, nil
 }
+
+// factsOf is what a scan read about one run, as the facts a frame stamps onto
+// the row it draws: the job name launch.json recorded, placed against the
+// published policy (s.index.ref — never parsed), and the launcher launch.json
+// recorded. The launcher is carried as it was read; watch.MergeFacts sanitises
+// it for display like every other bucket-derived string.
+func (s *queuedScanner) factsOf(f watch.RunFacts) watch.RunFacts {
+	return watch.RunFacts{JobRef: s.index.ref(f.Job), LaunchedBy: f.LaunchedBy}
+}
+
+// Facts is the job and launcher of each run the last scan read, by the run's
+// key (plan task 3.5 step 2, and who started a run). It is what a frame stamps
+// onto its rows (watch.MergeFacts): neither a live row's job nor its launcher
+// is in any registry entry, so the bucket's launch.json — read by the scan for
+// every run it lists — is where they come from.
+//
+// Call it on the goroutine that ran the scan (queuedSource.refresh does): the
+// map is the scan's own and is never mutated after it returns.
+func (s *queuedScanner) Facts() watch.Facts { return s.facts }
 
 // fetchQueuedOnce is watch --once's read of the queued and finished rows:
 // one scan in the background, waited for at most queuedOnceWait; past that
 // it returns no rows and a note, and the scan is abandoned.
-func fetchQueuedOnce(ctx context.Context, lc *localcfg.Config, repo string) ([]watch.QueuedRun, []watch.FinishedRun, string) {
+func fetchQueuedOnce(ctx context.Context, lc *localcfg.Config, repo string, index *projectJobIndex) ([]watch.QueuedRun, []watch.FinishedRun, watch.Facts, string) {
 	type result struct {
 		queued   []watch.QueuedRun
 		finished []watch.FinishedRun
+		facts    watch.Facts
 		note     string
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	sc := newQueuedScanner(lc, repo)
+	sc.index = index
 	done := make(chan result, 1)
 	go func() {
 		defer sc.Close()
@@ -644,13 +738,13 @@ func fetchQueuedOnce(ctx context.Context, lc *localcfg.Config, repo string) ([]w
 		if err != nil {
 			note = queuedNote(err)
 		}
-		done <- result{queued, finished, note}
+		done <- result{queued, finished, sc.Facts(), note}
 	}()
 	select {
 	case r := <-done:
-		return r.queued, r.finished, r.note
+		return r.queued, r.finished, r.facts, r.note
 	case <-time.After(queuedOnceWait):
-		return nil, nil, fmt.Sprintf("queued runs unavailable: the runs bucket did not answer within %s", queuedOnceWait)
+		return nil, nil, nil, fmt.Sprintf("queued runs unavailable: the runs bucket did not answer within %s", queuedOnceWait)
 	}
 }
 
@@ -660,12 +754,19 @@ func fetchQueuedOnce(ctx context.Context, lc *localcfg.Config, repo string) ([]w
 // render path, so a slow or unreachable bucket never stalls the
 // RTDB-driven view, and the first frame never waits for the first scan.
 type queuedSource struct {
+	sc *queuedScanner
+	// scan is the scan to run: sc's own, unless a test sets one to drive the
+	// failure handling below without a bucket behind it.
 	scan func(context.Context) ([]watch.QueuedRun, []watch.FinishedRun, string, error)
 	wg   sync.WaitGroup
 
 	mu       sync.Mutex
 	rows     []watch.QueuedRun
 	finished []watch.FinishedRun
+	// facts is the job and launcher of each run the last good scan read,
+	// resolved against the published policy (watch.MergeFacts stamps them
+	// onto the rows the frame draws).
+	facts    watch.Facts
 	note     string
 	failures int // scans failed in a row
 }
@@ -674,19 +775,20 @@ type queuedSource struct {
 // until ctx ends. The caller's Wait, after ctx is cancelled, returns
 // promptly: every step of a scan stops when ctx ends, and an open in
 // flight is left to finish on its own goroutine.
-func startQueuedSource(ctx context.Context, lc *localcfg.Config, repo string) *queuedSource {
+func startQueuedSource(ctx context.Context, lc *localcfg.Config, repo string, index *projectJobIndex) *queuedSource {
 	sc := newQueuedScanner(lc, repo)
-	return runQueuedSource(ctx, sc.scan, sc.Close)
+	sc.index = index
+	return runQueuedSource(ctx, sc)
 }
 
-// runQueuedSource polls scan on its own goroutine until ctx ends, then
-// calls done.
-func runQueuedSource(ctx context.Context, scan func(context.Context) ([]watch.QueuedRun, []watch.FinishedRun, string, error), done func()) *queuedSource {
-	qs := &queuedSource{scan: scan}
+// runQueuedSource polls sc on its own goroutine until ctx ends, then closes
+// it.
+func runQueuedSource(ctx context.Context, sc *queuedScanner) *queuedSource {
+	qs := &queuedSource{sc: sc}
 	qs.wg.Add(1)
 	go func() {
 		defer qs.wg.Done()
-		defer done()
+		defer sc.Close()
 		for {
 			qs.refresh(ctx)
 			t := time.NewTimer(queuedNextPoll())
@@ -706,20 +808,29 @@ func runQueuedSource(ctx context.Context, scan func(context.Context) ([]watch.Qu
 func (qs *queuedSource) Wait() { qs.wg.Wait() }
 
 func (qs *queuedSource) refresh(ctx context.Context) {
-	rows, finished, note, err := qs.scan(ctx)
+	scan := qs.scan
+	if scan == nil {
+		scan = qs.sc.scan
+	}
+	rows, finished, note, err := scan(ctx)
 	if ctx.Err() != nil {
 		return // shutting down: nothing will render it
+	}
+	var facts watch.Facts
+	if qs.sc != nil {
+		facts = qs.sc.Facts()
 	}
 	qs.mu.Lock()
 	defer qs.mu.Unlock()
 	if err == nil {
-		qs.rows, qs.finished, qs.note, qs.failures = rows, finished, note, 0
+		qs.rows, qs.finished, qs.facts, qs.note, qs.failures = rows, finished, facts, note, 0
 		return
 	}
 	qs.failures++
 	qs.note = queuedNote(err)
 	if qs.failures >= queuedDropAfter {
 		qs.rows, qs.finished = nil, nil
+		qs.facts = nil
 	} else if len(qs.rows) > 0 || len(qs.finished) > 0 {
 		qs.note += " (the queued rows shown are from an earlier read)"
 	}
@@ -731,4 +842,12 @@ func (qs *queuedSource) Get() ([]watch.QueuedRun, []watch.FinishedRun, string) {
 	qs.mu.Lock()
 	defer qs.mu.Unlock()
 	return qs.rows, qs.finished, qs.note
+}
+
+// Facts is the last good scan's facts, by the run's key. Safe to call on every
+// frame, like Get, and empty until the first scan lands.
+func (qs *queuedSource) Facts() watch.Facts {
+	qs.mu.Lock()
+	defer qs.mu.Unlock()
+	return qs.facts
 }

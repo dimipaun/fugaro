@@ -73,7 +73,7 @@ func TestDoctorReportsASharedConfig(t *testing.T) {
 	if !strings.Contains(c.Problem, "the project's config is the shared file published to the runs bucket (generation ") || !strings.Contains(c.Problem, "checked ") || !strings.Contains(c.Problem, " ago)") {
 		t.Errorf("problem = %q", c.Problem)
 	}
-	if c.Fix != "fugaro init creates your own local config" {
+	if c.Fix != "fugaro setup creates your own local config" {
 		t.Errorf("fix = %q", c.Fix)
 	}
 	if o.Project == nil || o.Project.Name != "aurora" {
@@ -95,7 +95,7 @@ func TestDoctorFlagGCPProjectReachesSelection(t *testing.T) {
 	}
 }
 
-// No local config and no gcp_project anywhere still says to run fugaro init.
+// No local config and no gcp_project anywhere still says to run fugaro setup.
 func TestDoctorStillSaysRunInitWithoutAGCPProject(t *testing.T) {
 	r := newDoctorRig(t)
 	if err := os.Remove(r.cfgPath); err != nil {

@@ -25,6 +25,23 @@
 # D75 cost — one service account per installation — and it is an owner-run
 # apply either way: nothing can use the account unless an operator impersonates
 # it, and it holds only the permissions below.
+#
+# GATED OFF since 0.8.6 (owner's ruling, 2026-10-18: "Gate it off by default;
+# redesign for 0.9.0" — moved to 0.9.5 by the owner's ruling of 2026-10-19 and
+# to 0.9.6 by the owner's ruling of 2026-10-20, so 0.9.0 and 0.9.5 ship with
+# the role still gated off, as 0.8.6 and 0.8.7 do). The scoped
+# role and its conditioned binding exist only when var.managed_deployer_scoped
+# is true, and nothing sets it: the condition
+# below cannot be accepted by IAM as written. It joins 9 clauses with 17
+# logical operators where IAM allows 12, it calls resource.name.contains(),
+# which is not a supported function (startsWith, endsWith, extract, == and !=
+# are), and resource.name is not supported at all for Artifact Registry
+# repositories, Cloud Run jobs, Cloud Scheduler jobs, IAM service accounts or
+# API keys. setIamPolicy would reject the binding and stop every fugaro update.
+# Until the fence is redesigned and measured live (0.9.6), the account, the
+# unconditioned create-and-read role and the operators' impersonation grant
+# are created as before, and every command that would use the deployer
+# refuses first (internal/cli's managedDeployerShipped).
 
 resource "google_service_account" "fugaro_deployer" {
   project      = var.project
@@ -133,6 +150,9 @@ resource "google_project_iam_custom_role" "fugaro_deployer" {
 # operation, for instance: a poll the provider makes may need one, and it fails
 # closed rather than being granted unfenced).
 resource "google_project_iam_custom_role" "fugaro_deployer_scoped" {
+  # Off unless the installation opts in; see the header (0.8.6 gate).
+  count = var.managed_deployer_scoped ? 1 : 0
+
   project = var.project
   role_id = "fugaroDeployerScoped"
   title   = "Fugaro managed deployer (prefixed resources only)"
@@ -144,7 +164,7 @@ resource "google_project_iam_custom_role" "fugaro_deployer_scoped" {
     "artifactregistry.repositories.update",       # ... and update it (labels, cleanup policy)
     "cloudscheduler.jobs.delete",                 # google_cloud_scheduler_job: delete a prefixed job
     "cloudscheduler.jobs.pause",                  # ... pause it
-    "cloudscheduler.jobs.resume",                 # ... and resume it: the pair of pause, so a job the plan paused cannot be stranded
+    "cloudscheduler.jobs.enable",                 # ... and resume it (GCP names resume "enable"; cloudscheduler.jobs.resume does not exist): the pair of pause, so a job the plan paused cannot be stranded
     "cloudscheduler.jobs.run",                    # ... and run it once
     "cloudscheduler.jobs.update",                 # ... and update it, which is what an apply of a changed schedule does
     "iam.serviceAccounts.actAs",                  # a job or a schedule runs as an account of the plan's own, prefixed — so it can never act as the default compute account or Fugaro's own
@@ -191,6 +211,9 @@ resource "google_project_iam_member" "fugaro_deployer" {
 # whole fence. A plan that creates this binding with the condition removed or
 # widened is refused by internal/infra/tf, byte for byte.
 resource "google_project_iam_member" "fugaro_deployer_scoped" {
+  # Off unless the installation opts in, together with the role it binds.
+  count = var.managed_deployer_scoped ? 1 : 0
+
   project = var.project
   role    = "projects/${var.project}/roles/fugaroDeployerScoped"
   member  = google_service_account.fugaro_deployer.member
@@ -220,7 +243,8 @@ resource "google_project_iam_member" "fugaro_deployer_scoped" {
 #
 # The first shows roles/iam.serviceAccountTokenCreator for the operators (this
 # resource); the second shows the two custom roles D75 gives the account, the
-# scoped one under its fmgd- condition.
+# scoped one under its fmgd- condition, or, while var.managed_deployer_scoped
+# is off (every installation in 0.8.6), fugaroDeployer alone.
 resource "google_service_account_iam_member" "fugaro_deployer_token_creator" {
   for_each = toset(var.operators)
 

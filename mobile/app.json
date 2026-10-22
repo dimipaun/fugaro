@@ -5,12 +5,32 @@
     "version": "0.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
+    "icon": "./assets/icon.png",
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#0A0E16"
+        }
+      ]
+    ],
     "ios": {
       "supportsTablet": false
     },
     "android": {
-      "edgeToEdgeEnabled": true
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0A0E16"
+      }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "70e67d4a-77d3-4110-9db6-e600266db345"
+      }
     }
   }
 }

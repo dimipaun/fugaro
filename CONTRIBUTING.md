@@ -53,4 +53,4 @@ The plugin's skills are in `plugin/skills` (`setup`, `working`, `routing`, `para
 
 ## Adding a backend for another cloud
 
-A cloud is a backend behind the interface in [`internal/backend`](internal/backend/backend.go); the runner, the agent loop and the git providers must not know which cloud they run on. [`internal/backend/gcp`](internal/backend/gcp) is the reference implementation, and its provisioning is a Terraform module set driven by `fugaro init` (`deploy/terraform/`). AWS and Azure are the most wanted. Please open an issue first (see "Other clouds" in the [README](README.md#other-clouds-help-wanted)), even if you can only review or test.
+A cloud is a backend behind the interface in [`internal/backend`](internal/backend/backend.go); the runner, the agent loop and the git providers must not know which cloud they run on. [`internal/backend/gcp`](internal/backend/gcp) is the reference implementation, and its provisioning is a Terraform module set driven by `fugaro setup` (`deploy/terraform/`). Please open an issue first (see "Other clouds" in the [README](README.md#other-clouds-help-wanted)), even if you can only review or test.

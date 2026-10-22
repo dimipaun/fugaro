@@ -1,119 +1,218 @@
 ---
 /**
- * website/src/pages/security.astro — the security page (website plan, Task W1.8).
+ * website/src/pages/security.astro — the security page (website plan, Task W1.8; the
+ * owner's brief and ruling D189 of 2026-10-19, the boundary diagram of 2026-10-20, and the
+ * bold look of 2026-10-21).
  *
- * The page renders `website/content/security.md`, which W0.5 generates from `SECURITY.md`
- * byte for byte below its title, and it adds **a lead line and nothing else** (D99). A
- * security page is the one page where being wrong is not merely embarrassing: the document
- * places "an agent doing harmful things inside its own container with the credentials that
- * job's service account is allowed to hold" out of scope and says a trusted author's own
- * prompt injection is still code execution, and a summary of either sentence is a false
- * claim about the product (F41, D99). So nothing here paraphrases, summarises or softens
- * the document: the page renders it.
+ * **The page is four things, and nothing else**: three of them are the document's own words,
+ * and the fourth is the page's own drawing written in them.
  *
- * Five decisions are visible in the file, and each of them is a reading of the plan rather
- * than a preference:
+ *   1. the **boundary diagram** (the owner's brief of 2026-10-20, and the owner's feedback of
+ *      2026-10-21 that put it in two layouts): one picture of the trust boundaries, drawn as
+ *      two inline SVGs — the wide one a desktop is shown and the tall one a phone is — with
+ *      the same facts as a list under it and the two limits the document's own summary names
+ *      below that: every label a phrase of `SECURITY.md`, proved while the page builds
+ *      (`quoted()` below), and the same words in the same order on both sides, proved by
+ *      `website/test/security.mjs`;
+ *   2. the **summary**, which is `SECURITY.md`'s own "In short" section, rendered from the
+ *      generated copy of the document;
+ *   3. the **"Reporting a vulnerability" section**, rendered from the same copy;
+ *   4. a **link to `SECURITY.md`** in the repository.
  *
- *   1. **The document is read through the content pipeline, not imported.** `loadSite()`
- *      validates the generated file — its header, its body, its source line — and fails the
- *      build naming it when it is missing or hand-edited (W1.3 step 2). The page renders the
- *      `body` that pipeline returns, so the page cannot render bytes the pipeline has not
- *      checked, and a page that rendered an empty security document would be a build error
- *      rather than a hole in the artifact.
- *   2. **The page carries its own renderer, and the reason is an anchor.** The document
- *      sends its own readers to a place by name — `see "Narrow git credentials" above` —
- *      and three of those names are the bold lead of a bullet rather than a heading
- *      (`SECURITY.md` "What one run's agent can reach", "Narrow git credentials", "Every
- *      launcher can write `runs/`"). A generic Markdown renderer gives ids to headings and
- *      to nothing else, so the anchors the repository's own cross-references rely on would
- *      not survive it (F40, and `internal/cli/docs_website_security_test.go`'s anchor rule
- *      is the same rule this renderer implements: a `##`-`####` heading, or a bullet whose
- *      bold run leads it). The subset below is what `SECURITY.md` uses — headings,
- *      paragraphs, `-` lists with one level of nesting and continuation lines, and inline
- *      code, bold, italics and links — and nothing else is guessed at, because a page that
- *      mangles a security sentence is worse than one that does not render it.
- *   3. **The lead line is a link line, not a claim** (step 1). It carries two links and no
- *      sentence of its own: the reporting section's own heading, pointing at that section
- *      (step 3's reporting pointer, which is what the document itself says to do rather
- *      than a paraphrase of what it says), and the path of the file this page is rendered
- *      from, pointing at that file in the repository. Both labels are facts — the heading
- *      from the document, the path from the generated file's own `source:` header line —
- *      and `website/test/security.mjs` holds the lead to being links and nothing else.
- *   4. **A missing reporting section stops the build.** The pointer is generated from the
- *      document's headings rather than written here, so a document that renamed or moved
- *      its `## Reporting a vulnerability` section fails the build instead of shipping a link
- *      to nowhere — the same rule as every other pointer on the site (Global Constraint 9).
- *   5. **The styles are global and token-only.** The document arrives through `set:html`,
- *      which Astro's scoped styles do not reach, so the block below is `is:global` and every
- *      selector is prefixed with the page's own marker attribute so it cannot reach another
- *      page. Colours come from W1.2's semantic tokens and never from a literal here; the
- *      lengths are the page's own, because a spacing scale is not something this task fixes.
+ * The page used to render `SECURITY.md` in full, behind a contents list built from its
+ * headings. The owner cut it to three things, and then asked for the boundary diagram above
+ * them (2026-10-20). D189 settled the one open question —
+ * where the summary comes from: **each long page's summary is rendered from a file, never
+ * written on the page**, and for this page the file is `SECURITY.md` itself, whose short
+ * "In short" section is the summary the page renders, written or approved by the owner as
+ * every `SECURITY.md` change is (`docs/website/redesign/reconciliation.md`, D189). So the
+ * page carries no summary prose of its own: a sentence here that the document does not state
+ * is the one thing a security page may not have (D99), and there is now nowhere to write one.
+ *
+ * Eight decisions are visible in the file:
+ *
+ *   1. **Both sections are the document's, word for word under the renderer.** They are
+ *      extracted from the generated `website/content/security.md` — the file `go run
+ *      ./internal/clidoc` writes from `SECURITY.md`, which `loadSite()` validates and a
+ *      missing or hand-edited copy of stops the build (W1.3 step 2) — so what the page says
+ *      cannot drift from the file it links to. A document that renamed, moved or emptied
+ *      either section stops the build rather than shipping a page with a hole in it.
+ *      `website/test/security.mjs` holds both to the document, bullet for bullet and
+ *      paragraph for paragraph.
+ *   2. **The diagram is the document's words too, and the build is what holds it there.** A
+ *      picture of a trust boundary is a claim about security, so every label of it — the
+ *      drawing's accessible name, each line inside the drawing, each fact under it and each of
+ *      the two lines below them — goes through `quoted()`: the phrase is looked for in
+ *      `SECURITY.md` while the page builds, and a phrase the document does not carry stops the
+ *      build (D99). The owner's brief for the picture named two things the document does not
+ *      say — that the pull request is a **draft** the owner **merges**, and that the container
+ *      is in **your own cloud project** — and a label that would need them is a label the page
+ *      does not carry: the drawing says the document's own "ends every run with a pull
+ *      request", and the container is the document's "one container per run".
+ *   3. **The drawing arranges the document's words, and the arrangement is a decision no gate
+ *      reads.** Every label being the document's own is what the build and
+ *      `website/test/security.mjs` prove; what the labels *say together* is drawn by hand, and
+ *      a picture can put two of the document's sentences side by side into a claim the
+ *      document makes only as a conditional. The model-key card is the one place that could
+ *      happen, so it is drawn as the document states it: `SECURITY.md`'s "What is not on by
+ *      default" bullet is one sentence — the budget gateway is **not on by default**, so the
+ *      real model key **sits in the agent's environment** — and its "With the budget gateway
+ *      on, model keys stay out of the agent's environment" is the other half of that same
+ *      conditional, never a second fact beside the first. So the card's title names the
+ *      gateway, its first line the default, and its last two lines the key and where it sits:
+ *      one state, the default one, which is the state the facts under the picture state too.
+ *      Drawing "the budget gateway" and "sits in the agent's environment" as two co-equal
+ *      lines would assert both halves of the conditional at once, and no test here reads a
+ *      picture's arrangement — which is why the arrangement is written down.
+ *   4. **A cross-reference inside the document becomes a link into the document.** The "In
+ *      short" bullets each end by naming the section they come from
+ *      (`([Known limits](#known-limits))`), and the page renders two of those sections and no
+ *      others. A reference to one of the two the page carries — today the summary's
+ *      `[Reporting a vulnerability](#reporting-a-vulnerability)` — is a link to the page's own
+ *      anchor, because that is where the section is and where a reader can follow it; a
+ *      reference to any other section is rewritten to the document in the repository at the
+ *      section it names. A cross-reference the document has **no heading for** is rendered as
+ *      its own text and
+ *      not as a link at all (round 4 of the review): every target the page can build for it
+ *      is wrong — the fragment as written is a link that goes nowhere, `website/test/
+ *      linkcheck.mjs` refuses a GitHub link whose fragment is not a heading, and the
+ *      document's own URL sends the reader to the top of the file with a link that reads
+ *      like every other one and arrives nowhere near the section it names. Text promises
+ *      nothing. `SECURITY.md` ships one (`[Money](#money)`, whose target is a bold lead in a
+ *      bullet under "Known limits" and not a heading); the owner has it in the pull request,
+ *      because the fix is a `SECURITY.md` edit. `website/test/security.mjs` pins the whole
+ *      rule over the built page — every cross-reference's text and order against the
+ *      document's own links, its href against the heading its fragment names (the page's own
+ *      anchor where the page renders that heading, the document's URL otherwise), and the
+ *      fragment-less one against the fact that it is not a link — so a fragment dropped,
+ *      aimed at another heading, sent to GitHub though the page carries it, or rendered as an
+ *      anchor fails there.
+ *   5. **The link is the repository's, and its path is read rather than typed.** The URL is
+ *      built from `site.yaml`'s repository and the generated file's own `source:` header, so
+ *      the page cannot point at a document this repository does not carry.
+ *   6. **The styles are global and token-only.** The rendered sections arrive through
+ *      `set:html`, which Astro's scoped styles do not reach, so the block below is
+ *      `is:global` and **every** selector is prefixed with the page's own marker attribute so it
+ *      cannot reach another page — including the two the bold look added, which are written
+ *      `[data-security-page] .security-hero` and `[data-security-page] .security-title` and not
+ *      as bare classes. Colours come from W1.2's semantic tokens and never from a literal here.
+ *   7. **The page is drawn in the site's bold look, and the look is `base.css`'s rather than
+ *      this file's** (the owner's brief of 2026-10-21). The markup above wears the shared
+ *      classes — the title `display-xl` with the gradient over its words, each section
+ *      heading `display-md`, each of the four blocks a `card` — and what this file's style
+ *      block adds is the two things that are this page's own: the rhythm the blocks are laid
+ *      out in (one column, one step of the spacing scale between them, and the blocks carry no
+ *      margin of their own — a flex item's margin is added to the gap, so a block that kept one
+ *      would give the same gap twice) and the panel the drawing sits on. Writing the display
+ *      scale or the card out again here would be a
+ *      second copy of a shape, and a second copy is a shape that drifts from the homepage's.
+ *      `website/test/security.mjs`'s `boldLookFailures` reads the classes and the rhythm back
+ *      off the built page; the visual match to the owner's boards is the owner's check at the
+ *      preview (the redesign's 70a–70c, P9). **No word of the page changed for it**: the look
+ *      is a way of drawing the document's text, and decision 1 still holds every word of it
+ *      to `SECURITY.md`.
+ *   8. **The drawing is one picture at two layouts**, and the stylesheet shows one of them at
+ *      a time (the owner's feedback of 2026-10-21: the tall drawing "works well in mobile"
+ *      but "on desktop doesn't fit above the fold", so a desktop shows "a horizontal layout
+ *      of the same drawing"). The tall drawing is the one a phone shows — the same picture
+ *      read top to bottom, at a phone's own width — and the wide one is the run read left to
+ *      right, drawn wide and shallow so the headline above it and the whole of it are inside
+ *      a 1440 × 800 first screen (the arithmetic is in the wide drawing's own comment). Both
+ *      are inline `<svg>` markup by hand, both carry the same labels in the same order, and
+ *      exactly one of them is rendered: the same arrangement, and the same reading, as the
+ *      How It Works drawing (`src/components/RunDiagram.astro`, whose gate reads both halves
+ *      of it). Nothing is a raster image and nothing is fetched.
  *
  * Nothing in this file fetches anything, reads a clock or starts a process: the page is
- * built from the files in this repository (Global Constraints 4 and 5).
+ * built from the files in this repository (Global Constraints 4 and 5). The diagram is
+ * inline `<svg>` markup: the drawing loads nothing — no image file, no font file, no script
+ * of its own — and the page adds no script of its own either. The site's one first-party
+ * file, `public/scripts/site.js`, is the layout's and loads on every page (the layout is
+ * held to that by `website/test/layout.mjs`); nothing in it reads the drawing, which is
+ * markup a browser paints.
  */
 import Base from '../layouts/Base.astro'
 import { loadSite } from '../content.ts'
+import { headingAnchor, headingText } from '../lib/github-slug.mjs'
 
 // The whole generated layer, validated: a missing or hand-edited security.md, or any other
 // fact the site renders, fails here with the file's name in the message (see 1 above).
 const site = loadSite()
 const securityDocument = site.documents['security.md']
 
+// The link's target: the file this page renders, in the repository `site.yaml` names. The
+// path is the generated file's own `source:` fact, so neither the repository nor the path is
+// written here, and `main` is the branch those files live on — the repository's default
+// branch, which every other GitHub link the site builds also names.
+const sourceHref = new URL(`blob/main/${securityDocument.source}`, `${site.facts.repository}/`).href
+
 // ---------------------------------------------------------------------------------------
-// The renderer: the subset of Markdown `SECURITY.md` is written in.
+// The document's own sections, and the markup they are rendered with.
 // ---------------------------------------------------------------------------------------
 
-type Block =
-  | { kind: 'heading'; level: number; text: string; id: string }
-  | { kind: 'paragraph'; text: string }
-  | { kind: 'list'; items: Item[] }
-
-interface Item {
-  /** The item's first line with its `- ` marker taken off, rendered inline. */
-  lead: string
-  /**
-   * The id the item carries, or null when the document's cross-references cannot name it.
-   * Only a top-level bullet whose first run is bold gets one, which is exactly the rule
-   * `internal/cli/docs_website_security_test.go` reads the document's anchors by.
-   */
-  id: string | null
-  /** What is under the item: its continuation lines and its nested list, in order. */
-  body: Block[]
-}
-
-const HEADING = /^(#{1,6})[ \t]+(.*?)[ \t]*$/
-const BULLET = /^([ \t]*)-[ \t]+(.*?)[ \t]*$/
-const BOLD_LEAD = /^\*\*(.+?)\*\*/
+/** The two sections the page renders, as the document spells their headings. */
+const SUMMARY = 'In short'
+const REPORTING = 'Reporting a vulnerability'
+const SUMMARY_ID = 'in-short'
+const REPORTING_ID = 'reporting-a-vulnerability'
 
 /**
- * The id a heading or a bullet's bold lead is given: lowercase, inline markup off,
- * punctuation dropped, spaces to hyphens. It is the convention the anchors of a rendered
- * Markdown page follow, and it is what makes `see "Narrow git credentials" above` resolve
- * to the bullet that carries that name — the test restates the same rule over the document
- * and over the built HTML so the two cannot disagree about what an anchor is.
+ * The document's lines under its `## <heading>`, up to the next heading of the same level or
+ * higher. A document without the heading fails the build: the page renders both sections and
+ * has nothing to fall back on, so a document that moved one stops the build rather than
+ * shipping a page with a hole in it.
  */
-function slug(text: string): string {
-  return inlineText(text)
-    .toLowerCase()
-    .replace(/['’]/g, '')
-    .replace(/[^\p{L}\p{N} -]/gu, '')
-    .trim()
-    .replace(/\s+/g, '-')
+function sectionLines(heading: string): string[] {
+  const lines = securityDocument.body.split('\n')
+  const start = lines.findIndex((line) => line.trim() === `## ${heading}`)
+  if (start === -1) {
+    throw new Error(
+      `${securityDocument.path} has no "## ${heading}" heading, and this page renders that section of it. The document is the page's whole text (D189), so a document that moved the section stops the build.`,
+    )
+  }
+  const rest = lines.slice(start + 1)
+  const end = rest.findIndex((line) => /^#{1,2}[ \t]/.test(line))
+  return end === -1 ? rest : rest.slice(0, end)
 }
 
-/** A line's text as a reader reads it, with its Markdown inline markup taken off. */
-function inlineText(line: string): string {
-  return line
-    .replace(/^\s*#{1,6}[ \t]+/, '')
-    .replace(/^\s*-[ \t]+/, '')
-    .replace(/`([^`]*)`/g, '$1')
-    .replace(/\[([^\]]*)\]\([^)\s]+\)/g, '$1')
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/\*([^*]+)\*/g, '$1')
-    .trim()
+/** The anchors the document's own headings carry, the way GitHub slugs them. */
+const documentAnchors = new Set(
+  securityDocument.body
+    .split('\n')
+    .map((line) => /^#{1,6}[ \t]+(.*)$/.exec(line.trim()))
+    .filter((match): match is RegExpExecArray => match !== null)
+    .map((match) => headingAnchor(headingText(match[1]))),
+)
+
+/**
+ * The anchors **this page itself renders**: the two sections it carries, under the ids the
+ * markup above gives their headings. A cross-reference to one of them is a link a reader can
+ * follow here, and it must be the page's own anchor rather than the document's — the section
+ * is on this page, and sending the reader to GitHub for a section they are looking at is the
+ * wrong destination even though the fragment would resolve there too.
+ */
+const pageAnchors = new Set([SUMMARY_ID, REPORTING_ID])
+
+/**
+ * A link target in the document, as the page renders it. A path is the document's own and
+ * is left as it is; a cross-reference into a section **this page renders** becomes a link to
+ * the page's own anchor, which is the section a reader can reach from here (the summary's
+ * `[Reporting a vulnerability](#reporting-a-vulnerability)` is that case, and it is the page's
+ * own `<h2 id="reporting-a-vulnerability">` that answers it); a cross-reference into any other
+ * section of the document becomes a link to the document in the repository, at the section it
+ * names. A fragment the document has **no heading for** has no target at all (`null`), and
+ * `inline()` renders that reference as its own text: the only link the page could build for it
+ * would send a reader to the top of the file, or to a fragment nothing answers, which is a
+ * promise the page cannot keep.
+ */
+function target(raw: string): string | null {
+  if (!raw.startsWith('#')) return raw
+  const fragment = raw.slice(1)
+  if (pageAnchors.has(fragment)) return `#${fragment}`
+  return documentAnchors.has(fragment) ? `${sourceHref}#${fragment}` : null
 }
 
+/** The document's inline markup, as HTML. */
 function escapeHTML(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -124,9 +223,10 @@ function escapeHTML(text: string): string {
 
 /**
  * One line's inline markup: code spans, bold, italics and links, in the order the document
- * nests them, with everything else escaped. A construct this renderer does not know is
- * left as the text it is rather than guessed at, so an unhandled construct shows up in the
- * page's text and `website/test/security.mjs` catches it against the document.
+ * nests them, with everything else escaped — and nothing added, so a space the document
+ * writes is a space the page renders. The subset is what the document's two sections use and
+ * nothing else is guessed at, because a page that mangles a security sentence is worse than
+ * one that does not render it (D99).
  */
 function inline(text: string): string {
   let html = ''
@@ -161,10 +261,11 @@ function inline(text: string): string {
     }
     if (text[i] === '[' && (match = /^\[([^\]]*)\]\(([^)\s]+)\)/.exec(rest)) !== null) {
       flush()
-      // The target is the document's own, escaped and **not rewritten**: links in the
-      // document are written as paths from the repository root, and rewriting them for the
-      // site would be editing a security document (W1.8 step 1, "with no editing").
-      html += `<a href="${escapeHTML(match[2])}">${inline(match[1])}</a>`
+      // The document's own link: its text is rendered as it stands and its target is read
+      // through `target()` above. A reference the document has no heading for renders as
+      // that text alone — the word, without a promise of where it goes (decision 2).
+      const href = target(match[2])
+      html += href === null ? inline(match[1]) : `<a href="${escapeHTML(href)}">${inline(match[1])}</a>`
       i += match[0].length
       continue
     }
@@ -177,288 +278,705 @@ function inline(text: string): string {
   return html
 }
 
-/** How far a line is indented, in spaces: what decides a nested list from a sibling. */
-function indentOf(line: string): number {
-  return line.length - line.trimStart().length
+/**
+ * A section's bullets, in the document's order, each one line joined back together when the
+ * file wrapped it. A wrap is a line that directly follows a bullet or another wrapped line; a
+ * line that follows a **blank** line is a paragraph of its own, and it stops the build, as does
+ * a line before the first bullet: the summary is the document's "In short" list, and a
+ * paragraph added under it is text the page would otherwise render inside the last bullet's
+ * `<li>`, which is text of the owner's the page has no business reshaping (D189).
+ */
+function bulletLines(heading: string): string[] {
+  const bullets: string[] = []
+  // Whether the line before this one was a bullet or a wrap of one. A blank line breaks the
+  // run, so the line after it is a block of its own rather than a continuation.
+  let wrapping = false
+  for (const line of sectionLines(heading)) {
+    const bullet = /^\s*[-*][ \t]+(.*)$/.exec(line)
+    if (bullet !== null) {
+      bullets.push(bullet[1].trim())
+      wrapping = true
+    } else if (line.trim() === '') {
+      wrapping = false
+    } else if (wrapping) {
+      bullets[bullets.length - 1] += ` ${line.trim()}`
+    } else {
+      throw new Error(
+        `${securityDocument.path}'s "## ${heading}" section carries a line that is not a bullet and does not wrap one (${JSON.stringify(line.trim())}), and this page renders the section as the list it is. The document is the page's whole text (D189), so a paragraph beside the list stops the build rather than being rendered as part of the bullet above it.`,
+      )
+    }
+  }
+  if (bullets.length === 0) {
+    throw new Error(
+      `${securityDocument.path}'s "## ${heading}" section carries no bullet, and this page renders it as the list it is: an empty summary is a page that describes nothing (D189).`,
+    )
+  }
+  return bullets
 }
 
-/** The next line that is not blank, or -1: what tells a list whether it continues. */
-function nextNonBlank(lines: string[], from: number): number {
-  for (let i = from; i < lines.length; i++) {
-    if (lines[i].trim() !== '') return i
-  }
-  return -1
-}
+/** The summary: the document's own "In short" bullets, each rendered as HTML. */
+const summaryBullets = bulletLines(SUMMARY).map(inline)
 
 /**
- * One `-` list, at one indentation: its items, and where the list ends. An item owns every
- * following line indented past its marker — a continuation paragraph or a nested list —
- * and a blank line ends the list unless what follows still belongs to it, which is how
- * `SECURITY.md` writes the gaps inside its "Known limits" list.
+ * The reporting section's paragraphs, each rendered: the section is two of them today. An
+ * emptied section stops the build for the same reason the summary's does — the page would
+ * otherwise render a heading over nothing, and a reporter following it would find no
+ * instructions where the document promised them (D189).
  */
-function parseList(lines: string[], start: number, indent: number): { items: Item[]; next: number } {
-  const items: Item[] = []
-  let i = start
+const reportingParagraphs = sectionLines(REPORTING)
+  .join('\n')
+  .split(/\n[ \t]*\n/)
+  .map((paragraph) => paragraph.replace(/\s+/g, ' ').trim())
+  .filter((paragraph) => paragraph !== '')
+  .map(inline)
 
-  while (i < lines.length) {
-    const line = lines[i]
-
-    if (line.trim() === '') {
-      const following = nextNonBlank(lines, i)
-      if (following === -1) return { items, next: lines.length }
-      const deeper = indentOf(lines[following]) > indent
-      const sibling = BULLET.test(lines[following]) && indentOf(lines[following]) === indent
-      if (!deeper && !sibling) break
-      i = following
-      continue
-    }
-
-    const bullet = BULLET.exec(line)
-    if (bullet === null || indentOf(line) !== indent) break
-
-    const lead = bullet[2].trim()
-    const bold = BOLD_LEAD.exec(lead)
-    i++
-
-    const body: Block[] = []
-    while (i < lines.length) {
-      const under = lines[i]
-
-      if (under.trim() === '') {
-        const following = nextNonBlank(lines, i)
-        if (following === -1 || indentOf(lines[following]) <= indent) break
-        i = following
-        continue
-      }
-      if (indentOf(under) <= indent) break
-
-      if (BULLET.test(under)) {
-        const nested = parseList(lines, i, indentOf(under))
-        body.push({ kind: 'list', items: nested.items })
-        i = nested.next
-        continue
-      }
-      body.push({ kind: 'paragraph', text: under.trim() })
-      i++
-    }
-
-    items.push({ lead, id: indent === 0 && bold !== null ? slug(bold[1]) : null, body })
-  }
-
-  return { items, next: i }
-}
-
-/** The document's blocks. Each paragraph, heading and bullet in `SECURITY.md` is one line. */
-function parse(text: string): Block[] {
-  const lines = text.split('\n')
-  const blocks: Block[] = []
-  let i = 0
-
-  while (i < lines.length) {
-    const line = lines[i]
-
-    if (line.trim() === '') {
-      i++
-      continue
-    }
-
-    const heading = HEADING.exec(line)
-    if (heading !== null) {
-      const text_ = heading[2].trim()
-      blocks.push({ kind: 'heading', level: heading[1].length, text: text_, id: slug(text_) })
-      i++
-      continue
-    }
-
-    if (BULLET.test(line)) {
-      const list = parseList(lines, i, indentOf(line))
-      blocks.push({ kind: 'list', items: list.items })
-      i = list.next
-      continue
-    }
-
-    blocks.push({ kind: 'paragraph', text: line.trim() })
-    i++
-  }
-
-  return blocks
-}
-
-function renderBlocks(blocks: Block[]): string {
-  return blocks.map(renderBlock).join('\n')
-}
-
-function renderBlock(block: Block): string {
-  if (block.kind === 'heading') {
-    return `<h${block.level} id="${block.id}">${inline(block.text)}</h${block.level}>`
-  }
-  if (block.kind === 'paragraph') {
-    return `<p>${inline(block.text)}</p>`
-  }
-  return `<ul>\n${block.items.map(renderItem).join('\n')}\n</ul>`
-}
-
-function renderItem(item: Item): string {
-  const id = item.id === null ? '' : ` id="${item.id}"`
-  const body = renderBlocks(item.body)
-  return `<li${id}>${inline(item.lead)}${body === '' ? '' : `\n${body}`}</li>`
-}
-
-// The document, parsed and rendered once: the body below its generated header, which is
-// what the pipeline hands over.
-const blocks = parse(securityDocument.body)
-const contents = blocks.flatMap((block) => (block.kind === 'heading' && block.level >= 2 ? [block] : []))
-
-// The reporting pointer (step 3): the section's own heading, found in the document, and the
-// build stops when the document has no such section rather than printing a dead link.
-const REPORTING = 'Reporting a vulnerability'
-const reporting = blocks.find((block): block is Extract<Block, { kind: 'heading' }> => block.kind === 'heading' && block.text === REPORTING)
-if (reporting === undefined) {
+if (reportingParagraphs.length === 0) {
   throw new Error(
-    `${securityDocument.path} has no "## ${REPORTING}" heading, so this page has nowhere to send a reader who has found a vulnerability. The pointer is generated from the document (W1.8 step 3), so a document that moved its reporting section stops the build rather than shipping a link to nowhere.`,
+    `${securityDocument.path}'s "## ${REPORTING}" section carries no paragraph, and this page renders that section as the document writes it: an emptied section is a heading over nothing, and the page has no fallback text of its own (D189).`,
   )
 }
 
-// The lead line's second link: the file this page renders, in this repository. The path is
-// the generated file's own `source:` fact and the origin is `site.yaml`'s repository, so
-// neither is written here, and `main` is the branch those files live on — the repository's
-// default branch, which every other GitHub link the site builds also names. The repository
-// URL is the base for a relative path rather than an origin-absolute one, because
-// `new URL('/blob/...')` would resolve against github.com and drop the repository.
-const sourceHref = new URL(`blob/main/${securityDocument.source}`, `${site.facts.repository}/`).href
+// ---------------------------------------------------------------------------------------
+// The boundary diagram (the owner's brief of 2026-10-20), in the document's own words.
+// ---------------------------------------------------------------------------------------
+
+/**
+ * `SECURITY.md` as a phrase is looked for in it: its link syntax reduced to the words that
+ * carry it, its inline markers removed, every run of whitespace collapsed to one space, in
+ * lower case. A label is compared against this and not against the file, so a line the
+ * document wrapped or a code span it marked is not read as a difference in what it says —
+ * and nothing else is normalized, because the words are the whole point: a word the document
+ * does not carry is a word this page may not render (D99).
+ */
+const documentText = securityDocument.body
+  .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+  .replace(/[*`]/g, '')
+  .replace(/\s+/g, ' ')
+  .toLowerCase()
+
+/** The same reading of a label the page renders, for the comparison above. */
+function normalized(text: string): string {
+  return text.replace(/[*`]/g, '').replace(/\s+/g, ' ').toLowerCase()
+}
+
+/**
+ * A phrase of the document, proved to be one while the page builds. Every label of the
+ * boundary diagram goes through this: the page carries the document's own words and no others
+ * (D99), so a label that drifts from the file — a word changed, or a claim the document does
+ * not make — stops the build rather than shipping a sentence about security that the policy
+ * does not state. Case is the page's own (a heading capitalizes its first word); the words
+ * are not.
+ */
+function quoted(text: string): string {
+  if (!documentText.includes(normalized(text))) {
+    throw new Error(
+      `${securityDocument.path} does not say ${JSON.stringify(text)}, and this page renders it as a label of its boundary diagram. The page carries the document's own words and no others (D99), so the label goes or the document changes — and a change to the document is the owner's.`,
+    )
+  }
+  return text
+}
+
+/**
+ * One label of the drawing, in the document's words, ending with the space that separates it
+ * from the label after it.
+ *
+ * The space is not drawn and is not a typo. SVG strips a line's trailing whitespace before it
+ * lays the line out, and each label here is positioned by its own `x`/`y` rather than
+ * following the one before it. It is there for the site's spacing gate (`test/spacing.mjs`,
+ * round 3 of this page's review), which reads two adjacent runs of text with no space between
+ * them as one word: two labels of this drawing are two runs of text, so without it the gate
+ * reads "the agent" followed by "permission prompts turned off" as "agentpermission" — the
+ * defect that gate exists for, reported on a picture where no reader can see it. Every label
+ * ends with it, uniformly, so the rule is one rule.
+ */
+function diagramLabel(text: string): string {
+  return `${quoted(text)} `
+}
+
+/** The heading the drawing sits under: the document's own sentence for the boundary. */
+const DIAGRAM_HEADING = quoted('The trust boundary is the container')
+
+/**
+ * The drawing's accessible name: the document's one-sentence summary of the design, which is
+ * what the picture draws. A screen reader reads this name, and then the list under the
+ * picture, which carries the same facts as words.
+ */
+const DIAGRAM_LABEL = quoted(
+  'Fugaro runs a coding agent with its permission prompts turned off, in a fresh cloud container per run, and ends every run with a pull request',
+)
+
+/**
+ * The facts under the picture, as the document's own clauses: who sends the task, what the
+ * run is, whose accounts the per-repository identity runs under, and where the model key sits.
+ * Each is rendered with the page's own inline markup, so a code span in the document is a
+ * `<code>` here exactly as it is in the summary below.
+ */
+const DIAGRAM_FACTS = [
+  'The design assumes you trust the repository and the source of the task: anyone who can push to it, launch a run, or is listed in `followup.trusted` can steer an agent that holds the credentials below',
+  'Fugaro runs a coding agent with its permission prompts turned off, in a fresh cloud container per run, and ends every run with a pull request',
+  "Each repository's jobs and builds run as their own service accounts",
+  "What is not on by default: the budget gateway, so with no `budget:` block the real model key sits in the agent's environment",
+].map((fact) => inline(quoted(fact)))
+
+/**
+ * The two lines under it: what the boundaries stop and what nothing stops, each the
+ * document's own summary bullet, whole. The cross-reference a bullet ends with is not part of
+ * its sentence, so it is not part of the line.
+ */
+const DIAGRAM_LIMITS = [
+  'What limits the blast radius today: one container per run, per-repository identities, and narrow git credentials — a project-wide credential is not narrow',
+  "What no boundary stops: network egress is unrestricted, the agent shares the container with the runner and can read its `/proc`, and the caps are the gateway's — set a credit limit on every key you give Fugaro",
+].map((line) => inline(quoted(line)))
 ---
 
-<Base title="Security">
+<Base
+  title="Security"
+  description="Fugaro's security model in short, the document's own instructions for reporting a vulnerability, and a link to the full policy."
+>
   <article class="security" data-security-page>
-    {/* The lead line (steps 1 and 3): two links, no sentence of its own. */}
-    <p class="security-lead" data-security-lead>
-      <a href={`#${reporting.id}`}>{REPORTING}</a>
-      <a href={sourceHref}>{securityDocument.source}</a>
-    </p>
+    {/* The title band (the owner's brief of 2026-10-21): the page's one word as the bold look's
+        headline — `base.css`'s `.display-xl`, the display scale's largest step, with
+        `.gradient-text` over it, so the word is drawn in the accent the redesign moved to the
+        logo's own hue — on the board's own background. The glow is `base.css`'s `.hero-glow`,
+        the layer the homepage's first screen draws, so the page opens the way the site's other
+        pages do; it is decoration and says so, and the heading is positioned above it because
+        a positioned box paints after a static one.
 
-    {/* The contents (step 1): the document's own headings, in the document's order, each
-        pointing at that heading's own id. Its accessible name is the nav's aria-label
-        rather than a visible title, because a visible one would be a sentence this page
-        states of its own. */}
-    <nav class="security-contents" data-security-toc aria-label="Contents">
+        The band is a `<div>` and not a `<header>`: it is the page's first screen, not a
+        landmark, and the site's landmarks are the layout's (`website/test/a11y.mjs`). */}
+    <div class="security-hero">
+      <div class="hero-glow" aria-hidden="true"></div>
+      <h1 class="security-title display-xl">
+        <span class="gradient-text">Security</span>
+      </h1>
+    </div>
+
+    {/* The boundary diagram (the owner's brief of 2026-10-20): inline SVG of the trust
+        boundaries, the same facts as a list under it, and the two limits below that. Every
+        label is a phrase of SECURITY.md, proved while the page builds (`quoted()` above), and
+        the drawing is one picture with a name: `role="img"` and an aria-label, so a screen
+        reader reads the name and then the list rather than every label of the drawing as a
+        loose string of its own. No script reads it and none is loaded for it.
+
+        **One picture, two layouts** (the owner's feedback of 2026-10-21). The two `<svg>`s
+        below are the same drawing: the tall one is the run read top to bottom, at a phone's
+        own 360-unit width, and the wide one is the run read left to right, drawn wide and
+        shallow for a desktop. Both carry the same labels in the same order, both are
+        `role="img"` with the same aria-label, and the stylesheet renders exactly one of them
+        at a time (`@media (max-width: 70rem)` shows the tall one) — so a reader meets one
+        picture whatever the width, and a screen reader one name. `hidden` is on the tall
+        drawing, which is what keeps a reader whose stylesheet never arrives to the wide one:
+        the two are one picture, and the wide one is the layout that carries the whole of it
+        rather than at a phone's width. No layout is generated from a script and none is a
+        raster image.
+
+        **The geometry is a rhythm and an inset, and the gate reads both.** A card's title is
+        drawn 26 units below its top edge and its lines 24 units apart, so a three-line card is
+        96 units high and a four-line one 120; the last baseline of every card ends inside the
+        inset the card declares (`data-pad`), on the x-axis and the y-axis both — the review of
+        2026-10-20 found two cards whose last line was drawn past their own inset, because the
+        gate measured the labels against the box horizontally and never vertically. A card that
+        cannot hold its lines on the rhythm is a card that has to grow, and the heights and the
+        `viewBox` grow with it — in both layouts: the wide drawing is the same cards as the
+        tall one, laid out in a row, and its own widths are derived the same way. */}
+    <section class="card security-diagram" data-security-diagram>
+      <h2 class="display-md">{DIAGRAM_HEADING}</h2>
+      <figure>
+        {/* The tall layout: the run read top to bottom, at 360 units — the 22.5rem the
+            stylesheet caps it at, a phone's own width, which is where a unit is a pixel and
+            every label is drawn at the size
+            the page sets it: `--font-size-xs` at 13 and `--font-size-lg` at 20. This is the
+            layout the page shipped with (the owner's brief of 2026-10-20); the wide one below
+            it is the same picture for a desktop, and `website/test/security.mjs` reads the two
+            as one drawing: the same labels, the same name, and exactly one of them rendered. */}
+        <svg
+          class="boundary-drawing boundary-drawing-tall"
+          viewBox="0 0 360 744"
+          role="img"
+          aria-label={DIAGRAM_LABEL}
+          focusable="false"
+          hidden
+        >
+          {/* Who sends the task: the repository, and the people the document trusts with it.
+              The phrase is the longest the drawing draws and it is broken where it is broken
+              because of that: at the estimate the gate measures with, the breaks the first cut
+              and its first repair used (after "run,", then after "launch") are each wider than
+              this card's content box, and this one fits it. The lines of a drawing are
+              hand-placed and the gate re-measures them. */}
+          <rect class="boundary-card" data-pad="16" x="12" y="12" width="336" height="92" rx="12" />
+          <text class="boundary-title" font-size="13" x="28" y="42">{diagramLabel('the source of the task')}</text>
+          <text class="boundary-line" font-size="13" x="28" y="66">{diagramLabel('anyone who can push to it, launch a')}</text>
+          <text class="boundary-line" font-size="13" x="28" y="88">{diagramLabel('run, or is listed in followup.trusted')}</text>
+
+          <g class="boundary-arrow">
+            <line x1="180" y1="104" x2="180" y2="121" />
+            <polygon class="boundary-arrow-head" points="180,130 174,119 186,119" />
+          </g>
+
+          {/* The boundary itself: one container per run, and what the document says is inside
+              it. The dashed box is the boundary, so nothing is drawn crossing it except the
+              two arrows that leave it. */}
+          <rect class="boundary-boundary" data-pad="20" x="12" y="130" width="336" height="480" rx="16" />
+          <text class="boundary-heading" font-size="20" x="32" y="166">{diagramLabel('one container per run')}</text>
+
+          <rect class="boundary-card" data-pad="16" x="32" y="182" width="288" height="72" rx="10" />
+          <text class="boundary-title" font-size="13" x="48" y="208">{diagramLabel('the agent')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="232">{diagramLabel('permission prompts turned off')}</text>
+
+          <rect class="boundary-card" data-pad="16" x="32" y="262" width="288" height="96" rx="10" />
+          <text class="boundary-title" font-size="13" x="48" y="288">{diagramLabel('the runner')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="312">{diagramLabel('the agent shares the container')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="336">{diagramLabel('can read its /proc')}</text>
+
+          <rect class="boundary-card" data-pad="16" x="32" y="366" width="288" height="96" rx="10" />
+          <text class="boundary-title" font-size="13" x="48" y="392">{diagramLabel('per-repository identities')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="416">{diagramLabel('their own service accounts')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="440">{diagramLabel('narrow git credentials')}</text>
+
+          {/* The key the container holds, and the gateway that would keep it out of the agent's
+              environment — the document's own conditional, in the order it states it: the
+              gateway is *not on by default*, so the real key sits in the agent's environment.
+              The two are one sentence and not two facts, so they are drawn as one: the card's
+              title names the gateway, its first line the default, and its last two lines the
+              key and where it sits. Drawing "the budget gateway" beside "sits in the agent's
+              environment" as two co-equal lines would be a conjunction the document never
+              states (SECURITY.md:64 and :72 are the two halves of one conditional), and the
+              arrangement is the one thing about this drawing no gate reads — the gate measures
+              each label against the box it is drawn in, and cannot read what the boxes mean. */}
+          <rect class="boundary-card" data-pad="16" x="32" y="470" width="288" height="120" rx="10" />
+          <text class="boundary-title" font-size="13" x="48" y="496">{diagramLabel('the budget gateway')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="520">{diagramLabel('not on by default')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="544">{diagramLabel('the real model key')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="568">{diagramLabel("sits in the agent's environment")}</text>
+
+          {/* Out of the container: the pull request every run ends with. */}
+          <g class="boundary-arrow">
+            <line x1="150" y1="610" x2="150" y2="627" />
+            <polygon class="boundary-arrow-head" points="150,636 144,625 156,625" />
+          </g>
+          <rect class="boundary-card" data-pad="16" x="12" y="636" width="318" height="64" rx="12" />
+          <text class="boundary-title" font-size="13" x="28" y="674">{diagramLabel('ends every run with a pull request')}</text>
+
+          {/* And out of the boundary, past it: the egress the document says nothing stops. */}
+          <g class="boundary-arrow">
+            <path d="M330 584 H 342 V 687" />
+            <polygon class="boundary-arrow-head" points="342,696 336,685 348,685" />
+          </g>
+          <text class="boundary-line" font-size="13" x="348" y="720" text-anchor="end">{diagramLabel('network egress is unrestricted')}</text>
+        </svg>
+
+        {/* The wide layout: the same run read left to right, in a 1180 × 400 `viewBox` (the
+            owner's feedback of 2026-10-21 — "the image is tall (works well in mobile) but on
+            desktop doesn't fit above the fold, can we do it more horizontally for desktop?").
+            The drawing is the same one the tall `<svg>` above draws: the task's source on the
+            left, the boundary round the four cards in the middle, the pull request on the
+            right and the egress that leaves the boundary below them — the same labels, in the
+            same order, so the two are one picture at two layouts and `website/test/security.mjs`
+            reads them as one.
+
+            **Why it fits a desktop's first screen.** At 1440 × 800 the page's column is 72rem
+            capped and the card's own padding taken out of it, so the drawing is rendered 1056 px
+            wide and 1180 units therefore settle at about 0.895 px each: the whole picture is
+            about 358 px tall, and the room above it — the header, the title band, the step
+            between the two blocks, the card's padding and the section heading — is about 400,
+            which is what puts the headline and the whole drawing inside the 800. A drawing
+            taller than its own width would not: that is the tall one, and that is why a desktop
+            does not show it. The floor under this layout is the other end of the same
+            arithmetic: 14-unit labels in the narrowest column the wide drawing is shown in
+            (70rem, where the column is 1024 px) are 12.15 px, still the size a reader reads at,
+            and below that the stylesheet shows the tall drawing, where a unit is a pixel.
+
+            **The type is an attribute on each line, as in the tall drawing**, and the two
+            layouts differ by one unit of it: 14 here and 13 there — 14 units at 0.895 px is
+            12.5 px on a desktop, and the tall drawing's 13 units are 13 px on a phone. The
+            heading is 21 units where the tall one's is 20, for the same reason. **The lines are
+            broken where the cards have room for them**, which is where the layout's own numbers
+            come from: a card's content is 230 units (262 less its 16-unit inset on each side =
+            26 characters at the gate's estimate), so `permission prompts turned off` and
+            `the agent shares the container` each take two lines here where the tall drawing
+            fits them on one of its wider cards, and the two cards of a row are the height of
+            the longer of the two so the grid stays a grid. The words are the same words in the
+            same order either way: a line split at a space is the phrase the document writes,
+            and `quoted()` above proves each one of them, line by line, while the page builds. */}
+        <svg
+          class="boundary-drawing boundary-drawing-wide"
+          viewBox="0 0 1180 400"
+          role="img"
+          aria-label={DIAGRAM_LABEL}
+          focusable="false"
+        >
+          {/* Who sends the task: the repository, and the people the document trusts with it. */}
+          <rect class="boundary-card" data-pad="16" x="8" y="140" width="262" height="120" rx="12" />
+          <text class="boundary-title" font-size="14" x="24" y="166">{diagramLabel('the source of the task')}</text>
+          <text class="boundary-line" font-size="14" x="24" y="190">{diagramLabel('anyone who can push to it,')}</text>
+          <text class="boundary-line" font-size="14" x="24" y="214">{diagramLabel('launch a run, or is listed')}</text>
+          <text class="boundary-line" font-size="14" x="24" y="238">{diagramLabel('in followup.trusted')}</text>
+
+          {/* Into the boundary, left to right: the arrow is the tall drawing's first one, laid
+              on its side, and it stops 4 units short of the dashed box, which nothing crosses
+              except the arrows that leave it. */}
+          <g class="boundary-arrow">
+            <line x1="276" y1="200" x2="290" y2="200" />
+            <polygon class="boundary-arrow-head" points="302,200 291,194 291,206" />
+          </g>
+
+          {/* The boundary itself, read as two rows of two cards: one container per run, and
+              what the document says is inside it. The dashed box is drawn first so the cards
+              and their labels paint over it. */}
+          <rect class="boundary-boundary" data-pad="20" x="306" y="20" width="576" height="360" rx="16" />
+          <text class="boundary-heading" font-size="21" x="326" y="56">{diagramLabel('one container per run')}</text>
+
+          {/* The first row: the agent and the runner. The agent's card is the runner's height
+              and not its own — one line fewer — so the two sit on the same rhythm, and the room
+              the extra line would take is the grid's. */}
+          <rect class="boundary-card" data-pad="16" x="326" y="76" width="262" height="120" rx="10" />
+          <text class="boundary-title" font-size="14" x="342" y="102">{diagramLabel('the agent')}</text>
+          <text class="boundary-line" font-size="14" x="342" y="126">{diagramLabel('permission prompts')}</text>
+          <text class="boundary-line" font-size="14" x="342" y="150">{diagramLabel('turned off')}</text>
+
+          <rect class="boundary-card" data-pad="16" x="600" y="76" width="262" height="120" rx="10" />
+          <text class="boundary-title" font-size="14" x="616" y="102">{diagramLabel('the runner')}</text>
+          <text class="boundary-line" font-size="14" x="616" y="126">{diagramLabel('the agent shares the')}</text>
+          <text class="boundary-line" font-size="14" x="616" y="150">{diagramLabel('container')}</text>
+          <text class="boundary-line" font-size="14" x="616" y="174">{diagramLabel('can read its /proc')}</text>
+
+          {/* The second row: the identities the run's jobs work under, and the key the container
+              holds. The gateway's card is the tall drawing's own, one line wider here: the
+              document's conditional is one sentence and is drawn as one card, as it is there. */}
+          <rect class="boundary-card" data-pad="16" x="326" y="216" width="262" height="144" rx="10" />
+          <text class="boundary-title" font-size="14" x="342" y="242">{diagramLabel('per-repository identities')}</text>
+          <text class="boundary-line" font-size="14" x="342" y="266">{diagramLabel('their own service accounts')}</text>
+          <text class="boundary-line" font-size="14" x="342" y="290">{diagramLabel('narrow git credentials')}</text>
+
+          <rect class="boundary-card" data-pad="16" x="600" y="216" width="262" height="144" rx="10" />
+          <text class="boundary-title" font-size="14" x="616" y="242">{diagramLabel('the budget gateway')}</text>
+          <text class="boundary-line" font-size="14" x="616" y="266">{diagramLabel('not on by default')}</text>
+          <text class="boundary-line" font-size="14" x="616" y="290">{diagramLabel('the real model key')}</text>
+          <text class="boundary-line" font-size="14" x="616" y="314">{diagramLabel("sits in the agent's")}</text>
+          <text class="boundary-line" font-size="14" x="616" y="338">{diagramLabel('environment')}</text>
+
+          {/* Out of the container: the pull request every run ends with, on the right where the
+              run's left-to-right reading ends. */}
+          <g class="boundary-arrow">
+            <line x1="886" y1="200" x2="898" y2="200" />
+            <polygon class="boundary-arrow-head" points="910,200 899,194 899,206" />
+          </g>
+          <rect class="boundary-card" data-pad="16" x="914" y="164" width="258" height="72" rx="12" />
+          <text class="boundary-title" font-size="14" x="930" y="190">{diagramLabel('ends every run with')}</text>
+          <text class="boundary-line" font-size="14" x="930" y="214">{diagramLabel('a pull request')}</text>
+
+          {/* And out of the boundary, past it: the egress the document says nothing stops, on
+              the same side of the picture the tall drawing puts it — below the run and outside
+              the dashed box. It is drawn last because it is the last thing the tall drawing
+              says: the two layouts carry the same words in the same order, which is how the
+              gate reads them as one picture. */}
+          <g class="boundary-arrow">
+            <path d="M862 300 H 900 V 370" />
+            <polygon class="boundary-arrow-head" points="900,381 894,370 906,370" />
+          </g>
+          <text class="boundary-line" font-size="14" x="1172" y="384" text-anchor="end">{diagramLabel('network egress is unrestricted')}</text>
+        </svg>
+
+        <ul class="boundary-facts">
+          {DIAGRAM_FACTS.map((fact) => <li set:html={fact} />)}
+        </ul>
+
+        {DIAGRAM_LIMITS.map((line) => <p class="boundary-limit" set:html={line} />)}
+      </figure>
+    </section>
+
+    {/* The document's own summary (D189): the "In short" section of SECURITY.md, rendered
+        bullet for bullet. Nothing here is written on this page; the text is the owner's. */}
+    <section class="card security-summary" data-security-summary>
+      <h2 class="display-md" id={SUMMARY_ID}>{SUMMARY}</h2>
       <ul>
-        {contents.map((heading) => (
-          <li>
-            <a href={`#${heading.id}`}>{heading.text}</a>
-          </li>
-        ))}
+        {summaryBullets.map((bullet) => <li set:html={bullet} />)}
       </ul>
-    </nav>
+    </section>
 
-    {/* The document (step 1): rendered, never edited. Its headings and the bold leads of
-        its bullets carry the ids the repository's own cross-references name (step 2). */}
-    <div class="security-document" data-security-document set:html={renderBlocks(blocks)} />
+    {/* The document's own reporting section, rendered and not edited. */}
+    <section class="card security-reporting" data-security-reporting>
+      <h2 class="display-md" id={REPORTING_ID}>{REPORTING}</h2>
+      {reportingParagraphs.map((paragraph) => <p set:html={paragraph} />)}
+    </section>
+
+    {/* The pointer to the document itself. One sentence, and the page's own. */}
+    <p class="card security-policy" data-security-policy>The full policy is <a href={sourceHref} rel="noopener">{securityDocument.source}</a> in the repository.</p>
   </article>
 </Base>
 
 <style is:global>
-  /* Global, because the document arrives through `set:html` and Astro's scoped styles do
-     not reach markup this page did not write; every selector is prefixed with
-     `data-security-page`, so nothing here can reach another page. Colours are W1.2's
-     tokens and this file carries no colour literal. */
+  /* Global, because the rendered sections arrive through `set:html` and Astro's scoped
+     styles do not reach markup this page did not write; every selector is prefixed with
+     `data-security-page`, so nothing here can reach another page. Colours are W1.2's tokens
+     and this file carries no colour literal.
+
+     **The bold look, and where it comes from** (the owner's brief of 2026-10-21). The page is
+     drawn in the same look the owner approved on the homepage and the product pages, and that
+     look is `base.css`'s section 2c — one set of shapes for the whole site: the display scale,
+     the gradient over a headline's words, the card and the panel tone. So this file names
+     those classes rather than writing their rules again (a second copy of a shape is a shape
+     that drifts from the homepage's), and the two things it adds are the page's own: the
+     rhythm its four blocks are laid out in, and the panel the picture sits on. What it does
+     **not** do is change a word: the page's text is the document's and the pointer's, and the
+     look is a way of drawing them. `website/test/security.mjs`'s `boldLookFailures` is what
+     holds the page to that — it reads the classes and the rhythm back off the built page —
+     and the visual match to the owner's boards is the owner's own check at the preview
+     (the redesign's 70a–70c, P9). */
   [data-security-page] {
+    box-sizing: border-box;
+    /* One column of blocks, set apart by one step of the spacing scale: the redesign's rhythm
+       is the scale's, so the room between two of them is comparable with the room any other
+       page gives its blocks, and the step is the page's own choice of how generous it is.
+
+       **The gap is the only room between two blocks.** The four regions below carry no vertical
+       margin of their own — the rule each one has says `margin: 0` — because a margin on a flex
+       item is added to the gap, and a block that kept the `--space-lg` it carried while the page
+       was a plain flow would give the gap twice: the room would render at 80 px where the page
+       says one step. That is the defect `website/test/base-styles.mjs`'s `homeRhythmFailures`
+       refuses on the homepage (a block padding a gap the block above it already pads), and the
+       reading here is the same one: the room between two blocks is one step of the scale and
+       not that step plus a block's own margin. `boldLookFailures` reads it back off this
+       stylesheet, so the two rules cannot drift apart again. */
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xl);
+    width: 100%;
+    max-width: var(--page-max);
     margin: 0 auto;
-    padding: 2rem 1.25rem 4rem;
-    max-width: 72ch;
+    padding: 0 var(--space-sm) var(--space-3xl);
     color: var(--text);
   }
 
-  [data-security-lead] {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem 1.5rem;
-    margin: 0 0 2rem;
-    font-size: 0.95rem;
+  /* The title band: the page's first screen, and the box the board's glow is drawn in.
+     `position: relative` and `overflow: hidden` are what the glow layer needs, and the band's
+     own top padding is the room above the headline — the article carries none, so the room is
+     declared once. Prefixed with the page's marker like every other selector here, so the block
+     cannot reach another page. */
+  [data-security-page] .security-hero {
+    position: relative;
+    overflow: hidden;
+    padding: var(--space-2xl) 0 var(--space-sm);
   }
 
-  [data-security-lead] a {
-    color: var(--accent);
+  /* The headline is `base.css`'s `.display-xl` with the one thing that is this page's: the
+     width it is set to. `position: relative` is what paints it over the glow (a positioned box
+     paints after a static one, and the glow is the band's first child), which is what the
+     homepage's own hero does. */
+  [data-security-page] .security-title {
+    position: relative;
+    margin: 0;
+    max-width: 20ch;
   }
 
-  [data-security-toc] {
-    border: 1px solid var(--border);
-    border-radius: 0.5rem;
-    background: var(--surface);
-    padding: 1rem 1.25rem;
-    margin: 0 0 2.5rem;
+  /* A section heading is the display scale's middle step — `base.css`'s `.display-md`, written
+     on the element — so the hierarchy is the board's: the title at the top step and each
+     section under it one step down. This rule is the room below the heading and nothing else,
+     and it is written at `[data-security-page] h2` because a class and an attribute selector
+     weigh the same: the page's own rule has to be the one that carries the margin, and
+     `.display-md`'s `margin-block: 0` is what it is overriding. */
+  [data-security-page] h2 {
+    margin: 0 0 var(--space-md);
   }
 
-  [data-security-toc] ul {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem 1.5rem;
+  /* The box the picture sits on is the panel and not the card's surface: the drawing's own
+     cards are drawn on the surface, so a surface box around them would be a card on a card
+     with nothing between them. One step below is what makes the picture read as a picture laid
+     on the page, which is what the panel tone is for (`palette-logo.css`). The selector is the
+     region's own attribute and the card's class together, so it beats `.card` whatever order
+     the build emits the two rules in. */
+  [data-security-diagram].card {
+    background: var(--panel);
+  }
+
+  /* The pointer is the page's smallest block, so it is the card at the control's padding
+     rather than at the card's: a full-height box under the reporting section would read as a
+     fourth section rather than as the note it is. Its tone is the quieter one — it is a
+     sentence about where the policy lives, not policy text.
+
+     `margin: 0` is load-bearing here in a way it is not on the three sections: the pointer is a
+     `<p>`, so `base.css`'s `:where(p) { margin: 0 0 var(--space-sm) }` gives it a margin below
+     that the flex container's gap would be added to. The page does not cap this box either, for
+     the reason the reporting card states — what holds this one sentence to the measure is the
+     same site-wide `p` rule, and the page writing `max-width` here as well would be the page
+     repeating a rule `base.css` already makes for every paragraph on the site. */
+  [data-security-policy].card {
+    margin: 0;
+    padding: var(--space-sm) var(--space-lg);
+    color: var(--text-muted);
+  }
+
+  /* The boundary diagram. **Two drawings, one picture, and exactly one of them rendered** (the
+     owner's feedback of 2026-10-21: the tall drawing "works well in mobile" but "on desktop
+     doesn't fit above the fold", so a desktop shows "a horizontal layout of the same drawing").
+     The tall `<svg>` is the run read top to bottom in a 360-unit-wide `viewBox`, capped at
+     22.5rem — a phone's own width, where a unit is a pixel — and it is the one a phone shows.
+     The wide `<svg>` is the same run read left to right in a 1180 × 400 one, and it is the one
+     a desktop shows: about 1056 px wide in the page's own column at 1440, which is 0.895 px a
+     unit and about 358 px of picture, so the headline above it and the whole drawing sit inside
+     a 1440 × 800 first screen (the arithmetic is in the drawing's own comment).
+
+     The changeover is the width at which the wide drawing's labels stop being readable rather
+     than the site's chrome breakpoint: its smallest label is 14 units and the narrowest column
+     the page gives the drawing at 70rem is 1024 px — 72rem's own ceiling, an eighth of the
+     site's gutter on each side and the card's `--space-lg` padding inside that — where 14 units
+     are 12.15 px. Below 70rem the page shows the tall drawing, which is the whole picture at
+     the scale a phone reads it at. The two are the same picture in the same order, so nothing
+     is lost at the changeover: `website/test/security.mjs` reads both of them.
+
+     **Only one is in the page at a time**, and `hidden` on the tall one is what a reader whose
+     stylesheet never arrives gets: the wide drawing, which is the layout that carries the whole
+     picture rather than a phone's cut of it. `display: none`/`block` in the query is what
+     switches them, and the two rules are written last, after `.boundary-drawing`'s own
+     `display: block`, because a class rule of the same weight as another is won by the one that
+     comes later.
+
+     The size is a `font-size` on each `<text>` and not a declaration here, because it is the
+     drawing's own geometry: the gate measures a label against the box it is drawn in
+     (`website/test/security.mjs`), and the box it has is a length in the picture's units, so
+     the size it is drawn at has to be one too. 13 units is `--font-size-xs` (0.8125rem) and 20
+     is `--font-size-lg` (1.25rem) at the 16 px root the tall picture's 360 units are laid out
+     against, which is the width it is shown at; the wide drawing's own 14 and 21 are the same
+     two sizes at the scale it is rendered at — the same arrangement, and the same estimate, as
+     the How It Works drawing (`src/components/RunDiagram.astro`). No script reads or writes any
+     of this; the shapes are painted from the classes below and every colour is a token. */
+  [data-security-diagram] {
+    margin: 0;
+  }
+
+  [data-security-diagram] figure {
+    margin: 0;
+  }
+
+  /* **The drawing is laid out in the column, and both numbers the page rests on are taken in that
+     box**: `width: 100%` of the card's content box and no ceiling of the site's own
+     (`max-width: 100%`), which is the box the label floor and the fold are measured in
+     (`website/test/security.mjs`, and the pair the How It Works drawing is held to). A layout
+     class may still cap its own drawing — the tall one does, at a phone's 22.5rem — and a cap
+     shrinks the box the labels are read in, so the gate reads the cap rather than assuming the
+     column. */
+  [data-security-diagram] .boundary-drawing {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+  }
+
+  [data-security-diagram] .boundary-drawing-tall {
+    max-width: 22.5rem;
+    display: none;
+  }
+
+  @media (max-width: 70rem) {
+    [data-security-diagram] .boundary-drawing-wide {
+      display: none;
+    }
+
+    [data-security-diagram] .boundary-drawing-tall {
+      display: block;
+    }
+  }
+
+  [data-security-diagram] text {
+    font-family: var(--font-sans);
+    fill: var(--text-muted);
+  }
+
+  [data-security-diagram] .boundary-title {
+    font-weight: 600;
+    fill: var(--text);
+  }
+
+  [data-security-diagram] .boundary-heading {
+    font-weight: 600;
+    fill: var(--accent);
+  }
+
+  [data-security-diagram] .boundary-card {
+    fill: var(--surface);
+    stroke: var(--border);
+    stroke-width: var(--border-width);
+  }
+
+  [data-security-diagram] .boundary-boundary {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 2;
+    stroke-dasharray: 7 5;
+  }
+
+  [data-security-diagram] .boundary-arrow {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 2;
+  }
+
+  [data-security-diagram] .boundary-arrow-head {
+    fill: var(--accent);
+    stroke: none;
+  }
+
+  [data-security-diagram] ul {
+    list-style: none;
+    margin: var(--space-sm) 0 0;
+    padding: 0;
+    max-width: var(--measure);
+  }
+
+  [data-security-diagram] li {
+    margin: 0 0 var(--space-2xs);
+    line-height: var(--leading-normal);
+  }
+
+  [data-security-diagram] .boundary-limit {
+    max-width: var(--measure);
+    margin: var(--space-sm) 0 0;
+    line-height: var(--leading-normal);
+  }
+
+  [data-security-summary] {
+    margin: 0;
+  }
+
+  [data-security-summary] ul {
     list-style: none;
     margin: 0;
     padding: 0;
+    max-width: var(--measure);
   }
 
-  [data-security-toc] a {
-    color: var(--accent);
-    text-decoration: none;
+  [data-security-summary] li {
+    margin: 0 0 var(--space-sm);
+    line-height: var(--leading-normal);
   }
 
-  [data-security-toc] a:hover,
-  [data-security-toc] a:focus {
-    text-decoration: underline;
-  }
-
-  [data-security-document] {
-    line-height: 1.6;
-  }
-
-  [data-security-document] h1 {
-    font-size: 2rem;
-    margin: 0 0 1.5rem;
-  }
-
-  [data-security-document] h2 {
-    font-size: 1.4rem;
-    margin: 2.5rem 0 1rem;
-  }
-
-  [data-security-document] h3 {
-    font-size: 1.15rem;
-    margin: 2rem 0 0.75rem;
-  }
-
-  [data-security-document] p,
-  [data-security-document] li {
+  [data-security-summary] strong {
     color: var(--text);
   }
 
-  [data-security-document] li + li {
-    margin-top: 0.5rem;
+  /* No `max-width` on the reporting card: a card is the column's width and the *prose* inside
+     it is what keeps to the measure. `base.css` already does that for every `p` on the site
+     (`:where(p, ul, ol, dl, blockquote, figcaption) { max-width: var(--measure) }`), which is
+     the same shape `.home-install-panel`'s note has — the panel spans and the note is capped.
+     Capping the box instead made this card 68 ch wide while the diagram and the summary beside
+     it spanned the column, which is two of the four blocks drawn to a different width. */
+  [data-security-reporting] {
+    margin: 0;
   }
 
-  [data-security-document] ul {
-    padding-left: 1.25rem;
+  [data-security-reporting] p {
+    line-height: var(--leading-normal);
   }
 
-  [data-security-document] a {
-    color: var(--accent);
-  }
-
-  [data-security-document] code {
+  [data-security-page] code {
     background: var(--surface);
-    border-radius: 0.25rem;
+    border-radius: var(--radius-sm);
     padding: 0.1rem 0.3rem;
     font-size: 0.9em;
   }
 
-  /* The document's own text sits on the ground rather than on a second surface: this page
-     is the document, and a card around it would be a presentation of it. */
-  [data-security-document] strong {
-    color: var(--text);
+  [data-security-page] a {
+    color: var(--accent);
   }
 
-  @media (max-width: 40rem) {
-    [data-security-page] {
-      padding: 1.25rem 1rem 3rem;
-    }
-  }
 </style>

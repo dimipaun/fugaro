@@ -148,7 +148,7 @@ type RoleIDs struct {
 	JobRunner      string `json:"job_runner"`
 	BuildSubmitter string `json:"build_submitter"`
 	// TagMover is empty in the outputs of an installation applied before
-	// the role existed; fugaro init --repo refuses those.
+	// the role existed; fugaro update refuses those.
 	TagMover string `json:"tag_mover"`
 }
 
@@ -176,8 +176,12 @@ type WorkflowSpec struct {
 	Env             map[string]string `json:"env"`
 	SecretEnv       map[string]string `json:"secret_env"` // env var → logical secret name
 	BucketCondition Condition         `json:"bucket_condition"`
-	Vertex          bool              `json:"vertex"`
-	DeployJob       bool              `json:"deploy_job"`
+	// TokenCondition is the job account's read-only grant on its own
+	// repository's budget token objects, tokens/<slug>/
+	// (gcp.TokenBucketCondition; budget-token-channel.md §7.2, D16).
+	TokenCondition Condition `json:"token_condition"`
+	Vertex         bool      `json:"vertex"`
+	DeployJob      bool      `json:"deploy_job"`
 
 	Name                string            `json:"-"`
 	Slug                string            `json:"-"`
@@ -596,6 +600,22 @@ func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w co
 		if p, ok := config.ProviderBySecret(lc.Providers, s.Name); ok {
 			return nil, userErr("workflow %s: secret %s is the key of model provider %s, which only the owner's local config may use", name, s.Name, p)
 		}
+		if p, ok := config.ReservedProviderSecret(lc.Providers, s.Name); ok {
+			// The conventional name of a configured provider's key, and not
+			// that provider's own .secret (a name that IS its key took the
+			// branch above). No workflow may mount it: the name belongs to
+			// that provider's key (config.ReservedProviderSecret), so a value
+			// stored under it would be read as the provider's credential the
+			// day the key is renamed to the convention, and `fugaro secrets
+			// set` refuses to store one — the job would mount a name that can
+			// have no version. Refused here rather than left to the readiness
+			// check, which would blame a missing secret. The same rule is
+			// config.CheckWorkflowProviderSecrets's, which `fugaro validate`
+			// calls; the two refusals must name the same secrets, and
+			// TestTheSpecAndValidateRefuseTheSameWorkflowSecretNames (this
+			// package) is what holds them to it.
+			return nil, userErr("workflow %s: secret %s is the name reserved for model provider %s's key (the convention names a provider's key after its entry), so no workflow may declare it", name, s.Name, p)
+		}
 		out = append(out, SecretMount{s.Name, s.Env})
 	}
 	return out, nil
@@ -687,6 +707,10 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 			Title:      gcp.BucketConditionTitle(saID),
 			Expression: gcp.BucketCondition(c.bucket, gcp.JobBucketPrefixes, slug),
 		},
+		TokenCondition: Condition{
+			Title:      gcp.TokenBucketConditionTitle(saID),
+			Expression: gcp.TokenBucketCondition(c.bucket, slug),
+		},
 		Vertex:    c.in.Cfg.Agent.Auth == "vertex",
 		DeployJob: true,
 
@@ -750,7 +774,7 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	ws.BuildSecrets = slices.Compact(ws.BuildSecrets)
 	// Every variable a secret is mounted as, so the runner can register
 	// them all for redaction before bootstrap.
-	ws.Env[runner.SecretEnvsVar] = strings.Join(slices.Sorted(maps.Keys(ws.SecretEnv)), ",")
+	ws.Env[runner.SecretEnvsVar] = redactionEnvs(ws.SecretEnv)
 	for env := range ws.SecretEnv {
 		if _, dup := ws.Env[env]; dup {
 			collisions = append(collisions, env)
@@ -761,6 +785,23 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 		return WorkflowSpec{}, userErr("workflow %s: secret env %s collides with a variable the platform sets", name, strings.Join(slices.Compact(collisions), ", "))
 	}
 	return ws, nil
+}
+
+// redactionEnvs is the value of runner.SecretEnvsVar for a job that mounts
+// secretEnv: every variable that job mounts a secret as, sorted and
+// comma-joined, which the runner splits and registers with its redactor before
+// bootstrap (internal/runner's addMountedSecrets).
+//
+// It is a function of the mounts and of nothing else, and every job that has
+// mounts computes it from its own map — the workflow specs, the check job, and
+// a project job's, whose jobs of one profile differ from each other (each
+// account's job mounts that account's token, or none). A hand-written list
+// beside the mounts is the one thing this cannot be: a mount added without it
+// is a secret the run publishes the moment it prints its environment, and
+// SECURITY.md's claim that the redactor masks what a run publishes rests on the
+// two being the same list.
+func redactionEnvs(secretEnv map[string]string) string {
+	return strings.Join(slices.Sorted(maps.Keys(secretEnv)), ",")
 }
 
 // budgetEnv adds the project's budget to a workflow job's env: the token
@@ -942,7 +983,7 @@ func (c *repoCtx) projectSecretCandidates(rs RepoSpec) map[string]string {
 // provider's own key whose provider lists repo -- AllowsData uniformly
 // across the last three, so §3a's no-list/["*"]-means-any-repository rule
 // applies to a provider's key exactly as it does everywhere else. ok is
-// false, id "" otherwise. It is exported because fugaro init --repo's
+// false, id "" otherwise. It is exported because fugaro update's
 // secrets stage (before any RepoSpec exists) needs the identical answer.
 func ProjectSecretCandidate(lc *localcfg.Config, logical, repo string) (id string, ok bool) {
 	if lc == nil || logical == "" {
@@ -1196,6 +1237,7 @@ func (rs RepoSpec) Addresses() []string {
 			add(p + "google_service_account_iam_member.operator[" + q(member) + "]")
 		}
 		add(p + "google_storage_bucket_iam_member.job")
+		add(p + "google_storage_bucket_iam_member.job_tokens")
 		for _, logical := range uniqueSecrets(ws) {
 			add(p + "google_secret_manager_secret_iam_member.job[" + q(logical) + "]")
 		}

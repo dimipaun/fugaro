@@ -2,7 +2,7 @@
 // Fugaro project: $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml (else under
 // ~/.config), holding the project's name, its GCP project, region and
 // buckets, and the onboarded repositories (design §2.4 and §5.4). fugaro
-// init writes them; Select picks the one a command acts on.
+// update writes them; Select picks the one a command acts on.
 package localcfg
 
 import (
@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -57,7 +58,7 @@ type Config struct {
 	BaseImages map[string]string `yaml:"base_images,omitempty"`
 	// ImageSource is the registry/owner prefix a base pin's images come
 	// from: "<host>/<owner>" (for example ghcr.io/dimipaun), the same
-	// string fugaro init's --image-source takes. It is the TRUSTED owner a
+	// string fugaro update's --image-source takes. It is the TRUSTED owner a
 	// base_images entry under the remote repository is checked against
 	// (design registry-remote-repository.md §3.6), recorded once by the run
 	// that pins, published in the shared config, and read from here by
@@ -68,9 +69,18 @@ type Config struct {
 	// BackendName is the compute backend by name (backend.Open's registry
 	// key); empty means backend.CloudRun, the only one implemented
 	// (design m11-setup-and-skills.md §7). Read it through Backend.
-	BackendName string    `yaml:"backend,omitempty"`
-	Build       Build     `yaml:"build"`
-	Terraform   Terraform `yaml:"terraform,omitempty"`
+	BackendName string `yaml:"backend,omitempty"`
+	// Batch is what the Cloud Batch backend reads: the installation facts a
+	// run's VM is built and placed from (design
+	// docs/design/compute-backend.md §4.4, plan
+	// 2026-10-19-compute-backend.md Task 8 step 2). Only the Batch opener
+	// reads it (internal/cli/cloud.go's cloudOpeners) and nothing selects
+	// that opener yet, so a config that carries this block still runs on
+	// Cloud Run: `backend: cloud-batch` stays refused by validate below until
+	// the enable task.
+	Batch     *Batch    `yaml:"batch,omitempty"`
+	Build     Build     `yaml:"build"`
+	Terraform Terraform `yaml:"terraform,omitempty"`
 	// ComputePrices override the compute list prices of a region, for
 	// cost estimates (design §10.1).
 	ComputePrices map[string]Price `yaml:"compute_prices,omitempty"`
@@ -196,13 +206,13 @@ type Budget struct {
 	AllowedModels []string `yaml:"allowed_models,omitempty"`
 	// RTDBURL is the project's Firebase Realtime Database (the budget
 	// backend of M9b), which fugaro budget reads and writes. Set by fugaro
-	// init --firebase; empty means the project has none.
+	// update --firebase-project; empty means the project has none.
 	RTDBURL string `yaml:"rtdb_url,omitempty"`
 	// FirebaseProject is the project's own Firebase project (the FP) and
 	// FirebaseAPIKey its restricted web API key (not a secret: it may call
 	// only Identity Toolkit and Secure Token). TokenSigner is the signer
 	// account the launcher mints run tokens as. All four are written by
-	// fugaro init --firebase from the Firebase root's outputs.
+	// fugaro update --firebase-project from the Firebase root's outputs.
 	FirebaseProject string `yaml:"firebase_project,omitempty"`
 	FirebaseAPIKey  string `yaml:"firebase_api_key,omitempty"`
 	TokenSigner     string `yaml:"token_signer,omitempty"`
@@ -352,7 +362,7 @@ func (c *Config) validateBudget(bad func(string, ...any)) {
 	}
 }
 
-// Terraform is what fugaro init needs to plan the installation again: its
+// Terraform is what fugaro update needs to plan the installation again: its
 // state bucket, and the inputs that exist only as flags.
 type Terraform struct {
 	StateBucket string   `yaml:"state_bucket,omitempty"`
@@ -361,7 +371,7 @@ type Terraform struct {
 	Operators   []string `yaml:"operators,omitempty"`
 	// BudgetAdmins are further budget admins on the Firebase project, IAM
 	// members (user:, group: or serviceAccount:); the GCP project's owners
-	// and editors are admins too, read when fugaro init --firebase runs.
+	// and editors are admins too, read when fugaro update --firebase-project runs.
 	BudgetAdmins []string `yaml:"budget_admins,omitempty"`
 	// RegistryCleanup (dry-run, on or off), NoLogIsolation and BudgetBackend
 	// are the installation's switches that exist as flags: adopt mode copies
@@ -385,6 +395,155 @@ const PriceSource = "local override"
 // anything above 1e-3 is a unit mistake (per hour, per month).
 const MaxPriceUSD = 0.001
 
+// Batch is the Cloud Batch backend's installation configuration: the facts a
+// run's VM and job are built and placed from (design
+// docs/design/compute-backend.md §4.4, plan 2026-10-19-compute-backend.md
+// Task 8 step 2). It is read in one place — internal/cli/cloud.go's Batch
+// opener, which builds internal/backend/batch.Options from it — and
+// `backend: cloud-batch` is refused by validate below until the enable task,
+// so this block selects nothing today.
+//
+// Most fields are what the compute root's apply already produces and
+// internal/infra/compute.go's ComputeOutputs already decodes (the machine
+// type, the preloaded boot image family, the network, the subnetwork, the run
+// account, and the socket gid Task 6 reads off the VM it builds the image on).
+// Image and TaskTimeout are the two batch.New requires that no output carries
+// yet: the image a run's job runs is a per-workflow fact
+// (backend/batch.Options.Image's own comment), and on Batch there is no
+// deployed job to read a timeout back from, so both are recorded here as the
+// installation's answers until the task that resolves them per workflow does.
+//
+// What is checked here is the *spelling* of each field — this file is where an
+// operator writes it, so a typo must fail at parse rather than at the first
+// launch. The rules that need more than one field, or a workflow to be
+// involved (the subnetwork being in the backend's region, a Docker workflow on
+// an installation with no gid recorded, the default Compute Engine account),
+// stay where they are enforced: internal/backend/batch's checkNetwork,
+// checkDocker and checkServiceAccount, which the opener runs on the same
+// values. Both sides fail closed.
+type Batch struct {
+	// Image is the container image a run's job runs, as the workflow's
+	// derived image would be named (a registry path with a tag or a digest).
+	// batch.New refuses an empty one, so a batch block without it is refused
+	// here too.
+	Image string `yaml:"image,omitempty"`
+	// MachineType is the Compute Engine machine type a run's VM is. Empty
+	// means the backend's own default (e2-standard-4); it must be one the
+	// price table carries, which the backend checks.
+	MachineType string `yaml:"machine_type,omitempty"`
+	// BootImage is the preloaded boot image a run's VM boots, as the family
+	// resource name the preload stage publishes: the runs' bootDisk.image
+	// names the family, not one of its generations.
+	BootImage string `yaml:"boot_image,omitempty"`
+	// Network and Subnetwork are the interface a run's VMs are placed in, as
+	// full resource names. Both are required and both are sent, because a
+	// run's VMs carry no external IP (design §1.7, C7).
+	Network    string `yaml:"network,omitempty"`
+	Subnetwork string `yaml:"subnetwork,omitempty"`
+	// ServiceAccount is the email of the dedicated service account a job's
+	// VMs run as (design §3.2). It must not be the default Compute Engine
+	// account, which is Editor on the project; the backend refuses that one.
+	ServiceAccount string `yaml:"service_account,omitempty"`
+	// Secrets maps an environment variable name to a Secret Manager secret's
+	// resource name — a NAME, never a value (design §1.6, C10). They are sent
+	// as the job's secretVariables, so the values never enter the job
+	// definition. A value that is not a secret's resource name is refused
+	// here, which is what keeps a pasted value from reaching a job.
+	Secrets map[string]string `yaml:"secrets,omitempty"`
+	// SocketGID is the gid of the Docker daemon's socket on the boot image,
+	// read off the VM Task 6 builds it on rather than assumed. Zero means
+	// this installation has no socket recorded, and the backend then refuses
+	// a run that asked for Docker rather than launching it with a socket it
+	// cannot open.
+	SocketGID int `yaml:"socket_gid,omitempty"`
+	// TaskTimeout is the task timeout a run's job gets when the launch names
+	// none (a launch that carries its own total, from --total-timeout, always
+	// wins: it is the run's own bound).
+	//
+	// Left out, the default is backend.MaxRunTime, the longest any run of
+	// this installation may legitimately be active: the failure directions of
+	// this field are not symmetric, and a bound shorter than a workflow's
+	// would truncate a run that was doing nothing wrong, while a longer one
+	// costs a stuck job machine time the reaper already bounds. So the
+	// default is the ceiling every run is already held to, and an operator
+	// who wants the jobs bounded more tightly writes it here. The workflow's
+	// own timeouts.total is where this value comes from once the enable task
+	// reads it per workflow (internal/cli's batchTimeouts).
+	TaskTimeout config.Duration `yaml:"task_timeout,omitempty"`
+}
+
+// BatchTaskTimeout is the task timeout a Batch job gets when the launch names
+// none: the config's batch.task_timeout, or backend.MaxRunTime when this file
+// sets none (see Batch.TaskTimeout's comment for why the default is the
+// ceiling rather than a small number).
+func (c *Config) BatchTaskTimeout() time.Duration {
+	if c.Batch != nil && c.Batch.TaskTimeout.Set && c.Batch.TaskTimeout.Duration > 0 {
+		return c.Batch.TaskTimeout.Duration
+	}
+	return backend.MaxRunTime
+}
+
+// validateBatch checks the batch block's field spellings (see Batch). It is
+// called whenever the block is written, whether or not this installation
+// selects the backend: a block that is not valid is not a block a later task
+// can turn on by flipping one line.
+func validateBatch(bad func(string, ...any), c *Config) {
+	b := c.Batch
+	if b == nil {
+		return
+	}
+	switch {
+	case b.Image == "":
+		bad("batch.image: the Cloud Batch backend needs the image a run's job runs; set it to the installation's registry image")
+	case !batchImageRE.MatchString(b.Image):
+		bad("batch.image %q is not a container image reference (a lowercase registry path with a tag or a digest, such as <region>-docker.pkg.dev/<project>/fugaro/fugaro:1)", b.Image)
+	}
+	if b.MachineType != "" && !vmMachineTypeRE.MatchString(b.MachineType) {
+		bad("batch.machine_type %q is not a Compute Engine machine type such as e2-standard-4", b.MachineType)
+	}
+	if b.BootImage != "" && !bootImageRE.MatchString(b.BootImage) {
+		bad("batch.boot_image %q is not the preloaded image family a run's VM boots (projects/<project>/global/images/family/<name>)", b.BootImage)
+	}
+	if b.Network != "" && !batchNetworkRE.MatchString(b.Network) {
+		bad("batch.network %q is not a network's full resource name (projects/<p>/global/networks/<n>): Batch refuses a job with no external IP unless the network is named explicitly", b.Network)
+	}
+	if b.Subnetwork != "" && !batchSubnetRE.MatchString(b.Subnetwork) {
+		bad("batch.subnetwork %q is not a subnetwork's full resource name (projects/<p>/regions/<region>/subnetworks/<s>): Batch refuses a job with no external IP unless the subnetwork is named explicitly", b.Subnetwork)
+	}
+	if b.ServiceAccount != "" && !emailRE.MatchString(b.ServiceAccount) {
+		bad("batch.service_account %q is not a service account email address", b.ServiceAccount)
+	}
+	if b.SocketGID < 0 {
+		bad("batch.socket_gid %d is negative: it is a gid read off the boot image's Docker socket (stat -c %%g /var/run/docker.sock)", b.SocketGID)
+	}
+	if b.TaskTimeout.Set && b.TaskTimeout.Duration <= 0 {
+		// Unlike a cap, a written 0 is not a spelling of the default: it is
+		// either a mistake or a claim that a job may run for no time at all,
+		// and the key can simply be left out. backend.MaxRunTime is what an
+		// omitted key means.
+		bad("batch.task_timeout %v: it must be more than 0, or left out for the default (%v)", b.TaskTimeout.Duration, backend.MaxRunTime)
+	}
+	// Each entry is named by its position in the sorted map, and never by its
+	// key: neither side of the map is printed, because **either** side can hold
+	// a secret's value. The value slot is the one a value is usually written
+	// into, but the key slot is no safer -- an environment variable name and an
+	// access key id can be spelled identically (`AKIAIOSFODNN7EXAMPLE` is
+	// both), so a key that fails batchEnvNameRE may be the very value this
+	// section must never carry, and a refusal that quoted it would put it on
+	// stderr, in a log and in an issue report. It is the same reasoning and the
+	// same shape as internal/backend/batch/batch.go's checkSecrets, which names
+	// its entry by position for this reason (design §1.6, C10).
+	keys := slices.Sorted(maps.Keys(b.Secrets))
+	for i, k := range keys {
+		if !batchEnvNameRE.MatchString(k) {
+			bad("batch.secrets: entry %d of %d has a key that is not an environment variable name (letters, digits and _, not starting with a digit). The refused key is not repeated here: a secret's value can be spelled like one, so a value written where the name belongs stops here, and a refusal is not the place to print it", i+1, len(keys))
+		}
+		if !batchSecretNameRE.MatchString(b.Secrets[k]) {
+			bad("batch.secrets: entry %d of %d is not a Secret Manager secret's resource name (projects/<p>/secrets/<name>), and is named by its position and not by its key for the same reason: it must be a name, never the secret itself, because the job definition is readable by anyone with batch.jobs.get", i+1, len(keys))
+		}
+	}
+}
+
 // Build configures Cloud Build submissions.
 type Build struct {
 	// ServiceAccount is deprecated: each repository's builds run as its
@@ -400,7 +559,15 @@ type Endpoints struct {
 	Logging       string `yaml:"logging,omitempty"`
 	SecretManager string `yaml:"secret_manager,omitempty"`
 	CloudBuild    string `yaml:"cloud_build,omitempty"`
-	// The APIs only fugaro init calls: bucket and IAM policy reads and
+	// Batch is the Cloud Batch API root, read by the Batch backend the
+	// compute-backend plan's Task 8 wires (internal/cli/cloud.go's
+	// cloudOpeners). Like the others it is for fakes and emulators: an
+	// installation sets none of them, and an empty value is the real
+	// endpoint. Only the backend's own API is here -- the reaper's Compute
+	// Engine root is not a CLI client's endpoint, it is the reaper job's
+	// (internal/backend/batch/reap.go's Endpoints).
+	Batch string `yaml:"batch,omitempty"`
+	// The APIs only fugaro update calls: bucket and IAM policy reads and
 	// writes, service accounts, registries, the project's number, and the
 	// enable of Cloud Resource Manager.
 	Storage          string `yaml:"storage,omitempty"`
@@ -409,27 +576,33 @@ type Endpoints struct {
 	ResourceManager  string `yaml:"resource_manager,omitempty"`
 	CloudScheduler   string `yaml:"cloud_scheduler,omitempty"`
 	ServiceUsage     string `yaml:"service_usage,omitempty"`
-	// CloudBilling is read by fugaro init --firebase to check that the
+	// CloudBilling is read by fugaro update --firebase-project to check that the
 	// Firebase project has billing.
 	CloudBilling string `yaml:"cloud_billing,omitempty"`
-	// FirebaseDatabase lists the Firebase project's databases (init --firebase).
+	// FirebaseDatabase lists the Firebase project's databases (fugaro update
+	// --firebase-project).
 	FirebaseDatabase string `yaml:"firebase_database,omitempty"`
-	// APIKeys reads the Firebase project's API keys (init --firebase).
+	// APIKeys reads the Firebase project's API keys (fugaro update
+	// --firebase-project).
 	APIKeys string `yaml:"api_keys,omitempty"`
-	// FirebaseManagement is where init --create-project adds Firebase to a
-	// project it creates (Firebase Management v1beta1).
+	// FirebaseManagement is where fugaro setup --create-project adds Firebase
+	// to a project it creates (Firebase Management v1beta1).
 	FirebaseManagement string `yaml:"firebase_management,omitempty"`
-	// IdentityToolkit is where init --firebase ensures Identity Platform is
-	// initialized in the Firebase project (Identity Toolkit's REST API).
+	// IdentityToolkit is where fugaro update --firebase-project ensures Identity
+	// Platform is initialized in the Firebase project (Identity Toolkit's REST
+	// API).
 	IdentityToolkit string `yaml:"identity_toolkit,omitempty"`
-	// Firestore and FirebaseRules are where init --firebase ensures the
-	// Firebase project's Firestore database exists and deploys its deny-all
-	// security rules (the Firestore and Firebase Rules REST APIs).
+	// Firestore and FirebaseRules are where fugaro update --firebase-project
+	// ensures the Firebase project's Firestore database exists and deploys its
+	// deny-all security rules (the Firestore and Firebase Rules REST APIs).
 	Firestore     string `yaml:"firestore,omitempty"`
 	FirebaseRules string `yaml:"firebase_rules,omitempty"`
 	// IAMCredentials is where the launcher signs a run's budget token (signJwt).
 	IAMCredentials string `yaml:"iam_credentials,omitempty"`
-	NoAuth         bool   `yaml:"no_auth,omitempty"` // send no credentials (fakes only)
+	// CloudAsset is where fugaro managed apply makes the whole-project
+	// inventory read (Cloud Asset's SearchAllResources, Task 4.1a/4.5).
+	CloudAsset string `yaml:"cloud_asset,omitempty"`
+	NoAuth     bool   `yaml:"no_auth,omitempty"` // send no credentials (fakes only)
 }
 
 // Repo is an onboarded repository.
@@ -446,8 +619,8 @@ type Repo struct {
 	// repositories. It is not a secret.
 	GitHubAppID string `yaml:"github_app_id,omitempty"`
 	// Vertex records that one of the repository's workflows authenticates
-	// its agent through Vertex AI (agent.auth: vertex), so fugaro init
-	// enables the Vertex AI API. fugaro init --repo sets it.
+	// its agent through Vertex AI (agent.auth: vertex), so fugaro update
+	// enables the Vertex AI API. fugaro update sets it.
 	Vertex bool `yaml:"vertex,omitempty"`
 }
 
@@ -482,19 +655,32 @@ var (
 	// project: no domain: and no wildcard.
 	budgetAdminRE = regexp.MustCompile(`^(user|group|serviceAccount):[^\s*]+$`)
 	apiKeyRE      = regexp.MustCompile(`^[A-Za-z0-9_-]{20,128}$`)
-	signerRE      = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$`)
+	// The batch block's own spellings. Each is the shape
+	// internal/backend/batch requires of the same value — its
+	// networkNameRE, subnetworkNameRE, envNameRE and secretNameRE — spelled
+	// again here because this file is where an operator writes them and a
+	// typo must fail at parse. Both sides fail closed; a value that passes
+	// here and not there is refused by batch.New when the opener opens the
+	// backend, which is the authoritative check.
+	batchImageRE      = regexp.MustCompile(`^[a-z0-9][a-z0-9._/-]*(:[\w.-]{1,128}|@sha256:[a-f0-9]{64})$`)
+	vmMachineTypeRE   = regexp.MustCompile(`^[a-z][a-z0-9-]{1,40}$`)
+	bootImageRE       = regexp.MustCompile(`^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/global/images/family/[a-z0-9-]{1,63}$`)
+	batchNetworkRE    = regexp.MustCompile(`^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/global/networks/[a-z0-9-]{1,63}$`)
+	batchSubnetRE     = regexp.MustCompile(`^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/regions/[a-z][a-z0-9-]{0,62}/subnetworks/[a-z0-9-]{1,63}$`)
+	batchEnvNameRE    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	batchSecretNameRE = regexp.MustCompile(`^projects/([a-z][a-z0-9-]{4,28}[a-z0-9])/secrets/([A-Za-z0-9_-]{1,255})(/versions/([A-Za-z0-9_-]{1,255}))?$`)
+	signerRE          = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$`)
 )
 
-// configDir is $XDG_CONFIG_HOME/fugaro, else ~/.config/fugaro.
+// configDir is $XDG_CONFIG_HOME/fugaro, else the platform's own config
+// directory (UserDir): %APPDATA%\fugaro on Windows, ~/.config/fugaro
+// elsewhere.
 func configDir(getenv func(string) string) (string, error) {
-	if x := getenv("XDG_CONFIG_HOME"); x != "" {
-		return filepath.Join(x, "fugaro"), nil
+	d, err := UserDir(getenv, runtime.GOOS, DirConfig)
+	if err != nil {
+		return "", fmt.Errorf("%w, so there is no project config directory; pass --config", err)
 	}
-	home := getenv("HOME")
-	if home == "" {
-		return "", errors.New("neither XDG_CONFIG_HOME nor HOME is set, so there is no project config directory; pass --config")
-	}
-	return filepath.Join(home, ".config", "fugaro"), nil
+	return filepath.Join(d, "fugaro"), nil
 }
 
 // ProjectsDir is where the project configs live:
@@ -588,7 +774,7 @@ func LoadProject(getenv func(string) string, name string) (*Config, string, erro
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("%w at %s: run fugaro init to write it", ErrMissing, path)
+		return nil, fmt.Errorf("%w at %s: run fugaro setup to write it", ErrMissing, path)
 	}
 	if err != nil {
 		return nil, err
@@ -615,7 +801,7 @@ func BaseImageNameKind(ref string) string {
 	return ""
 }
 
-// ParseBaseImageFlag reads one fugaro init --base-image value: KIND=IMAGE, or
+// ParseBaseImageFlag reads one fugaro update --base-image value: KIND=IMAGE, or
 // a bare IMAGE whose repository name says the kind (fugaro-<kind>, as in
 // ghcr.io/dimipaun/fugaro-go:1 or <registry>/fugaro-base/fugaro-web-node:dev-abc).
 func ParseBaseImageFlag(v string) (kind, ref string, err error) {
@@ -768,6 +954,17 @@ func (c *Config) validate() error {
 			bad("profiles.%s.allow_repos: a written list with no repository in it is ambiguous: remove the key to fall back to the project's allow_repos, or write the repositories this profile admits (the project's allow_repos is still required, so a profile's list can only narrow it)", name)
 		}
 	}
+	// A profile's claude_accounts entries are resolved here against the two
+	// blocks an account can be defined in, because this file is where both are
+	// written, and an account a profile names but this file does not define
+	// names no credential at all (design project-named-oauth-tokens §4.4 row 1,
+	// plan Task 1). The one question only the published node can answer —
+	// whether the profile's own allow_repos covers every repository the
+	// account's allow_data_to does — is projectpolicy's, where both lists are
+	// in hand.
+	for _, p := range config.ValidateProfileClaudeAccounts(c.Profiles, c.ClaudeAccounts, c.ProjectSecrets) {
+		bad("%s: %s", p.Path, p.Message)
+	}
 	if c.ImageSource != "" {
 		if err := mirror.ValidSourcePrefix(c.ImageSource); err != nil {
 			bad("image_source %v", err)
@@ -798,6 +995,7 @@ func (c *Config) validate() error {
 			bad("backend %q is not a known backend (%s)", c.BackendName, backend.CloudRun)
 		}
 	}
+	validateBatch(bad, c)
 	if t := c.Terraform; t.StateBucket != "" && !bucketRE.MatchString(t.StateBucket) {
 		bad("terraform.state_bucket %q is not a bucket name", t.StateBucket)
 	}
@@ -878,6 +1076,15 @@ func (c *Config) validate() error {
 		{"cloud_billing", c.Endpoints.CloudBilling}, {"firebase_database", c.Endpoints.FirebaseDatabase}, {"api_keys", c.Endpoints.APIKeys}, {"firebase_management", c.Endpoints.FirebaseManagement},
 		{"iam_credentials", c.Endpoints.IAMCredentials}, {"identity_toolkit", c.Endpoints.IdentityToolkit},
 		{"firestore", c.Endpoints.Firestore}, {"firebase_rules", c.Endpoints.FirebaseRules},
+		{"cloud_asset", c.Endpoints.CloudAsset},
+		// The Batch API root is the opener's, not init's (internal/cli's
+		// cloudOpeners hands it to internal/backend/batch), but it is the
+		// same kind of value: internal/backend/batch's clientOptions passes
+		// it to option.WithEndpoint with the operator's ADC attached, so a
+		// plain-http root elsewhere would send that token to a stranger.
+		// Every sibling is refused here for that reason, and this one is no
+		// different.
+		{"batch", c.Endpoints.Batch},
 	} {
 		if ep.url == "" {
 			continue
@@ -964,7 +1171,7 @@ func (c *Config) PriceOverride(region string) (backend.Prices, bool) {
 func (c *Config) Warnings() []string {
 	var w []string
 	if c.Build.ServiceAccount != "" {
-		w = append(w, "build.service_account is deprecated and will be ignored: each repository's builds run as its own build account; fugaro init drops it")
+		w = append(w, "build.service_account is deprecated and will be ignored: each repository's builds run as its own build account; fugaro update drops it")
 	}
 	return append(w, c.notes...)
 }
@@ -998,7 +1205,7 @@ func (c *Config) RunsBucketName() string {
 // (builds/<slug>/<workflow>/image.json), as gs://<name>: always the runs
 // bucket, the only bucket a build account may write (under
 // builds/<slug>/), never another bucket_url. fugaro image build, fugaro
-// init's first build and the daily check send it; readiness, ls and
+// setup's first build and the daily check send it; readiness, ls and
 // image status read it. "" when there is no runs bucket name.
 func (c *Config) RecordBucketURL() string {
 	if name := c.RunsBucketName(); name != "" {

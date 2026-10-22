@@ -12,12 +12,47 @@
  *     with its control already in it and `hidden`, and this reveals the control and drives
  *     it. A browser that runs no script therefore shows the command and no button, rather
  *     than a button that copies nothing.
- *   - **Escape and a click outside close an open menu (part P3).** The menu's two levels are
- *     `<details>` and open and close by themselves (and the groups share a `name`, so only
- *     one is open at a time); what a `<details>` does not do is close when the reader
- *     presses Escape or clicks somewhere else, which is what a menu owes a keyboard. Closing
- *     is all this adds: with no script the menu still opens, still closes and still reaches
- *     every link.
+ *   - **The menu: Escape and a click outside close an open submenu (part P3), and on a device
+ *     whose pointer hovers a submenu opens when the pointer arrives at its group (the owner's
+ *     brief of 2026-10-18, item 1).** The menu's two levels are `<details>` and open and close
+ *     by themselves (and the groups share a `name`, so only one is open at a time). What a
+ *     `<details>` does not do is close when the reader presses Escape or clicks somewhere
+ *     else, or open when a pointer merely arrives at it, and those two are what this file
+ *     adds: with no script the menu still opens, still closes and still reaches every link.
+ *     The hover behaviour is bound only where `matchMedia` says the device's pointer hovers,
+ *     and only for a pointer that says it is a mouse or a pen — a tap sends a pointer of its
+ *     own, and a finger never hovers — so a touch screen keeps the tap it has always had. The
+ *     answer is watched rather than sampled once, so a pointer plugged in or taken away after
+ *     the page loaded is answered too. A group also opens when the keyboard's focus arrives at
+ *     its trigger, which is what lets Tab reach the links inside a closed group — and never when
+ *     a click or a tap brings that focus, because the click that brought it toggles the group
+ *     itself and would close what the focus had opened. A close this file does not ask for is
+ *     answered too: opening a group closes its siblings in the `name` set, and the focus the
+ *     browser drops with them is handed back to the trigger. A close the *reader* asks for from
+ *     somewhere else is not answered that way: a press outside the menu forgets where the focus
+ *     was, because a click on the page's own text moves it to the body without a `focusin` to
+ *     hear, and the focus a reader has just dismissed the menu from stays where they put it.
+ *   - **The console's screenshot slider: the count, the current dot and the autoplay (the
+ *     owner's feedback of 2026-10-21).** The slider itself is the browser's — a snapping
+ *     scroll container whose dots are anchors, all of it in the markup and none of it here.
+ *     What this file adds is what a stylesheet cannot know: the count (`n / N`) and the mark on
+ *     the dot the reader is on, both read from the track's own scroll position, the two arrows
+ *     the markup emits `hidden`, and an advance every six seconds that stops while somebody is
+ *     reading. With no script the bar is never drawn, the four screenshots are the page, and
+ *     the four dots are four links.
+ *   - **The homepage's slider (the owner's feedback of 2026-10-21, item 3).** The block's three
+ *     slides are three panels that are all in the markup, and the three dots that choose
+ *     between them are fragment links the stylesheet's `:target` rules answer — so a reader
+ *     whose browser runs no script has the whole block and every slide in it. What this adds is
+ *     the clock: the block advances every six seconds, stops while the reader is in it (a
+ *     pointer over it or the keyboard's focus inside it) and while the page is not being shown,
+ *     steps back and forward on the two buttons the markup emits `hidden`, answers the arrow
+ *     keys, and marks the dot of the slide on screen with `aria-current`. A reader who has
+ *     asked their system for less motion gets none of the clock at all — the slides, the dots
+ *     and the two buttons still work, and nothing moves on its own. The two sliders share the
+ *     four names they have to agree on and no more (the section below), because what each one
+ *     drives is different: this one moves panels the block names, and the console's moves a
+ *     scroll container the block reads back.
  *   - **The consent banner, and the analytics gate behind it (W1.12, W3.2; D93, D106).** The
  *     banner's two buttons write one decision to `localStorage`; this file reveals the banner
  *     when no decision is stored, and — only when that decision is `granted` — loads Google's
@@ -45,8 +80,10 @@
  *
  * Nothing here is load-bearing: the commands are in the markup in full, and every one of
  * them is readable, selectable and copyable by hand without this file ever arriving; the
- * menu is a `<details>` at both levels and needs none of this to work; and with no script the
- * banner is not shown at all, so a reader who runs none is measured by nothing.
+ * menu is a `<details>` at both levels and needs none of this to work; the slider's three
+ * slides are in the markup and the dots that open them are links, so the block works with no
+ * script and only its clock is lost; and with no script the banner is not shown at all, so a
+ * reader who runs none is measured by nothing.
  *
  * It is loaded with `defer` from the base layout, so it runs once the document has been
  * parsed and every block and banner it looks for is in the tree. The only thing it stores is
@@ -64,6 +101,28 @@
   // The menu, and everything that is open in it (P3).
   var OPEN_MENUS = '.site-nav details[open]'
 
+  // The menu's submenus: one `<details>` per group, whose `<summary>` is the control that
+  // announces the group's state. There are two of them and no other menu control at any
+  // width — the labels are the menu on a phone as much as on a wide viewport (the owner's
+  // brief of 2026-10-19, item 1) — and each one opens and closes by its own click.
+  var GROUP_DETAILS = '.site-nav-group details'
+  var SUMMARY = 'summary'
+
+  // A device whose pointer hovers opens a group's submenu when the pointer arrives at the
+  // group and closes it a moment after the pointer leaves (the owner's brief of 2026-10-18,
+  // item 1). The test is the pointer's capability and never the viewport's width: a tablet
+  // 1280 px wide has no hover to give, and a phone with a mouse attached has one. It is the
+  // query `base.css` scopes the menu's hover states to, and `test/nav-hover.mjs` holds the two
+  // strings to each other.
+  var HOVER_QUERY = '(hover: hover) and (pointer: fine)'
+
+  // How long a submenu stays open after the pointer leaves its group. A menu that closes the
+  // instant the pointer leaves the trigger is a menu that cannot be entered: the cursor
+  // crosses the seam between the summary and the list, and it clips the corner of a
+  // neighbouring group on the way. Long enough to cross, short enough that a menu the reader
+  // has walked away from does not hang over the page.
+  var CLOSE_AFTER_MS = 200
+
   // Whether this browser has a clipboard to write to at all. A control that cannot do the
   // one thing it offers is worse than no control, so a browser without one keeps the
   // markup's `hidden` exactly as it is.
@@ -71,11 +130,10 @@
     return !!(navigator.clipboard && typeof navigator.clipboard.writeText === 'function')
   }
 
-  // The text a block offers: the element the block marks as its own source, or the code
-  // element inside it. The terminal marks its command, because what a reader wants out of
-  // that window is the invocation and not the prompt and the caret drawn around it.
+  // The text a block offers: the command inside it, which every block the site prints holds in
+  // a `<pre><code>` or in a `code.usage` (website/test/copy.mjs holds each page to that shape).
   function sourceOf(block) {
-    return block.querySelector('[data-copy-source]') || block.querySelector('pre, code')
+    return block.querySelector('pre, code')
   }
 
   // The one thing the control says, in the live region the markup carries for it. The
@@ -106,21 +164,46 @@
     )
   }
 
-  // Whether a menu holds the element: the drawer's panel is its toggle's next sibling rather
-  // than its child (see the layout's note), so "inside the drawer" is the toggle or that panel.
+  // Whether a menu holds the element. A group's list is the `<details>`'s own child (see the
+  // layout's note), so "inside the group" is what the element's own ancestry says.
   function holds(details, element) {
-    if (!element) return false
-    if (details.contains(element)) return true
-    var panel = details.nextElementSibling
-    return !!(panel && details.classList.contains('site-nav-drawer') && panel.contains(element))
+    return !!element && details.contains(element)
   }
+
+  // The focus this file has just given back, and the reason the group it lands on does not
+  // reopen. Both closes below hand the focus to the trigger they closed, and a trigger that
+  // reopened what was just closed under it would be a menu no keyboard could dismiss. It is
+  // cleared by the next focus that arrives anywhere else: the group's own listener reads it on
+  // the way up, for the handback it was written for, and the document's own clears it for every
+  // other arrival — so the guard lasts exactly the focus it was written for, and a reader who
+  // takes the focus out of the menu and comes back to the same trigger is arriving at it rather
+  // than being handed it back.
+  var restored = null
+
+  // Where the focus is, remembered as the `focusin` that brought it says. A group can be closed
+  // by the browser rather than by this file — its sibling in the same `name` set opened, which on
+  // a pointer's arrival happens with no key pressed and no focus moved by the reader — and the
+  // browser stops drawing the list the focus is standing in and drops that focus to `<body>`
+  // before the `toggle` this file hears about the close. So the element is remembered as it
+  // arrives: by the time the group is closed, `document.activeElement` is no longer it.
+  var focused = null
+
+  // Whether the focus arriving next is the pointer's rather than the keyboard's. A click or a tap
+  // moves the focus to the `<summary>` on the way to the click, and a group opened by that focus
+  // would be closed again by the very click that brought it: the first tap on a group would do
+  // nothing, and a click on a closed group whose trigger did not already hold the focus would do
+  // nothing either. So the pointer's focus opens nothing — the click does, which is the control's
+  // own behaviour — and the keyboard's focus opens the group, which is what lets Tab reach the
+  // links inside a closed one. A press and a key press are the two things that move the focus,
+  // and each answers the question the other way.
+  var pointerFocus = false
 
   // Close every open menu. A menu closed under the reader's focus would leave that focus on
   // an element that is no longer rendered, so the control that opened it takes the focus
-  // back — which is where a keyboard reader expects to be after dismissing a menu. Menus come
-  // in document order, outermost first, so the toggle that takes the focus is the outermost
-  // one that holds it and is on the page: the drawer's on a narrow viewport (closing it hides
-  // the groups' own toggles), the group's on a wide one (where the drawer is not drawn).
+  // back — which is where a keyboard reader expects to be after dismissing a menu. The open
+  // menus are read in document order and the first one that holds the focus and is still
+  // drawn takes it; the groups are siblings and no level sits inside another, so there
+  // is only ever one open at a time and the search is a formality rather than a choice.
   function closeMenus() {
     var active = document.activeElement
     var open = document.querySelectorAll(OPEN_MENUS)
@@ -130,18 +213,541 @@
       if (!back && summary && holds(open[i], active) && summary.getClientRects().length > 0) back = summary
     }
     for (var j = 0; j < open.length; j++) open[j].open = false
-    if (back) back.focus()
+    if (back && back !== active) {
+      restored = back
+      back.focus()
+    }
+  }
+
+  // What a `<summary>` announces, kept in step with the `open` attribute by the one event a
+  // browser fires when that attribute changes: a click, Enter or Space, a sibling in the
+  // group's exclusive set, or this file's own hover below. A `<summary>` already exposes its
+  // parent's state by itself — that native mapping is what makes the menu work with no script
+  // at all — and the attribute written here is the same state said in the place a reader of
+  // the DOM looks for it. The event does not bubble, so it is caught on the way down instead:
+  // one listener, for every group, in every mode.
+  //
+  // A close this file did not ask for arrives here too, and only here: opening a group closes
+  // its siblings in the `name` set, which on a pointer's arrival is a close under a keyboard
+  // reader's focus with no key pressed and no focus moved by anyone. The browser has already
+  // stopped drawing the list that focus was in and dropped it, so `focused` above is the only
+  // record of where it was, and the trigger takes it back exactly as the two closes below do.
+  //
+  // Nothing writes the attribute before a toggle happens, which is the point: with no script
+  // there is no attribute to override the mapping with, and no state to go stale.
+  function expanded() {
+    document.addEventListener(
+      'toggle',
+      function (event) {
+        var group = event.target
+        var parent = group && group.parentElement
+        if (!group || !parent || !parent.classList || !parent.classList.contains('site-nav-group')) return
+        var summary = group.querySelector(SUMMARY)
+        if (summary) summary.setAttribute('aria-expanded', group.open ? 'true' : 'false')
+        if (!group.open && summary && focused && focused !== summary && holds(group, focused)) {
+          restored = summary
+          summary.focus()
+        }
+      },
+      true,
+    )
+  }
+
+  // The keyboard's way into a group (the owner's brief of 2026-10-18, item 1), bound whatever
+  // the device answers — beside `expanded` above rather than inside the hover behaviour below,
+  // which is the pointer's own. A reader who tabs to a trigger has to be able to reach the links
+  // inside a closed `<details>` — Tab from the trigger then goes into the list rather than past
+  // it — and that reader is the device's keyboard rather than its pointer: a phone or a tablet
+  // with a keyboard attached answers the hover query "no", and a menu whose second level only a
+  // hovering pointer can open is a menu that keyboard cannot enter at all.
+  //
+  // What opens the group is the keyboard's focus and never the pointer's (see `pointerFocus`
+  // above), and never the focus a close has just handed back to the trigger, which is where the
+  // reader who dismissed a menu is left rather than somewhere they asked to be.
+  function keyboardGroups() {
+    var groups = document.querySelectorAll(GROUP_DETAILS)
+    for (var i = 0; i < groups.length; i++) {
+      ;(function (group) {
+        var summary = group.querySelector(SUMMARY)
+        group.addEventListener('focusin', function (event) {
+          var fromClosing = restored
+          restored = null
+          if (!summary || event.target !== summary || fromClosing === summary) return
+          // The pointer's focus opens nothing: the click that brought it toggles the group
+          // itself, so a group opened here would be closed again by that click — a first tap
+          // that does nothing, and a click on a closed group that does nothing either. The
+          // keyboard's focus opens it, which is what lets Tab reach the links inside.
+          if (pointerFocus) return
+          group.open = true
+        })
+      })(groups[i])
+    }
+  }
+
+  // Whether an event came from a pointer that hovers. The device's answer to `HOVER_QUERY` is
+  // about its *primary* pointer, and a device can answer yes and still have a finger on it: a
+  // touch laptop has a trackpad and a screen, and a tablet with one has both too. What the
+  // event itself says is finer than that — a mouse and a pen hover, and a finger never does —
+  // and it is the event that decides here, because a tap's own pointer arrives at the group
+  // before the tap's click does: taken for a hover, it would open the submenu and the click
+  // that follows would close it again, and a finger could not open a submenu at all. A pointer
+  // that names no type is not a yes either, on the same principle as a browser with no
+  // `matchMedia` to ask: no answer is no.
+  function hoveringPointer(event) {
+    var type = event && event.pointerType
+    return type === 'mouse' || type === 'pen'
+  }
+
+  // The hover behaviour as it is bound right now, and the way to take it off again. The device's
+  // answer is not fixed for the life of the page — see `decideHover` — so what is bound has to
+  // be remembered to be unbound.
+  var unbindHover = null
+
+  // Bind the hover behaviour where the device answers that its pointer hovers, and take it off
+  // where the answer changes (the owner's brief of 2026-10-18, item 1). A tablet docked to a
+  // keyboard gains a trackpad, a mouse is plugged into a phone, a laptop's pointer is taken
+  // away: none of them reloads the page, and a query asked once at load would leave the reader
+  // who arrived after it with the wrong menu either way. So this runs on the answer as it is
+  // now and on every `change` to it, and the click is untouched in both directions.
+  function decideHover(query) {
+    if (query && query.matches) {
+      if (!unbindHover) unbindHover = hoverGroups()
+    } else if (unbindHover) {
+      unbindHover()
+      unbindHover = null
+    }
+  }
+
+  // The pointer's way in and out of a group (the owner's brief of 2026-10-18, item 1), bound
+  // on the group's `<details>` because that element holds both the trigger and the list: a
+  // pointer travelling from the summary into the list never leaves it, so the submenu cannot
+  // close under a reader who is on their way to a link.
+  //
+  // The events are the pointer's own rather than the mouse's, because a finger's tap is
+  // delivered as a mouse's too — the compatibility events every browser sends after a tap —
+  // and `hoveringPointer` above is what refuses it.
+  //
+  // A group opens when the pointer arrives and closes `CLOSE_AFTER_MS` after the pointer leaves.
+  // The keyboard's way into a group is `keyboardGroups` above, which is bound whether or not the
+  // device has a pointer to hover with; what is bound here is the pointer's half alone. What this
+  // file does not touch is the click: a `<summary>` toggles its own group, so a click on a group
+  // the pointer has already opened closes it, which is what the control did before any of this
+  // and what a reader pressing it is asking for.
+  //
+  // A group has two readers, and the pointer is only one of them. The keyboard's focus is the
+  // other, and it outranks the pointer: a pointer that leaves a group somebody is standing in
+  // has asked for a close that is not owed yet, and it lands when the focus goes rather than
+  // under the reader. That is the same reader the delay is for — the one who comes back — and
+  // coming back by keyboard is coming back.
+  //
+  // It returns the way back out: every listener it bound, taken off again. A close that is
+  // already scheduled is left to run, because it was scheduled by a pointer that had left the
+  // group and closing it is what the reader asked for by leaving; taking the listeners off is
+  // about the pointers that have not moved yet.
+  function hoverGroups() {
+    var groups = document.querySelectorAll(GROUP_DETAILS)
+    var bound = []
+    // One re-reading of each group, for the listener below that hears the reader's focus move
+    // anywhere on the page. What a group answers is whether a reader is inside it, and that
+    // changes when the focus arrives in the group *and* when it leaves — and the leaving fires
+    // no event on the group itself. So the listener is the document's and every group re-reads
+    // its own state from wherever the focus is now.
+    var reread = []
+
+    function on(element, type, handler) {
+      element.addEventListener(type, handler)
+      bound.push([element, type, handler])
+    }
+
+    // Where the reader's focus has gone: a group it has arrived in is one the pointer's close
+    // cannot take away, and one it has left owes the close the pointer asked for.
+    function focusMoved() {
+      for (var i = 0; i < reread.length; i++) reread[i]()
+    }
+    on(document, 'focusin', focusMoved)
+
+    for (var i = 0; i < groups.length; i++) {
+      ;(function (group) {
+        var summary = group.querySelector(SUMMARY)
+        var closesAt = null
+        // The pointer has left and asked for a close. That alone does not say the close is owed:
+        // it is owed when the pointer has gone and nobody is left reading.
+        var pointerLeft = false
+
+        function stopClosing() {
+          if (closesAt !== null) window.clearTimeout(closesAt)
+          closesAt = null
+        }
+
+        // Whether a reader is standing in the group, read when it is asked rather than
+        // remembered: a focus can leave by way of something that cannot take it — a paragraph of
+        // the page's own text — and that fires no `focusin` anywhere, so a memory of the reader
+        // would outlive the reader and hold the group open for good.
+        //
+        // The one focus that is not a reader is the pointer's own on the trigger: a tap or a
+        // click leaves the focus there, and the group that press opened is the pointer's to close
+        // when the pointer goes. The keyboard's focus on the trigger is a reader — that is where
+        // a Tab to a group leaves it — and so is a focus anywhere inside the list.
+        function readerIsInside() {
+          var active = document.activeElement
+          if (!holds(group, active)) return false
+          return active !== summary || !pointerFocus
+        }
+
+        // A pointer that leaves a group the keyboard is standing in has asked for a close that is
+        // not owed yet: it is owed when the focus goes, and the focus going is what lands it. A
+        // pointer that leaves an empty group is owed it at once.
+        function closeWhenNobodyIsReading() {
+          if (pointerLeft && !readerIsInside()) closesAt = window.setTimeout(close, CLOSE_AFTER_MS)
+        }
+
+        reread.push(function () {
+          // A reader arriving inside the delay the pointer's close waits is the reader the delay
+          // is for: the close is cancelled, and the focus holds the group open in its place.
+          stopClosing()
+          closeWhenNobodyIsReading()
+        })
+
+        // This close never lands under a focus inside the group — the focus holds the group open
+        // until it goes — so there is no focus here to hand back to the trigger. The closes that
+        // can strand one are the reader's own and the browser's, and those pay it above.
+        function close() {
+          closesAt = null
+          pointerLeft = false
+          group.open = false
+        }
+
+        on(group, 'pointerenter', function (event) {
+          if (!hoveringPointer(event)) return
+          pointerLeft = false
+          stopClosing()
+          group.open = true
+        })
+
+        on(group, 'pointerleave', function (event) {
+          if (!hoveringPointer(event)) return
+          pointerLeft = true
+          stopClosing()
+          closeWhenNobodyIsReading()
+        })
+      })(groups[i])
+    }
+
+    return function release() {
+      for (var j = 0; j < bound.length; j++) bound[j][0].removeEventListener(bound[j][1], bound[j][2])
+    }
   }
 
   function menu() {
     document.addEventListener('keydown', function (event) {
+      // A key press makes the focus that follows the keyboard's own: this is what a Tab to a
+      // group's trigger is, and the `focusin` above opens the group for it.
+      pointerFocus = false
       if (event.key === 'Escape') closeMenus()
+    })
+    document.addEventListener('pointerdown', function (event) {
+      // A pointer's press moves the focus to what it pressed, on the way to the click that
+      // press is making. That focus is not the keyboard's, and the `focusin` above refuses it.
+      pointerFocus = true
+      // And a press outside the group the remembered focus is in is the reader leaving it. The
+      // focus goes to what was pressed, or — where that can take no focus at all, a paragraph of
+      // the page's own text — to the body, and that last one fires no `focusin` anywhere: the
+      // element remembered above would stay the link the reader has walked away from, and a close
+      // their press asks for would hand the focus back to a trigger they were leaving. So it is
+      // forgotten here, and a close that follows has nothing to give back.
+      var pressed = event.target && event.target.closest ? event.target.closest(GROUP_DETAILS) : null
+      if (focused && !(pressed && holds(pressed, focused))) focused = null
+    })
+    document.addEventListener(
+      'focusin',
+      function (event) {
+        // Where the focus is, for the `toggle` in `expanded` above: that listener hears a close
+        // which has already dropped the focus, so the element has to be remembered as it arrives.
+        focused = event.target
+      },
+      true,
+    )
+    document.addEventListener('focusin', function (event) {
+      // The guard against reopening is written for the one focus a close hands back to the
+      // trigger, and it lasts exactly that long: a focus arriving anywhere else — the page's own
+      // text, a link in the footer — is the reader having moved on, and the trigger they come
+      // back to afterwards is a trigger they have arrived at, which opens as it did the first
+      // time. Read on the way up, after the group's own listener has had the focus the guard was
+      // written for, and never for that focus itself.
+      if (restored && event.target !== restored) restored = null
     })
     document.addEventListener('click', function (event) {
       var target = event.target
       if (target && target.closest && target.closest('.site-nav')) return
       closeMenus()
     })
+    expanded()
+    keyboardGroups()
+
+    // The device's answer to the pointer's question, asked once and then watched. A browser
+    // with no `matchMedia` to ask cannot answer, and a menu whose hover behaviour is guessed at
+    // is worse than one that keeps the click: no answer means no hover behaviour. `addListener`
+    // is the same subscription under the name browsers had for it before `addEventListener`
+    // reached a `MediaQueryList`, and the object a `change` reports carries the new answer in
+    // its own `matches` — which is the one `decideHover` reads, at load and after every change.
+    var query = window.matchMedia ? window.matchMedia(HOVER_QUERY) : null
+    if (query) {
+      if (query.addEventListener) query.addEventListener('change', decideHover)
+      else if (query.addListener) query.addListener(decideHover)
+    }
+    decideHover(query)
+  }
+
+  // ---- the console's screenshot slider (the owner's feedback of 2026-10-21) --------------
+  //
+  // The console page's slider is a scroll container with snap points, and it works with none
+  // of this: the track scrolls, the dots are anchors into their slides and the first picture is
+  // in the page, so a reader who runs no script still reaches every screenshot (D183, and
+  // `website/test/console-screens.mjs` is the gate for it). Three things are this file's, and
+  // they are the three the owner asked for on 2026-10-21:
+  //
+  //   - the control bar the markup emits `hidden` — a Previous button, the count and a Next
+  //     button — which is revealed here;
+  //   - the count (`n / N`) and the mark on the dot the reader is on, both read from where the
+  //     track actually is, so a reader who swipes with a trackpad sees the same reading as one
+  //     who presses Next;
+  //   - and an advance every `AUTO_MS` that stops while somebody is reading: the pointer over
+  //     the slider, the focus inside it, the tab in the background, or a system that asks for
+  //     less motion at all.
+  //
+  // Nothing here is load-bearing, and the last line of this comment is the reason it is safe to
+  // write any of it: with no script the pictures are all in the document, in order, with their
+  // captions, and the four dots are four links.
+
+  // The four names **both** of the site's sliders are found and driven by, declared once here
+  // because the two blocks are the same two blocks to whoever reads the markup: `[data-slider]`
+  // is the one attribute a page marks a slider with, the two step-control attributes are the two
+  // controls a slider's markup emits `hidden`, and the six seconds and the motion query are what
+  // the owner asked of both. What the two do with them is not shared, and the two sections say
+  // why: this one moves a scroll container and reads its position back, and the homepage's below
+  // moves panels the block names.
+  var SLIDER = '[data-slider]'
+  var SLIDER_PREV = '[data-slider-prev]'
+  var SLIDER_NEXT = '[data-slider-next]'
+
+  // How long a slide stands before the next one. Six seconds: long enough to look at a
+  // screenshot the size of a page, short enough that a reader who is watching can see that the
+  // slider is a slider (the owner's "~6s"). The homepage's slider stands each of its slides for
+  // the same six seconds, which is why this is one constant and not two.
+  var AUTO_MS = 6000
+
+  // The query a visitor's system answers when it has asked for less motion. `base.css` is where
+  // the site honours that for the stylesheet's own motion (D105); a carousel is motion no
+  // stylesheet can switch off, so it is honoured here — and watched after load, the way the
+  // menu watches its own query, because a visitor can turn the setting on without reloading.
+  // The homepage's slider reads the same query through `calm()` below, and neither slider moves
+  // on its own for a reader who answered it.
+  var LESS_MOTION = '(prefers-reduced-motion: reduce)'
+
+  // The console slider's own three, and the two the bar is drawn from: the track it scrolls,
+  // the slides it counts, the dots it marks, the bar itself and the count in it.
+  //
+  // **The interior is `data-slider-*` too, and that is the correction of 2026-10-21** (the
+  // homepage's "See it" panel became a slider that renders the console page's own rows, D246).
+  // These three were `.screens-track`, `.screen` and `.screen-dot` — the console page's class
+  // names — and a second page can only reuse this driver by borrowing the classes of a page it
+  // has nothing to do with. The classes stay, because they are what the stylesheet draws; what
+  // the script reads is the attribute, which is the same shape as the door above it. The
+  // homepage's own slider reads `[data-slider-slide]` and `[data-slider-dot]` for its panels
+  // and its dots, so the two drivers now share those two names and the two blocks differ in
+  // what they put under them: a track of slides against a block of panels.
+  var SLIDER_BAR = '[data-slider-bar]'
+  var SLIDER_TRACK = '[data-slider-track]'
+  var SLIDER_SLIDE = '[data-slider-slide]'
+  var SLIDER_DOT = '[data-slider-dot]'
+  var SLIDER_COUNT = '[data-slider-counter]'
+
+  /**
+   * The elements of `block`'s OWN slider: everything `selector` matches inside it that belongs
+   * to no nearer slider. The homepage's "See it" panel holds one of these blocks inside the
+   * homepage's own, so a plain `block.querySelectorAll('[data-slider-slide]')` would hand the
+   * outer block the inner one's slides — and the two drivers would count, mark and move each
+   * other's. `closest('[data-slider]')` is what tells them apart, and it answers the block
+   * itself for everything of the block's own: the same expression a browser answers, so the
+   * rule needs no bookkeeping and cannot go stale.
+   */
+  function own(block, selector) {
+    var found = block.querySelectorAll(selector)
+    var kept = []
+    for (var i = 0; i < found.length; i++) {
+      if (found[i].closest(SLIDER) === block) kept.push(found[i])
+    }
+    return kept
+  }
+
+  function slider(section) {
+    var track = own(section, SLIDER_TRACK)[0]
+    if (!track) return
+    var slides = track.querySelectorAll(SLIDER_SLIDE)
+    // One slide is nowhere to go, and the markup renders no bar for it either: this is that
+    // same rule read from the other end, so a slider with one screenshot cannot end up with a
+    // Next button that goes to the slide it is already on.
+    if (slides.length < 2) return
+
+    // Every hook this driver reads is read through `own()`, the single elements as much as the
+    // lists: the homepage's "See it" panel holds a slider of its own inside this page's block,
+    // and its bar, its count and its two arrows carry the same four names this one's do — a
+    // `section.querySelector` would answer with whichever came first in the document, which is
+    // this block's own today and the inner block's the day the two are written the other way
+    // round. The rule is the same one the slides and the dots are read with, and it needs no
+    // document order to be right.
+    var bar = own(section, SLIDER_BAR)[0]
+    var count = own(section, SLIDER_COUNT)[0]
+    var dots = own(section, SLIDER_DOT)
+    var prev = own(section, SLIDER_PREV)[0]
+    var next = own(section, SLIDER_NEXT)[0]
+    var index = 0
+    var timer = null
+    var over = false
+    var inside = false
+
+    // Where the track is, as the slide it is showing. The slides are one track-width each
+    // (`grid-auto-columns: 100%`), so the slide at the left edge is the scroll offset over that
+    // width, rounded to the nearest — which is what a swipe that stopped between two slides
+    // (there is no such stop: the track snaps) comes out as.
+    function shown() {
+      var width = track.clientWidth || 0
+      if (!width) return index
+      var at = Math.round((track.scrollLeft || 0) / width)
+      return at < 0 ? 0 : at > slides.length - 1 ? slides.length - 1 : at
+    }
+
+    // Draw the reading: the count, and the mark on the dot the reader is on. `aria-current` is
+    // written on every dot rather than taken off the others — "false" is a value the attribute
+    // has — so there is no second state (an attribute that is there or not) to keep in step,
+    // and a whitespace-only difference never reaches the DOM.
+    function paint() {
+      if (count) count.textContent = index + 1 + ' / ' + slides.length
+      for (var i = 0; i < dots.length; i++) {
+        var mark = i === index ? 'true' : 'false'
+        if (dots[i].getAttribute('aria-current') !== mark) dots[i].setAttribute('aria-current', mark)
+      }
+    }
+
+    // Go to a slide, wrapping at either end: Next on the last slide is the first one rather
+    // than a control that does nothing, which is what "auto-slide" asks for and what makes the
+    // two arrows the whole of the navigation.
+    //
+    // The move lands where it was asked to land — no animation — and that is deliberate: the
+    // count and the dots are the track's own position, so a move the browser animates would be
+    // a move during which the position is between two slides while the reading had already
+    // moved on, and a jump across several slides would narrate every one it passed. **It is
+    // `'instant'` and not `'auto'`**: CSSOM-View resolves `'auto'` to the box's computed
+    // `scroll-behavior`, which the track declares `smooth` — so `'auto'` is the animation this
+    // is written to avoid, and the count would narrate the slides a move passed through while a
+    // reader pressing Next twice in a row advanced one slide, the second press having read a
+    // position a `scroll` event had already put back. A browser too old to know the word reads
+    // it as a value the dictionary does not have and takes the default, which is what the
+    // reader's own motion gets anyway. That motion stays the stylesheet's — `scroll-behavior:
+    // smooth` on the track, which the base layout's reduced-motion rule neutralises — and so is
+    // a dot's anchor with no script.
+    // A track the page is not laying out cannot be moved, and a move it cannot make is not one
+    // to count: `clientWidth` is zero for a box inside a `display: none` subtree, and the case
+    // on this site is the homepage, where this slider renders inside the "See it" panel and that
+    // panel is drawn only while the reader is on it (D246). The clock keeps its beat there — six
+    // seconds of a panel nobody has opened is no work — and every beat is refused here, so the
+    // count and the mark on the dots stay on the slide the track is showing: the first one, which
+    // is what the reader who opens the panel sees, and where their next move starts from.
+    function show(to) {
+      if (!(track.clientWidth || 0)) return
+      index = (to + slides.length) % slides.length
+      var left = index * (track.clientWidth || 0)
+      if (typeof track.scrollTo === 'function') track.scrollTo({ left: left, behavior: 'instant' })
+      else track.scrollLeft = left
+      paint()
+    }
+
+    function forward() {
+      show(index + 1)
+    }
+
+    // Whether the slider may move on its own right now: nobody is reading it (no pointer over
+    // it, no focus in it), the tab is not in the background, and the system has not asked for
+    // less motion.
+    var query = window.matchMedia ? window.matchMedia(LESS_MOTION) : null
+    function mayAdvance() {
+      return !over && !inside && !document.hidden && !(query && query.matches)
+    }
+
+    function play() {
+      if (timer !== null || !window.setInterval || !mayAdvance()) return
+      timer = window.setInterval(forward, AUTO_MS)
+    }
+
+    function pause() {
+      if (timer === null) return
+      window.clearInterval(timer)
+      timer = null
+    }
+
+    /** What the two states above come to after something changed: running, or stopped. */
+    function settle() {
+      if (mayAdvance()) play()
+      else pause()
+    }
+
+    if (prev) prev.addEventListener('click', function () { show(index - 1) })
+    if (next) next.addEventListener('click', function () { show(index + 1) })
+
+    for (var d = 0; d < dots.length; d++) {
+      ;(function (dot, at) {
+        dot.addEventListener('click', function (event) {
+          // A dot is an anchor into its own slide, which is what a reader with no script gets.
+          // With a script the press is the same move a Next press is, so that the count and the
+          // mark follow it exactly rather than following a jump that is still travelling.
+          if (event && event.preventDefault) event.preventDefault()
+          show(at)
+        })
+      })(dots[d], d)
+    }
+
+    // The track is the source of truth, so a reader's own swipe moves the reading too.
+    track.addEventListener('scroll', function () {
+      var at = shown()
+      if (at !== index) {
+        index = at
+        paint()
+      }
+    })
+
+    // The pointer's arrival and the focus's hold the slider still, and the two are answered
+    // separately because they are different readers: a keyboard reader standing on a dot has no
+    // pointer over anything, and a pointer resting on a screenshot has moved no focus. The
+    // focus is read from the document rather than from this section's own `focusout`, which
+    // fires with the focus already on its way out — and the arriving `focusin` is what says
+    // where it went.
+    section.addEventListener('pointerenter', function () { over = true; settle() })
+    section.addEventListener('pointerleave', function () { over = false; settle() })
+    document.addEventListener('focusin', function (event) {
+      inside = section.contains(event.target)
+      settle()
+    })
+    document.addEventListener('visibilitychange', settle)
+
+    if (query) {
+      if (query.addEventListener) query.addEventListener('change', settle)
+      else if (query.addListener) query.addListener(settle)
+    }
+
+    // The bar the markup emitted `hidden`, revealed now that something drives it — and the
+    // reading drawn before the first frame, so the count is written from the start rather than
+    // empty until the first move.
+    //
+    // The first reading is the track's, like every other one: a page that arrives already
+    // scrolled — a shared `#console-screen-3` deep link, or a scroll position the browser
+    // restored — opens on that slide, and a count hardcoded to the first one would tell that
+    // reader `1 / N` and mark the first dot until the first `scroll` event corrected it.
+    // `shown()` answers `index` when the track reports no width, so a browser that lays nothing
+    // out yet leaves the starting index as it was.
+    if (bar) bar.hidden = false
+    index = shown()
+    paint()
+    settle()
   }
 
   // ---- the consent banner, and the analytics gate behind it (W1.12, W3.2) ----------------
@@ -412,9 +1018,294 @@
     analytics(banner)
   }
 
+  // ---- the homepage's slider (the owner's feedback of 2026-10-21, item 3) -------------------
+
+  // The block, and the three things in it this file drives that are this slider's own: the
+  // slides (the panels, each carrying its own name), the dots (fragment links, one per slide),
+  // and the name the slide on screen is written under. Every one of them is a presence-only
+  // attribute selector, because the three hand-written stub DOMs `website/test/copy.mjs`,
+  // `website/test/consent.mjs` and `website/test/nav-hover.mjs` run this whole file and read
+  // selectors of that shape and no other (`website/test/slider.mjs` runs it against the built
+  // homepage and reads the behaviour out of it).
+  //
+  // The block itself, the two step controls, the six seconds a slide stands and the motion
+  // query are **not** declared here: they are the four names this slider and the console's agree
+  // on, and they are declared once, with the console's section above.
+  var SLIDE = '[data-slider-slide]'
+  var DOT = '[data-slider-dot]'
+
+  // The name the slide on screen is written under, on the block itself: the stylesheet shows
+  // the panel whose name matches it, and it is what stands the no-script `:target` rules down
+  // once this file is driving.
+  var ACTIVE = 'data-active'
+
+  /**
+   * Whether the page is in front of the reader. A tab nobody is looking at is a tab nobody is
+   * reading, and a block that advanced behind the reader's back would have moved on by the time
+   * they came back — so the clock runs only while the page is shown, and a document that cannot
+   * answer is not one this file starts a clock in. Every browser that runs this file answers
+   * (`document.hidden` has been a boolean everywhere since 2013), and a browser that does not
+   * loses the clock and keeps the slides, the dots and the two step controls.
+   *
+   * The console slider above asks the same question directly (`!document.hidden`), which is the
+   * same answer in a browser that has one; the name here is the homepage's own, and the
+   * `shown()` in the console's section is a different reading of a different thing — the slide
+   * its track is on — which is why this one is called what it is.
+   */
+  function pageShown() {
+    return document.hidden === false
+  }
+
+  // The reader's own answer on less motion, where the browser can be asked at all: the query is
+  // the console slider's own `LESS_MOTION`, which both sliders read. It is asked by the first
+  // block that is in a position to consult it — `watchMotion()` below is what asks, and it asks
+  // only of a page that is being shown — and it is kept here rather than per block, because the
+  // answer is the page's and not a block's. A browser with no `matchMedia` to ask cannot answer,
+  // and no answer reads as "no": the block moves, as it does everywhere else in this file, and no
+  // clock is held back by a question nobody could put.
+  var motion = null
+
+  /** Whether the reader has asked for less motion, as that query last answered. The block still
+   *  slides when the reader chooses a slide — that is motion they asked for by clicking — and
+   *  nothing moves on its own. */
+  function calm() {
+    return !!(motion && motion.matches)
+  }
+
+  /**
+   * One block, driven. The slides are the panels in the order they are written, the dots are
+   * the links to them, and the two step controls move one slide either way and wrap.
+   *
+   * Nothing here is required for a slide to be reachable: with the file absent, the dots are
+   * links that open the panel each one names, and the first panel is the one the stylesheet
+   * shows. This is the clock, the two controls and the mark on the current dot.
+   *
+   * The block is handed in by `start()`, which found every `[data-slider]` on the page once and
+   * gave each one to both of this file's sliders. A block with no panels of its own in it — the
+   * console page's, whose slider is a scroll container, and the panel the homepage's own slider
+   * renders that scroll container in — is one this function returns from at once.
+   */
+  function panels(block) {
+    // A block that carries a track of its OWN is the console-style slider's, and its slides are
+    // the track's `<li>`s rather than the block's panels: the driver above moves it, and two
+    // drivers on one block would each write the other's state. The homepage's block holds one
+    // of those inside its third panel, which is the case this reads.
+    if (own(block, SLIDER_TRACK).length > 0) return
+    var slides = own(block, SLIDE)
+    // One slide is not a slider, and no slide is a block this file has nothing to say about.
+    // A block that grew a second panel gets the whole behaviour from the same markup.
+    if (slides.length < 2) return
+
+    var dots = own(block, DOT)
+    // `own()` here for the same reason the driver above reads its own two arrows with it: the
+    // block holds a slider of its own, whose arrows carry these two names, and document order is
+    // not a rule either of them should rest on.
+    var back = own(block, SLIDER_PREV)[0]
+    var on = own(block, SLIDER_NEXT)[0]
+    var at = 0
+    var timer = null
+    // The two ways a reader is in the block, and they are two flags rather than one: a pointer
+    // over the block and the keyboard's focus inside it are different readers, and one flag for
+    // both would let the pointer's leaving release a hold the focus is still keeping — a reader
+    // tabbing through the dots would have the slide move under them the moment a resting pointer
+    // drifted off the block — and the focus's leaving release the pointer's.
+    var over = false
+    var inside = false
+
+    /** A slide's own name: the panel's `data-slider-slide` and the dot's, one name. */
+    function nameOf(slide) {
+      return slide.getAttribute('data-slider-slide') || ''
+    }
+
+    function idOf(slide) {
+      return slide.getAttribute('id') || ''
+    }
+
+    function stop() {
+      if (timer === null) return
+      // Guarded rather than assumed: `window.clearTimeout` is not in the two stub DOMs that run
+      // this file without a clock, and a timer id they never gave out is not one to hand back.
+      if (typeof window.clearTimeout === 'function') window.clearTimeout(timer)
+      timer = null
+    }
+
+    /** Whether the block should be still. Either hold first and the page's own visibility
+     *  second, so a reader standing in the block — and a page nobody is shown — cost no media
+     *  query and no timer at all. */
+    function still() {
+      return over || inside || !pageShown() || calm()
+    }
+
+    // Whether this block has subscribed to the reduced-motion answer yet.
+    var watching = false
+
+    /** Ask the reader's system about less motion, once for the page and once for this block, and
+     *  subscribe this block's clock to the answer — a visitor can turn the setting on without
+     *  reloading, and a query read at load alone would give them one more advance before the
+     *  block settled.
+     *
+     *  **It asks nothing of a page that is not being shown**, which is why it is called from
+     *  `arm()` and not from the wiring below: a document that cannot answer whether it is shown —
+     *  the stub DOMs that run this file without a `document.hidden` — is a document this asks
+     *  nothing of, and those gates keep the one query they were written for. A block on a tab
+     *  that starts hidden subscribes the moment the tab comes back, because `visibilitychange`
+     *  arms the clock again and this runs first. */
+    function watchMotion() {
+      if (watching || !pageShown()) return
+      watching = true
+      if (!motion && typeof window.matchMedia === 'function') motion = window.matchMedia(LESS_MOTION)
+      if (!motion) return
+      if (motion.addEventListener) motion.addEventListener('change', arm)
+      else if (motion.addListener) motion.addListener(arm)
+    }
+
+    /** Put the clock back, from whatever the block's state is now. Called after every change:
+     *  the reader's own step restarts the six seconds rather than racing them. */
+    function arm() {
+      stop()
+      watchMotion()
+      if (still()) return
+      timer = window.setTimeout(function () {
+        timer = null
+        step(1)
+      }, AUTO_MS)
+    }
+
+    /** Show one slide: the block's name for it, and the mark on the dot that opens it. The
+     *  mark is written as `true` or `false` rather than added and removed, because `false` is
+     *  what a link that is not current should say and the two stub DOMs that run this file
+     *  have no `removeAttribute`. */
+    function show(slide) {
+      for (var i = 0; i < slides.length; i++) if (slides[i] === slide) at = i
+      block.setAttribute(ACTIVE, nameOf(slide))
+      for (var j = 0; j < dots.length; j++) {
+        dots[j].setAttribute('aria-current', dots[j].getAttribute('data-slider-dot') === nameOf(slide) ? 'true' : 'false')
+      }
+    }
+
+    function step(by) {
+      at = (at + by + slides.length) % slides.length
+      show(slides[at])
+      arm()
+    }
+
+    /** The slide a dot opens, read out of the link itself: the fragment it carries is the
+     *  panel's own id, which is the pairing the stylesheet's no-script rules are built on, and
+     *  reading it here keeps one name for the link, the panel and this file's state. */
+    function slideFor(dot) {
+      var href = dot.getAttribute('href') || ''
+      if (href.charAt(0) !== '#') return null
+      for (var i = 0; i < slides.length; i++) if (idOf(slides[i]) === href.slice(1)) return slides[i]
+      return null
+    }
+
+    /** The arrow keys, on a control of this block: the keys a reader presses to step a slider,
+     *  and the keys a link or a button has no other use for. */
+    function keys(control) {
+      control.addEventListener('keydown', function (event) {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+        if (typeof event.preventDefault === 'function') event.preventDefault()
+        step(event.key === 'ArrowLeft' ? -1 : 1)
+      })
+    }
+
+    for (var d = 0; d < dots.length; d++) {
+      ;(function (dot) {
+        dot.addEventListener('click', function (event) {
+          var slide = slideFor(dot)
+          if (!slide) return
+          // Shown in place rather than followed: with this file running, the state is the
+          // block's own name for the slide, and an address that kept a fragment would be a
+          // second state to keep in step — and one the browser would jump back to on a reload.
+          if (event && typeof event.preventDefault === 'function') event.preventDefault()
+          show(slide)
+          arm()
+        })
+        keys(dot)
+      })(dots[d])
+    }
+
+    if (back) {
+      // The markup emits both controls `hidden`, so a reader whose browser runs no script is
+      // shown no control that steps nowhere (D183). This is what reveals them.
+      back.hidden = false
+      back.addEventListener('click', function () {
+        step(-1)
+      })
+      keys(back)
+    }
+    if (on) {
+      on.hidden = false
+      on.addEventListener('click', function () {
+        step(1)
+      })
+      keys(on)
+    }
+
+    // The reader is in the block: the pointer is over it, or the keyboard's focus is inside it.
+    // Each holds the clock and each lets go of its own hold and no other — a pointer that leaves
+    // while the focus is still in the block leaves the block held, and a focus that leaves under
+    // a resting pointer does the same — and a focus that moves from one dot to the next never
+    // leaves the block at all, which is what `contains` answers.
+    block.addEventListener('pointerenter', function () {
+      over = true
+      arm()
+    })
+    block.addEventListener('pointerleave', function () {
+      over = false
+      arm()
+    })
+    block.addEventListener('focusin', function () {
+      inside = true
+      arm()
+    })
+    block.addEventListener('focusout', function (event) {
+      if (event && event.relatedTarget && typeof block.contains === 'function' && block.contains(event.relatedTarget)) return
+      inside = false
+      arm()
+    })
+
+    // A tab that goes away stops the clock and a tab that comes back starts it again, from the
+    // six seconds rather than from wherever the clock had got to.
+    if (typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', function () {
+        arm()
+      })
+    }
+
+    // Where the block opens. A reader who arrived on one of the slides — the dots are links,
+    // and a link whose fragment is a slide's own id is a link to that slide — opens on that
+    // one; a reader who arrived on the page opens on the first, which is the panel the
+    // stylesheet shows while no fragment is targeted, so the mark and the panel agree from the
+    // first frame. The address is read defensively: the stub DOMs that run this file have no
+    // `location`, and a block that threw on one would take the copy controls down with it.
+    var opening = slides[0]
+    var hash = window.location && window.location.hash ? window.location.hash.slice(1) : ''
+    if (hash) {
+      for (var h = 0; h < slides.length; h++) if (idOf(slides[h]) === hash) opening = slides[h]
+    }
+    show(opening)
+    arm()
+  }
+
   function start() {
     menu()
     consent()
+    // The sliders first, and unconditionally: a slider's controls are not a convenience the
+    // page can do without — the arrows, the count and the dots are the owner's feedback of
+    // 2026-10-21 — so neither is behind the clipboard gate the copy controls stand behind below.
+    //
+    // One query, for the one attribute a slider's block is marked with, and each of the two
+    // drivers below is handed every block: the console slider's returns at once from a block
+    // with no track of its own in it and this file's homepage slider at once from a block with
+    // no panels of its own, so a page carrying one of the two blocks takes the same path as a
+    // page carrying the other, and a page carrying one inside the other — the homepage — gets
+    // both, each on its own block and neither on the other's elements.
+    var sliders = document.querySelectorAll(SLIDER)
+    for (var s = 0; s < sliders.length; s++) {
+      slider(sliders[s])
+      panels(sliders[s])
+    }
     var blocks = document.querySelectorAll('[data-copy]')
     if (blocks.length === 0) return
     if (!canCopy()) return

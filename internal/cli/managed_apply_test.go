@@ -69,7 +69,36 @@ func managedBudgetRig(t *testing.T) (*initRig, string) {
 		t.Fatal(err)
 	}
 	r.gcs.AddBucket(initRunsBucket, initProjectNumber, map[string]string{"fugaro": "managed"})
+	labelled(r.crm, initProject)
+	// The whole-project read these tests do not exercise: no Cloud Asset
+	// server is configured here, so the command would reach Google's own API.
+	// A read that cannot be made is the fallback (Task 4.5), which is the
+	// honest state of these fixtures, and the rows about the inventory itself
+	// stub their own answer (managedInventoryRig).
+	stubManagedAssets(t, &fakeManagedAssets{err: errors.New("no Cloud Asset server in this test")})
 	return r, root
+}
+
+// fakeManagedAssets is the command's whole-project read as a test sees it: the
+// answer it gives, and every project it was asked about.
+type fakeManagedAssets struct {
+	assets []managedmode.Asset
+	err    error
+	asked  []string
+}
+
+func (f *fakeManagedAssets) List(_ context.Context, gcpProject string) ([]managedmode.Asset, error) {
+	f.asked = append(f.asked, gcpProject)
+	return f.assets, f.err
+}
+
+// stubManagedAssets points the command's whole-project read at assets, for the
+// length of one test.
+func stubManagedAssets(t *testing.T, assets managedmode.Assets) {
+	t.Helper()
+	old := managedAssets
+	managedAssets = func(context.Context, *localcfg.Config) (managedmode.Assets, error) { return assets, nil }
+	t.Cleanup(func() { managedAssets = old })
 }
 
 // noWriteAcrossFakes is the task's own "no write is made" assertion, read off
@@ -121,7 +150,7 @@ func TestManagedApplyRefusesWhenNoBudgetReadOpensTheGate(t *testing.T) {
 	}{
 		{"the marker is version 1: managed, and no amount recorded",
 			[]byte(`{"version":1,"gcp_project":"proj-1234"}`), false,
-			[]string{"has no budget recorded", "this release cannot add a budget to an existing project", "fugaro init --create-project --managed --budget N --budget-currency CCC --billing-account ID"}},
+			[]string{"has no budget recorded", "fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC", "fugaro setup --create-project --managed --budget N --budget-currency CCC --billing-account ID"}},
 		{"there is no marker at all", nil, false, []string{"is not managed", "is not there"}},
 		{"the marker exists and cannot be read", []byte(v2), true, []string{"is not managed", "cannot be read"}},
 		// A version-2 marker whose figure fails Budget.Check is reported as an
@@ -1166,6 +1195,44 @@ func TestManagedApplyRefusalsMapToExitCodes(t *testing.T) {
 		if !strings.Contains(got.Error(), want) {
 			t.Errorf("the refusal does not carry %q:\n%v", want, got)
 		}
+	}
+}
+
+// TestManagedApplyWithoutADCCredentialsIsAUserError: a machine with no
+// Application Default Credentials at all is a user error (exit 1, "run gcloud
+// auth application-default login"), and the deployer's credential file is
+// written inside the apply — so the failure arrives as the terraform
+// constructor's error, which internal/managed wraps with %w and this command
+// maps. A plain error there falls into managedApplyErr's default arm, which
+// reports a cloud or terraform failure (exit 2) for a lookup in the user's own
+// environment; the wrap below is that composition, so this is the code the
+// process would carry out.
+func TestManagedApplyWithoutADCCredentialsIsAUserError(t *testing.T) {
+	lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject}
+	// An account with no ADC anywhere: no credential file, no gcloud
+	// directory, and no home to look in either. %APPDATA% is blanked with the
+	// rest because that is where gcloud keeps its config directory on Windows
+	// (adcpath.go's gcloudConfigDir): a Windows machine running this test with
+	// its own %APPDATA%\gcloud\application_default_credentials.json in place
+	// would find credentials and fail here for the wrong reason. On Linux —
+	// where this runs today — the variable is never read, so blanking it
+	// changes nothing now and is what makes the row true on Windows later
+	// (Slice 3's T3.5).
+	for _, k := range []string{"GOOGLE_APPLICATION_CREDENTIALS", "CLOUDSDK_CONFIG", "XDG_CONFIG_HOME", "APPDATA", "HOME", "USERPROFILE"} {
+		t.Setenv(k, "")
+	}
+	u := deployerImpersonationURL("https://iamcredentials.example.test", managedmode.DeployerAccount(initProject))
+	_, cleanup, err := writeImpersonationFile(u)
+	cleanup()
+	if err == nil {
+		t.Fatal("a credential file was written with no Application Default Credentials on the machine")
+	}
+	if !strings.Contains(err.Error(), "Application Default Credentials") {
+		t.Errorf("the refusal is %v, want it to name the credentials the user has to go and get", err)
+	}
+	got := managedApplyErr(lc, "infra", managedmode.Result{}, fmt.Errorf("terraform for %s: %w", initProject, err))
+	if ExitCode(got) != ExitUserError {
+		t.Errorf("exit %d, want %d (no ADC is the user's to fix, not a remote failure): %v", ExitCode(got), ExitUserError, got)
 	}
 }
 

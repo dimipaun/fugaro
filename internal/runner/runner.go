@@ -26,6 +26,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/gateway"
@@ -430,6 +431,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		err = r.redactErr(err)
 	}()
 
+	r.addSealKey()
 	r.addMountedSecrets()
 	if onNewRun != nil {
 		onNewRun(r)
@@ -625,6 +627,28 @@ const SecretEnvsVar = "FUGARO_SECRET_ENVS"
 // minSecretLen is the shortest value redacted; agent.BuildEnv refuses a
 // shorter declared secret for the same reason.
 const minSecretLen = 4
+
+// addSealKey registers the launch's seal key with the redactor, before
+// anything can print it. The key arrives in the job's environment — it is the
+// value of the launcher's marker (Backend.TokenKey, D15) — so the runner holds
+// it from its first moment, long before takeBudgetToken unseals anything with
+// it, and every reason the run publishes from here on is redacted of it.
+// That is why it is registered at the top of Run and not where the key is
+// used: the parse that reads the marker cannot register anything (it runs
+// before this process has a redactor at all, internal/cli's runExec), so the
+// runner is the earliest holder that can.
+//
+// The value registered is both spellings the key can be printed in: the
+// encoded one, because that is the form it travels in and therefore the form a
+// print of the environment value would show, and the raw key bytes, because
+// the redactor derives a secret's base64 spellings from the secret itself —
+// so the raw form also covers an encoding this code did not think of.
+func (r *run) addSealKey() {
+	if len(r.d.Backend.TokenKey) > 0 {
+		r.addSecret(token.EncodeKey(r.d.Backend.TokenKey))
+		r.addSecret(string(r.d.Backend.TokenKey))
+	}
+}
 
 // addMountedSecrets registers the values of the variables SecretEnvsVar
 // names, before anything else runs, so even a failure reason from the
@@ -1090,6 +1114,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := r.checkJobProfile(ctx, name, wf); err != nil {
 		return err
 	}
+	// And the credential the job holds, against the one this run's own
+	// configuration resolved to (plan task 3, design §4.4 rows 6 to 9): the
+	// runner's own half of the launch gate, here because agent.auth is a fact
+	// of the resolved config and the job identity is a fact of admissionCheck,
+	// which ran before any git credential existed.
+	if err := r.checkProjectJobAccount(ctx, cfg.Agent.Auth); err != nil {
+		return err
+	}
 	rcp, rrec, err := r.resolveRecipe(ctx, cfg)
 	if err != nil {
 		return err
@@ -1272,6 +1304,13 @@ func (r *run) bootstrap(ctx context.Context) error {
 		if err := r.checkPullRequest(ctx); err != nil {
 			return err
 		}
+		// The branch the pull request targets NOW — read above, by
+		// checkPullRequest, from the provider — is the base every diff this
+		// follow-up takes is measured against (diffbase.go, diffBase). For
+		// a pull request retargeted since the run before it (main ->
+		// integration-0.9.6) that is not the ref this follow-up read its
+		// configuration from. It is fetched below, with every other base the
+		// run diffs against, once the review heads are resolved.
 	}
 	// A job that runs without a derived image installs the repository's
 	// mise tools itself (provision.go, design generic-tool.md §2, G4): the
@@ -1287,6 +1326,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 			return err
 		}
 	}
+	// Every branch this run's diffs are measured against, brought in with
+	// the run's own credentials (diffbase.go, fetchDiffBases): a first run's
+	// --ref, which a clone job's --single-branch clone does not carry as a
+	// remote-tracking ref at all, a follow-up's retargeted pull request base,
+	// and each reviewed pull request's own base. Here, where all three are
+	// resolved — the last of them by checkReviewPRs just above — and before
+	// the prefetch reads them.
+	r.fetchDiffBases(ctx)
 	// A follow-up's and a review run's agent has no git credentials of its
 	// own, and a blobless clone fetches file contents lazily through
 	// origin: the runner brings in what the agent's own git will read while
@@ -1694,7 +1741,14 @@ func (r *run) agentLoop(ctx context.Context) {
 		}
 		sessionID = req.SessionID
 	}
-	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.cfg.Git.BaseBranch)
+	// The prompt as it is before the input each review round adds to it
+	// (reviewPromptWithInput): the diff under review is built per round,
+	// never once here, because a fix between two rounds changes the branch.
+	// The base is the run's own base of work, not the branch its
+	// configuration came from (diffbase.go, diffBase): a run started from
+	// another ref must review its own change, not the whole of that ref's
+	// divergence from the default branch.
+	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.reviewPromptBase(), r.reviewDiffSize(ctx), r.baseUnreadable())
 	if f := r.follow; f != nil {
 		if add := followup.ReviewAddendum(f.sel, f.nonce); add != "" {
 			reviewPrompt += "\n\n" + add
@@ -1728,7 +1782,7 @@ func (r *run) agentLoop(ctx context.Context) {
 // review step, since there is no cheap loop to bounce back to.
 func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, sys, sessionID string) {
 	for round := 1; round <= st.Rounds; round++ {
-		res, ok, _ := r.stage(ctx, "review", agent.Request{Prompt: reviewPrompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}, stageOpts{})
+		res, ok, _ := r.stage(ctx, "review", agent.Request{Prompt: r.reviewPromptWithInput(ctx, reviewPrompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}, stageOpts{})
 		r.countTokens(res)
 		if !ok {
 			return
@@ -1793,7 +1847,7 @@ func (r *run) fix(ctx context.Context, v Verdict, sys, sessionID string) (string
 // go on to the senior review.
 func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sessionID string) (string, bool) {
 	for round := 1; round <= rounds; round++ {
-		res, ok, err := r.stage(ctx, "review_first", agent.Request{Prompt: reviewPrompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}, stageOpts{Skippable: true})
+		res, ok, err := r.stage(ctx, "review_first", agent.Request{Prompt: r.reviewPromptWithInput(ctx, reviewPrompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}, stageOpts{Skippable: true})
 		r.countTokens(res)
 		sum := runstore.ReviewSummary{Round: round, Tier: runstore.TierFirst, Verdict: "none", Bounce: r.bounce}
 		var v Verdict
@@ -1898,7 +1952,7 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 		}
 	}
 	pins := r.stagePins(name)
-	if err := r.writeManagedSettings(pins); err != nil {
+	if err := r.writeManagedSettings(name, pins); err != nil {
 		r.fail("stage " + name + ": " + err.Error())
 		return agent.Result{}, false, err
 	}

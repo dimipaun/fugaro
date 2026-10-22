@@ -1,34 +1,47 @@
 ---
 // website/src/pages/index.astro — the site's front page (website plan, Task W1.4; redesign
-// part P8, findings RF20 and RF21).
+// parts P1, P5 and P8; the owner's approved board `website/design-ref/HomeV3.dc.html`,
+// 2026-10-20, which supersedes the draft "Home, draft 2 (slider)", 2026-10-19).
 //
-// The page is the hero, and under it the flow: the brief's item 5 asks for a picture of how
-// the system works, and the flow How It Works carries is that picture (D185), so the same
-// component is placed here rather than a second drawing built for the front page. Every
-// other thing the front page could say is a section of its own with a section's own facts
-// (W2.x, W3.x), and a placeholder here would be a sentence the product cannot back (F50).
-// What the page reads, it reads through the content pipeline (W1.3) — it holds no fact of
-// its own.
+// **The page is five blocks, and the board says which five**: the hero — the title, the prompt
+// line and the one-line promise, with the call to action the site has always had — then the
+// slider whose three tabs are how it is to use, why it is worth it and what it looks like
+// running, then the run's four steps as a band, then the grid of what a run leaves behind, then
+// the closing call to action with the install command. The page before the board was three
+// blocks: the hero, the slider and the button. The board splits the run out of the slider's
+// first panel into a band of its own and gives the page a grid of what a run leaves behind, so
+// this file renders `Hero`, `HomeSlider`, `HomeRunBand`, `HomeWhatYouGet` and `HomeInstall`.
+//
+// **What left the page, and where it went.** The chat's illustration is the slider's first
+// panel — the three steps a reader takes, each with a line of the README under it — so
+// `AgentChat.astro` is gone rather than hidden: a component no page renders is a component
+// whose build-time guards no longer run. The four-step flow left the site with the owner's
+// ruling of 2026-10-20, which retires `ArchitectureDiagram.astro`: the run is
+// `/how-it-works/`'s own drawing, and the band above the grid is the homepage's summary of it —
+// four names and four lines, not the picture, which `website/test/home.mjs` refuses here on
+// purpose. The benefits are still `Benefits.astro`, rendered by the slider's second panel; and
+// the two install cards are the button above the one command most readers run, with every path
+// still laid out on `/getting-started/`.
+//
+// Every block reads what it renders through the content pipeline (W1.3) and holds it to the
+// repository; this page holds no fact of its own.
 import Base from '../layouts/Base.astro'
 import Hero from '../components/Hero.astro'
-import ArchitectureDiagram from '../components/ArchitectureDiagram.astro'
+import HomeSlider from '../components/HomeSlider.astro'
+import HomeRunBand from '../components/HomeRunBand.astro'
+import HomeWhatYouGet from '../components/HomeWhatYouGet.astro'
+import HomeInstall from '../components/HomeInstall.astro'
 ---
 
 <Base title="Fugaro">
+  {/* Five top-level blocks, each carrying its own gutter and its own room below: `main:has(>
+      .hero)` drops `main`'s padding on this page, so no block adds a top padding on top of the
+      block above's bottom one, and the gap between two of them is one padding rather than two
+      (`website/test/base-styles.mjs`'s `homeRhythmFailures` reads the five at 1280, 768 and
+      375 px). */}
   <Hero />
-  {/* A div rather than a section: the flow is a figure, and a <section> without a heading
-      of its own would be a landmark a reader has to skip through with no name on it. */}
-  <div class="home-flow">
-    <ArchitectureDiagram />
-  </div>
+  <HomeSlider />
+  <HomeRunBand />
+  <HomeWhatYouGet />
+  <HomeInstall />
 </Base>
-
-<style>
-  /* The flow sits under the hero, on the same column as everything else (W1.2's tokens;
-     its spacing is the layout's, not a number of this page's own). */
-  .home-flow {
-    max-width: var(--page-max);
-    margin: 0 auto;
-    padding: 0 var(--space-md) var(--space-3xl);
-  }
-</style>

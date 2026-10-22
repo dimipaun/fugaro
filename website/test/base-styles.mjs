@@ -8,6 +8,43 @@
 // page marked). The colour side — no literal in base.css, every pair it paints checked for
 // all three palettes — is in `a11y.mjs`, beside the contrast arithmetic it reuses.
 //
+// **The third subject is the layout of the pages' own pictures** (changes spec of 2026-10-18,
+// item 4). It was the four-step flow's: `ArchitectureDiagram.astro`'s cards were a quarter of
+// the row each, laid out from 48 rem, where a card's content box was 100 px wide and the words
+// its own step names were made of did not fit in that — a diagram that cannot print its own
+// labels is the picture failing at the one thing it is for. The flow is retired (the owner's
+// ruling of 2026-10-20: the component is deleted, and the pages show the homepage's three-tab
+// slider and the run's drawing), and the same two readings are here for what replaced it: **the
+// room a step name is printed in** (`sliderLayoutFailures` reads the slider's grid, its list's
+// cap and the gutter between `main` and the list, against the longest word of the three names)
+// and **the arrows of the run's drawing**, which leave each box and land on the next
+// (`runArrowFailures` reads the cards, the gaps between them and each head's three corners).
+//
+// **Two more readings of the same kind, both of them defects a browser shows rather than a
+// preference: an arrow that points the way the run does not travel, and a command block's copy
+// control sitting at the left of the block it belongs to.** The first was `transform:
+// rotate(90deg)` on an arrow drawn pointing down, which turned it leftwards — from each step
+// back at the one before it — and it is now the drawing's own geometry: a head at the wrong end
+// of a shaft, or a shaft drawn from the later box back to the earlier one. The second is
+// `justify-content: space-between` on a row whose first child in the markup is the shared
+// control, which puts the control at the left of its command, the other way round from
+// `base.css`'s rule and from every other command block on the site. Both are read from the
+// built page as arithmetic or as a cascade, because both are invisible to a check that only
+// counts elements: `slider.mjs` counts the three panels and `copy.mjs` clicks the control, and
+// neither of them says which way an arrow points or where the control is drawn.
+//
+// **And the run under the picture was one vertical timeline** (the owner's feedback of
+// 2026-10-19: "The run, step by step section does not look good"). Five steps laid out as a
+// `repeat(auto-fit, minmax(18rem, 1fr))` grid read three beside two with a hole in the last
+// row on a desktop and two-by-two on a tablet, with nothing joining one step to the next — a
+// list of facts rather than a run. `runTimelineFailures` read the shape that timeline claimed:
+// one column in force at 360, 768 and 1280 px, a connector on the steps that have one below
+// them and none on the last, and no width or `nowrap` in the section wider than the phone's
+// content box, which is the overflow a browser would show at 360 px. The owner's approved
+// draft of 2026-10-19 replaced the timeline with the diagram, and its shape — every line of
+// the drawing measured against the box it is drawn in — is held by `test/how-it-works.mjs`'s
+// `runDiagramFailures`; what is left of the run's layout here is the room its blocks take.
+//
 // The pages are read from `dist/`, which `npm run check` builds before it runs this file.
 // No browser, no network: the checks are over the HTML and CSS a browser would receive.
 
@@ -16,7 +53,7 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { parse, textOf, walk } from './lib/html.mjs'
+import { cssDeclarations, cssRules, parse, textOf, walk } from './lib/html.mjs'
 
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const DIST = path.join(SITE, 'dist')
@@ -82,21 +119,42 @@ function mediaBlocks(css) {
 
 // The layout the header and the menu are held to, as a function over one built page's CSS, so
 // that each part of it is proved by the fixture below rather than only observed on today's
-// stylesheet. It states three things, and each of them is a defect rather than a preference:
+// stylesheet. It states four things, and each of them is a defect rather than a preference:
 //
-//   - the header is one row that cannot wrap, with the drawer positioned against it (RF3
-//     measured 177 px of three wrapped nav rows on a 390 px first screen);
-//   - **the wide viewport is where the menu is.** The base rule hides the panel and the
-//     drawer's `open` attribute is the one thing that shows it again — and that block is
-//     exactly where the drawer itself is taken away, so no `open` attribute can arrive up
-//     there. A 48rem block that moves the panel (`position: static`) without displaying it
-//     therefore leaves the menu `display: none` at every viewport at or above the breakpoint:
-//     the wordmark, and no way to reach a section. Each of the three wide rules is asserted,
-//     because the layout is the three of them together;
-//   - **opening anything must not move the page.** The drawer's panel is an overlay rather
-//     than a block in the header's row, and a group's own dropdown is out of that row's flow
-//     for the same reason: opening *Product* at 1280 px must not grow the header and push the
-//     page down under the reader.
+//   - **the menu is the group labels in the header's one row, at every width.** The owner's brief
+//     of 2026-10-19 (item 1) took the single "Menu" toggle away, so the group labels are
+//     the menu at 375 px as much as at 1280: `.site-nav-groups` is a row at every width, no
+//     rule for the drawer it replaced survives, and nothing hides a group's list — a closed
+//     `<details>` is the one thing that does that, and a stylesheet that hides a list too is a
+//     menu that cannot open;
+//   - **the header is one row that cannot wrap** (RF3 measured 177 px of three wrapped nav
+//     rows on a 390 px first screen). A group's list hangs out of that row's flow rather than
+//     joining it, at both widths: a phone's drawer across the header's width, a wide
+//     viewport's dropdown under its own label;
+//   - **a phone's row fits.** The wordmark's text is taken out of the row below the phone
+//     breakpoint (the owner's ruling: the mark stays, the text goes), and the gap between the
+//     wordmark and the labels is the phone's 8 px rather than the wide layout's 32 px. Those
+//     two are what the row measures against at 320 px, and neither is decoration: with the
+//     text drawn, or with the wide gap, the row is wider than the header's content box and
+//     the page gets a sideways scroll. **The row carried the Home link as well when the
+//     owner's feedback of 2026-10-21 put it in the menu** — a fourth item, about 45 px at
+//     this size — so the breakpoint is the wider one that item needs (the text leaves the row
+//     from about 432 px down, where the table's three-item row left it from 390 px down) and
+//     the row's own spacing below it is where the Home item is paid for: the phone block takes
+//     the 8 px between the wordmark and the menu to 4 and the items' own 4 px gap to none.
+//     **The same feedback then dropped the Reference group**, so the row carries three items
+//     again and the cut is left at the wider one it was measured at rather than re-tightened:
+//     it is the safe direction, and re-measuring the row is the owner's live check 70a's. Out of
+//     the row is not out of the page, though: the mark
+//     beside the text is decoration with an empty `alt`, so the text is the home link's only
+//     name and no `.site-wordmark-name` rule — in the phone block **or in the base rule above
+//     it**, which is where a `display:none` would hide it at every width — may hide it from a
+//     screen reader;
+//   - **opening anything must not move the page.** A group's list is out of the header's flow,
+//     so opening *Product* at 1280 px must not grow the header and push the page down under
+//     the reader; and on a wide viewport the dropdown hangs from the group's **right** edge,
+//     because a list opening rightwards from the last group runs past the viewport between the
+//     breakpoint and the page's maximum width, where the header's padding is still narrow.
 //
 // Whether the row *fits* 390 px, and whether a real browser's `<details>` behaves as the
 // markup says, are rendered measurements no hermetic test can take; they are the owner's live
@@ -105,10 +163,78 @@ export function navLayoutFailures(css, rel = '') {
   const out = []
   const fail = (why) => out.push(rel ? `${rel}: ${why}` : why)
 
+  // The row, and the labels in it.
   if (!/\.site-header\{[^}]*flex-wrap:nowrap/.test(css)) fail('the header wraps, so the menu can become a second row')
-  if (!/\.site-header\{[^}]*position:relative/.test(css)) fail('the header is not the box the drawer is positioned against')
-  if (!/\.site-nav-panel\{[^}]*position:absolute/.test(css)) fail("the drawer is in the header's flow, so opening it makes the header taller")
-  if (!/\.site-nav-drawer\[open\]\s*~\s*\.site-nav-panel\{[^}]*display:block/.test(css)) fail("the drawer's open state does not show the panel")
+  if (!/\.site-header\{[^}]*position:relative/.test(css)) fail("the header is not the box a phone's drawer is positioned against")
+  if (!/\.site-nav-groups\{[^}]*display:flex/.test(css)) fail("the group labels are not laid out in the header's row")
+  if (!/\.site-nav-group ul\{[^}]*position:absolute/.test(css)) {
+    fail("a group's list is in the header's flow, so opening one grows the header's row and pushes the page down")
+  }
+  if (!/\.site-nav-group ul\{[^}]*left:0/.test(css) || !/\.site-nav-group ul\{[^}]*right:0/.test(css)) {
+    fail("a group's list is not the header's width on a phone, so the drawer is a column under one label instead of the menu")
+  }
+  for (const [, decls] of css.matchAll(/\.site-nav-group ul\{([^}]*)\}/g)) {
+    if (/display:none/.test(decls)) {
+      fail("a rule hides a group's list, and the list is the menu: a closed `<details>` is what hides it, and a stylesheet that hides it too leaves nothing that can open it")
+    }
+  }
+  // The toggle this menu replaced. Its styles outliving it would be a second control in the
+  // markup's absence, and the first sign that the drawer was half removed.
+  if (/\.site-nav-(?:toggle|panel|drawer)\b/.test(css)) {
+    fail('the stylesheet still styles the drawer the menu no longer has')
+  }
+
+  // The row at a phone's width: the text out of it, and the gap the phone's rather than the
+  // wide layout's. `min-height` is the target size the owner's brief asks the menu to be
+  // measured against — 44 px, on the labels and on the links inside a list.
+  if (!/\.site-nav-group>details>summary\{[^}]*min-height:44px/.test(css)) {
+    fail("a group's label is a tap target smaller than the 44 px the owner's brief asks for")
+  }
+  if (!/\.site-nav a\{[^}]*min-height:44px/.test(css)) {
+    fail("a link inside a group's list is a tap target smaller than the 44 px the owner's brief asks for")
+  }
+  // The base header rule and not the wide block's, which is where the 32 px belongs: the
+  // stylesheet is read as rules, so the one with no condition over it is the one at 320 px.
+  const baseHeader = cssRules(css).find((r) => !(r.conditions ?? []).length && r.selector === '.site-header')
+  if (!baseHeader || /var\(--space-lg\)/.test(baseHeader.body ?? '')) {
+    fail("the header's gap between the wordmark and the labels is the wide layout's 32 px at 320 px, where the row has none to spare")
+  }
+
+  const phone = mediaBlocks(css).filter((block) => /27rem/.test(block.query))
+  if (phone.length === 0) {
+    fail("the stylesheet has no phone breakpoint, so the wordmark's text is drawn beside the labels at 375 px")
+  }
+  const hidden = phone.map((block) => /\.site-wordmark-name\{([^}]*)\}/.exec(block.body)).find(Boolean)?.[1]
+  if (phone.length && !hidden) fail("the wordmark's text is drawn beside the labels at 375 px, where the row has no room for it")
+  if (hidden && !/position:absolute/.test(hidden)) {
+    fail("the wordmark's text is taken out of the row without being taken out of the flow, so the row is still as wide as the word")
+  }
+  // And the row's own spacing below the breakpoint, which is where the Home item the owner's
+  // feedback of 2026-10-21 put in the menu was paid for on the narrowest phones. The row
+  // carries three items again since that day's later feedback dropped the Reference group, so
+  // the two rules are headroom rather than the whole of the payment — kept, because the cut
+  // beside them is still the wider one measured with the item in the row, and a phone block
+  // that leaves the base gap between the wordmark and the menu, and the items' own 4 px,
+  // standing is a row the measurement never saw.
+  const phoneRule = (selector) => phone.map((block) => new RegExp(`\\${selector}\\{([^}]*)\\}`).exec(block.body)).find(Boolean)?.[1]
+  if (phone.length && phoneRule('.site-header') === undefined) {
+    fail("the phone block leaves the header's row at the gap it has above the breakpoint, where the cut the row was measured at (27 rem, with the Home item the owner's feedback of 2026-10-21 put in it) leaves a 320 px phone's content box none to spare")
+  }
+  if (phone.length && phoneRule('.site-nav-groups') === undefined) {
+    fail("the phone block leaves the menu's items 4 px apart, and the row's cut is the wider one measured with the Home item in it, where a 320 px phone's content box has none to spare")
+  }
+  // **Every** `.site-wordmark-name` rule, not only the phone block's: the base rule is the one
+  // that is in force at 1280 px, so a `display:none` there takes the name away at every width
+  // while the phone block still reads as the correct clipping, and a check that only read
+  // inside the block would pass it (the review of 2026-10-19). The mark beside the text is
+  // decoration with an empty `alt`, so the text is the link's only name and this is not a
+  // layout preference.
+  for (const rule of cssRules(css)) {
+    if (rule.selector !== '.site-wordmark-name') continue
+    if (/display:none|visibility:hidden/.test(rule.body ?? '')) {
+      fail("the wordmark's text is hidden from a screen reader as well as from the eye, and the logo beside it is decoration with an empty alt: the link to the home page is left naming nothing")
+    }
+  }
 
   const wide = mediaBlocks(css).filter((block) => /48rem/.test(block.query))
   if (wide.length === 0) {
@@ -121,17 +247,19 @@ export function navLayoutFailures(css, rel = '') {
   const rule = (name) => wide.map((block) => new RegExp(`\\${name}\\{([^}]*)\\}`).exec(block.body)).find(Boolean)?.[1]
   const has = (name, declaration) => (rule(name) ?? '').split(';').filter(Boolean).some((d) => declaration.test(d))
 
-  // The one the menu dies of: the wide block has to display the panel, not only reposition it.
-  if (!has('.site-nav-panel', /^display:(?!none)/)) {
-    fail(
-      "the 48rem block hides the drawer and never displays the panel — the base rule's display:none still stands there, and the drawer whose open attribute would undo it is the element that block takes away, so the menu is invisible at every viewport at or above 48rem (P3, D182)",
-    )
+  if (!has('.site-header', /^gap:var\(--space-2xs\) var\(--space-lg\)$/)) {
+    fail('the wide viewport keeps the phone\'s 8 px between the wordmark and the labels, where the wide layout has room for 32 px')
   }
-  if (!has('.site-nav-drawer', /^display:none$/)) fail("the drawer's toggle is still shown on a wide viewport, where nothing needs opening")
-  if (!has('.site-nav-panel', /^position:static$/)) fail('the wide panel is still an overlay, hanging over the page below the header')
-  if (!has('.site-nav-groups', /^display:flex$/)) fail('the wide viewport does not lay the three groups out in one row')
-  if (!has('.site-nav-group ul', /^position:absolute$/)) {
-    fail("a group's dropdown is in the header's flow, so opening one at a wide viewport grows the header's row and pushes the page down (the drawer's panel is out of flow for the same reason)")
+  if (!has('.site-nav-group', /^position:relative$/)) {
+    fail("a group is not the box its dropdown is positioned against, so at a wide viewport the list is still anchored to the header and is the header's width")
+  }
+  // The base rule puts the list out of the header's flow and this block must leave it there:
+  // a wide rule that names a `position` of its own is a rule that takes it back in.
+  if (/position:(?:static|relative)/.test(rule('.site-nav-group ul') ?? '')) {
+    fail("a group's dropdown is in the header's flow, so opening one at a wide viewport grows the header's row and pushes the page down")
+  }
+  if (!has('.site-nav-group ul', /^left:auto$/)) {
+    fail("a group's dropdown keeps the phone's full width at a wide viewport, so it hangs across the header instead of under its label")
   }
   // And out of flow *rightwards of nothing*: the menu sits at the right of the header, so a
   // list opening to the right of the last group runs past the viewport between the breakpoint
@@ -139,6 +267,52 @@ export function navLayoutFailures(css, rel = '') {
   // scroll on a laptop for opening a menu.
   if (!has('.site-nav-group ul', /^right:0$/)) {
     fail("a group's dropdown opens from its group's left edge, so the last group's list runs past the viewport between the breakpoint and the page's maximum width and gives the page a sideways scroll")
+  }
+
+  // The menu's Home link carries the inline padding of the labels it shares the header's row
+  // with, at both widths — and the wide declaration is read **after** the phone's. Both halves
+  // are load-bearing, and the second is the one that is easy to get wrong: `.site-nav a` sets the
+  // whole `padding` shorthand on every link in the menu, and `.site-nav-home > a` is one class
+  // and one type, the same specificity, so the last rule read wins. A `padding-inline` written
+  // into the wide block *above* the base rule — which is where the labels' own wide
+  // padding lives — is read first and then overwritten by that shorthand, and the link keeps its
+  // phone padding at every width while the labels beside it open to 8 px. That is exactly what
+  // this rule did until the review of 2026-10-21 caught it, and nothing held either declaration.
+  const inlinePadding = (body) => {
+    const own = /(?:^|;)padding-inline:([^;]+)/.exec(`;${body}`)
+    if (own) return own[1].trim()
+    const all = /(?:^|;)padding:([^;]+)/.exec(`;${body}`)
+    if (!all) return null
+    const parts = all[1].trim().split(/\s+/)
+    return parts.length === 1 ? parts[0] : parts[1]
+  }
+  const homeRules = cssRules(css)
+    .map((one, at) => ({ at, wide: (one.conditions ?? []).some((c) => /48rem/.test(c)), body: one.body ?? '', selector: one.selector }))
+    .filter((one) => one.selector === '.site-nav-home>a')
+  const summaryRules = cssRules(css)
+    .map((one) => ({ wide: (one.conditions ?? []).some((c) => /48rem/.test(c)), body: one.body ?? '', selector: one.selector }))
+    .filter((one) => one.selector === '.site-nav-group>details>summary')
+  const labelAt = (isWide) => inlinePadding(summaryRules.find((one) => one.wide === isWide)?.body ?? '')
+  if (homeRules.length === 0) {
+    fail("the stylesheet gives the menu's Home link no padding of its own, so it is drawn with the 8 px a link inside a group's list gets and stands wider than the labels beside it in the header's row")
+  }
+  for (const isWide of [false, true]) {
+    const where = isWide ? 'at a wide viewport' : 'at a phone'
+    const home = homeRules.filter((one) => one.wide === isWide).at(-1)
+    if (home === undefined) {
+      fail(`the menu's Home link carries no inline padding ${where}, so it falls back to the whole \`padding\` shorthand \`.site-nav a\` sets and stands at a different width from the labels beside it in the header's row`)
+      continue
+    }
+    const mine = inlinePadding(home.body)
+    const label = labelAt(isWide)
+    if (mine !== label) {
+      fail(`the menu's Home link is drawn with an inline padding of ${JSON.stringify(mine)} ${where} where the labels beside it in the header's row get ${JSON.stringify(label)}: the row is measured as one row at one spacing, and a link that disagrees with the labels it shares it with is an item drawn at a width nobody measured`)
+    }
+  }
+  const homeBase = homeRules.find((one) => !one.wide)
+  const homeWide = homeRules.find((one) => one.wide)
+  if (homeBase !== undefined && homeWide !== undefined && homeWide.at < homeBase.at) {
+    fail("the wide viewport's inline padding for the menu's Home link is declared before the phone's, and `.site-nav a` above both sets the whole `padding` shorthand: at one class and one type the last rule read wins, so the wide declaration is dead code and the link keeps its phone padding at every width while the labels beside it open to 8 px")
   }
   return out
 }
@@ -158,10 +332,44 @@ test('the header cannot become two rows, and the wide row is where the menu is',
 // case would fail for the wrong reason (or worse, pass).
 const TODAY = () => pageCss(readFileSync(path.join(DIST, 'index.html'), 'utf8'))
 
-function plant(from, to) {
+/**
+ * Today's stylesheet with one fragment replaced — the fixture every case below is made of.
+ * `which` picks the occurrence: the first by default, and `'last'` for the fragments the
+ * flow's three layouts each write. The arrow's turn is the one that needs it: `rotate(-90deg)`
+ * is written twice, once for the two-by-two's row arrows and once for the row's, and a case
+ * about the row has to edit the row's — the first occurrence is the two-by-two's, which the
+ * check reads at 35 rem and not at 72.
+ */
+function plant(from, to, which = 'first') {
   const css = TODAY()
   assert.ok(css.includes(from), `this fixture is built by removing ${JSON.stringify(from)} from the built stylesheet, and the stylesheet no longer carries it`)
+  if (which === 'last') {
+    const at = css.lastIndexOf(from)
+    return css.slice(0, at) + to + css.slice(at + from.length)
+  }
   return css.replace(from, to)
+}
+
+/**
+ * Today's stylesheet with **one named rule** rewritten — `selector` is a fragment of the rule's
+ * selector, `edit` gets the rule's own text and has to change it. The fixture for a case about
+ * one of several rules that declare the same thing, or about the selector itself: the
+ * homepage's top-level blocks each write `padding:0 var(--space-md) var(--space-3xl)` — the same
+ * declaration, in the rule of the file that renders each one — so a case about the benefits'
+ * padding has nothing to tell it apart from the install's (`plant` takes the first or the last
+ * occurrence of a fragment, and *which* rule that is depends on the order Astro emits the
+ * components in, which is not something a case should rest on).
+ */
+function plantRule(selector, edit) {
+  const css = TODAY()
+  const at = css.indexOf(selector)
+  assert.ok(at !== -1, `this fixture rewrites the rule whose selector carries ${JSON.stringify(selector)}, and the built stylesheet no longer carries it`)
+  const end = css.indexOf('}', at)
+  assert.ok(end !== -1, `the rule whose selector carries ${JSON.stringify(selector)} has no body in the built stylesheet`)
+  const rule = css.slice(at, end + 1)
+  const rewritten = edit(rule)
+  assert.notEqual(rewritten, rule, `this fixture rewrites the rule whose selector carries ${JSON.stringify(selector)}, and the edit changed nothing`)
+  return css.slice(0, at) + rewritten + css.slice(end + 1)
 }
 
 test('the layout rule passes on the built stylesheet, so each refusal below is the one edit it names', () => {
@@ -170,55 +378,138 @@ test('the layout rule passes on the built stylesheet, so each refusal below is t
 
 test('every layout refusal fires on the defect it names', () => {
   const cases = [
-    [
-      'a wide block that repositions the panel but never displays it',
-      plant('display:block;position:static', 'position:static'),
-      /never displays the panel/,
-    ],
-    [
-      'no 48rem breakpoint at all',
-      TODAY().replaceAll('(width>=48rem)', '(width>=99rem)'),
-      /no 48rem breakpoint/,
-    ],
-    [
-      'the wide row still shows the drawer toggle',
-      plant('.site-nav-drawer{display:none}', '.site-nav-drawer{display:block}'),
-      /toggle is still shown on a wide viewport/,
-    ],
-    [
-      'a wide panel that is still an overlay',
-      plant('display:block;position:static', 'display:block'),
-      /still an overlay/,
-    ],
-    [
-      'the wide groups not laid out in one row',
-      plant('gap:var(--space-3xs) var(--space-2xs);display:flex}', 'gap:var(--space-3xs) var(--space-2xs)}'),
-      /out in one row/,
-    ],
-    [
-      "a group's dropdown left in the header's flow",
-      plant('background:var(--ground);position:absolute;top:100%;right:0}', 'background:var(--ground);top:100%;right:0}'),
-      /dropdown is in the header's flow/,
-    ],
-    [
-      "a group's dropdown opening rightwards off the viewport",
-      plant('position:absolute;top:100%;right:0}', 'position:absolute;top:100%;left:0}'),
-      /sideways scroll/,
-    ],
+    // The row, and the labels in it.
     [
       'a header that can wrap',
       plant('flex-wrap:nowrap;display:flex;position:relative}', 'display:flex;position:relative}'),
       /header wraps/,
     ],
     [
-      'a drawer panel that is not an overlay',
-      plant('display:none;position:absolute;top:100%', 'display:none;top:100%'),
-      /drawer is in the header's flow/,
+      'a header that is not the box a phone drawer hangs from',
+      plant('flex-wrap:nowrap;display:flex;position:relative}', 'flex-wrap:nowrap;display:flex}'),
+      /not the box a phone's drawer/,
     ],
     [
-      'a panel the drawer cannot show',
-      plant('.site-nav-drawer[open]~.site-nav-panel{display:block}', '.site-nav-drawer[open]~.site-nav-panel{border-color:red}'),
-      /open state does not show the panel/,
+      "the labels stacked instead of in the header's row",
+      plant('.site-nav-groups{gap:var(--space-3xs);display:flex}', '.site-nav-groups{gap:var(--space-3xs)}'),
+      /not laid out in the header's row/,
+    ],
+    [
+      "a group's list left in the header's flow",
+      plant('background:var(--panel);position:absolute;top:100%;left:0;right:0}', 'background:var(--panel);top:100%;left:0;right:0}'),
+      /in the header's flow/,
+    ],
+    [
+      'a phone drawer that is a column under one label',
+      plant('position:absolute;top:100%;left:0;right:0}', 'position:absolute;top:100%;left:auto;right:0}'),
+      /not the header's width/,
+    ],
+    [
+      "a rule that hides a group's list",
+      plant('background:var(--panel);position:absolute', 'background:var(--panel);display:none;position:absolute'),
+      /hides a group's list/,
+    ],
+    [
+      'the drawer this menu replaced, styled again',
+      plant('.site-nav-groups{gap:var(--space-3xs)', '.site-nav-drawer{display:none}.site-nav-groups{gap:var(--space-3xs)'),
+      /still styles the drawer/,
+    ],
+    [
+      'a label smaller than the tap target the brief asks for',
+      plant('box-sizing:border-box;min-height:44px;padding:var(--space-3xs)', 'box-sizing:border-box;padding:var(--space-3xs)'),
+      /label is a tap target smaller/,
+    ],
+    [
+      'a link smaller than the tap target the brief asks for',
+      plant('.site-nav a{box-sizing:border-box;min-height:44px', '.site-nav a{box-sizing:border-box'),
+      /link inside a group's list is a tap target/,
+    ],
+    [
+      "the wide layout's gap left in the phone's row",
+      plant('align-items:center;gap:var(--space-2xs);padding-block', 'align-items:center;gap:var(--space-2xs) var(--space-lg);padding-block'),
+      /32 px at 320 px/,
+    ],
+    // The phone's row: the text out of it, and the text out of the eye only.
+    [
+      'no phone breakpoint at all',
+      TODAY().replaceAll('(width<=27rem)', '(width<=99rem)'),
+      /no phone breakpoint/,
+    ],
+    // The Home item the owner's feedback of 2026-10-21 put in the row was paid for out of the
+    // row's own spacing below the breakpoint, so both halves of that are held: the rule that
+    // takes the gap between the wordmark and the menu to the phone's 4 px, and the one that
+    // takes the items' own 4 px gap to none. Both stay with the wider cut.
+    [
+      "the row's spacing left at the gap the breakpoint found",
+      plant('.site-header{gap:var(--space-3xs)}', ''),
+      /leaves the header's row at the gap it has above the breakpoint/,
+    ],
+    [
+      "the menu's items left 4 px apart below the breakpoint",
+      plant('.site-nav-groups{gap:0}', ''),
+      /leaves the menu's items 4 px apart/,
+    ],
+    [
+      "a phone breakpoint that leaves the wordmark's text in the row",
+      plant('.site-wordmark-name{clip-path', '.site-wordmark-name-kept{clip-path'),
+      /drawn beside the labels at 375 px/,
+    ],
+    [
+      "the wordmark's text hidden without leaving the row's flow",
+      plant(
+        '.site-wordmark-name{clip-path:inset(50%);white-space:nowrap;width:1px;height:1px;position:absolute;overflow:hidden}',
+        '.site-wordmark-name{clip-path:inset(50%);white-space:nowrap;width:1px;height:1px;overflow:hidden}',
+      ),
+      /without being taken out of the flow/,
+    ],
+    [
+      "the wordmark's text hidden from a screen reader as well",
+      plant('.site-wordmark-name{clip-path:inset(50%)', '.site-wordmark-name{display:none;clip-path:inset(50%)'),
+      /naming nothing/,
+    ],
+    // And the same hiding in the base rule, which is in force at every width: the phone block
+    // is untouched here, so a check that read only inside it would pass this stylesheet while
+    // the home link names nothing at 1280 px.
+    [
+      "the wordmark's text hidden at every width by the base rule",
+      plant('.site-wordmark-name{text-overflow:ellipsis', '.site-wordmark-name{display:none;text-overflow:ellipsis'),
+      /naming nothing/,
+    ],
+    [
+      "the wordmark's text made invisible at every width by the base rule",
+      plant('.site-wordmark-name{text-overflow:ellipsis', '.site-wordmark-name{visibility:hidden;text-overflow:ellipsis'),
+      /naming nothing/,
+    ],
+    // The wide viewport.
+    [
+      'no 48rem breakpoint at all',
+      TODAY().replaceAll('(width>=48rem)', '(width>=99rem)'),
+      /no 48rem breakpoint/,
+    ],
+    [
+      "the wide viewport keeping the phone's gap",
+      plant('@media (width>=48rem){.site-header{gap:var(--space-2xs) var(--space-lg)}', '@media (width>=48rem){.site-header{gap:var(--space-2xs)}'),
+      /room for 32 px/,
+    ],
+    [
+      "a group that is not the box its dropdown hangs from",
+      plant('padding-inline:var(--space-2xs)}.site-nav-group{position:relative}', 'padding-inline:var(--space-2xs)}.site-nav-group{position:static}'),
+      /not the box its dropdown/,
+    ],
+    [
+      "a wide dropdown left in the header's flow",
+      plant('min-width:max-content;padding:var(--space-2xs)', 'position:static;min-width:max-content;padding:var(--space-2xs)'),
+      /dropdown is in the header's flow/,
+    ],
+    [
+      "a wide dropdown that is still the header's width",
+      plant('border-radius:var(--radius-lg);left:auto;right:0}', 'border-radius:var(--radius-sm);left:0;right:0}'),
+      /hangs across the header/,
+    ],
+    [
+      "a group's dropdown opening rightwards off the viewport",
+      plant('border-radius:var(--radius-lg);left:auto;right:0}', 'border-radius:var(--radius-sm);left:auto;right:auto}'),
+      /sideways scroll/,
     ],
   ]
   for (const [what, css, expected] of cases) {
@@ -236,15 +527,2180 @@ test('the layout imports the stylesheets statically, tokens first', () => {
   assert.ok(tokens < base, 'Base.astro imports base.css before tokens.css')
 })
 
+// ---- the flow can print its own step names (changes spec item 4) -------------------------
+
+/**
+ * Every rule of a stylesheet, as `{ query, selector, decls }`, in document order, with the
+ * `@media`/`@supports` prelude a rule sits inside — so a rule can be held to where it applies
+ * rather than to being present somewhere in the file. The reading itself is `lib/html.mjs`'s
+ * `cssRules`, the reader the other gates use: this only renames its parts, so that a
+ * stylesheet one gate can read is a stylesheet every gate reads the same way.
+ */
+function allRules(css) {
+  return cssRules(css).map((rule) => ({
+    query: (rule.conditions ?? []).join(' '),
+    selector: rule.selector ?? '',
+    decls: rule.body ?? '',
+  }))
+}
+
+/** A rule's declarations as `{ property: value }`, the last one winning, as a browser reads them. */
+function declarations(rule) {
+  return Object.fromEntries(cssDeclarations(rule.decls))
+}
+
+/**
+ * True when a rule is in force at a viewport width: no `@media`, or a width range the width
+ * falls in. **Both ends of a range are read.** The flow has three layouts and each is a range
+ * of its own — the column below 35 rem, the two-by-two from 35 rem to 71.98 rem, the row from
+ * 72 rem — and a reader that honoured only `min-width` would apply the two-by-two's rules at
+ * 1280 px as well, where they are not in force at all: the last of them would win the reads
+ * below and the row would be measured out of the wrong block. The end that made the defect
+ * visible is the row's own: it has to be measured with the padding, the gap and the arrow box
+ * of the block that actually lays it out.
+ *
+ * A query with no width in it at all — `prefers-reduced-motion`, `@supports` — is a rule the
+ * width does not decide, and it is reported as not applying: the two animation rules are the
+ * ones that matter here, and they are about motion rather than about a width.
+ */
+function appliesAt(width) {
+  return (rule) => {
+    if (!rule.query) return true
+    const min = /width\s*>=\s*([\d.]+)rem/.exec(rule.query)
+    const max = /width\s*<=\s*([\d.]+)rem/.exec(rule.query)
+    if (min === null && max === null) return false
+    if (min !== null && Number(min[1]) * 16 > width) return false
+    if (max !== null && Number(max[1]) * 16 < width) return false
+    return true
+  }
+}
+
+/**
+ * A CSS length as pixels: a token, a `rem`/`px` length, or a `calc(var(--x) * n)` — and a
+ * `calc(var(--x) / n)`, which is how a length that is half of a token is written (the run's
+ * connector is placed at half the marker's width, `left: calc(var(--space-lg) / 2)`), so that a
+ * value the stylesheet writes in the reading's own vocabulary is one the reading can measure.
+ */
+function toPx(value, tokens) {
+  if (value === undefined) return NaN
+  // A bare zero is zero pixels, and it is the one length CSS lets a rule write without a unit:
+  // a shorthand that names a side `0` — `padding: var(--space-2xl) 0 var(--space-3xl)` — is a
+  // padding this reader would otherwise read as `NaN`, which passes every comparison.
+  if (/^0(?:px|rem|em|%)?$/.test(value.trim())) return 0
+  const variable = /^var\(--([a-z0-9-]+)\)$/.exec(value)
+  if (variable) return tokens.get(variable[1]) ?? NaN
+  const calc = /^calc\(\s*var\(--([a-z0-9-]+)\)\s*\*\s*([\d.]+)\s*\)$/.exec(value)
+  if (calc) return (tokens.get(calc[1]) ?? NaN) * Number(calc[2])
+  const divide = /^calc\(\s*var\(--([a-z0-9-]+)\)\s*\/\s*([\d.]+)\s*\)$/.exec(value)
+  if (divide) return (tokens.get(divide[1]) ?? NaN) / Number(divide[2])
+  const rem = /^([\d.]+)rem$/.exec(value)
+  if (rem) return Number(rem[1]) * 16
+  const px = /^([\d.]+)px$/.exec(value)
+  return px ? Number(px[1]) : NaN
+}
+
+/**
+ * The first component of a shorthand declaration, with a `calc()` kept whole. A `border:
+ * calc(var(--border-width) * 2) solid var(--accent)` is a two-pixel border whose first
+ * component is the `calc(…)`; splitting the shorthand on whitespace takes `calc(var(--border-width)`
+ * instead, which is not a length at all — and a length read as `NaN` is a length nothing
+ * checked (see the refusal for the arithmetic's inputs in `flowLayoutFailures`).
+ */
+function firstToken(value) {
+  if (!value) return value
+  const text = value.trim()
+  if (!text.startsWith('calc(')) return text.split(/\s+/)[0]
+  const end = closingParen(text, text.indexOf('('))
+  return end === -1 ? text : text.slice(0, end + 1)
+}
+
+/**
+ * A shorthand declaration's components, in order, with any `calc()` kept whole. Built on
+ * `firstToken`, so `padding: var(--space-md) var(--space-2xs)` is two components and a
+ * `calc()` in one of them stays one.
+ */
+function shorthandParts(value) {
+  const out = []
+  let rest = (value ?? '').trim()
+  while (rest) {
+    const token = firstToken(rest)
+    if (!token) break
+    out.push(token)
+    rest = rest.slice(token.length).trim()
+  }
+  return out
+}
+
+/**
+ * The growth factor a `flex` shorthand declares, as a number, or `NaN` when the shorthand is
+ * not one this reader knows. The growth factor is the shorthand's first component when that
+ * is a number (`flex: 1`, `flex: 1 1 auto`, the row's `flex: 1 1 0`), and the shorthand's own
+ * keywords otherwise: `auto` is `1 1 auto` and grows, `none` is `0 0 auto` and does not, and
+ * `initial` is `0 1 auto`. The keywords are not a nicety — a minifier writes the card's
+ * `flex: 1 1 auto` as `flex: auto`, so a reader that only took the first component as a
+ * number would read the page as it ships as a page whose cards do not grow.
+ */
+function growthOf(value) {
+  if (value === undefined) return undefined
+  const keyword = { auto: 1, none: 0, initial: 0 }[value.trim()]
+  if (keyword !== undefined) return keyword
+  const first = Number(shorthandParts(value)[0])
+  return Number.isFinite(first) ? first : NaN
+}
+
+/**
+ * The **inline** component of a shorthand — the room a `padding` takes from the sides, and
+ * the gap a two-value `gap` puts between columns — which is the second component when there
+ * is one and the first when the shorthand names a single value. The horizontal half is the
+ * one that matters to the arithmetic below: a card's block padding is the reader's breathing
+ * room and costs the name nothing, while its inline padding comes straight out of the box the
+ * name has to print in.
+ *
+ * **Four values are `top right bottom left`**, so the room a side takes is the *last* one —
+ * the left edge, the one a line of the card's content starts at — and not the second, which
+ * is the right edge. Reading the second made a card whose left padding is what the name is up
+ * against (`padding: var(--space-md) 0 var(--space-md) var(--space-3xl)`) look like a card
+ * that takes no room at all at its sides, which is a name that fits the arithmetic and does
+ * not fit the page. The arithmetic below spends what this returns on **both** sides, which is
+ * an over-estimate when the two differ — and an over-estimate is the direction to be wrong in,
+ * since it refuses a row that might not fit a name rather than passing one that does not.
+ */
+function inlineToken(value) {
+  const parts = shorthandParts(value)
+  if (parts.length === 4) return parts[3]
+  return parts.length > 1 ? parts[1] : parts[0]
+}
+
+/** The tokens a stylesheet declares, as `name -> px`. */
+function lengthTokens(css) {
+  const out = new Map()
+  for (const m of css.matchAll(/--([a-z0-9-]+):\s*([\d.]+)(rem|px)\b/g)) out.set(m[1], Number(m[2]) * (m[3] === 'rem' ? 16 : 1))
+  return out
+}
+
+/**
+ * An upper bound on how wide a run of text is, in ems, for the stack the site sets —
+ * `--font-sans`, which is the reader's system UI sans. The table names the characters whose
+ * advance is not the default, and every value is generous rather than measured: the arithmetic
+ * below is used to say a name **fits**, and an upper bound that says it fits holds in any
+ * browser, while a measurement taken from one machine's font is a claim about that machine
+ * (which is also why no browser is needed to check this).
+ */
+const ADVANCE = new Map([
+  ['i', 0.32], ['j', 0.34], ['l', 0.32], ['f', 0.4], ['r', 0.45], ['t', 0.45],
+  ['m', 0.95], ['w', 0.85], ['M', 0.95], ['W', 1], [' ', 0.35],
+])
+const DEFAULT_ADVANCE = 0.68
+
+/** The width of a run of text at `fontSize` px, as the upper bound above. */
+export function textWidth(text, fontSize) {
+  let ems = 0
+  for (const ch of text) ems += ADVANCE.get(ch) ?? DEFAULT_ADVANCE
+  return ems * fontSize
+}
+
+/**
+ * The margin the longest step name must have left over on top of `textWidth`'s estimate, in
+ * pixels, where the four cards stand in a row. The estimate is already an upper bound — every
+ * character at least 0.68 em, and the wide ones at their own wider value — so this is the
+ * second margin rather than the only one: a system font a little wider than the table, a
+ * rounding in the browser, a hinting that adds a fraction of a pixel per glyph. Four pixels
+ * is a third of a character, which is enough that the name is not *exactly* at the box's edge
+ * when the estimate is right, and small enough that it never decides the layout on its own —
+ * this reading gives the name **234 px** against an estimated 225 at the width the row starts
+ * at, and the page's own box there is 246 px: this arithmetic counts `main`'s gutter as well as
+ * the wrapper's, and the homepage's `main:has(> .hero)` shortcut drops `main`'s, so the number
+ * read here is the narrower one — which is the direction a margin on a *fits* question should
+ * err in. The row is the one layout where a name that wraps is the defect, so it is the one
+ * place the margin is required rather than merely positive.
+ */
+const NAME_MARGIN = 4
+
+/** The longest word of a name: what a card has to hold when the name wraps. */
+function longestWord(names) {
+  return names
+    .flatMap((name) => name.split(/\s+/))
+    .sort((a, b) => b.length - a.length)
+    .at(0) ?? ''
+}
+
+/** Pseudo-classes that are a state rather than a shape: a browser does not apply them at rest. */
+const STATE_PSEUDO = new Set(['hover', 'focus', 'focus-visible', 'focus-within', 'active', 'visited', 'target'])
+
+/**
+ * A `ch` in pixels, at the element's own font size. `ch` is the advance of the font's `0`,
+ * which no stylesheet states and no hermetic test can measure — the site sets `--font-sans`,
+ * the reader's own system UI font. The value below is deliberately **below** what a digit
+ * measures in the sans stacks the tokens name (they run about 0.55–0.6 em), so a cap that
+ * fails here fails whatever the reader's font is: the failure is a statement about the
+ * smallest cap the value could mean, not about one machine's fonts.
+ */
+const CH = 0.5
+
+/** The parts of a list — a selector list, a value list — split on `separator` outside any parentheses. */
+function splitTop(text, separator) {
+  const out = []
+  let depth = 0
+  let start = 0
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]
+    if (ch === '(' || ch === '[') depth += 1
+    else if (ch === ')' || ch === ']') depth -= 1
+    else if (depth === 0 && ch === separator) {
+      out.push(text.slice(start, i))
+      start = i + 1
+    }
+  }
+  out.push(text.slice(start))
+  return out.map((part) => part.trim()).filter(Boolean)
+}
+
+/** A selector's compounds — one per element — with the combinators between them taken out. */
+function compoundsOf(selector) {
+  const out = []
+  let depth = 0
+  let current = ''
+  for (const ch of selector) {
+    if (ch === '(' || ch === '[') depth += 1
+    else if (ch === ')' || ch === ']') depth -= 1
+    if (depth === 0 && (ch === ' ' || ch === '>' || ch === '+' || ch === '~')) {
+      if (current) out.push(current)
+      current = ''
+      continue
+    }
+    current += ch
+  }
+  if (current) out.push(current)
+  return out
+}
+
+/** The index of the `)` that closes the `(` at `open`, or -1. */
+function closingParen(selector, open) {
+  let depth = 0
+  for (let i = open; i < selector.length; i += 1) {
+    if (selector[i] === '(') depth += 1
+    else if (selector[i] === ')') {
+      depth -= 1
+      if (depth === 0) return i
+    }
+  }
+  return -1
+}
+
+/** The index of the `]` that closes the `[` at `open`, with quoted values skipped, or -1. */
+function closingBracket(selector, open) {
+  let quote = ''
+  for (let i = open + 1; i < selector.length; i += 1) {
+    const ch = selector[i]
+    if (quote) {
+      if (ch === quote) quote = ''
+      continue
+    }
+    if (ch === '"' || ch === "'") quote = ch
+    else if (ch === ']') return i
+  }
+  return -1
+}
+
+/**
+ * How an attribute selector reads against the element this reader was given. The element's own
+ * attributes are carried in, rather than assumed: a component's stylesheet is scoped by the
+ * attribute Astro adds to the elements it styles (`.flow-steps[data-astro-cid-…]`), so a
+ * reader that could not answer for an attribute would report every component rule as
+ * unreadable — and one that assumed every attribute selector matched would read a rule about
+ * an element it has never seen as a cap on this one.
+ */
+function readAttribute(selector, element) {
+  const parsed = /^\[\s*([\w-]+)\s*(?:([~^$*|]?=)\s*(?:"([^"]*)"|'([^']*)'|([^\]\s]+))\s*([iIsS])?\s*)?\]$/.exec(selector)
+  if (!parsed) return { unreadable: `the attribute selector ${JSON.stringify(selector)}` }
+  const [, name, operator, doubleQuoted, singleQuoted, bare, flag] = parsed
+  const actual = element.attrs?.get(name)
+  if (operator === undefined) return { matches: actual !== undefined }
+  if (actual === undefined) return { matches: false }
+  const insensitive = (flag ?? '').toLowerCase() === 'i'
+  const have = insensitive ? actual.toLowerCase() : actual
+  const want = insensitive ? (doubleQuoted ?? singleQuoted ?? bare ?? '').toLowerCase() : doubleQuoted ?? singleQuoted ?? bare ?? ''
+  const answers = {
+    '=': have === want,
+    '~=': have.split(/\s+/).includes(want),
+    '^=': have.startsWith(want),
+    '$=': have.endsWith(want),
+    '*=': have.includes(want),
+    '|=': have === want || have.startsWith(`${want}-`),
+  }
+  return answers[operator] === undefined ? { unreadable: `the attribute operator ${JSON.stringify(operator)}` } : { matches: answers[operator] }
+}
+
+const IDENT = /^[a-zA-Z][\w-]*/
+
+/**
+ * How one compound of a selector reads against the flow's list: `{ matches, ratio }`, where
+ * `ratio` is the compound's specificity as `[ids, classes, elements]` — or `{ unreadable }`
+ * when the compound carries something this reader cannot evaluate **and could still match**.
+ * A compound that already cannot match the element (another name, another class) answers
+ * `matches: false` whatever else it carries, which is what keeps a rule about somebody else's
+ * `::marker` out of this reader's way.
+ */
+function readCompound(compound, element) {
+  const ratio = [0, 0, 0]
+  let matches = true
+  let i = 0
+  const unreadable = (why) => (matches ? { unreadable: why } : { matches: false, ratio })
+  if (compound[i] === '*') i += 1
+  else {
+    const name = IDENT.exec(compound.slice(i))
+    if (name) {
+      if (name[0].toLowerCase() !== element.name) matches = false
+      ratio[2] += 1
+      i += name[0].length
+    }
+  }
+  while (i < compound.length) {
+    const ch = compound[i]
+    if (ch === '.') {
+      const name = IDENT.exec(compound.slice(i + 1))
+      if (!name) return unreadable(`a class in ${JSON.stringify(compound)} this reader cannot read`)
+      if (!element.classes.includes(name[0])) matches = false
+      ratio[1] += 1
+      i += 1 + name[0].length
+      continue
+    }
+    if (ch === '#') {
+      const name = IDENT.exec(compound.slice(i + 1))
+      if (!name) return unreadable(`an id in ${JSON.stringify(compound)} this reader cannot read`)
+      if (element.id !== name[0]) matches = false
+      ratio[0] += 1
+      i += 1 + name[0].length
+      continue
+    }
+    if (ch === '[') {
+      const end = closingBracket(compound, i)
+      if (end === -1) return unreadable(`the unbalanced ${JSON.stringify(compound)}`)
+      const attribute = readAttribute(compound.slice(i, end + 1), element)
+      if (attribute.unreadable) return unreadable(attribute.unreadable)
+      if (!attribute.matches) matches = false
+      ratio[1] += 1
+      i = end + 1
+      continue
+    }
+    if (ch === ':') {
+      const double = compound[i + 1] === ':'
+      const name = IDENT.exec(compound.slice(i + (double ? 2 : 1)))
+      if (!name) return unreadable(`a pseudo-class in ${JSON.stringify(compound)} this reader cannot read`)
+      const pseudo = name[0].toLowerCase()
+      const after = i + (double ? 2 : 1) + name[0].length
+      if (compound[after] === '(') {
+        const end = closingParen(compound, after)
+        if (end === -1) return unreadable(`the unbalanced ${JSON.stringify(compound)}`)
+        if (double) return unreadable(`the pseudo-element ${JSON.stringify(compound.slice(i, end + 1))}`)
+        if (pseudo !== 'where' && pseudo !== 'is' && pseudo !== 'not') {
+          return unreadable(`the functional pseudo-class ${JSON.stringify(`:${pseudo}()`)} in ${JSON.stringify(compound)}`)
+        }
+        const readings = splitTop(compound.slice(after + 1, end), ',').map((arg) => readSelector(arg, element))
+        if (readings.some((r) => r.unreadable)) return unreadable(`the ${JSON.stringify(`:${pseudo}()`)} in ${JSON.stringify(compound)}, whose own arguments this reader cannot evaluate`)
+        // An empty `:where()`/`:is()` matches nothing — and an empty selector list is an
+        // invalid selector, so the rule it is written in never applies at all.
+        const any = readings.length > 0 && readings.some((r) => r.matches)
+        // `:where()` contributes nothing to the specificity; `:is()` and `:not()` take their
+        // most specific argument's, which is what makes `:where(ul, ol)` a zero the class
+        // `.flow-steps` beats and a `:is(ol)` worth the element name it carries.
+        const strongest = readings.map((r) => r.ratio).reduce((a, b) => (moreSpecific(b, a) ? b : a), [0, 0, 0])
+        if (pseudo === 'not') {
+          if (any) matches = false
+          ratio[0] += strongest[0]
+          ratio[1] += strongest[1]
+          ratio[2] += strongest[2]
+        } else if (pseudo === 'is') {
+          if (!any) matches = false
+          ratio[0] += strongest[0]
+          ratio[1] += strongest[1]
+          ratio[2] += strongest[2]
+        } else if (!any) matches = false
+        i = end + 1
+        continue
+      }
+      if (double) return unreadable(`the pseudo-element ${JSON.stringify(`::${pseudo}`)}`)
+      if (STATE_PSEUDO.has(pseudo)) {
+        matches = false
+        ratio[1] += 1
+        i = after
+        continue
+      }
+      return unreadable(`the pseudo-class ${JSON.stringify(`:${pseudo}`)} in ${JSON.stringify(compound)}`)
+    }
+    return unreadable(`the part of ${JSON.stringify(compound)} that begins at ${JSON.stringify(ch)}`)
+  }
+  return { matches, ratio }
+}
+
+/**
+ * How a whole selector reads against the flow's list. A selector with more than one compound
+ * reaches the element through an ancestor — `figure > ol` — and an ancestor is a fact about a
+ * page this reader is not given, so it is reported rather than assumed either way.
+ */
+function readSelector(selector, element) {
+  const compounds = compoundsOf(selector)
+  const subject = compounds.at(-1)
+  if (!subject) return { unreadable: `the empty selector ${JSON.stringify(selector)}` }
+  const reading = readCompound(subject, element)
+  // A rule about somebody else's element — `.site-footer ul`, `figure > ol` where there is no
+  // such figure — is not a rule about this one, and saying so here is what keeps an unrelated
+  // rule out of the refusals below. Only a selector that *does* reach the list and reaches it
+  // through an ancestor is unreadable.
+  if (reading.unreadable || !reading.matches) return reading
+  if (compounds.length > 1) {
+    return { unreadable: `${JSON.stringify(selector)}, whose ancestor part this reader cannot check against a page` }
+  }
+  return reading
+}
+
+/** True when `a` is the more specific of two `[ids, classes, elements]` ratios. */
+function moreSpecific(a, b) {
+  for (let i = 0; i < 3; i += 1) {
+    if (a[i] !== b[i]) return a[i] > b[i]
+  }
+  return false
+}
+
+/** The values a stylesheet declares its tokens as, for following a `var()` to what it means. */
+function tokenText(css) {
+  const out = new Map()
+  for (const m of css.matchAll(/--([a-z0-9-]+):\s*([^;{}]+)/g)) out.set(m[1], m[2].trim())
+  return out
+}
+
+/** The font size a list is set in: what its `ch` lengths are measured against. The list's own
+ *  rule when it declares one — read through the element's first class, so a list whose type is
+ *  set by its own rule measures its `ch` cap against that size rather than the body's — the
+ *  body's size otherwise, and 16 px when neither is declared. */
+function elementFontPx(css, element) {
+  const tokens = lengthTokens(css)
+  const rules = allRules(css)
+  const klass = (element.classes[0] ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const own = rules
+    .filter((r) => klass !== '' && new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector))
+    .map((r) => declarations(r)['font-size'])
+    .filter(Boolean)
+    .pop()
+  const body = rules
+    .filter((r) => /(^|[,\s>])body(?![\w-])/.test(r.selector))
+    .map((r) => declarations(r)['font-size'])
+    .filter(Boolean)
+    .pop()
+  return toPx(own ?? body ?? '', tokens) || 16
+}
+
+/** A `max-width` value as pixels: `none` is no cap at all, and `NaN` is a value this reader cannot measure. */
+function capPixels(value, tokens, pxTokens, fontPx) {
+  const seen = new Set()
+  let text = value.trim()
+  for (;;) {
+    const variable = /^var\(--([a-z0-9-]+)\)$/.exec(text)
+    if (!variable) break
+    if (seen.has(variable[1])) return NaN
+    seen.add(variable[1])
+    const next = tokens.get(variable[1])
+    if (next === undefined) return NaN
+    text = next
+  }
+  if (text === 'none') return Infinity
+  const px = toPx(text, pxTokens)
+  if (!Number.isNaN(px)) return px
+  const ch = /^([\d.]+)ch$/.exec(text)
+  return ch ? Number(ch[1]) * CH * fontPx : NaN
+}
+
+/**
+ * The `max-width` in force on a list at a viewport width: `{ px, value, selector, query }`,
+ * where `px` is `Infinity` for `none` or for no rule at all — or `{ unreadable }` when a rule
+ * that reaches the element carries a value or a selector this reader cannot evaluate, which
+ * the caller refuses rather than reads past. It takes the list's element (`listElement`), a
+ * descriptor read out of the built page, because the cap it reads is `base.css`'s and reaches
+ * every `ul`, `ol` and `dl` on the site.
+ */
+export function listMaxWidth(css, width, element) {
+  const rules = allRules(css)
+  const tokens = tokenText(css)
+  const fontPx = elementFontPx(css, element)
+  const unreadable = []
+  let best = null
+  for (const rule of rules) {
+    if (!appliesAt(width)(rule)) continue
+    // Only a rule that declares a `max-width` can be a cap, and only those are read: a rule
+    // about something else — `:root`'s tokens, a heading's size — is not this check's subject,
+    // and reporting *its* selector as unreadable would be noise about a rule that cannot
+    // squeeze anything.
+    const value = declarations(rule)['max-width']
+    if (value === undefined) continue
+    let ratio = null
+    for (const part of splitTop(rule.selector, ',')) {
+      const reading = readSelector(part, element)
+      if (reading.unreadable) {
+        unreadable.push(`${reading.unreadable}${rule.query ? ` inside ${rule.query}` : ''}`)
+        continue
+      }
+      if (!reading.matches) continue
+      if (ratio === null || moreSpecific(reading.ratio, ratio)) ratio = reading.ratio
+    }
+    if (ratio === null) continue
+    if (best === null || !moreSpecific(best.ratio, ratio)) best = { value, ratio, selector: rule.selector, query: rule.query }
+  }
+  // A rule that reaches this element and whose selector or value this reader cannot read is
+  // reported rather than skipped: it may be the one that caps the list.
+  if (unreadable.length > 0) return { unreadable: unreadable[0] }
+  if (best === null) return { px: Infinity, value: 'none', selector: '', query: '' }
+  const px = capPixels(best.value, tokens, lengthTokens(css), fontPx)
+  if (Number.isNaN(px)) {
+    return { unreadable: `${JSON.stringify(best.value)} on ${JSON.stringify(best.selector)}${best.query ? ` inside ${best.query}` : ''}` }
+  }
+  return { px, value: best.value, selector: best.selector, query: best.query }
+}
+
+// ---- How It Works: one left edge, and room under the title (review round 3, item 3d) ------
+//
+// The page is one picture and the run in words under it, and `main` gives its top-level blocks
+// one gutter: the `h1`, the section the drawing lives in and the words section. What the review
+// of round 3 found on the page's previous body was a block adding a gutter of its own on top of
+// that one, so the detail of the picture was indented relative to the title and the picture
+// above it — two left edges on one page, 24 px apart. The other half of the same finding is the
+// gap between the title and the picture: `base.css` gives every `h1` 12 px under it, which is a
+// heading's margin rather than the room a page's opening picture is met with.
+//
+// The same two claims are read here on the page the owner's draft of 2026-10-19 asks for, and
+// the defect they refuse is the one the review measured: a block of the page that insets itself
+// inside the gutter, and a title left sitting against the block under it. Both are read out of
+// the built page rather than left to the eye — the inline component of every diagram block's
+// padding comes out of the cascade at the desktop width, and the title's own rule is read for
+// the room it declares under itself. The vertical rhythm between the picture and the words is
+// not this check's business: that is a rhythm the owner's eye owns (70a-70c).
+//
+// **The bold redesign of 2026-10-20 moved the title into the page's opening** (the owner's
+// approved board `website/design-ref/HowItWorksV3.dc.html`): the `h1` is the hero's headline,
+// the diagram and its words are the blocks under it, and the room the title declares is what
+// separates the headline from the lead under it. The claim and the room are the ones this check
+// has always read — the class the page declares it on, and the two pixels it is at least — and
+// what moved is which block follows the title.
+
+/** The classes of the blocks the diagram is drawn in: the page's own, and no other page's. */
+const RUN_BLOCKS = ['run-picture', 'run-diagram', 'run-words']
+
+/**
+ * Every way the How It Works page's blocks do not share `main`'s left edge, or its title sits
+ * against the block under it, for one built page's stylesheet and markup. Returns nothing on
+ * a page that carries no diagram, so it can be run over every built page.
+ */
+export function runDiagramFailures(css, html) {
+  const out = []
+  const classesOf = (el) => (el.attrs.get('class') ?? '').split(/\s+/).filter(Boolean)
+  const doc = parse(html)
+  const figure = [...walk(doc)].find((el) => el.name === 'figure' && classesOf(el).includes('run-diagram'))
+  if (!figure) return out
+  const title = [...walk(doc)].find((el) => classesOf(el).includes('page-title'))
+  const rules = allRules(css)
+  const tokens = lengthTokens(css)
+  const declared = (klass, property) =>
+    rules
+      .filter((r) => new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector) && appliesAt(80 * 16)(r))
+      .map((r) => declarations(r)[property])
+      .filter((value) => value !== undefined)
+      .pop()
+
+  // The gutter a block adds inside `main`'s own. Any of the four declarations can do it, and
+  // the shorthand's inline half is the one this reads (`padding: 40px 0 64px` is the site's own
+  // vertical-only shape and is not an inset).
+  for (const klass of RUN_BLOCKS) {
+    for (const property of ['padding', 'padding-inline', 'padding-left', 'padding-right']) {
+      const value = declared(klass, property)
+      if (value === undefined) continue
+      const inline = /^padding-(left|right)$/.test(property) ? value : inlineToken(value)
+      const inset = toPx(inline, tokens)
+      if (Number.isNaN(inset)) {
+        out.push(
+          `the \`.${klass}\` block's inline padding cannot be read from \`${property}: ${value}\`, and an inset this check cannot turn into pixels is one nothing checked (\`NaN\` passes the comparison below) — teach \`website/test/base-styles.mjs\` the shape, or write the declaration in one it reads (review round 3, item 3d)`,
+        )
+      } else if (inset > 0) {
+        out.push(
+          `the \`.${klass}\` block insets its own content by ${Math.round(inset)} px inside the gutter \`main\` already gives it (\`${property}: ${value}\`), and the page's \`h1\` above it starts at that gutter: the block is ${Math.round(inset)} px right of the title, which is the second left edge the review of round 3 measured (review round 3, item 3d)`,
+        )
+      }
+    }
+  }
+
+  if (!title) {
+    out.push(
+      "the How It Works page's `h1` carries no `page-title` class, so the room under it cannot be read: the title and the block under it are the page's opening, and what separates them is this page's own rule rather than a heading's default margin (review round 3, item 3d)",
+    )
+    return out
+  }
+  const room = toPx(declared('page-title', 'margin-bottom'), tokens)
+  const wanted = tokens.get('space-lg')
+  if (Number.isNaN(room)) {
+    out.push(
+      `the How It Works title's bottom margin cannot be read from \`${declared('page-title', 'margin-bottom') ?? '(nothing declared)'}\`, and a margin this check cannot turn into pixels is one nothing checked (review round 3, item 3d)`,
+    )
+  } else if (room < wanted) {
+    out.push(
+      `the How It Works title has ${Math.round(room)} px under it, and the page's opening follows it: \`base.css\`'s heading margin is a heading's margin, and the title a reader meets first is followed by the page's own block at the room of a section opening — at least ${wanted} px (\`--space-lg\`) (review round 3, item 3d)`,
+    )
+  }
+  return out
+}
+
+test('the picture and the words under it share the title’s left edge, and the title has room', () => {
+  const failures = []
+  let checked = 0
+  for (const { rel, html } of builtPages()) {
+    if (!html.includes('run-diagram')) continue
+    checked += 1
+    failures.push(...runDiagramFailures(pageCss(html), html).map((line) => `${rel}: ${line}`))
+  }
+  assert.ok(checked > 0, 'no built page carries the run diagram, and the owner\'s draft of 2026-10-19 puts it on How It Works')
+  assert.deepEqual(failures, [], `the How It Works page has two left edges:\n  ${failures.join('\n  ')}`)
+})
+
+test('every run-diagram refusal fires on the defect it names', () => {
+  const page = readFileSync(path.join(DIST, 'how-it-works', 'index.html'), 'utf8')
+  const css = pageCss(page)
+  /**
+   * The page's own rule for a selector, as the built stylesheet writes it — Astro scopes a
+   * component's rule with its own `[data-astro-cid-…]`, so the fixture has to replace the
+   * declaration inside the rule the page carries rather than a rule written here.
+   */
+  const ruleText = (selector) => {
+    const pattern = new RegExp(`(?:^|[},])\\s*(${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})(\\[[^\\]]*\\])?\\{([^}]*)\\}`)
+    const match = pattern.exec(css)
+    assert.ok(match, `the How It Works stylesheet carries no \`${selector}\` rule, and the cases below are about the page's own rules`)
+    return match[0]
+  }
+  /** One declaration of that rule replaced, with the rest of the page's stylesheet kept. */
+  const change = (selector, from, to) => {
+    const text = ruleText(selector)
+    assert.ok(text.includes(from), `\`${selector}\` no longer declares ${JSON.stringify(from)}, and this fixture replaces it`)
+    return css.replace(text, text.replace(from, to))
+  }
+  const cases = [
+    // The defect the review of round 3 measured, in the shape the page's own markup takes: a
+    // block that gives itself a gutter inside `main`'s.
+    [
+      'the words section indented inside the page gutter',
+      change('.run-words', 'margin-top:var(--space-2xl)', 'margin-top:var(--space-2xl);padding-left:var(--space-md)'),
+      /insets its own content by 24 px/,
+    ],
+    // And the same defect written as a shorthand, which is how the page it was found on wrote
+    // it: the drawing's own vertical room, rewritten as the shorthand that insets both edges.
+    [
+      'the drawing inset by a shorthand',
+      change('.run-diagram', 'padding-block:var(--space-sm)', 'padding:var(--space-md)'),
+      /insets its own content by 24 px/,
+    ],
+    // A title left with a heading's margin under it, which is where the page's own block under
+    // it started 12 px below the headline.
+    ['the title with a heading’s margin under it', change('.page-title', 'margin-bottom:var(--space-2xl)', 'margin-bottom:var(--space-xs)'), /px under it, and the page's opening/],
+    // A page whose title lost the class the room is declared on: the rule is the page's, and a
+    // title that no longer carries it is a title nothing measured. The headline carries the
+    // page's class beside `base.css`'s display step, so the class is dropped from the list
+    // rather than the whole attribute replaced.
+    [
+      'a title without the page’s own class',
+      css,
+      /carries no `page-title` class/,
+      page.replace(/class="([^"]*)\bpage-title\b ?([^"]*)"/, 'class="$1$2"'),
+    ],
+  ]
+  for (const [what, stylesheet, expected, html = page] of cases) {
+    assert.deepEqual(
+      runDiagramFailures(stylesheet, html).map((line) => (expected.test(line) ? 'fired' : line)),
+      ['fired'],
+      `${what}: the refusal did not fire, and this is what it said instead`,
+    )
+  }
+
+  // The control: the page as it is built passes, and a page with no diagram is not its subject.
+  assert.deepEqual(runDiagramFailures(css, page), [], 'the built page does not pass the shape its own cases are drawn from')
+  assert.deepEqual(runDiagramFailures(pageCss(builtPages().find((entry) => entry.rel === 'index.html').html), builtPages().find((entry) => entry.rel === 'index.html').html), [], 'the homepage has no diagram, and this check has no subject there')
+})
+
+// ---- the run's arrows point the way the run travels (the drawing that took the flow's place)
+//
+// The retired gate this one stands for read the flow's four cards and the arrow each step left:
+// a shaft drawn in the gap beside a card, placed on the side the next step is on, pointing the
+// way the run travels — and it refused an arrow drawn the other way (`transform: rotate(90deg)`
+// on an arrow drawn pointing down, which turned it back at the step before it and read the four
+// steps in the opposite order). `ArchitectureDiagram.astro` is deleted with the flow (the
+// owner's ruling of 2026-10-20) and the run is now a drawing: its four boxes are cards — a row
+// of them in the wide drawing, a column in the tall one — with one arrow between each pair.
+//
+// Nothing in the repository read those six arrows. `test/how-it-works.mjs` reads the round trip
+// of the fix (`[fix ─► review(2)]`, `docs/design/v1.md` §4): that the loop is drawn, that it
+// joins the two stages it is between, and that its head's point leads its base. The straight
+// arrows between the four boxes — the picture's biggest claim, and the one a reader follows to
+// read the run at all — had no gate under them, so this reads them where the flow's gate read
+// its own: which way they point, and which box each one lands on.
+//
+// Everything below is derived from the drawing itself rather than typed here: the cards' own
+// rects, the axis they are laid out along (a row differs in `x` at one `y`, a column in `y` at
+// one `x`), the gap between two of them, and the three corners of each head. Three claims, and
+// each is the defect rather than a preference:
+//
+//   - **one arrow per gap, and it stays in its gap.** Each arrow is placed in the gap between
+//     two cards that are beside each other — the shafts are drawn inset from the card's edge in
+//     one drawing and flush with it in the other, so the reading is the gap the arrow's two
+//     ends fall in rather than the pixel they start at. A gap with two arrows is a stage the
+//     run takes twice; a gap with none is a stage it never reaches; an arrow that falls in no
+//     gap reaches across a card;
+//   - **each arrow runs the way the cards do.** The drawing's cards are the run's four boxes in
+//     order, so the arrow between two of them leaves the earlier card and lands on the later
+//     one — a head at the other end of the same shaft, or a shaft drawn from the later card
+//     back to the earlier, is the same picture read backwards (`pull request → your agent`);
+//   - **the head continues the shaft it ends.** Its base sits on the shaft's own axis and at
+//     the shaft's end, its point is ahead of that base the way the shaft runs, and the head's
+//     own axis is parallel to the shaft's — so a head drawn off to one side of the shaft, or
+//     turned round on it, is refused. An arrowhead is where the arrow points.
+//
+// The two drawings are one picture at two scales, so they carry the same number of arrows; each
+// drawing is read on its own axis, which is what makes this a reading of the drawing rather
+// than of a width.
+
+/**
+ * One of the run's drawings, as the built page carries it: the `<svg>` tag's own attributes and
+ * the markup inside it, which is what the readings below are made of. `null` on a page that
+ * carries no such drawing — those pages are not this check's subject rather than failures of it.
+ */
+function runDrawing(html, klass) {
+  const tag = new RegExp(`<svg\\b[^>]*class="[^"]*\\b${klass.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![-\\w])[^"]*"[^>]*>`).exec(html)
+  if (tag === null) return null
+  const open = html.indexOf(tag[0])
+  const close = html.indexOf('</svg>', open)
+  if (close === -1) return null
+  return { attrs: tag[0], markup: html.slice(open + tag[0].length, close) }
+}
+
+/** Whether two coordinates are the same point of a drawing, to the tenth of a unit the
+ *  component writes its own numbers to. */
+const samePoint = (a, b) => Math.abs(a - b) <= 0.5
+
+/** How far a point lies off the line through `from` and `to`, in units. */
+function offAxis(point, from, to) {
+  const length = Math.hypot(to.x - from.x, to.y - from.y)
+  if (length === 0) return Infinity
+  return Math.abs((to.x - from.x) * (from.y - point.y) - (from.x - point.x) * (to.y - from.y)) / length
+}
+
+/** The three corners of a path drawn as an arrowhead, as `{ apex, base }` — the point of the
+ *  triangle is the corner opposite its longest side, which is the base the other two sit on —
+ *  or `null` when the `d` is not three corners at all. */
+function headCorners(d) {
+  const points = [...d.matchAll(/(-?[\d.]+)[\s,]+(-?[\d.]+)/g)].map((m) => ({ x: Number(m[1]), y: Number(m[2]) }))
+  if (points.length !== 3) return null
+  const [a, b, c] = points
+  const side = (p, q) => Math.hypot(p.x - q.x, p.y - q.y)
+  const lengths = [side(b, c), side(a, c), side(a, b)]
+  const opposite = lengths.indexOf(Math.max(...lengths))
+  return { apex: points[opposite], base: points.filter((_, index) => index !== opposite) }
+}
+
+/** The run a drawing draws: the cards its markup puts down, the arrow shafts, and the heads,
+ *  each head with its own `d`, so one this reader cannot read is reported rather than dropped. */
+function runArrowsOf(drawing) {
+  const cards = [...drawing.markup.matchAll(/<rect class="run-card"[^>]*?x="(-?[\d.]+)"[^>]*?y="(-?[\d.]+)"[^>]*?width="([\d.]+)"[^>]*?height="([\d.]+)"/g)].map((m) => ({
+    x: Number(m[1]),
+    y: Number(m[2]),
+    w: Number(m[3]),
+    h: Number(m[4]),
+  }))
+  const shafts = [...drawing.markup.matchAll(/<line class="run-arrow-line" x1="(-?[\d.]+)" y1="(-?[\d.]+)" x2="(-?[\d.]+)" y2="(-?[\d.]+)"/g)].map((m) => ({
+    from: { x: Number(m[1]), y: Number(m[2]) },
+    to: { x: Number(m[3]), y: Number(m[4]) },
+  }))
+  const heads = [...drawing.markup.matchAll(/<path class="run-arrow-head" d="([^"]+)"/g)].map((m) => ({ d: m[1], corners: headCorners(m[1]) }))
+  return { cards, shafts, heads }
+}
+
+/**
+ * Every way the run's drawing fails to point the way the run travels, for one built page's
+ * markup. Returns nothing on a page that carries no drawing, so it can be run over every page.
+ */
+export function runArrowFailures(html) {
+  if (runDrawing(html, 'run-wide') === null && runDrawing(html, 'run-tall') === null) return []
+  const out = []
+  const counts = []
+  for (const klass of ['run-wide', 'run-tall']) {
+    const drawing = runDrawing(html, klass)
+    if (drawing === null) {
+      out.push(
+        `the page carries no \`${klass}\` drawing, and the run is drawn twice — a row of boxes for a desktop and a column for a phone — so both are the picture whose arrows this reads (the owner's ruling of 2026-10-20)`,
+      )
+      continue
+    }
+    const { cards, shafts, heads } = runArrowsOf(drawing)
+    counts.push({ klass, shafts: shafts.length })
+    if (cards.length < 2) {
+      out.push(
+        `the ${klass} drawing draws ${cards.length} box card(s), and the run is four boxes with an arrow between each pair: without two cards there is no gap for an arrow to travel, and the box it lands on cannot be read (the owner's ruling of 2026-10-20)`,
+      )
+      continue
+    }
+    // The axis the drawing lays its cards along, read off the cards themselves: a row differs
+    // in `x` at one `y`, a column in `y` at one `x`. A drawing that does neither is refused
+    // rather than read on a guess.
+    const along =
+      cards.every((card) => samePoint(card.y, cards[0].y))
+        ? 'x'
+        : cards.every((card) => samePoint(card.x, cards[0].x))
+          ? 'y'
+          : null
+    if (along === null) {
+      out.push(
+        `the ${klass} drawing's cards are not laid out along one axis (their own rects are at ${cards.map((card) => `${card.x},${card.y}`).join(' / ')}), and the run's boxes are a row or a column: the arrows between them run whichever way the cards do, which is what says which box one lands on (the owner's ruling of 2026-10-20)`,
+      )
+      continue
+    }
+    const alongBox = along === 'x' ? 'w' : 'h'
+    const ordered = [...cards].sort((a, b) => a[along] - b[along])
+    /** The edges of the gap between each pair of cards beside each other, along the axis: the
+     *  earlier card's far edge and the later card's near one, in the drawing's own units. */
+    const gaps = ordered.slice(0, -1).map((card, index) => {
+      const next = ordered[index + 1]
+      return { start: card[along] + card[alongBox], end: next[along], at: index }
+    })
+    const inGap = (value, gap) => value >= gap.start - 0.5 && value <= gap.end + 0.5
+
+    if (shafts.length !== gaps.length || heads.length !== gaps.length) {
+      out.push(
+        `the ${klass} drawing has ${cards.length} cards, ${shafts.length} \`run-arrow-line\` shafts and ${heads.length} \`run-arrow-head\` heads, and each gap between two of the run's boxes carries one arrow — a shaft and the head that ends it: a gap with two arrows is a stage the run takes twice, and a gap with none is a stage it never reaches (the retired arrows gate, changes spec 2026-10-18 item 4; the owner's ruling of 2026-10-20)`,
+      )
+      continue
+    }
+
+    const taken = new Map()
+    let refused = false
+    shafts.forEach((shaft, index) => {
+      if (refused) return
+      const head = heads[index]
+      const tip = head.corners === null ? null : head.corners.apex[along]
+      const matched = gaps.filter((gap) => inGap(shaft.from[along], gap) && tip !== null && samePoint(tip, gap.end))
+      const where = `runs from ${along} ${shaft.from[along].toFixed(1)} to ${along} ${shaft.to[along].toFixed(1)}`
+      if (matched.length !== 1) {
+        out.push(
+          `the ${klass} drawing's arrow ${index + 1} ${where} and its head's point is ${head.corners === null ? 'a path this check cannot read as three corners' : `at ${along} ${head.corners.apex[along].toFixed(1)}`}, and the arrow between two boxes of the run is drawn in the gap between them, arriving at the later one: an arrow that is in no gap reaches across a box, and one whose point is not at the far end of its gap points at the box the run came from (the retired arrows gate, changes spec 2026-10-18 item 4; the owner's ruling of 2026-10-20)`,
+        )
+        refused = true
+        return
+      }
+      const gap = matched[0]
+      if (taken.has(gap.at)) {
+        out.push(
+          `the ${klass} drawing's gap between the cards at ${along} ${gap.start.toFixed(1)} and ${along} ${gap.end.toFixed(1)} carries two arrows (${taken.get(gap.at) + 1} and ${index + 1}), and the run steps from one box to the next once: a second arrow in the same gap reads the run as taking that step twice (the retired arrows gate; the owner's ruling of 2026-10-20)`,
+        )
+        refused = true
+        return
+      }
+      taken.set(gap.at, index)
+
+      // The shaft runs the way the cards do: from the earlier card towards the later one, which
+      // is the direction the gap's own two edges are in.
+      if (shaft.to[along] - shaft.from[along] <= 0) {
+        out.push(
+          `the ${klass} drawing's arrow ${index + 1} ${where}, and the gap it is drawn in runs the other way — from the card at ${along} ${gap.start.toFixed(1)} to the next at ${along} ${gap.end.toFixed(1)}: an arrow drawn from the later box back to the earlier one reads the run backwards, which is the defect the retired gate refused when a rotation turned a step's arrow back at the step before it (the retired arrows gate, changes spec 2026-10-18 item 4; the owner's ruling of 2026-10-20)`,
+        )
+        refused = true
+        return
+      }
+
+      // The head continues the shaft it ends: its base at the shaft's end and on the shaft's own
+      // axis, its point ahead of the base the way the shaft runs, and the head's own axis
+      // parallel to the shaft's.
+      if (head.corners === null) {
+        out.push(
+          `the ${klass} drawing's arrow ${index + 1} ends in an arrowhead this check cannot read as three corners (${JSON.stringify(head.d)}), and an arrowhead is a point on a base: without the corners there is no way to say which way it points (the retired arrows gate; the owner's ruling of 2026-10-20)`,
+        )
+        refused = true
+        return
+      }
+      const { apex, base } = head.corners
+      const middle = { x: (base[0].x + base[1].x) / 2, y: (base[0].y + base[1].y) / 2 }
+      const length = Math.hypot(shaft.to.x - shaft.from.x, shaft.to.y - shaft.from.y)
+      const unit = { x: (shaft.to.x - shaft.from.x) / length, y: (shaft.to.y - shaft.from.y) / length }
+      const reach = Math.hypot(apex.x - middle.x, apex.y - middle.y)
+      const ahead = (apex.x - middle.x) * unit.x + (apex.y - middle.y) * unit.y
+      const turn = reach === 0 ? Infinity : Math.abs((apex.x - middle.x) * unit.y - (apex.y - middle.y) * unit.x) / reach
+      const off = Math.max(offAxis(middle, shaft.from, shaft.to), Math.hypot(middle.x - shaft.to.x, middle.y - shaft.to.y))
+      if (off > 6 || ahead <= 0 || turn > 0.2) {
+        out.push(
+          `the ${klass} drawing's arrow ${index + 1} draws its head with its base ${off.toFixed(1)} units from the end of its own shaft (at ${middle.x.toFixed(1)},${middle.y.toFixed(1)}, the shaft ending at ${shaft.to.x.toFixed(1)},${shaft.to.y.toFixed(1)}), its point ${ahead > 0 ? `${ahead.toFixed(1)} units ahead of that base` : `${Math.abs(ahead).toFixed(1)} units behind it`}, and its own axis ${turn === Infinity ? 'of no length at all' : turn > 0.2 ? `turned ${(Math.asin(Math.min(1, turn)) * (180 / Math.PI)).toFixed(0)}° off the shaft's` : "along the shaft's"}: an arrowhead is the end of its shaft and points the way the shaft runs, and a head laid beside or across it points somewhere the run does not go (the retired arrows gate, changes spec 2026-10-18 item 4; the owner's ruling of 2026-10-20)`,
+        )
+        refused = true
+      }
+    })
+  }
+
+  // The two drawings are one picture at two scales: the same steps, and so the same number of
+  // arrows between them.
+  if (counts.length > 1 && new Set(counts.map(({ shafts }) => shafts)).size > 1) {
+    out.push(
+      `the page's drawings carry ${counts.map(({ klass, shafts }) => `${shafts} arrows in the ${klass} one`).join(' and ')}, and they are one picture at two scales: a run that steps between a different number of boxes on a phone is a second run (the owner's draft of 2026-10-19)`,
+    )
+  }
+  return out
+}
+
+test('the run’s arrows leave each box and land on the next, pointing the way the run travels', () => {
+  const failures = []
+  let checked = 0
+  for (const { rel, html } of builtPages()) {
+    if (runDrawing(html, 'run-wide') === null) continue
+    checked += 1
+    failures.push(...runArrowFailures(html).map((line) => `${rel}: ${line}`))
+  }
+  assert.ok(checked > 0, 'no built page carries the run drawing, and the owner\'s draft of 2026-10-19 puts it on How It Works')
+  assert.deepEqual(failures, [], `the run's arrows do not point the way the run travels:\n  ${failures.join('\n  ')}`)
+})
+
+test('every run-arrow refusal fires on the defect it names', () => {
+  const page = readFileSync(path.join(DIST, 'how-it-works', 'index.html'), 'utf8')
+  /** The shapes of one drawing's arrows, as the built page draws them: every case below is one
+   *  edit to the page's own markup, so a component that drew its arrows differently would fail
+   *  this fixture loudly rather than leave it passing by accident. */
+  const shapes = (klass) => {
+    const drawing = runDrawing(page, klass)
+    assert.ok(drawing, `the built page carries no \`${klass}\` drawing, and these cases are about the drawing's own arrows`)
+    return {
+      markup: drawing.markup,
+      shafts: [...drawing.markup.matchAll(/<line class="run-arrow-line"[^>]*\/>/g)].map((m) => m[0]),
+      heads: [...drawing.markup.matchAll(/<path class="run-arrow-head" d="[^"]+"\s*\/>/g)].map((m) => m[0]),
+    }
+  }
+  /** The corners of a head, as the triangle this check reads: the point and the base it is on. */
+  const partsOf = (head) => headCorners(/d="([^"]+)"/.exec(head)[1])
+  /** The same head, drawn with those corners. */
+  const redraw = (head, corners) => head.replace(/d="[^"]+"/, `d="M ${corners.map((point) => `${point.x} ${point.y}`).join(' L ')} Z"`)
+  const shift = (points, by) => points.map((point) => ({ x: point.x + by.x, y: point.y + by.y }))
+  /** The same head turned round on its own base: its point mirrored to the other side, which is
+   *  the retired gate's `rotate(90deg)` told in the drawing's own geometry. */
+  const turnRound = ({ apex, base }) => {
+    const middle = { x: (base[0].x + base[1].x) / 2, y: (base[0].y + base[1].y) / 2 }
+    return [{ x: 2 * middle.x - apex.x, y: 2 * middle.y - apex.y }, base[0], base[1]]
+  }
+  /** An arrow moved along the drawing's own axis by `dx`, both of its shapes together. */
+  const movedArrow = (shaft, head, dx) => [
+    shaft.replace(/x1="(-?[\d.]+)"/, (m, x) => `x1="${Number(x) + dx}"`).replace(/x2="(-?[\d.]+)"/, (m, x) => `x2="${Number(x) + dx}"`),
+    redraw(head, shift([partsOf(head).apex, ...partsOf(head).base], { x: dx, y: 0 })),
+  ]
+
+  const wide = shapes('run-wide')
+  const tall = shapes('run-tall')
+  const wideHead = partsOf(wide.heads[0])
+  const tallHead = partsOf(tall.heads[0])
+  const across = movedArrow(wide.shafts[0], wide.heads[0], 60)
+  const cases = [
+    // The head turned round on its own shaft: the arrow now points back at the box the run came
+    // from, which is the defect the retired gate refused.
+    [
+      'the head turned round on its shaft',
+      () => withDrawing('run-wide', (markup) => markup.replace(wide.heads[0], redraw(wide.heads[0], turnRound(wideHead)))),
+      /points at the box the run came from/,
+    ],
+    // The same head with its base drawn past its point: the point trails the base on the shaft.
+    [
+      'the head’s base drawn past its point',
+      () => withDrawing('run-wide', (markup) => markup.replace(wide.heads[0], redraw(wide.heads[0], [wideHead.apex, ...shift(wideHead.base, { x: 30, y: 0 })]))),
+      /units behind it/,
+    ],
+    // A head drawn beside the shaft it ends rather than at the end of it.
+    [
+      'the head drawn beside its shaft',
+      () => withDrawing('run-wide', (markup) => markup.replace(wide.heads[0], redraw(wide.heads[0], shift([wideHead.apex, ...wideHead.base], { x: 0, y: 20 })))),
+      /draws its head with its base .* units from the end of its own shaft/,
+    ],
+    // A head this reader cannot read as a triangle at all: a point with no base.
+    [
+      'a head that is not three corners',
+      () => withDrawing('run-wide', (markup) => markup.replace(wide.heads[0], redraw(wide.heads[0], [wideHead.apex, wideHead.base[0]]))),
+      /cannot read as three corners/,
+    ],
+    // A shaft drawn the other way: from the later card back to the earlier one, which is the
+    // same picture read backwards.
+    [
+      'a shaft drawn from the later box back',
+      () => withDrawing('run-wide', (markup) => markup.replace(wide.shafts[0], wide.shafts[0].replace(/x1="(-?[\d.]+)"([^>]*)x2="(-?[\d.]+)"/, 'x1="$3"$2x2="$1"'))),
+      /the gap it is drawn in runs the other way/,
+    ],
+    // Two arrows in one gap, and none in the next: the drawing still carries one arrow per pair
+    // of cards, so only the gaps say that the run does not take one of its steps twice.
+    [
+      'two arrows in one gap',
+      () => withDrawing('run-wide', (markup) => markup.replace(wide.shafts[1], wide.shafts[0]).replace(wide.heads[1], wide.heads[0])),
+      /carries two arrows/,
+    ],
+    // An arrow taken away: a stage the run never reaches.
+    [
+      'an arrow missing from a gap',
+      () => withDrawing('run-wide', (markup) => markup.replace(wide.shafts[1], '').replace(wide.heads[1], '')),
+      /and each gap between two of the run's boxes carries one arrow/,
+    ],
+    // An arrow moved into the middle of a card: it is in no gap, so it reaches across one.
+    [
+      'an arrow drawn across a card',
+      () => withDrawing('run-wide', (markup) => markup.replace(wide.shafts[0], across[0]).replace(wide.heads[0], across[1])),
+      /reaches across a box/,
+    ],
+    // A card moved off the row: the drawing's boxes are no longer along one axis, so which box
+    // an arrow lands on is not a fact the picture states.
+    [
+      'a card off the row',
+      () => withDrawing('run-wide', (markup) => markup.replace(/(<rect class="run-card"[^>]*?y=")(-?[\d.]+)(")/, (m, before, y, after) => `${before}${Number(y) + 60}${after}`)),
+      /not laid out along one axis/,
+    ],
+    // The tall drawing with an arrow taken away: the two drawings are one picture at two
+    // scales, and the phone's is missing a step of the run.
+    [
+      'the two drawings with a different number of arrows',
+      () => page.replace(tall.shafts[0], '').replace(tall.heads[0], ''),
+      /one picture at two scales/,
+    ],
+    // The phone's drawing with its own head turned round, read on that drawing's own axis.
+    [
+      'the tall drawing’s head turned round',
+      () => page.replace(tall.heads[0], redraw(tall.heads[0], turnRound(tallHead))),
+      /points at the box the run came from/,
+    ],
+  ]
+  /** The page with one drawing's markup replaced by a version of it. */
+  const withDrawing = (klass, instead) => {
+    const { markup } = shapes(klass)
+    assert.ok(page.includes(markup), `the built page no longer carries the ${klass} drawing's markup, and these cases replace it`)
+    return page.replace(markup, instead(markup))
+  }
+  for (const [what, instead, expected] of cases) {
+    const planted = instead()
+    assert.notEqual(planted, page, `${what} was not planted: the fixture's pattern did not match the built page`)
+    const failures = runArrowFailures(planted)
+    assert.ok(
+      failures.some((line) => expected.test(line)),
+      `${what}: the refusal did not fire, and this is what it said instead:\n  ${failures.join('\n  ') || '(nothing)'}`,
+    )
+  }
+
+  // The control: the page as it is built passes, and a page with no drawing is not its subject.
+  assert.deepEqual(runArrowFailures(page), [], 'the built page does not pass the reading its own cases are drawn from')
+  const home = builtPages().find((entry) => entry.rel === 'index.html').html
+  assert.deepEqual(runArrowFailures(home), [], 'the homepage draws no run, and this check has no subject there')
+})
+// ---- the homepage's vertical rhythm: one gap, not two (review round 5) ---------------------
+//
+// The homepage's top-level blocks carry their own gutter and the room below themselves — the
+// hero's `--space-lg`, the two figures' `--space-3xl`, the install section's tail — because
+// `main:has(> .hero)` drops `main`'s padding on this page and each block puts it back. That is
+// what makes the space between two blocks the **previous** block's bottom padding, and the
+// review of the built site measured what a second padding on the *next* block does to it: the
+// install section carried `--space-lg` of its own on top of the flow's `--space-3xl`, so the
+// band between the flow's last card and the "Install" heading was 7 rem + 2 rem = 144 px of
+// blank page — the widest gap on the page, and twice the rhythm every other pair of blocks
+// keeps. Whichever of the two blocks owns a gap, only one of them may pad it.
+//
+// **A rule is read against the element it claims to style, scope attribute and all** (review
+// round 6). Astro gives every element a `data-astro-cid-…` for the component that rendered it
+// and appends the page's own to the selectors the page's `<style>` declares, so a page's rule
+// reaches the elements the page renders and no other. `.home-benefits` was declared on the
+// homepage and rendered by `Benefits.astro`: the rule was dead, the section kept no gutter and
+// no room below it, and this reading — which matched a rule to a block by class name — took the
+// dead rule's `padding` for the block's and passed at all three widths. So a selector that
+// names a scope the element does not carry is not in force, and a block the stylesheet names
+// and no rule reaches is a refusal of its own, because the pair reading below can only see a
+// block that declares a padding *somewhere*.
+//
+// It is read from the built page rather than from the sources: the top-level blocks of the
+// homepage's `main`, in document order, and each one's own `padding` out of the cascade.
+// Nothing here is about a *particular* pair — a page whose blocks all pad both sides of their
+// gaps is the same defect four times, and the refusal names the pair it found.
+//
+// **Read at three widths**, which are the three the reviews of this branch used: 1280, 768 and
+// a phone's 375. The padding that fixes the gap is not inside a breakpoint, so the gap is 112 px
+// at all three — and that is the thing three readings hold, rather than one reading at the
+// desktop width: a rule that gave a block a top padding *only* below some width would double one
+// gap on that band and nowhere else, and a check that read one width would call the page's
+// rhythm right while a phone showed two paddings under one heading. The third case below plants
+// exactly that rule and proves the width is what decides it.
+
+/** The viewport widths the homepage's rhythm is read at: the desktop the record measures, the
+ * tablet the flow's two-by-two is drawn at, and a phone. */
+export const RHYTHM_WIDTHS = [80 * 16, 48 * 16, 375]
+
+/**
+ * Every pair of the homepage's top-level blocks that both pad the gap between them, as the
+ * sentences a reader of the failure gets — and, before the pairs, every top-level block the
+ * stylesheet names and no rule can reach (the round-6 reading: a block whose rule is scoped to
+ * something the element is not). A page with no `main`, or with one block, has no pair to read
+ * and is not a failure here.
+ */
+export function homeRhythmFailures(css, html) {
+  const out = []
+  const classesOf = (el) => (el.attrs.get('class') ?? '').split(/\s+/).filter(Boolean)
+  const main = [...walk(parse(html))].find((el) => el.name === 'main')
+  if (main === undefined) return out
+  const blocks = [...walk(main)].filter((el) => el.parent === main)
+  const rules = allRules(css)
+  const tokens = lengthTokens(css)
+
+  /**
+   * The scope attributes an element carries: Astro writes one `data-astro-cid-…` per component
+   * that rendered it, and appends the page's own to every compound selector the page's `<style>`
+   * declares. So a selector that names a scope the element does not carry **cannot match the
+   * element**, however its class name reads — and that is the shape the review of round 6 found:
+   * `.home-benefits` was declared on the homepage and rendered by `Benefits.astro`, and a
+   * reading that matched on the class alone took the dead rule's padding for the section's.
+   */
+  const scopesOf = (el) => new Set([...el.attrs.keys()].filter((name) => name.startsWith('data-astro-cid-')))
+
+  /** True when one selector — not a list of them — can match an element carrying `scopes`: every
+   *  `[data-astro-cid-…]` it names is one of the element's. A selector with none is unscoped
+   *  (`base.css`, and the rules these cases plant) and matches anything. */
+  const reaches = (selector, scopes) =>
+    [...selector.matchAll(/\[(data-astro-cid-[^\]]+)\]/g)].every(([, scope]) => scopes.has(scope))
+
+  /** True when a rule names one of `classes` in a selector that can reach an element carrying
+   *  `scopes`. A selector list is read one selector at a time: it matches if *any* of them does. */
+  const names = (rule, classes, scopes) =>
+    rule.selector
+      .split(',')
+      .some(
+        (part) =>
+          classes.some((klass) => new RegExp(`\\.${klass}(?![\\w-])`).test(part)) && reaches(part, scopes),
+      )
+
+  /**
+   * A block's own vertical padding, out of the declarations in force at `width` on any of its
+   * classes, read in the order a browser applies them: the block shorthand's first component
+   * is the top and its third the bottom (the second when the shorthand names two values, the
+   * first when it names one), and `padding-top`/`padding-bottom` override the shorthand for
+   * the edge they name — including a rule that pads one edge and writes no shorthand at all,
+   * which is how a block pads a gap without the word `padding` ever appearing. Reading the
+   * shorthand alone made that block look like one that pads nothing, and the doubled gap the
+   * review measured was the one a shorthand declared: the check could only see the shape it
+   * was written for. `null` when nothing declares a vertical padding — a block with no
+   * padding of its own is a block that cannot pad the gap. The width is a parameter because
+   * the rules that decide it are read out of the cascade at that width: a block that pads the
+   * gap on a phone and not on a desktop is the defect on the phone, and the reading has to be
+   * taken there to see it.
+   */
+  const vertical = (block, width) => {
+    const classes = classesOf(block)
+    const scopes = scopesOf(block)
+    const inForce = rules.filter((r) => names(r, classes, scopes) && appliesAt(width)(r))
+    let top
+    let bottom
+    for (const rule of inForce) {
+      for (const [property, value] of cssDeclarations(rule.decls)) {
+        if (property === 'padding') {
+          const parts = shorthandParts(value)
+          top = parts[0]
+          bottom = parts.length > 2 ? parts[2] : parts[1] ?? parts[0]
+        } else if (property === 'padding-top') {
+          top = value
+        } else if (property === 'padding-bottom') {
+          bottom = value
+        }
+      }
+    }
+    if (top === undefined || bottom === undefined) return null
+    return {
+      top: toPx(top, tokens),
+      bottom: toPx(bottom, tokens),
+      // What a failure quotes: the two values the edges were read from, so a reader of the
+      // sentence can find the rule to fix — one value when a shorthand set both, and both
+      // when the edges came from declarations of their own.
+      declared: top === bottom ? top : `top: ${top}, bottom: ${bottom}`,
+    }
+  }
+
+  /** The name a block is reported by: its classes, as a reader finds them in the markup. */
+  const nameOf = (block) => classesOf(block).map((klass) => `.${klass}`).join('') || block.name
+
+  /**
+   * **A block the stylesheet names and no rule reaches**, which is a failure of its own whatever
+   * the pairs below read (review round 6). The pair reading can only see a block that declares a
+   * vertical padding somewhere, and a block whose padding sits in a rule that cannot match it
+   * declares nothing at all — `vertical` returns `null`, and `null` on either side of a pair
+   * skips that pair **in silence**. That is how every gate passed over a section that padded
+   * nothing on any width: the class was named by `index.astro`'s rule, the `<section>` carried
+   * `Benefits.astro`'s scope, and a block the page means to style reads exactly like a block
+   * that has no padding to give. The refusal names the rule, the scope it is written for and the
+   * scope the element carries, because the two are one line apart in a source file and the fix
+   * is to move the rule, not to change the class.
+   */
+  for (const block of blocks) {
+    const classes = classesOf(block)
+    if (classes.length === 0) continue
+    const scopes = scopesOf(block)
+    const namedBy = rules.filter((r) =>
+      r.selector.split(',').some((part) => classes.some((klass) => new RegExp(`\\.${klass}(?![\\w-])`).test(part))),
+    )
+    if (namedBy.length === 0 || namedBy.some((r) => names(r, classes, scopes))) continue
+    const selectors = [...new Set(namedBy.map((r) => r.selector))]
+    const wanted = [
+      ...new Set(
+        selectors.flatMap((selector) => [...selector.matchAll(/\[(data-astro-cid-[^\]]+)\]/g)].map(([, scope]) => scope)),
+      ),
+    ]
+    out.push(
+      `the homepage's ${nameOf(block)} is named by the stylesheet (\`${selectors.join('`, `')}\`) and no selector of ${namedBy.length === 1 ? 'that rule' : 'those rules'} can reach the element: the element carries ${scopes.size ? [...scopes].join(', ') : 'no scope attribute'} where the rule is scoped to ${wanted.join(', ') || 'no scope at all'}. A rule the element cannot be matched by is a rule the block never gets, so the block keeps no gutter and no room below it — and the pair reading above skips it in silence, because a block with no padding of its own reads like a block that has no padding to give (review round 6: a page's scoped rule reaches the elements the page renders, and this block is rendered by a component that carries its own scope)`,
+    )
+  }
+
+  for (let i = 1; i < blocks.length; i += 1) {
+    const above = blocks[i - 1]
+    const below = blocks[i]
+    for (const width of RHYTHM_WIDTHS) {
+      const a = vertical(above, width)
+      const b = vertical(below, width)
+      if (a === null || b === null) continue
+      if (Number.isNaN(a.bottom) || Number.isNaN(b.top)) {
+        out.push(
+          `at ${width} px the homepage's ${nameOf(above)} and ${nameOf(below)} carry a padding the rhythm check cannot turn into pixels (${JSON.stringify(a.declared)} and ${JSON.stringify(b.declared)}), and the room between two blocks is read from those two numbers: teach \`website/test/base-styles.mjs\` the shape, or write the declaration in one it reads (review round 5)`,
+        )
+        continue
+      }
+      if (a.bottom > 0 && b.top > 0) {
+        out.push(
+          `at ${width} px the homepage's ${nameOf(above)} ends with ${Math.round(a.bottom)} px under it and ${nameOf(below)} opens with ${Math.round(b.top)} px over it, so the gap between them is ${Math.round(a.bottom + b.top)} px — twice the rhythm the page's other blocks keep, because each of these two blocks pads the one gap (review round 5)`,
+        )
+      }
+    }
+  }
+
+  return out
+}
+
+test('the homepage’s blocks pad the gap between them once, and not twice', () => {
+  const failures = []
+  let checked = 0
+  for (const { rel, html } of builtPages()) {
+    if (!html.includes('class="home-slider"')) continue
+    checked += 1
+    failures.push(...homeRhythmFailures(pageCss(html), html).map((line) => `${rel}: ${line}`))
+  }
+  assert.ok(checked > 0, 'no built page renders the homepage’s blocks, so the rhythm of the page was measured nowhere')
+  assert.deepEqual(failures, [], `the homepage pads one gap twice:\n  ${failures.join('\n  ')}`)
+})
+
+test('the rhythm refusal fires on the doubled gap, and the pairs that keep the rhythm pass', () => {
+  const html = readFileSync(path.join(DIST, 'index.html'), 'utf8')
+  const cases = [
+    // The defect as it shipped: the install section's own `--space-lg` on top of the room the
+    // block above it already carries — the 144 px band the review of round 5 measured between
+    // the last block and the "Install" heading, which was the flow's last card then and is the
+    // benefits panel of the 2026-10-19 draft. **The bold redesign of 2026-10-20 moved the
+    // install section to the end of the page, so the block above it is now the "what you get"
+    // grid** (`.home-get`) — the defect, the number and the rule are unchanged, and only the
+    // name of the block above changed. The plant names the rule rather than the declaration,
+    // because every block of this page writes `padding:0 var(--space-md) var(--space-3xl)`
+    // (the hero's and the slider's first in the built page, then the band's, the grid's and the
+    // install's) and a case about the install's declaration is a case about the rule the
+    // install's file declares it in.
+    [
+      'an install section padding the gap the grid above it already pads',
+      plantRule('.home-install[data-astro-cid-', (rule) => rule.replace('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)')),
+      [/\.home-get ends with 112 px under it and \.home-install opens with 32 px over it, so the gap between them is 144 px/],
+    ],
+    // And the same edit on the block between the two: the slider's top padding over the hero's
+    // bottom one, which is the pair the hero's own bottom padding makes. Every block on this
+    // page declares its own rule in the component that renders it (there is no page-level
+    // `<style>` on `index.astro` any more), so the two plants above and here are the two gaps
+    // the page has, each padded twice by the rule of the block below it. The sum is the hero's
+    // own room — `--space-2xl`, and `--space-3xl` from 60 rem up, since the bold redesign
+    // gives the hero the bottom of the scale — plus the slider's planted `--space-lg`: 144 px
+    // on a desktop and 104 px on a tablet or a phone, which is the pair the pattern reads.
+    [
+      'the slider padding the gap the hero above it already pads',
+      plantRule('.home-slider[data-astro-cid-', (rule) => rule.replace('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)')),
+      [/the gap between them is 1(?:44|04) px/],
+    ],
+    // **And what the reading does not reach**: the benefits panel. The section is rendered
+    // inside the slider's second panel since the owner's approved draft of 2026-10-19, so it is
+    // not a top-level block of the page and its box is not a gap between two blocks. The plant
+    // gives it a top padding anyway and the reading refuses nothing — a check that walked every
+    // section carrying a padding would report the panel's own box as a doubled gap. The
+    // `plantRule` call is also what holds the panel's rule to the build: `.home-benefits-panel`
+    // is `Benefits.astro`'s, declared when the section is rendered in a panel.
+    [
+      'a benefits panel padding its own top, which is not a gap between two blocks',
+      plantRule('.home-benefits-panel[data-astro-cid-', (rule) => rule.replace('padding:0', 'padding:var(--space-lg) 0 0')),
+      [],
+    ],
+    // **The case the three widths are for.** The same doubled gap, written inside a rule that is
+    // in force on a phone and nowhere else: at 1280 and 768 the page's rhythm is right and at
+    // 375 the install section pads a gap the flow above it already pads. A check that read one
+    // width — the desktop width, which is what this one read before review round 5's follow-up —
+    // passes this stylesheet, and the phone is where the reader sees two paddings under one
+    // heading. Two details of the plant: `(width<=48rem)` would be in force at 768 as well,
+    // because 48 rem **is** 768 px, so the band here is a phone's own 30 rem; and `appliesAt`
+    // reads ranges written with `>=`/`<=` rather than `<`, so the plant is written in the
+    // vocabulary the reader has.
+    [
+      'an install section that pads the gap only on a phone',
+      `${TODAY()}@media screen and (width<=30rem){.home-install{padding:var(--space-lg) var(--space-md) var(--space-3xl)}}`,
+      [/the gap between them is 144 px/],
+      [375],
+    ],
+    // **The same doubled gap written as a longhand**, which is the shape the check could not
+    // see: it read the `padding` shorthand out of the cascade and nothing else, so a rule that
+    // pads one edge — `padding-top`, which is how a block that keeps the shorthand for its
+    // sides writes its own top — left the block looking like one that cannot pad the gap at
+    // all, and the 144 px band went unmeasured. The plant appends the rule rather than editing
+    // the section's own, because a longhand in a rule of its own is exactly the case: the
+    // declaration that pads the gap and the shorthand that does not are in two rules, and the
+    // reading has to take the last one in force for each edge.
+    [
+      'an install section that pads the gap with a longhand',
+      `${TODAY()}.home-install{padding-top:var(--space-lg)}`,
+      [/the gap between them is 144 px/],
+    ],
+  ]
+  for (const [what, css, expected, widths = RHYTHM_WIDTHS] of cases) {
+    const failures = homeRhythmFailures(css, html)
+    for (const pattern of expected) {
+      for (const width of widths) {
+        assert.ok(
+          failures.some((line) => line.startsWith(`at ${width} px `) && pattern.test(line)),
+          `${what}: at ${width} px the refusal ${pattern} did not fire, and this is what the check said instead:\n  ${failures.join('\n  ') || '(nothing)'}`,
+        )
+      }
+    }
+    const planted = expected.length * widths.length
+    assert.equal(failures.length, planted, `${what}: the check refused ${failures.length} gap(s) where this case plants ${planted}:\n  ${failures.join('\n  ')}`)
+  }
+
+  // And the page as it ships: the pairs above, with the gap padded once, are not refused — so
+  // the two cases are the edit and not the check.
+  assert.deepEqual(homeRhythmFailures(TODAY(), html), [], 'the homepage as it ships pads one of its gaps twice')
+})
+
+test('the rhythm reading refuses a block whose rule cannot reach it', () => {
+  const html = readFileSync(path.join(DIST, 'index.html'), 'utf8')
+  const sliderScope = /class="home-slider"[^>]*data-astro-cid-(\w+)/.exec(html)?.[1]
+  assert.ok(sliderScope, 'the built homepage no longer carries the slider’s scope on `.home-slider`, and this case re-scopes a rule to it')
+
+  // **The defect of round 6, as it shipped**: a block declared by a component other than the one
+  // that renders it, so its rules carry that component's scope (`[data-astro-cid-…]`), the
+  // element carries its own, and the rules reach neither. The plant is that edit, made to a block
+  // the reading walks and to every rule that names it — the install block, whose two rules are
+  // both declared by `HomeInstall.astro`, re-scoped to the component that renders the slider.
+  // **Every** rule naming the block has to move for the refusal to fire, which is the reading's
+  // own rule and not a way around it: the refusal says the stylesheet names a block no rule
+  // reaches, and one rule that still reaches it means the block is reached. Round 6 found the
+  // shape on the benefits section when `index.astro` declared the rule; the draft of 2026-10-19
+  // puts that section inside a panel, where the reading does not walk it —
+  // `website/test/slider.mjs` holds the panel's own rule to the scope the section carries — so
+  // the case is written on a block the reading can still see.
+  const installScope = /class="home-install"[^>]*data-astro-cid-(\w+)/.exec(html)?.[1]
+  assert.ok(installScope, 'the built homepage no longer carries a scope on `.home-install`, and this case re-scopes its rules away from it')
+  assert.notEqual(installScope, sliderScope, 'the install block and the slider now carry one scope, and this case tells them apart')
+  const rescoped = TODAY().replaceAll(`[data-astro-cid-${installScope}]`, `[data-astro-cid-${sliderScope}]`)
+  assert.notEqual(rescoped, TODAY(), 'the built homepage’s stylesheet no longer names the install block’s scope, and this case re-scopes the rules that do')
+  // And the other half of the same defect, from the element's side: the block with the scope
+  // attribute its component gives it removed, which is a rule that names a scope nothing on the
+  // element carries. Either way the block is one the stylesheet names and no rule reaches.
+  const unscoped = html.replace(/<section class="home-install"([^>]*)>/, (tag, rest) => `<section class="home-install"${rest.replace(/ data-astro-cid-\w+/g, '')}>`)
+  assert.notEqual(unscoped, html, 'the built homepage’s install block no longer carries a scope attribute, and this case takes one off')
+
+  const cases = [
+    ['every rule naming the block scoped to the component that renders the slider rather than to the one that renders the block', rescoped, html, new RegExp(`scoped to data-astro-cid-${sliderScope}`)],
+    ['a block whose scope attribute is gone', TODAY(), unscoped, /the element carries no scope attribute/],
+  ]
+  for (const [what, css, page, expected] of cases) {
+    const failures = homeRhythmFailures(css, page)
+    assert.equal(failures.length, 1, `${what}: the reading refused ${failures.length} thing(s) where this case plants one:\n  ${failures.join('\n  ') || '(nothing)'}`)
+    assert.match(failures[0], /^the homepage's \.home-install is named by the stylesheet/, `${what}: the refusal does not say which block it is about, or does not begin with it:\n  ${failures[0]}`)
+    assert.match(failures[0], expected, `${what}: the refusal does not name the scopes it read:\n  ${failures[0]}`)
+  }
+
+  // And the two halves restore the reading: the defect is the scope mismatch and not the class,
+  // so a rule that names the class *and* carries the element's scope is in force — the shipped
+  // page passing is what the test above asserts.
+  assert.deepEqual(homeRhythmFailures(TODAY(), html), [], 'the homepage as it ships carries a block its rules cannot reach')
+})
+
+// ---- the watch slot reserves no space until the image lands (review round 3, item 3b) ------
+
+/**
+ * Every way the `fugaro watch` slot breaks the two rules that make it a slot rather than a
+ * placeholder. It is empty until a later task adds the screenshot — that is item 3's own
+ * arrangement and PR #622's image — and the review of round 3 found the cost of getting it
+ * wrong: about 140 px of blank page between the figure and the command bar under it. So:
+ *
+ *   - **nothing draws a box around an empty slot.** `:empty { display: none }` is what takes
+ *     it out of the page while it holds nothing, and any rule that gives the slot itself a
+ *     height, a padding, a border, a background or a margin is the blank rectangle coming
+ *     back. Rules about what is *inside* the slot (a `>` in the selector) are the other half
+ *     and are let through;
+ *   - **the pictures that land in it are sized already.** The slot renders the site's shared
+ *     slider — the same `ScreenshotSlider.astro` the console page's slider is, since
+ *     2026-10-21 — and the rule that sizes a slide's picture is that component's own. This
+ *     reader finds it by the class the slot's own `<img>` elements carry in the built page,
+ *     so the slot's four pictures are held to the same reading whichever component draws them;
+ *   - **and the picture that landed is sized so it scales.** The screenshot is a 1459 x 441
+ *     logical capture of a terminal, and the owner's brief for putting it on the page asks for
+ *     the page at 1280, 768 and 375 px: a fixed width is the picture running past a phone's
+ *     edge — the column is 327 px at 375 — and a fixed height is the same picture squashed into
+ *     a box that is not its shape. So the rule that sizes it takes its width from the column it
+ *     is in (a percentage of it, or a percentage `max-width`) and lets the height follow the
+ *     file's own ratio (`height: auto` or an `aspect-ratio`). This is what "it scales down
+ *     without horizontal scroll" is made of, and it is the same reading `test/base-styles.mjs`
+ *     takes everywhere else: the built stylesheet's own declarations.
+ */
+export function watchSlotFailures(css, html) {
+  const out = []
+  const slot = [...walk(parse(html))].find((el) => el.attrs.get('data-slot') === 'watch-screenshot')
+  if (!slot) return out // the markup's slot is `test/home.mjs`'s subject, not this one's
+  const own = allRules(css).filter((rule) => /\.watch-shot(?![\w-])/.test(rule.selector))
+  const empty = own.find((rule) => rule.selector.includes(':empty'))
+  if (empty === undefined || declarations(empty)['display'] !== 'none') {
+    out.push(
+      "no rule takes the watch screenshot's slot out of the page while it is empty (`.watch-shot:empty { display: none }`): the slot holds nothing until the image lands, and an empty element that still takes space is blank page between the conversation and the command bar (review round 3, item 3b)",
+    )
+  }
+  for (const rule of own) {
+    if (rule.selector.includes(':empty')) continue
+    if (rule.selector.includes('>')) continue // a rule about the image inside the slot
+    const declarations_ = declarations(rule)
+    for (const property of ['height', 'min-height', 'aspect-ratio', 'padding', 'border', 'background', 'margin']) {
+      const value = declarations_[property]
+      if (value === undefined) continue
+      out.push(
+        `\`${rule.selector}\` gives the watch screenshot's slot a \`${property}: ${value}\`${rule.query ? ` inside ${rule.query}` : ''}, and the slot is empty until the image lands: a slot with a box of its own is blank page in the meantime, which is what the review of round 3 measured at about 140 px (review round 3, item 3b)`,
+      )
+    }
+  }
+  // The pictures the slot renders, read from the markup rather than written here: since the
+  // slot became the shared slider it holds a `<img>` per slide, and the rule that sizes them is
+  // the slider's own (`ScreenshotSlider.astro`), which every slide of both pages' sliders
+  // shares. The classes are read from the built page, so a reading that named one would not
+  // follow the component if it renamed its own.
+  const pictures = [...walk(slot)].filter((el) => el.name === 'img')
+  const classes = [
+    ...new Set(pictures.flatMap((el) => (el.attrs.get('class') ?? '').split(/\s+/).filter(Boolean))),
+  ]
+  const sizes = allRules(css).filter((rule) =>
+    classes.some((name) => new RegExp(`\\.${name}(?![\\w-])`).test(rule.selector)),
+  )
+  if (pictures.length === 0 || sizes.length === 0) {
+    out.push(
+      `no rule sizes the pictures the watch screenshot's slot renders (${
+        pictures.length === 0
+          ? 'the slot holds no image at all'
+          : `the slot's images carry ${classes.map((name) => `\`${name}\``).join(', ')} and no rule names ${classes.length === 1 ? 'it' : 'them'}`
+      }): the slot renders the site's shared slider, whose own rule is what sizes a slide's picture, and a picture nothing sizes is a picture laid out at its file's own pixels (review round 3, item 3b)`,
+    )
+    return out
+  }
+  // The width the picture is laid out at, as the widest declaration any of those rules makes
+  // about it: a percentage of the column is one that tracks the column at every viewport.
+  const percents = sizes.flatMap((rule) => {
+    const declared = declarations(rule)
+    return ['width', 'max-width']
+      .map((property) => declared[property])
+      .filter((value) => value !== undefined)
+  })
+  const tracks = percents.find((value) => /^\d+(\.\d+)?%$/.test(value) && Number.parseFloat(value) <= 100)
+  if (tracks === undefined) {
+    out.push(
+      `the rule that sizes the watch screenshot declares ${
+        percents.length === 0 ? 'no width at all' : `\`width\`/\`max-width\` of ${percents.map((v) => `\`${v}\``).join(' and ')}`
+      }, and the picture is a 1459 px-wide capture of a terminal: at 375 px the column it sits in is 327 px, so a width that is not a percentage of that column is the screenshot running past the phone's edge, which is the horizontal scroll the owner's brief for this asset asks the page not to have (owner spec 2026-10-18, item 5)`,
+    )
+  }
+  // And none of the slider's own rules gives the picture a fixed length at all — the check above
+  // reads the declarations there are, and this one reads the ones a breakpoint could add: a
+  // `width` in pixels inside a media query overrides the percentage above at exactly the
+  // viewports that query answers, which is where the overflow would live.
+  for (const rule of sizes) {
+    const declared = declarations(rule)
+    for (const property of ['width', 'max-width', 'min-width', 'height', 'min-height']) {
+      const value = declared[property]
+      if (value === undefined || !/^\d+(\.\d+)?(px|rem|em|ch|vh|vw|pt)$/.test(value)) continue
+      out.push(
+        `\`${rule.selector}\` gives the watch screenshot a \`${property}: ${value}\`${rule.query ? ` inside ${rule.query}` : ''}, and a length in units is a box the picture does not grow out of: the capture is 1459 logical pixels wide in a column that is 327 px at 375, so the picture's own width has to come from the column (a percentage) and its height from the file's ratio (owner spec 2026-10-18, item 5)`,
+      )
+    }
+  }
+  const ratios = sizes.flatMap((rule) => {
+    const declared = declarations(rule)
+    return ['height', 'aspect-ratio']
+      .map((property) => declared[property])
+      .filter((value) => value !== undefined)
+  })
+  if (!ratios.some((value) => value === 'auto' || /^\d+(\.\d+)?\s*\/\s*\d+(\.\d+)?$/.test(value))) {
+    out.push(
+      `the rule that sizes the watch screenshot declares ${ratios.length === 0 ? 'no height at all' : `\`height\`/\`aspect-ratio\` of ${ratios.map((v) => `\`${v}\``).join(' and ')}`}, and the picture's height has to follow the file's own ratio: a fixed height with a width that shrinks with the column is the screenshot squashed out of its shape at every viewport narrower than the one the number was typed at (owner spec 2026-10-18, item 5)`,
+    )
+  }
+  return out
+}
+
+test('the watch slot reserves no space until the image lands, and the image scales in it', () => {
+  // The slot as it ships, first: the cases below are the real rules with one thing taken out,
+  // and a case that never read the shipped stylesheet would pass on a page whose slot had no
+  // rules at all. The homepage is the page the slot is on — the "See it" panel of the slider
+  // (the owner's approved draft of 2026-10-19) — and `watchSlotFailures` returns early on a page
+  // with no slot, so this assertion is also what holds the slot to the artifact.
+  const home = readFileSync(path.join(DIST, 'index.html'), 'utf8')
+  const css = pageCss(home)
+  assert.deepEqual(watchSlotFailures(css, home), [], 'the watch slot as it ships breaks one of the rules the cases below are about')
+
+  // The slot's own rule and the slider's rule that sizes the pictures in it, each planted: the
+  // one that takes an empty slot out of the page, and the one the slot's `<img>` elements are
+  // laid out by.
+  const nothingPainted = css.replace(
+    /\.watch-shot\[data-astro-cid-[a-z0-9]+\]:empty\{display:none\}/,
+    '.watch-shot[data-astro-cid-6fbtmsuw]:empty{display:block}',
+  )
+  assert.notEqual(nothingPainted, css, "this fixture turns the slot's `:empty` rule into one that still draws it, and the built stylesheet no longer carries that rule")
+  const noImageRule = css.replace(/\.screen-image\[data-astro-cid-[a-z0-9]+\]\{[^}]*\}/, '')
+  assert.notEqual(noImageRule, css, "this fixture removes the rule that sizes the pictures in the slot, and the built stylesheet no longer carries one")
+  // And the picture's own sizing, each planted the way the defect reads on the page: a width
+  // in pixels is the screenshot wider than the phone's column, and a height in pixels is the
+  // same screenshot squashed into a box that is not its shape.
+  const fixedWidth = css.replace(/(\.screen-image\[data-astro-cid-[a-z0-9]+\]\{[^}]*?)width:100%/, '$1width:1459px')
+  const fixedHeight = css.replace(/(\.screen-image\[data-astro-cid-[a-z0-9]+\]\{[^}]*?)height:auto/, '$1height:441px')
+  assert.notEqual(fixedWidth, css, "this fixture fixes the watch screenshot's width in pixels, and the built stylesheet no longer sizes it with a percentage")
+  assert.notEqual(fixedHeight, css, "this fixture fixes the watch screenshot's height in pixels, and the built stylesheet no longer lets it follow the file's ratio")
+  // The same defect one breakpoint down: the base rule still tracks the column, and a media
+  // query answers a phone with a fixed width instead — the shape a "just for small screens"
+  // override takes, and the one a check that read only the declarations in front of it would
+  // miss.
+  const imgSelector = /(\.screen-image\[data-astro-cid-[a-z0-9]+\])/.exec(css)?.[1]
+  assert.ok(imgSelector, "this fixture needs the rule that sizes the pictures in the watch slot, and the built stylesheet no longer carries one to read its selector from")
+  const phoneWidth = `${css}\n@media (max-width:40rem){${imgSelector}{width:900px}}`
+  const cases = [
+    ['the slot left in the page while it is empty', nothingPainted, /takes the watch screenshot's slot out of the page/],
+    ['the screenshot fixed in width inside a breakpoint', phoneWidth, /a length in units is a box the picture does not grow out of/],
+    ['a box drawn around the empty slot', `${css}\n.watch-shot{min-height:140px}`, /gives the watch screenshot's slot a `min-height/],
+    ['the rule that sizes the slot\'s pictures removed', noImageRule, /no rule sizes the pictures the watch screenshot's slot renders/],
+    ['the screenshot given a fixed width', fixedWidth, /the picture is a 1459 px-wide capture of a terminal/],
+    ['the screenshot given a fixed height', fixedHeight, /the picture's height has to follow the file's own ratio/],
+  ]
+  for (const [what, stylesheet, expected] of cases) {
+    const failures = watchSlotFailures(stylesheet, home)
+    assert.ok(
+      failures.some((line) => expected.test(line)),
+      `${what}: the refusal did not fire, and this is what it said instead:\n  ${failures.join('\n  ') || '(nothing)'}`,
+    )
+  }
+})
+
+// ---- the homepage's slider: the block the flow's own arithmetic moved to -------------------
+//
+// The homepage's section is the owner's approved draft of 2026-10-19 — one slider with three
+// tabs — and the four-step flow that stood in its place is retired with it (the owner's ruling
+// of 2026-10-20: `ArchitectureDiagram.astro` is deleted, and the gates for what the pages show
+// now take the retired ones' place). The two gates below are the ones the flow's layout carried,
+// read on the block that replaced it, and they are the two claims that were never about the
+// flow: **a step name has to fit the column it is printed in**, and **a block does not change
+// shape with the viewport unless the design says so**.
+//
+// The first is the retired gate's centre of gravity (`.flow-steps`'s four cards in a quarter of
+// the row each, where a card's content box was 100 px wide and "Ephemeral cloud job" did not
+// print in it). The slider's three names are printed in the third track of a grid, beside the
+// step's number and its icon, and the box they get is arithmetic: the page's column, less the
+// gutters between `main` and the list, less the list's own cap (it is an `<ol>`, and `base.css`
+// holds lists to the measure), less the step's padding and border, less the grid's two gaps,
+// less the number's own track and the icon's. Every one of those numbers comes out of the built
+// stylesheet rather than being typed here, so a token that moves moves this with it. The gutter
+// is read the way the flow's arithmetic read it: the declared padding of `main` and of every
+// block between it and the list, *ignoring* the homepage's `main:has(> .hero)` shortcut (which
+// drops `main`'s padding and lets each block put its own back), so the box this works from is
+// narrower than the page's own — the direction a *fits* question should err in.
+//
+// The second is the retired band gate (`flowBandFailures` read the shape in force at six widths
+// and refused a layout inside a query with no viewport width in it). The slider has no bands to
+// read: the tabs are the mechanism and the fragment is the state, so which panel a reader is
+// shown is **never** the viewport's business, and a rule that shows or hides a panel from a
+// media query is a second mechanism the tabs do not know about — a tab that does nothing at
+// some widths, or a panel that appears without the reader asking for it. Both shapes of that
+// defect are refused: a query about the width, and a query the width does not decide (which
+// would show or hide a panel at every width).
+//
+// The names may wrap — that is the first thing the retired gate read, and it is why the limit
+// here is the longest single *word* rather than the longest name — so the one declaration that
+// takes the wrapping away is refused on its own.
+
+/** The widths the slider is read at: a phone, the site's chrome breakpoint, and the desktop
+ *  width the other gates measure the site at. Nothing about the slider answers to the viewport,
+ *  so these are three readings of one layout rather than three bands. */
+const SLIDER_WIDTHS = [360, 768, 1280]
+
+/** The classes between `main` and the slider's step list on one built page: the gutters its own
+ *  width arithmetic has to take off the column. */
+function sliderWrappers(html) {
+  const list = [...walk(parse(html))].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('easy-steps'))
+  const out = []
+  for (let node = list?.parent; node && node.name !== 'main'; node = node.parent) {
+    out.push(...(node.attrs?.get('class') ?? '').split(/\s+/).filter(Boolean))
+  }
+  return out
+}
+
+/**
+ * A list on one built page, as `listMaxWidth` reads it: its name, its classes, its id and every
+ * attribute it carries. The attributes matter because Astro scopes a component's stylesheet by
+ * adding one (`data-astro-cid-…`), and a rule the cascade reader could not answer for is a rule
+ * it has to refuse. `what` is the sentence that says where the list is supposed to be, so the
+ * assertion names the page rather than the class.
+ */
+export function listElement(html, klass, what) {
+  const list = [...walk(parse(html))].find(
+    (el) => (el.name === 'ol' || el.name === 'ul') && (el.attrs.get('class') ?? '').split(/\s+/).includes(klass),
+  )
+  assert.ok(list, `the page carries no <ol class="${klass}">, so the cap on it cannot be read: ${what}`)
+  return {
+    name: list.name,
+    classes: (list.attrs.get('class') ?? '').split(/\s+/).filter(Boolean),
+    id: list.attrs.get('id') ?? null,
+    attrs: list.attrs,
+  }
+}
+
+/** The text of every element of one built page that carries `klass`, in document order. */
+function textOfEach(html, klass) {
+  return [...walk(parse(html))]
+    .filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes(klass))
+    .map((el) => textOf(el).replace(/\s+/g, ' ').trim())
+}
+
+/**
+ * Every way the homepage's slider fails to render the step names it prints, or fails to keep
+ * the panel a reader chose, for one built page's stylesheet and markup. Returns nothing on a
+ * page that carries no slider, so it can be run over every built page.
+ */
+export function sliderLayoutFailures(css, html) {
+  const out = []
+  const rules = allRules(css)
+  const tokens = lengthTokens(css)
+  const declared = (klass, property, width) =>
+    rules
+      .filter((r) => new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector) && appliesAt(width)(r))
+      .map((r) => declarations(r)[property])
+      .filter((value) => value !== undefined)
+      .pop()
+
+  // The names may wrap, at every width: one rule holding them on a line is the defect.
+  for (const rule of rules) {
+    if (!/\.step-name(?![\w-])/.test(rule.selector)) continue
+    if (!(declarations(rule)['white-space'] ?? '').startsWith('nowrap')) continue
+    out.push(
+      `the step name is held on one line (${rule.query ? `inside ${rule.query}: ` : ''}white-space: nowrap), and the name is printed in the third track of a grid beside the step's number and its icon: that track is a fraction of a phone's page, so a name that cannot wrap runs out of the panel rather than onto a second line (the retired four-across gate's first reading, changes spec 2026-10-18 item 4; the owner's ruling of 2026-10-20)`,
+    )
+  }
+
+/** A media query about the viewport's width, in either of the two shapes the site writes:
+ *  the built `(width<=59.25rem)` range form and the classic `(max-width:40rem)`. A query that
+ *  is about something else — `prefers-reduced-motion`, `min-resolution`, `hover` — is not about
+ *  the width, and a `display` inside one is a mechanism that acts at every width. */
+const ABOUT_WIDTH = /(?:min-width|max-width|width\s*[<>]=?)\s*:?\s*[\d.]+(?:rem|px)/
+
+  // The panel a reader is shown is the fragment's, at every width — the tab is a link to the
+  // panel's own id, and the stylesheet's `:target` rules are what shows it. A `display` on a
+  // panel inside a media query is the viewport deciding instead, in one of two shapes: a query
+  // about the width (a band at which the tabs stop working, or a panel appears unasked), or a
+  // query the width does not decide (which does it at every width).
+  for (const rule of rules) {
+    if (!/\.panel(?![\w-])|#home-panel-/.test(rule.selector)) continue
+    const display = declarations(rule)['display']
+    if (display === undefined || !rule.query) continue
+    // **One at-rule is let through, and it is not a band.** `@supports selector(:has(*))` is not
+    // a question about the viewport or about the reader's settings: it asks the browser whether
+    // it can read the one selector that says "while no panel is targeted", and the rule inside it
+    // is the block's own no-script state — the first panel, which is what the tabs and the
+    // fragment already show. It is written that way because a selector list is not forgiving: a
+    // browser that cannot answer `:has()` would drop a list carrying it, and take the panels the
+    // other selectors in that list show down with it (the review of 2026-10-21). Every other
+    // at-rule — a width, `prefers-reduced-motion`, anything else — is still refused below, in
+    // both of the two shapes this read has always refused.
+    if (rule.query === '@supports selector(:has(*))') continue
+    out.push(
+      ABOUT_WIDTH.test(rule.query)
+        ? `the slider's panels are given \`display: ${display}\` inside \`${rule.query}\`, a query about the viewport's width, and the panel a reader is shown is the one the fragment names at every width: a query here is a band in which a tab does nothing, or a panel appears without the reader asking for it (the retired band gate, review round 3 item 3e; the owner's ruling of 2026-10-20)`
+        : `the slider's panels are given \`display: ${display}\` inside \`${rule.query}\`, a query with no viewport width in it, and a panel shown or hidden at no particular width is one shown or hidden at every width — a mechanism the reader's tab does not know about (the retired band gate, review round 3 item 3e; the owner's ruling of 2026-10-20)`,
+    )
+  }
+
+  const names = textOfEach(html, 'step-name')
+  if (names.length === 0) return out
+  const numbers = textOfEach(html, 'step-number')
+  const list = listElement(html, 'easy-steps', "the slider's steps are one list, and the box its names are printed in is read from the list's own cap")
+
+  /**
+   * The inline padding a block declares: `inlineToken` of its `padding` shorthand. The survey
+   * of wrappers above uses the class's own last rule rather than a rule in force at a width,
+   * which is an over-estimate when a breakpoint gives the block a smaller gutter — the
+   * direction to be wrong in, since the box this reads is a floor.
+   */
+  const wrapperPad = sliderWrappers(html).reduce((sum, klass) => {
+    const value = rules
+      .filter((r) => new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector))
+      .map((r) => toPx(inlineToken(declarations(r)['padding']), tokens))
+      .filter((px) => !Number.isNaN(px))
+      .pop()
+    return sum + (value ?? 0)
+  }, 0)
+
+  /** `main`'s gutter at a width: the last of its rules that applies there, with the homepage's
+   *  `main:has(…)` shortcut left out on purpose (see the section comment). */
+  const mainPad = (width) =>
+    rules
+      .filter((r) => /(^|[,\s])main(?![\w-])/.test(r.selector) && !r.selector.includes(':has(') && appliesAt(width)(r))
+      .map((r) => toPx(inlineToken(declarations(r)['padding']), tokens))
+      .filter((px) => !Number.isNaN(px))
+      .pop() ?? 0
+
+  for (const width of SLIDER_WIDTHS) {
+    const columns = declared('easy-step', 'grid-template-columns', width)
+    const nameSize = toPx(declared('step-name', 'font-size', width), tokens)
+    const numberSize = toPx(declared('step-number', 'font-size', width), tokens)
+    const iconBox = toPx(declared('step-icon', 'width', width), tokens)
+    const columnGap = toPx(inlineToken(declared('easy-step', 'column-gap', width) ?? declared('easy-step', 'gap', width)), tokens)
+    const stepPad = toPx(inlineToken(declared('easy-step', 'padding', width)), tokens)
+    const stepBorder = toPx(firstToken(declared('easy-step', 'border', width)), tokens)
+    const pageMax = tokens.get('page-max')
+
+    // Every number the arithmetic below is made of, refused here when this reader could not
+    // turn it into pixels rather than carried into the sums: `NaN` is false against every
+    // comparison below, so a length read as `NaN` makes the refusals silent — the panel would
+    // be reported as fitting because the check stopped measuring it.
+    const unreadable = [
+      ['the grid the step is laid out in (`.easy-step`’s grid-template-columns)', columns],
+      ['the size the step names are set in (`.step-name`’s font-size)', nameSize],
+      ['the size the step number is set in (`.step-number`’s font-size)', numberSize],
+      ['the icon’s track (`.step-icon`’s width)', iconBox],
+      ['the gap between the tracks (`.easy-step`’s column-gap)', columnGap],
+      ['the step’s padding (`.easy-step`’s padding)', stepPad],
+      ['the step’s border (`.easy-step`’s border)', stepBorder],
+      ['the page’s own ceiling (`--page-max`)', pageMax],
+    ].filter(([, value]) => value === undefined || (typeof value === 'number' && Number.isNaN(value)))
+    if (unreadable.length > 0) {
+      out.push(
+        `at ${width} px the slider's arithmetic cannot be read: ${unreadable.map(([what]) => what).join(', ')} is not a length this check can turn into pixels (or, for the grid, no track list at all), and a length it cannot read is a length nothing checked (\`NaN\` passes every comparison below) — teach \`website/test/base-styles.mjs\` the shape, or write the declaration in one it reads (changes spec 2026-10-18, item 4; the owner's ruling of 2026-10-20)`,
+      )
+      continue
+    }
+    if (numbers.length === 0) {
+      out.push(
+        `the slider prints step names and no step number, and the number is the first track of the grid the name is printed in: what the number's own track takes out of the name cannot be read from a page that carries none (the owner's ruling of 2026-10-20)`,
+      )
+      continue
+    }
+
+    // The name's own track: the one the stylesheet puts the name in, and the one that has to
+    // be the grid's remaining room. An `auto` (or `max-content`) track is sized by the name
+    // itself, so a name wider than the page does not wrap — it widens the grid past the
+    // gutter, which is the same defect the retired gate measured, told the other way round.
+    const tracks = splitTop(columns, ' ')
+    const last = tracks[tracks.length - 1] ?? ''
+    if (tracks.length < 3) {
+      out.push(
+        `at ${width} px the step is a grid of \`${columns}\`, and the step's number, its icon and its name are three tracks: a grid with ${tracks.length} of them does not place the name beside the other two (the owner's ruling of 2026-10-20)`,
+      )
+    } else if (!/fr\)?\s*$/.test(last) || !/^minmax\(\s*0/.test(last)) {
+      out.push(
+        `at ${width} px the name's track of the step's grid is \`${last}\` (\`grid-template-columns: ${columns}\`), and the name's track is the grid's remaining room — \`minmax(0, 1fr)\`: a track sized by the name itself is a name wider than the page widening the grid past the column it is in rather than wrapping inside it (the retired four-across gate's card arithmetic, told the other way round; changes spec 2026-10-18 item 4; the owner's ruling of 2026-10-20)`,
+      )
+    }
+
+    // The box the name is printed in: the page's column — the viewport, capped by `--page-max`
+    // — less `main`'s gutter and the gutters of the blocks between it and the list, less the
+    // cap the list itself carries, less the step's own padding and border, less the two gaps,
+    // less the number's track (the widest number the page prints, at the size the stylesheet
+    // sets it) and the icon's.
+    const cap = listMaxWidth(css, width, list)
+    if (cap.unreadable) {
+      out.push(
+        `at ${width} px the slider's list is reached by a rule this check cannot read — ${cap.unreadable} — and a cap nobody can read is a cap nobody checked: teach \`website/test/base-styles.mjs\`'s cascade reader the construct, or write the rule in a shape it reads (the owner's ruling of 2026-10-20)`,
+      )
+      continue
+    }
+    const numberBox = Math.max(...numbers.map((number) => textWidth(number, numberSize)))
+    const box = Math.min(Math.min(width, pageMax) - 2 * mainPad(width) - 2 * wrapperPad, cap.px)
+    const room = box - 2 * stepPad - 2 * stepBorder - 2 * columnGap - numberBox - iconBox
+    const needs = textWidth(longestWord(names), nameSize)
+    if (room < needs) {
+      out.push(
+        `at ${width} px the slider prints its step names in ${Math.round(room)} px (the column is ${Math.round(box)} px, less the step's padding and border, the grid's two gaps, the number's track at ${numberBox.toFixed(1)} px and the icon's ${iconBox} px), and the longest word of the three names it prints (${JSON.stringify(longestWord(names))}, at ${nameSize} px) needs ${Math.round(needs)} px: a name is free to wrap here, so the word is what has to fit, and a word that does not fit runs out of the panel (the retired four-across gate's name arithmetic, changes spec 2026-10-18 item 4; the owner's ruling of 2026-10-20)`,
+      )
+    }
+  }
+  return out
+}
+
+test('the slider prints its step names in the room it gives them, and answers to the fragment', () => {
+  // The homepage is the page the slider is on (the owner's approved draft of 2026-10-19) and
+  // the pages that carry no slider are not this check's subject — `sliderLayoutFailures`
+  // returns early on them — so a homepage without one has to be refused rather than passed.
+  const home = readFileSync(path.join(DIST, 'index.html'), 'utf8')
+  assert.ok(/class="[^"]*easy-steps/.test(home), 'the homepage carries no `easy-steps` list, and the slider is where the homepage\'s three steps are (the owner\'s approved draft of 2026-10-19)')
+  assert.ok(textOfEach(home, 'step-name').length > 0, 'the homepage prints no `step-name`, and the slider\'s first panel is the three steps of using Fugaro')
+  assert.deepEqual(sliderLayoutFailures(pageCss(home), home), [], 'the slider as it ships breaks one of the rules the cases below are about')
+  for (const { rel, html } of builtPages()) {
+    if (rel === 'index.html') continue
+    assert.deepEqual(sliderLayoutFailures(pageCss(html), html), [], `${rel} carries no slider and the check's subject there is the panels it does carry`)
+  }
+})
+
+test('every slider refusal fires on the defect it names', () => {
+  const home = readFileSync(path.join(DIST, 'index.html'), 'utf8')
+  const css = pageCss(home)
+  /** The page's own rule for a selector, as the built stylesheet writes it (Astro scopes a
+   *  component's rules with `[data-astro-cid-…]`, so the fixture edits the rule the page
+   *  carries rather than one written here). */
+  const ruleText = (selector) => {
+    const pattern = new RegExp(`(?:^|[},])\\s*(${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})(\\[[^\\]]*\\])?\\{([^}]*)\\}`)
+    const match = pattern.exec(css)
+    assert.ok(match, `the homepage's stylesheet carries no \`${selector}\` rule, and the cases below are about the page's own rules`)
+    return match[0]
+  }
+  const change = (selector, from, to) => {
+    const text = ruleText(selector)
+    assert.ok(text.includes(from), `\`${selector}\` no longer declares ${JSON.stringify(from)}, and this fixture replaces it`)
+    return css.replace(text, text.replace(from, to))
+  }
+  const cases = [
+    // The name held on one line: the retired gate's first reading, and the one declaration that
+    // takes the wrapping away.
+    ['the step name held on one line', `${css}\n.step-name{white-space:nowrap}`, /is held on one line/],
+    // A band of width at which a panel is shown whatever the fragment says: the tabs stop
+    // working there, and the panel appears unasked.
+    [
+      'a panel shown inside a query about the width',
+      `${css}\n@media (max-width:40rem){.panel{display:block}}`,
+      /inside `@media \(max-width:40rem\)`, a query about the viewport's width/,
+    ],
+    // And the same defect in a query the width does not decide, which does it at every width.
+    [
+      'a panel hidden inside a query with no width in it',
+      `${css}\n@media (prefers-reduced-motion:reduce){.panel{display:none}}`,
+      /inside `@media \(prefers-reduced-motion:reduce\)`, a query with no viewport width in it/,
+    ],
+    // The name's track sized by the name itself, so a long name widens the grid rather than
+    // wrapping in it.
+    [
+      'the name’s track sized by the name',
+      change('.easy-step', 'grid-template-columns:auto auto minmax(0,1fr)', 'grid-template-columns:auto auto auto'),
+      /the name's track of the step's grid is `auto`/,
+    ],
+    // A grid that does not place the name beside the other two at all.
+    [
+      'a grid with two tracks',
+      change('.easy-step', 'grid-template-columns:auto auto minmax(0,1fr)', 'grid-template-columns:auto minmax(0,1fr)'),
+      /are three tracks: a grid with 2 of them/,
+    ],
+    // The box the names are printed in squeezed to a strip: the list capped far below its own
+    // measure, which is the cap a browser would give the names.
+    ['the list capped into a strip', change('.easy-steps', 'max-width:var(--measure)', 'max-width:6rem'), /the longest word of the three names it prints/],
+    // A track this reader cannot measure: the icon in `em`s, which is a length `toPx` refuses
+    // rather than a length it reads as nothing.
+    ['an icon track in a unit this check cannot read', change('.step-icon', 'width:28px', 'width:2em'), /arithmetic cannot be read/],
+  ]
+  for (const [what, stylesheet, expected] of cases) {
+    assert.notEqual(stylesheet, css, `${what} was not planted: the fixture's pattern did not match the built stylesheet`)
+    const failures = sliderLayoutFailures(stylesheet, home)
+    assert.ok(
+      failures.some((line) => expected.test(line)),
+      `${what}: the refusal did not fire, and this is what it said instead:\n  ${failures.join('\n  ') || '(nothing)'}`,
+    )
+  }
+})
+
+// ---- a copy control sits at the right of the block it belongs to (base.css) --------------
+
+/**
+ * Every `[data-copy]` block on one built page that holds both a control and a command, as
+ * `{ klass, display, direction, atStart }`: the blocks "where the control is drawn" is a
+ * question at all. A block carrying one of the two — or a command inside its own control —
+ * is `test/copy.mjs`'s subject, not this one, and is skipped.
+ *
+ * `atStart` is whether the control ends up first along the row's main axis — from `order`
+ * where the two differ, and from the markup where they are equal, which is the cascade a
+ * browser applies. The classes are read off the built page and the declarations off the built
+ * stylesheet, so the check follows the block rather than a list of block names kept here.
+ */
+export function copyBlocks(css, html, width = 80 * 16) {
+  const rules = allRules(css)
+  const classesOf = (el) => (el.attrs.get('class') ?? '').split(/\s+/).filter(Boolean)
+
+  /** The declarations in force for an element with these classes at a width, last one winning. */
+  const effective = (classes) => {
+    const out = {}
+    for (const rule of rules) {
+      if (!appliesAt(width)(rule)) continue
+      const selects = rule.selector.split(',').map((selector) => selector.trim())
+      if (!selects.some((selector) => classes.some((klass) => new RegExp(`(^|[\\s>+~])\\.${klass}(?![\\w-])`).test(selector)))) continue
+      Object.assign(out, declarations(rule))
+    }
+    return out
+  }
+
+  const blocks = []
+  for (const block of [...walk(parse(html))].filter((el) => el.attrs.has('data-copy'))) {
+    const control = [...walk(block)].find((el) => classesOf(el).includes('command-controls'))
+    const insideControl = (el) => {
+      for (let node = el.parent; node && node !== block; node = node.parent) if (node === control) return true
+      return false
+    }
+    const command = [...walk(block)].find((el) => (el.name === 'pre' || el.name === 'code') && !insideControl(el))
+    if (!control || !command) continue // the markup's shape is `copy.mjs`'s subject, not this one
+
+    const layout = effective(classesOf(block))
+    const display = layout['display'] ?? 'block'
+    const direction = layout['flex-direction'] ?? 'row'
+
+    const orderOf = (el) => {
+      const value = effective(classesOf(el))['order']
+      return value === undefined ? 0 : Number(value)
+    }
+    const order = [...walk(block)]
+    const atStart =
+      orderOf(control) === orderOf(command)
+        ? order.indexOf(control) < order.indexOf(command)
+        : orderOf(control) < orderOf(command)
+    blocks.push({ klass: classesOf(block)[0] ?? '(unclassed)', display, direction, atStart })
+  }
+  return blocks
+}
+
+/** The command blocks on one built page that draw their control and their command on one row. */
+export function sideBySideCopyBlocks(css, html, width = 80 * 16) {
+  return copyBlocks(css, html, width).filter((block) => block.display === 'flex' && block.direction.startsWith('row'))
+}
+
+/**
+ * Every command block on one built page that draws its control on the wrong side of the
+ * command it belongs to. `base.css` states the rule — a command block is one row, with the
+ * control beside the command at its top right — and every block on the site follows it by
+ * reading one rule: `.command-block` is `display: flex` with `flex-direction: row-reverse`,
+ * because the control comes **first in the markup** (it is `src/lib/copy-control.mjs`'s,
+ * shared with every other block) and a plain row would therefore draw the control at the left
+ * of the command and push the command to the right edge. `order: 1` on the control says the
+ * same thing from the other end and is let through.
+ *
+ * The review of round 3 (item 3c) is why this is one rule and not two: the install cards used
+ * to put the control in a row *above* their command while the watch bar put it beside
+ * one, and two placements for one control read as two different components. So the blocks
+ * this returns are now every command block on the page, and a block that stops sharing the
+ * row is a second placement the case below fails on rather than a shape this rule ignores.
+ */
+export function copyControlPlacementFailures(css, html) {
+  const out = []
+  for (const { klass, direction, atStart } of sideBySideCopyBlocks(css, html)) {
+    const reversed = direction === 'row-reverse'
+    if (reversed ? !atStart : atStart) {
+      out.push(
+        `the copy control of a .${klass} block is drawn before the command it belongs to (display: flex, flex-direction: ${direction}, and the control is first in the markup), where base.css puts the control beside the command at its top right and every command block on the site reads that way (changes spec 2026-10-18, item 3c)`,
+      )
+    }
+  }
+  return out
+}
+
+test('every command block that shares a row with its control draws the control at the right', () => {
+  const failures = []
+  for (const { rel, html } of builtPages()) failures.push(...copyControlPlacementFailures(pageCss(html), html).map((line) => `${rel}: ${line}`))
+  assert.deepEqual(failures, [], `a command block draws its control on the wrong side:\n  ${failures.join('\n  ')}`)
+})
+
+test('the copy-control placement rule reads every command block, and refuses the one that shipped wrong', () => {
+  const home = readFileSync(path.join(DIST, 'index.html'), 'utf8')
+  const css = TODAY()
+  const blocks = copyBlocks(css, home)
+  const sideBySide = sideBySideCopyBlocks(css, home)
+  assert.equal(
+    blocks.length,
+    2,
+    `the homepage carries ${blocks.length} command block(s) with a control and a command, and it renders two: the install block at the foot of the page and the watch block in the slider's third panel (the owner's approved draft of 2026-10-19; changes spec 2026-10-18, items 3 and 4)`,
+  )
+  // One placement for all of them: the review of round 3 found the install cards putting the
+  // control above their command while the watch bar put it beside one, so a block that does
+  // not share the row any more is that defect coming back, not a shape this rule skips.
+  assert.deepEqual(
+    sideBySide.map((block) => block.klass).sort(),
+    blocks.map((block) => block.klass).sort(),
+    `the homepage's command blocks ${JSON.stringify(blocks.map((block) => `${block.klass}:${block.display}/${block.direction}`))} do not all read the same way, and one control has one placement on this site (changes spec 2026-10-18, item 3c)`,
+  )
+  assert.ok(
+    sideBySide.some((block) => block.klass === 'watch-block' && block.direction === 'row-reverse' && block.atStart),
+    `the check finds no side-by-side command block on the homepage (it found ${JSON.stringify(sideBySide)}), so the cases below would pass without reading the block they are about (changes spec 2026-10-18, item 3)`,
+  )
+  assert.ok(
+    sideBySide.some((block) => block.klass === 'command-block'),
+    `the check does not read the install block's own markup (it found ${JSON.stringify(sideBySide)}), and item 3c is about the placement inside it`,
+  )
+  assert.deepEqual(copyControlPlacementFailures(css, home), [], 'the placement rule fails on the built homepage, so the case below is not proving what it names')
+
+  // The defect as it shipped in the watch bar: a plain row, so the control — first in the
+  // markup — is drawn at the left of the command. `.command-block`'s `row-reverse` is the
+  // site's only one, and both of the homepage's blocks carry that class, so removing it leaves
+  // every command block on the page a plain row and the check has to refuse all of them rather
+  // than the watch block alone.
+  const notReversed = plant('flex-direction:row-reverse;', '')
+  const failures = copyControlPlacementFailures(notReversed, home)
+  assert.equal(
+    failures.length,
+    sideBySide.length,
+    `removing the one \`row-reverse\` left ${sideBySide.length} command block(s) drawing their control first, and the check refused ${failures.length}:\n  ${failures.join('\n  ') || '(nothing)'}`,
+  )
+  assert.ok(
+    failures.some((f) => /drawn before the command it belongs to/.test(f)),
+    `a row that is not reversed was not refused; the check said:\n  ${failures.join('\n  ') || '(nothing)'}`,
+  )
+
+  // And the other way of saying the same thing, which the check has to let through: the row
+  // left alone, with the control ordered after the command. `order` is what puts the control
+  // at main-end, which in a plain row is the right — the arrangement base.css asks for.
+  const ordered = notReversed.replace('.command-controls{justify-content:flex-end;', '.command-controls{justify-content:flex-end;order:1;')
+  assert.ok(ordered !== notReversed, 'this fixture moves the control to the end of the row with `order: 1` on .command-controls, and the built stylesheet no longer carries that rule')
+  assert.deepEqual(
+    copyControlPlacementFailures(ordered, home),
+    [],
+    'a row whose control is ordered after its command is refused, and that is how base.css states the control belongs on the right',
+  )
+})
+
+// ---- an install command wraps rather than being cut off (changes spec item 4) ------------
+
+/**
+ * Every way the homepage's install commands can be cut off rather than read, for one built
+ * page's stylesheet.
+ *
+ * The commands are `website/data/install.yaml`'s, and one of them is a single 44-character
+ * token: `go install github.com/dimipaun/fugaro/cmd/fugaro@latest`. Set the way a command is
+ * usually set — `white-space: pre` — that token runs past the card it sits in, and the reader
+ * gets `…@late`: the defect the review of this branch found on the homepage at both sizes. So
+ * the rule here is the one the page follows, and it has two parts, because a wrapping
+ * declaration alone is not enough for a line with no spaces in it:
+ *
+ *   - **the command wraps** — `pre-wrap`, `pre-line` or the default rather than `pre` or
+ *     `nowrap` — so its own line structure is kept and a line longer than the card still
+ *     comes round;
+ *   - **a long token has somewhere to break** — `overflow-wrap: anywhere`/`break-word`, or
+ *     `word-break: break-all` — because `github.com/dimipaun/fugaro/cmd/fugaro@latest` has no
+ *     break opportunity a wrapping algorithm has to take, and a token with nowhere to break
+ *     runs past the card's edge however willing the block is to wrap.
+ *
+ * A block that scrolls instead — `white-space: pre` with `overflow-x: auto` — is refused
+ * rather than allowed: whether a reader can see that a command block scrolls (a fade, or the
+ * overlay scrollbars most platforms draw only while scrolling) is a rendered question no
+ * hermetic check can answer, and a command a reader cannot tell is incomplete is the defect
+ * the rule is about.
+ */
+export function installCommandFailures(css) {
+  const out = []
+  // Every rule that styles a command block's own `<pre>`, **wherever the block is**. The
+  // homepage's install commands carry a class of their own, and every other command block on the
+  // site — Getting Started's install cards, the slider's watch command — is reached by
+  // `base.css`'s `.command-block > pre`. Reading only the homepage's class left the site's other
+  // install commands held by nothing, which is where this rule's own defect then reappeared: the
+  // `pre` gives up the width of the copy control beside it, so the page whose whole job is the
+  // install pushed `go install …@latest` out of its card first.
+  const rules = allRules(css).filter(
+    (rule) => /\.home-install-command(?![\w-])/.test(rule.selector) || /\.command-block\s*>\s*pre(?![\w-])/.test(rule.selector),
+  )
+  if (rules.length === 0) return out
+  const declared = (property) => rules.map(declarations).map((d) => d[property]).filter(Boolean).pop() ?? ''
+  // A `<pre>`'s own default when the stylesheet declares nothing: the command keeps the single
+  // line it is written on, which is what the first refusal below is about.
+  const whiteSpace = declared('white-space') || 'pre'
+  const wrap = [declared('overflow-wrap'), declared('word-break')]
+
+  if (!whiteSpace.split(/\s+/).some((value) => value === 'pre-wrap' || value === 'pre-line' || value === 'normal')) {
+    out.push(
+      `the install command is set with white-space: ${whiteSpace}, which keeps every line the command is written on and does not wrap it: \`go install github.com/dimipaun/fugaro/cmd/fugaro@latest\` is one 44-character token in a card near 22 rem wide, so a block that cannot wrap it either clips it at the card's edge or scrolls it out of sight (changes spec 2026-10-18, item 4)`,
+    )
+  }
+  if (!wrap.includes('anywhere') && !wrap.includes('break-word') && !wrap.includes('break-all')) {
+    out.push(
+      `the install command wraps but nothing breaks its long token (overflow-wrap: ${declared('overflow-wrap') || '(nothing declared)'}, word-break: ${declared('word-break') || '(nothing declared)'}): \`go install github.com/dimipaun/fugaro/cmd/fugaro@latest\` has no break opportunity a wrapping algorithm has to take, and a token with nowhere to break runs past the card's edge (changes spec 2026-10-18, item 4)`,
+    )
+  }
+  return out
+}
+
+test('every command block on the site wraps rather than being cut off', () => {
+  const failures = []
+  let checked = 0
+  for (const { rel, html } of builtPages()) {
+    // A command block *element*: the marker is the `[data-copy]` attribute the control needs,
+    // written the way markup writes it — the stylesheet every page carries names the class and
+    // the attribute, so a substring test on either would say every page has a command block.
+    if (!html.includes('data-copy ')) continue
+    checked += 1
+    failures.push(...installCommandFailures(pageCss(html)).map((line) => `${rel}: ${line}`))
+  }
+  assert.ok(checked > 0, 'no built page carries a command block, and the homepage offers the two ways to install the CLI (changes spec 2026-10-18, item 4)')
+  assert.deepEqual(failures, [], `a command is cut off rather than read:\n  ${failures.join('\n  ')}`)
+})
+
+test('every command-block refusal fires on the defect it names', () => {
+  const css = TODAY()
+  assert.ok(css.includes('command-block'), 'the homepage carries no command block, so the cases below would pass without reading the block they are about')
+  assert.deepEqual(installCommandFailures(css), [], 'the install-command rule fails on the built stylesheet, so the cases below are not proving what they name')
+
+  // The defect as it shipped: a `<pre>` that keeps the command on its line and scrolls the
+  // rest out of the card, which is the `…@late` the review of this branch found.
+  const clipped = css.replace('white-space:pre-wrap;overflow-wrap:anywhere', 'white-space:pre;overflow-x:auto')
+  assert.notEqual(clipped, css, 'this fixture rewrites the install command’s own declarations, and the built stylesheet no longer carries them')
+  const clippedFailures = installCommandFailures(clipped)
+  assert.ok(
+    clippedFailures.some((f) => /does not wrap it/.test(f)),
+    `the command that shipped clipped was not refused; the check said:\n  ${clippedFailures.join('\n  ') || '(nothing)'}`,
+  )
+
+  // And the other half of the rule: a block that wraps but leaves the long token nowhere to
+  // break, which is the same defect one declaration later.
+  const unbreakable = css.replace('white-space:pre-wrap;overflow-wrap:anywhere', 'white-space:pre-wrap')
+  assert.notEqual(unbreakable, css, 'this fixture rewrites the install command’s own declarations, and the built stylesheet no longer carries them')
+  const unbreakableFailures = installCommandFailures(unbreakable)
+  assert.ok(
+    unbreakableFailures.some((f) => /nothing breaks its long token/.test(f)),
+    `a command that wraps without a break opportunity was not refused; the check said:\n  ${unbreakableFailures.join('\n  ') || '(nothing)'}`,
+  )
+
+  // **And the same defect on a page the homepage's class never reached**, which is the review's
+  // finding: Getting Started's install cards carry no `home-install-command` — the assertion
+  // below says so — so a check that read only that class returned nothing for the page whose
+  // whole job is the install, while `base.css`'s `.command-block > pre` is the rule that decides
+  // every command on it. Planting the clipped `pre` there is refused now, and would not have
+  // been refused before the widening.
+  const install = pageCss(readFileSync(path.join(DIST, 'getting-started', 'index.html'), 'utf8'))
+  assert.ok(!install.includes('.home-install-command'), 'the install page carries the homepage’s install-command class, so this case would not prove the widening it is about')
+  const installClipped = install.replace('white-space:pre-wrap;overflow-wrap:anywhere', 'white-space:pre;overflow-x:auto')
+  assert.notEqual(installClipped, install, 'this fixture rewrites the command block’s own declarations, and the built stylesheet no longer carries them')
+  const installFailures = installCommandFailures(installClipped)
+  assert.ok(
+    installFailures.some((f) => /does not wrap it/.test(f)),
+    `the install page's clipped command was not refused; the check said:\n  ${installFailures.join('\n  ') || '(nothing)'}`,
+  )
+})
+
 // ---- the menu (P3, D182) ---------------------------------------------------------------
 
 // The rule the menu is held to, as a function over one built page, so that each part of it
 // can be proved by a fixture below rather than only observed on today's markup. It is the
-// contract RF4 names, rewritten for the two-level menu: the nav is still a labelled landmark,
-// its top-level items are links or `<summary>` elements, every link in it is keyboard
-// reachable, and the page still carries exactly one `aria-current="page"` — on the wordmark
-// when the page being read is the home page (D182 makes the logo the link home), on the menu
-// link otherwise.
+// contract RF4 names, rewritten twice: once for the two-level menu (the nav is a labelled
+// landmark, its top-level items are `<details>` disclosures, every link in it is keyboard
+// reachable, and the page carries exactly one `aria-current="page"` — on the menu link to the
+// route being read, which since the owner's feedback of 2026-10-21 is the menu's own Home link
+// on the home page and never the wordmark, which links the same route and carries no mark of
+// its own), and once for the owner's brief of 2026-10-19 (item 1), which took the single
+// "Menu" toggle away: the group labels are the menu, nothing stands in front of them,
+// and a group's list of links is the `<details>`'s own child, because a closed `<details>` is
+// the one thing that hides it. **The feedback of 2026-10-21 (item 2) put Home in front of the
+// groups** — "I think we need a 'Home' as the first menu" — so the menu's list opens
+// with a link to `/` named `Home`, on every viewport, and the groups follow it. **And the same
+// day's feedback dropped the Reference group** — Console under *Product*, Docs and Changelog
+// under *Project* — so the menu is two groups, and the rule below says so.
+//
+// The wordmark's text is checked here too, beside the menu it has to share a row with: the
+// phone breakpoint takes `.site-wordmark-name` out of that row, so a wordmark whose text is
+// loose in the link is a row that overflows at 375 px with nothing in the stylesheet able to
+// say which part of it gives way.
 
 /** The route a built page's relative path serves. */
 function routeOf(rel) {
@@ -271,47 +2727,120 @@ export function navFailures(html, rel) {
   const nav = navs[0]
   if (!(nav.attrs.get('aria-label') ?? '').trim()) fail('the section nav has an empty label: a screen reader lists landmarks by name')
 
-  // The drawer: the toggle and the panel it opens. The panel is the toggle's next element
-  // sibling, which is the structure `base.css`'s sibling combinator reads — if it stops being
-  // one, the wide layout still works and the narrow drawer silently never opens.
-  const elements = nav.children.filter((child) => child.name !== undefined)
-  const drawer = [...walk(nav)].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-nav-drawer'))
-  const panel = [...walk(nav)].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-nav-panel'))
-  if (!drawer) fail('the nav has no drawer toggle (a <details class="site-nav-drawer">): a narrow viewport shows the menu behind one control')
-  if (!panel) fail('the nav has no panel (a .site-nav-panel) holding the groups')
-  if (drawer && panel && (panel.parent !== nav || elements.indexOf(panel) !== elements.indexOf(drawer) + 1)) {
-    fail("the panel is not the drawer toggle's next sibling, which is the wire base.css shows it with: as a child of the toggle the narrow drawer would never open, because a closed <details> hides its own children")
+  // The drawer the menu replaced. A toggle standing in front of the labels is the thing
+  // the owner's brief of 2026-10-19 took away, and its markup coming back — in any of the three
+  // parts it was made of — is a control between the reader and a section they can already see.
+  for (const gone of ['site-nav-drawer', 'site-nav-toggle', 'site-nav-panel']) {
+    if (all.some((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes(gone))) {
+      fail(`the page still carries a .${gone}: the menu is the group labels in the header's row, with no toggle in front of them`)
+    }
   }
-  if (drawer) {
-    const summary = drawer.children.find((el) => el.name === 'summary')
-    if (!summary || !textOf(summary).trim()) fail('the drawer toggle is not a <summary> with words on it')
-    // The panel is the toggle's sibling rather than its child, so nothing but this attribute
-    // tells assistive technology which region the toggle's expanded state is about.
-    const controls = summary?.attrs.get('aria-controls') ?? ''
-    if (!panel || !controls || panel.attrs.get('id') !== controls) {
-      fail(`the drawer toggle's aria-controls is ${JSON.stringify(controls)} and the panel's id is ${JSON.stringify(panel?.attrs.get('id') ?? '')}: the panel is outside the <details>, so the toggle has to name the region it opens`)
+  // And nothing names a region outside the nav any more: the one `aria-controls` the menu had
+  // was the toggle's, naming the panel that was its sibling rather than its child. A group's
+  // list is its own `<details>`'s child, so a control that names something else is a control
+  // describing a structure the menu no longer has.
+  for (const el of walk(nav)) {
+    const controls = el.attrs.get('aria-controls')
+    if (controls !== undefined) {
+      fail(`a <${el.name}> in the nav names ${JSON.stringify(controls)} with aria-controls: nothing the menu draws is outside the control that opens it`)
     }
   }
 
-  // The menu itself: groups of a summary and a list of links. Every top-level item is a link
-  // or a summary — a plain span that looks like a control is one a keyboard cannot open.
-  const groups = panel ? [...walk(panel)].filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-nav-group')) : []
-  if (panel && groups.length === 0) fail('the menu has no groups: the nav is three groups of three (D182)')
+  // The menu itself: the way home and then the groups, as a list directly in the nav.
+  // Nothing between the nav and the items is what there is to say about a narrow viewport — the
+  // items are the menu.
+  //
+  // **Home is the first item** (the owner's feedback of 2026-10-21: "I think we need a 'Home'
+  // as the first menu"), and it is a link rather than a group: home is one page and has nothing
+  // under it, so a disclosure in front of it would be a control that opens nothing. It is read
+  // off the list's own children and not off the whole nav, because "first" is a fact about the
+  // order a reader meets them in, which is the order they are drawn in.
+  const items = [...walk(nav)]
+    .filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-nav-groups'))
+    .flatMap((list) => list.children.filter((child) => child.name !== undefined))
+  const [home] = items
+  const homeLink = (home?.attrs.get('class') ?? '').split(/\s+/).includes('site-nav-home')
+    ? home.children.find((child) => child.name === 'a')
+    : undefined
+  if (homeLink === undefined) {
+    fail("the menu does not open with a Home link (a .site-nav-home item holding an <a>): the owner's feedback of 2026-10-21 asks for Home as the first item of the menu, on a phone and on a wide viewport alike")
+  } else {
+    const href = homeLink.attrs.get('href') ?? ''
+    if (href !== '/') fail(`the menu's Home link points at ${JSON.stringify(href)}, and the way home is "/" (the owner's feedback of 2026-10-21)`)
+    const name = textOf(homeLink).trim()
+    if (name !== 'Home') fail(`the menu's first item is named ${JSON.stringify(name)}, and the owner's feedback of 2026-10-21 names it "Home"`)
+    if (home.children.some((child) => child.name === 'ul' || child.name === 'details')) {
+      fail('the menu\'s Home item holds a list or a disclosure: home is one page, and the item in front of the groups is a link')
+    }
+  }
+  const groups = [...walk(nav)].filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-nav-group'))
+  if (items.length !== groups.length + 1) {
+    fail(`the menu's list carries ${items.length} item(s): the Home link and then one item per group, which is ${groups.length + 1} for the ${groups.length} group(s) the menu draws — an item that is neither Home nor a group is a section the menu does not have (D182; the owner's feedback of 2026-10-21)`)
+  }
+  // Two groups, not three: D182 wrote three, and the owner's feedback of 2026-10-21 dropped the
+  // Reference group — Console under Product, Docs and Changelog under Project.
+  if (groups.length !== 2) fail(`the menu carries ${groups.length} groups: the nav is two groups (Product and Project) since the owner's feedback of 2026-10-21 dropped the Reference group (D182)`)
+  // The count is not the contract on its own: the two groups are **named**, and each lists the
+  // routes the owner's feedback of 2026-10-21 leaves it with. A rename in `NAV_GROUPS`
+  // (Project → Company) keeps the count at two and would leave every gate green while D182's
+  // amendment, the fixture below and check 70a's steps all tell the reader to look for
+  // "Product" and "Project" — so the names and the routes are held here, with the count.
+  const GROUPS_WANTED = [
+    ['Product', ['/how-it-works/', '/why-gcp/', '/getting-started/', '/caps-and-costs/', '/console/', '/mobile/']],
+    ['Project', ['/docs/', '/security/', '/faq/', '/community/', '/changelog/']],
+  ]
+  groups.forEach((group, at) => {
+    const wanted = GROUPS_WANTED[at]
+    if (wanted === undefined) return
+    const [label, routes] = wanted
+    const details = group.children.find((el) => el.name === 'details')
+    const summary = details && details.children.find((el) => el.name === 'summary')
+    const list = details && details.children.find((el) => el.name === 'ul')
+    const drawn = summary ? textOf(summary).trim() : ''
+    if (drawn !== label) {
+      fail(`the menu's group ${at + 1} is labelled ${JSON.stringify(drawn)}, and the two groups are ${JSON.stringify(GROUPS_WANTED.map(([want]) => want))}: the owner's feedback of 2026-10-21 names them (Console under Product, the rest under Project — D182)`)
+    }
+    const hrefs = list ? [...walk(list)].filter((el) => el.name === 'a').map((el) => el.attrs.get('href') ?? '') : []
+    if (hrefs.join(' ') !== routes.join(' ')) {
+      fail(`the *${label}* group lists ${JSON.stringify(hrefs)}, and the owner's feedback of 2026-10-21 leaves it ${JSON.stringify(routes)} (D182)`)
+    }
+  })
   // One `name` across the groups makes them an exclusive set, without script: opening one
   // dropdown closes the one already open, so two never hang over each other on a wide row.
   const names = new Set(groups.flatMap((group) => group.children.filter((el) => el.name === 'details').map((el) => el.attrs.get('name') ?? '')))
   if (groups.length > 0 && (names.size !== 1 || names.has(''))) {
-    fail(`the menu's groups carry the names ${JSON.stringify([...names])}: they share one non-empty name, so opening one dropdown closes the other two`)
+    fail(`the menu's groups carry the names ${JSON.stringify([...names])}: they share one non-empty name, so opening one dropdown closes the other`)
   }
   for (const group of groups) {
     for (const item of group.children.filter((child) => child.name !== undefined)) {
       if (item.name !== 'details') {
-        fail(`a top-level menu item is a <${item.name}>, and every top-level item is a link or a <summary> (a disclosure a keyboard can open)`)
+        fail(`a top-level menu item is a <${item.name}>, and every top-level item is a <details> disclosure a keyboard can open`)
         continue
       }
       const summary = item.children.find((el) => el.name === 'summary')
       if (!summary || !textOf(summary).trim()) fail('a menu group has no <summary> with words on it')
+      // The list is the `<details>`'s own child, and that is the whole of the mechanism: a
+      // closed `<details>` hides what it holds, in every engine, with no stylesheet involved.
+      // A list moved out of its details — as the drawer's panel once sat outside its toggle —
+      // is a menu drawn open on every page at every width.
+      const list = item.children.find((el) => el.name === 'ul')
+      if (!list) {
+        fail("a group's list of links is not inside its own <details>, so the group is drawn open wherever it appears: a closed <details> is the one thing that hides a list")
+      } else if (![...walk(list)].some((el) => el.name === 'a')) {
+        fail("a group has no links: each of the nav's two groups (Product, Project) lists the sections it holds")
+      }
     }
+  }
+
+  // The way home on a phone: the wordmark's text is in its own element, because that element is
+  // what the phone breakpoint takes out of the header's row (the owner's ruling of 2026-10-19:
+  // the mark stays, the text goes). Loose text in the link is text nothing can hide.
+  const wordmark = all.find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-wordmark'))
+  const wordmarkName = wordmark && [...walk(wordmark)].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-wordmark-name'))
+  if (!wordmark) {
+    fail('the page carries no wordmark link to the home page')
+  } else if (!wordmarkName || !textOf(wordmarkName).trim()) {
+    fail("the wordmark's text is not in its own element (.site-wordmark-name), so the phone breakpoint has nothing to take out of the header's row and the row is wider than the viewport at 375 px")
   }
 
   // Keyboard reachability, and the current page.
@@ -344,27 +2873,35 @@ test('the section nav is a labelled landmark of keyboard-reachable links, with t
 
 // ---- the refusals, kept ------------------------------------------------------------------
 
-// The three groups, as the layout writes them, so a fixture is the real shape and not a
-// smaller one the rule happens to accept.
+// The two groups, as the layout writes them (the owner's feedback of 2026-10-21 dropped the
+// Reference group: Console under *Product*, Docs and Changelog under *Project*), so a fixture
+// is the real shape and not a smaller one the rule happens to accept.
 const FIXTURE_GROUPS = [
-  ['Product', [['/how-it-works/', 'How it works'], ['/getting-started/', 'Getting started'], ['/caps-and-costs/', 'Caps and costs']]],
-  ['Reference', [['/docs/', 'Docs'], ['/console/', 'Console'], ['/changelog/', 'Changelog']]],
-  ['Project', [['/security/', 'Security'], ['/faq/', 'FAQ'], ['/community/', 'Community']]],
+  ['Product', [['/how-it-works/', 'How it works'], ['/why-gcp/', 'Why GCP'], ['/getting-started/', 'Getting started'], ['/caps-and-costs/', 'Caps and costs'], ['/console/', 'Console'], ['/mobile/', 'Mobile']]],
+  ['Project', [['/docs/', 'Docs'], ['/security/', 'Security'], ['/faq/', 'FAQ'], ['/community/', 'Community'], ['/changelog/', 'Changelog']]],
 ]
 
-const FIXTURE_DRAWER = '<details class="site-nav-drawer"><summary class="site-nav-toggle" aria-controls="site-nav-panel">Menu</summary></details>'
+// The wordmark, as the layout writes it: the logo is decoration beside the name, and the name
+// is the element the phone breakpoint takes out of the row.
+const FIXTURE_WORDMARK =
+  '<a class="site-wordmark" href="/" rel="home"><img src="/logo.png" alt="" width="47" height="32" /><span class="site-wordmark-name">Fugaro</span></a>'
 
-function fixtureNav({ label = 'Sections', current = '/docs/', drawer = FIXTURE_DRAWER } = {}) {
+function fixtureNav({ label = 'Sections', current = '/docs/', home = { href: '/', name: 'Home' }, homeFirst = true } = {}) {
   const groups = FIXTURE_GROUPS.map(([group, items]) => {
     const links = items
       .map(([href, text]) => `<li><a href="${href}"${href === current ? ' aria-current="page"' : ''}>${text}</a></li>`)
       .join('')
     return `<li class="site-nav-group"><details name="site-nav-group"><summary>${group}</summary><ul>${links}</ul></details></li>`
   }).join('')
-  return `<nav class="site-nav" aria-label="${label}">${drawer}<div class="site-nav-panel" id="site-nav-panel"><ul class="site-nav-groups">${groups}</ul></div></nav>`
+  // The menu's first item is the way home (the owner's feedback of 2026-10-21), and it is the
+  // item marked current on the home page: `current: '/'` marks the Home link, which is the one
+  // link on the page to the route being read.
+  const wayHome =
+    home === null ? '' : `<li class="site-nav-home"><a href="${home.href}"${current === '/' ? ' aria-current="page"' : ''}>${home.name}</a></li>`
+  return `<nav class="site-nav" aria-label="${label}"><ul class="site-nav-groups">${homeFirst ? wayHome + groups : groups + wayHome}</ul></nav>`
 }
 
-function fixturePage({ nav = fixtureNav(), wordmark = '<a class="site-wordmark" href="/" rel="home">Fugaro</a>' } = {}) {
+function fixturePage({ nav = fixtureNav(), wordmark = FIXTURE_WORDMARK } = {}) {
   return `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><header class="site-header">${wordmark}${nav}</header></body></html>`
 }
 
@@ -374,34 +2911,82 @@ function navRefusals(html, rel = 'docs/index.html') {
 
 test('the menu passes its own rule, so each refusal below is the one thing it breaks', () => {
   assert.deepEqual(navRefusals(fixturePage()), [])
-  // The home page: the wordmark is the link home and the one element marked current.
-  assert.deepEqual(
-    navRefusals(
-      fixturePage({
-        nav: fixtureNav({ current: '' }),
-        wordmark: '<a class="site-wordmark" href="/" rel="home" aria-current="page">Fugaro</a>',
-      }),
-      'index.html',
-    ),
-    [],
-  )
+  // The home page: the menu's own Home link is the one element marked current, and the wordmark
+  // — the other link to `/` — carries no mark of its own (the owner's feedback of 2026-10-21).
+  assert.deepEqual(navRefusals(fixturePage({ nav: fixtureNav({ current: '/' }) }), 'index.html'), [])
 })
 
 test('every menu refusal fires on the defect it names', () => {
   const cases = [
     ['an unlabelled nav', fixturePage({ nav: fixtureNav({ label: '' }) }), /empty label/],
-    ['no drawer toggle', fixturePage({ nav: fixtureNav({ drawer: '' }) }), /no drawer toggle/],
-    ['the panel inside the toggle', fixturePage({ nav: fixtureNav().replace('</details><div class="site-nav-panel" id="site-nav-panel">', '<div class="site-nav-panel" id="site-nav-panel">').replace('</ul></div></nav>', '</ul></div></details></nav>') }), /next sibling/],
-    ['a drawer toggle that does not name its panel', fixturePage({ nav: fixtureNav().replace(' aria-controls="site-nav-panel"', '') }), /aria-controls is ""/],
-    ['a drawer toggle naming another region', fixturePage({ nav: fixtureNav().replace(' id="site-nav-panel"', ' id="elsewhere"') }), /panel's id is "elsewhere"/],
-    ['groups that are not one exclusive set', fixturePage({ nav: fixtureNav().replace('<details name="site-nav-group"><summary>Product', '<details><summary>Product') }), /share one non-empty name/],
+    [
+      'the drawer toggle, back in the header',
+      fixturePage({ nav: fixtureNav().replace('<ul class="site-nav-groups">', '<details class="site-nav-drawer"><summary class="site-nav-toggle">Menu</summary></details><ul class="site-nav-groups">') }),
+      /still carries a \.site-nav-drawer/,
+    ],
+    [
+      'the panel the drawer opened, back around the groups',
+      fixturePage({
+        nav: fixtureNav()
+          .replace('<ul class="site-nav-groups">', '<div class="site-nav-panel" id="site-nav-panel"><ul class="site-nav-groups">')
+          .replace('</ul></nav>', '</ul></div></nav>'),
+      }),
+      /still carries a \.site-nav-panel/,
+    ],
+    [
+      'a control naming a region outside itself',
+      fixturePage({ nav: fixtureNav().replace('<summary>Product</summary>', '<summary aria-controls="site-nav-panel">Product</summary>') }),
+      /names "site-nav-panel" with aria-controls/,
+    ],
+    // The menu's first item: the owner's feedback of 2026-10-21 asks for Home at the front of
+    // it, so a menu without it, a menu that has it last, a Home link pointing somewhere else and
+    // a Home link named something else are each refused.
+    ['a menu with no Home item at all', fixturePage({ nav: fixtureNav({ home: null }) }), /does not open with a Home link/],
+    ['the Home item left at the end of the menu', fixturePage({ nav: fixtureNav({ homeFirst: false }) }), /does not open with a Home link/],
+    ['a Home link that points elsewhere', fixturePage({ nav: fixtureNav({ home: { href: '/docs/', name: 'Home' } }) }), /Home link points at "\/docs\/"/],
+    ['a first item named something else', fixturePage({ nav: fixtureNav({ home: { href: '/', name: 'Start' } }) }), /first item is named "Start"/],
+    [
+      'a Home item holding a list of its own',
+      fixturePage({ nav: fixtureNav().replace('<a href="/">Home</a>', '<a href="/">Home</a><ul><li><a href="/faq/">FAQ</a></li></ul>') }),
+      /holds a list or a disclosure/,
+    ],
+    [
+      'an item that is neither Home nor a group',
+      fixturePage({ nav: fixtureNav().replace('</ul></nav>', '<li class="site-nav-extra"><a href="/privacy/">Privacy</a></li></ul></nav>') }),
+      /the menu's list carries 4 item\(s\)/,
+    ],
+    // The two groups are named and hold the owner's feedback's links, so a rename and a route
+    // that leaves its group are each refused even though the count is still two.
+    ['a group renamed', fixturePage({ nav: fixtureNav().replace('<summary>Project</summary>', '<summary>Company</summary>') }), /group 2 is labelled "Company"/],
+    [
+      'a route dropped out of its group',
+      fixturePage({ nav: fixtureNav().replace('<li><a href="/changelog/">Changelog</a></li>', '') }),
+      /the \*Project\* group lists/,
+    ],
     ['a group with no summary', fixturePage({ nav: fixtureNav().replace('<summary>Product</summary>', '') }), /no <summary> with words on it/],
+    ['groups that are not one exclusive set', fixturePage({ nav: fixtureNav().replace('<details name="site-nav-group"><summary>Product', '<details><summary>Product') }), /share one non-empty name/],
+    [
+      "a group's list moved out of its own <details>",
+      fixturePage({
+        nav: fixtureNav()
+          .replace('<summary>Product</summary><ul>', '<summary>Product</summary></details><ul>')
+          .replace('</ul></details></li>', '</ul></li>'),
+      }),
+      /list of links is not inside its own <details>/,
+    ],
+    ['a group with no links', fixturePage({ nav: fixtureNav().replace(/<ul>.*?<\/ul>/, '<ul></ul>') }), /no links/],
     ['a top-level item that is not a control', fixturePage({ nav: fixtureNav().replace('<li class="site-nav-group">', '<li class="site-nav-group"><span>Product</span>') }), /top-level menu item is a <span>/],
     ['a link with no href', fixturePage({ nav: fixtureNav().replace('<a href="/docs/" aria-current="page">', '<a aria-current="page">') }), /no href/],
     ['a link out of the tab order', fixturePage({ nav: fixtureNav().replace('<a href="/faq/">', '<a href="/faq/" tabindex="-1">') }), /out of the tab order/],
     ['no current page marked', fixturePage({ nav: fixtureNav({ current: '' }) }), /marks 0 elements/],
     ['two current pages marked', fixturePage({ nav: fixtureNav().replace('<a href="/console/">', '<a href="/console/" aria-current="page">') }), /marks 2 elements/],
     ['the wrong page marked current', fixturePage({ nav: fixtureNav({ current: '/console/' }) }), /its own route is "\/docs\/"/],
+    [
+      "the wordmark's text loose in the link",
+      fixturePage({ wordmark: '<a class="site-wordmark" href="/" rel="home">Fugaro</a>' }),
+      /not in its own element/,
+    ],
+    ['no wordmark at all', fixturePage({ wordmark: '' }), /no wordmark link to the home page/],
   ]
   for (const [what, html, expected] of cases) {
     const failures = navRefusals(html)
@@ -409,9 +2994,10 @@ test('every menu refusal fires on the defect it names', () => {
   }
 })
 
-test('the menu rule holds the home page to the wordmark as its one current mark', () => {
-  // The home page lists no `/` link, so the rule reads the wordmark: with no mark at all, and
-  // with the mark on something else, it refuses.
+test('the menu rule holds the home page to its Home link as the one current mark', () => {
+  // The home page's `/` link is the menu's first item since the owner's feedback of 2026-10-21,
+  // so that link is what the rule marks: with no mark on the page at all, and with the mark on
+  // something else, it refuses.
   assert.ok(navRefusals(fixturePage({ nav: fixtureNav({ current: '' }) }), 'index.html').some((f) => /marks 0 elements/.test(f)))
   assert.ok(
     navRefusals(
@@ -421,6 +3007,17 @@ test('the menu rule holds the home page to the wordmark as its one current mark'
       }),
       'index.html',
     ).some((f) => /its own route is "\/"/.test(f)),
+  )
+  // And the wordmark may not carry the mark as well: two links to `/` marked current is two
+  // claims about which page is being read, which is the refusal the plant below names.
+  assert.ok(
+    navRefusals(
+      fixturePage({
+        nav: fixtureNav({ current: '/' }),
+        wordmark: FIXTURE_WORDMARK.replace('rel="home"', 'rel="home" aria-current="page"'),
+      }),
+      'index.html',
+    ).some((f) => /marks 2 elements/.test(f)),
   )
 })
 

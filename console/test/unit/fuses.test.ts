@@ -19,8 +19,9 @@
 //   2. **the hook that applies it** -- `afterPack` is driven with a fake
 //      `flipFuses`/`getCurrentFuseWire`, so what the packer will call is a fact
 //      here rather than something the packer is trusted to do: the config it
-//      passes, the binary it names, its refusal on a platform that is not
-//      darwin, and the check that reads the wire back afterwards;
+//      passes, the binary it names on each platform this build packages
+//      (darwin's `.app` and Linux's bare executable), its refusal on a platform
+//      it does not package, and the check that reads the wire back afterwards;
 //   3. **the rest of the build configuration** -- asar on, the files allow-list,
 //      `publish: null` and `--publish never`, the exact set of keys the build
 //      object may have, the pinned packer the `package` script runs, and the
@@ -60,8 +61,11 @@ import {
   BEYOND_PIN_FUSES,
   FLIPPED_FUSES,
   LEFT_ALONE_FUSES,
+  SUPPORTED_PLATFORMS,
   afterPack,
   fuseConfig,
+  fuseTarget,
+  linuxExecutable,
   macExecutable,
   type AfterPackContext,
   type FuseTools,
@@ -75,6 +79,7 @@ const CONSOLE_DIR = fileURLToPath(new URL('../../', import.meta.url))
 const ELECTRON_PACKAGE = fileURLToPath(new URL('../../node_modules/electron/', import.meta.url))
 
 const manifest = JSON.parse(readFileSync(PACKAGE_JSON, 'utf8')) as {
+  readonly description?: string
   readonly scripts: Record<string, string>
   readonly devDependencies: Record<string, string>
   readonly dependencies?: Record<string, string>
@@ -93,6 +98,7 @@ const build = manifest.build as {
   readonly npmRebuild?: unknown
   readonly electronDownload?: { readonly checksums?: Record<string, string> }
   readonly mac?: Record<string, unknown>
+  readonly linux?: Record<string, unknown>
 }
 
 /** flips is the configuration's value per fuse, keyed by the enum, with the
@@ -146,6 +152,20 @@ const CONTEXT: AfterPackContext = {
   electronPlatformName: 'darwin',
   appOutDir: '/tmp/out/mac-universal',
   packager: { appInfo: { productFilename: 'Fugaro Console' } },
+}
+
+/** LINUX_CONTEXT is the same context for a Linux build. There is no bundle on
+ * Linux: electron-builder's `LinuxPackager` writes one bare executable named by
+ * its own `executableName` (falling back to the sanitized package name), and
+ * `appOutDir` is `release/linux-unpacked`. Both names are carried here because
+ * the hook reads whichever the packager set. */
+const LINUX_CONTEXT: AfterPackContext = {
+  electronPlatformName: 'linux',
+  appOutDir: '/tmp/out/linux-unpacked',
+  packager: {
+    appInfo: { productFilename: 'Fugaro Console', sanitizedName: 'fugaro-console' },
+    executableName: 'fugaro-console',
+  },
 }
 
 describe('the six fuses the console is built with', () => {
@@ -383,14 +403,75 @@ describe('the afterPack hook', () => {
     await expect(afterPack(context)).rejects.toThrow(/sentinel/)
   })
 
-  it('refuses a platform that is not darwin rather than shipping an unflipped bundle', async () => {
-    // The console is a macOS application (design D4, and this MVP). A build on
-    // any other platform would produce a bundle this hook cannot find, and
-    // silently skipping would be the one outcome that ships the fuses unset.
+  it('names the Linux executable electron-builder produced, by its executableName', () => {
+    // There is no `.app` and no `Contents/MacOS` on Linux: the packer writes one
+    // executable into `appOutDir`, named by `LinuxPackager.executableName`, and
+    // that is the file the fuses go into. The path here is the packer's own
+    // resolution (`path.join(appOutDir, executableName)`), not one this file
+    // invented -- see `addElectronFuses` in app-builder-lib.
+    expect(linuxExecutable(LINUX_CONTEXT)).toBe(join(LINUX_CONTEXT.appOutDir, 'fugaro-console'))
+  })
+
+  it('falls back to the packager’s sanitized name when no executableName is configured', () => {
+    // electron-builder's own default: `LinuxPackager` uses
+    // `appInfo.sanitizedName.toLowerCase()` when `linux.executableName` is not
+    // set. The build sets it, and this mirrors the fallback anyway, so a
+    // configuration edit that dropped the key would flip the right file rather
+    // than a path this hook guessed.
+    const context: AfterPackContext = {
+      ...LINUX_CONTEXT,
+      packager: { appInfo: { productFilename: 'Fugaro Console', sanitizedName: 'Fugaro-Console' } },
+    }
+    expect(linuxExecutable(context)).toBe(join(context.appOutDir, 'fugaro-console'))
+  })
+
+  it('refuses a Linux context that names no binary, rather than guessing a path to flip', async () => {
+    // Neither `executableName` nor `sanitizedName`: there is no file this hook
+    // could honestly name, and flipping nothing while reporting success is the
+    // outcome the whole hook exists to prevent.
     const fuses = fakeFuses()
-    const elsewhere: AfterPackContext = { ...CONTEXT, electronPlatformName: 'linux' }
-    await expect(afterPack(elsewhere, fuses)).rejects.toThrow(/darwin/)
+    const nameless: AfterPackContext = {
+      ...LINUX_CONTEXT,
+      packager: { appInfo: { productFilename: 'Fugaro Console' } },
+    }
+    await expect(afterPack(nameless, fuses)).rejects.toThrow(/executable name/)
     expect(fuses.calls).toEqual([])
+  })
+
+  it('flips the same six fuses into the Linux executable, with the same configuration', async () => {
+    // The whole point of the Linux half: the fuse set is a property of the
+    // application, not of the platform, so the binary linux-unpacked holds is
+    // flipped with byte-for-byte the configuration the macOS bundle gets.
+    const fuses = fakeFuses()
+    await afterPack(LINUX_CONTEXT, fuses)
+    expect(fuses.calls).toHaveLength(1)
+    expect(fuses.calls[0]?.path).toBe(linuxExecutable(LINUX_CONTEXT))
+    expect(fuses.calls[0]?.config).toEqual(fuseConfig())
+    expect(Object.keys(fuses.calls[0]?.config as object)).toHaveLength(FLIPPED_FUSES.length + 1)
+  })
+
+  it('reads the Linux wire back too, and fails naming the fuse a flip did not take', async () => {
+    // The same verification as on darwin, on the Linux path: an ELF whose
+    // RunAsNode fuse is still on must stop the build before the packer packages
+    // the directory into an AppImage or a deb.
+    const fuses = fakeFuses({ [FuseV1Options.RunAsNode]: FuseState.ENABLE })
+    await expect(afterPack(LINUX_CONTEXT, fuses)).rejects.toThrow(/RunAsNode/)
+    await expect(afterPack(LINUX_CONTEXT, fuses)).rejects.toThrow(/fugaro-console/)
+  })
+
+  it('refuses a platform this build does not package, rather than shipping an unflipped binary', async () => {
+    // Windows is the platform this build does not produce (design D10: the CLI
+    // has no Windows build, and signing is the owner's). A build on it would
+    // produce a binary this hook has no path for, and silently skipping would
+    // be the one outcome that ships the fuses unset.
+    expect([...SUPPORTED_PLATFORMS]).toEqual(['darwin', 'linux'])
+    const fuses = fakeFuses()
+    const elsewhere: AfterPackContext = { ...CONTEXT, electronPlatformName: 'win32' }
+    await expect(afterPack(elsewhere, fuses)).rejects.toThrow(/win32/)
+    // and the message names what *is* packaged, so the refusal is actionable
+    await expect(afterPack(elsewhere, fuses)).rejects.toThrow(/darwin and linux/)
+    expect(fuses.calls).toEqual([])
+    expect(() => fuseTarget(elsewhere)).toThrow(/win32/)
   })
 })
 
@@ -407,8 +488,9 @@ describe('the packaging configuration the fuses belong to', () => {
     // opens a window with no page in it. The preloads are named exactly: the
     // dashboard window loads `dist/preload/index.js` and the picker's window
     // `dist/preload/installations.js` (Task 3.4b), and nothing else under that
-    // directory ships. Only `.js` and the two documents are shipped, so no
-    // source map is; `dist/renderer` is the bundler's input, not served, so it
+    // directory ships. Only `.js`, the documents and the served stylesheet
+    // (Task 6.2, which every document links) are shipped, so no source map is;
+    // `dist/renderer` is the bundler's input, not served, so it
     // is not shipped; and the two compiled files the app never loads -- the
     // packing hook (it needs a devDependency) and the fixture loader (tests and
     // the recorder) -- are excluded by name.
@@ -420,6 +502,7 @@ describe('the packaging configuration the fuses belong to', () => {
       'dist/shared/**/*.js',
       'dist/source/**/*.js',
       '!dist/source/fixture.js',
+      'dist/bundle/console.css',
       'dist/bundle/console.js',
       'dist/bundle/index.html',
       'dist/bundle/installations.html',
@@ -438,7 +521,7 @@ describe('the packaging configuration the fuses belong to', () => {
     const patterns = build.files ?? []
     for (const pattern of patterns) {
       expect(pattern, `${pattern} is not a shape this test can read`).toMatch(
-        /^!?(?:[a-z]+\/[a-z]+\/\*\*\/\*\.js|[a-z]+(?:\/[a-z]+)*\/[a-z]+\.(?:js|html))$/,
+        /^!?(?:[a-z]+\/[a-z]+\/\*\*\/\*\.js|[a-z]+(?:\/[a-z]+)*\/[a-z]+\.(?:js|html|css))$/,
       )
     }
     const ships = (file: string): boolean => {
@@ -489,9 +572,10 @@ describe('the packaging configuration the fuses belong to', () => {
   it('ships no source map', () => {
     // The build emits them (tsconfig.build.json sets sourceMap), and a map in
     // the asar is a full copy of the sources with a pointer to it. Every
-    // include in the list ends in `.js` or names one of the `.html`
-    // documents, so no map matches.
-    for (const pattern of build.files ?? []) expect(pattern).toMatch(/\.(?:js|html)$/)
+    // include in the list ends in `.js`, names one of the `.html` documents, or
+    // is the served `.css` (Task 6.2) -- so no include names a `.map`, and a
+    // pattern that started to would fail here.
+    for (const pattern of build.files ?? []) expect(pattern).toMatch(/\.(?:js|html|css)$/)
   })
 
   it('publishes nowhere: publish is null, not merely absent', () => {
@@ -518,6 +602,7 @@ describe('the packaging configuration the fuses belong to', () => {
         'directories',
         'electronDownload',
         'files',
+        'linux',
         'mac',
         'npmRebuild',
         'productName',
@@ -531,12 +616,133 @@ describe('the packaging configuration the fuses belong to', () => {
   })
 
   it('has exactly the mac keys this task decided', () => {
+    // `icon` joined the list with the icon task (the owner's brief of
+    // 2026-10-19): the bundle's application icon, from `build/icon.png`, which
+    // is the website's own mark. It adds nothing to what ships -- the file
+    // becomes the bundle's `icon.icns` and is not packed into the asar -- and
+    // `test/unit/icon.test.ts` is where that reading is asserted; the list is
+    // still pinned here so that a second icon key, or a *different* one, is a
+    // red test rather than a quiet line.
     expect(Object.keys(build.mac ?? {}).toSorted()).toEqual(
-      ['entitlements', 'entitlementsInherit', 'hardenedRuntime', 'target'].toSorted(),
+      ['entitlements', 'entitlementsInherit', 'hardenedRuntime', 'icon', 'target'].toSorted(),
     )
     for (const widening of ['asarUnpack', 'extraResources', 'extraFiles', 'binaries', 'identity']) {
       expect(build.mac, `build.mac.${widening} must be absent`).not.toHaveProperty(widening)
     }
+  })
+
+  it('has exactly the linux keys this task decided', () => {
+    // The owner's ruling of 2026-10-20: Linux for 0.10.0, unsigned. The keys
+    // below are the ones that change *what is produced* or what the generated
+    // `.desktop` and deb control file say -- `category` becomes
+    // `Categories=`, `description` becomes `Comment=`, `executableName`
+    // becomes `Exec=` and `Icon=`, `synopsis` becomes the deb `Description:`,
+    // and `maintainer` is what the deb target refuses to build without (there
+    // is no `author` with an email in this package.json, so without it the
+    // `deb` leg fails at pack time rather than shipping a package with an
+    // empty `Maintainer:`).
+    //
+    // `desktop.entry` is deliberately *not* here: electron-builder computes the
+    // entry from the keys above, and it refuses an `Exec` given that way
+    // outright (`computeDesktopEntry` throws "Please specify executable name as
+    // linux.executableName instead of linux.desktop.Exec"), so a hand-written
+    // entry would be a second, unchecked copy of the same facts.
+    expect(Object.keys(build.linux ?? {}).toSorted()).toEqual(
+      [
+        'artifactName',
+        'category',
+        'description',
+        'executableName',
+        'icon',
+        'maintainer',
+        'synopsis',
+        'target',
+      ].toSorted(),
+    )
+    // None of the ways to widen the bundle on this platform either: these would
+    // add files to the package (or, for `files`/`asar`, replace the very rules
+    // the fuses depend on) from inside the platform block, where the top-level
+    // allow-list does not reach.
+    for (const widening of ['asar', 'asarUnpack', 'extraResources', 'extraFiles', 'files', 'electronDist']) {
+      expect(build.linux, `build.linux.${widening} must be absent`).not.toHaveProperty(widening)
+    }
+  })
+
+  it('pins what the Linux build produces: AppImage and deb, x64, and the artifact names', () => {
+    // The arch is pinned in the configuration rather than on the command line,
+    // so `electron-builder --linux` is the whole command the CI job runs and
+    // the architecture it produced is a fact in this repository. x64 only: an
+    // arm64 leg would cross-build an architecture nothing in this repository
+    // has ever run, and a package nobody has launched is not one to publish.
+    const linux = (build.linux ?? {}) as Record<string, unknown>
+    expect(linux['target']).toEqual([
+      { target: 'AppImage', arch: ['x64'] },
+      { target: 'deb', arch: ['x64'] },
+    ])
+    // The name the release notes, the checksum file and the website's data all
+    // have to agree on. `${arch}` is electron-builder's own substitution, so a
+    // build that quietly produced another architecture would produce another
+    // name rather than a mislabelled file.
+    expect(linux['artifactName']).toBe('Fugaro.Console-${version}-linux-${arch}.${ext}')
+    expect(linux['executableName']).toBe('fugaro-console')
+    expect(linux['icon']).toBe('build/icon.png')
+    // A freedesktop main category and an additional one: the console is the
+    // GUI for a developer CLI, and what it does is monitor runs. electron-builder
+    // appends the trailing `;` the spec requires.
+    expect(linux['category']).toBe('Development;Monitor')
+    expect(typeof linux['synopsis']).toBe('string')
+    expect(typeof linux['description']).toBe('string')
+    expect(linux['description']).not.toBe(manifest.description)
+    expect(linux['maintainer']).toMatch(/<[^<>@\s]+@[^<>\s]+>$/)
+    // The artifact name is the one the workflow's checksum file and the website
+    // reader look for: it must not carry a space, so the names are the same
+    // whether a tool splits on whitespace or not.
+    expect(linux['artifactName']).not.toMatch(/\s/)
+    // `build/icon.png` exists and is the 1024px source electron-builder turns
+    // into the icons it installs; `icon.test.ts` reads it.
+    expect(existsSync(join(CONSOLE_DIR, 'build', 'icon.png'))).toBe(true)
+  })
+
+  it('configures no signature for Linux: the owner ruled it unsigned, and signing is the owner’s', () => {
+    // The owner's ruling of 2026-10-20 is "yes, Linux for 0.10.0, unsigned".
+    // There is deliberately no code-signing key here, no `forceCodeSigning` that
+    // would turn the absence into a build failure, and no `afterSign` hook: the
+    // console carries no signing identity of its own (the macOS identity arrives
+    // in the environment as CSC_LINK/CSC_NAME and is the owner's), and an
+    // AppImage is not code-signed at all -- its integrity is the SHA-256 beside
+    // the download and the Sigstore bundle the release attaches.
+    const linux = (build.linux ?? {}) as Record<string, unknown>
+    for (const signing of [
+      'cscLink',
+      'cscKeyPassword',
+      'identity',
+      'forceCodeSigning',
+      'signAndEditExecutable',
+    ]) {
+      expect(linux, `build.linux.${signing} must be absent`).not.toHaveProperty(signing)
+    }
+    for (const signing of ['forceCodeSigning', 'afterSign', 'afterAllArtifactBuild', 'afterExtract']) {
+      expect(build, `build.${signing} must be absent`).not.toHaveProperty(signing)
+    }
+  })
+
+  it('packages Linux with the same pinned packer, the same asar and the same files allow-list', () => {
+    // The brief's rule for this task: "the asar/`build.files` rules and the
+    // CSP/fuses stay exactly as strict on Linux as on macOS". `asar` and
+    // `files` are top-level and neither platform block may re-state them; this
+    // asserts the command the CI job runs and that nothing on the Linux side
+    // re-opens them.
+    expect(manifest.scripts['package:linux']).toBe('electron-builder --linux --publish never')
+    expect(manifest.scripts['package:linux']).not.toMatch(/\bnpx\b/)
+    expect(manifest.scripts['package:linux']).not.toMatch(/--publish\s+(?:always|onTag|onTagOrDraft)/)
+    expect(manifest.scripts['package:linux']).not.toMatch(/--(?:arm64|ia32|universal)\b/)
+    expect(manifest.scripts['package:linux']).not.toMatch(/electron-builder@/)
+    expect(manifest.scripts['package:linux']).not.toMatch(/--dir\b/)
+    // `npm run build` is *not* in that script on purpose: the CI job builds the
+    // app once and both platform legs pack the same `dist`, so a second compile
+    // in the middle of a packaging step is a second chance to pack something
+    // the type-checked build did not produce.
+    expect(manifest.scripts['package:linux']).not.toMatch(/npm run build/)
   })
 
   it('has no electron-builder.env, and could not ship one', () => {
@@ -552,18 +758,28 @@ describe('the packaging configuration the fuses belong to', () => {
     expect(build.npmRebuild).toBe(false)
   })
 
-  it('verifies both Electron archives against the pinned Electron’s own checksums', () => {
-    // A universal build downloads the darwin arm64 and x64 Electron archives
-    // at pack time. Without inline checksums electron-builder verifies them
-    // against a SHASUMS256.txt fetched from the same release host; with these,
-    // against hashes in this repository, which must equal the ones the
+  it('verifies every Electron archive it downloads against the pinned Electron’s own checksums', () => {
+    // A universal build downloads the darwin arm64 and x64 Electron archives at
+    // pack time, and the Linux leg downloads `electron-v<version>-linux-x64.zip`
+    // on the ubuntu runner. Without inline checksums electron-builder verifies
+    // them against a SHASUMS256.txt fetched from the same release host; with
+    // these, against hashes in this repository, which must equal the ones the
     // lockfile-pinned `electron` package carries in its `checksums.json`
     // (present after `npm ci --ignore-scripts`: it is in the tarball).
+    //
+    // The list is pinned exactly, so a build that started downloading an archive
+    // nobody pinned -- a third arch, a different version -- fails here rather
+    // than trusting a hash fetched over the network at pack time. `linux-arm64`
+    // is deliberately not in it: this build produces x64 Linux only.
     const version = manifest.devDependencies.electron
     const checksums = build.electronDownload?.checksums ?? {}
     expect(Object.keys(build.electronDownload ?? {})).toEqual(['checksums'])
     expect(Object.keys(checksums).toSorted()).toEqual(
-      [`electron-v${version}-darwin-arm64.zip`, `electron-v${version}-darwin-x64.zip`].toSorted(),
+      [
+        `electron-v${version}-darwin-arm64.zip`,
+        `electron-v${version}-darwin-x64.zip`,
+        `electron-v${version}-linux-x64.zip`,
+      ].toSorted(),
     )
     for (const hash of Object.values(checksums)) expect(hash).toMatch(/^[0-9a-f]{64}$/)
     const upstream = JSON.parse(readFileSync(join(ELECTRON_PACKAGE, 'checksums.json'), 'utf8')) as Record<

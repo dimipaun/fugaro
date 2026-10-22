@@ -16,6 +16,12 @@
 // false of the aggregation's JSON output, which has no line to carry a comment on — so
 // the two kinds of file are distinguished and each is held to its own property.
 //
+// The gates section makes one promise of a different kind: it opens by counting the checks it
+// lists ("Nine checks run over the **built** artifact …") and then names them, one bullet each.
+// A count is a claim like any other, and the one it makes is about the list under it — a gate
+// added without the sentence moving leaves the README undercounting itself, which is the defect
+// the case below is written for. It is held to the list, and the list to the files.
+//
 // W0.6's changelog comes with its own test (`changelog.mjs`), and each later task adds
 // its own file: `npm run check` runs `test/*.mjs`, so none of them touches this one.
 
@@ -256,6 +262,51 @@ test('the Go gate the README prints selects the site\'s own tests', () => {
   for (const name of declared) {
     assert.ok(pattern.test(name), `${name} is the site's own pin and the Go gate the README prints (${command[1]}) does not select it: a reader running the command the README names gets a green run with this test unexecuted`)
   }
+})
+
+// The number words the gates section's opening sentence may count with. A list rather than a
+// numeral parser: the README writes its counts as words, and a count this file cannot read is a
+// count nothing holds.
+const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen']
+
+test('the gates section counts the gates it lists, and every gate it names is a file', () => {
+  const lines = readme().split('\n')
+
+  // The section's own opening sentence, which is where the count is written. It is found by
+  // its shape rather than by its position, so a section moved is still the section read.
+  const opening = lines.findIndex((line) => /^\w+ checks run over the \*\*built\*\* artifact/.test(line))
+  assert.ok(opening >= 0, 'the README has no gates section opening on "… checks run over the **built** artifact"')
+
+  const stated = /^(\w+) checks run over/.exec(lines[opening])
+  const count = NUMBER_WORDS.indexOf(stated[1].toLowerCase())
+  assert.ok(count >= 0, `the gates section opens with "${stated[1]}", which is not a number this check can read`)
+
+  // The list under it: one bullet per gate, each opening with a backticked `test/*.mjs` and each
+  // wrapping onto indented lines — one of the bullets (the budget's) runs to several paragraphs
+  // and blank lines of its own. So a bullet is what is counted, an indented or blank line is a
+  // bullet's own prose and is passed over, and the list ends at the first line that is neither:
+  // the paragraph the section closes with.
+  const first = lines.findIndex((line, at) => at > opening && /^- `test\/[\w-]+\.mjs`/.test(line))
+  assert.ok(first > opening, 'the gates section lists no gate, so there is no count to hold')
+  const gates = []
+  for (const line of lines.slice(first)) {
+    const gate = /^- `(test\/[\w-]+\.mjs)`/.exec(line)
+    if (gate) gates.push(gate[1])
+    else if (line.trim() !== '' && !/^\s/.test(line)) break
+  }
+  assert.equal(new Set(gates).size, gates.length, `the gates section lists a gate twice: ${gates.join(', ')}`)
+  for (const gate of gates) {
+    assert.ok(existsSync(path.join(SITE_ROOT, gate)), `${gate} is listed as one of the site's gates and is not a file`)
+  }
+
+  // The count, against the list it is a count of. A gate added to the list without the sentence
+  // moving is a README that undercounts itself, and a gate removed without it moving is one that
+  // overcounts: both are the same defect, and it is the defect this case exists for.
+  assert.equal(
+    gates.length,
+    count,
+    `the gates section says ${stated[1]} checks run over the built artifact and lists ${gates.length} (${gates.join(', ')}): the count is a fact about the list under it, so the two move together`,
+  )
 })
 
 test('the README names the Node version package.json pins', () => {
@@ -550,16 +601,36 @@ test('the README claims about docs/pending-workflows/, firebase.json and the dep
   const text = readme()
   assert.ok(!/Nothing under `docs\/pending-workflows\/`/.test(text), 'the README says nothing is staged under docs/pending-workflows/, but other pending workflows are committed there')
   const staged = path.join(REPO_ROOT, 'docs', 'pending-workflows')
+  // The README says what docs/pending-workflows/ holds, and the claim is checked in both directions
+  // rather than as a bare count: a workflow staged there that the README does not name is a
+  // pending change nobody was told about, and a name in the README that is not staged is an
+  // instruction to copy in a file that is not there. The count is asserted too, so that
+  // "holds one pending workflow" cannot survive a second file arriving beside it.
+  //
+  // The count is written as a word and read back as a number, so that the sentence is the
+  // only thing a copy-in has to update: copying a staged file in and `git rm`-ing it leaves
+  // the directory with none, and "now holds no pending workflow" is then an edit to the
+  // sentence rather than to this test as well.
+  //
   // The owner copied the website's two manual workflows (#566) into .github/workflows/ and removed
-  // the staged copies, so the directory holds no pending workflow and the real files exist.
-  assert.ok(/now holds no pending workflow/.test(text.replace(/\s+/g, ' ')), 'the README no longer says what docs/pending-workflows/ holds today')
+  // the staged copies, so none of them is pending and the real files exist.
+  const flat = text.replace(/\s+/g, ' ')
+  const words = { no: 0, one: 1, two: 2, three: 3, four: 4, five: 5 }
+  const said = flat.match(/now holds (no|one|two|three|four|five) pending workflows?/)
+  assert.ok(said, 'the README no longer says how many workflows docs/pending-workflows/ holds, as "now holds <no|one|two|three|four|five> pending workflow(s)"')
   // The console's two workflows are the one exception, and it is not a pending one: the owner copied
   // both into .github/workflows/ and their staged copies are kept on purpose (the Go docs tests assert
   // byte-identity), so each staged file must be exactly the one that runs.
   const keptStaged = ['console-release.yml', 'console-tests.yml']
   const yamls = existsSync(staged) ? readdirSync(staged).filter((n) => /\.ya?ml$/i.test(n)).sort() : []
   const pending = yamls.filter((n) => !keptStaged.includes(n))
-  assert.deepEqual(pending, [], 'a workflow is staged under docs/pending-workflows/ but the README says none is pending, so update the README')
+  const claimed = [...flat.matchAll(/`docs\/pending-workflows\/([\w.-]+\.ya?ml)`/g)].map((m) => m[1])
+  assert.deepEqual([...new Set(claimed)].sort(), pending, 'the README and docs/pending-workflows/ disagree: the README names exactly the pending workflows and no others (a staged file it does not name, or a named file that is not staged)')
+  assert.equal(
+    words[said[1]],
+    pending.length,
+    `the README says "${said[0]}" and docs/pending-workflows/ holds ${pending.length} pending workflow file(s) (${pending.join(', ') || 'none'}): update the sentence`,
+  )
   for (const name of yamls.filter((n) => keptStaged.includes(n))) {
     const real = path.join(REPO_ROOT, '.github', 'workflows', name)
     assert.ok(existsSync(real), `docs/pending-workflows/${name} is staged but .github/workflows/${name} is missing, so it is pending and the README says none is`)

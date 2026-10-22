@@ -1,5 +1,5 @@
 # Plans the installation against a mock provider: no credentials, no network
-# beyond the provider download. The names are the ones fugaro init writes
+# beyond the provider download. The names are the ones fugaro update writes
 # into terraform.tfvars.json.
 #
 # An assertion can't reach into a child module's resources, so the first run
@@ -36,8 +36,8 @@ variables {
   launchers              = ["user:launcher@example.com"]
   operators              = ["user:operator@example.com"]
   launcher_bucket_condition = {
-    title      = "fugaro-launchers-runs"
-    expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\")"
+    title      = "fugaro-launchers-runs-tokens"
+    expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\")"
   }
 }
 
@@ -355,14 +355,14 @@ run "people" {
   }
   assert {
     condition     = keys(google_storage_bucket_iam_member.runs_launcher) == ["user:launcher@example.com"]
-    error_message = "launchers who are not operators write runs/"
+    error_message = "launchers who are not operators write runs/ and tokens/"
   }
   assert {
     condition = alltrue([for m in google_storage_bucket_iam_member.runs_launcher :
       m.role == "roles/storage.objectUser" && m.bucket == "fugaro-runs-proj-1234" &&
-      one(m.condition).title == "fugaro-launchers-runs" &&
-    one(m.condition).expression == "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\")"])
-    error_message = "the launchers' write grant is objectUser on runs/ only"
+      one(m.condition).title == "fugaro-launchers-runs-tokens" &&
+    one(m.condition).expression == "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\")"])
+    error_message = "the launchers' write grant is objectUser on runs/ and tokens/ only"
   }
   assert {
     condition     = keys(google_storage_bucket_iam_member.state) == ["user:operator@example.com"] && google_storage_bucket_iam_member.state["user:operator@example.com"].bucket == "fugaro-tfstate-proj-1234"
@@ -405,7 +405,7 @@ run "launcher_who_is_an_operator" {
   }
 }
 
-# A condition that is not runs/ of this bucket fails the plan.
+# A condition that is not runs/ and tokens/ of this bucket fails the plan.
 run "launcher_condition_must_be_this_buckets_runs" {
   command = plan
 
@@ -415,8 +415,47 @@ run "launcher_condition_must_be_this_buckets_runs" {
 
   variables {
     launcher_bucket_condition = {
-      title      = "fugaro-launchers-runs"
+      title      = "fugaro-launchers-runs-tokens"
       expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/\")"
+    }
+  }
+
+  expect_failures = [google_storage_bucket_iam_member.runs_launcher]
+}
+
+# The pre-seal condition, runs/ alone under its old title, fails the plan: the
+# launcher writes the sealed budget token under tokens/
+# (docs/design/budget-token-channel.md section 7.2), and the precondition is
+# where the Terraform and gcp.LauncherBucketCondition must agree.
+run "launcher_condition_must_cover_tokens" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    launcher_bucket_condition = {
+      title      = "fugaro-launchers-runs"
+      expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\")"
+    }
+  }
+
+  expect_failures = [google_storage_bucket_iam_member.runs_launcher]
+}
+
+# Widened past tokens/ (a third prefix) fails the plan too.
+run "launcher_condition_not_past_tokens" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    launcher_bucket_condition = {
+      title      = "fugaro-launchers-runs-tokens"
+      expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/fugaro/\")"
     }
   }
 
@@ -435,7 +474,7 @@ run "launcher_condition_title_must_match" {
   variables {
     launcher_bucket_condition = {
       title      = "other"
-      expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\")"
+      expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\")"
     }
   }
 
@@ -636,7 +675,7 @@ run "bad_launcher_bucket_condition" {
 
   variables {
     launcher_bucket_condition = {
-      title      = "fugaro-launchers-runs"
+      title      = "fugaro-launchers-runs-tokens"
       expression = "true"
     }
   }
@@ -851,9 +890,9 @@ run "budget_token_objects_expire" {
   assert {
     condition = anytrue([for r in google_storage_bucket.runs.lifecycle_rule :
       one(r.action).type == "Delete" && one(r.condition).age == 1 &&
-      one(r.condition).matches_prefix == tolist(["runs/"]) &&
+      one(r.condition).matches_prefix == tolist(["runs/", "tokens/"]) &&
     one(r.condition).matches_suffix == tolist(["/budget-token"])])
-    error_message = "runs/*/*/budget-token must be deleted after a day, and only that suffix"
+    error_message = "tokens/*/*/budget-token (and a pre-seal runs/*/*/budget-token) must be deleted after a day, and only that suffix"
   }
   assert {
     condition = length([for r in google_storage_bucket.runs.lifecycle_rule :
@@ -1556,5 +1595,163 @@ run "project_secrets" {
   assert {
     condition     = alltrue([for m in google_secret_manager_secret_iam_member.operator : m.role != "roles/secretmanager.secretAccessor"])
     error_message = "no operator may read a project-wide secret's value"
+  }
+}
+
+# The shared project job's three grants, which the installation golden plan
+# cannot show: its tfvars name no launcher, no operator and no Vertex profile,
+# so the planned project module holds none of them and a change to any of the
+# three passes every plan-level test in the tree. This run plans the module
+# itself, the way the runs above it do, with a launcher, an operator and a
+# Vertex profile set.
+#
+# What each grant is: the launchers may start THIS job with overrides
+# (fugaroJobRunner, the same role and permission the per-repository path
+# grants); the operators may act as the job's account, which deploying the job
+# needs; and a Vertex profile's job account may call aiplatform. None of the
+# three is a project-level widening — the launcher's role is on the job, and
+# the actAs is on the account.
+run "project_job_grants" {
+  command = plan
+
+  module {
+    source = "../../modules/project"
+  }
+
+  variables {
+    project         = "proj-1234"
+    fugaro_project  = "aurora"
+    region          = "us-east5"
+    runs_bucket     = "fugaro-runs-proj-1234"
+    job_runner_role = "projects/proj-1234/roles/fugaroJobRunner"
+    launchers       = ["user:launcher@example.com"]
+    operators       = ["user:operator@example.com"]
+    secrets         = {}
+    job = {
+      profile  = "standard"
+      provider = "github"
+      account  = ""
+      job      = "fugaro-p-standard-github-0ca96e64b636"
+      service_account = {
+        account_id   = "fugaro-p-standard-git-0ca96e64"
+        display_name = "Fugaro project job standard github"
+      }
+      image          = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc"
+      cpu            = "2"
+      memory         = "8Gi"
+      task_timeout_s = 21720
+      # FUGARO_GITHUB_APP_ID: a github shared job's precondition (job.tf,
+      # owner ruling 2026-10-17) refuses the plan without it.
+      env = {
+        FUGARO_BUCKET        = "gs://fugaro-runs-proj-1234"
+        FUGARO_GCP_PROJECT   = "proj-1234"
+        FUGARO_GITHUB_APP_ID = "123456789"
+        FUGARO_PROJECT       = "aurora"
+        FUGARO_REGION        = "us-east5"
+      }
+      secret_env = {}
+      bucket_condition = {
+        title      = "fugaro-fugaro-p-standard-git-0ca96e64"
+        expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/cache/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/locks/\")"
+      }
+      token_condition = {
+        title      = "fugaro-project-tokens-fugaro-p-standard-git-0ca96e64"
+        expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\")"
+      }
+      vertex = true
+    }
+  }
+
+  assert {
+    condition = (keys(google_cloud_run_v2_job_iam_member.launcher) == ["user:launcher@example.com"] &&
+      google_cloud_run_v2_job_iam_member.launcher["user:launcher@example.com"].role == "projects/proj-1234/roles/fugaroJobRunner" &&
+      google_cloud_run_v2_job_iam_member.launcher["user:launcher@example.com"].member == "user:launcher@example.com" &&
+    google_cloud_run_v2_job_iam_member.launcher["user:launcher@example.com"].name == "fugaro-p-standard-github-0ca96e64b636")
+    error_message = "each launcher gets fugaroJobRunner on this job alone, and never on the project"
+  }
+  # The grants below are written from this account's computed member, so the
+  # mock provider has to give it one during the plan for them to be readable.
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-p-standard-git-0ca96e64@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-p-standard-git-0ca96e64@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-p-standard-git-0ca96e64@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition     = google_service_account.job.account_id == "fugaro-p-standard-git-0ca96e64"
+    error_message = "the job's own account is the one the profile names, so the grants below can be read against it"
+  }
+  assert {
+    condition = (keys(google_service_account_iam_member.operator) == ["user:operator@example.com"] &&
+      google_service_account_iam_member.operator["user:operator@example.com"].role == "roles/iam.serviceAccountUser" &&
+      google_service_account_iam_member.operator["user:operator@example.com"].member == "user:operator@example.com" &&
+    google_service_account_iam_member.operator["user:operator@example.com"].service_account_id == google_service_account.job.name)
+    error_message = "each operator may act as this job's own account, which deploying the job needs"
+  }
+  assert {
+    condition = (length(google_project_iam_member.vertex) == 1 &&
+      google_project_iam_member.vertex[0].role == "roles/aiplatform.user" &&
+    google_project_iam_member.vertex[0].member == google_service_account.job.member)
+    error_message = "a Vertex profile's job account, and only it, may call aiplatform"
+  }
+}
+
+# The managed deployer's scoped role and its conditioned binding are gated off
+# by default (0.8.6: the fmgd- fence cannot be expressed as an IAM condition
+# yet; deployer.tf's header). By default neither exists, while the account, the
+# unconditioned role and its binding stay.
+run "deployer_scoped_off_by_default" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  assert {
+    condition     = length(google_project_iam_custom_role.fugaro_deployer_scoped) == 0 && length(google_project_iam_member.fugaro_deployer_scoped) == 0
+    error_message = "the scoped deployer role and its binding must not exist unless managed_deployer_scoped is set"
+  }
+  assert {
+    condition     = google_service_account.fugaro_deployer.account_id == "fugaro-deployer" && google_project_iam_custom_role.fugaro_deployer.role_id == "fugaroDeployer"
+    error_message = "the deployer account and its unconditioned role are created whatever the gate says"
+  }
+  assert {
+    condition     = google_project_iam_member.fugaro_deployer.role == "projects/proj-1234/roles/fugaroDeployer" && length(google_project_iam_member.fugaro_deployer.condition) == 0
+    error_message = "binding (1) is the unconditioned role, with no condition"
+  }
+}
+
+# The opt-in still plans the gated pair exactly as D75 wrote it: one role with
+# the scoped permissions (cloudscheduler.jobs.enable, never .resume), bound once
+# under the managed-prefix condition.
+run "deployer_scoped_opt_in" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    managed_deployer_scoped = true
+  }
+
+  assert {
+    condition     = length(google_project_iam_custom_role.fugaro_deployer_scoped) == 1 && google_project_iam_custom_role.fugaro_deployer_scoped[0].role_id == "fugaroDeployerScoped"
+    error_message = "with managed_deployer_scoped the scoped role must exist, as fugaroDeployerScoped"
+  }
+  assert {
+    condition     = contains(google_project_iam_custom_role.fugaro_deployer_scoped[0].permissions, "cloudscheduler.jobs.enable") && !contains(google_project_iam_custom_role.fugaro_deployer_scoped[0].permissions, "cloudscheduler.jobs.resume")
+    error_message = "the scoped role resumes a Scheduler job with cloudscheduler.jobs.enable; cloudscheduler.jobs.resume does not exist"
+  }
+  assert {
+    condition = (length(google_project_iam_member.fugaro_deployer_scoped) == 1 &&
+      google_project_iam_member.fugaro_deployer_scoped[0].role == "projects/proj-1234/roles/fugaroDeployerScoped" &&
+      google_project_iam_member.fugaro_deployer_scoped[0].condition[0].title == "fugaro-managed-prefix" &&
+    strcontains(google_project_iam_member.fugaro_deployer_scoped[0].condition[0].expression, "projects/_/buckets/fmgd-"))
+    error_message = "with managed_deployer_scoped the scoped role is bound once, under the fugaro-managed-prefix condition"
   }
 }

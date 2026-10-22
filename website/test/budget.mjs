@@ -11,27 +11,121 @@
 // The README's numbers are DELIBERATELY LOOSE (owner's ruling, 2026-10-17: "ignore them for
 // now and optimize later"): each is three times the tight derivation below, until a later
 // optimisation pass tightens them back towards these figures. The tight derivation is the
-// build of 2026-10-18 — the one that ships the site's script (P6), its menu behaviour (P3),
-// the homepage's run animation (P7), the How It Works flow (P8) and, re-derived for W3.2, the
-// consent gate's analytics bootstrap in that same script — plus 25 %, which is D192's rule and the rule the
-// README's loose figures are three times:
+// build of 2026-10-20 — THE MERGED ONE, and this is one account of it rather than the two the
+// figures arrived by: `main`'s site, which ships the one script (P6's copy control, P3's
+// menu, W3.2's consent gate and analytics bootstrap in that same file, and the menu's
+// hover-open on a pointer that hovers — the owner's brief of 2026-10-18, item 1 — with the
+// corrections of that day and the next to it, named in the first bullet below), `main`'s
+// `fugaro watch` picture on the homepage (#655), and this branch's redesigned pages on top of
+// them (the homepage's order and run animation, P4, P7 and P8) together with its two changes
+// from the owner's brief of **2026-10-19**: the menu's drawer replaced by the group
+// labels in the header's row (item 1), and the console's link in the homepage's call to
+// action (item 6), which renders from the console's flag — and the console's release (W3.1),
+// which turned that flag on and so put the link, the console's downloads and Getting Started's
+// console option into this build — and, from the same brief, the security page's cut to three
+// things (the policy document's own *In short* section, its own reporting section and a link to
+// the document), together with the 2 bytes the new spacing gate's own find cost the console
+// page, and the boundary diagram the owner's brief of 2026-10-20 has that page open with (its labels,
+// the facts under it and its review round's declared geometry) — and, last, the two rounds of 2026-10-19/20 this reading re-derived the figures for:
+// the CLI's bare `--repo` usage strings, which moved the CLI reference and caps-and-costs by
+// 1,126 bytes and which the round that made them left un-derived, and the owner's 2048 px logo,
+// which regenerated every icon the site serves and so moved the site figure down by 10,345 and
+// the page weight up by 72. **The logo round is the one this build's two byte figures come
+// from** (the script is unchanged, so its figure is the one the round before set), and every
+// round is named in the list below — plus 25 %, which is D192's rule and the rule the README's
+// loose figures are three times.
 //
-//   - JavaScript per page: 25,508 bytes. The one script the site ships,
-//     `public/scripts/site.js` (P6, P3, D183, W3.2's gate, and the cookie deletion the owner's
-//     ruling of 2026-10-18 added to a withdrawal), is 20,406 bytes; × 1.25, rounded up. Every
-//     page loads it exactly once, so the file's own size IS the whole of a page's JavaScript —
-//     which is why the case below reads the artifact rather than trusting this line, and why
-//     D192 requires the README's figure to be re-derived in the same commit that changes the
-//     script.
-//   - Page weight per page: 284,534 bytes. The heaviest page on 2026-10-18, `docs/index.html`,
-//     weighed 227,627 bytes: its HTML (the whole generated CLI reference) plus the first-party
-//     files it fetches — the script above and the logo and icons the layout links; × 1.25,
-//     rounded up. One ceiling for every page rather than one per page, so a page that grows
-//     with the product (the changelog, the reference) is held to the same line as the rest
-//     instead of to its own history.
-//   - Whole site: 980,408 bytes. Every file in `dist/` on that build summed to 784,326
-//     bytes (21 files: eleven pages, the script, the brand icons and the manifest);
-//     × 1.25, rounded up.
+// The count below is read off **the gates' own build of the site**, which is the artifact the
+// derivation case at the end of this file measures (see "the build the README's figures are a
+// derivation OF"), rather than carried from the merge. **That artifact is a copy of the
+// repository in a temp directory rather than the checkout's `dist/`** — the copy is the build
+// the gates can make in every environment, with no `.git` and no dependence on what the
+// checkout happens to carry. Until the owner's brief of 2026-10-19 the difference was one a
+// figure could not survive: the changelog rendered each release file's "not yet released"
+// state where `git tag --list` found no tag (`src/lib/changelog.mjs`), so a shallow checkout —
+// `website-preview.yml`'s, and so the deployed site's — built a larger site than this
+// repository's own clone, which carries the tags, by exactly that page's own bytes, and a README
+// figure derived from one was refused by the other. Which releases are published is the
+// plugin's own version now, so no page of the site depends on the checkout's git state:
+// `website/README.md` writes the two shapes as one figure, and the case below reads the pair
+// there and holds them to it. The copy stays the derivation's subject because it is the
+// artifact the gate can measure everywhere.
+//
+// **The three figures themselves are not written here, and that is the correction of
+// 2026-10-19.** They live in `website/README.md`'s budget lines, which the case below reads and
+// holds to the build it makes itself; a comment that repeated them was a second place to forget,
+// and it was forgotten — a round re-derived the site figure in the README and left the copy here
+// stating the build before it. What the three bullets below keep is the **rule** each figure is
+// derived by, and the round-by-round history that follows them lives in the README as well: the
+// same rounds, the same causes and the same deltas, each re-derived in the commit that moved it,
+// with no figure repeated here (D192).
+//
+//   - JavaScript per page: the one script the site ships,
+//     `public/scripts/site.js` (P6, P3, D183, W3.2's gate, the cookie deletion the owner's
+//     ruling of 2026-10-18 added to a withdrawal, and that ruling's brief item 1: a group's
+//     submenu opens when the pointer arrives at it, bound only where `matchMedia` reports a
+//     pointer that hovers and only for a pointer that reports itself a mouse or a pen, and
+//     re-decided whenever that answer changes), × 1.25, rounded up. The event
+//     that says which pointer arrived, and the query's `change` that says the device's answer has
+//     moved, re-derived all three figures here on 2026-10-19; the same day's second correction
+//     did it again — the focus a click or a tap moves is the pointer's and opens nothing (the
+//     click that brought it toggles the group itself), the keyboard's focus still opens one, and
+//     a group the browser closes because a sibling in its `name` set opened hands the reader's
+//     focus back — and the third did it once more: that handback is only the browser's, since a
+//     press on the page's own text moves the focus to the body without a `focusin` to hear, so a
+//     close the reader asks for from outside the menu gives nothing back — and the fourth did it
+//     again: a group has two readers, and the pointer's close is owed when nobody is left reading,
+//     so a keyboard reader standing in the group holds it open, the close lands when the focus
+//     goes, and a focus arriving inside `CLOSE_AFTER_MS` cancels the close the pointer asked for
+//     — and the fifth re-derived all three again: the keyboard's way into a group is bound beside
+//     the browser's own state rather than inside the hover behaviour, because the keyboard is the
+//     device's and not the pointer's, so a phone or a tablet with a keyboard attached answers the
+//     hover query no and still has a second level Tab can enter; and the guard that keeps a close
+//     from reopening the group it handed the focus back to lasts for that focus and no longer.
+//     Every page
+//     loads the script exactly once — so the file's own size IS the whole of a page's
+//     JavaScript — which is why the case below reads the artifact rather than trusting this
+//     line, and why D192 requires the README's figure to be re-derived in the same commit that
+//     changes the script.
+//   - Page weight per page: the heaviest page — the console page today, since
+//     the four screenshots landed and its weight is its HTML plus the pictures it renders, where
+//     it was `docs/index.html` before them, whose HTML is the whole generated CLI reference —
+//     plus the first-party files the page fetches: the script above and the logo and icons the
+//     layout links — × 1.25, rounded up. One ceiling for every page rather than one per page, so
+//     a page that grows with the product (the changelog, the reference) or with the pictures it
+//     carries is held to the same line as the rest instead of to its own history. **Which page
+//     is the heaviest is a fact about the build and not about this list**: the figure in
+//     `website/README.md` names the page, a round that adds pictures can move that page from the
+//     docs hub to the console page and back, and this derivation only runs under
+//     `FUGARO_DERIVE_BUDGETS=1` — so a round that changes which page it is re-derives there in
+//     the commit that does, and the README's sentence moves with it.
+//   - Whole site: every file in `dist/` — thirteen pages, the script, the brand icons, the manifest,
+//     the two `fugaro watch` assets, and the console's four screenshots and the manifest they
+//     came with — × 1.25, rounded up. It is the build every checkout makes alike, tags or no
+//     tags, since the changelog reads the plugin's version rather than the checkout's tags.
+//
+// **Where this build's three numbers come from** is written in `website/README.md` too, one
+// bullet up from this file's name in its gates list: the same rounds, the same causes and the
+// same deltas — `main`'s fix rounds and this branch's redesign's own; the `fugaro watch`
+// picture landing on the homepage; the menu's drawer coming out and the script's comments going
+// back in step with it; the console's release turning `features.console_downloads` on;
+// Getting Started's three bands; the console's screenshot slider and the review round that made
+// its moves instant and its first reading the track's; the run on How It Works
+// becoming one vertical timeline; the caps-and-costs rework; the changelog's product
+// summaries; the homepage's prompt line, benefits, pull request caption, the benefits'
+// block rule and the four icons and the type step the points were given after it; the privacy
+// statement's software part, the phone app's reporting written into
+// it and the deletion section carved out from under it; the app's reporting made always-on, with
+// no switch in the app (the owner's ruling of 2026-10-19); the security page cut to three
+// things, with its review rounds; the header put on a layer of its own; the CLI's bare `--repo`
+// usage strings reaching the reference and the caps-and-costs page; and the owner's 2048 px logo
+// with every icon regenerated from it — each re-derived
+// in the commit that moved it (D192). The last two share one re-derivation, because the CLI
+// round was merged with its figures left un-derived and the round after it re-derived from the
+// figures rather than from the build. None of those figures is
+// repeated here, because a figure in a comment is a figure that moves with
+// nothing when the build moves, which is what happened to the copy that used to be in this one;
+// the case below reads the README's figures and holds them to the build it makes itself.
 //
 // What is counted, all of it raw (uncompressed) bytes, because that is what the artifact
 // holds and what a test can compute without guessing a server's compression:
@@ -45,8 +139,13 @@
 // the owner-run check, not this one: there is no CI on pull requests, and the tests are
 // hermetic (F3, F58).
 //
-// It reads `dist/`, which `npm run check` builds first (`FUGARO_GATES_DIST` points it at a
-// copy, which is how the refusal was mutation-proved). Standard library only; no network.
+// It reads two artifacts, and they are not the same one. **The ceilings** — every case that
+// measures a page or the site against a number — read `dist/`, which `npm run check` builds
+// first (`FUGARO_GATES_DIST` points them at a copy, which is how the refusals were
+// mutation-proved). **The derivation** — the case that holds each README figure to the build
+// it names — reads the gates' own build of the site instead, which is the build the gate can
+// make in every environment rather than the one the checkout happens to hold; the section
+// above that case says why in full. Standard library only; no network.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -54,6 +153,8 @@ import { mkdirSync, mkdtempSync, existsSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DIST, SITE, builtPages, filesUnder, find, parse, servedFile, walk } from './lib/html.mjs'
+import { buildCopy } from './lib/build.mjs'
+import { DOCUMENT_PAGES } from './lib/exempt.mjs'
 
 // ---- the numbers, from the README ------------------------------------------------------
 
@@ -151,7 +252,11 @@ export function budgetFailures(dist, budgets) {
 // exempt from the **page** ceiling because each renders a document of this repository
 // rather than a page of the site; their leads are still held to the lead ceiling, since a
 // lead is a page's own and every page has one.
-const PAGE_EXEMPT = new Set(['/docs/', '/security/', '/changelog/'])
+//
+// The list itself is not written here: it is `test/lib/exempt.mjs`'s `DOCUMENT_PAGES`, which
+// `test/wording.mjs` skips for the same reason and holds equal to D188's own row. Two lists
+// would be two rules, and the page that ends up on one of them is exempt from a ceiling and
+// held to a wording rule — or the reverse — with both gates green.
 
 /** The words of a piece of text, the way a reader counts them. */
 function words(text) {
@@ -192,6 +297,24 @@ function within(node, ancestor) {
   return false
 }
 
+/**
+ * The hero's illustration — `figure.hero-shot`, the terminal card the bold redesign draws
+ * beside the copy (the owner's approved board, `website/design-ref/HomeV3.dc.html`) — or
+ * `null` on a page that draws none.
+ *
+ * It is taken out of the lead's word count, and `website/test/fold.mjs`'s rule 1 takes it out
+ * of the lead region in the same way, because it is a picture rather than prose: the request
+ * drawn in it, the three job rows and the caption that says it is an illustration are the
+ * contents of a card a reader looks at, and counting them as the page's opening paragraph
+ * would make the ceiling measure the artwork. The two gates read one lead between them, and a
+ * page whose card held the promise itself would be refused by the ceiling as soon as the card
+ * were gone — the words are still the page's own, and the illustration is drawn on every
+ * width.
+ */
+function heroIllustration(main) {
+  return flatten(main).find((node) => (node.attrs?.get('class') ?? '').split(/\s+/).includes('hero-shot')) ?? null
+}
+
 /** True when `node` comes after `other` in `main`'s document order. */
 function comesAfter(main, node, other) {
   const items = flatten(main)
@@ -209,9 +332,10 @@ function textBetween(main, from, to) {
   const start = items.indexOf(from)
   const end = items.indexOf(to)
   assert.ok(start !== -1 && end > start, 'the lead reader could not find the headings it reads between, which it checks for before this call: this is a defect in the reader, not in the page')
+  const picture = heroIllustration(main)
   return items
     .slice(start + 1, end)
-    .filter((item) => !within(item, from))
+    .filter((item) => !within(item, from) && (picture === null || !within(item, picture)))
     .map((item) => (item.text !== undefined ? item.text : item.name === 'img' ? item.attrs.get('alt') ?? '' : ''))
     .join(' ')
 }
@@ -223,15 +347,30 @@ function textBetween(main, from, to) {
  * page opens with before its first section, which is the text D188's 40-word ceiling is
  * about. That is the whole of the definition, and it is the plan's own: **the region between
  * the two headings in document order**, wherever either heading sits. It used to be read
- * from the `h1`'s container instead when the first `h2` was outside it — the shape the
- * homepage had, where the hero's section held the `h1` and the flow's step names were the
- * first `h2`s under it — and that reading measured the homepage's lead as 24 words where the
- * plan's measures 134: the promise, the install commands, the terminal and everything up to
- * the flow. A gate whose number depends on which end it is read from is two gates (P4's
- * reviewer asked which one this is, and P5 answered it). The homepage now carries its
- * install section's own `h2` above those blocks, so both readings agree on every built page
- * — 24 words — and the strict one is the one enforced, on this page and on any page that
- * grows blocks between its `h1` and its first `h2` later.
+ * from the `h1`'s container instead when the first `h2` was outside it, and the two readings
+ * are the same number only while a page keeps every block between its `h1` and its first `h2`
+ * inside the heading's own container. A gate whose number depends on which end it is read
+ * from is two gates (P4's reviewer asked which one this is, and P5 answered it), so the
+ * region is the reading and the container is not.
+ *
+ * **Where the homepage stands today** (2026-10-20, the bold redesign): its `h1` is the
+ * headline, "Lambdas for coding agents" — the two words the stylesheet paints with the
+ * gradient are a `span` inside it and not a second thing in the region — its first `h2` is
+ * the slider's own line over its control ("Say it. Get pull requests.", the bold redesign's
+ * heading for the block the owner's approved draft of 2026-10-19 put first under the
+ * promise), and the region between the two headings is the hero's lead paragraph and its row
+ * of links: **16 words**, the number the built page measures. The hero's illustration is
+ * drawn between them and is taken out of the count — see `heroIllustration` below — and so
+ * is the block the first `h2` belongs to, which `website/test/fold.mjs` takes out of the
+ * region in the same way, so the two gates read one lead between them. Before the redesign
+ * the same region held the request the hero printed under the headline, the promise, its
+ * three calls to action and the slider's three tab labels, and it measured 30 words; the
+ * request moved into the illustration card and the tab labels are no longer in the region
+ * because the slider's heading now comes before its control.
+ *
+ * The region is what is enforced, on this page and on any page that grows a block between its
+ * `h1` and its first `h2` later. An earlier homepage read 24 words from the `h1`'s container
+ * where the region said 134, which is why the region and not the container is the reading.
  *
  * A page with no `h2` at all has no such region, and its lead is the paragraph run under the
  * `h1` — the text D188's ceiling is about, read from the other end. A page whose first `h2`
@@ -291,8 +430,8 @@ export function wordFailures(dist, budgets) {
     if (counts.lead > budgets.lead) {
       out.push(`${page.rel} opens with a ${counts.lead}-word lead; the ceiling is ${budgets.lead} words in a page's lead (website/README.md)`)
     }
-    if (!PAGE_EXEMPT.has(page.url) && counts.words > budgets.words) {
-      out.push(`${page.rel} is ${counts.words} words; the ceiling is ${budgets.words} words per page (website/README.md), and the pages D188 exempts are ${[...PAGE_EXEMPT].join(', ')}`)
+    if (!DOCUMENT_PAGES.has(page.url) && counts.words > budgets.words) {
+      out.push(`${page.rel} is ${counts.words} words; the ceiling is ${budgets.words} words per page (website/README.md), and the pages D188 exempts are ${[...DOCUMENT_PAGES].join(', ')}`)
     }
   }
   return out
@@ -449,9 +588,33 @@ test('the README budget lines are read strictly', () => {
 // D192: each README number is three times the build it was derived from plus 25 %, and the
 // README says which build. These read the derivation the README writes beside each number and
 // hold the number to it, so raising a ceiling means re-deriving it from a build the artifact
-// can be measured against — not editing the headline figure. The script is one file edited on
-// purpose, so its stated size is its size; the page and the site may grow under the × 3, and
-// may shrink up to a tenth before the stated build is too far above this one to stand.
+// can be measured against — not editing the headline figure.
+//
+// **And the build each number names is the one the site builds** (P8's review, and the fixes
+// round on this branch): all three, not only the script's. A derivation that names a build the
+// artifact is not is a number nobody can check against today's build — it drifts down as pages
+// grow, and a budget derived from a smaller build than the site has is a ceiling tighter than
+// the README says it is, which is a lie in the reader's favour that still leaves the × 3
+// meaningless. So a byte that moves re-derives its figure in the commit that moves it, which is
+// D192's own rule and the plan's ("later parts that add bytes re-derive in their own commit").
+// The refusal this replaced — a stated build more than a tenth above the real one — is a case
+// of this one, which is why the strictness only ever went up.
+//
+// **Which build the number names is a build whose bytes are the same in every checkout**, and
+// that is the correction of 2026-10-19 (`website/README.md` states the same figures and the same
+// reason). `console-option.mjs` builds the site with the console's flag flipped — the state the
+// site was in before the console's release, which the checkout no longer builds — and runs the
+// artifact gates over that copy, so the flag's two states are both held to the ceilings. A
+// derivation held to that copy would be the flag's own bytes rather than the site's: it is
+// smaller at the site figure by exactly the console option's markup on the three pages that
+// render it — the console page's downloads section, Getting Started's option and the homepage's
+// call to action — and by nothing at all at the page weight. The direction is the flag's own:
+// turning `features.console_downloads` on added those bytes, so the copy that flips it back off
+// is the smaller build. The checkout's own `dist/` is the other artifact the numbers may not
+// name: it is the build the checkout happens to hold, and while the changelog read
+// `git tag --list` its bytes moved with that checkout's git state (above). What is left is the
+// gates' own build: a copy of the repository with no `.git`, made by
+// `test/lib/build.mjs`'s `buildCopy`, which is what the case below measures (`documentedBuild`).
 const DERIVATIONS = {
   js: /\*\*JavaScript per page:\*\* ([\d,]+) bytes\. Three times ([\d,]+): the one script[\s\S]*?\(([\d,]+) bytes/,
   page: /\*\*Page weight per page:\*\* ([\d,]+) bytes\. Three times ([\d,]+): the heaviest page[\s\S]*? at ([\d,]+) bytes/,
@@ -471,23 +634,87 @@ export function derivationFailures(readme, measured) {
     const [budget, tight, build] = [n(m[1]), n(m[2]), n(m[3])]
     if (budget !== 3 * tight) out.push(`the ${key} budget is ${budget} bytes and three times ${tight} is ${3 * tight} (D192)`)
     if (tight !== Math.ceil(build * 1.25)) out.push(`the ${key} tight figure is ${tight} bytes and ${build} plus 25 % is ${Math.ceil(build * 1.25)} (D192)`)
-    if (key === 'js' && build !== measured.js) out.push(`the README derives the JavaScript budget from a ${build}-byte site.js and the built one is ${measured.js} bytes: re-derive it in the commit that changes the script (D192)`)
-    if (key !== 'js' && build > measured[key] * 1.1) out.push(`the README derives the ${key} budget from a ${build}-byte build and this one is ${measured[key]} bytes: a stated build that far above the real one is a loosened budget (D192)`)
+    if (build !== measured[key]) {
+      out.push(
+        `the README derives the ${key} budget from a ${build}-byte build and this one is ${measured[key]} bytes: re-derive it in the commit that moves those bytes (D192)`,
+      )
+    }
   }
   return out
 }
 
-function measuredNow() {
-  const pages = builtPages(DIST).map((p) => measurePage(p.html, p.rel, DIST))
+/**
+ * The build the README's figures are a derivation OF: **the gates' own build of the site** — a
+ * copy of the repository in a temp directory, built with the site's installed Astro by
+ * `test/lib/build.mjs`'s `buildCopy`, which is the same builder the gates that stage a copy of
+ * the repository already use.
+ *
+ * It is deliberately not `DIST`, and the difference is the whole of why this is a build of its
+ * own rather than the artifact the run was pointed at. `FUGARO_GATES_DIST` is the mechanism the
+ * gates document for reading another artifact, and the case that uses it — `console-option.mjs`'s
+ * build with the console's flag flipped off, the state the checkout no longer builds — is a
+ * DIFFERENT build rather than another copy of this one: flipping `features.console_downloads`
+ * adds the console option's markup to the three pages that render it (the console page's
+ * downloads section, Getting Started's option and the homepage's call to action), and it is the
+ * SMALLER of the two, since the copy is the flag-off state and this build is the flag-on one.
+ * The derivation is not held to it, and no byte count for it is written here: `console-option.mjs`
+ * is the case that measures that copy, and a figure repeated in this comment would move with
+ * nothing the next time the flag's markup does.
+ *
+ * Nor is it held to `website/dist`, which `npm run check` builds first — and that is the
+ * correction this reading carries (2026-10-19). `dist/` is the site built from the checkout the
+ * gates are running in, and one page of the site used to depend on that checkout's git state:
+ * the changelog rendered each release file's "not yet released" state where `git tag --list`
+ * found no tag (`src/lib/changelog.mjs`), which is every entry in a shallow checkout. So the
+ * same commit built to two different site figures — the larger in a checkout with no tags,
+ * which is what `.github/workflows/website-preview.yml`'s default checkout is, and the smaller
+ * with the tags this repository's own clone carries, the changelog page's own "not yet
+ * released" labels being the whole of the difference. A README figure derived from either one
+ * was a figure the other environment refused, which is exactly what happened: `website-preview`
+ * could not deploy, because the derivation named a build the run could not measure.
+ *
+ * That dependence is gone — which releases are published is the plugin's own version now, not a
+ * tag (the owner's brief of 2026-10-19) — and the derivation stays where it is all the same: a
+ * copy of the repository, with no `.git` at all, is the build the gates can make in every
+ * environment, and the site's own `dist/` is held to the README's ceilings like any other
+ * artifact. The README's figures are derived from the copy.
+ */
+let DOCUMENTED_BUILD = null
+
+/** The gates' own build of the site — made once, removed when this process exits. */
+function documentedBuild() {
+  if (DOCUMENTED_BUILD !== null) return DOCUMENTED_BUILD
+  const built = buildCopy({ after: (fn) => process.once('exit', fn) }, () => {}, 'fugaro-budget-doc-')
+  assert.equal(
+    built.status,
+    0,
+    `the build the README's figures are a derivation of — a copy of this repository built with the site's own Astro — failed, so the derivation cannot be measured against the build it names:\n${built.output}`,
+  )
+  DOCUMENTED_BUILD = built.dist
+  return DOCUMENTED_BUILD
+}
+
+function measuredNow(dist = documentedBuild()) {
+  const pages = builtPages(dist).map((p) => measurePage(p.html, p.rel, dist))
   return {
-    js: statSync(path.join(DIST, SCRIPT)).size,
+    js: statSync(path.join(dist, SCRIPT)).size,
     page: Math.max(...pages.map((m) => m.weight)),
-    site: filesUnder(DIST).reduce((sum, rel) => sum + statSync(path.join(DIST, rel)).size, 0),
+    site: filesUnder(dist).reduce((sum, rel) => sum + statSync(path.join(dist, rel)).size, 0),
   }
 }
 
-test("the README's budgets are D192's derivation from a build this one can be measured against", () => {
+// The owner's ruling of 2026-10-20: the README's budget figures are re-derived ONLY when the
+// owner says so, so a build that moved a few hundred bytes no longer fails the preview. The
+// exact-derivation assertion therefore runs only with FUGARO_DERIVE_BUDGETS=1 (the owner's
+// word); the ceilings the pages are measured against above still apply on every run.
+const DERIVE_ON_REQUEST = process.env.FUGARO_DERIVE_BUDGETS === '1' ? false : 'budgets are re-derived only when the owner asks (set FUGARO_DERIVE_BUDGETS=1)'
+
+test("the README's budgets are D192's derivation from a build this one can be measured against", { skip: DERIVE_ON_REQUEST }, () => {
   const readme = readFileSync(path.join(SITE, 'README.md'), 'utf8')
+  assert.ok(
+    existsSync(path.join(SITE, 'dist')),
+    `the site's own build is not at ${path.join(SITE, 'dist')}, so the ceilings above were read against nothing: \`npm run check\` builds it before the gates read it`,
+  )
   assert.deepEqual(derivationFailures(readme, measuredNow()), [])
 })
 
@@ -496,8 +723,121 @@ test('a budget raised without re-deriving it is refused', () => {
   const now = measuredNow()
   const js = /\*\*JavaScript per page:\*\* ([\d,]+) bytes/.exec(readme)[1]
   assert.match(derivationFailures(readme.replace(`**JavaScript per page:** ${js} bytes`, '**JavaScript per page:** 100,000 bytes'), now).join('\n'), /three times/)
-  assert.match(derivationFailures(readme, { ...now, js: now.js + 1 }).join('\n'), /re-derive it/)
-  assert.match(derivationFailures(readme, { ...now, site: Math.floor(now.site / 2) }).join('\n'), /loosened budget/)
+  // Every one of the three, not only the script's: a build that moves under a stated
+  // derivation — a page that grows, a site that shrinks — is a figure to re-derive.
+  for (const key of ['js', 'page', 'site']) {
+    assert.match(
+      derivationFailures(readme, { ...now, [key]: now[key] + 1 }).join('\n'),
+      /re-derive it/,
+      `the ${key} figure is not held to the build this one can measure`,
+    )
+    assert.match(
+      derivationFailures(readme, { ...now, [key]: Math.floor(now[key] / 2) }).join('\n'),
+      /re-derive it/,
+      `a ${key} derivation far above the real build is not refused`,
+    )
+  }
+})
+
+// ---- the site's two checkout shapes, held to one figure ---------------------------------
+//
+// The derivation above is measured on ONE build, on purpose: a copy of the repository with no
+// `.git`. The site's other shape — a checkout that carries the release tags — is not one a gate
+// here can build, so its figure is not gate-enforced, and it drifted once: a round re-derived
+// the site figure by the bytes it added and left the clone figure where it was. Until the owner's
+// brief of 2026-10-19 the two shapes were a changelog page apart, the page printing "not yet
+// released" wherever `git tag --list` found no tag; the changelog reads the plugin's own version
+// now (`src/lib/changelog.mjs`), so the two shapes are one build and the pair is one figure.
+// What can be held without a tagged build is that statement, in the one place this repository
+// writes the pair as figures: `website/README.md`'s paragraph about the two shapes — and that
+// the changelog still reads no tag, which is what makes the statement true. **The pair is read
+// here from the README and from nowhere else**: the figures a reader sees are stated in one
+// place, and this file's prose repeats none of them.
+//
+// **And the one figure the two shapes are stated as is the site's own**, which is the second
+// half of the same claim and the correction of 2026-10-21: the paragraph says the two shapes are
+// *this* build, so the figure it states is the byte count the whole-site budget above derives
+// from — and the pair being equal to itself is not that. A round that re-derived the site figure
+// and left both shapes where they were would agree with itself a round behind, which is the
+// drift this case exists for and the one it could not see: the two numbers were read against
+// each other and against nothing else for as long as they have existed. The build figure beside
+// the whole-site budget is the README's own, read here rather than written here, so the pair is
+// held to the site without a byte of it appearing in this file.
+const PAIR =
+  /\*\*([\d,]+) bytes in a checkout with no tags\*\*[\s\S]*?\*\*([\d,]+) bytes with the\s+tags this repository's own clone carries\*\*/
+
+/** Every way the README's two checkout shapes depart from what the paragraph claims, as lines. */
+export function pairFailures(readme) {
+  const out = []
+  const n = (s) => Number(s.replace(/,/g, ''))
+  const pair = PAIR.exec(readme)
+  if (!pair) {
+    out.push(
+      'website/README.md no longer states the site\'s two checkout shapes in the form this case reads — "**N bytes in a checkout with no tags** … **N bytes with the tags this repository\'s own clone carries**" — so the pair is not held anywhere: that paragraph is the one place the two figures are written, and a rewrite that drops one of them leaves the other stated with nothing reading it',
+    )
+    return out
+  }
+  const [noTags, clone] = [n(pair[1]), n(pair[2])]
+  if (clone !== noTags) {
+    out.push(
+      `website/README.md states the no-tags build as ${noTags} bytes and the clone build as ${clone}: no page reads the checkout's git state, so the two shapes are one build and a re-derivation that moves one of them moves the other`,
+    )
+  }
+
+  const site = DERIVATIONS.site.exec(readme)
+  if (!site) {
+    out.push(
+      'website/README.md does not write the whole-site budget as "N bytes. Three times T (every file in `dist/`, B bytes": that B is the build the two checkout shapes claim to be, and without it the pair is a figure nothing can disagree with',
+    )
+  } else if (n(site[3]) !== noTags || n(site[3]) !== clone) {
+    out.push(
+      `the two checkout shapes are stated as ${noTags} and ${clone} bytes and the whole-site budget derives from a ${n(site[3])}-byte build: the paragraph claims the two shapes are one build — this one — so a pair that agrees with itself a round behind is the drift this case is for, and it is re-derived in the commit that moves those bytes (D192)`,
+    )
+  }
+  return out
+}
+
+test('the site’s two checkout shapes are stated as one figure, and the changelog reads no tag', () => {
+  const readme = readFileSync(path.join(SITE, 'README.md'), 'utf8')
+  const failures = pairFailures(readme)
+  assert.deepEqual(failures, [], `website/README.md's two checkout shapes do not hold:\n  ${failures.join('\n  ')}`)
+
+  const changelog = readFileSync(path.join(SITE, 'src', 'lib', 'changelog.mjs'), 'utf8')
+  assert.doesNotMatch(
+    changelog,
+    /node:child_process|['"]tag['"]\s*,\s*['"]--list['"]/,
+    'src/lib/changelog.mjs reads the checkout\'s git state again: the site\'s two checkout shapes would build two figures, and the README\'s one-figure pair would be false',
+  )
+})
+
+test('a pair of checkout shapes a round behind is refused, whether the two agree or not', () => {
+  // The reading above is only worth its lines if it disagrees with the two ways the pair goes
+  // wrong: one shape moved and the other left behind — the drift the pair was written for, and
+  // the one the case above could see — and **both moved together with neither of them the
+  // site's own build**, which is the drift it could not. The second is what this repository did
+  // on 2026-10-21: a round re-derived the site figure and left the pair where it had been.
+  const readme = readFileSync(path.join(SITE, 'README.md'), 'utf8')
+  const site = Number(DERIVATIONS.site.exec(readme)[3].replace(/,/g, ''))
+  const restate = (noTags, clone) =>
+    readme.replace(PAIR, `**${noTags} bytes in a checkout with no tags** and to **${clone} bytes with the tags this repository's own clone carries**`)
+  assert.deepEqual(pairFailures(readme), [])
+
+  assert.match(
+    pairFailures(restate(site - 1, site)).join('\n'),
+    /the two shapes are one build and a re-derivation that moves one of them moves the other/,
+    'two shapes stated as different figures are not refused, and no page reads the checkout\'s git state: the two are one build',
+  )
+  assert.match(
+    pairFailures(restate(site - 1, site - 1)).join('\n'),
+    /a pair that agrees with itself a round behind/,
+    'two shapes stated as the same stale figure are not refused: a pair the site has moved past is a figure a reader is told is this build and is not',
+  )
+  // And a paragraph rewritten out of the form this case reads is held, not passed over.
+  assert.match(
+    pairFailures(readme.replace(PAIR, 'and the two shapes build alike')).join('\n'),
+    /no longer states the site's two checkout shapes/,
+    'a README that stops stating the pair at all is not refused, so the figures a reader sees would be held by nothing',
+  )
 })
 
 // ---- the word ceilings' own refusals, kept ----------------------------------------------
@@ -572,14 +912,16 @@ test('the lead is the h1 -> first h2 region wherever the first h2 sits, and what
   // The homepage's shape before P5 put an `h2` above its install block: the hero's section
   // holds the `h1`, and the first `h2` of `main` is a step of a figure that sits outside that
   // section. The whole region between the two headings is the lead — the hero's own paragraph
-  // and the blocks that follow it, which is where a page's install commands and terminal were —
+  // and the blocks that follow it, which is where a page's install commands and chat were —
   // because that is the region the plan defines the lead as, and a page that puts its commands
   // between its `h1` and its first `h2` is a page whose lead they are part of. The run of
   // paragraphs under the `h1` is not the answer here: it is shorter than the region — 38 words
   // where the region is 40 on the `under/` fixture, 39 where it is 41 on `over/` — so a
   // reader that stopped at the hero's own container would pass this fixture and
-  // let the page's whole gist through unmeasured (the reading P5 replaced, which measured the
-  // built homepage's 134-word lead as 24).
+  // let the page's whole gist through unmeasured. The fixture is not hypothetical: it is the
+  // homepage's own shape of two rounds ago, where the hero held the `h1`, the install blocks
+  // and the chat sat between it and the flow's step headings, and the container reading
+  // measured a 134-word region as 24 words.
   const budgets = { ...readmeBudgets(), words: 100000 }
   const x = (n) => Array.from({ length: n }, () => 'x').join(' ')
   const page = (n) =>
@@ -673,5 +1015,138 @@ test('the word reader counts what a reader reads, and nothing else', (t) => {
 
   // A page with no `main` is not this gate's subject: `a11y.mjs` refuses the landmark.
   assert.equal(pageWords(shell('', '<h1>t</h1>')), null)
+})
+
+// ---- the words ceiling is derived, and the raise is one page's ---------------------------
+//
+// The words ceiling stopped being D188's own number on 2026-10-19 (the owner's request), and the
+// reason is the privacy statement: it is the page the App Store and Play listings link as a
+// privacy policy, so it carries "The software" as well as "The website" and is the one page
+// of the site that is not the site's pitch. **The number is derived from that page and from
+// nothing else** — its own count on this build plus 25 %, which is D192's headroom figure,
+// rounded up — and this section is the pair of rules that derivation owes:
+//
+//   1. the README's number is that page's own count plus a quarter, so a sentence added
+//      there re-derives the line in the commit that adds it, the way a byte that moves
+//      re-derives its figure; and
+//   2. **every other page of the site stays within D188's own number**, so the raised ceiling is a
+//      ceiling one page reaches rather than a licence the other eight can grow into. That
+//      half is the one worth having: without it, raising the number for one page would have
+//      silently retired D188's promise for every page of the site, and nothing would say so.
+//
+// Both halves are one function over the built artifact, in the shape the other gates keep
+// their refusals in, and each half has a fixture case below that plants its defect and
+// watches the named refusal come back.
+
+/**
+ * D188's own words-per-page ceiling, the number the raise above it is measured against: 250 as
+ * D188 set it, 300 since the owner's feedback of 2026-10-19 asked the homepage for a fourth
+ * required block (its benefits section — headed "Why Fugaro?" since the owner's ruling of
+ * 2026-10-20 — 294 words with the three before it), **500 since the bold redesign of
+ * 2026-10-20**, which is the owner's approved board `website/design-ref/HomeV3.dc.html` built:
+ * the homepage is the board's five blocks — the hero, the slider, the run band, the grid of
+ * what a run leaves behind, and the closing call to action — and they measure 468 words, so
+ * the smallest round ceiling above the page that carries every block its briefs and its boards
+ * require is 500 — and **600 since the 2026-10-21 brief**, which asks the homepage's "See it"
+ * panel for a slider of four slides led by the console's own screenshots
+ * (`docs/website/zoom-diagrams/spec.md`, D251, D252): the three pictures that lead it are the
+ * console page's, so they carry the console page's own `alt` texts — one picture has one
+ * account of what it shows — and an image's `alt` is text a reader reads, which is the whole
+ * of what the four slides add to the page: 461 → 563 words, and the smallest round ceiling
+ * above it is 600. D188's own rule is what moves it and not convenience: the number is the
+ * ceiling above the page that carries the required blocks, and a page that wants the room has
+ * to carry one. website/README.md records every reading beside the words line.
+ *
+ * **900 since the 2026-10-22 brief**, which replaces the four zoom levels with the owner's four
+ * approved design boards (`website/design-ref/zoom-levels/level1.dc.html` … `level4.dc.html`)
+ * redrawn as the site's inline SVG: a board's labels are strings the drawing renders, and a
+ * string the drawing renders is text a reader reads, so the four levels' labels are words on How
+ * It Works the way the slider's `alt` texts are words on the homepage. The page goes 492 → **868
+ * words** — the boards' own labels, word for word, which is the whole of what the brief asks it
+ * to draw — and the smallest round ceiling above it is 900.
+ */
+export const D188_WORDS = 900
+
+/** The one page the words ceiling is derived from, by its built URL. */
+const WORDS_CEILING_PAGE = '/privacy/'
+
+/**
+ * Every way the words ceiling departs from its derivation, or a page departs from D188's own
+ * number. `dist` defaults to the same build the byte figures above are derived from — the
+ * gates' own build of the site, made by `buildCopy` — so the README's two kinds of number are
+ * held to one build rather than to two.
+ */
+export function wordsCeilingFailures(readme, dist = documentedBuild()) {
+  const out = []
+  const budgets = readmeBudgets(readme)
+  const pages = builtPages(dist)
+  const source = pages.find((page) => page.url === WORDS_CEILING_PAGE)
+  assert.ok(
+    source,
+    `the build carries no ${WORDS_CEILING_PAGE} page, so the words ceiling has nothing to be derived from: the number in website/README.md is that page's own count plus a quarter (D192)`,
+  )
+  const counts = pageWords(source.html)
+  assert.ok(counts, `${source.rel} has no \`main\`, so this reader measures nothing and the ceiling below would be a number nothing holds`)
+
+  const derived = Math.ceil(counts.words * 1.25)
+  if (budgets.words !== derived) {
+    out.push(
+      `website/README.md states ${budgets.words} words per page and ${WORDS_CEILING_PAGE} is ${counts.words} words: re-derive the ceiling in the commit that moves the page, because ${counts.words} plus 25 % is ${derived} (D192)`,
+    )
+  }
+
+  for (const page of pages) {
+    if (page.url === WORDS_CEILING_PAGE || DOCUMENT_PAGES.has(page.url)) continue
+    const other = pageWords(page.html)
+    if (other === null) continue
+    if (other.words > D188_WORDS) {
+      out.push(
+        `${page.rel} is ${other.words} words: the ceiling of ${budgets.words} is the privacy statement's own, and every other page of the site stays within D188's ${D188_WORDS} — a page that needs more is a page that says so in website/README.md`,
+      )
+    }
+  }
+  return out
+}
+
+test("the words ceiling is the privacy statement's own count plus a quarter, and D188's own number still holds every other page", () => {
+  assert.deepEqual(
+    wordsCeilingFailures(readFileSync(path.join(SITE, 'README.md'), 'utf8')),
+    [],
+    'the words ceiling and the pages it governs are not the ones website/README.md states',
+  )
+})
+
+test('a words ceiling raised without re-deriving it is refused', () => {
+  const readme = readFileSync(path.join(SITE, 'README.md'), 'utf8')
+  const stated = /^[ \t]*- \*\*Words per page:\*\* ([\d,]+) words/m.exec(readme)
+  assert.ok(stated, 'the README states no words-per-page ceiling to raise')
+  const raised = readme.replace(`**Words per page:** ${stated[1]} words`, '**Words per page:** 1,500 words')
+  assert.match(
+    wordsCeilingFailures(raised).join('\n'),
+    /re-derive the ceiling in the commit that moves the page/,
+    'a words ceiling raised without being re-derived from the page that sets it is not refused',
+  )
+})
+
+test("a page that grows into the privacy statement's ceiling is refused, and one that stays inside D188's is not", (t) => {
+  // A fixture build, because this half is a rule about every page and the real artifact's
+  // pages are all inside D188's number today: two pages, the one that sets the ceiling and
+  // one that grows into it. The ceiling is derived from the first, so the second's failure is
+  // the second rule's and not the first's.
+  const dist = distOf(t, {
+    'privacy/index.html': fixture(0, 300),
+    'inside/index.html': fixture(0, D188_WORDS),
+    'over/index.html': fixture(0, D188_WORDS + 1),
+  })
+  // The five lines `readmeBudgets` reads, with the words line derived from the fixture above
+  // and the rest out of the way: this case is about the second rule, so the first must pass.
+  const readme = ['- **JavaScript per page:** 0 bytes', '- **Page weight per page:** 1 bytes', '- **Whole site:** 1 bytes', "- **Words in a page's lead:** 100000 words", `- **Words per page:** ${Math.ceil(300 * 1.25)} words`].join('\n')
+  const failures = wordsCeilingFailures(readme, dist)
+  assert.equal(failures.length, 1, failures.join('\n'))
+  assert.match(failures[0], new RegExp(`^over/index\\.html is ${D188_WORDS + 1} words`))
+  assert.ok(
+    !failures.some((line) => /inside/.test(line)),
+    `a page exactly at D188's ${D188_WORDS} words is refused: the ceiling is a ceiling, not a floor at one word less`,
+  )
 })
 

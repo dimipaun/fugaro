@@ -910,7 +910,7 @@ func TestInstallationSpec(t *testing.T) {
 // can carry a bucket name gcp.LauncherBucketCondition refuses to widen on;
 // that function panics by design rather than accept it.
 // Installation must turn that into a clean UserError before ever calling
-// it, not let the panic through to fugaro init.
+// it, not let the panic through to fugaro update.
 func TestInstallationRefusesAnInvalidBucketURLCharset(t *testing.T) {
 	lc := parseLC(t, strings.Replace(m4LocalConfig, "runs_bucket: fugaro-runs-proj-1234", "bucket_url: gs://fugaro-runs-Proj1234", 1))
 	if lc.RunsBucketName() != "fugaro-runs-Proj1234" {
@@ -990,7 +990,7 @@ func TestBaseImageWarnings(t *testing.T) {
 }
 
 // The Vertex AI API is enabled when a repository the local config records
-// authenticates its agent through Vertex (init --repo records it), and
+// authenticates its agent through Vertex (fugaro update records it), and
 // only then: the installation root can't read the workflows itself.
 func TestInstallationEnablesVertexFromRepos(t *testing.T) {
 	lc := parseLC(t, m4LocalConfig+m5Additions)
@@ -1010,7 +1010,7 @@ func TestInstallationEnablesVertexFromRepos(t *testing.T) {
 }
 
 // A repository's spec says whether any of its workflows uses Vertex, which
-// init --repo records in the local config.
+// fugaro update records in the local config.
 func TestRepoUsesVertex(t *testing.T) {
 	sandbox, err := Repo(sandboxInputs(t, m5Additions))
 	if err != nil {
@@ -1026,7 +1026,7 @@ func TestRepoUsesVertex(t *testing.T) {
 }
 
 // The runs bucket the specs name is the one image builds record in
-// (localcfg's RunsBucketName), so the first build fugaro init submits,
+// (localcfg's RunsBucketName), so the first build fugaro update submits,
 // readiness and the daily check all agree; with none, it is an error.
 func TestBucketNameIsRunsBucketName(t *testing.T) {
 	for _, c := range []struct{ runs, bucketURL string }{
@@ -1322,7 +1322,7 @@ func TestInitRepoPassesTheBackendToEveryJob(t *testing.T) {
 // M2 of the PR #379 review: FUGARO_BUDGET_TOKEN says "the launch of this run
 // minted it a budget identity", which is a fact about one launch and nothing
 // a job is deployed with. It travels as an execution override
-// (backend.LaunchSpec.Env) and never through init --repo's deploy-time
+// (backend.LaunchSpec.Env) and never through fugaro update's deploy-time
 // environment; a job that carried it from the deploy would look to the
 // runner like a launch that had minted, whatever the launch did. Pinned here
 // because nothing else in this package reads the marker — a change that put
@@ -2196,7 +2196,7 @@ func TestRepoAddressesMatchTheVertexGolden(t *testing.T) {
 // snapshot a manual -tags terraform -update rewrites: a resource added to a
 // module -- #362's google_artifact_registry_repository_iam_member.build_ghcr,
 // say -- leaves both sides agreeing with each other and both wrong, and
-// every fugaro init --repo would then print a false "This change retires 1
+// every fugaro update would then print a false "This change retires 1
 // address" pointing at a destructive command. This reads the modules
 // themselves, embedded in the binary, so the drift fails a test that CI runs
 // with no terraform, no network and no golden to maintain.
@@ -2256,7 +2256,7 @@ func TestAddressesCoversEveryModuleResource(t *testing.T) {
 				}
 				t.Errorf("%s declares %s.%s, and no fixture's Addresses() has an address for it.\n"+
 					"A retirement is computed as the state minus those addresses, so this resource would be\n"+
-					"retired -- printed as a change that removes it -- on every fugaro init --repo.\n"+
+					"retired -- printed as a change that removes it -- on every fugaro update.\n"+
 					"Add it to Addresses() (internal/infra/spec.go), regenerate the goldens\n"+
 					"(go test -tags terraform ./internal/infra -run TestRealRepoRootAddresses -update),\n"+
 					"or list it in conditionalResources with the reason it is off in both fixtures.",

@@ -65,9 +65,15 @@ type InstallOptions struct {
 	NoLogIsolation bool
 	// BudgetBackend gives the installation the history account and, once
 	// the Firebase root's outputs are known and its image exists, the
-	// history job and its sweep Scheduler job. It is set by --firebase and
+	// history job and its sweep Scheduler job. It is set by --firebase-project and
 	// by a project config that records a Firebase project.
 	BudgetBackend bool
+	// ManagedDeployerScoped opts the installation in to the managed
+	// deployer's scoped role and its conditioned binding (the module's
+	// managed_deployer_scoped). Nothing sets it while internal/cli's
+	// managedDeployerShipped is false (0.8.6): the binding's fmgd- fence is
+	// not an IAM condition GCP accepts yet (deployer.tf's header).
+	ManagedDeployerScoped bool
 }
 
 // Budget is an optional budget on the project, in whole units of currency.
@@ -94,7 +100,7 @@ type InstallationSpec struct {
 	Launchers       []string          `json:"launchers"`
 	Operators       []string          `json:"operators"`
 	// LauncherBucketCondition limits the launchers' write grant on the runs
-	// bucket to runs/ (gcp.LauncherBucketCondition).
+	// bucket to runs/ and tokens/ (gcp.LauncherBucketCondition).
 	LauncherBucketCondition Condition       `json:"launcher_bucket_condition"`
 	Budget                  *Budget         `json:"budget"`
 	AlertEmail              *string         `json:"alert_email"`
@@ -111,7 +117,7 @@ type InstallationSpec struct {
 	EnableBudget bool         `json:"enable_budget,omitempty"`
 	History      *HistorySpec `json:"history,omitempty"`
 	// ProjectSecrets are the installation module's project-wide secret
-	// containers (logical name -> gcp.ProjectSecretID), which fugaro init
+	// containers (logical name -> gcp.ProjectSecretID), which fugaro update
 	// creates or adopts; their values are never set by Terraform (design
 	// docs/design/project-secrets.md §4). Installation() fills it from the
 	// local config's eligibility; DiscoverInstallation then unions in every
@@ -124,6 +130,11 @@ type InstallationSpec struct {
 	// an installation whose local config names no profile, so the plan of
 	// one that had none is unchanged (infra.ProjectJobs).
 	ProjectJobs map[string]ProjectJob `json:"project_jobs,omitempty"`
+	// ManagedDeployerScoped is the module's managed_deployer_scoped: left out
+	// unless set, so an installation that does not opt in writes the same
+	// tfvars as before the variable existed and plans without the scoped
+	// deployer role and its binding (InstallOptions.ManagedDeployerScoped).
+	ManagedDeployerScoped bool `json:"managed_deployer_scoped,omitempty"`
 }
 
 // InstallationNames are the installation's singleton names.
@@ -216,6 +227,7 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 		return InstallationSpec{}, err
 	}
 	s.ProjectJobs = jobs
+	s.ManagedDeployerScoped = o.ManagedDeployerScoped
 	if o.NoLogIsolation {
 		s.LogIsolation = new(false)
 	}

@@ -27,6 +27,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -152,7 +153,7 @@ func checkDBProject(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) e
 	case err != nil:
 		return dbErr(lc, err, false)
 	case !found:
-		return userErr("the database at budget.rtdb_url has no /fugaro/project: it is not a Fugaro project's budget database; an operator runs fugaro init --firebase for project %s", lc.Name)
+		return userErr("the database at budget.rtdb_url has no /fugaro/project: it is not a Fugaro project's budget database; an operator runs fugaro update --firebase-project for project %s", lc.Name)
 	case name != lc.Name:
 		return userErr("the database at budget.rtdb_url belongs to project %q, not %q; fix budget.rtdb_url in project %s's config", oneLine(name), lc.Name, lc.Name)
 	}
@@ -207,11 +208,13 @@ func confirmTyped(cmd *cobra.Command, in *bufio.Reader, lc *localcfg.Config, yes
 // command that has no such flag it is advice that cannot be taken.
 func confirmTypedStrict(cmd *cobra.Command, lc *localcfg.Config, why, what string) error {
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "⚠ CONFIRM (project %s): %s\n", lc.Name, what)
+	// The name is printed bounded (safetext.Field) and compared as itself
+	// below: the bound is on the text and never on the comparison.
+	fmt.Fprintf(out, "⚠ CONFIRM (project %s): %s\n", safetext.Field(lc.Name), what)
 	if !stdinIsTerminal(cmd.InOrStdin()) {
 		return userErr("%s: %s", initflow.NeedsTerminal("the typed confirmation of this step"), why)
 	}
-	fmt.Fprintf(out, "Type %s to confirm: ", lc.Name)
+	fmt.Fprintf(out, "Type %s to confirm: ", safetext.Field(lc.Name))
 	line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return userErr("reading the confirmation: %v", err)
@@ -722,17 +725,25 @@ type budgetSetOptions struct {
 func newBudgetSetCmd() *cobra.Command {
 	var o budgetSetOptions
 	cmd := &cobra.Command{
-		Use:   "set (--global | --defaults | --repo R) [--daily USD] [--per-run USD] [--max-reserve USD] [--mode observe|enforce] | --clear",
+		Use:   "set (--global | --defaults | --repo [owner/name]) [--daily USD] [--per-run USD] [--max-reserve USD] [--mode observe|enforce] | --clear",
 		Short: "Set a cap, the lease limit or the mode (budget admins)",
 		Long: "Set caps in the project's budget database, with an ETag-guarded write that shows\n" +
 			"the old and the new value.\n\n" +
-			"  --global    the project's daily and per-run caps; also takes --max-reserve and --mode\n" +
-			"  --defaults  the caps of every repository that has none of its own\n" +
-			"  --repo R    one repository's caps\n\n" +
+			"  --global            the project's daily and per-run caps; also takes --max-reserve and --mode\n" +
+			"  --defaults          the caps of every repository that has none of its own\n" +
+			"  --repo [owner/name] one repository's caps; --repo with no value means the\n" +
+			"                      repository this checkout belongs to, which needs no\n" +
+			"                      owner/name at all\n\n" +
 			"--max-reserve (the largest single lease) and --mode (observe, or enforce: caps\n" +
 			"bite) are project-wide, so they go with --global. Amounts are US dollars from 0\n" +
 			"to 100000, and a per-run cap may not exceed the daily cap of the same scope.\n" +
 			"--clear removes the scope's caps.\n\n" +
+			"--repo owner/name always works, from anywhere; the bare --repo is refused\n" +
+			"outside a checkout whose origin names a repository, and never stands for the\n" +
+			"project-wide caps. kill and resume take --repo the same way. preview needs no\n" +
+			"bare form: left out, --repo already means this checkout's repository. show is\n" +
+			"the one whose empty --repo is not the checkout (it means no repository\n" +
+			"filter), so it takes owner/name.\n\n" +
 			"Raising a cap (setting one that was unset counts), or lowering the mode to\n" +
 			"observe, loosens what runs may spend, so it asks you to type the project's name\n" +
 			"(or pass --yes). Lowering needs no confirmation.",
@@ -742,7 +753,7 @@ func newBudgetSetCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.BoolVar(&o.global, "global", false, "the project's own caps")
 	f.BoolVar(&o.defaults, "defaults", false, "the default caps of repositories without their own")
-	f.StringVar(&o.repo, "repo", "", "one repository's caps (owner/name)")
+	f.StringVar(&o.repo, "repo", "", "one repository's caps, given as owner/name (no value: this checkout's origin)")
 	f.Float64Var(&o.daily, "daily", 0, "the daily cap, in US dollars")
 	f.Float64Var(&o.perRun, "per-run", 0, "the per-run cap, in US dollars")
 	f.Float64Var(&o.reserve, "max-reserve", 0, "the largest single lease, in US dollars (with --global)")
@@ -763,14 +774,19 @@ type setPlan struct {
 }
 
 func parsePlan(cmd *cobra.Command, o *budgetSetOptions) (*setPlan, error) {
+	// A bare --repo (rewritten to --repo= at the argv boundary) is a scope
+	// with an empty value, so the flag's presence is what names the scope and
+	// not the string it carries: read off o.repo != "" and the bare form is
+	// not a scope at all, which is "name one scope" for a command that named
+	// one.
 	n := 0
-	for _, b := range []bool{o.global, o.defaults, o.repo != ""} {
+	for _, b := range []bool{o.global, o.defaults, cmd.Flags().Changed("repo")} {
 		if b {
 			n++
 		}
 	}
 	if n != 1 {
-		return nil, userErr("name one scope: --global, --defaults or --repo R")
+		return nil, userErr("name one scope: --global, --defaults or --repo [owner/name]")
 	}
 	p := &setPlan{clear: o.clear, repo: o.repo}
 	switch {
@@ -1042,6 +1058,37 @@ func buildEdits(ctx context.Context, db *rtdb.Client, p *setPlan, slug string) (
 	return edits, nil
 }
 
+// namedRepo is the repository a budget command was pointed at: --repo's value
+// when it carries one, and the repository this checkout belongs to when it
+// does not (a bare --repo, which NormalizeRepoArgs rewrote to --repo=).
+//
+// The reading of the checkout's origin is originRepo's -- the one helper run,
+// ls, validate and secrets use, over repoFromOrigin, the one parser of a
+// remote URL (https, ssh or scp-like, github.com or bitbucket alike). What is
+// not reused is originRepo's message, which is written for a command that was
+// given no --repo at all. Nothing is guessed here: outside a checkout, or with
+// an origin that names no repository, the command refuses and names the fix,
+// and it never falls back to the project-wide caps, which are a scope the
+// person who typed --repo did not ask for.
+//
+// The shape check is the one resolveSecretRepo makes for the same flag, and it
+// is what keeps a mistyped value a refusal: `--repo acme-app` reaches here as
+// the value acme-app -- the argv rewrite leaves a --repo with a token after it
+// alone -- and it must never be read as "no value" and answered with the
+// checkout's repository instead.
+func namedRepo(ctx context.Context, repo string) (string, error) {
+	if repo == "" {
+		var err error
+		if repo, err = originRepo(ctx); err != nil {
+			return "", userErr("--repo with no value means the repository this checkout belongs to, and this is not a checkout with an origin remote that names one: pass --repo owner/name")
+		}
+	}
+	if _, err := task.CanonicalRepo(repo); err != nil {
+		return "", userErr("--repo: %v", err) // CanonicalRepo's error doesn't quote its input
+	}
+	return repo, nil
+}
+
 func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 	ctx := cmd.Context()
 	p, err := parsePlan(cmd, o)
@@ -1054,6 +1101,9 @@ func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 	}
 	slug := ""
 	if p.scope == "repo" {
+		if p.repo, err = namedRepo(ctx, p.repo); err != nil {
+			return err
+		}
 		if slug, err = repoSlugOf(ctx, lc, p.repo); err != nil {
 			return err
 		}
@@ -1136,15 +1186,21 @@ type budgetKillOptions struct {
 
 func newBudgetKillCmd(kill bool) *cobra.Command {
 	var o budgetKillOptions
-	use, short, long := "resume (--all | --repo R) [--reason TEXT]", "Clear a kill switch (budget admins)",
-		"Clear the project's kill switch (--all) or one repository's (--repo R), recording who\n"+
-			"and when. Asks you to type the project's name (or pass --yes): runs start again."
+	use, short, long := "resume (--all | --repo [owner/name]) [--reason TEXT]", "Clear a kill switch (budget admins)",
+		"Clear the project's kill switch (--all) or one repository's (--repo [owner/name]),\n"+
+			"recording who and when. --repo with no value means the repository this checkout\n"+
+			"belongs to, as it does for set. Asks you to type the project's name (or pass\n"+
+			"--yes): runs start again."
 	if kill {
-		use, short, long = "kill (--all | --repo R) [--reason TEXT]", "Halt every run of the project or of one repository (budget admins)",
-			"Set the project's kill switch (--all) or one repository's (--repo R), recording\n"+
-				"who, when and why. Runs in flight halt within seconds (a run in its last stage\n"+
-				"finishes pushing its work first) and new runs refuse. --all asks you to type\n"+
-				"the project's name (or pass --yes); one repository needs no confirmation."
+		use, short, long = "kill (--all | --repo [owner/name]) [--reason TEXT]", "Halt every run of the project or of one repository (budget admins)",
+			"Set the project's kill switch (--all) or one repository's (--repo [owner/name]),\n"+
+				"recording who, when and why. --repo with no value means the repository this\n"+
+				"checkout belongs to, as it does for set. show takes owner/name (its empty\n"+
+				"--repo means no repository filter, not a checkout), and preview already\n"+
+				"means this checkout's repository without the flag.\n"+
+				"Runs in flight halt within seconds (a run in its last stage finishes pushing\n"+
+				"its work first) and new runs refuse. --all asks you to type the project's name\n"+
+				"(or pass --yes); one repository needs no confirmation."
 	}
 	cmd := &cobra.Command{
 		Use: use, Short: short, Long: long, Args: cobra.NoArgs,
@@ -1152,7 +1208,7 @@ func newBudgetKillCmd(kill bool) *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.BoolVar(&o.all, "all", false, "the whole project")
-	f.StringVar(&o.repo, "repo", "", "one repository (owner/name)")
+	f.StringVar(&o.repo, "repo", "", "one repository, given as owner/name (no value: this checkout's origin)")
 	f.StringVar(&o.reason, "reason", "", "why (recorded, shown by budget show and watch)")
 	f.BoolVar(&o.yes, "yes", false, "confirm without typing the project's name")
 	addCloudFlags(cmd, &o.cloud)
@@ -1161,8 +1217,10 @@ func newBudgetKillCmd(kill bool) *cobra.Command {
 
 func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 	ctx := cmd.Context()
-	if o.all == (o.repo != "") {
-		return userErr("name one scope: --all or --repo R")
+	// The flag's presence names the scope, not the string it carries: a bare
+	// --repo is a scope with an empty value (see parsePlan).
+	if o.all == cmd.Flags().Changed("repo") {
+		return userErr("name one scope: --all or --repo [owner/name]")
 	}
 	if utf8.RuneCountInString(o.reason) > maxKillReason {
 		return userErr("--reason is %d characters; keep it to %d", utf8.RuneCountInString(o.reason), maxKillReason)
@@ -1177,11 +1235,15 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 	}
 	path, what := budget.PathKillGlobal, "project "+lc.Name
 	if !o.all {
-		slug, err := repoSlugOf(ctx, lc, o.repo)
+		repo, err := namedRepo(ctx, o.repo)
 		if err != nil {
 			return err
 		}
-		path, what = budget.PathKillRepo(slug), "repository "+o.repo
+		slug, err := repoSlugOf(ctx, lc, repo)
+		if err != nil {
+			return err
+		}
+		path, what = budget.PathKillRepo(slug), "repository "+repo
 	}
 	out := cmd.OutOrStdout()
 	in := bufio.NewReader(cmd.InOrStdin())

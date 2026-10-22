@@ -309,6 +309,43 @@ func TestBuildEnvAuthModes(t *testing.T) {
 	}
 }
 
+// An OAuth run's agent environment is built from its own credential and
+// nothing else. ANTHROPIC_API_KEY is in no allow-list for auth: oauth, so a
+// key that is in the runner's own environment — a job that mounts one beside
+// the token, a hand-started runner, a local run on a machine that has one —
+// never reaches the agent, and the run cannot fall back to it. The token's
+// absence is an error (TestBuildEnvAuthModes pins that text); this is the
+// other half of the same rule, and it is the mechanism design
+// project-named-oauth-tokens §4.4 row 10 names for "the run fails; it does
+// not fall back".
+//
+// Mutation (run, restored): add ANTHROPIC_API_KEY to oauth's secretNames in
+// BuildEnv. Both halves of this test fail: the agent authenticates as the
+// key, and the run with no token is admitted.
+func TestBuildEnvOAuthNeverFallsBackToTheAPIKey(t *testing.T) {
+	const key = "placeholder-api-key"
+	env, _, err := BuildEnv([]string{"ANTHROPIC_API_KEY=" + key, "CLAUDE_CODE_OAUTH_TOKEN=oauth-token-abcdef"},
+		EnvSpec{Auth: "oauth"})
+	if err != nil {
+		t.Fatalf("BuildEnv = %v", err)
+	}
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "ANTHROPIC_API_KEY=") {
+			t.Errorf("an OAuth run's environment carries the Anthropic API key: %q", kv)
+		}
+	}
+	if !slices.Contains(env, "CLAUDE_CODE_OAUTH_TOKEN=oauth-token-abcdef") {
+		t.Errorf("the agent's environment lacks the token: %v", env)
+	}
+	// The other half: with the key in the environment and no token, the run
+	// is refused rather than run as something its configuration did not
+	// choose.
+	if _, _, err := BuildEnv([]string{"ANTHROPIC_API_KEY=" + key}, EnvSpec{Auth: "oauth"}); err == nil ||
+		!strings.Contains(err.Error(), "CLAUDE_CODE_OAUTH_TOKEN") {
+		t.Fatalf("a run with auth: oauth and no token was admitted with an API key in the environment: err = %v", err)
+	}
+}
+
 func TestBuildEnvShortSecret(t *testing.T) {
 	if _, _, err := BuildEnv([]string{"ANTHROPIC_API_KEY=abc"}, EnvSpec{Auth: "api-key"}); err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
 		t.Fatalf("short auth secret err = %v", err)
@@ -592,7 +629,7 @@ func TestStageTokensTakesLarger(t *testing.T) {
 }
 
 func TestBuildEnvGatewayDropsRealKey(t *testing.T) {
-	const realKey = "sk-ant-real-key-123"
+	const realKey = "placeholder-api-key"
 	parent := []string{"PATH=/bin", "ANTHROPIC_API_KEY=" + realKey, "ANTHROPIC_BASE_URL=https://elsewhere.invalid", "NPM_TOKEN=npm-456"}
 	gw := &Gateway{BaseURL: "http://127.0.0.1:4000", Token: "tok-abc"}
 	env, secrets, err := BuildEnv(parent, EnvSpec{Auth: "api-key", Gateway: gw, Secrets: []string{"NPM_TOKEN"}})
@@ -809,7 +846,7 @@ func TestBuildEnvNoGatekeeperNeedsTheKeyActionably(t *testing.T) {
 	if err == nil {
 		t.Fatal("api-key with no gateway and no key started")
 	}
-	for _, want := range []string{"ANTHROPIC_API_KEY", "fugaro secrets set anthropic-api-key", "fugaro init --repo", "route the model through a provider"} {
+	for _, want := range []string{"ANTHROPIC_API_KEY", "fugaro secrets set anthropic-api-key", "fugaro update", "route the model through a provider"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}

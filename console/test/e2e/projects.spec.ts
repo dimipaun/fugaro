@@ -70,13 +70,14 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { _electron as electron, expect, test } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
 import type { JSONDoc } from '../../src/source/source'
 import { PROJECT_PANEL_KEYS, PROJECTS_THEMES } from '../../src/renderer/screens/projects'
 import { inRangeCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
+import { launchConsole } from '../support/launch'
 
 // The console's own directory, from this file's location: `test/e2e/x.spec.ts`
 // is two levels below it.
@@ -443,13 +444,13 @@ test.describe('the Projects screen', () => {
     // opens when no installation is chosen -- is not, and no spec touches the
     // machine's own console profile.
     cli.seedActiveInstallation()
-    app = await electron.launch({ args: cli.launchArgs(consoleDir), env: cli.env })
+    app = await launchConsole({ args: cli.launchArgs(consoleDir), env: cli.env })
     page = await app.firstWindow()
     await page.waitForLoadState('domcontentloaded')
   })
 
   test.afterAll(async () => {
-    await app.close()
+    await app?.close()
     cli.remove()
   })
 
@@ -648,5 +649,46 @@ test.describe('the Projects screen', () => {
       PROJECTS_THEMES.map((theme) => `${theme}-${process.platform}.png`).sort(),
     )
     for (const file of present) expect(file).toMatch(new RegExp(`^(${PROJECTS_THEMES.join('|')})-(darwin|linux)\\.png$`))
+  })
+
+  test('keeps its state words and its row boundary under forced colors (design section 6.4)', async () => {
+    // The Projects screen's half of the forced-colors smoke (section 4.4, in the half
+    // section 6.4 gives this task). This is the screen with the most states and the
+    // fewest colours: every panel carries `data-state`, the two with no command say
+    // "not readable with this CLI" in a sentence, and neither may become a colour the
+    // system takes away. The chrome's half is `entry.spec.ts`'s; a smoke, not a golden.
+    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
+    await page.emulateMedia({ forcedColors: 'active', colorScheme: 'light' })
+    expect(await page.evaluate(() => matchMedia('(forced-colors: active)').matches)).toBe(true)
+
+    const forced = await page.evaluate(() => {
+      const scope: ParentNode = document.getElementById('projects-mount') ?? document.createDocumentFragment()
+      const all = (selector: string): HTMLElement[] =>
+        Array.from(scope.querySelectorAll<HTMLElement>(selector))
+      const row = scope.querySelector('li.projects-job') ?? scope.querySelector('li.projects-cap')
+      const computed = row === null ? null : getComputedStyle(row)
+      const number = scope.querySelector('.projects-number')
+      return {
+        states: all('.projects-panel').map((panel) => panel.getAttribute('data-state')),
+        because: all('.projects-because').map((one) => one.textContent ?? ''),
+        rowVisibility: computed?.visibility ?? null,
+        rowWidth: computed?.borderBottomWidth ?? null,
+        rowColour: computed?.borderBottomColor ?? null,
+        tabular: number === null ? null : getComputedStyle(number).fontVariantNumeric,
+      }
+    })
+
+    // The state is in the DOM twice over: as the attribute a reader's tools read, and
+    // as the sentence a reader reads.
+    expect(forced.states).toContain('not-built')
+    expect(forced.because.join(' '), 'a panel with no document lost its reason').toContain(
+      'not readable with this CLI',
+    )
+    expect(forced.rowVisibility).toBe('visible')
+    expect(forced.rowWidth, 'the panel’s row boundary collapsed under forced colors').not.toBe('0px')
+    expect(forced.rowColour).not.toBe('rgba(0, 0, 0, 0)')
+    expect(forced.tabular, 'the numbers lost their tabular figures').toContain('tabular-nums')
+
+    await page.emulateMedia({ forcedColors: 'none' })
   })
 })

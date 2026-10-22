@@ -47,11 +47,21 @@
   --space-xl: 3rem;
   --space-2xl: 4.5rem;
   --space-3xl: 7rem;
+  /* The bold redesign's section rhythm: the room one band of the page gives the next. It is a
+     step of the scale rather than a number a band invents, so two bands' room is comparable
+     and `website/test/base-styles.mjs`'s rhythm reading can add it up. */
+  --space-4xl: 9rem;
 
-  /* ---- radius ---- */
+  /* ---- radius ----
+   * Four steps, and the redesign is why the top two exist: the boards draw a card at 18–20 px
+   * and a panel at 20 px, so a card and the panel it sits on are two radii rather than one
+   * rounded box inside another. `--radius-lg` is the control (a button, a code block), and
+   * `--radius-pill` is the one shape that is not a corner at all. There is deliberately no
+   * step above `--radius-xl`: a fifth radius nothing draws is a token every page carries. */
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 16px;
+  --radius-xl: 20px;
   --radius-pill: 999px;
 
   /* ---- type: families, then sizes, then the leading and weights that go with them ---- */
@@ -70,15 +80,36 @@
   --font-size-2xl: 2rem;
   --font-size-3xl: 2.75rem;
   --font-size-4xl: 3.5rem;
+  /* The bold redesign's display steps, and the top of the scale: the owner's boards draw the
+     home page's headline at 104 px and a section's at 56 px, which are two steps above the
+     largest size the site had. They are sizes rather than clamps, because the clamp that
+     turns a size into a phone's size is the headline's own rule (`.display-xl` in
+     `base.css`), and a token that carried a viewport unit would be a value no reader of the
+     scale could compare with the step below it. */
+  --font-size-5xl: 4.5rem;
+  --font-size-6xl: 6.5rem;
 
   --leading-tight: 1.15;
   --leading-snug: 1.35;
   --leading-normal: 1.6;
+  /* The display leading, which is tighter than any prose can be set in: a headline whose two
+     lines are 0.94 of its own size reads as one block of type rather than as two lines, and
+     it is only ever used above 40 px, where a reader's eye does not need the room a
+     paragraph's leading gives it. */
+  --leading-display: 0.94;
   --tracking-tight: -0.02em;
+  /* The display tracking. A headline set at 100 px with the body's tracking reads as loose
+     and unfinished, because the letter-spacing a size needs is proportional to the size. */
+  --tracking-display: -0.045em;
 
   --weight-normal: 400;
   --weight-medium: 500;
   --weight-semibold: 600;
+  /* The weight the display scale is set in. It is the heaviest weight the system font stack
+     is guaranteed to draw on every platform (the `900` face of the reader's own sans), and it
+     is what makes the headline read as the loudest thing on the page rather than as a large
+     paragraph. */
+  --weight-black: 900;
 
   /* ---- layout ---- */
   --measure: 68ch;
@@ -91,6 +122,29 @@
    * the ring is reachable and visible). */
   --focus-ring-width: 2px;
   --focus-ring-offset: 2px;
+
+  /* ---- stacking ----
+   * The one place the site numbers a layer, and two names are the whole of it.
+   *
+   * `--z-header` is the header's row and the panel a group hangs below it, and **nothing else
+   * names a layer at all**: a page's own content carries no `z-index`, not this one and not a
+   * number of its own, which is what `website/test/stacking.mjs` refuses a content rule. A
+   * positioned block with no `z-index` paints
+   * with every other such block in tree order, and the header is the first of them: a page
+   * that draws a positioned block after it — the retired four-step flow's steps are what its
+   * arrows were placed against, and the homepage's slider is the positioned block that stands
+   * where they stood — had that block painted across an open menu, which is the owner's
+   * reading of 2026-10-19 on `/how-it-works/` at phone width. So the header takes
+   * this layer and becomes a stacking context, which paints it, panel included, above every
+   * block a page draws, on every page and at every width.
+   *
+   * `--z-chrome` is the reader's own chrome above the page: the skip link, which is drawn
+   * over the header it skips past, and the analytics banner, which is fixed to the window's
+   * foot. Both are written in the base layer rather than by a page, and `website/test/stacking.mjs`
+   * reads the built stylesheets and refuses a third rule at either layer — a component with a
+   * layer of its own is the defect this scale exists to prevent. */
+  --z-header: 10;
+  --z-chrome: 20;
 
   /* ---- motion ---- */
   --duration-fast: 120ms;

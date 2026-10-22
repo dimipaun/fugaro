@@ -182,7 +182,7 @@ var sharedForbidden = []string{"terraform", "user", "endpoints", "bucket_url", "
 // ParseShared validates a published shared config against its anchor and
 // returns it (docs/design/shared-config.md §5). Anyone holding objectAdmin
 // on the runs bucket can write the file, so it refuses, and never repairs,
-// anything fugaro init would not have written or that points outside the
+// anything the converge would not have written or that points outside the
 // anchor's GCP project: another name, GCP project or bucket, a registry,
 // base image or log view elsewhere, a budget block whose Firebase project
 // is not the anchor's GCP project or whose database or signer is not its
@@ -191,10 +191,10 @@ var sharedForbidden = []string{"terraform", "user", "endpoints", "bucket_url", "
 // anchors, aliases, merge keys, explicit
 // tags, repeated keys or documents, and anything over
 // localcfg.SharedMaxBytes. Every refusal names the field and says to have
-// fugaro init run again.
+// fugaro update run again.
 func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 	refuse := func(format string, args ...any) (*localcfg.Config, error) {
-		return nil, fmt.Errorf("the shared config "+format+"; ask an operator to run fugaro init again", args...)
+		return nil, fmt.Errorf("the shared config "+format+"; ask an operator to run fugaro update again", args...)
 	}
 	bad := func(field, why string, args ...any) (*localcfg.Config, error) {
 		return refuse("has a bad "+field+": "+why, args...)
@@ -213,7 +213,7 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 	// that decodes to its zero value cannot hide.
 	for _, k := range sharedForbidden {
 		if _, ok := top[k]; ok {
-			return refuse("carries %s:, which is never published; it was not written by fugaro init", k)
+			return refuse("carries %s:, which is never published; it was not written by the converge", k)
 		}
 	}
 	// The identity first, so a file of another installation is named as
@@ -234,7 +234,7 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 		return refuse("is not valid: %s", strconv.Quote(strings.ReplaceAll(err.Error(), "local config: ", "")))
 	}
 	for _, k := range dropped {
-		c.AddWarning(fmt.Sprintf("the project's shared config still lists base_images.%q, a base removed in 0.7.0; ignored (the next fugaro init or fugaro image refresh republishes the shared config)", k))
+		c.AddWarning(fmt.Sprintf("the project's shared config still lists base_images.%q, a base removed in 0.7.0; ignored (the next fugaro update or fugaro image refresh republishes the shared config)", k))
 	}
 	// Again on the decoded values, which are what the commands use.
 	switch {
@@ -260,7 +260,7 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 	switch {
 	case c.ImageSource == "" || c.ImageSource == mirror.DefaultSources[0] || c.ImageSource == a.ImageSource:
 	default:
-		return bad("image_source", "%q is not %s, and this machine's local config does not record it: a base pin through the remote repository is checked against the owner recorded there, so record %s first (fugaro init --base base --image-source %s), then publish",
+		return bad("image_source", "%q is not %s, and this machine's local config does not record it: a base pin through the remote repository is checked against the owner recorded there, so record %s first (fugaro update --base base --image-source %s), then publish",
 			c.ImageSource, mirror.DefaultSources[0], c.ImageSource, c.ImageSource)
 	}
 	// The owner every remote-repository entry must name: the published
@@ -277,7 +277,7 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 				ref, c.RegistryHost, infra.BaseRegistry, c.RegistryHost, infra.GhcrRegistry, owner, kind)
 		}
 		if c.ImageSource == "" && strings.HasPrefix(ref, c.RegistryHost+"/"+infra.GhcrRegistry+"/") {
-			return bad("base_images."+kind, "%q is a pin through the remote repository, which is checked against the owner image_source records, and this config records none: rerun fugaro init --base %s there to record one, or remove the entry", ref, kind)
+			return bad("base_images."+kind, "%q is a pin through the remote repository, which is checked against the owner image_source records, and this config records none: rerun fugaro update --base %s there to record one, or remove the entry", ref, kind)
 		}
 	}
 	if c.Build.ServiceAccount != "" {
@@ -288,13 +288,123 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 			return bad("repos."+name+".base_branch", "%q is set; it is never published: the base branch comes from the checkout's reviewed fugaro.yaml", c.Repos[name].BaseBranch)
 		}
 	}
+	// Every value of the published batch block that names a cloud resource is
+	// held to the anchor's project, for the reason the fields above are. The
+	// block is published because it is the installation's own facts, not one
+	// machine's (localcfg.Config.Shared), and that is exactly why a writer with
+	// objectAdmin on the runs bucket — anyone who can write this file — must
+	// not be able to point another machine's Batch runs at resources of their
+	// choosing: an image they built, which would run as the installation's own
+	// service account, VMs placed on their network, a job running as their
+	// account, or a job reading a secret out of their project. The values are
+	// the ones the compute root the Batch stage applies creates in the
+	// installation's project (design compute-backend.md §4.4, plan
+	// 2026-10-19-compute-backend.md Task 8 step 2).
+	//
+	// What this refuses beyond a foreign image, account and secret: an image
+	// served through the project's own fugaro-ghcr repository, which the
+	// project check cannot see (it is the anchor's project) and which is a
+	// pull-through to ghcr.io, so its contents are a stranger's — see the
+	// check itself; batch.boot_image, which is not the review's list and is the
+	// one with the
+	// most behind it — a VM's boot disk is the machine itself, so a boot image
+	// family the writer owns is their kernel and their daemon data root
+	// running as the run's account — and a network or a subnetwork in another
+	// project, although
+	// internal/backend/batch's checkNetwork notes that a shared VPC's network
+	// may live elsewhere. The anchor is a name, a GCP project and a bucket, so
+	// a host project is not something a reader can establish for itself, and
+	// this file is the channel a stranger can write. The compute module creates
+	// the network in the installation's own project, so nothing this tree
+	// builds is refused; a shared-VPC installation needs a decision about which
+	// host project its readers may trust before it can publish one.
+	if b := c.Batch; b != nil {
+		if m := batchImageProjectRE.FindStringSubmatch(b.Image); m == nil || m[1] != a.GCPProject {
+			return bad("batch.image", "%q is not an image of this project's Artifact Registry, <region>-docker.pkg.dev/%s/<repository>/<image>[:tag][@sha256:<digest>]: a Batch run's job image is this installation's own build, and an image from anywhere else would run as the run's service account", b.Image, a.GCPProject)
+		}
+		// The path, before the repository is read out of it: a reference
+		// whose segments are not name components is one Docker refuses, and
+		// one whose empty, "." or ".." segment Docker would resolve is a
+		// path to a repository the segment check below never read — a
+		// pull-through reached through the anchor's own host and project.
+		// localcfg's own grammar for this field is the spelling an operator
+		// writes, and it is looser than this one; the value here is the
+		// writer's, so it is read strictly (this package's batchImageRE, below).
+		if !batchImageRE.MatchString(b.Image) {
+			return bad("batch.image", "%q is not a path of names in this project's Artifact Registry, <region>-docker.pkg.dev/%s/<repository>/<image>[:tag][@sha256:<digest>]: a path segment is a lowercase name, never empty, %q or %q, so what this names is an image and not a path Docker would resolve to another repository", b.Image, a.GCPProject, ".", "..")
+		}
+		// The project is not the whole of it: the repository the image sits in
+		// is inside that project, so no project check can tell one repository
+		// from another. fugaro-ghcr is a pull-through repository to ghcr.io
+		// (deploy/terraform/gcp/modules/installation/registry.tf: "nothing
+		// writes it, the packages are public so it is unauthenticated"), so
+		// what it serves is whatever the upstream package's owner published --
+		// anyone with a GitHub account, and no grant in this installation
+		// stands between it and the pull. Held to the project alone, this
+		// check accepted
+		// <host>/<project>/fugaro-ghcr/<their owner>/<their image>:<tag>,
+		// which is their code and their entrypoint running as the run's
+		// service account: exactly what the comment above says this check is
+		// for.
+		//
+		// The refusal is a flat one, and it costs nothing legitimate: a
+		// base_images pin -- the only thing of this installation's that may
+		// come out of the remote repository -- always carries a release tag
+		// and a digest together (baseImageRE, above), and localcfg's own
+		// batch.image grammar refuses that shape (localcfg's own batchImageRE,
+		// not the one in this package, takes a tag or a digest, never both), so no value of base_images can be a job
+		// image to begin with: batch.image is the installation's own build,
+		// one image for its runs. fugaro-base and this installation's
+		// per-repository registries are not refused with it: they are
+		// repositories only this installation's operators and builds push to,
+		// so a writer who can write this file cannot put code of their own in
+		// them. The refusal is of this one repository ID only: every other
+		// pull-through repository of the project passes, which the Task 10
+		// inventory records.
+		if r := batchImageRepoRE.FindStringSubmatch(b.Image); r != nil && r[1] == infra.GhcrRegistry {
+			return bad("batch.image", "%q is served through the %q remote repository, which is a pull-through to ghcr.io: what it holds is the upstream package's owner's image, not this installation's build, so a run would execute their code as the run's service account. A job image is the repository's own, <region>-docker.pkg.dev/%s/<this repository's registry>/<image>[:tag]", b.Image, infra.GhcrRegistry, a.GCPProject)
+		}
+		for _, f := range []struct{ field, value, want string }{
+			// The boot image above the rest for what it is: a VM boots from
+			// it, so an image family of the writer's choosing is the whole
+			// machine — its kernel, its daemon, its Docker data root —
+			// running as the run's service account.
+			{"batch.boot_image", b.BootImage, "projects/" + a.GCPProject + "/global/images/family/<name>"},
+			{"batch.network", b.Network, "projects/" + a.GCPProject + "/global/networks/<name>"},
+			{"batch.subnetwork", b.Subnetwork, "projects/" + a.GCPProject + "/regions/<region>/subnetworks/<name>"},
+		} {
+			// Empty is left to the backend, which refuses a launch with no
+			// network at all (checkNetwork): there is no resource named here
+			// for a writer to move.
+			if f.value == "" {
+				continue
+			}
+			if m := batchResourceProjectRE.FindStringSubmatch(f.value); m != nil && m[1] == a.GCPProject {
+				continue
+			}
+			return bad(f.field, "%q is not this project's resource, %s", f.value, f.want)
+		}
+		if b.ServiceAccount != "" && !strings.HasSuffix(b.ServiceAccount, "@"+a.GCPProject+".iam.gserviceaccount.com") {
+			return bad("batch.service_account", "%q is not this project's service account, <name>@%s.iam.gserviceaccount.com", b.ServiceAccount, a.GCPProject)
+		}
+		for i, name := range slices.Sorted(maps.Keys(b.Secrets)) {
+			if m := batchSecretProjectRE.FindStringSubmatch(b.Secrets[name]); m != nil && m[1] == a.GCPProject {
+				continue
+			}
+			// Named by its position and not by its key or its value, the way
+			// localcfg's own batch.secrets refusal names an entry: the value
+			// slot is where a secret's value is written by mistake, and a
+			// refusal is not the place to print it.
+			return bad("batch.secrets", "entry %d of %d is not a Secret Manager secret of this project, projects/%s/secrets/<name>", i+1, len(b.Secrets), a.GCPProject)
+		}
+	}
 	if b := c.Budget; b != nil && (b.RTDBURL != "" || b.FirebaseProject != "" || b.TokenSigner != "") {
 		// The database and signer must be the anchor's own project's: an
 		// internally consistent triple of another project would pass the
 		// checks below. An installation with a separate Firebase project
 		// can't be anchored by the checkout, so it is never used from here.
 		if b.FirebaseProject != a.GCPProject {
-			return nil, fmt.Errorf("the shared config's budget.firebase_project %q is not gcp_project %s: this installation uses a separate Firebase project, so the shared config cannot be used automatically; run fugaro init (adopt) to configure it", b.FirebaseProject, a.GCPProject)
+			return nil, fmt.Errorf("the shared config's budget.firebase_project %q is not gcp_project %s: this installation uses a separate Firebase project, so the shared config cannot be used automatically; run fugaro update (adopt) to configure it", b.FirebaseProject, a.GCPProject)
 		}
 		o := infra.FirebaseOutputs{RTDBURL: b.RTDBURL, FirebaseAPIKey: b.FirebaseAPIKey, TokenSigner: b.TokenSigner, FirebaseProject: b.FirebaseProject}
 		if err := infra.CheckFirebaseOutputsFor(o, "", false); err != nil {
@@ -347,6 +457,63 @@ func dropLegacyBaseImages(data []byte) ([]byte, []string, error) {
 	return out, dropped, err
 }
 
+// An image reference's own pieces, spelled once and read by baseImageRE and
+// batchImageRE below: a path component is a lowercase name component, so it
+// can be neither empty nor "." nor ".." — the segments Docker itself refuses.
+// They matter here because a segment this reader accepted and Docker
+// resolved is a repository of the writer's choosing reached through a
+// segment the checks below never read (see batchImageRE).
+const (
+	imageComponent = `[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*`
+	imageTag       = `[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}`
+	imageDigest    = `sha256:[0-9a-f]{64}`
+)
+
+// batchResourceProjectRE pulls the project out of a full resource name,
+// projects/<project>/..., and batchImageProjectRE pulls it out of an Artifact
+// Registry image reference, <region>-docker.pkg.dev/<project>/...:
+// batchImageRepoRE pulls the repository out of the same reference, one segment
+// further along. These are the shapes ParseShared holds the published batch
+// block's network, subnetwork and image to. All are applied after
+// localcfg.Parse, whose own grammar for these fields is looser (for the image
+// it accepts empty, "." and ".." path segments, which batchImageRE below
+// refuses) — so the questions left here are whose project a value names, and,
+// for the image, which of that project's repositories it comes out of.
+var (
+	batchResourceProjectRE = regexp.MustCompile(`^projects/([a-z][a-z0-9-]{4,28}[a-z0-9])/`)
+	batchImageProjectRE    = regexp.MustCompile(`^[a-z][a-z0-9-]*-docker\.pkg\.dev/([a-z][a-z0-9-]{4,28}[a-z0-9])/`)
+	// batchImageRepoRE is the segment after the project, which an Artifact
+	// Registry reference always has (nothing in the registry is served under
+	// the project itself); it is matched separately so the project check above
+	// keeps answering exactly what it answered before this one existed.
+	batchImageRepoRE = regexp.MustCompile(`^[a-z][a-z0-9-]*-docker\.pkg\.dev/[a-z][a-z0-9-]{4,28}[a-z0-9]/([^/:@]+)/`)
+	// batchSecretProjectRE is the same for a Secret Manager secret's resource
+	// name, projects/<project>/secrets/<name>.
+	batchSecretProjectRE = regexp.MustCompile(`^projects/([a-z][a-z0-9-]{4,28}[a-z0-9])/secrets/`)
+)
+
+// batchImageRE is the whole shape of a published batch.image: the Artifact
+// Registry host, the anchor's project, and then a path of name components —
+// <repository>/<image>, at least those two, the form the refusals name —
+// with an optional tag or digest. The components are baseImageRE's, and they
+// are here for the reason the repository check exists at all: the project in
+// the reference is the anchor's own either way, and the segment
+// batchImageRepoRE reads is only a segment. Docker resolves empty, "." and
+// ".." segments before it pulls, so
+//
+//	<host>/<project>//<repository>/<owner>/<image>:<tag>
+//	<host>/<project>/./<repository>/<owner>/<image>:<tag>
+//	<host>/<project>/<segment>/../<repository>/<owner>/<image>:<tag>
+//
+// all pass a project check, read a repository that is not the one the image
+// comes from — the pull-through among them — and fail to pull, because
+// Docker rejects the reference the reader accepted. A reference the tool
+// cannot pull is never this installation's job image, so it is refused here,
+// before the repository is read: the value is one the writer wrote, and the
+// shapes above are not what the converge writes.
+var batchImageRE = regexp.MustCompile(`^[a-z][a-z0-9-]*-docker\.pkg\.dev/[a-z][a-z0-9-]{4,28}[a-z0-9]/` +
+	imageComponent + `(?:/` + imageComponent + `)+` + `(?::` + imageTag + `)?(?:@` + imageDigest + `)?$`)
+
 // baseImageRE matches what this installation's base_images may name under
 // host, in either shape: the copy an earlier release made,
 // <host>/fugaro-base/<path> with an optional tag and digest, or this
@@ -366,16 +533,13 @@ func dropLegacyBaseImages(data []byte) ([]byte, []string, error) {
 // ".." (this value reaches a Dockerfile FROM line), and there is no other
 // "@". The ID is taken from the entry's own key rather than spelled out.
 func baseImageRE(host, kind, owner string) *regexp.Regexp {
-	const component = `[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*`
-	const tag = `[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}`
-	const digest = `sha256:[0-9a-f]{64}`
 	return regexp.MustCompile(`^` + regexp.QuoteMeta(host+"/"+infra.BaseRegistry+"/") +
-		component + `(?:/` + component + `)*` + `(?::` + tag + `)?(?:@` + digest + `)?$` +
+		imageComponent + `(?:/` + imageComponent + `)*` + `(?::` + imageTag + `)?(?:@` + imageDigest + `)?$` +
 		`|^` + regexp.QuoteMeta(host+"/"+infra.GhcrRegistry+"/"+owner+"/fugaro-"+kind) +
-		`:` + releaseVersionRE + `@` + digest + `$`)
+		`:` + releaseVersionRE + `@` + imageDigest + `$`)
 }
 
-// sharedTopLevel checks the YAML's shape, which fugaro init's Marshal
+// sharedTopLevel checks the YAML's shape, which the converge's Marshal
 // fixes: one document holding a mapping, with no anchor, alias, merge key,
 // explicit tag or repeated key anywhere (an alias or merge key could carry
 // a value past the key checks; a tag could make a key read differently
@@ -410,10 +574,10 @@ func sharedTopLevel(data []byte) (map[string]string, error) {
 
 func checkSharedNode(n *yaml.Node) error {
 	if n.Kind == yaml.AliasNode || n.Anchor != "" {
-		return fmt.Errorf("uses a YAML anchor or alias (line %d), which fugaro init never writes", n.Line)
+		return fmt.Errorf("uses a YAML anchor or alias (line %d), which the converge never writes", n.Line)
 	}
 	if n.Style&yaml.TaggedStyle != 0 {
-		return fmt.Errorf("uses an explicit YAML tag %q (line %d), which fugaro init never writes", n.Tag, n.Line)
+		return fmt.Errorf("uses an explicit YAML tag %q (line %d), which the converge never writes", n.Tag, n.Line)
 	}
 	if n.Kind == yaml.MappingNode {
 		seen := map[string]bool{}
@@ -423,7 +587,7 @@ func checkSharedNode(n *yaml.Node) error {
 			case k.Kind != yaml.ScalarNode:
 				return fmt.Errorf("has a key that is not a plain value (line %d)", k.Line)
 			case k.Value == "<<" || k.Tag == "!!merge":
-				return fmt.Errorf("uses a YAML merge key << (line %d), which fugaro init never writes", k.Line)
+				return fmt.Errorf("uses a YAML merge key << (line %d), which the converge never writes", k.Line)
 			case seen[k.Value]:
 				return fmt.Errorf("repeats the key %q (line %d)", k.Value, k.Line)
 			}
@@ -544,20 +708,20 @@ func readSharedFromBucket(ctx context.Context, a SharedAnchor) (*localcfg.Config
 	}
 	var m infra.ProjectMarker
 	if data == nil || json.Unmarshal(data, &m) != nil || m.Version != 1 || !config.ProjectNameRE.MatchString(m.Name) {
-		return nil, 0, nil, gone(userErr("%s in %s is not a version 1 project marker; ask an operator to run fugaro init", infra.ProjectMarkerObject, url))
+		return nil, 0, nil, gone(userErr("%s in %s is not a version 1 project marker; ask an operator to run fugaro update", infra.ProjectMarkerObject, url))
 	}
 	switch {
 	case m.Name != a.Name:
 		return nil, 0, nil, gone(userErr("the installation at %s is project %s, not %s (%s says so): check project and gcp_project in the checkout's fugaro.yaml", url, m.Name, a.Name, infra.ProjectMarkerObject))
 	case m.GCPProject != a.GCPProject:
-		return nil, 0, nil, gone(userErr("%s in %s says gcp_project %q, not %s; ask an operator to run fugaro init", infra.ProjectMarkerObject, url, m.GCPProject, a.GCPProject))
+		return nil, 0, nil, gone(userErr("%s in %s says gcp_project %q, not %s; ask an operator to run fugaro update", infra.ProjectMarkerObject, url, m.GCPProject, a.GCPProject))
 	}
 	data, gen, err := b.ReadMaxStrict(ctx, infra.SharedConfigObject, localcfg.SharedMaxBytes)
 	switch {
 	case errors.Is(err, blobx.ErrNotExist):
-		return nil, 0, nil, gone(userErr("project %s has not published a shared config; ask an operator to run fugaro init (it writes %s to %s)", a.Name, infra.SharedConfigObject, url))
+		return nil, 0, nil, gone(userErr("project %s has not published a shared config; ask an operator to run fugaro update (it writes %s to %s)", a.Name, infra.SharedConfigObject, url))
 	case errors.Is(err, blobx.ErrTooLarge):
-		return nil, 0, nil, gone(userErr("%s in %s is over the 64 KiB limit; ask an operator to run fugaro init again", infra.SharedConfigObject, url))
+		return nil, 0, nil, gone(userErr("%s in %s is over the 64 KiB limit; ask an operator to run fugaro update again", infra.SharedConfigObject, url))
 	case err != nil:
 		return nil, 0, nil, bucketErr(url, "reading "+infra.SharedConfigObject, err)
 	}

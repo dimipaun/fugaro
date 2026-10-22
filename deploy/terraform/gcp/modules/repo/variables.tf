@@ -1,4 +1,4 @@
-# Every name arrives from fugaro init --repo's terraform.tfvars.json, and the
+# Every name arrives from fugaro update's terraform.tfvars.json, and the
 # installation's outputs arrive in it too, under installation. The
 # validation blocks check shapes only; nothing here derives a name.
 
@@ -133,6 +133,10 @@ variable "repo" {
       env            = map(string)
       secret_env     = map(string)
       bucket_condition = object({
+        title      = string
+        expression = string
+      })
+      token_condition = object({
         title      = string
         expression = string
       })

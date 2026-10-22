@@ -32,6 +32,17 @@ locals {
   preload_prefix = var.names.preload_image
   preload_family = "${local.preload_prefix}-${substr(sha256(var.base_image), 0, 8)}"
 
+  # The label every generation this build makes records its socket gid under,
+  # and the one name for it on this side: the build's substitution below and
+  # the output the stage reads back are both this local, so the writer and the
+  # reader cannot drift. The VALUE is not here and cannot be: the gid belongs
+  # to the boot image the build makes, out of band, so the build reads it off
+  # the builder VM and labels the image with it (preload.sh), and a rebuild
+  # records it again (design §2.2, C2: a run reaches the socket through
+  # `--group-add <gid>`, so a rebuilt image whose gid moved leaves a recorded
+  # one stale).
+  socket_gid_label = "socket-gid"
+
   # The script, as Cloud Build will read it. The build config is
   # substitution-processed BEFORE any step runs: every `$VAR` in it is read as
   # a substitution, and one that is not a built-in makes the API reject the
@@ -50,6 +61,15 @@ locals {
   preload_build = {
     serviceAccount = local.preload_email
     timeout        = "1800s"
+    # The socket gid's label name, as a BUILD SUBSTITUTION rather than a value
+    # written into the step: user-defined substitutions (a leading `_`) are
+    # what the build config may name, and one that is declared here and used
+    # below is substituted before any step runs, exactly as the built-ins are
+    # (cloud.google.com/build/docs/configuring-builds/substitute-variable-values,
+    # checked 2026-10-16). A `$NAME` that is not declared makes the API reject
+    # the whole build (INVALID_ARGUMENT), which is why this local is the only
+    # place the name is written.
+    substitutions = { _SOCKET_GID_LABEL = local.socket_gid_label }
     # CLOUD_LOGGING_ONLY, not CLOUD_LOGGING: with a user-specified service
     # account the build's logs must go to a Cloud Storage bucket or a Cloud
     # Logging bucket in the project, and the value that names the latter is
@@ -93,6 +113,13 @@ locals {
         # --service-account takes; run_accounts holds IAM members.
         "RUN_ACCOUNT=${trimprefix(sort(tolist(var.run_accounts))[0], "serviceAccount:")}",
         "MACHINE_TYPE=${var.builder_machine_type}",
+        # The label the image is labelled with, from the substitution above.
+        # preload.sh refuses to run without it and never spells it itself.
+        # `$${` is HCL's escape: terraform writes the literal
+        # `${_SOCKET_GID_LABEL}` into the build config, which is what Cloud
+        # Build substitutes -- `${` alone would be terraform reading a variable
+        # that does not exist (terraform validate refuses it).
+        "SOCKET_GID_LABEL=$${_SOCKET_GID_LABEL}",
       ]
     }]
   }

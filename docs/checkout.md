@@ -17,7 +17,7 @@ What a rebuild buys is warm caches: the runtimes from your `mise.toml`, the `ima
 
 ## `clone`
 
-**`checkout: clone` is not shipped yet.** `fugaro init --repo` and `fugaro image refresh` refuse, before any cloud call, to deploy or move a `checkout: clone` workflow's job (the `cloneShipped` gate in `internal/cli/recipes_skew.go`), so no deployed job is a clone job today and the switch recipe below cannot be completed. Everything in this section is what the option does when it ships; the live check in "Not verified yet" is what has to pass first.
+**`checkout: clone` is shipped** (fugaro 0.9.0). `fugaro update --repo` deploys a clone workflow's job onto the installation's base image (`base_images.base`) and `fugaro image refresh` moves it, the same as for any other workflow: the gate that refused both until the option was released (the `cloneShipped` flag in `internal/cli/recipes_skew.go`) is open. Two things the launch still checks: the job image's own release has to be **fugaro 0.7.5 or later** (`cloneSince` — the release whose runner reads `FUGARO_CHECKOUT` and makes the blobless clone), and a job image with no release tag at all (a dev build, a hand-pushed image) is only warned about. Live Check 38 of [gcp-live-checklist.md](gcp-live-checklist.md) is what proved the option end to end on the installation's own release base image; that run is the reason the gate is open. Its own record lags, though — the checklist's Check 38 row still reads **USER-RUN, NOT RUN** and its section still describes the hand-flipped build the run needed before the flip, because writing the run's FACT lines there is the owner's step, not this doc's. The gate is open; the checklist file has not been updated to say so.
 
 `checkout: clone` means **no per-repository image at all**. The workflow's job runs the installation's own base image (`base_images.base`) directly, so there is no build and no daily image check for that workflow. What the run pays instead is at start-up:
 
@@ -37,13 +37,11 @@ Move the workflow back to `baked` if it needs any of them.
 
 ### Switching a workflow to `clone`
 
-Once the option ships:
-
 1. Set `checkout: clone` on the workflow in `fugaro.yaml`, commit it, and merge it to your base branch.
-2. In your own terminal, run `fugaro init --repo .` in the checkout. That redeploys the workflow's job onto the installation's base image and sets `FUGARO_CHECKOUT=clone` in it, which is what tells the run to make its own clone. (Today this step is refused: see the note at the top of this section.)
+2. In your own terminal, run `fugaro update --repo .` in the checkout. That redeploys the workflow's job onto the installation's base image and sets `FUGARO_CHECKOUT=clone` in it, which is what tells the run to make its own clone.
 3. Then run the workflow as usual.
 
-Order matters: `fugaro image refresh` only moves a job that is already a clone job (it carries the `FUGARO_CHECKOUT` it must keep); a job deployed from a `baked` `fugaro.yaml` is refused, with `fugaro init --repo` as the fix. `fugaro run` decides `baked` or `clone` for a launch from the `fugaro.yaml` of the checkout you run it in, so run it in the repository's checkout.
+Order matters: `fugaro image refresh` only moves a job that is already a clone job (it carries the `FUGARO_CHECKOUT` it must keep); a job deployed from a `baked` `fugaro.yaml` is refused, with `fugaro update --repo` as the fix. `fugaro run` decides `baked` or `clone` for a launch from the `fugaro.yaml` of the checkout you run it in, so run it in the repository's checkout.
 
 ### What is and is not in the checkout
 
@@ -53,9 +51,11 @@ An on-demand fetch goes to `origin` with whatever credentials the caller's git h
 
 So the runner fetches, before any stage starts and with the credentials it holds, the file contents the agent is pointed at:
 
-- **the branch's diff against the base**: `git diff origin/<base>...HEAD`, the command the review prompt names — its base side, at the merge base, is what no checkout of the branch brings in;
+- **the branch's diff against the base**: `git diff origin/<base>...HEAD`, the command the review prompt names — its base side, at the merge base, is what no checkout of the branch brings in. `<base>` is the run's own base of work, not the repository's default branch: the ref a first run was cut from (`--ref`), the base branch the pull request targets *now* for a follow-up (read from the provider, so a retargeted pull request prefetches its new base), and each reviewed pull request's own base for a review run (`internal/runner/diffbase.go`, `diffBase`). A run started from another branch on a repository whose `git.base_branch` is still `main` therefore fetches — and reviews — the branch it was cut from, not the whole of `main`'s divergence from it;
 - **the branch's own commits**: `git log -p origin/<base>..HEAD`, `git show <a commit of the branch>`, `git diff HEAD~1`. Reading a pull request commit by commit is the other thing a reviewer does, and an earlier revision of a file the branch changed again is not in the branch's tip;
 - **the diff against the base tip**: `git diff origin/<base>`, for when the base branch has moved on since the merge base.
+
+The base ref itself is fetched as well, before those three, whenever it is not one bootstrap already brought in: a clone job's clone carries the remote's default branch alone (`--single-branch`), so a run started from another branch, a follow-up whose pull request was retargeted, and a review run reviewing a pull request that targets any other branch all name an `origin/<base>` that only that fetch creates — without it the prompt's range, the review input and the reviewer's own `git diff origin/<base>...HEAD` resolve to nothing (`internal/runner/diffbase.go`, `fetchDiffBases`).
 
 What is still not there: `git blame`, and `git show <old-revision>:<path>` for a revision nobody fetched — the file contents of revisions outside those three sets (an earlier revision of a file the branch's own commits did not touch, another branch, the rest of the base branch's history). On a private repository those fail under `clone` where they work under `baked`. Treat `clone` as a checkout for the branch you are working on, not as a full local mirror; `baked` is the option that has every object locally.
 
@@ -63,19 +63,19 @@ The fetching costs a few more calls per run, and the two that read the pull requ
 
 The dependency warm-up is the agent's job (or your `commands.build`).
 
-## Not verified yet
+## What the live check measured
 
-Two things are still unmeasured, and both are in the live checklist's clone check (sandbox only, run by the maintainer):
+Check 38 of [gcp-live-checklist.md](gcp-live-checklist.md) is the option's live check (sandbox only, run by the maintainer), and it has run and passed. It answers the two questions nothing in this repository could:
 
-- that a Cloud Run job's service agent may pull the installation's base image for a workflow job (today only builds and the check job do);
-- what `mise install` actually costs at every start-up, which is the price of `clone` over `baked`.
+- whether a Cloud Run job's service agent may pull the installation's base image for a workflow job — a `checkout: clone` job pulls `base_images.base` under the run job's own service account, where before only image builds and the daily check job pulled it;
+- what `mise install` costs at every start-up, which is the price of `clone` over `baked`.
 
-Until that check passes, treat `clone` as the newer of the two options. `baked` is what every existing workflow, the setup skill and `fugaro image refresh` assume.
+Its FACT lines are the record of both, in the checklist section. `clone` is still the newer of the two options: `baked` is what every workflow existing before it, the setup skill and `fugaro image refresh`'s rebuild path assume.
 
 ## Known gaps
 
 Three smaller gaps are carried from this feature's review and are **not** closed yet. None of them changes what a `baked` workflow does today:
 
-- **`fugaro run --repo <owner/name>` from outside the checkout.** `fugaro run` reads `checkout` from the `fugaro.yaml` of the checkout it runs in, not from the job it is about to run, so a clone workflow launched from elsewhere is judged as a baked one. Closing it means falling back to the deployed job's own `FUGARO_CHECKOUT` (or to its image being `base_images.base`); until then, run `fugaro run` in the repository's checkout. (A clone job cannot be deployed at all yet — see the top of the `clone` section — so this gap is not reachable today.)
+- **`fugaro run --repo <owner/name>` from outside the checkout.** `fugaro run` reads `checkout` from the `fugaro.yaml` of the checkout it runs in, not from the job it is about to run, so a clone workflow launched from elsewhere is judged as a baked one. Closing it means falling back to the deployed job's own `FUGARO_CHECKOUT` (or to its image being `base_images.base`); until then, run `fugaro run` in the repository's checkout. **This gap is reachable now that `checkout: clone` has shipped**: until the release that carried the flag kept clone jobs from existing at all, and it no longer does.
 - **The base-image freshness check reads your local config.** `fugaro run` compares `base_images.base` as *your* `fugaro.yaml` names it, not the image the deployed job actually runs, so a job whose image drifted (a refresh that has not been run, a hand-edited job) is not caught.
 - **A clone-only repository still gets its own artifact registry**, plus the build account's writer grant, even though nothing is ever built into it. It is inert, and dropping it is a Terraform change (`deploy/terraform/gcp/modules/repo`) that has not been made.

@@ -13,6 +13,10 @@
 //
 //   {"ts":"2026-10-15T14:22:31Z","argv":["/opt/homebrew/bin/fugaro","watch","--json","--project","fugaro"],"cwd":"/Users/owner/src/fugaro","project":"fugaro"}
 //
+// (Both paths in that line are the example's, not the format's: the first is
+// wherever rule 4 resolved the binary -- `/usr/local/bin/fugaro` on a Linux
+// machine -- and the second is the installation's own directory.)
+//
 //   - `ts` -- RFC 3339, UTC, second precision (the shape Check 59a's FACT lines
 //     compare, and the reason the milliseconds `Date#toISOString` writes are
 //     trimmed here rather than left in);

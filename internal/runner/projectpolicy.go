@@ -21,9 +21,11 @@ import (
 //
 //   - The policy node can only be read with the run's Firebase identity: the
 //     same custom token, exchanged for the same ID token, that the budget
-//     session uses. token.TakeObject *deletes* the object as it reads it
-//     (internal/budget/token/object.go), so the take is shared: exactly once
-//     per run, handed to the policy read and to budget.Open both (finding 2).
+//     session uses. token.TakeObject only *reads* the object (a job's grant on
+//     tokens/ is read-only, D16: consume-once rests on the per-launch key, not on
+//     a delete; internal/budget/token/object.go), and the take is still shared:
+//     exactly once per run, handed to the policy read and to budget.Open both
+//     (finding 2).
 //   - The mode-off path is entered by the job's own budget mode being off,
 //     never by an absence of a credential and never by a failure the run sees
 //     (B1). A budget-on run with no FUGARO_FIREBASE_API_KEY, or with no token
@@ -88,7 +90,7 @@ func (r *run) projectPolicy(ctx context.Context) (*projectpolicy.Policy, bool, e
 	p.done = true
 	if !r.d.Backend.On() && !r.d.Backend.MalformedEnv && !r.d.Backend.TokenMarked {
 		// No database in the job's environment: no client, no marker, no node.
-		// This is the absence the readiness gate refuses (init --repo) once
+		// This is the absence the readiness gate refuses (fugaro update) once
 		// the project has published a policy; a run cannot invent the
 		// credential it would need to notice one. An environment that named a
 		// backend it could not parse is not that absence (L-b), and neither is
@@ -186,8 +188,9 @@ func (r *run) policyReadError(err error) error {
 // denied read, a node that is not this Fugaro's policy, a read that failed. The
 // run does not start — never on the environment ceiling, which would be less
 // constrained than what the owner published. The message names the node, the
-// one cause that is not tampering (an older CLI's init --firebase redeploys the
-// pre-policy rules and leaves the marker in place), and the fix.
+// one cause that is not tampering (an older CLI's fugaro update
+// --firebase-project redeploys the pre-policy rules and leaves the marker in
+// place), and the fix.
 func (r *run) unreadablePolicy(err error) error {
 	marker := projectpolicy.PathRulesMarker()
 	if errors.Is(err, rtdb.ErrPermission) && !strings.Contains(err.Error(), projectpolicy.PathShared()) {
@@ -202,11 +205,12 @@ func (r *run) unreadablePolicy(err error) error {
 	}
 	if errors.Is(err, rtdb.ErrPermission) {
 		// The node's read was denied, with the marker read: the one cause that
-		// is not tampering is an older CLI's init --firebase, which redeploys
-		// the rules from before the policy nodes while leaving the marker in
-		// place, so a policy that was published becomes unreadable and every
-		// budget-on run of the project stops here (R2-8(b)).
-		return fmt.Errorf("the project's policy at %s could not be read: the deployed rules are older than the marker %s and refuse this run's token for a node that exists, which is what an older fugaro's 'fugaro init --firebase' leaves behind when it redeploys rules that predate that marker and leaves it in place. Run 'fugaro init --firebase' again with an up-to-date fugaro, which deploys the rules generation this runner reads (%d). The run does not start on a ceiling the policy did not set: %s",
+		// is not tampering is an older CLI's fugaro update --firebase-project,
+		// which redeploys the rules from before the policy nodes while leaving
+		// the marker in place, so a policy that was published becomes
+		// unreadable and every budget-on run of the project stops here
+		// (R2-8(b)).
+		return fmt.Errorf("the project's policy at %s could not be read: the deployed rules are older than the marker %s and refuse this run's token for a node that exists, which is what an older fugaro's 'fugaro update --firebase-project' leaves behind when it redeploys rules that predate that marker and leaves it in place. Run 'fugaro update --firebase-project' again with an up-to-date fugaro, which deploys the rules generation this runner reads (%d). The run does not start on a ceiling the policy did not set: %s",
 			projectpolicy.PathShared(), marker, projectpolicy.RulesVersion, r.redact(err.Error()))
 	}
 	var me *projectpolicy.MarkerError
@@ -240,8 +244,11 @@ func (r *run) unreadablePolicy(err error) error {
 }
 
 // budgetClient builds the client this run reads the project's database with,
-// from its own Firebase identity. TakeObject is called exactly once per run and
-// its result shared with budget.Open (finding 2).
+// from its own Firebase identity. It is the run's one call site of
+// takeBudgetToken — the memo guard below is what makes it one read of the
+// object per run, and TestTheBudgetTokenIsTakenAtOneCallSite is what holds the
+// call site at one — and the unsealed token is shared with budget.Open
+// (finding 2).
 //
 // A nil client with a nil error means this run has no database to read: the job
 // carries no backend, or its budget is off and the runs bucket holds no token
@@ -322,21 +329,31 @@ func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 		// minted one: nothing to read.
 		return nil, nil
 	case errors.Is(err, token.ErrNoToken):
-		// A budget-on run with no token object in the bucket is the shipped
+		// A budget-on run whose token object cannot be read is the shipped
 		// refusal (B1, budget_session.go's startBudgetBackend said the same
 		// before this read existed). So is a job whose environment carries
 		// the launcher's marker (M2): the launcher mints whenever it can see
-		// a policy, whatever the mode, so a marker means this run HAD a token
-		// and it is gone — another run of the repository can delete a queued
-		// run's object. Reading that as "no policy here" would run a mode-off
-		// job of a policy-enforcing project with no session, no cap and no
-		// kill switch. The marker is a fact about this launch, so it is the
-		// one the run trusts.
+		// a policy, whatever the mode, so a marker means this run HAD a token.
+		// Reading its absence as "no policy here" would run a mode-off job of
+		// a policy-enforcing project with no session, no cap and no kill
+		// switch. The marker is a fact about this launch, so it is the one
+		// the run trusts.
+		//
+		// What the absence means changed with the seal (D16): the take is
+		// read-only and no run can delete a queued run's object, so "already
+		// taken" is never the cause. The job account's grant on tokens/ is
+		// conditioned and has no list, so GCS answers a refused read and a
+		// missing object alike with 403, and gocloud reports both as
+		// NotFound (token.ErrNoToken): the run cannot tell them apart. The
+		// likely cause after an upgrade is the grant — a job not re-applied
+		// since the token moved to tokens/ has none — so the refusal names it
+		// and its cure first. It names no object, and no key.
+		const grant = "this job's service account lacks its read grant on the repository's token objects under tokens/ (a job not re-applied since the upgrade that moved the budget token there: an operator runs fugaro update for this repository in its checkout)"
 		if r.d.Backend.TokenMarked {
-			c.err = errors.New("the run's budget token is not in the runs bucket, though the launcher minted one for this run (FUGARO_BUDGET_TOKEN is set in the job's environment): it was already taken, or deleted; launch the run again")
+			c.err = fmt.Errorf("the run's budget token could not be read from the runs bucket, though the launcher minted one for this run (FUGARO_BUDGET_TOKEN is set in the job's environment); the run cannot tell a refused read from a missing object. Either %s — then start a new run (fugaro run with the same task): this run has launched, and retrying its run id only reports it — or the object is gone (a launch that failed and was cleaned up, or the bucket's day-long lifecycle rule): launch the run again", grant)
 			return nil, c.err
 		}
-		c.err = errors.New("the run's budget token is not in the runs bucket (already taken, or the run was not launched with one): launch the run again")
+		c.err = fmt.Errorf("the run's budget token could not be read from the runs bucket: the run was not launched with one, or %s — either way, start a new run (fugaro run with the same task): this run has launched, and retrying its run id only reports it — and when the grant is the cause, an operator runs that update first", grant)
 		return nil, c.err
 	default:
 		c.err = err
@@ -356,8 +373,18 @@ func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 	return db, nil
 }
 
-// takeBudgetToken reads and deletes the run's token object, once per run. Its
-// refusals are the shipped ones (plan R10, B1): a job whose environment says
+// errLauncherPredatesSeal is the mixed-fleet refusal (D19): the job's marker
+// is "1", which only a launcher from before the seal writes, so the token it
+// minted is unsealed and under runs/, and this runner reads neither.
+func errLauncherPredatesSeal(runID string) error {
+	return fmt.Errorf("%s is 1, so the fugaro that launched this run predates the seal of the budget token: it wrote the token unsealed, where this runner never reads one, and handed this execution no key; nothing was read. Upgrade the launching fugaro (fugaro upgrade), then start a new run (fugaro run with the same task): run %s has launched, and retrying its run id would only report it", BudgetTokenEnv, runID)
+}
+
+// takeBudgetToken reads the run's sealed token object. It has one call site —
+// budgetClient, which memoizes what this returns, so the object is read once
+// per run — and that is a shape the source holds rather than one a run's state
+// can show: see TestTheBudgetTokenIsTakenAtOneCallSite. Its refusals are the
+// shipped ones (plan R10, B1): a job whose environment says
 // the budget is on but carries no Firebase API key, or no runs bucket, or a
 // slug or run id that cannot be a database key, is damage to the job, and the
 // run stops before anything else.
@@ -373,7 +400,21 @@ func (r *run) takeBudgetToken(ctx context.Context) (string, error) {
 	if budget.Key(slug) != slug || budget.Key(runID) != runID || slug == "" || runID == "" {
 		return "", fmt.Errorf("the repository slug %q or run id %q cannot be used as keys of the budget database", slug, runID)
 	}
-	custom, err := token.TakeObject(ctx, r.d.Bucket, slug, runID)
+	// A marker of "1" is a launcher from before the seal (D19): it wrote the
+	// token unsealed under runs/, which this runner never reads, and handed
+	// no key. The run refuses here, before the bucket, with the side that is
+	// old named — never by reading a plaintext object instead.
+	if b.TokenMarked && len(b.TokenKey) == 0 {
+		return "", errLauncherPredatesSeal(runID)
+	}
+	// The take carries the launch's seal key (Backend.TokenKey, from the
+	// marker's value) and unseals the object under tokens/ with it; a
+	// plaintext object, and any object with no key, is refused rather than
+	// read (token.TakeObject). The take is read-only — the job's grant on
+	// tokens/ has no delete (D16) — so it removes nothing. The key itself is
+	// registered with the redactor at the top of Run, before this call, so
+	// nothing here may print it.
+	custom, err := token.TakeObject(ctx, r.d.Bucket, slug, runID, r.d.Backend.TokenKey)
 	switch {
 	case errors.Is(err, token.ErrNoToken):
 		return "", err // the caller says what an absent token means for this run

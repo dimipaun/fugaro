@@ -16,16 +16,27 @@
 //   - website/data/install.yaml   the install facts (W0.1), pinned to README.md,
 //                                 docs/release.md and .goreleaser.yaml by
 //                                 internal/cli/docs_website_install_test.go.
+//   - website/data/release-summaries.yaml
+//                                 the end-user sentence per release (the owner's brief of
+//                                 2026-10-19), which the changelog page prints above the
+//                                 entry's Highlights: hand-written, one line per release,
+//                                 and the page stops the build when a release file it
+//                                 renders has no line here.
 //   - website/content/*.md        generated documents (W0.4's CLI reference, W0.5's
 //                                 security page), each saying on its first line that it
 //                                 is generated and by what.
 //   - website/content/costs.json  W0.3's aggregation output, published deliberately and
 //                                 **absent until the owner runs it**: an empty figure is
 //                                 honest, an invented one is not (D96, D97).
-//   - README.md                   the tagline, which is the line under its `# Fugaro`
-//                                 title and is read here rather than copied into a
-//                                 component, so the site and the README cannot drift
-//                                 (F48, D102).
+//   - website/data/typical-costs.yaml
+//                                 what a job costs, as the owner measured it on this
+//                                 project's own development runs (the owner's brief of
+//                                 2026-10-19). Hand-written, refreshed by editing the file,
+//                                 and held to the built page by website/test/caps-and-costs.mjs.
+//   - README.md                   the tagline and the subline, which are the two lines
+//                                 under its `# Fugaro` title and are read here rather
+//                                 than copied into a component, so the site and the README
+//                                 cannot drift (F48, D102; changes spec item 2).
 //
 // Three properties this module is written to hold:
 //
@@ -95,9 +106,11 @@ const PUBLIC_DIR = path.join(SITE_ROOT, 'public')
  * them renders the generated file or the build stops.
  *
  * `content/costs.json` is deliberately **not** in this list: it is W0.3's aggregation
- * output, the owner runs the command that writes it, and until then the caps-and-costs
- * page renders its "not enough runs yet" state, which is the honest state on day one
- * (W1.5, D96).
+ * output, the owner runs the command that writes it, and until then there is nothing to
+ * render — which is the honest state on day one (W1.5, D96). The per-recipe ranges section
+ * that read it was removed on 2026-10-21 (the owner's ruling) while the file is absent, so
+ * nothing on the site renders these figures today; the loader stays, and validates the file
+ * the day one is published.
  */
 const REQUIRED_DOCUMENTS = ['cli-reference.md', 'security.md']
 
@@ -461,6 +474,25 @@ function asNumber(value: Value, file: string, what: string): number {
   return value
 }
 
+/**
+ * A figure the page prints in dollars and cents: every figure of the owner's measurement is
+ * one, and each is printed to the cent and never rounded (`money()` in the caps-and-costs
+ * guide, and `website/data/typical-costs.yaml`'s own promise that a figure is never rounded
+ * there). So a figure that is not a whole number of cents is refused here rather than rounded
+ * on the page: `0.365` would print as `$0.36`, which is a figure neither the file nor the
+ * measurement behind it carries. The tolerance is float noise on a decimal written by hand
+ * (`0.1 + 0.2`), an order of magnitude of room for a third decimal.
+ */
+function asCents(value: Value, file: string, what: string): number {
+  const figure = asNumber(value, file, what)
+  if (Math.abs(figure * 100 - Math.round(figure * 100)) > 1e-6) {
+    throw new Error(
+      `${file}: ${what} is ${figure}, which is not a whole number of cents, and the page prints every figure it carries in dollars and cents without rounding it (W1.3 step 2).`,
+    )
+  }
+  return figure
+}
+
 function asURL(value: Value, file: string, what: string): string {
   const text = asString(value, file, what)
   let url: URL
@@ -719,6 +751,650 @@ export function loadInstallFacts(): InstallFacts {
 }
 
 // ---------------------------------------------------------------------------------------
+// website/data/release-summaries.yaml — the end-user summary of each release (the owner's
+// brief of 2026-10-19).
+//
+// The changelog renders one summary under each release's heading and the release file's own
+// Highlights below it. The summary is a product feature a reader understands rather than an
+// operator step, so it is written for the site and lives beside the site's other facts; the
+// release file stays the source of an entry's full text and is never edited for it.
+// ---------------------------------------------------------------------------------------
+
+/** website/data/release-summaries.yaml, validated: the release's tag, to its summary. */
+export type ReleaseSummaries = { [tag: string]: string }
+
+const SUMMARIES_FILE = 'website/data/release-summaries.yaml'
+
+/** The tag a summary is keyed by, which is the release file's own name without its `.md`. */
+const RELEASE_TAG = /^v\d+\.\d+\.\d+$/
+
+export function loadReleaseSummaries(): ReleaseSummaries {
+  const file = SUMMARIES_FILE
+  const doc = asMap(
+    parseYAML(
+      readBytes(path.join(DATA_DIR, 'release-summaries.yaml'), 'the end-user summary the changelog renders under each release (the owner\'s brief of 2026-10-19)'),
+      file,
+    ),
+    file,
+    'the document',
+  )
+  refuseUnknownKeys(doc, ['summaries', 'version'], file)
+
+  if (asInt(doc.version, file, 'version') !== 1) {
+    throw new Error(`${file}: version is not 1, and this reader knows version 1 (W1.3 step 2).`)
+  }
+
+  const summaries = asMap(doc.summaries, file, 'summaries')
+  const out: ReleaseSummaries = {}
+  for (const [tag, value] of Object.entries(summaries)) {
+    // A key that is not a release's tag is a summary no entry can render: the changelog looks
+    // a release up by the tag (the filename's own), so a misspelt key is an orphan the reader
+    // of this file has to see rather than a line that silently never appears.
+    if (!RELEASE_TAG.test(tag)) {
+      throw new Error(`${file}: ${tag} is not a release tag, and summaries is keyed by them: vX.Y.Z, as docs/releases/vX.Y.Z.md writes it.`)
+    }
+    const summary = asString(value, file, `summaries.${tag}`)
+    if (summary.trim() === '') {
+      throw new Error(`${file}: summaries.${tag} is empty, and the changelog renders it under the release's heading: an empty summary is a release with nothing said about it (the owner's brief of 2026-10-19).`)
+    }
+    out[tag] = summary
+  }
+  if (Object.keys(out).length === 0) {
+    throw new Error(`${file}: summaries is empty, and the changelog renders one summary per release (the owner's brief of 2026-10-19).`)
+  }
+  return out
+}
+
+// ---------------------------------------------------------------------------------------
+// website/data/typical-costs.yaml — what a job costs, as the owner measured it on this
+// project's own development runs (the owner's brief of 2026-10-19).
+//
+// It is a hand-written fact file like `site.yaml` and `install.yaml`, and the page that
+// renders it is the caps-and-costs guide: the figures are the ones the owner recorded, the
+// page prints them and no others, and a refresh is an edit here rather than an edit to a
+// page (Global Constraint 6, D96, D97). The sample size is printed beside every figure, and
+// a row drawn from fewer runs than `site.yaml`'s `min_runs` is refused here rather than
+// rendered: the site publishes no figure from a sample thinner than that, and the two
+// cannot disagree (D97).
+// ---------------------------------------------------------------------------------------
+
+/** One kind of run, with the figures the owner measured for it. */
+export interface TypicalCostJob {
+  /** The row's name in a build error, and the built row's own hook. */
+  id: string
+  /** The row's label, as a reader reads it. */
+  name: string
+  /** The sample the row's figures were drawn from. */
+  runs: number
+  medianUSD: number
+  /** The range the middle half of the runs fell in, or null when the file carries none. */
+  middleHalfUSD: { low: number; high: number } | null
+  nineInTenUnderUSD: number
+  /** The most expensive single run of that kind, or null when the file carries none. */
+  worstUSD: number | null
+}
+
+/** website/data/typical-costs.yaml, validated. */
+export interface TypicalCostsFacts {
+  /** The window the runs were taken from, and how many finished in it. `to` is the day the
+   * figures were taken, so the page prints the age of its own numbers. */
+  from: string
+  to: string
+  runs: number
+  jobs: TypicalCostJob[]
+  /** The per-run cap Fugaro's own installation sets today: the ceiling a looping run meets. Not
+   * a CLI default, so it is a fact about the installation the runs were taken from and never a
+   * claim about what `fugaro` ships. It is **not** the cap these figures were measured under —
+   * see `measuredUnderCapUSD`. */
+  perRunCapUSD: number
+  /** The day the cap above took effect, as the file spells it (`YYYY-MM-DD`). The page prints
+   * it beside the cap, so a reader can tell which cap was in force when the figures were
+   * measured rather than taking today's cap for the one they ran under. */
+  perRunCapSince: string
+  /** The per-run cap the figures above were measured under, which is a second figure and not a
+   * copy of the one above: the owner lowered the cap on the date above, so a page that printed
+   * today's cap as the one these runs ran under would claim a measurement under a cap that did
+   * not exist yet. The bars are drawn against this one, so every mark sits inside its track. */
+  measuredUnderCapUSD: number
+}
+
+const TYPICAL_COSTS_FILE = 'website/data/typical-costs.yaml'
+
+export function loadTypicalCosts(minRuns: number): TypicalCostsFacts {
+  const file = TYPICAL_COSTS_FILE
+  const doc = asMap(
+    parseYAML(
+      readBytes(
+        path.join(DATA_DIR, 'typical-costs.yaml'),
+        'the figures the caps-and-costs guide leads with, as the owner measured them on this project\'s own development runs (the owner\'s brief of 2026-10-19)',
+      ),
+      file,
+    ),
+    file,
+    'the document',
+  )
+  refuseUnknownKeys(doc, ['jobs', 'measured_under_cap_usd', 'per_run_cap_since', 'per_run_cap_usd', 'version', 'window'], file)
+
+  if (asInt(doc.version, file, 'version') !== 1) {
+    throw new Error(`${file}: version is not 1, and this reader knows version 1 (W1.3 step 2).`)
+  }
+
+  const window = asMap(doc.window, file, 'window')
+  refuseUnknownKeys(window, ['from', 'runs', 'to'], `${file} window`)
+  const runs = asInt(window.runs, file, 'window.runs')
+  if (runs < minRuns) {
+    throw new Error(
+      `${file}: window.runs is ${runs}, below the minimum of ${minRuns} the site publishes a figure from (website/data/site.yaml, D97). The page prints the window's own count beside its figures, so a window thinner than that is not one this site publishes.`,
+    )
+  }
+
+  // A row's optional figures are read as null rather than defaulted to a number: a page
+  // renders the dash the file's absence means, and it never invents a range (Global
+  // Constraint 6). `middle_half_usd` is the one shape with two numbers in it, and a list of
+  // anything but two is refused here rather than half-read.
+  const jobs = asList(doc.jobs, file, 'jobs').map((entry, index) => {
+    const job = asMap(entry, file, `jobs[${index}]`)
+    refuseUnknownKeys(job, ['id', 'median_usd', 'middle_half_usd', 'name', 'nine_in_ten_under_usd', 'runs', 'worst_usd'], `${file} jobs[${index}]`)
+    const what = `jobs[${index}]`
+    const id = asString(job.id, file, `${what}.id`)
+    const sample = asInt(job.runs, file, `${what}.runs`)
+    if (sample < minRuns) {
+      throw new Error(
+        `${file}: the row "${id}" carries ${sample} runs, below the minimum of ${minRuns} the site publishes a figure from (D97). The page prints the sample size beside every figure, so a row drawn from fewer runs is not one this site publishes.`,
+      )
+    }
+
+    let middleHalfUSD: { low: number; high: number } | null = null
+    if (job.middle_half_usd !== undefined) {
+      const half = asList(job.middle_half_usd, file, `${what}.middle_half_usd`).map((value, at) => asCents(value, file, `${what}.middle_half_usd[${at}]`))
+      if (half.length !== 2) {
+        throw new Error(
+          `${file}: ${what}.middle_half_usd carries ${half.length} figures, and the range the middle half of the runs fell in is two: the lower and the upper bound, in that order (W1.3 step 2).`,
+        )
+      }
+      if (half[0] > half[1]) {
+        throw new Error(`${file}: ${what}.middle_half_usd is [${half[0]}, ${half[1]}], and the lower bound is above the upper one (W1.3 step 2).`)
+      }
+      middleHalfUSD = { low: half[0], high: half[1] }
+    }
+
+    return {
+      id,
+      name: asString(job.name, file, `${what}.name`),
+      runs: sample,
+      medianUSD: asCents(job.median_usd, file, `${what}.median_usd`),
+      middleHalfUSD,
+      nineInTenUnderUSD: asCents(job.nine_in_ten_under_usd, file, `${what}.nine_in_ten_under_usd`),
+      worstUSD: job.worst_usd === undefined ? null : asCents(job.worst_usd, file, `${what}.worst_usd`),
+    }
+  })
+  if (jobs.length === 0) {
+    throw new Error(`${file}: jobs is empty, and the caps-and-costs guide leads with one row per kind of run (the owner's brief of 2026-10-19).`)
+  }
+  const ids = new Set<string>()
+  for (const job of jobs) {
+    if (ids.has(job.id)) {
+      throw new Error(`${file}: two rows carry the id "${job.id}", and the id is what a build error and the built row's own hook name (W1.3 step 2).`)
+    }
+    ids.add(job.id)
+  }
+
+  const perRunCapUSD = asCents(doc.per_run_cap_usd, file, 'per_run_cap_usd')
+  if (perRunCapUSD <= 0) {
+    throw new Error(`${file}: per_run_cap_usd is ${perRunCapUSD}, and the cap the page prints as the ceiling a looping run meets is above zero (W1.3 step 2).`)
+  }
+  const measuredUnderCapUSD = asCents(doc.measured_under_cap_usd, file, 'measured_under_cap_usd')
+  if (measuredUnderCapUSD <= 0) {
+    throw new Error(`${file}: measured_under_cap_usd is ${measuredUnderCapUSD}, and the cap the page draws the bars of its figures against is above zero: a bar scaled by a cap of nothing is a bar whose every mark is at infinity (the owner's feedback of 2026-10-22).`)
+  }
+
+  return {
+    from: asString(window.from, file, 'window.from'),
+    to: asString(window.to, file, 'window.to'),
+    runs,
+    jobs,
+    perRunCapUSD,
+    perRunCapSince: asString(doc.per_run_cap_since, file, 'per_run_cap_since'),
+    measuredUnderCapUSD,
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// website/data/{console,home}-screens.yaml — the sliders' slides, and the pictures in them
+// (the console's: owner feedback 2026-10-19; the homepage's: the zoom work of 2026-10-21, D246).
+//
+// **One reader for two files, because the two files are the same document.** The console page's
+// slider and the homepage's "See it" panel render the same component from rows of the same
+// shape, so the validation is one function and each page names its file and gets its rows. A
+// row's `file` is a NAME and its `dir` is the one of the two directories under `public/` that
+// serves it — `screenshots` unless the row says otherwise, which is why every console row (and
+// every homepage row but the watch capture) carries no `dir` at all.
+// ---------------------------------------------------------------------------------------
+
+/**
+ * One slide: the file, the two texts a reader gets for it, and its own pixel dimensions.
+ */
+export interface Screen {
+  /** The file's name under `public/<dir>/`, as the data file writes it. */
+  file: string
+  /** The site path the browser fetches: derived here from `file` and `dir`, written nowhere. */
+  src: string
+  /** What a reader gets when the picture does not arrive, and what a screen reader reads. */
+  alt: string
+  /** The line under the picture. */
+  caption: string
+  /** The file's own width in pixels, so the browser can reserve the box. */
+  width: number
+  /** The file's own height in pixels. */
+  height: number
+}
+
+/** One of the two screenshots data files, validated. */
+export interface ScreensFacts {
+  screens: Screen[]
+}
+
+/** Where a screenshot's file lives under `public/`, and the site path it is served at. */
+const SCREENS_DIR = 'screenshots'
+
+/**
+ * The directories under `public/` a row's `file` may name, and the default. The console's rows
+ * are all captures of the console and live in `screenshots/`; the homepage's last slide is the
+ * owner's `fugaro watch` capture, which has been at `public/images/fugaro-watch.png` since PR
+ * #622 and is not one of the console's four. **A row names one of these two and never a path**:
+ * the site path is composed here from the pair, so no data file carries a URL (Global
+ * Constraint 9), and a `dir` that is neither is refused by name rather than fetched.
+ */
+const SCREEN_DIRS = ['images', 'screenshots']
+
+const SCREENS_KEYS = ['screens', 'version']
+const SCREEN_KEYS = ['alt', 'caption', 'dir', 'file', 'height', 'width']
+
+/**
+ * The formats the slider serves. A console screenshot is a raster image, and these are the
+ * ones a browser renders without a second thought: PNG is what the site's own captures are
+ * (`public/images/fugaro-watch.png`, `logo.png`), and the three after it are the same
+ * picture in fewer bytes — which is the whole of what the budget has to say about a format,
+ * since it counts raw bytes and does not care how they were encoded.
+ *
+ * SVG is deliberately not on the list: it is a document rather than a picture, it can carry
+ * script and external references, and a slider of screenshots has no use for one.
+ */
+const SCREEN_FORMATS = ['avif', 'jpeg', 'jpg', 'png', 'webp']
+
+/**
+ * The console's screenshots, in the order the slider shows them.
+ *
+ * **The four rows this file ships are the owner's own pictures** (the owner's feedback of
+ * 2026-10-21: "console page: screenshots missing"): the Live, Run, Spend and Installations
+ * screens, captured from the console's build as fixture data and served from
+ * `public/screenshots/`, with the `alt` text `public/screenshots/MANIFEST.json` records beside
+ * them. **An empty list stays a legal document and not a failure**, which is the one place this
+ * reader differs from the install and site readers beside it: no build can make a screenshot
+ * (D190), so `screens: []` is read as the state it is — the console page renders no slider at
+ * all — and `website/test/console-screens.mjs` is the file that reads both states.
+ *
+ * Everything else is refused by name: a `file` that is a path or a URL rather than a name
+ * under `public/screenshots/` (the site path is derived from it, so a URL here would be a
+ * second copy of a fact the build composes — Global Constraint 9), a format the slider does
+ * not serve, an `alt` or a `caption` nobody could read, and a size that is not a positive
+ * whole number of pixels.
+ */
+export function loadConsoleScreens(): ScreensFacts {
+  return {
+    screens: screensOf(
+      'console-screens.yaml',
+      "the console's screenshots: the files, their alt text, their captions and their sizes (the owner's feedback of 2026-10-19)",
+    ),
+  }
+}
+
+/**
+ * The homepage's "See it" slides, in the order the panel's slider shows them (the owner's
+ * feedback of 2026-10-21, and the brief's "replace the single Fugaro Watch screenshot with a
+ * slider"; D246, D251, D252).
+ *
+ * **The rows are the console's own three screenshots and then the watch capture**, which is the
+ * order the brief asks for — "lead with the desktop console and give it the most space … Fugaro
+ * Watch moves to the end as a 'for the terminal crowd' slide" — and the three leading rows'
+ * `alt` and `caption` are the `console-screens.yaml` rows' own, verbatim: one picture has one
+ * `alt` text and one caption, and a second page that paraphrased them would be a second copy of
+ * the sentence that drifts first (`website/test/home.mjs` holds the three to the console file).
+ * The last row is `public/images/fugaro-watch.png`, which is the same file the panel has always
+ * shown, and its caption is the brief's own example for that slide.
+ */
+export function loadHomeScreens(): ScreensFacts {
+  return {
+    screens: screensOf(
+      'home-screens.yaml',
+      "the homepage slider's slides: the console's screenshots and the `fugaro watch` capture, with their alt text, their captions and their sizes (the brief of 2026-10-21)",
+    ),
+  }
+}
+
+/**
+ * The phone app's screenshots, in the order the mobile page's slider shows them (the
+ * zoom-diagrams plan, Part 3 item 4; D251).
+ *
+ * **The list is empty, and that is the document rather than a failure.** The owner supplies
+ * the phone captures as files later (D251) and no agent commits a screenshot (D190), so the
+ * file ships with no row and the page renders no slider at all: a row added here is a slide,
+ * and nothing in the page or the shared component moves for it.
+ */
+export function loadMobileScreens(): ScreensFacts {
+  return {
+    screens: screensOf(
+      'mobile-screens.yaml',
+      "the phone app's screenshots: the files, their alt text, their captions and their sizes (the owner's answer of 2026-10-21, D251)",
+    ),
+  }
+}
+
+/**
+ * One screenshots data file, read and validated: the name under `website/data/` and the
+ * sentence that says what the file is for, because that sentence is what an unreadable file's
+ * error names. Every caller above is this function with a different name, which is what keeps
+ * the pages' rows the same shape — and therefore what keeps one component's rendering of them
+ * the same.
+ */
+function screensOf(name: string, why: string): Screen[] {
+  const file = `website/data/${name}`
+  const doc = asMap(parseYAML(readBytes(path.join(DATA_DIR, name), why), file), file, 'the document')
+  refuseUnknownKeys(doc, SCREENS_KEYS, file)
+
+  if (asInt(doc.version, file, 'version') !== 1) {
+    throw new Error(`${file}: version is not 1, and this reader knows version 1 (W1.3 step 2).`)
+  }
+
+  return asList(doc.screens, file, 'screens').map((entry, index) => {
+    const what = `screens[${index}]`
+    const screen = asMap(entry, file, what)
+    refuseUnknownKeys(screen, SCREEN_KEYS, `${file} ${what}`)
+
+    // The directory the row's file is served from: one of the two under `public/`, and
+    // `screenshots` for a row that names none — which is every console row, and the reason a
+    // row's shape did not change when the homepage's file arrived.
+    const dir = screen.dir === undefined ? SCREENS_DIR : asString(screen.dir, file, `${what}.dir`)
+    if (!SCREEN_DIRS.includes(dir)) {
+      throw new Error(
+        `${file}: ${what}.dir is ${JSON.stringify(dir)}, and a picture this site serves lives in one of ${SCREEN_DIRS.map((one) => `public/${one}/`).join(' or ')}: the site path the browser fetches is composed from the pair, so a directory that is neither is a file no page can reach.`,
+      )
+    }
+
+    const name = asString(screen.file, file, `${what}.file`)
+    // A NAME and not a path: the site path is `/${SCREENS_DIR}/${name}` below, and a name
+    // carrying a separator, a scheme or a `..` is a file the derivation would not reach, or
+    // a URL written into a data file (Global Constraint 9).
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {
+      throw new Error(
+        `${file}: ${what}.file is ${JSON.stringify(name)}, and it is the file's NAME under website/public/${dir}/ — letters, digits, dots, dashes and underscores, with no directory, no scheme and no space. The site path the browser fetches is derived from the name, so a name that is a path or a URL is a fact this file is not allowed to carry (Global Constraint 9).`,
+      )
+    }
+    // The dot is required before the format is read. With no dot at all `lastIndexOf` answers
+    // -1 and `slice(0)` hands back the whole name, so a name that IS a served format — `png`,
+    // `jpg`, `webp` — would pass a check that only asks whether the extension is one of them,
+    // and the row would render a picture at `/<dir>/png`. There is no dot, so there is
+    // no extension and no picture either.
+    const dot = name.lastIndexOf('.')
+    const format = dot === -1 ? '' : name.slice(dot + 1).toLowerCase()
+    if (!SCREEN_FORMATS.includes(format)) {
+      throw new Error(
+        `${file}: ${what}.file is ${JSON.stringify(name)}, and the slider serves ${SCREEN_FORMATS.join(', ')} — the raster formats a browser renders as a picture. An SVG is a document that can carry script and references, and a name with no extension at all is not a picture either.`,
+      )
+    }
+
+    const alt = asString(screen.alt, file, `${what}.alt`)
+    const caption = asString(screen.caption, file, `${what}.caption`)
+    if (alt.trim() === '') {
+      throw new Error(
+        `${file}: ${what}.alt is empty, and every slide carries alt text: it is what a reader gets when the picture does not arrive and what a screen reader reads instead of it, and a screenshot nobody can identify is a picture a reader cannot use.`,
+      )
+    }
+    if (caption.trim() === '') {
+      throw new Error(
+        `${file}: ${what}.caption is empty, and every slide carries a caption: it is the line under the picture that says what a reader is looking at, and the owner asked for one on each slide.`,
+      )
+    }
+
+    // Both dimensions, each named on its own: they are the two numbers the browser
+    // reserves the picture's box with, so a zero or a negative one is a box that collapses
+    // and a page that jumps when the file lands — and the message says which of the two to
+    // fix.
+    const width = asInt(screen.width, file, `${what}.width`)
+    const height = asInt(screen.height, file, `${what}.height`)
+    if (width < 1) {
+      throw new Error(
+        `${file}: ${what}.width is ${width}, and a screenshot's width is the file's own pixels: a positive whole number, which is half of what the browser reserves the box with so the page does not jump when the file lands.`,
+      )
+    }
+    if (height < 1) {
+      throw new Error(
+        `${file}: ${what}.height is ${height}, and a screenshot's height is the file's own pixels: a positive whole number, which is half of what the browser reserves the box with so the page does not jump when the file lands.`,
+      )
+    }
+
+    return { file: name, src: `/${dir}/${name}`, alt, caption, width, height }
+  })
+}
+
+// ---------------------------------------------------------------------------------------
+// website/data/mobile-claims.yaml — what the phone app does, and what it does not do yet.
+// ---------------------------------------------------------------------------------------
+
+/**
+ * One claim about the phone app, and whether the tree backs it today.
+ *
+ * `shipped` and `planned` are the two states the page renders differently (D240's second
+ * condition, D241's answer), and they are the whole of the vocabulary: a third state would be
+ * a third way for a reader to be unsure which of the two a bullet is.
+ */
+export interface MobileClaim {
+  /** The claim, as the page renders it. */
+  text: string
+  /** Whether the tree backs it today (`shipped`) or it is still to be built (`planned`). */
+  state: 'shipped' | 'planned'
+}
+
+/** website/data/mobile-claims.yaml, validated. */
+export interface MobileClaimsFacts {
+  claims: MobileClaim[]
+}
+
+const MOBILE_CLAIMS_FILE = 'website/data/mobile-claims.yaml'
+
+const MOBILE_CLAIMS_KEYS = ['claims', 'version']
+const MOBILE_CLAIM_KEYS = ['state', 'text']
+
+/** The two states a claim may carry, in the order the page renders them. */
+export const MOBILE_CLAIM_STATES = ['shipped', 'planned']
+
+/**
+ * The phone app's claims, in the order the page renders them (the zoom-diagrams plan, Part 3;
+ * D240, D241).
+ *
+ * **A row is a claim and its state, and the state is required.** The page is a "coming soon"
+ * page, and D240 allows one only while every bullet is marked shipped or planned: a row
+ * without a state would be a claim the reader cannot place, and a state this reader does not
+ * know would be a bullet the page cannot mark at all — so both are refused here, by name,
+ * rather than rendered as prose.
+ *
+ * **An empty list is refused**, which is the one place this reader differs from the
+ * screenshots reader beside it. A file with no screenshot is a legal document (no build can
+ * make a picture, D190); a file with no claim is a page whose whole job is the claims, and a
+ * build that rendered one would be a badge and nothing behind it — the state the brief's
+ * third item exists to avoid.
+ */
+export function loadMobileClaims(): MobileClaimsFacts {
+  const file = MOBILE_CLAIMS_FILE
+  const doc = asMap(
+    parseYAML(readBytes(path.join(DATA_DIR, 'mobile-claims.yaml'), "the phone app's claims: what it does today and what is still to be built, one row each, with the state the page marks it with (the zoom-diagrams plan Part 3; D240, D241)"), file),
+    file,
+    'the document',
+  )
+  refuseUnknownKeys(doc, MOBILE_CLAIMS_KEYS, file)
+  const claims = asList(doc.claims, file, 'claims').map((entry, index) => {
+    const what = `claims[${index}]`
+    const claim = asMap(entry, file, what)
+    refuseUnknownKeys(claim, MOBILE_CLAIM_KEYS, `${file} ${what}`)
+
+    const state = asString(claim.state, file, `${what}.state`)
+    if (!MOBILE_CLAIM_STATES.includes(state)) {
+      throw new Error(
+        `${file}: ${what}.state is ${JSON.stringify(state)}, and a claim is either ${MOBILE_CLAIM_STATES.map((one) => `\`${one}\``).join(' or ')}: the page renders the two into two lists with their own headings, so a bullet is marked shipped or planned and a reader never has to guess which one it is reading (D240, D241).`,
+      )
+    }
+
+    const text = asString(claim.text, file, `${what}.text`)
+    if (text.trim() === '') {
+      throw new Error(
+        `${file}: ${what}.text is empty, and every row of this file is a claim: a bullet with no words in it is a mark with nothing behind it, and the page renders this string as the whole of what the row says.`,
+      )
+    }
+
+    return { text, state: state as MobileClaim['state'] }
+  })
+
+  if (claims.length === 0) {
+    throw new Error(
+      `${file}: claims is empty, and this file is the page: the phone app's page is a "coming soon" badge and the claims under it, so a build with no claim in the file is a page that says nothing about what is coming (D240, D241). A page whose every claim has been dropped is a page to take down, not one to build empty.`,
+    )
+  }
+
+  return { claims }
+}
+
+// website/data/why-gcp.yaml — the claims the "Why GCP" page renders.
+// ---------------------------------------------------------------------------------------
+
+/**
+ * One claim of the "Why GCP" page: the sentence a reader reads, the document in this
+ * repository that proves it, and the day the two were last read against each other.
+ */
+export interface WhyGcpClaim {
+  /** The row's anchor on the page, and the name a build error uses. */
+  id: string
+  /** The sentence the page renders. */
+  text: string
+  /** The document the claim is traceable to, relative to the repository root. */
+  source: string
+  /** The day the claim was last read against that document, `YYYY-MM-DD`. */
+  date: string
+}
+
+/** website/data/why-gcp.yaml, validated. */
+export interface WhyGcpFacts {
+  /** The brief's four numbered points, in the order the page's `<ol>` renders them. */
+  points: WhyGcpClaim[]
+  /** The closing claims — the AWS objection and the second cloud — in the order the page renders them. */
+  closing: WhyGcpClaim[]
+  /** The page's one-sentence framing of what no other cloud offers (D249). */
+  framing: WhyGcpClaim
+}
+
+const WHY_GCP_FILE = 'website/data/why-gcp.yaml'
+
+const WHY_GCP_KEYS = ['closing', 'framing', 'points', 'version']
+const WHY_GCP_CLAIM_KEYS = ['date', 'id', 'source', 'text']
+
+/**
+ * One row of the file: a claim, its citation and its date, all three read and all three
+ * non-empty. The three refusals are `faq.astro`'s `loadFaq`'s, for the same reasons — an
+ * unknown key is a fact nothing renders, an empty field is a claim the page would print a
+ * blank space for, and a `source` that is not on disk is a citation of nothing — and the date
+ * is refused unless it is written as a date, because a claim about what another cloud does is
+ * one whose age a reader has to be able to judge (ZF58).
+ */
+function asClaim(value: Value, file: string, what: string): WhyGcpClaim {
+  const claim = asMap(value, file, what)
+  refuseUnknownKeys(claim, WHY_GCP_CLAIM_KEYS, `${file} ${what}`)
+
+  const id = asString(claim.id, file, `${what}.id`)
+  // The row's anchor: the page renders it as the row's `id`, so an id that is not one, or one
+  // written twice, is an element a reader cannot jump to or two elements sharing a name.
+  if (!/^[a-z][a-z0-9-]*$/.test(id)) {
+    throw new Error(
+      `${file}: ${what}.id is ${JSON.stringify(id)}, and a row's id is its anchor on the page: lower-case letters, digits and dashes, which is what \`id="…"\` and a link to the row are made of.`,
+    )
+  }
+
+  const text = asString(claim.text, file, `${what}.text`)
+  if (text.trim() === '') {
+    throw new Error(
+      `${file}: ${what}.text is empty, and every row of this file is a claim the page renders: a row with no words is a blank space where a reader was meant to read the reason Fugaro runs on GCP.`,
+    )
+  }
+
+  const source = asString(claim.source, file, `${what}.source`)
+  if (source.trim() === '') {
+    throw new Error(
+      `${file}: ${what}.source is empty, and every claim this page renders cites the document that proves it (Global Constraint 6): a claim with no citation is one no guard can hold, and the build stops rather than printing it.`,
+    )
+  }
+  if (!existsSync(path.join(REPO_ROOT, source))) {
+    throw new Error(
+      `${file}: ${what} names ${JSON.stringify(source)} as the file that proves it, and this repository does not have that file. Every claim is traceable to a document in the tree or it is not written (D102, D243), so the build fails rather than linking a source that is not there.`,
+    )
+  }
+
+  const date = asString(claim.date, file, `${what}.date`)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new Error(
+      `${file}: ${what}.date is ${JSON.stringify(date)}, and every row carries the day its claim was last read against its source, written YYYY-MM-DD: a claim about what another cloud does is one whose age a reader has to be able to judge (docs/website/README.md, ZF58), and a row whose date is written any other way is one no reader can date.`,
+    )
+  }
+
+  return { id, text, source, date }
+}
+
+/** A list of claims, each read by `asClaim` and each named in a build error by its position. */
+function asClaims(value: Value, file: string, key: string): WhyGcpClaim[] {
+  return asList(value, file, key).map((entry, index) => asClaim(entry, file, `${key}[${index}]`))
+}
+
+/**
+ * The claims the "Why GCP" page renders: the brief's four numbered points, the two closing
+ * claims, and the framing sentence (D243; the brief of 2026-10-21 and the reconciliation's
+ * section 4, findings ZF15-ZF22).
+ *
+ * **The file is the page's only source of these sentences.** Nothing the page renders about
+ * GCP is typed into the page: a claim arrives with its citation and its date or it does not
+ * arrive, which is what keeps the page's argument checkable against the tree rather than
+ * being a paragraph somebody believed. The four points are held to four — the brief numbers
+ * them, the page renders them as one `<ol>`, and a fifth row is a point the brief does not
+ * make — and the ids are held unique, because each is rendered as an element's `id`.
+ */
+export function loadWhyGcp(): WhyGcpFacts {
+  const file = WHY_GCP_FILE
+  const doc = asMap(
+    parseYAML(readBytes(path.join(DATA_DIR, 'why-gcp.yaml'), "the Why GCP page's claims: the brief's four points, the AWS objection and the page's framing sentence (the brief of 2026-10-21, D243 and D249)"), file),
+    file,
+    'the document',
+  )
+  refuseUnknownKeys(doc, WHY_GCP_KEYS, file)
+  const points = asClaims(doc.points, file, 'points')
+  if (points.length !== 4) {
+    throw new Error(
+      `${file}: carries ${points.length} points, and the page renders the brief's four — Firebase as the control plane, a Firebase project being a Google Cloud project, the project being the one place the installation lives, and what Fugaro's own project holds. A point added or removed here is a change to the argument the page makes, so it is made in the brief and in this file together.`,
+    )
+  }
+
+  const closing = asClaims(doc.closing, file, 'closing')
+  const framing = asClaim(doc.framing, file, 'framing')
+
+  const seen = new Set<string>()
+  for (const claim of [...points, ...closing, framing]) {
+    if (seen.has(claim.id)) {
+      throw new Error(
+        `${file}: two rows share the id ${JSON.stringify(claim.id)}, and a row's id is rendered as its element's \`id\`: the page would carry \`id="${claim.id}"\` twice, and a link to either row would resolve to the first.`,
+      )
+    }
+    seen.add(claim.id)
+  }
+
+  return { points, closing, framing }
+}
+
+// ---------------------------------------------------------------------------------------
 // website/content/ — the generated documents, and the aggregation's published output.
 // ---------------------------------------------------------------------------------------
 
@@ -820,9 +1496,9 @@ function loadCosts(minRuns: number): CostsFacts | null {
   const file = COSTS_FILE
   const absolute = path.join(CONTENT_DIR, 'costs.json')
   if (!existsSync(absolute)) {
-    // The honest empty state rather than a failure: the aggregation is owner-run, and the
-    // caps-and-costs page renders its "not enough runs yet" state until it has been run
-    // (W1.5, D96).
+    // The honest empty state rather than a failure: the aggregation is owner-run, and no
+    // page renders these figures while it has not been run (W1.5, D96 — the ranges band
+    // that read them was removed on 2026-10-21).
     return null
   }
 
@@ -892,32 +1568,92 @@ function loadCosts(minRuns: number): CostsFacts | null {
 // ---------------------------------------------------------------------------------------
 
 /**
- * The tagline: **README.md's own tagline line, the line under its `# Fugaro` title**
- * (F48, D102). It is read rather than copied into a component, because a tagline typed
- * into a template is a second copy of the README's line and the one that drifts — and
- * because every other sentence the site prints has to be traceable to a document or a
- * command, starting with this one.
+ * The two lines the site's promise is written in, read from the one place they are
+ * written: **README.md's own opening**, under its `# Fugaro` title.
  *
- * The line's markdown emphasis is not part of the sentence, so the `**` that makes it
- * bold in the README is stripped: what a page renders is the text a reader reads.
+ *   - the **headline** is the README's tagline line — the first non-empty line under the
+ *     title, the bold one — and it is the hero's `h1` (F48, D102);
+ *   - the **subline** is the line under it: one sentence saying what the product is, which
+ *     is the hero's lead, the site's default page description and the `og:description` a
+ *     shared link shows — the card included, since the head emits one `twitter:card` and no
+ *     second description tag, so the card reads the OpenGraph one (the changes spec of
+ *     2026-10-18, item 2; `website/test/home.mjs` holds both to the README's line and
+ *     asserts there is no `twitter:description`).
+ *
+ * Both are read rather than copied into a component, because a promise typed into a
+ * template is a second copy of the README's line and the one that drifts — and because
+ * every other sentence the site prints has to be traceable to a document or a command,
+ * starting with these. Both also have to be there: a README whose title is followed by one
+ * line, or by none, stops the build naming the file rather than rendering a page with a
+ * hole in its first screen.
+ *
+ * The same goes for the *shape* of the two lines, and it is checked rather than assumed:
+ * the README is markdown and what a page renders is text, so a promise that is a line of
+ * markdown *structure* — a heading, a list item, a quote, a table row, a rule or a fence,
+ * an image or a raw tag — would print its own markers on the first screen. Either line
+ * being one stops the build naming the file, which is the behaviour
+ * `website/test/home.mjs` holds to a case (a README that puts its promise under the title
+ * as `## Install` fails the build rather than rendering "## Install" under the headline).
+ *
+ * The markdown emphasis is not part of either sentence, so the `**` that makes the tagline
+ * bold in the README is stripped: what a page renders is the text a reader reads. The
+ * subline is the whole of the line: it is one sentence, and a second one on the same line
+ * would be rendered whole, so the README's own line breaks are what fixes where it ends.
  */
-export function loadTagline(): string {
+function loadPromiseLines(): { tagline: string; subline: string } {
   const file = 'README.md'
-  const lines = readBytes(path.join(REPO_ROOT, 'README.md'), 'the tagline: the line under its `# Fugaro` title, which the site renders rather than restating (F48, D102)').split('\n')
+  const lines = readBytes(
+    path.join(REPO_ROOT, 'README.md'),
+    'the tagline and the subline: the two lines under its `# Fugaro` title, which the site renders rather than restating (F48, D102; changes spec item 2)',
+  ).split('\n')
 
   const title = lines.findIndex((line) => line.trim() === '# Fugaro')
   if (title === -1) {
-    throw new Error(`${file}: no "# Fugaro" title, and the site's tagline is the line under it (F48, D102, W1.3 step 1).`)
+    throw new Error(`${file}: no "# Fugaro" title, and the site's tagline and subline are the two lines under it (F48, D102, W1.3 step 1).`)
   }
-  const line = lines.slice(title + 1).find((candidate) => candidate.trim() !== '')
-  if (line === undefined) {
-    throw new Error(`${file}: the "# Fugaro" title is the last thing in the file, and the tagline is the line under it (F48, D102).`)
+
+  const unemphasized = (line: string) => line.trim().replace(/^\*\*(.+)\*\*$/, '$1').trim()
+  // Markdown that organises a document rather than saying something. Both lines are rendered
+  // as plain text, so one of these would print its own markers on the first screen.
+  const STRUCTURE = /^(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|>\s?|\||`{3,}|<|={3,}|-{3,}$)/
+  const under = lines.slice(title + 1).filter((candidate) => candidate.trim() !== '')
+  if (under.length < 2) {
+    throw new Error(
+      `${file}: the "# Fugaro" title is followed by ${under.length} non-empty line(s), and the site renders the two under it: the tagline (the hero's headline) and the subline (the promise under it, which is the site's page description). Add the missing line, or this build has no promise to render (changes spec item 2, F48).`,
+    )
   }
-  const tagline = line.trim().replace(/^\*\*(.+)\*\*$/, '$1').trim()
-  if (tagline === '') {
-    throw new Error(`${file}: the line under the "# Fugaro" title is empty, and the site renders that line as its tagline (F48, D102).`)
+
+  const tagline = unemphasized(under[0])
+  const subline = unemphasized(under[1])
+  if (tagline === '' || subline === '') {
+    throw new Error(`${file}: one of the two lines under the "# Fugaro" title is empty, and the site renders both (F48, D102; changes spec item 2).`)
   }
-  return tagline
+  for (const [what, line] of [
+    ['tagline', tagline],
+    ['subline', subline],
+  ] as const) {
+    if (STRUCTURE.test(line)) {
+      throw new Error(
+        `${file}: the ${what} is ${JSON.stringify(line)}, which is markdown structure — a heading, a list item, a quote, a table row, a rule or fence, an image or a tag — rather than the sentence the site renders as plain text: the markers would be printed on the first screen, where the promise is. The two lines are the README's opening under its "# Fugaro" title: one line saying what the product is, and the sentence under it (changes spec item 2, F48, D102).`,
+      )
+    }
+  }
+  return { tagline, subline }
+}
+
+/** README.md's tagline line: the site's headline, the hero's `h1` (F48, D102). */
+export function loadTagline(): string {
+  return loadPromiseLines().tagline
+}
+
+/**
+ * README.md's subline: the one sentence under the tagline, rendered as the hero's lead and
+ * as the site's default page description (changes spec item 2). It is provider-neutral on
+ * purpose — "cloud jobs", not a named cloud — because where a run happens is the
+ * architecture's business and is explained further down the page.
+ */
+export function loadSubline(): string {
+  return loadPromiseLines().subline
 }
 
 /**
@@ -973,10 +1709,14 @@ export function loadSitemapHref(canonicalURL: string): string | null {
 export interface Site {
   facts: SiteFacts
   install: InstallFacts
-  /** README.md's tagline line, the site's default page description. */
+  /** README.md's tagline line: the site's headline, the hero's `h1`. */
   tagline: string
+  /** README.md's subline: the hero's lead and the site's default page description. */
+  subline: string
   /** The generated documents under content/, keyed by file name. */
   documents: { [name: string]: GeneratedDocument }
+  /** What a job costs, as the owner measured it on this project's own development runs. */
+  typicalCosts: TypicalCostsFacts
   /** The aggregation's published figures, or null while the owner has not run it. */
   costs: CostsFacts | null
   fonts: { href: string; type: string }[]
@@ -987,7 +1727,7 @@ let loaded: Site | null = null
 
 /**
  * The whole pipeline: the site's facts, the install facts, the generated documents, the
- * aggregation's figures, the tagline, the fonts and the sitemap — each read from its own
+ * aggregation's figures, the tagline and the subline, the fonts and the sitemap — each read from its own
  * source, each validated, and any one of them missing or malformed a build error naming
  * the file.
  *
@@ -1002,7 +1742,9 @@ export function loadSite(): Site {
     facts,
     install: loadInstallFacts(),
     tagline: loadTagline(),
+    subline: loadSubline(),
     documents: loadGeneratedDocuments(),
+    typicalCosts: loadTypicalCosts(facts.minRuns),
     costs: loadCosts(facts.minRuns),
     fonts: loadFonts(),
     sitemapHref: loadSitemapHref(facts.canonicalURL),

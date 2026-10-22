@@ -84,6 +84,10 @@ variable "repo" {
         title      = string
         expression = string
       })
+      token_condition = object({
+        title      = string
+        expression = string
+      })
       vertex     = bool
       deploy_job = bool
     }))
@@ -91,14 +95,14 @@ variable "repo" {
 }
 
 variable "allow_job_delete" {
-  description = "Lowers the jobs' deletion protection, for offboarding (fugaro init --repo --allow-job-delete)."
+  description = "Lowers the jobs' deletion protection, for offboarding (fugaro update --allow-job-delete)."
   type        = bool
   default     = false
   nullable    = false
 }
 
 # The GitHub App ID isn't a secret. The jobs and the check get it through
-# their env; it is here only so init --repo can read it back as an output,
+# their env; it is here only so fugaro update can read it back as an output,
 # even when every workflow's check is off.
 variable "github_app_id" {
   description = "The GitHub App's ID, or null for a Bitbucket repository."

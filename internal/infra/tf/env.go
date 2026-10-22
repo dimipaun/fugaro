@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // passThrough lists the only variables copied from fugaro's environment into
@@ -38,12 +40,12 @@ const impersonate = "GOOGLE_IMPERSONATE_SERVICE_ACCOUNT"
 // cache must be absolute.
 func Env(parent []string, workdir, cache string) ([]string, error) {
 	if !filepath.IsAbs(workdir) || !filepath.IsAbs(cache) {
-		return nil, fmt.Errorf("terraform: the workdir %q and plugin cache %q must be absolute", workdir, cache)
+		return nil, fmt.Errorf("terraform: the workdir %q and plugin cache %q must be absolute", safetext.Field(workdir), safetext.Field(cache))
 	}
 	// Refused rather than escaped: terraformrc is HCL, where quotes,
 	// backslashes and ${ or %{ templates would change the meaning.
 	if strings.ContainsAny(cache, "\"\\$%") || strings.ContainsFunc(cache, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
-		return nil, fmt.Errorf("terraform: unsupported characters in the plugin cache path %q", cache)
+		return nil, fmt.Errorf("terraform: unsupported characters in the plugin cache path %q", safetext.Field(cache))
 	}
 
 	kept := map[string]string{}
@@ -53,7 +55,7 @@ func Env(parent []string, workdir, cache string) ([]string, error) {
 			continue
 		}
 		if k == impersonate {
-			return nil, errors.New("terraform: " + impersonate + " is set; fugaro init runs Terraform as your own credentials only, so unset it")
+			return nil, errors.New("terraform: " + impersonate + " is set; fugaro update runs Terraform as your own credentials only, so unset it")
 		}
 		if passThrough[k] || strings.HasPrefix(k, "XDG_") {
 			kept[k] = v // the last one wins, as in exec

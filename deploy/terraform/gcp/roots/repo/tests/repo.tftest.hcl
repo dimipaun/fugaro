@@ -1,6 +1,6 @@
 # Plans one repository against a mock provider: no credentials, no network
-# beyond the provider download. The inputs are the golden tfvars fugaro
-# init --repo writes (the Go side of the contract checks it produces
+# beyond the provider download. The inputs are the golden tfvars
+# fugaro update writes (the Go side of the contract checks it produces
 # exactly these files), so a shape Go and Terraform disagree on fails here.
 #
 # An assertion can't reach into a child module's resources, so the root
@@ -69,7 +69,7 @@ run "root_github" {
   }
   assert {
     condition     = output.github_app_id == "123456"
-    error_message = "the GitHub App ID must come back as an output, for init --repo to read"
+    error_message = "the GitHub App ID must come back as an output, for fugaro update to read"
   }
 }
 
@@ -369,6 +369,140 @@ run "bucket_condition_exact" {
     condition     = google_storage_bucket_iam_member.job.role == "roles/storage.objectUser" && google_storage_bucket_iam_member.job.bucket == "fugaro-runs-proj-1234"
     error_message = "the job account gets objectUser on the runs bucket"
   }
+}
+
+# The job's read-only grant on its own repository's budget token objects
+# (docs/design/budget-token-channel.md section 7.2, D16): objectViewer, never
+# objectUser, on exactly tokens/<slug>/ of the runs bucket, and the runs/,
+# cache/ and locks/ grant does not reach tokens/.
+run "token_condition_exact" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project         = var.bitbucket.project
+    fugaro_project  = var.bitbucket.fugaro_project
+    region          = var.bitbucket.region
+    name            = "web"
+    repo_label      = var.bitbucket.repo.label
+    workflow        = var.bitbucket.repo.workflows.web
+    secrets         = var.bitbucket.repo.secrets
+    runs_bucket     = var.bitbucket.installation.runs_bucket
+    job_runner_role = var.bitbucket.installation.role_ids.job_runner
+  }
+
+  assert {
+    condition     = google_storage_bucket_iam_member.job_tokens.role == "roles/storage.objectViewer" && google_storage_bucket_iam_member.job_tokens.bucket == "fugaro-runs-proj-1234"
+    error_message = "the job account reads tokens/ and may not write it: objectViewer, never objectUser"
+  }
+  assert {
+    condition     = google_storage_bucket_iam_member.job_tokens.condition[0].expression == "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/acme-sandbox-100024cb41873d4e/\")"
+    error_message = "the job account's token condition is its own repository's tokens/<slug>/, byte for byte"
+  }
+  assert {
+    condition     = google_storage_bucket_iam_member.job_tokens.condition[0].title == "fugaro-tokens-fugaro-acme-sandbox-w-7815dfaf" && google_storage_bucket_iam_member.job_tokens.condition[0].description == null
+    error_message = "the token condition's title is the input, with no description"
+  }
+  assert {
+    condition     = !strcontains(google_storage_bucket_iam_member.job.condition[0].expression, "/objects/tokens/")
+    error_message = "the job's objectUser grant must not reach tokens/: a peer run could delete a queued token"
+  }
+}
+
+# A token condition widened past tokens/<slug>/ (a second clause) fails the plan.
+run "token_condition_not_past_tokens" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project         = var.bitbucket.project
+    fugaro_project  = var.bitbucket.fugaro_project
+    region          = var.bitbucket.region
+    name            = "web"
+    repo_label      = var.bitbucket.repo.label
+    workflow        = merge(var.bitbucket.repo.workflows.web, { token_condition = { title = "fugaro-tokens-fugaro-acme-sandbox-w-7815dfaf", expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/acme-sandbox-100024cb41873d4e/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\")" } })
+    secrets         = var.bitbucket.repo.secrets
+    runs_bucket     = var.bitbucket.installation.runs_bucket
+    job_runner_role = var.bitbucket.installation.role_ids.job_runner
+  }
+
+  expect_failures = [var.workflow]
+}
+
+# tokens/ of every repository fails the plan: a job reads its own repository's.
+run "token_condition_not_all_tokens" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project         = var.bitbucket.project
+    fugaro_project  = var.bitbucket.fugaro_project
+    region          = var.bitbucket.region
+    name            = "web"
+    repo_label      = var.bitbucket.repo.label
+    workflow        = merge(var.bitbucket.repo.workflows.web, { token_condition = { title = "fugaro-tokens-fugaro-acme-sandbox-w-7815dfaf", expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\")" } })
+    secrets         = var.bitbucket.repo.secrets
+    runs_bucket     = var.bitbucket.installation.runs_bucket
+    job_runner_role = var.bitbucket.installation.role_ids.job_runner
+  }
+
+  expect_failures = [var.workflow]
+}
+
+# Another repository's tokens/<slug>/ fails the plan: the slug must be the one
+# the job's own runs/ condition names.
+run "token_condition_not_another_repo" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project         = var.bitbucket.project
+    fugaro_project  = var.bitbucket.fugaro_project
+    region          = var.bitbucket.region
+    name            = "web"
+    repo_label      = var.bitbucket.repo.label
+    workflow        = merge(var.bitbucket.repo.workflows.web, { token_condition = { title = "fugaro-tokens-fugaro-acme-sandbox-w-7815dfaf", expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/acme-other-0123456789abcdef/\")" } })
+    secrets         = var.bitbucket.repo.secrets
+    runs_bucket     = var.bitbucket.installation.runs_bucket
+    job_runner_role = var.bitbucket.installation.role_ids.job_runner
+  }
+
+  expect_failures = [var.workflow]
+}
+
+# Another bucket's tokens/ fails the plan (the resource precondition).
+run "token_condition_this_bucket" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project         = var.bitbucket.project
+    fugaro_project  = var.bitbucket.fugaro_project
+    region          = var.bitbucket.region
+    name            = "web"
+    repo_label      = var.bitbucket.repo.label
+    workflow        = merge(var.bitbucket.repo.workflows.web, { bucket_condition = { title = var.bitbucket.repo.workflows.web.bucket_condition.title, expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-other/objects/runs/acme-sandbox-100024cb41873d4e/\")" }, token_condition = { title = "t", expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-other/objects/tokens/acme-sandbox-100024cb41873d4e/\")" } })
+    secrets         = var.bitbucket.repo.secrets
+    runs_bucket     = var.bitbucket.installation.runs_bucket
+    job_runner_role = var.bitbucket.installation.role_ids.job_runner
+  }
+
+  expect_failures = [google_storage_bucket_iam_member.job_tokens]
 }
 
 run "build_bucket_condition_exact" {
@@ -783,7 +917,7 @@ run "people_job" {
   }
 
   assert {
-    # fugaro init puts the operators among the launchers too (they get
+    # fugaro update puts the operators among the launchers too (they get
     # everything launchers get), so the fixture's operator runs jobs.
     condition = tomap({ for k, m in google_cloud_run_v2_job_iam_member.launcher : k => m.role }) == tomap({
       "user:launcher@example.com" = "projects/proj-1234/roles/fugaroJobRunner"
@@ -907,7 +1041,7 @@ run "scheduler_region_and_paused" {
 }
 
 # Cloud Run checks a job's secrets when it creates it, and the check job
-# mounts the provider credential at latest, so until fugaro init --repo
+# mounts the provider credential at latest, so until fugaro update
 # finds a version (or the job already exists) it plans no check job, and
 # so no invoker grant or Scheduler job either.
 run "check_not_deployed" {

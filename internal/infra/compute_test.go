@@ -337,9 +337,9 @@ func TestJobRunAccountsReadsTheJobMark(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("JobRunAccounts = %q, want %q", got, want)
 	}
-	// The reaper is not a run account: the design's §3.7 gives it exactly six
-	// permissions over jobs and instances, and a VM running as it could do
-	// neither of the things a run must.
+	// The reaper is not a run account: the design's §3.7 gives it exactly five
+	// permissions over jobs and instances (Task 9), and a VM running as it
+	// could do neither of the things a run must.
 	if slices.ContainsFunc(got, func(s string) bool { return strings.Contains(s, ReaperAccountID) }) {
 		t.Errorf("the reaper's own account was returned as a run account: %q", got)
 	}

@@ -10,7 +10,6 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
@@ -354,7 +353,11 @@ func (r *run) freshContext(ctx context.Context) {
 			r.follow.rootTask = t.Task
 		}
 	}
-	base := r.cfg.Git.BaseBranch
+	// The branch's diff against the run's own base of work — the branch the
+	// pull request targets now (diffbase.go, diffBase), not the run's
+	// configuration base, which is stale the moment the pull request is
+	// retargeted.
+	base := r.diffBase()
 	stat, err := sessionGit(ctx, r.repo, "diff", "--stat", "origin/"+base+"...HEAD")
 	if err != nil {
 		r.d.Log.Warn("reading the branch's diff stat failed", "err", r.redact(err.Error()))
@@ -366,7 +369,7 @@ func (r *run) freshContext(ctx context.Context) {
 func (r *run) promptData() followup.PromptData {
 	f := r.follow
 	return followup.PromptData{
-		PR: r.spec.PR, PRURL: f.pr.URL, Branch: r.rec.Branch, Base: r.cfg.Git.BaseBranch, StateDir: r.d.StateDir,
+		PR: r.spec.PR, PRURL: f.pr.URL, Branch: r.rec.Branch, Base: r.diffBase(), StateDir: r.d.StateDir,
 		Instructions: r.spec.Task, Resumed: f.restored.Resumed, MovedCommits: f.restored.Moved,
 		RootTask: f.rootTask, DiffStat: f.diffStat, PreviousAnswer: f.prevAnswer, Nonce: f.nonce, Redact: r.redactor(),
 	}
@@ -387,7 +390,7 @@ func (r *run) fellBackFresh(ctx context.Context) {
 // it wrote none. It is read as a regular file only, never through a
 // symlink the agent could point at the runner's credentials.
 func (r *run) answer() string {
-	f, err := os.OpenFile(filepath.Join(r.d.StateDir, followupFile), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	f, err := openNoFollow(filepath.Join(r.d.StateDir, followupFile))
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			r.d.Log.Warn("reading followup.md failed", "err", r.redact(err.Error()))

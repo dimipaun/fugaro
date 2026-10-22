@@ -374,7 +374,7 @@ func TestRunMemoizesTheLayerReadThroughTheRealCommand(t *testing.T) {
 }
 
 // defaultBranchParse must read the bucket at most once per command
-// invocation too: fugaro init calls it (through resolveRepoTarget, once
+// invocation too: the converge calls it (through resolveRepoTarget, once
 // while gathering inputs and once more in the repository stage, and
 // through defaultBranchConfig in the secrets stage) up to three times for
 // the same checkout.

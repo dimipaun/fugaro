@@ -126,7 +126,7 @@ func ApplyGate(r BudgetRead) (Enable, error) {
 	switch {
 	case r.Err != nil:
 		return Enable{}, fmt.Errorf("%w: the apply-time budget read of %s could not be made, and a read that did not answer is an apply with no budget control at all: %s",
-			ErrNotEnabled, r.Project, safetext.Field(r.Err.Error()))
+			ErrNotEnabled, safetext.Field(r.Project), safetext.Field(r.Err.Error()))
 	case r.OK && b.Valid():
 		return Enable{budget: b, read: true}, nil
 	case r.OK || r.Invalid || r.Amount != 0 || r.Currency != "":
@@ -143,7 +143,7 @@ func ApplyGate(r BudgetRead) (Enable, error) {
 			why = err.Error()
 		}
 		return Enable{}, fmt.Errorf("%w: the budget recorded in the marker of %s is invalid: %s",
-			ErrNotEnabled, r.Project, safetext.Field(why))
+			ErrNotEnabled, safetext.Field(r.Project), safetext.Field(why))
 	case !r.Managed:
 		// Not managed at all: the project keeps the coding agent's refusal, and
 		// the sentence is the one the command already prints for that.
@@ -151,21 +151,22 @@ func ApplyGate(r BudgetRead) (Enable, error) {
 		if reason == "" {
 			reason = "its creation fact was not believed"
 		}
-		return Enable{}, fmt.Errorf("%w: %s is not managed (%s), so its plans keep the coding agent's refusal and are applied by fugaro init's own path with its confirmation",
-			ErrNotEnabled, r.Project, reason)
+		return Enable{}, fmt.Errorf("%w: %s is not managed (%s), so its plans keep the coding agent's refusal and are applied by fugaro update's own path with its confirmation",
+			ErrNotEnabled, safetext.Field(r.Project), reason)
 	default:
 		// Managed, and the creation fact records no amount: the marker's
 		// version 1, which is a creation before Task 4.2 or a creation that
-		// was not managed. The sentence says what is true in this release:
-		// fugaro init refuses --managed without --create-project, so no
-		// command in this build adds a budget to an existing project (that is
-		// the plan's Task 6.1, unscheduled), and the only managed project is
-		// one created with its budget.
+		// was not managed (an ordinary `fugaro setup --create-project`, whose
+		// WriteMarker call passes no budget). The sentence says what is true
+		// in this release, and since Task 6.1 there IS a way for such a
+		// project to get an amount: the owner's own command, at their own
+		// terminal, which replaces this marker's version-1 fact with the one
+		// that records the amount the owner states (managed.WriteFlag).
 		reason := safetext.Field(r.Reason)
 		if reason == "" {
 			reason = "the creation fact records no amount"
 		}
-		return Enable{}, fmt.Errorf("%w: %s has no budget recorded (%s), and this release cannot add a budget to an existing project; a managed project must be created with `fugaro init --create-project --managed --budget N --budget-currency CCC --billing-account ID`",
-			ErrNotEnabled, r.Project, reason)
+		return Enable{}, fmt.Errorf("%w: %s has no budget recorded (%s), so the project's own owner can add one by flagging it managed — `fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC`, typed at their own terminal, which replaces this creation fact with the version that records the amount — or a managed project is created with one: `fugaro setup --create-project --managed --budget N --budget-currency CCC --billing-account ID`",
+			ErrNotEnabled, safetext.Field(r.Project), reason)
 	}
 }

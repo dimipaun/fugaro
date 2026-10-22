@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	managedmode "github.com/dimipaun/fugaro/internal/managed"
 )
 
 // The gate at the call site, which internal/infra/managed's own test cannot
@@ -28,7 +30,7 @@ import (
 // created no project must write no marker, whatever else it did; the mutation
 // this exists to catch is dropping that check and marking the project the run
 // installs into (r.res.Created = r.gcpProject in markCreated), which in
-// production would mark every installation an ordinary `fugaro init` touches
+// production would mark every installation an ordinary converge touches
 // — fugaro's own, belong, the owner's — as managed, and turn the
 // confirmations off for them (design D73: adding Firebase to a project is
 // never what makes it managed).
@@ -43,18 +45,18 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 		r := newInitRig(t)
 		r.markedRuns(t, initProjectName, initProject)
 		fakeTerminal(t)
-		if _, _, err := executeStdin(t, initProjectName+"\n", "init"); err != nil {
+		if _, _, err := executeStdin(t, initProjectName+"\n", "setup"); err != nil {
 			t.Fatal(err)
 		}
 		noMarker(t, r.gcs, initRunsBucket)
 	})
 
-	// (b) init --firebase: Firebase is added to a project that already
+	// (b) update --firebase-project: Firebase is added to a project that already
 	// exists, which this run did not create.
-	t.Run("init --firebase on an existing project", func(t *testing.T) {
+	t.Run("update --firebase-project on an existing project", func(t *testing.T) {
 		r := newFBRig(t)
 		r.markedRuns(t, initProjectName, initProject)
-		if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
+		if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
 			t.Fatal(err)
 		}
 		noMarker(t, r.gcs, initRunsBucket)
@@ -105,15 +107,139 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 		if want := `{"version":1,"gcp_project":"` + newProj + `"}`; b != want {
 			t.Errorf("gs://%s/%s = %s, want %s", bucket, managed.MarkerObject, b, want)
 		}
+		// And the other half of the same fact, written by the same step
+		// (Task 3.0): the label on the project itself, which the read
+		// requires. Both, or the project is not managed at all.
+		if got := r.crm.Labels(newProj)[managed.ProjectLabelKey]; got != managed.ProjectLabelValue {
+			t.Errorf("%s on the created project %s = %q, want %q: the run that creates a project writes both halves of the fact", managed.ProjectLabelKey, newProj, got, managed.ProjectLabelValue)
+		}
+	})
+
+	// (c') The same creation in the release as it ships, with managed
+	// projects off (managedDeployerShipped false): the creation fact is
+	// written as it always was, and the label is not, so the project does
+	// not read as managed — which would change init's own guard refusal for
+	// it to the managed text, with no --allow-delete — in a release whose
+	// every managed entry point refuses. And the run does not say it is
+	// Fugaro-managed.
+	t.Run("--create-project with managed projects off", func(t *testing.T) {
+		closeShippedGates(t)
+		r := newProjectRig(t)
+		bucket := "fugaro-runs-" + newProj
+		r.gcs.AddProject(newProj, gcpfake.FirstCreatedProjectNumber)
+		r.gcs.AddBucket(bucket, gcpfake.FirstCreatedProjectNumber, managedBucketLabels)
+		roles := map[string]string{}
+		for _, r := range []string{"launcher", "job_runner", "build_submitter", "tag_mover"} {
+			roles[r] = "projects/" + newProj + "/roles/fugaro" + strings.ToUpper(r[:1]) + r[1:]
+		}
+		r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+			"runs_bucket":               bucket,
+			"registry_host":             "us-east5-docker.pkg.dev/" + newProj,
+			"scheduler_service_account": "fugaro-scheduler@" + newProj + ".iam.gserviceaccount.com",
+			"role_ids":                  roles,
+		})}
+		r.save(t)
+		r.bill.AddAccount(billingAcc, true)
+		out, _, err := r.run(t, true, newProj+"\n"+billingAcc+"\n"+initProjectName+"\n", "--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		b, ok := markerAt(t, r.gcs, bucket)
+		if want := `{"version":1,"gcp_project":"` + newProj + `"}`; !ok || b != want {
+			t.Errorf("gs://%s/%s = %q (present %v), want %s", bucket, managed.MarkerObject, b, ok, want)
+		}
+		if got, set := r.crm.Labels(newProj)[managed.ProjectLabelKey]; set {
+			t.Errorf("%s=%q written on %s with managed projects off in this release", managed.ProjectLabelKey, got, newProj)
+		}
+		if strings.Contains(out, "it is Fugaro-managed") || !strings.Contains(out, "managed projects are off in this release") {
+			t.Errorf("the run's line about the creation fact is not the one for managed projects off:\n%s", out)
+		}
+	})
+
+	// (c'') The label write refused: the project can be read and not written
+	// (no resourcemanager.projects.update — the shape every credential a run
+	// holds is in), so the object lands and the label does not. It is the one
+	// state where the two halves disagree, and what it must not do is report
+	// the project as marked: the read answers "not managed" for a project
+	// with the object and no label, so a run that said it marked one would be
+	// telling the operator that confirmations are skipped for a project they
+	// are not.
+	t.Run("--create-project with the label refused", func(t *testing.T) {
+		r := newProjectRig(t)
+		bucket := "fugaro-runs-" + newProj
+		r.gcs.AddProject(newProj, gcpfake.FirstCreatedProjectNumber)
+		r.gcs.AddBucket(bucket, gcpfake.FirstCreatedProjectNumber, managedBucketLabels)
+		roles := map[string]string{}
+		for _, r := range []string{"launcher", "job_runner", "build_submitter", "tag_mover"} {
+			roles[r] = "projects/" + newProj + "/roles/fugaro" + strings.ToUpper(r[:1]) + r[1:]
+		}
+		r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+			"runs_bucket":               bucket,
+			"registry_host":             "us-east5-docker.pkg.dev/" + newProj,
+			"scheduler_service_account": "fugaro-scheduler@" + newProj + ".iam.gserviceaccount.com",
+			"role_ids":                  roles,
+		})}
+		r.save(t)
+		r.bill.AddAccount(billingAcc, true)
+		r.crm.DenyUpdate(newProj)
+		out, _, err := r.run(t, true, newProj+"\n"+billingAcc+"\n"+initProjectName+"\n", "--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if _, ok := markerAt(t, r.gcs, bucket); !ok {
+			t.Fatalf("no %s in gs://%s: the object is written first and this run wrote it\n%s", managed.MarkerObject, bucket, out)
+		}
+		if got := r.crm.Labels(newProj)[managed.ProjectLabelKey]; got != "" {
+			t.Errorf("%s on %s = %q, want it unwritten: the API refused the update", managed.ProjectLabelKey, newProj, got)
+		}
+		if !strings.Contains(out, "not marked as managed") {
+			t.Errorf("the run did not say the project is unmarked, and the read answers \"not managed\" for it:\n%s", out)
+		}
+		if strings.Contains(out, "recorded that this run created project "+newProj) {
+			t.Errorf("the run reported a project marked when only half the fact was written:\n%s", out)
+		}
+		// And the state bucket is set up anyway: it is D77's, what an apply
+		// under the deployer needs, and markCreated is its only writer in the
+		// tree — a later run creates no project and returns before it. So a
+		// run that stopped at the refused label takes with it the one step
+		// that no command of ours can take later, and the paths a person is
+		// sent to for the half-written mark end in a managed apply.
+		state := managedmode.ManagedStateBucketName(newProj)
+		if r.gcs.Inserted(state) == nil {
+			t.Fatalf("the run that could not write the label created no gs://%s: a project no later run can make applyable\n%s", state, out)
+		}
+		member := "serviceAccount:" + managedmode.DeployerAccount(newProj)
+		var bound bool
+		for _, b := range r.gcs.BucketPolicy(state) {
+			if b.Role == managedmode.DeployerStateRole && slices.Contains(b.Members, member) {
+				bound = true
+			}
+		}
+		if !bound {
+			t.Errorf("%s is not bound to gs://%s: the state bucket step is the deployer's binding and nothing else does it (D75, Task 1.5): %v", member, state, r.gcs.BucketPolicy(state))
+		}
+		// The half-written mark's own account of itself: which owner-run
+		// commands complete it, and the one route that works for the fact a
+		// --managed creation writes. The warning this replaced gave both
+		// marks to the creating run alone ("written once, by the run that
+		// creates the project") and offered a command that refuses for a
+		// fact that already records an amount.
+		s := out
+		if !strings.Contains(s, "records no amount") || !strings.Contains(s, "already records one") {
+			t.Errorf("the unmarked warning does not split the two states the owner's commands answer to (a fact that records no amount, and one that does):\n%s", s)
+		}
+		if strings.Contains(s, "written once, by the run that creates the project") {
+			t.Errorf("the unmarked warning still gives both marks to the creating run alone, and the owner's own flag writes both:\n%s", s)
+		}
 	})
 
 	// (c') --create-project on a project that already exists and has no
 	// Firebase: the stage adds Firebase where the project is, and creates
 	// nothing. This is where D73's "adding Firebase is never what makes a
 	// project managed" is decided — the AddFirebase branch of the same stage
-	// that creates — so it is pinned here and not only through init
-	// --firebase (b), a different stage. The bucket is the project's own,
-	// seeded and numbered as (c) seeds it, so a mutation that marks the
+	// that creates — so it is pinned here and not only through fugaro update
+	// --firebase-project (b), a different stage. The bucket is the project's
+	// own, seeded and numbered as (c) seeds it, so a mutation that marks the
 	// project on adding Firebase really writes.
 	t.Run("--create-project adding Firebase to an existing project", func(t *testing.T) {
 		r := newProjectRig(t)
@@ -147,11 +273,11 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 		noMarker(t, r.gcs, bucket)
 	})
 
-	// (c'') --create-project with --firebase set to the same project: the
+	// (c'') --create-project with --firebase-project set to the same project: the
 	// one-project layout the docs tell the owner to run ("One project or
 	// two: either is supported", docs/gcp-setup.md, and the live checklist's
 	// init step), where the Firebase backend lives in the project the run
-	// creates. It is a different path to the same fact: with --firebase the
+	// creates. It is a different path to the same fact: with --firebase-project the
 	// installation is the Firebase engine's first apply and the installation
 	// stage is skipped (init_stages.go, newInstallationStage), so the
 	// outputs markCreated reads — the runs bucket among them — are set by
@@ -159,14 +285,15 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 	// the fact still lands, once.
 	//
 	// Against a *different* Firebase project the flag is refused before
-	// anything is called (TestCreateWithOtherFirebaseRefused); this is the
+	// anything is called (TestFirebaseProjectPairingRuleIsUnchanged); this is
+	// the
 	// accepted combination, and until this case existed no test ran it.
 	t.Run("--create-project with Firebase on the created project", func(t *testing.T) {
 		r := newCreatedFBRig(t)
 		bucket := "fugaro-runs-" + newProj
 		out, _, err := r.run(t, true, newProj+"\n"+billingAcc+"\n"+names(1)+"us-east5\n"+names(1),
 			"--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New",
-			"--firebase", newProj, "--budget-mode", "observe")
+			"--firebase-project", newProj, "--budget-mode", "observe")
 		if err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
@@ -253,8 +380,8 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 
 // createdFBRig is the rig of the one-project layout: the create rig (the
 // project, its billing and Firebase Management) with the Firebase engine's
-// own fakes on top, for `fugaro init --create-project --gcp-project P
-// --firebase P`. The Firebase project is the one this run creates, so its
+// own fakes on top, for `fugaro setup --create-project --gcp-project P
+// --firebase-project P`. The Firebase project is the one this run creates, so its
 // database, its admins and its billing exist as the run itself leaves them,
 // not as a rig seeds them.
 type createdFBRig struct {
@@ -440,6 +567,9 @@ func noMarker(t *testing.T, g *gcpfake.GCS, bucket string) {
 func (r *initRig) managedRuns(t *testing.T, name, gcp string) {
 	t.Helper()
 	r.markedRuns(t, name, gcp)
+	// The project's own half of the fact (Task 3.0): a world with the object
+	// and no label is not managed, so a test that means "managed" needs both.
+	labelled(r.crm, gcp)
 	body := fmt.Sprintf(`{"version":1,"gcp_project":%q}`, gcp)
 	if err := r.gcs.Bucket(t, initRunsBucket).Bucket.WriteAll(context.Background(), managed.MarkerObject, []byte(body), nil); err != nil {
 		t.Fatal(err)
@@ -492,7 +622,7 @@ func managedRefusal(t *testing.T, err error, address string, advice bool) {
 	}
 }
 
-// Task 3.2 at the call site: in a managed project `fugaro init`'s guard
+// Task 3.2 at the call site: in a managed project the converge's guard
 // refusal ends with the managed sentence — no flag, no DeleteHints line, the
 // owner as the one who decides — and in any project that is not managed it is
 // today's, byte for byte, hints and all. Only the text differs: what is
@@ -505,7 +635,7 @@ func TestManagedInitRefusalNamesNoFlag(t *testing.T) {
 	r := newInitRig(t)
 	r.managedRuns(t, initProjectName, initProject)
 	r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
-	out, _, err := executeStdin(t, "", "init", "--yes")
+	out, _, err := executeStdin(t, "", "setup", "--yes")
 	managedRefusal(t, err, address, true)
 	if len(r.ran(t, "apply")) != 0 {
 		t.Fatalf("a plan the guard refused was applied\n%s", out)
@@ -515,7 +645,7 @@ func TestManagedInitRefusalNamesNoFlag(t *testing.T) {
 	r2 := newInitRig(t)
 	r2.stateBucket()
 	r2.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
-	out2, _, err := executeStdin(t, "", "init", "--yes")
+	out2, _, err := executeStdin(t, "", "setup", "--yes")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out2)
 	}
@@ -539,12 +669,13 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 	const a = "user:a@example.com"
 	address := `module.installation.google_storage_bucket_iam_member.state["` + a + `"]`
 
-	// (c) An address on the owner's list does not permit an init --yes delete.
+	// (c) An address on the owner's list does not permit a fugaro setup --yes
+	// delete.
 	r := newInitRig(t)
 	r.managedRuns(t, initProjectName, initProject)
 	r.allowDeleteList(t, initProject, address)
 	r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
-	_, _, err := executeStdin(t, "", "init", "--yes")
+	_, _, err := executeStdin(t, "", "setup", "--yes")
 	managedRefusal(t, err, address, true)
 	if len(r.ran(t, "apply")) != 0 {
 		t.Fatal("the owner's delete list approved a delete in fugaro's own root")
@@ -560,7 +691,7 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 			r.stateBucket()
 		}
 		r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
-		out, _, err := executeStdin(t, "", "init", "--yes", "--allow-delete", address)
+		out, _, err := executeStdin(t, "", "setup", "--yes", "--allow-delete", address)
 		if err != nil || len(r.ran(t, "apply")) != 1 {
 			t.Errorf("%s: --allow-delete for the plan's delete: err %v, %d applies\n%s", name, err, len(r.ran(t, "apply")), out)
 		}
@@ -575,7 +706,7 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 		t.Fatal(err)
 	}
 	reads := stubManagedFact(t, false, errors.New("must not be read"))
-	out, _, err := executeStdin(t, "", "init", "--yes", "--allow-delete", address)
+	out, _, err := executeStdin(t, "", "setup", "--yes", "--allow-delete", address)
 	if err != nil || len(r.ran(t, "apply")) != 1 {
 		t.Fatalf("a plan with no delete: err %v, %d applies\n%s", err, len(r.ran(t, "apply")), out)
 	}
@@ -601,7 +732,7 @@ func TestManagedInitRefusalOfWhatNoApprovalClearsHasNoAdvice(t *testing.T) {
 			r.setPlan(t, ch)
 			// Listed on the command line, so the moved object's refusal is
 			// the moved one rather than an unlisted delete's.
-			_, _, err := executeStdin(t, "", "init", "--yes", "--allow-delete", addr)
+			_, _, err := executeStdin(t, "", "setup", "--yes", "--allow-delete", addr)
 			managedRefusal(t, err, addr, false)
 			if len(r.ran(t, "apply")) != 0 {
 				t.Fatal("a plan the guard refused was applied")
@@ -621,7 +752,7 @@ func TestManagedInitFactReadErrorFailsClosed(t *testing.T) {
 	r.stateBucket()
 	r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
 	reads := stubManagedFact(t, false, errors.New("the storage API answered 400"))
-	_, _, err := executeStdin(t, "", "init", "--yes")
+	_, _, err := executeStdin(t, "", "setup", "--yes")
 	managedRefusal(t, err, address, false)
 	if !strings.Contains(err.Error(), "could not be read") || !strings.Contains(err.Error(), "the storage API answered 400") {
 		t.Errorf("the refusal does not say the read failed:\n%s", err)
@@ -711,7 +842,7 @@ func TestManagedInitRefusalAtEveryCallSite(t *testing.T) {
 		r.script["plan@installation"] = map[string]any{"exit": 0}
 		r.script["show@installation"] = map[string]any{"stdout": `{"format_version":"1.2","resource_changes":[]}`}
 		r.save(t)
-		_, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
+		_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
 		managedRefusal(t, err, addr, true)
 		if len(r.applies(t)) != 0 {
 			t.Errorf("applied: %v", r.applies(t))
@@ -721,7 +852,7 @@ func TestManagedInitRefusalAtEveryCallSite(t *testing.T) {
 		stubManagedFact(t, true, nil)
 		outside := "module.repo.google_storage_bucket_iam_member.job"
 		r := newRetireRig(t, retireOpts{protection: true, outside: outside})
-		_, _, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+		_, _, err := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
 		managedRefusal(t, err, outside, true)
 		if applies := r.applies(t); len(applies) != 0 {
 			t.Errorf("the refused plan was applied: %v", applies)
@@ -735,7 +866,7 @@ func TestManagedInitRefusalAtEveryCallSite(t *testing.T) {
 		r := newInitRig(t)
 		r.stateBucket()
 		r.setPlan(t, append(forgetPlan(), change("module.installation.google_service_account.scheduler", "delete"))...)
-		_, _, err := executeStdin(t, "", "init", "--forget", "--yes")
+		_, _, err := executeStdin(t, "", "update", "--forget", "--yes")
 		managedRefusal(t, err, "module.installation.google_service_account.scheduler", true)
 		if len(r.ran(t, "apply"))+len(r.ran(t, "state rm")) != 0 {
 			t.Fatalf("calls = %q", r.calls(t))
@@ -758,7 +889,7 @@ func TestManagedInitRefusalBoundsUntrustedText(t *testing.T) {
 				r := newInitRig(t)
 				r.stateBucket()
 				r.setPlan(t, change(v, "delete"))
-				_, _, err := executeStdin(t, "", "init", "--yes")
+				_, _, err := executeStdin(t, "", "setup", "--yes")
 				if ExitCode(err) != ExitUserError {
 					t.Fatalf("exit %d, err %v", ExitCode(err), err)
 				}

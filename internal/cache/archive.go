@@ -239,7 +239,7 @@ func writeRoot(tw *tar.Writer, i int, dir, exclude string, charge func(int64) er
 			}
 			return tw.WriteHeader(&tar.Header{Name: name, Linkname: filepath.ToSlash(target), Typeflag: tar.TypeSymlink})
 		case t.IsRegular():
-			f, err := rt.OpenFile(rel, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+			f, err := openRootNoFollow(rt, rel)
 			if err != nil {
 				return err
 			}

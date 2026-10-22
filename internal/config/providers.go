@@ -370,9 +370,30 @@ func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
 			add(at+".secret", "starts with %q: that is the beginning of an API key, not a secret's name; .secret is the NAME of the secret in Secret Manager that holds the key", keyPrefix)
 		case reservedSecretName(p.Secret):
 			add(at+".secret", "%q is a secret Fugaro already uses: give the provider key its own name", p.Secret)
+		case HarnessOAuthSecret(p.Secret):
+			// A harness's OAuth credential name, bare or in a named
+			// namespace: a person's subscription token belongs there
+			// (ClaudeOAuthToken, CodexOAuthToken), and a provider's key
+			// stored under one would be read as that credential. The Codex
+			// half is reserved ahead of the harness (owner ruling of
+			// 2026-10-18), and the Claude half closes the same hole on the
+			// side that is live: without this case a provider could claim
+			// claude-oauth-token-acme, which `fugaro secrets set` refuses to
+			// store for anything but a configured, allowed account — so the
+			// key could never be written, and every repository the provider
+			// allows would mount a secret that does not exist.
+			add(at+".secret", "%q is a harness's OAuth credential name (claude-oauth-token or codex-oauth-token, and the names in their -<name> namespaces): that is a person's subscription token, never a provider's key", p.Secret)
 		default:
 			if other, dup := secrets[p.Secret]; dup {
 				add(at+".secret", "%q is already the secret of provider %s: each provider has its own key", p.Secret, other)
+			} else if other, ok := ReservedProviderSecret(providers, p.Secret); ok && other != name {
+				// The conventional name of a *different* provider's key. A
+				// provider's own conventional name is fine (other == name);
+				// this is a second provider claiming it, which is the same
+				// collision as two providers sharing one secret with the
+				// capture delayed to the day the first entry's key is
+				// renamed to the convention.
+				add(at+".secret", "%q is the conventional name of provider %s's key (%s): each provider's key is its own, and the convention reserves that name for it", p.Secret, other, ProviderSecretConvention(other))
 			}
 			secrets[p.Secret] = name
 		}
@@ -470,6 +491,176 @@ func ProviderBySecret(providers map[string]ModelProvider, secret string) (name s
 }
 
 func reservedSecretName(s string) bool { _, ok := ReservedSecrets[s]; return ok }
+
+// APIKeySuffix ends a provider key's conventional secret name: a provider
+// entry names its key after itself, so the entry `openrouter` stores
+// openrouter-api-key and `deepseek` stores deepseek-api-key — the spelling
+// docs/multi-model.md §2 writes in its examples, and the one the owner ruled
+// for on 2026-10-18.
+//
+// It is a convention and not a rule, in both directions. A key stored under
+// any other name keeps working: nothing is renamed and nothing is migrated,
+// and `fugaro validate` and `fugaro doctor` only *warn* about the difference
+// (ProviderSecretWarnings). And the conventional name is reserved for that
+// provider whatever its .secret is written as (ReservedProviderSecret), so
+// nothing else may store a value under it.
+const APIKeySuffix = "-api-key"
+
+// ProviderSecretConvention is the secret name the convention gives the
+// provider entry named name: name + APIKeySuffix.
+func ProviderSecretConvention(name string) string { return name + APIKeySuffix }
+
+// ReservedProviderSecret reports whether secret is the conventional key name
+// of one of providers, and which provider that is: the name <p>-api-key
+// belongs to p's key, whether or not p's .secret is written that way.
+//
+// The reason it is reserved rather than merely preferred: a value another
+// document stored under it — a workflow's own secret, a profile's mount —
+// would become p's key the day p's key is renamed to the convention, so the
+// rename would hand the provider a credential somebody else wrote. The
+// provider itself is not refused its own name (ProviderBySecret finds it
+// first, and ValidateModelProviders holds a provider's .secret to this rule
+// only when the name belongs to a *different* entry).
+//
+// A conventional name the platform already owns is never reserved for a
+// provider (conventionUsable): the entry `anthropic` gives anthropic-api-key,
+// the direct Anthropic key, and an entry named after a harness family gives a
+// name in that family. Neither can ever be the provider's key
+// (ValidateModelProviders refuses both as a .secret), and reserving one would
+// take the platform's own name away from `secrets set` and init.
+func ReservedProviderSecret(providers map[string]ModelProvider, secret string) (name string, ok bool) {
+	for _, n := range sortedKeys(providers) {
+		if conventionUsable(n) && ProviderSecretConvention(n) == secret {
+			return n, true
+		}
+	}
+	return "", false
+}
+
+// SecretNameOffConvention says why p's key is not stored under the name the
+// convention gives it, as a clause for a message whose subject is the
+// provider entry's name (validate's Problem.Path, doctor's check), or "" when
+// it is on convention. It is the one wording the two surfaces share, so they
+// cannot drift apart about one provider.
+//
+// It never echoes anything but names: p.Secret is a secret's name, and the
+// one thing it must never be is a value (CheckSecretName's rule, which
+// ValidateModelProviders applies before this text is ever built).
+//
+// An entry whose conventional name the provider may not use
+// (conventionUsable) is never warned about: the advice would name a secret
+// ValidateModelProviders refuses.
+func SecretNameOffConvention(name string, p ModelProvider) string {
+	want := ProviderSecretConvention(name)
+	if p.Secret == want || !conventionUsable(name) {
+		return ""
+	}
+	return fmt.Sprintf("its key is stored under the name %s; the convention names a provider's key after its entry in the local config, so this one's is %s. The key keeps working as it is — nothing is renamed and nothing is migrated — and %s stays reserved for it either way, so a key stored from now on should be %s",
+		p.Secret, want, want, want)
+}
+
+// conventionUsable reports whether the conventional name of the provider
+// entry named name is one a provider's key may have: not a secret the
+// platform reserves for itself (ReservedSecrets — the entry `anthropic` gives
+// anthropic-api-key) and not a harness's OAuth credential name.
+func conventionUsable(name string) bool {
+	c := ProviderSecretConvention(name)
+	return !reservedSecretName(c) && !HarnessOAuthSecret(c)
+}
+
+// CheckWorkflowProviderSecrets refuses a workflow secret whose name belongs to
+// a configured provider's key. It is both halves of what
+// infra.SecretMounts refuses when a job is built, in the same order, because
+// the two names are two different collisions — and the second is the one
+// docs/design/project-secrets.md §3 names as needing exactly this pair of
+// documents, "a provider's .Secret is an operator-chosen, open-ended string
+// config.Validate ... has no way to know about — only SecretMounts, which has
+// both w.Secrets and lc.Providers in scope, can catch that one":
+//
+//   - the provider's own secret (ProviderBySecret): a workflow declaring
+//     `ds-key` while the local config stores deepseek's key under that name
+//     would mount the owner's provider credential into the job as the
+//     workflow's own variable, which is the provider key leaving the one place
+//     it is stored and used.
+//   - the conventional name of a provider's key (ReservedProviderSecret):
+//     <entry>-api-key belongs to that provider whatever its .secret is written
+//     as today, so a value a workflow stored under it would be read as the
+//     provider's credential the day the key is renamed to the convention — the
+//     rename would hand the provider a credential somebody else wrote.
+//
+// The order matters and is SecretMounts's: a name that IS a provider's secret
+// takes the first branch (a name stored on convention takes both, and "this is
+// provider X's key" is the sharper truth about it). Both are refusals rather
+// than warnings because `fugaro secrets set` stores a value under neither
+// (secrets.go's own two branches, the same order), so a workflow that declared
+// one would either mount the owner's key or mount a name that can have no
+// version.
+//
+// It is Validate's own rule for the other reserved names
+// (workflows.<name>.secrets[i].name, the same path and the same sentence
+// shape), and it lives here rather than in Validate for one reason: both
+// collisions are relative to the owner's providers, which are in the local
+// config and never in a fugaro.yaml — Validate(c *Config) has no table to
+// judge a name against, and the one caller that holds both (`fugaro validate`,
+// internal/cli/validate.go) calls this.
+//
+// The job spec does not call it: internal/infra/spec.go's SecretMounts
+// implements the same two refusals inline (spec.go, the loop over
+// w.Secrets), because its message is the job's own — it names the workflow and
+// refuses at the mount rather than collecting a Problem — and there is one
+// rule in two places. internal/infra's
+// TestTheSpecAndValidateRefuseTheSameWorkflowSecretNames holds them together:
+// it refuses exactly the names this one refuses, so a name cannot pass
+// `fugaro validate` and stop a run's job, or be refused at the mount and
+// admitted here.
+//
+// The refusal names the provider and the name, and never a value: a workflow
+// secret's Name is a name, but the same field is a place a value has been
+// typed before (CheckSecretName's rule).
+func CheckWorkflowProviderSecrets(c *Config, providers map[string]ModelProvider) []Problem {
+	var ps []Problem
+	if len(providers) == 0 {
+		return nil
+	}
+	for _, name := range sortedKeys(c.Workflows) {
+		for i, s := range c.Workflows[name].Secrets {
+			path := fmt.Sprintf("workflows.%s.secrets[%d].name", showKey(name), i)
+			if p, ok := ProviderBySecret(providers, s.Name); ok {
+				ps = append(ps, Problem{
+					Path: path,
+					Message: fmt.Sprintf("%s is the secret of model provider %s in the project's local config: a provider's key is the owner's, stored and mounted by that config alone (fugaro secrets set stores it there and nowhere else), so a workflow declaring it would mount the owner's provider credential into the job as a variable of its own. Name the workflow's own secret something else",
+						showKey(s.Name), showKey(p)),
+				})
+				continue
+			}
+			p, ok := ReservedProviderSecret(providers, s.Name)
+			if !ok {
+				continue
+			}
+			ps = append(ps, Problem{
+				Path: path,
+				Message: fmt.Sprintf("%s is reserved for model provider %s's key: the convention names a provider's key after its entry in the local config (%s), and that name belongs to that provider whatever its .secret is written as today, so a value stored under it would become the provider's credential the day the key is renamed to the convention. Name the workflow's own secret something else",
+					showKey(s.Name), showKey(p), showKey(ProviderSecretConvention(p))),
+			})
+		}
+	}
+	return ps
+}
+
+// ProviderSecretWarnings are the providers whose key is stored under a name
+// the convention does not give it, one Problem per provider, in name order.
+// They are warnings and never refusals (the owner's ruling of 2026-10-18):
+// the config is valid, the key works, and the entry says what the convention
+// would have said differently.
+func ProviderSecretWarnings(providers map[string]ModelProvider) []Problem {
+	var ps []Problem
+	for _, name := range sortedKeys(providers) {
+		if msg := SecretNameOffConvention(name, providers[name]); msg != "" {
+			ps = append(ps, Problem{Path: "providers." + name + ".secret", Message: msg})
+		}
+	}
+	return ps
+}
 
 // ClaudePatterns are the model patterns no provider may claim: Claude goes
 // direct to Anthropic, also under the "anthropic/" vendor prefix. One
@@ -598,7 +789,7 @@ func CheckProviderGateway(a Agent, bg string, providers map[string]ModelProvider
 	}
 	why := "which needs the budget gateway: set budget.mode to enforce (with agent.auth api-key) and a per-run cap; without it the call would go to Anthropic"
 	if mode == "observe" {
-		why = "which needs budget.mode enforce: observe never refuses a call and a provider's calls are real dollars. Set budget.mode: enforce with budget.per_run_usd in the project config and run `fugaro init --repo` (or budget.mode: enforce in fugaro.yaml); `fugaro budget set --global --mode enforce` makes the shared database enforce too (it needs the global --daily and --per-run caps)"
+		why = "which needs budget.mode enforce: observe never refuses a call and a provider's calls are real dollars. Set budget.mode: enforce with budget.per_run_usd in the project config and run `fugaro update` (or budget.mode: enforce in fugaro.yaml); `fugaro budget set --global --mode enforce` makes the shared database enforce too (it needs the global --daily and --per-run caps)"
 	}
 	var ps []Problem
 	for _, r := range []struct{ path, model string }{

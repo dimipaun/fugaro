@@ -27,15 +27,18 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-func TestBootstrapExchangesAndDeletesToken(t *testing.T) {
+func TestBootstrapExchangesTheSealedToken(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "enforce", "", capScript(1)...)
 	var st []int
 	rec, err := b.run(t, calling(&st, implement("feature"), call{sonnet, 4000}), review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
-	if !b.tokenObjectGone() {
-		t.Fatal("the token object is still in the bucket")
+	// The take is read-only (D16): the sealed object stays for the lifecycle
+	// rule, and consume-once rests on the key the launcher handed this
+	// execution alone.
+	if !b.tokenObjectKept() {
+		t.Fatal("the run removed the token object: its grant on tokens/ is read-only")
 	}
 	// Two: the run's own read of the project's policy (projectpolicy.go)
 	// exchanges the custom token the launcher left it, and budget.Open
@@ -88,8 +91,8 @@ func TestKillAtBootstrapNoPR(t *testing.T) {
 	if b.entry() != nil {
 		t.Fatal("a registry entry was left")
 	}
-	if !b.tokenObjectGone() {
-		t.Fatal("the token object is still in the bucket")
+	if !b.tokenObjectKept() {
+		t.Fatal("the run removed the token object: its grant on tokens/ is read-only")
 	}
 }
 
@@ -525,6 +528,7 @@ func TestOffNeverTouchesBackend(t *testing.T) {
 	if err := token.DeleteObject(context.Background(), b.bucket, repoSlug, runID); err != nil {
 		t.Fatal(err)
 	}
+	b.unmarked() // a launch that minted nothing: no marker either
 	b.db.Refuse(503, "UNAVAILABLE", "", "down")
 	rec, err := b.run(t, implement("feature"), review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded || rec.Budget != nil {
@@ -560,8 +564,8 @@ func TestTokenExpiredHalts(t *testing.T) {
 	if !strings.Contains(rec.Halt.Detail, "launch it again") {
 		t.Fatalf("detail = %q", rec.Halt.Detail)
 	}
-	if b.itk.Exchanges() != 0 || !b.tokenObjectGone() {
-		t.Fatal("an expired token must be removed and never exchanged")
+	if b.itk.Exchanges() != 0 || !b.tokenObjectKept() {
+		t.Fatal("an expired token must never be exchanged, and the run may not remove it (read-only on tokens/)")
 	}
 	if len(b.agent.calls) != 0 || len(b.provider.State.PRs) != 0 {
 		t.Fatal("the run went on")
@@ -850,7 +854,11 @@ func TestBudgetSecretScan(t *testing.T) {
 	b.deps.Env = append(b.deps.Env, runner.RTDBURLEnv+"="+b.db.URL, runner.FirebaseAPIKeyEnv+"="+bkAPIKey)
 	custom := func() string {
 		objs := allObjects(t, b.harness.bucket)
-		return objs[token.ObjectKey(repoSlug, runID)]
+		tok, err := token.Unseal(b.key, token.ObjectKey(repoSlug, runID), []byte(objs[token.ObjectKey(repoSlug, runID)]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(tok)
 	}()
 	if custom == "" {
 		t.Fatal("no token object to start from")
@@ -870,7 +878,7 @@ func TestBudgetSecretScan(t *testing.T) {
 	if err != nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
-	secrets := append(b.registered(), custom, bkAPIKey)
+	secrets := append(b.registered(), custom, bkAPIKey, token.EncodeKey(b.key))
 	if len(b.registered()) < 4 {
 		t.Fatalf("only %d secrets were registered for redaction", len(b.registered()))
 	}
@@ -964,11 +972,13 @@ func TestTokenWithoutBackendIsInfraError(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "enforce", "5")
 	b.deps.Backend = runner.Backend{}
 	rec, err := b.run(t)
-	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "fugaro init --repo") {
+	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "fugaro update") {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
-	if !b.tokenObjectGone() {
-		t.Fatal("the unused token object was left behind")
+	// The object is the launcher's evidence and is left for the lifecycle
+	// rule: the run's grant on tokens/ is read-only (D16).
+	if !b.tokenObjectKept() {
+		t.Fatal("the run removed the token object: its grant on tokens/ is read-only")
 	}
 }
 

@@ -6,6 +6,7 @@
       "project": { ".read": false, ".write": false },
       "mark": { ".read": false, ".write": false }
     },
+    "creds": { ".read": false, ".write": false },
     "config": {
       "caps": {
         "global": { ".read": "TOKEN || USER" },
@@ -22,7 +23,29 @@
         "global": { ".read": "TOKEN || USER" },
         "repos": { "$slug": { ".read": "(TOKEN && auth.token.fs == $slug) || USER" } }
       },
-      "admin": { ".read": false, ".write": false }
+      "admin": {
+        ".read": false,
+        ".write": false,
+        "devices": {
+          "$uid": { ".read": false, ".write": false }
+        }
+      }
+    },
+    "pairing": {
+      "$uid": {
+        "request": {
+          ".read": false,
+          ".write": "PAIRING && newData.exists() && !data.exists()",
+          ".validate": "newData.hasChildren(['key', 'at'])",
+          "key": { ".validate": "PUBKEY" },
+          "at": { ".validate": "TIMESTAMP" },
+          "$other": { ".validate": false }
+        },
+        "delivery": {
+          ".read": "PAIRING",
+          ".write": false
+        }
+      }
     },
     "runs": {
       "$slug": {
@@ -39,6 +62,15 @@
           "spent": {
             ".write": "RUN && newData.exists()",
             ".validate": "AMOUNT && NEW >= OLD && NEW + N(runs/$slug/$run/released) <= N(runs/$slug/$run/reserved)"
+          },
+          "byTier": {
+            "$tier": {
+              ".validate": "$tier == 'b' || $tier == 'c'",
+              "spent": {
+                ".write": "RUN && newData.exists()",
+                ".validate": "AMOUNT && NEW >= OLD && NEW + N(runs/$slug/$run/released) <= N(runs/$slug/$run/reserved)"
+              }
+            }
           },
           "notional": {
             ".write": "RUN && newData.exists()",
@@ -78,6 +110,15 @@
           "calls": {
             ".write": "TOKEN && DAYOK && newData.exists()",
             ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= {{.MaxCallsPerWrite}}"
+          },
+          "byTier": {
+            "$tier": {
+              ".validate": "$tier == 'b' || $tier == 'c'",
+              "spent": {
+                ".write": "TOKEN && DAYOK && newData.exists()",
+                ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= MAXRES"
+              }
+            }
           }
         },
         "repos": {
@@ -98,6 +139,15 @@
             "calls": {
               ".write": "TOKEN && auth.token.fs == $slug && DAYOK && newData.exists()",
               ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= {{.MaxCallsPerWrite}}"
+            },
+            "byTier": {
+              "$tier": {
+                ".validate": "$tier == 'b' || $tier == 'c'",
+                "spent": {
+                  ".write": "TOKEN && auth.token.fs == $slug && DAYOK && newData.exists()",
+                  ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= MAXRES"
+                }
+              }
             },
             "byModel": {
               "$model": {
@@ -141,6 +191,15 @@
               "spent": {
                 ".write": "RUN && DAYOK && newData.exists()",
                 ".validate": "AMOUNT && NEW >= OLD && NEW + N(spend/$day/runs/$slug/$run/released) <= N(spend/$day/runs/$slug/$run/reserved)"
+              },
+              "byTier": {
+                "$tier": {
+                  ".validate": "$tier == 'b' || $tier == 'c'",
+                  "spent": {
+                    ".write": "RUN && DAYOK && newData.exists()",
+                    ".validate": "AMOUNT && NEW >= OLD && NEW + N(spend/$day/runs/$slug/$run/released) <= N(spend/$day/runs/$slug/$run/reserved)"
+                  }
+                }
               }
             }
           }
@@ -172,6 +231,8 @@
           "stageDeadline": { ".validate": "AMOUNT && RBOK" },
           "updatedAt": { ".validate": "AMOUNT && RBOK" },
           "spent": { ".validate": "AMOUNT && RBOK" },
+          "credential": { ".validate": "STR && RBOK" },
+          "waiting_until": { ".validate": "TIMESTAMP && RBOK" },
           "requestedBy": { ".validate": "STR && RBOK" },
           "$other": { ".validate": false }
         }
@@ -195,11 +256,39 @@
         "inbox": {
           "$msg": {
             ".write": "MAILBOX && newData.exists() && !data.exists()",
-            ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at']) && $msg.length <= {{.MaxKeyLength}}",
+            ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at', 'mac']) && $msg.length <= {{.MaxKeyLength}} && KINDREQ",
             "id": { ".validate": "newData.isString() && newData.val().length <= {{.MaxKeyLength}} && newData.val() == $msg" },
             "sender": { ".validate": "STR && newData.val() == $mb" },
             "text": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxTextLength}}" },
             "at": { ".validate": "TIMESTAMP" },
+            "mac": { ".validate": "MACOK" },
+            "agent": { ".validate": "AGENTID" },
+            "kind": { ".validate": "newData.isString() && (newData.val() == 'message' || newData.val() == 'prompt' || newData.val() == 'answer' || newData.val() == 'action')" },
+            "options": {
+              ".validate": "PARENTKIND == 'prompt' && newData.hasChildren()",
+              "$i": { ".validate": "OPTIONIDX && newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxOptionLength}}" }
+            },
+            "reply_to": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxKeyLength}} && (PARENTKIND == 'answer' || PARENTKIND == 'action')" },
+            "action": {
+              ".validate": "PARENTKIND == 'action' && newData.hasChildren(['id', 'verb', 'target', 'confirmation']) && (newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true)",
+              "id": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxKeyLength}}" },
+              "verb": { ".validate": "newData.isString() && (newData.val() == 'cancel' || newData.val() == 'merge' || newData.val() == 'confirm')" },
+              "target": {
+                ".validate": "TARGETOK",
+                "run": { ".validate": "RUNTARGET" },
+                "repo": { ".validate": "REPOTARGET" },
+                "pr": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() % 1 == 0 && newData.val() <= {{.MaxTimestamp}}" },
+                "$other": { ".validate": false }
+              },
+              "head_sha": { ".validate": "(newData.isString() && newData.val().length > 0) && SHAOK" },
+              "confirmation": {
+                ".validate": "newData.hasChildren(['id', 'at'])",
+                "id": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxKeyLength}}" },
+                "at": { ".validate": "TIMESTAMP" },
+                "$other": { ".validate": false }
+              },
+              "$other": { ".validate": false }
+            },
             "$other": { ".validate": false }
           }
         },
@@ -207,11 +296,39 @@
           ".read": "MAILBOX",
           "$msg": {
             ".write": "CONSUMER && newData.exists() && !data.exists()",
-            ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at']) && $msg.length <= {{.MaxKeyLength}}",
+            ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at', 'mac']) && $msg.length <= {{.MaxKeyLength}} && KINDREQ",
             "id": { ".validate": "newData.isString() && newData.val().length <= {{.MaxKeyLength}} && newData.val() == $msg" },
             "sender": { ".validate": "STR && newData.val() == $mb" },
             "text": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxTextLength}}" },
             "at": { ".validate": "TIMESTAMP" },
+            "mac": { ".validate": "MACOK" },
+            "agent": { ".validate": "AGENTID" },
+            "kind": { ".validate": "newData.isString() && (newData.val() == 'message' || newData.val() == 'prompt' || newData.val() == 'answer' || newData.val() == 'action')" },
+            "options": {
+              ".validate": "PARENTKIND == 'prompt' && newData.hasChildren()",
+              "$i": { ".validate": "OPTIONIDX && newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxOptionLength}}" }
+            },
+            "reply_to": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxKeyLength}} && (PARENTKIND == 'answer' || PARENTKIND == 'action')" },
+            "action": {
+              ".validate": "PARENTKIND == 'action' && newData.hasChildren(['id', 'verb', 'target', 'confirmation']) && (newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true)",
+              "id": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxKeyLength}}" },
+              "verb": { ".validate": "newData.isString() && (newData.val() == 'cancel' || newData.val() == 'merge' || newData.val() == 'confirm')" },
+              "target": {
+                ".validate": "TARGETOK",
+                "run": { ".validate": "RUNTARGET" },
+                "repo": { ".validate": "REPOTARGET" },
+                "pr": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() % 1 == 0 && newData.val() <= {{.MaxTimestamp}}" },
+                "$other": { ".validate": false }
+              },
+              "head_sha": { ".validate": "(newData.isString() && newData.val().length > 0) && SHAOK" },
+              "confirmation": {
+                ".validate": "newData.hasChildren(['id', 'at'])",
+                "id": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxKeyLength}}" },
+                "at": { ".validate": "TIMESTAMP" },
+                "$other": { ".validate": false }
+              },
+              "$other": { ".validate": false }
+            },
             "acked": {
               ".write": "MAILBOX && newData.exists() && !data.exists()",
               ".validate": "newData.isBoolean() && newData.val() == true && data.parent().exists()"
@@ -222,9 +339,19 @@
         "heartbeat": {
           ".read": "MAILBOX",
           ".write": "CONSUMER && newData.exists()",
-          ".validate": "newData.hasChildren(['at', 'boot'])",
+          ".validate": "newData.hasChildren(['at', 'boot', 'mac'])",
           "at": { ".validate": "TIMESTAMP" },
-          "boot": { ".validate": "STR" },
+          "boot": { ".validate": "BOOTOK" },
+          "mac": { ".validate": "MACOK" },
+          "agents": {
+            ".validate": "newData.hasChildren()",
+            "$i": {
+              ".validate": "AGENTIDX && newData.hasChildren(['id', 'name'])",
+              "id": { ".validate": "AGENTID" },
+              "name": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxAgentNameLength}}" },
+              "$other": { ".validate": false }
+            }
+          },
           "$other": { ".validate": false }
         }
       }

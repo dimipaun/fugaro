@@ -130,7 +130,7 @@ func TestWrongNameAtTheRunPromptAppliesNothing(t *testing.T) {
 	if !asNeedsYou(err, &ny) || *screens != 1 {
 		t.Fatalf("err %v, screens %d", err, *screens)
 	}
-	if !strings.Contains(strings.Join(ny.Left.Commands, " "), "init") || !strings.Contains(ny.Left.Text, "type the project's name") || strings.Contains(ny.Left.Text+out.String(), "--yes") {
+	if !strings.Contains(strings.Join(ny.Left.Commands, " "), "setup") || !strings.Contains(ny.Left.Text, "type the project's name") || strings.Contains(ny.Left.Text+out.String(), "--yes") {
 		t.Errorf("left %+v\n%s", ny.Left, out)
 	}
 	if ok, err := r.askOrdinary("applies B", ""); ok || !asNeedsYou(err, &ny) {
@@ -284,6 +284,26 @@ func TestRunConfirmationCallSites(t *testing.T) {
 			t.Errorf("%s uses the run confirmation", f)
 		}
 	}
+	// Nor do they read the run's review to find out whether it was taken: the
+	// review's answer covers the installation's ordinary steps, and the steps
+	// above are not among them — an unlisted repository's identity is not on
+	// the screen the person answered, so reading its state there would take a
+	// confirmation for something it never named (W5.1's repository gate was
+	// the one call site that did). Only init_review.go, which owns the review,
+	// may read it.
+	readReview := regexp.MustCompile(`\br\.review\.`)
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") || f == "init_review.go" {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if readReview.Match(b) {
+			t.Errorf("%s reads r.review: the run's one confirmation is init_review.go's to read", f)
+		}
+	}
 }
 
 // --- through the command, over the fakes ---
@@ -314,7 +334,7 @@ func TestMarkedProjectTakesOnePrompt(t *testing.T) {
 	r := newInitRig(t)
 	r.markedRuns(t, initProjectName, initProject)
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, initProjectName+"\n", "init")
+	out, _, err := executeStdin(t, initProjectName+"\n", "setup")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -339,7 +359,7 @@ func TestMarkedProjectTakesOnePrompt(t *testing.T) {
 	// A rerun has nothing to do, and asks nothing.
 	r.script["plan"] = map[string]any{"exit": 0}
 	r.save(t)
-	out, _, err = executeStdin(t, "", "init")
+	out, _, err = executeStdin(t, "", "setup")
 	if err != nil || strings.Contains(out, "Type aurora") {
 		t.Fatalf("rerun: %v\n%s", err, out)
 	}
@@ -354,7 +374,7 @@ func TestUnmarkedProjectKeepsPerStepPrompts(t *testing.T) {
 			r := newInitRig(t)
 			r.markedRuns(t, mark[0], mark[1])
 			fakeTerminal(t)
-			out, _, err := executeStdin(t, initProjectName+"\n"+initProjectName+"\n"+initProjectName+"\n", "init")
+			out, _, err := executeStdin(t, initProjectName+"\n"+initProjectName+"\n"+initProjectName+"\n", "setup")
 			if err != nil {
 				t.Fatalf("%v\n%s", err, out)
 			}
@@ -364,7 +384,7 @@ func TestUnmarkedProjectKeepsPerStepPrompts(t *testing.T) {
 			// One answer is one step: the next one is declined.
 			r2 := newInitRig(t)
 			r2.markedRuns(t, mark[0], mark[1])
-			_, _, err = executeStdin(t, initProjectName+"\n", "init")
+			_, _, err = executeStdin(t, initProjectName+"\n", "setup")
 			if err == nil || len(r2.ran(t, "apply")) != 0 {
 				t.Fatalf("one answer confirmed more than one step: %v", err)
 			}
@@ -378,7 +398,7 @@ func TestMarkedProjectWrongNameAppliesNothing(t *testing.T) {
 	r := newInitRig(t)
 	r.markedRuns(t, initProjectName, initProject)
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, "nope\n"+initProjectName+"\n", "init")
+	out, _, err := executeStdin(t, "nope\n"+initProjectName+"\n", "setup")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
@@ -393,7 +413,7 @@ func TestMarkedProjectWrongNameAppliesNothing(t *testing.T) {
 // An agent's environment takes no confirmation and applies nothing, marked or
 // not, with a name waiting on stdin.
 func TestMarkedProjectInAnAgentSession(t *testing.T) {
-	for _, args := range [][]string{{"init"}, {"init", "--yes"}} {
+	for _, args := range [][]string{{"setup"}, {"setup", "--yes"}} {
 		r := newInitRig(t)
 		r.markedRuns(t, initProjectName, initProject)
 		fakeTerminal(t)
@@ -414,7 +434,7 @@ func TestMarkedProjectYesAsBefore(t *testing.T) {
 	r := newInitRig(t)
 	r.markedRuns(t, initProjectName, initProject)
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes")
+	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes")
 	if err != nil || strings.Contains(out, "Review:") || strings.Contains(out, "Type aurora") || len(r.ran(t, "apply")) != 1 {
 		t.Fatalf("%v, calls %q\n%s", err, r.calls(t), out)
 	}
@@ -429,7 +449,7 @@ func TestMarkedProjectPlanOnlyShowsTheReview(t *testing.T) {
 	r := newInitRig(t)
 	r.markedRuns(t, initProjectName, initProject)
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, initProjectName+"\n", "init", "--plan-only", "--yes")
+	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--plan-only", "--yes")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -444,7 +464,7 @@ func TestMarkedProjectPlanOnlyShowsTheReview(t *testing.T) {
 	// An unmarked project has no review to show.
 	r2 := newInitRig(t)
 	r2.markedRuns(t, "", "")
-	out, _, err = executeStdin(t, "", "init", "--plan-only")
+	out, _, err = executeStdin(t, "", "setup", "--plan-only")
 	if err != nil || strings.Contains(out, "Review:") {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -489,7 +509,7 @@ func TestReviewScreenGolden(t *testing.T) {
 	}
 }
 
-// The whole first-run shape of init --firebase with the images: in a project
+// The whole first-run shape of update --firebase-project with the images: in a project
 // marked as Fugaro's, one typed project name covers the installation apply,
 // the Viewer-read removal, the Firebase apply, the Firestore writes, the image
 // copy, the history job's apply and the local config; the Firestore database's
@@ -505,7 +525,7 @@ func TestFirebaseRunTakesOnePromptPlusTheLocation(t *testing.T) {
 			r.markedRuns(t, "", "")
 		}
 		fakeTerminal(t)
-		out, errOut, err := executeStdin(t, stdin, "init", "--firebase", fp, "--base", "base")
+		out, errOut, err := executeStdin(t, stdin, "setup", "--firebase-project", fp, "--base", "base")
 		return out + errOut, err, r
 	}
 	// One project for everything (the Firebase project is the installation's).
@@ -594,7 +614,7 @@ func TestMarkedProjectReplacePlanAsksItsOwn(t *testing.T) {
 			addr := "module.installation.google_storage_bucket.runs"
 			r.setPlan(t, change(addr, "delete", "create"))
 			fakeTerminal(t)
-			out, _, err := executeStdin(t, tc.stdin, "init", "--allow-delete", addr)
+			out, _, err := executeStdin(t, tc.stdin, "setup", "--allow-delete", addr)
 			if got := len(r.ran(t, "apply")); got != tc.apply {
 				t.Fatalf("%d applies, want %d (err %v)\n%s", got, tc.apply, err, out)
 			}
@@ -716,7 +736,7 @@ func TestMarkedProjectUnlistedGrantAsksItsOwn(t *testing.T) {
 	r.setPlan(t, planChange{"address": "module.installation.google_project_iam_member.x", "type": "google_project_iam_member",
 		"change": map[string]any{"actions": []string{"create"}, "before": nil, "after": map[string]any{"member": "user:eve@example.com", "role": "roles/storage.objectUser"}, "after_unknown": map[string]any{}}})
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, names(1), "init")
+	out, _, err := executeStdin(t, names(1), "setup")
 	if err == nil || len(r.ran(t, "apply")) != 0 || !strings.Contains(out, "not covered by the run confirmation") {
 		t.Fatalf("err %v, calls %q\n%s", err, r.calls(t), out)
 	}
@@ -751,8 +771,12 @@ func TestReviewScreenPrintsOnlySafeText(t *testing.T) {
 	}
 }
 
-// The first Cloud Build's confirmation is never on the covered path: the
-// function that offers it uses askTyped and never the run confirmation.
+// The first Cloud Build's confirmation is never on the ordinary covered path:
+// the function that offers it uses the confirmation of the step it is
+// (askCovered, which W5.1 makes YesOrTyped: D12's answer of 2026-10-20 covers a
+// billable first image build in BOTH front doors, and in neither of them does
+// the run's own --yes/terminal decision stand in for it), and never the run
+// confirmation.
 func TestCloudBuildConfirmationStaysOutsideTheCoveredPath(t *testing.T) {
 	b, err := os.ReadFile("init.go")
 	if err != nil {
@@ -771,11 +795,14 @@ func TestCloudBuildConfirmationStaysOutsideTheCoveredPath(t *testing.T) {
 		return body
 	}
 	body := funcBody("func (r *initRun) buildImages(")
-	if !strings.Contains(body, "r.askTyped(") {
-		t.Error("buildImages no longer asks the typed confirmation")
+	if !strings.Contains(body, "r.askCovered(") {
+		t.Error("buildImages no longer asks the step's own confirmation")
 	}
-	if a, s := strings.Index(body, "r.askTyped("), strings.Index(body, "r.submitAndWait("); a < 0 || s < 0 || a > s {
-		t.Errorf("buildImages must ask the typed confirmation (at %d) before r.submitAndWait( (at %d)", a, s)
+	if a, s := strings.Index(body, "r.askCovered("), strings.Index(body, "r.submitAndWait("); a < 0 || s < 0 || a > s {
+		t.Errorf("buildImages must ask the step's confirmation (at %d) before r.submitAndWait( (at %d)", a, s)
+	}
+	if strings.Contains(body, "r.askTyped(") {
+		t.Error("buildImages asks the Typed confirmation: the billable build is covered in both doors (D12)")
 	}
 	for _, bad := range []string{"confirmOrdinary", "askOrdinary", "runCovers", "r.confirm(", "r.ask("} {
 		if strings.Contains(body, bad) {
@@ -1002,7 +1029,7 @@ func TestSubmitAndWaitSpecCarriesMachineBucketBase(t *testing.T) {
 
 // TestInitRepoAcceptsAForkPinWithTheRecordedOwner is why the owner is
 // recorded in the local config at all (design §3.6, the row after the site
-// table). `fugaro init --repo` — the command that renders every job image
+// table). `fugaro update --repo` — the command that renders every job image
 // and the check spec — CANNOT take --image-source (it is installation-only),
 // so with the flag as the only source the owner would be "" there, an empty
 // owner refuses every remote path, and a fork's own legitimate pin would be

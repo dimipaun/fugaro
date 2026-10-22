@@ -1,0 +1,74 @@
+// The mailbox module's one door: its test (mobile plan, Task P3.6).
+//
+// The surface is asserted as an exact set rather than "these names are
+// present", for the reason `../../accounts/index.test.js` gives: a re-export
+// added without a thought is how a key or a write path ends up reachable from a
+// screen. Here the two things that must NOT be on the door are the tag
+// functions (`mac.js`, `sha256.js`) and the ports. `mac.js` takes a key as an
+// argument: a screen that could call it is a screen that could hold one, which
+// is the sentence `SecretStore.use` exists to make unnecessary. And the real
+// database adapter is built by `mobile/index.js`, the one file that knows what
+// a device is, so that a screen cannot build a second write path.
+
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import * as mailbox from './index.js';
+
+test('the door exports the client, the paths, the codes and the two fakes', () => {
+  assert.deepEqual(Object.keys(mailbox).sort(), [
+    'CLIENT_CODES',
+    'EXPIRED',
+    'MAC_KEY_ITEM',
+    'MAILBOX_ROOT',
+    'MAILBOX_TTL_MS',
+    'MemoryMailboxStore',
+    'MemorySpeaker',
+    'PRESENCE_REASON',
+    'REDACT_CODES',
+    'SPEAK_CODES',
+    'STORE_CODES',
+    'createMailboxClient',
+    'isDatabaseKey',
+    'mailboxPaths',
+    'outboundRedactor',
+    'toPresenceHeartbeat',
+  ]);
+});
+
+test('the tag functions and the adapters are not on the door', () => {
+  // A tag function takes a key; the client is the only caller, and it takes one
+  // inside `SecretStore.use`.
+  for (const name of ['macOf', 'verifyMac', 'sha256', 'hmacSha256', 'canonicalBytes', 'toHex']) {
+    assert.equal(name in mailbox, false, name);
+  }
+  // ... and no port: the client is handed one by the entry.
+  for (const name of ['expoSecureStorePort', 'expoAsyncStoragePort', 'database']) {
+    assert.equal(name in mailbox, false, name);
+  }
+});
+
+test('the client the door builds is the one the tests in this directory build', async () => {
+  // A door that exported a different builder would still pass the set above.
+  const client = mailbox.createMailboxClient({
+    account: {
+      id: 'laptop',
+      firebaseProjectId: 'fugaro-dev',
+      authUid: 'uid-0001',
+      fugaroProject: 'fugaro',
+    },
+    keys: { use: async (id, item, fn) => ({ ok: true, result: await fn('synthetic-key') }) },
+    store: new mailbox.MemoryMailboxStore(),
+    speaker: new mailbox.MemorySpeaker(),
+    now: () => 1_700_000_000_000,
+    newId: () => 'm-1',
+    secrets: [],
+    heartbeatIntervalMs: 60_000,
+  });
+  assert.deepEqual(client.paths.inbox, 'mailbox/uid-0001/inbox');
+  assert.deepEqual(await client.send('run 42 finished'), {
+    ok: true,
+    id: 'm-1',
+    at: 1_700_000_000_000,
+  });
+});

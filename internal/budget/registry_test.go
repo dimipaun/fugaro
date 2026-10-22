@@ -2,6 +2,7 @@ package budget_test
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -21,22 +22,87 @@ func TestMaxEntryTokensMatchesRules(t *testing.T) {
 	}
 }
 
+// TestMaxEntryTimestampMatchesRules is the same pin for the entry's other
+// duplicated bound: budget.MaxEntryTimestamp and rules.MaxTimestamp, which the
+// template's TIMESTAMP validator applies to `waiting_until`. A rules change
+// that moves one without the other reopens the same freeze for an instant: a
+// value the rules refuse but Go would still send.
+func TestMaxEntryTimestampMatchesRules(t *testing.T) {
+	if budget.MaxEntryTimestamp != rules.MaxTimestamp {
+		t.Fatalf("budget.MaxEntryTimestamp = %d, rules.MaxTimestamp = %d", budget.MaxEntryTimestamp, rules.MaxTimestamp)
+	}
+}
+
+// TestRegistryClipsTheCredentialAndTheWaitingTime (the review finding on
+// C1.3's two new entry fields): clipEntry is the one function every registry
+// write goes through, and its documented job is to keep every value inside the
+// bounds the rules check, so that one bad value cannot make the whole
+// agents/<slug>/<run> PATCH denied and stop every later heartbeat. Credential
+// and WaitingUntil were outside it. A name past the rules' MaxString, or
+// carrying a character safetext strips, and an instant outside
+// [0, MaxTimestamp], went out as they stood — and the rules refuse the whole
+// entry for either, which the rules package's emulator cases pin (the
+// credential-name case and the waiting-until case beside it). Session.Update
+// is where C1.16 records the name the service answered with, so that writer is
+// where the freeze would have arrived.
+//
+// What the entry carries instead is the clipped value: the same treatment
+// every other string of the entry gets, so the run keeps heartbeating and the
+// name it shows is the name it was given, minus what a terminal must not be
+// handed.
+func TestRegistryClipsTheCredentialAndTheWaitingTime(t *testing.T) {
+	f := newFixture(t)
+	s := f.started(budget.AgentEntry{Stage: "bootstrap"})
+	entry := func() map[string]any {
+		e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any)
+		return e
+	}
+	// Over the bound, and carrying what safetext strips: a bidi override and a
+	// control character.
+	long := "claude-shared-account-" + strings.Repeat("x", rules.MaxString) + "‮\u0007"
+	s.Update(func(e *budget.AgentEntry) { e.Credential, e.WaitingUntil = long, -1 })
+	waitFor(t, "the clipped credential to reach the registry", func() bool {
+		e := entry()
+		return e != nil && e["credential"] != nil
+	})
+	got, _ := entry()["credential"].(string)
+	if len(got) > rules.MaxString {
+		t.Errorf("the credential sent is %d bytes, want at most %d: the rules refuse the whole entry for a longer one", len(got), rules.MaxString)
+	}
+	if !strings.HasPrefix(got, "claude-shared-account-") {
+		t.Errorf("the credential = %q, want the name the run was given, clipped", got)
+	}
+	if strings.ContainsAny(got, "‮\u0007") {
+		t.Errorf("the credential = %q still carries the characters safetext strips", got)
+	}
+	// A negative instant is outside the rules' bound, and zero is "nothing
+	// pending": the node is absent rather than refused.
+	if v := entry()["waiting_until"]; v != nil {
+		t.Errorf("waiting_until = %v for a negative instant, want the node absent (clamped to 0)", v)
+	}
+	// An instant past the exact-double line is clamped to the line rather than
+	// sent for the rules to refuse.
+	s.Update(func(e *budget.AgentEntry) { e.WaitingUntil = budget.MaxEntryTimestamp + 1 })
+	want := json.Number(strconv.FormatInt(budget.MaxEntryTimestamp, 10))
+	waitFor(t, "the clamped instant to reach the registry", func() bool { return entry()["waiting_until"] == want })
+}
+
 // TestRegistryDropsNewKeysOnceWhenRulesRefuse (Review Focus 4): rules
 // deployed before 0.7.0 refuse an entry that carries action or tokens
 // (their $other). The session drops both for the rest of the run, warns
-// once naming fugaro init, and the entry is still written without them.
+// once naming fugaro update, and the entry is still written without them.
 func TestRegistryDropsNewKeysOnceWhenRulesRefuse(t *testing.T) {
 	f := newFixture(t)
 	logs := captureLog(f)
 	s := f.started(budget.AgentEntry{Stage: "bootstrap"})
 	f.db.DenyKeys("action", "tokens")
 	s.Update(func(e *budget.AgentEntry) { e.Action, e.Tokens = "tool Bash: go test", 1200 })
-	waitFor(t, "the fallback warning", func() bool { return strings.Contains(logs.String(), "fugaro init") })
+	waitFor(t, "the fallback warning", func() bool { return strings.Contains(logs.String(), "fugaro update") })
 	waitFor(t, "the entry to settle without the new keys", func() bool {
 		e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any)
 		return e != nil && e["stage"] == "bootstrap" && e["action"] == nil && e["tokens"] == nil
 	})
-	if n := strings.Count(logs.String(), "fugaro init"); n != 1 {
+	if n := strings.Count(logs.String(), "fugaro update"); n != 1 {
 		t.Fatalf("warned %d times, want once: %s", n, logs.String())
 	}
 	// The coder keeps calling Update with a new action after the drop (every
@@ -51,7 +117,7 @@ func TestRegistryDropsNewKeysOnceWhenRulesRefuse(t *testing.T) {
 	if e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any); e["action"] != nil || e["tokens"] != nil {
 		t.Fatalf("a later Update brought the dropped keys back: %v", e)
 	}
-	if n := strings.Count(logs.String(), "fugaro init"); n != 1 {
+	if n := strings.Count(logs.String(), "fugaro update"); n != 1 {
 		t.Fatalf("warned %d times after a later Update, want still once: %s", n, logs.String())
 	}
 }
@@ -132,7 +198,7 @@ func TestRegistryKeepsNewKeysWhenRulesAccept(t *testing.T) {
 		e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any)
 		return e != nil && e["action"] == "tool Bash: go test"
 	})
-	if strings.Contains(logs.String(), "fugaro init") {
+	if strings.Contains(logs.String(), "fugaro update") {
 		t.Fatalf("warned even though the rules accepted the keys: %s", logs.String())
 	}
 	if e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any); e["tokens"] != json.Number("1200") {
@@ -159,8 +225,8 @@ func TestRegistryRecoversFromATransientDoubleRefusal(t *testing.T) {
 		e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any)
 		return e != nil && e["stage"] == "bootstrap" && e["action"] == nil && e["tokens"] == nil
 	})
-	waitFor(t, "the fallback warning", func() bool { return strings.Contains(logs.String(), "fugaro init") })
-	if n := strings.Count(logs.String(), "fugaro init"); n != 1 {
+	waitFor(t, "the fallback warning", func() bool { return strings.Contains(logs.String(), "fugaro update") })
+	if n := strings.Count(logs.String(), "fugaro update"); n != 1 {
 		t.Fatalf("warned %d times, want once: %s", n, logs.String())
 	}
 }
@@ -168,7 +234,7 @@ func TestRegistryRecoversFromATransientDoubleRefusal(t *testing.T) {
 // TestRegistryReArmsAfterRulesStopAcceptingTheNewKeys (review focus 4):
 // checkNewKeys only ever probes once it has a definite answer, so once it
 // has found the rules accept the keys it never looks again. If the rules
-// are then redeployed older (an operator reran an old fugaro init, or
+// are then redeployed older (an operator reran an old fugaro update, or
 // rolled back), only heartbeat's own fallback — spotting a permission
 // refusal on a beat whose entry still carries the keys — can notice and
 // re-arm the probe; checkNewKeys's own per-beat retry (pinned by
@@ -188,7 +254,7 @@ func TestRegistryReArmsAfterRulesStopAcceptingTheNewKeys(t *testing.T) {
 		e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any)
 		return e != nil && e["action"] == nil && e["tokens"] == nil
 	})
-	waitFor(t, "the fallback warning", func() bool { return strings.Contains(logs.String(), "fugaro init") })
+	waitFor(t, "the fallback warning", func() bool { return strings.Contains(logs.String(), "fugaro update") })
 }
 
 // TestRegistryOutageDoesNotDropNewKeys (review focus 4): an outage (503, not
@@ -207,7 +273,7 @@ func TestRegistryOutageDoesNotDropNewKeys(t *testing.T) {
 		e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any)
 		return e != nil && e["action"] == "tool Bash: go test"
 	})
-	if strings.Contains(logs.String(), "fugaro init") {
+	if strings.Contains(logs.String(), "fugaro update") {
 		t.Fatalf("an outage was mistaken for old rules refusing the keys: %s", logs.String())
 	}
 }

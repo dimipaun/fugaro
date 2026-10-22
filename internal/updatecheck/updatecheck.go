@@ -13,15 +13,17 @@ package updatecheck
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
 // Repo is the GitHub repository releases are checked against.
@@ -134,17 +136,15 @@ func (e Entry) Due(now time.Time) bool {
 	return age < 0 || age >= CheckTTL
 }
 
-// cachePath is $XDG_CACHE_HOME/fugaro/update-check.json, else under
-// ~/.cache: one file, not per project, since whether this binary is
-// current has nothing to do with which project a command acts on.
+// cachePath is $XDG_CACHE_HOME/fugaro/update-check.json, else under the
+// platform's own cache directory (localcfg.UserDir): %LOCALAPPDATA%\fugaro
+// on Windows, ~/.cache/fugaro elsewhere. One file, not per project, since
+// whether this binary is current has nothing to do with which project a
+// command acts on.
 func cachePath(getenv func(string) string) (string, error) {
-	dir := getenv("XDG_CACHE_HOME")
-	if dir == "" {
-		home := getenv("HOME")
-		if home == "" {
-			return "", errors.New("neither XDG_CACHE_HOME nor HOME is set, so the update-check cache can't be written")
-		}
-		dir = filepath.Join(home, ".cache")
+	dir, err := localcfg.UserDir(getenv, runtime.GOOS, localcfg.DirCache)
+	if err != nil {
+		return "", fmt.Errorf("%w, so the update-check cache can't be written", err)
 	}
 	return filepath.Join(dir, "fugaro", "update-check.json"), nil
 }

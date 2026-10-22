@@ -64,7 +64,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { _electron as electron, expect, test } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
 import { NO_ACTIVE_INSTALLATION, REDUCED_REFUSAL } from '../../src/main/ipc'
@@ -80,6 +80,7 @@ import { EXPOSED_OPERATIONS } from '../../src/preload/index'
 import { installCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
 import { dismissFirstRunPicker } from '../support/firstRun'
+import { launchConsole } from '../support/launch'
 import { INSTALLATIONS_MENU_LABEL, PICKER_ENTRY_URL } from '../../src/main/picker'
 import { sanitizeRefusal } from '../../src/shared/sanitize'
 
@@ -127,7 +128,7 @@ async function launch(
   // unseeded one, whose picker opens beside the window under test and is
   // dismissed before any assertion about that window (`dismissFirstRunPicker`).
   const profile = options.firstRun ?? stub
-  const app = await electron.launch({
+  const app = await launchConsole({
     args: profile.launchArgs(consoleDir),
     env: { ...stubEnv, ...(options.env ?? {}), [SPAWN_LOG_ENV]: spawnLog },
   })
@@ -607,11 +608,18 @@ test.describe('the renderer entry, in the real window', () => {
       expect(shape.scripts).toHaveLength(1)
       expect(shape.scriptUrls).toEqual([`${APP_ORIGIN}/console.js`])
       // And the window holds the entry's drawing and nothing the document
-      // shipped: the header, the navigation and the panel, in that order. Task
-      // 1.1's placeholder -- "The console's window is up. It has no data yet." --
-      // would be a fourth child here, a second `<h1>` and a sentence this task
-      // made false, printed above the figures.
-      expect(shape.bodyChildren).toEqual(['console-installation', 'console-views', 'console-panel'])
+      // shipped: the installation rail (Task 6.3 -- the canvas's structural
+      // addition, the grid's first column and the body's first content child
+      // when there is no banner), the installation line, the navigation and the
+      // panel, in that order. Task 1.1's placeholder -- "The console's window is
+      // up. It has no data yet." -- would be a fifth child here, a second `<h1>`
+      // and a sentence this task made false, printed above the figures.
+      expect(shape.bodyChildren).toEqual([
+        'console-rail',
+        'console-installation',
+        'console-views',
+        'console-panel',
+      ])
       expect(shape.bodyText).not.toContain('It has no data yet')
 
       const panel = launched.page.locator('div.console-panel')
@@ -646,6 +654,177 @@ test.describe('the renderer entry, in the real window', () => {
       await close(launched)
     }
   })
+  test('the chrome keeps its marks under forced colors, the rail’s rows with them (design section 6.4)', async () => {
+    // Section 4.4's promise, read from inside a page the system is painting in
+    // forced colors: the current view is still marked, the chrome's boundary is
+    // still a boundary, and every state keeps its word. It is a **smoke, not a
+    // golden** (design section 6.4) -- the pixels under forced colors are the
+    // platform's and are not this console's to pin -- so what is asserted is what
+    // section 4.4 promises and nothing about how it looks.
+    //
+    // The chrome's half is this spec's because `entry.spec.ts` already drives the
+    // dashboard the chrome is drawn into; the screens' half is Task 6.4's, in each
+    // screen's own spec. The rail is chrome, and section 4.4's rule 1 -- a state
+    // keeps its word -- is what its three state words are for, so the rail's row
+    // is read here beside the nav's.
+    stub.setVersion(CLI_VERSION_BUILT_AGAINST)
+    const launched = await launch(stub.env)
+    try {
+      // Drawn first, then the media emulated: what forced colors is asked about is
+      // the chrome this console drew, not a page that never saw it.
+      await expect(launched.page.locator('div.console-panel li.live-repo')).toHaveCount(1)
+      await expect(launched.page.locator('aside.console-rail span.console-rail-state')).toHaveText(
+        '● running',
+      )
+
+      await launched.page.emulateMedia({ forcedColors: 'active', colorScheme: 'light' })
+      // The emulation is on before anything is read, and `colorScheme` is pinned
+      // so the run does not depend on the machine's own preference.
+      expect(await launched.page.evaluate(() => matchMedia('(forced-colors: active)').matches)).toBe(
+        true,
+      )
+
+      const chrome = await launched.page.evaluate(() => {
+        const read = (element: Element | null) => {
+          if (element === null) return null
+          const computed = getComputedStyle(element)
+          return {
+            background: computed.backgroundColor,
+            bottomWidth: computed.borderBottomWidth,
+            bottomColor: computed.borderBottomColor,
+            leftWidth: computed.borderLeftWidth,
+            visibility: computed.visibility,
+          }
+        }
+        const marked = document.querySelector(
+          'nav.console-views button.console-view[aria-current="true"]',
+        )
+        const plain = document.querySelector(
+          'nav.console-views button.console-view:not([aria-current="true"])',
+        )
+        const row = document.querySelector('aside.console-rail button.console-rail-row')
+        return {
+          markedText: marked?.textContent ?? null,
+          marked: read(marked),
+          plain: read(plain),
+          row: read(row),
+          stateWord: row?.querySelector('span.console-rail-state')?.textContent ?? null,
+        }
+      })
+
+      // The current view is still marked, and still by the same attribute: the
+      // mark is not a colour the system took away.
+      expect(chrome.markedText, 'the current view lost its mark under forced colors').toBe('Live')
+      expect(chrome.marked?.visibility).toBe('visible')
+      // The chrome's boundary is still a boundary: a border the system forces to
+      // one of its own colours is a border, and a width of zero would not be.
+      expect(chrome.marked?.bottomWidth, 'the current view’s boundary collapsed').not.toBe('0px')
+      expect(chrome.marked?.bottomColor).not.toBe('rgba(0, 0, 0, 0)')
+      // And the mark that was a *fill* survives the palette: section 4.4's second
+      // rule maps the current view to `Highlight` with `forced-color-adjust: none`,
+      // so it is still painted unlike the views beside it.
+      expect(chrome.plain, 'the nav has no unmarked view to compare the mark against').not.toBeNull()
+      expect(chrome.marked?.background, 'the marked view is painted like its neighbours').not.toBe(
+        chrome.plain?.background,
+      )
+      // The rail's rows are read with them: its hairline is still a hairline, its
+      // 3 px left border is still 3 px, and the state's word and its glyph are
+      // both still in the DOM -- which is the whole of what rule 1 asks for.
+      expect(chrome.row?.visibility).toBe('visible')
+      expect(chrome.row?.bottomWidth, 'the rail row’s boundary collapsed').not.toBe('0px')
+      expect(chrome.row?.leftWidth).toBe('3px')
+      expect(chrome.stateWord, 'the rail’s state word did not survive forced colors').toBe(
+        '● running',
+      )
+    } finally {
+      await close(launched)
+    }
+  })
+
+  test('the installation rail draws a row for the installation it can read, and none for one it cannot', async () => {
+    // Design section 4.1's rail, in a real window: the active installation's row
+    // -- the one `installation.current` answers with -- carrying its name, its
+    // project, its state word and its glyph; and, on a profile where nothing has
+    // been chosen, **no row at all** while the rail itself is still drawn. A row
+    // for every *stored* installation would need a bounded list read on the
+    // dashboard's bridge, which the design withholds (sections 4.1 and 11) and
+    // this task adds no operation for -- so the rail makes no read of its own,
+    // and the spawn log below is where that is visible.
+    stub.setVersion(CLI_VERSION_BUILT_AGAINST)
+    const launched = await launch(stub.env)
+    try {
+      const rail = launched.page.locator('aside.console-rail')
+      await expect(rail, 'the dashboard draws no installation rail').toHaveCount(1)
+      await expect(rail.locator('button.console-rail-row')).toHaveCount(1)
+      await expect(rail.locator('span.console-rail-name')).toHaveText('e2e')
+      await expect(rail.locator('span.console-rail-project')).toHaveText('e2e')
+      // The state word and the glyph, together: the rail opens `running` because
+      // the console is reading this installation now, and the Live poll it is
+      // reading is the one the panel below draws.
+      await expect(rail.locator('span.console-rail-state')).toHaveText('● running')
+      await expect(rail.locator('span.console-rail-state')).toHaveAttribute('data-state', 'running')
+      // The spend is `n/a` until the console's own `budget show` read fills it:
+      // the rail reads nothing itself, and the dashboard's mount reads no budget
+      // (that read is the Spend screen's).
+      await expect(rail.locator('span.console-rail-spend')).toHaveText('n/a')
+      // The head, the foot row and the hint are the rail's whatever it has to put
+      // in its list, and the foot row is the design's own control.
+      await expect(rail.locator('button.console-rail-collapse')).toHaveAttribute(
+        'aria-expanded',
+        'true',
+      )
+      await expect(rail.locator('button.console-rail-add')).toHaveText('+ Add installation')
+      await expect(rail.locator('p.console-rail-hint')).toHaveText('Switch with the shortcut keys 1 2 3')
+      // And the rail asked for nothing: the log holds the handshake's probe and
+      // the live watch, which is what a healthy console spawns -- a row per stored
+      // installation would have added a read here. The watch is written by the
+      // entry's *first poll*, which is a message round and a spawn behind the rail
+      // being drawn -- the row's `running` is the word the rail opens with, not
+      // evidence that a read has landed -- so this waits for the record the way
+      // the spawn-log case above does rather than reading a log still being
+      // written.
+      await expect
+        .poll(() => launched.records().some((record) => record.argv[1] === 'watch'), {
+          message: 'the live read never reached the spawn log',
+        })
+        .toBe(true)
+      const reads = [...new Set(launched.records().map((record) => record.argv[1]))].sort()
+      expect(reads, 'the rail made a read of its own').toEqual(['version', 'watch'])
+    } finally {
+      await close(launched)
+    }
+
+    // The other half: a first run with no installation chosen. The dashboard can
+    // read an answer and the answer names no installation, so there is no row to
+    // draw -- and an invented one would be a lie about what this console knows.
+    const fresh = installCliStub(CLI_VERSION_BUILT_AGAINST)
+    try {
+      const blank = await launch(fresh.env, { firstRun: fresh })
+      try {
+        expect(blank.page.url(), 'the first run drew something other than the dashboard').toBe(
+          APP_ENTRY_URL,
+        )
+        expect(await installationOf(blank.page)).toEqual({
+          ok: true,
+          data: { chosen: false, sentence: NO_ACTIVE_INSTALLATION },
+        })
+        const rail = blank.page.locator('aside.console-rail')
+        await expect(rail, 'the rail is not drawn at all with nothing chosen').toHaveCount(1)
+        await expect(rail.locator('button.console-rail-row')).toHaveCount(0)
+        await expect(rail.locator('button.console-rail-add')).toHaveText('+ Add installation')
+        // And the installation line says the same thing in words, which is the
+        // pair a reader checks: an empty rail and a sentence naming why.
+        await expect(blank.page.locator('section.console-installation p.installation-none')).toHaveText(
+          NO_ACTIVE_INSTALLATION,
+        )
+      } finally {
+        await close(blank)
+      }
+    } finally {
+      fresh.remove()
+    }
+  })
+
   test('a stored binary that is gone is a refusal, never another fugaro, and the picker is still reachable (review B1)', async () => {
     // A second profile whose active installation names a binary that is not
     // there. Before the fix the handshake walked on to the machine's own
@@ -654,7 +833,7 @@ test.describe('the renderer entry, in the real window', () => {
     gone.seedActiveInstallation('gone', join(gone.dir, 'missing', 'fugaro'))
     const scratch = mkdtempSync(join(tmpdir(), 'fugaro-console-entry-'))
     const spawnLog = join(scratch, 'spawn.jsonl')
-    const app = await electron.launch({ args: gone.launchArgs(consoleDir), env: { ...gone.env, [SPAWN_LOG_ENV]: spawnLog } })
+    const app = await launchConsole({ args: gone.launchArgs(consoleDir), env: { ...gone.env, [SPAWN_LOG_ENV]: spawnLog } })
     try {
       const page = await app.firstWindow()
       await page.waitForLoadState('domcontentloaded')

@@ -38,16 +38,50 @@ func newCRM(t *testing.T) (*crm.Service, *gcpfake.CRM) {
 
 // managedWorld is what a managed installation looks like to this read: the
 // runs bucket, numbered as the GCP project is numbered and labelled as the
-// installation labels it, and the Resource Manager record that says that
-// number is that project's own. The object itself is put by the caller,
-// because whether it is there at all is one of the mismatches.
+// installation labels it, the Resource Manager record that says that number
+// is that project's own, and — since Task 3.0 — the project's own
+// fugaro_managed label, which the run that created it writes beside the
+// object. The object itself is put by the caller, because whether it is there
+// at all is one of the mismatches.
+//
+// Every row that means to be about something *else* starts here, which is the
+// point: a world that is managed in every other way is the only one in which
+// the reason a test reads is the reason it arranged.
 func managedWorld(t *testing.T) (*storage.Service, *gcpfake.GCS, *crm.Service, *gcpfake.CRM) {
 	t.Helper()
 	s, f := newStorage(t)
 	f.AddBucket(testBucket, testProjectNumber, testManaged)
 	c, cf := newCRM(t)
 	cf.AddProject(testProject, testProjectNumber)
+	cf.SetLabels(testProject, map[string]string{ProjectLabelKey: ProjectLabelValue})
 	return s, f, c, cf
+}
+
+// markedWorld is managedWorld with the object in it: the fact as the creating
+// run leaves it, both halves written. It is what a row that has to take one
+// half away starts from.
+func markedWorld(t *testing.T) (*storage.Service, *crm.Service) {
+	t.Helper()
+	s, f, c, _ := managedWorld(t)
+	f.Put(testBucket, MarkerObject, []byte(markerJSON))
+	return s, c
+}
+
+// labelledCRM is the Resource Manager side of a managed installation on its
+// own, for the rows that build their storage by hand (a bucket in another
+// project, a bucket without the label, a transport that dies mid-read). The
+// project carries the label unless the row says otherwise, because a row that
+// means to be about the storage side has to get past the project's own half
+// of the fact to reach it.
+func labelledCRM(t *testing.T, labels map[string]string) (*crm.Service, *gcpfake.CRM) {
+	t.Helper()
+	c, cf := newCRM(t)
+	cf.AddProject(testProject, testProjectNumber)
+	if labels == nil {
+		labels = map[string]string{ProjectLabelKey: ProjectLabelValue}
+	}
+	cf.SetLabels(testProject, labels)
+	return c, cf
 }
 
 // roundTripFunc answers the calls this package makes without a server behind
@@ -137,6 +171,55 @@ func TestIsManagedReadsTheCreationFact(t *testing.T) {
 	// than writes anywhere else for this reason).
 	if got := runsBucketName(testProject); got != testBucket {
 		t.Errorf("runsBucketName(%q) = %q, want %q", testProject, got, testBucket)
+	}
+	// One Resource Manager call and one only (Task 3.0). The project's label
+	// is a field of the project object this read already fetches for its
+	// number check, so the second half of the fact costs no new call and no
+	// new permission: a second call here would be a second permission the
+	// reading identity needs at run time, and a managed apply runs as the
+	// deployer, whose grants are pinned whole for exactly this reason.
+	if n := len(cf.Requests()); n != 1 {
+		t.Errorf("the read made %d Resource Manager calls, want 1 — the number and the labels come from the one project get: %v", n, cf.Requests())
+	}
+}
+
+// The label can only narrow, never widen (Task 3.0; docs/plans/2026-10-18-
+// managed-projects-task-3.0-decisions.md §4). A project that carries
+// fugaro_managed and has no creation fact is not managed, and the reason is
+// about the fact: a label is a thing anything holding
+// resourcemanager.projects.update can put on a project, which is a
+// permission the owner's own account has and no credential a run holds may
+// (design finding 14), so a label believed on its own would be the boundary
+// written by whoever holds that permission rather than by the run that
+// created the project. The other direction — the label taken away, with the
+// fact left in place — is
+// TestIsManagedRefusesEveryMismatch/"a project with no fugaro_managed label".
+func TestTheProjectLabelAloneIsNotManaged(t *testing.T) {
+	ctx := context.Background()
+
+	// The label, the project, the runs bucket, everything but the fact.
+	s, _, c, _ := managedWorld(t)
+	ok, reason, err := IsManaged(ctx, s, c, testFugaroProject, testProject)
+	if err != nil || ok {
+		t.Fatalf("IsManaged = %v, %q, %v; want false, a reason, nil", ok, reason, err)
+	}
+	if !strings.Contains(reason, MarkerObject) {
+		t.Errorf("reason = %q, want it to be about the creation fact that is not there", reason)
+	}
+
+	// And a value that is not the one this package writes is not the label,
+	// however close it is: label values are case-sensitive, so "TRUE" is
+	// another value and not the mark — with the fact there and perfect, so
+	// the label is the only thing that can refuse this project.
+	s, f, c, cf := managedWorld(t)
+	f.Put(testBucket, MarkerObject, []byte(markerJSON))
+	cf.SetLabels(testProject, map[string]string{ProjectLabelKey: "TRUE"})
+	ok, reason, err = IsManaged(ctx, s, c, testFugaroProject, testProject)
+	if err != nil || ok {
+		t.Fatalf("IsManaged = %v, %q, %v; want false, a reason, nil", ok, reason, err)
+	}
+	if !strings.Contains(reason, ProjectLabelKey) {
+		t.Errorf("reason = %q, want it to be about the %s label", reason, ProjectLabelKey)
 	}
 }
 
@@ -280,19 +363,69 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 		"no runs bucket": {
 			world: func(t *testing.T) (*storage.Service, *crm.Service) {
 				s, _ := newStorage(t)
-				c, cf := newCRM(t)
-				cf.AddProject(testProject, testProjectNumber)
+				c, _ := labelledCRM(t, nil)
 				return s, c
 			},
 			reason: "is not there",
+		},
+		// The state every project marked before Task 3.0 is in: the fact is
+		// there and perfect, and nothing has ever written the label. It is
+		// the regression the change carries (decisions §5) and it is the
+		// fail-closed direction, so it is a row rather than a note: the
+		// owner-run backfill of docs/gcp-setup.md is what turns it back into
+		// a managed project, and this is the reason a person reads first.
+		"a project with no fugaro_managed label": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f := newStorage(t)
+				f.AddBucket(testBucket, testProjectNumber, testManaged)
+				f.Put(testBucket, MarkerObject, []byte(markerJSON))
+				// Other labels of its own, so the row is about this key and
+				// not about a project that carries no labels at all.
+				c, _ := labelledCRM(t, map[string]string{"environment": "prod"})
+				return s, c
+			},
+			// The condition, whole: both marks, this one missing, and the
+			// guidance left to docs/gcp-setup.md — no command is named here
+			// (decisions §5, and TestTheNoLabelReasonNamesNoCommand pins
+			// that half). It attributes the label to neither writer alone,
+			// which is what the round-2 review found in the sentence this
+			// replaced.
+			reason: "carries no fugaro_managed label, so " + testFugaroProject + " is not managed: a managed project carries both marks, the creation fact in its runs bucket and the label on the project itself, and a project that has the fact without the label is marked again by hand, on the account that owns it (docs/gcp-setup.md)",
+		},
+		// The label is missing AND the object read fails: the label alone
+		// decides this project (read.go's last return), and the read's error
+		// is dropped rather than returned — a caller failing a command for a
+		// project the label has already refused would be reporting the wrong
+		// thing. So this row's verdict is the one above, and `fails` is
+		// false: the API did not answer and the answer is still the
+		// label's.
+		"no label, and the object read fails too": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f := newStorage(t)
+				f.AddBucket(testBucket, testProjectNumber, testManaged)
+				f.Put(testBucket, MarkerObject, []byte(markerJSON))
+				f.RefusePath(MarkerObject, http.StatusInternalServerError, "INTERNAL", "", "backend error")
+				c, _ := labelledCRM(t, map[string]string{"environment": "prod"})
+				return s, c
+			},
+			reason: "carries no fugaro_managed label, so " + testFugaroProject + " is not managed: a managed project carries both marks, the creation fact in its runs bucket and the label on the project itself, and a project that has the fact without the label is marked again by hand, on the account that owns it (docs/gcp-setup.md)",
+		},
+		"a project whose fugaro_managed label says something else": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f := newStorage(t)
+				f.AddBucket(testBucket, testProjectNumber, testManaged)
+				f.Put(testBucket, MarkerObject, []byte(markerJSON))
+				c, _ := labelledCRM(t, map[string]string{ProjectLabelKey: "false"})
+				return s, c
+			},
+			reason: "carries fugaro_managed=false, not true",
 		},
 		"a bucket in another project": {
 			world: func(t *testing.T) (*storage.Service, *crm.Service) {
 				s, f := newStorage(t)
 				f.AddBucket(testBucket, 999, testManaged)
 				f.Put(testBucket, MarkerObject, []byte(markerJSON))
-				c, cf := newCRM(t)
-				cf.AddProject(testProject, testProjectNumber)
+				c, _ := labelledCRM(t, nil)
 				return s, c
 			},
 			reason: "belongs to project number 999",
@@ -302,8 +435,7 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 				s, f := newStorage(t)
 				f.AddBucket(testBucket, testProjectNumber, nil)
 				f.Put(testBucket, MarkerObject, []byte(markerJSON))
-				c, cf := newCRM(t)
-				cf.AddProject(testProject, testProjectNumber)
+				c, _ := labelledCRM(t, nil)
 				return s, c
 			},
 			reason: "fugaro=managed",
@@ -313,8 +445,7 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 				s, f := newStorage(t)
 				f.AddBucket(testBucket, testProjectNumber, map[string]string{"fugaro": "managed-by-someone"})
 				f.Put(testBucket, MarkerObject, []byte(markerJSON))
-				c, cf := newCRM(t)
-				cf.AddProject(testProject, testProjectNumber)
+				c, _ := labelledCRM(t, nil)
 				return s, c
 			},
 			reason: "fugaro=managed",
@@ -358,8 +489,9 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 		// package prints, and it is the one place a control character really
 		// arrives (a 5xx body, or a proxy's): this row's message carries a
 		// newline and an escape sequence, so the assertion below is about
-		// safetext.OneLine rather than about the fixtures holding no control
-		// character — deleting that boundary fails here and nowhere else.
+		// safetext.Field (read.go's one boundary for every return) rather
+		// than about the fixtures holding no control character — deleting
+		// that boundary fails here and nowhere else.
 		"the object read fails with a body that is not one line": {
 			world: func(t *testing.T) (*storage.Service, *crm.Service) {
 				s, f, c, _ := managedWorld(t)
@@ -372,8 +504,7 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 		},
 		"the object's body dies mid-read": {
 			world: func(t *testing.T) (*storage.Service, *crm.Service) {
-				c, cf := newCRM(t)
-				cf.AddProject(testProject, testProjectNumber)
+				c, _ := labelledCRM(t, nil)
 				s := storageWithTransport(t, func(r *http.Request) (*http.Response, error) {
 					if strings.Contains(r.URL.Path, "/o/") {
 						return &http.Response{StatusCode: http.StatusOK, Status: "200 OK",
@@ -399,8 +530,7 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 		},
 		"a context that ends while the object is read": {
 			world: func(t *testing.T) (*storage.Service, *crm.Service) {
-				c, cf := newCRM(t)
-				cf.AddProject(testProject, testProjectNumber)
+				c, _ := labelledCRM(t, nil)
 				s := storageWithTransport(t, func(r *http.Request) (*http.Response, error) {
 					if strings.Contains(r.URL.Path, "/o/") {
 						return nil, context.Canceled
@@ -699,6 +829,38 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 	}
 }
 
+// The no-label reason states the CONDITION and not a command, which is this
+// PR's own settled decision (§5 of
+// docs/plans/2026-10-18-managed-projects-task-3.0-decisions.md) and the one
+// point in it the owner may veto: the reason is the one piece of the label
+// that reaches a coding agent's session, and a sentence naming the write
+// (gcloud projects update, or the owner's flag) invites the boundary write
+// from the side that must never make it. The guidance stays in
+// docs/gcp-setup.md, which the reason names — so this test asserts both
+// halves: the condition is stated, and no command is.
+func TestTheNoLabelReasonNamesNoCommand(t *testing.T) {
+	s, f := newStorage(t)
+	f.AddBucket(testBucket, testProjectNumber, testManaged)
+	f.Put(testBucket, MarkerObject, []byte(markerJSON))
+	c, _ := labelledCRM(t, map[string]string{"environment": "prod"})
+
+	ok, reason, err := IsManaged(context.Background(), s, c, testFugaroProject, testProject)
+	if err != nil || ok {
+		t.Fatalf("IsManaged = %v, %q, %v; want false, a reason, and no failure", ok, reason, err)
+	}
+	if !strings.Contains(reason, ProjectLabelKey) || !strings.Contains(reason, "docs/gcp-setup.md") {
+		t.Errorf("reason = %q, want the condition (the missing %s label) and where a person reads the guidance", reason, ProjectLabelKey)
+	}
+	// The commands that write the label, and the one that removes it, by the
+	// names a session would copy out of the string: none of them is this
+	// reason's to give.
+	for _, cmd := range []string{"gcloud", "managed flag", "managed apply", "projects update", "--update-labels", "--remove-labels"} {
+		if strings.Contains(reason, cmd) {
+			t.Errorf("reason = %q names %q: the refusal states the condition and not a command (decisions §5)", reason, cmd)
+		}
+	}
+}
+
 // The fact is about the GCP project, and the Fugaro project name is the name
 // the answer is reported about: an installation is one Fugaro project in one
 // GCP project, whose own bucket carries the fact, so the same GCP project
@@ -906,5 +1068,88 @@ func TestReadBudgetAnswerInvalidAndProjectFirst(t *testing.T) {
 		if !strings.Contains(a.Reason, tc.reason) {
 			t.Errorf("%s: reason %q, want %q", tc.marker, a.Reason, tc.reason)
 		}
+	}
+}
+
+// L3, and the precedence between the two reasons a project can be refused for
+// at once: an unlabelled project whose runs bucket holds a version-2 marker
+// about it carrying a figure that fails Budget.Check is refused for the
+// FIGURE — Invalid, with the refused figure handed back — and not for the
+// missing label. Both halves hold, and the figure's reason is the more
+// specific one, which is the one to win: the label's sentence sends the owner
+// to the backfill in docs/gcp-setup.md, and a backfill would leave them with a
+// managed project whose recorded amount nothing can be compared against.
+//
+// Every other state of the object keeps the label's reason. It is the verdict
+// — a project without that label is not managed whatever the object says, and
+// IsManaged has to stay false for all of these — and it is the sentence the
+// owner of a project marked before Task 3.0 reads first (decisions §5).
+func TestReadBudgetAnswerTheInvalidFigureOutranksTheMissingLabel(t *testing.T) {
+	ctx := context.Background()
+	const noLabel = "carries no fugaro_managed label"
+	for name, tc := range map[string]struct {
+		marker  string // "" for a bucket with no object in it
+		invalid bool
+		reason  string
+	}{
+		"a figure that fails Check": {
+			marker:  `{"version":2,"gcp_project":"` + testProject + `","budget":{"amount":5000,"currency":"usd"}}`,
+			invalid: true,
+			reason:  "a managed creation could have chosen",
+		},
+		"an empty figure": {
+			marker:  `{"version":2,"gcp_project":"` + testProject + `","budget":{}}`,
+			invalid: true,
+			reason:  "a managed creation could have chosen",
+		},
+		// Not Invalid, and the label's reason: the project is not managed, and
+		// a valid figure in an object it may not be believed from changes
+		// nothing about that.
+		"a valid figure": {
+			marker: `{"version":2,"gcp_project":"` + testProject + `","budget":{"amount":50,"currency":"USD"}}`,
+			reason: noLabel,
+		},
+		"a version-1 fact, which carries no figure": {
+			marker: `{"version":1,"gcp_project":"` + testProject + `"}`,
+			reason: noLabel,
+		},
+		// The project's name is judged before its figure (readFact), so this
+		// one would carry no figure back even with the label written; without
+		// it the label's reason stands.
+		"another project's marker, with a figure that fails Check": {
+			marker: `{"version":2,"gcp_project":"proj-9999","budget":{"amount":5000,"currency":"usd"}}`,
+			reason: noLabel,
+		},
+		"no object at all": {reason: noLabel},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, f := newStorage(t)
+			f.AddBucket(testBucket, testProjectNumber, testManaged)
+			if tc.marker != "" {
+				f.Put(testBucket, MarkerObject, []byte(tc.marker))
+			}
+			// The state the regression of decisions §5 is: everything else as
+			// a managed project has it, and this key never written. Other
+			// labels of its own, so the row is about this key.
+			c, _ := labelledCRM(t, map[string]string{"environment": "prod"})
+			a, err := ReadBudgetAnswer(ctx, s, c, testFugaroProject, testProject)
+			if err != nil || a.OK {
+				t.Fatalf("%+v, %v: want a refusal answered, not a failure", a, err)
+			}
+			if a.Invalid != tc.invalid {
+				t.Errorf("Invalid = %v, want %v (%s)", a.Invalid, tc.invalid, a.Reason)
+			}
+			if !strings.Contains(a.Reason, tc.reason) {
+				t.Errorf("reason %q, want %q", a.Reason, tc.reason)
+			}
+			if tc.invalid && strings.Contains(a.Reason, noLabel) {
+				t.Errorf("the label's reason was answered for a figure no creation could have chosen: %q", a.Reason)
+			}
+			// The verdict is the same either way: the read of the object buys
+			// the better reason, never a managed project.
+			if managed, _, _ := IsManaged(ctx, s, c, testFugaroProject, testProject); managed {
+				t.Error("IsManaged believed a project with no fugaro_managed label")
+			}
+		})
 	}
 }

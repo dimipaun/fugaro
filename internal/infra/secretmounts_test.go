@@ -3,6 +3,7 @@ package infra
 import (
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
@@ -74,6 +75,84 @@ func TestSecretMounts(t *testing.T) {
 	bad := config.Workflow{Secrets: []config.Secret{{Name: "openrouter-api-key", Env: "X"}}}
 	if _, err := SecretMounts("bitbucket-token", &config.Config{}, "app", config.DefaultClaudeAccount, bad, lc, "acme/app"); err == nil {
 		t.Error("a workflow secret naming a provider's key was accepted")
+	}
+}
+
+// TestSecretMountsRefusesAnotherProvidersConventionalName: a workflow may not
+// declare the name reserved for a configured provider's key either, even when
+// that provider stores its key under another name — the name belongs to that
+// provider's key (config.ReservedProviderSecret, the <entry>-api-key convention
+// of 2026-10-18), so a value stored under it would be read as the provider's
+// credential the day the key is renamed to the convention, and `fugaro secrets
+// set` refuses to store one. Refused here, at the mount, rather than left to
+// the readiness check: the job would otherwise mount a name that can never have
+// a version, and be refused as a missing secret.
+//
+// The mutation is dropping the second refusal: the off-convention list below
+// mounts.
+func TestSecretMountsRefusesAnotherProvidersConventionalName(t *testing.T) {
+	// openrouter's key is off convention on purpose: openrouter-api-key is then
+	// reserved for it and nobody's .secret today.
+	lc := &localcfg.Config{Providers: map[string]config.ModelProvider{
+		"openrouter": {Secret: "other-key", AllowDataTo: []string{"acme/app"}},
+		"deepseek":   {Secret: "deepseek-api-key", AllowDataTo: []string{"acme/app"}},
+		"thief":      {Secret: "thief-key", AllowDataTo: []string{"acme/app"}},
+	}}
+	for _, name := range []string{"openrouter-api-key", "thief-api-key"} {
+		w := config.Workflow{Secrets: []config.Secret{{Name: name, Env: "X"}}}
+		_, err := SecretMounts("bitbucket-token", &config.Config{}, "app", config.DefaultClaudeAccount, w, lc, "acme/app")
+		if err == nil {
+			t.Errorf("a workflow secret naming %s was accepted", name)
+			continue
+		}
+		for _, want := range []string{"reserved for model provider", name} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal for %s does not say %q: %v", name, want, err)
+			}
+		}
+	}
+	// A provider whose key IS its conventional name is refused by the sharper
+	// rule above, which names it a provider's key: the two refusals do not
+	// overlap, and a name is only ever refused once.
+	w := config.Workflow{Secrets: []config.Secret{{Name: "deepseek-api-key", Env: "X"}}}
+	if _, err := SecretMounts("bitbucket-token", &config.Config{}, "app", config.DefaultClaudeAccount, w, lc, "acme/app"); err == nil ||
+		!strings.Contains(err.Error(), "is the key of model provider deepseek") {
+		t.Errorf("a provider's own key reads %v, want the sharper refusal", err)
+	}
+	// A name no entry's convention gives it is an ordinary workflow secret:
+	// this rule claims only the conventional name, and the provider's own key
+	// (whatever it is spelled) stays the sharper rule above.
+	w = config.Workflow{Secrets: []config.Secret{{Name: "some-other-name", Env: "X"}}}
+	if _, err := SecretMounts("bitbucket-token", &config.Config{}, "app", config.DefaultClaudeAccount, w, lc, "acme/app"); err != nil {
+		t.Errorf("an ordinary workflow secret was refused: %v", err)
+	}
+}
+
+// TestTheSpecAndValidateRefuseTheSameWorkflowSecretNames: the two refusals the
+// owner's providers table gives a workflow's secret -- a provider's own key
+// (config.ProviderBySecret) and the conventional name of one
+// (config.ReservedProviderSecret) -- are implemented twice: in
+// config.CheckWorkflowProviderSecrets, which `fugaro validate` calls, and
+// inline in SecretMounts above, whose message is the job's own. The two must
+// refuse the same names, or a name would pass `fugaro validate` and stop a
+// run's job at the mount, or be refused at the mount and admitted by the
+// command an operator checks with. This is that agreement, over the names the
+// table makes interesting: a key on convention, a key off convention, another
+// entry's conventional name, and a name no entry claims.
+func TestTheSpecAndValidateRefuseTheSameWorkflowSecretNames(t *testing.T) {
+	providers := map[string]config.ModelProvider{
+		"openrouter": {Secret: "openrouter-api-key", AllowDataTo: []string{"acme/app"}},
+		"deepseek":   {Secret: "ds-key", AllowDataTo: []string{"acme/app"}},
+	}
+	for _, name := range []string{"openrouter-api-key", "deepseek-api-key", "ds-key", "npm-token", "some-other-name"} {
+		w := config.Workflow{Secrets: []config.Secret{{Name: name, Env: "X"}}}
+		cfg := &config.Config{Workflows: map[string]config.Workflow{"web": w}}
+		lc := &localcfg.Config{Providers: providers}
+		validateRefuses := len(config.CheckWorkflowProviderSecrets(cfg, providers)) > 0
+		_, err := SecretMounts("bitbucket-token", &config.Config{}, "app", config.DefaultClaudeAccount, w, lc, "acme/app")
+		if validateRefuses != (err != nil) {
+			t.Errorf("secret %q: fugaro validate refuses = %v, the job spec refuses = %v: the two must agree about which names belong to a provider", name, validateRefuses, err != nil)
+		}
 	}
 }
 

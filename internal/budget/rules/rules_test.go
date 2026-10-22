@@ -3,6 +3,7 @@ package rules
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"math/rand"
 	"os"
 	"regexp"
@@ -17,6 +18,23 @@ import (
 )
 
 const goldenPath = "testdata/rules.golden.json"
+
+// parentChain matches one run of .parent() calls. deeperBy lengthens every
+// run by exactly k, so a rule copied k locations deeper compares equal only
+// when each of its chains climbs exactly k further -- not merely "some" -- and
+// a chain that stops one parent() short still differs.
+var parentChain = regexp.MustCompile(`(?:\.parent\(\))+`)
+
+func deeperBy(rule string, k int) string {
+	extra := strings.Repeat(".parent()", k)
+	return parentChain.ReplaceAllStringFunc(rule, func(run string) string { return run + extra })
+}
+
+// shallowerByOne drops one parent() from every run: the rule a by-tier leaf
+// would carry if its chains reached one location short of the node they mean.
+func shallowerByOne(rule string) string {
+	return parentChain.ReplaceAllStringFunc(rule, func(run string) string { return strings.TrimSuffix(run, ".parent()") })
+}
 
 // TestRulesGolden pins the generated rules. Regenerate on purpose with
 // UPDATE_GOLDEN=1 go test ./internal/budget/rules and review the diff: it is
@@ -572,6 +590,12 @@ func TestRunTokenWritesSurviveThePolicyEdit(t *testing.T) {
 		"spend/$day/repos/" + slugForPath + "/byModel/$model/out",
 		"spend/$day/repos/" + slugForPath + "/byModel/$model/cr",
 		"spend/$day/repos/" + slugForPath + "/byModel/$model/cw",
+		// the by-tier split of real spend (C1.3 rule 3, D140): tier B and
+		// tier C under each of the four $spent locations above
+		"runs/" + slugForPath + "/$run/byTier/$tier/spent",
+		"spend/$day/global/byTier/$tier/spent",
+		"spend/$day/repos/" + slugForPath + "/byTier/$tier/spent",
+		"spend/$day/runs/" + slugForPath + "/$run/byTier/$tier/spent",
 		// spend/<day>/runs/<slug>/<run>/ (the run's share of the day)
 		"spend/$day/runs/" + slugForPath + "/$run/reserved",
 		"spend/$day/runs/" + slugForPath + "/$run/released",
@@ -619,6 +643,12 @@ func TestRunTokenWritesSurviveThePolicyEdit(t *testing.T) {
 			if _, listed := mailboxWrites()[p]; !listed {
 				t.Errorf("/%s is writable under the mailbox: a write there is one of the four mailboxWrites() lists, and this one is not", p)
 			}
+		case "pairing":
+			// D165's family (P6.4): the one write a pairing session has, and
+			// TestPairingWritesAreExactlyTheOne is what pins it.
+			if _, listed := pairingWrites()[p]; !listed {
+				t.Errorf("/%s is writable under pairing: a write there is the one pairingWrites() lists, and this one is not", p)
+			}
 		}
 	}
 }
@@ -645,6 +675,155 @@ func mailboxWrites() map[string][]string {
 		"mailbox/$mb/outbox/$msg/acked": once(phone),
 		"mailbox/$mb/outbox/$msg":       once(consumer),
 		"mailbox/$mb/heartbeat":         consumer,
+	}
+}
+
+// pairingWrites is D165's grant list (P6.4): the one write a pairing session
+// has, with the fragments its predicate must carry — the pu claim, $uid naming
+// the token's own uid, newData.exists() (a delete is not a write, and a delete
+// of the request would let a session bind a second key) and !data.exists()
+// (the request is written ONCE: a fingerprint the operator confirms must not be
+// swappable afterwards). The delivery node is the operator's write over IAM and
+// has none.
+func pairingWrites() map[string][]string {
+	return map[string][]string{
+		"pairing/$uid/request": {"auth.token.pu != null", "auth.token.pu == auth.uid", "$uid == auth.uid", "newData.exists()", "!data.exists()"},
+	}
+}
+
+// TestPairingWritesAreExactlyTheOne pins D165's family without the emulator:
+// one write, for the pairing uid, on its own request node, once. The emulator
+// proves what each identity can reach through it (emulator_pairing_test.go);
+// this proves the list did not grow, which is the half a later edit would
+// change quietly — a second grant here is a second way into a mailbox.
+func TestPairingWritesAreExactlyTheOne(t *testing.T) {
+	paths := generatedPaths(t)
+	want := pairingWrites()
+	for p, frags := range want {
+		attrs, ok := paths[p]
+		if !ok {
+			t.Errorf("the template does not generate /%s", p)
+			continue
+		}
+		w, _ := attrs[".write"].(string)
+		if w == "" {
+			t.Errorf("/%s carries no .write: the pairing session's one write is gone", p)
+			continue
+		}
+		for _, f := range frags {
+			if !strings.Contains(w, f) {
+				t.Errorf("/%s .write = %q, want it to carry %q", p, w, f)
+			}
+		}
+	}
+
+	// No second grant anywhere in the family, and the delivery node is
+	// explicitly denied to every writer: it is written over IAM, which bypasses
+	// the rules, so a client grant there would be a client that can rewrite
+	// what the phone was told to trust.
+	for p, attrs := range paths {
+		if p != "pairing" && !strings.HasPrefix(p, "pairing/") {
+			continue
+		}
+		if w, ok := attrs[".write"].(string); ok {
+			if _, listed := want[p]; !listed {
+				t.Errorf("/%s is writable (%s) and is not the pairing session's one write", p, w)
+			}
+		}
+	}
+	if attrs, ok := paths["pairing/$uid/delivery"]; !ok {
+		t.Error("the template does not generate /pairing/$uid/delivery")
+	} else {
+		if w, ok := attrs[".write"]; !ok || w != false {
+			t.Errorf("/pairing/$uid/delivery .write = %v, want false", w)
+		}
+		r, _ := attrs[".read"].(string)
+		for _, f := range []string{"auth.token.pu != null", "auth.token.pu == auth.uid", "$uid == auth.uid"} {
+			if !strings.Contains(r, f) {
+				t.Errorf("/pairing/$uid/delivery .read = %q, want it to carry %q", r, f)
+			}
+		}
+	}
+
+	// The request node is nobody's to read, the pairing uid included: the
+	// operator reads the key over IAM when they check the fingerprint (P6.6).
+	for _, p := range []string{"pairing", "pairing/$uid", "pairing/$uid/request"} {
+		attrs, ok := paths[p]
+		if !ok {
+			t.Errorf("the template does not generate /%s", p)
+			continue
+		}
+		if r, ok := attrs[".read"]; ok && r != false {
+			t.Errorf("/%s .read = %v: an RTDB grant on a parent cascades to its children", p, r)
+		}
+	}
+}
+
+// TestDeviceNodesAreClientDenied pins D166's node from the rules' side: the
+// allowlist is written over IAM by `fugaro pair` (P6.6) and by nothing else, so
+// no client token — a phone's, a consumer's, a run's or a pairing session's —
+// holds a grant on it or on any child of it. The rules are not what keeps it
+// from a launcher, which reads it through roles/firebasedatabase.viewer
+// whatever they say (G13); what they keep is a *client* out, which is the
+// difference between an account that can un-revoke itself and one that cannot.
+func TestDeviceNodesAreClientDenied(t *testing.T) {
+	paths := generatedPaths(t)
+	// The path internal/budget/rules names and the CLI will read (PathDevices).
+	if PathDevices != "config/admin/devices" {
+		t.Fatalf("PathDevices = %q, want config/admin/devices", PathDevices)
+	}
+	node := PathDevices + "/$uid"
+	attrs, ok := paths[node]
+	if !ok {
+		t.Fatalf("the template does not generate /%s, which USER's device conjunct reads", node)
+	}
+	for _, a := range []string{".read", ".write"} {
+		if v, ok := attrs[a]; !ok || v != false {
+			t.Errorf("/%s %s = %v, want false: no client token may touch the allowlist", node, a, v)
+		}
+	}
+	if r, ok := attrs[".read"].(string); ok {
+		t.Errorf("/%s .read = %q: the node is written and read over IAM only", node, r)
+	}
+}
+
+// TestUserClaimRequiresTheDeviceNode: D166's conjunct, in every read and write
+// USER or MAILBOX reaches. The property is the one an operator relies on when
+// they revoke a phone — deleting one child takes every family away at once —
+// so it is asserted on the claim itself and on the rendered expressions, not
+// only on the mailbox (an account that lost its device node must not go on
+// reading the caps).
+func TestUserClaimRequiresTheDeviceNode(t *testing.T) {
+	conjunct := "root.child('config/admin/devices').child(auth.uid).exists()"
+	if !strings.Contains(userClaim, conjunct) {
+		t.Fatalf("userClaim = %q, want D166's conjunct %q", userClaim, conjunct)
+	}
+
+	paths := generatedPaths(t)
+	// Every location whose grant is the user claim's, in either form: the
+	// eight dashboard families carry USER, and the mailbox's two carry MAILBOX,
+	// which is the same claim plus `$mb == auth.uid`.
+	var n int
+	for p, attrs := range paths {
+		for _, a := range []string{".read", ".write"} {
+			expr, ok := attrs[a].(string)
+			if !ok {
+				continue
+			}
+			if !strings.Contains(expr, "auth.token.mu") {
+				continue
+			}
+			n++
+			if !strings.Contains(expr, conjunct) {
+				t.Errorf("/%s %s = %q carries the user claim without the device conjunct: revoking a phone would not revoke this", p, a, expr)
+			}
+		}
+	}
+	// The sweep would pass vacuously if the claim had stopped being used at
+	// all; the eight read families and the mailbox's grants are the ones that
+	// must be there.
+	if n < 10 {
+		t.Errorf("only %d grants carry the user claim: the sweep above proved nothing", n)
 	}
 }
 
@@ -781,24 +960,24 @@ func schemaCatalog(t *testing.T) (consts map[string]int64, fields, required []st
 // (at held to MaxAmount, an id to something the schema allows longer) fails
 // here.
 //
-// P6.3 grew the schema — `mac` is now required on every message, and `agent`,
-// `kind`, `options`, `reply_to` and the action record are optional fields — and
-// the template has NOT grown with it: the mailbox subtree still gates P2.1's
-// field set, and P6.4 (a task of its own, level 3, after P2.2) is what adds the
-// new fields to the rules. So the two lists below are pinned in the direction
-// that must hold NOW: the schema's field set is exactly this (a change to it
-// is a deliberate change to this test), and every field the rules DO gate is a
-// field the schema names, never one it does not. The fields the rules do not
-// gate yet are named in the comment above the per-node loop, so that "fewer
-// fields than the schema" is a known, listed state rather than an oversight —
-// and so that P6.4 has a failing test to make pass, not a silent gap to close.
+// P6.3 grew the schema and P6.4 (this change) grew the template with it: `mac`
+// is required on every message and on the heartbeat, `agent`, `kind`,
+// `options`, `reply_to` and the action record are the fields a message may
+// carry beside it, and the (kind, field) table is what says which kind may
+// carry which. So the two lists below are the schema's own, and the per-node
+// loop asserts the rules gate exactly them — a field the rules gate that the
+// schema does not name fails there too, because the rules may gate fewer
+// fields than the schema, never one it does not have.
 //
 // What this test cannot pin is the rest of the schema's judgement, and §6.4
 // says where the rules are looser rather than claiming they are the same: the
-// rules cannot inspect characters, so the id's key rule (no `%`, no control
-// character, no lone surrogate — all of which the schema refuses) is the
-// schema's alone, and `text`'s control characters with it. The emulator cases
-// (emulator_mailbox_test.go) prove what the rules do refuse.
+// id's key rule (no `%`, no control character, no lone surrogate — all of
+// which the schema refuses) is the schema's alone, and `text`'s control
+// characters with it. The characters the schema states as a pattern (a tag, a
+// head SHA, an identity, a target) are checked at the database too, and
+// TestMailboxRulesCheckTheSchemasCharacters pins them. The emulator cases
+// (emulator_mailbox_test.go, emulator_pairing_test.go) prove what the rules do
+// refuse.
 func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 	consts, fields, required := schemaCatalog(t)
 	if got, want := MaxKeyLength, consts["ID_MAX"]; int64(got) != want {
@@ -812,6 +991,29 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 	}
 	if got, want := MaxTimestamp, consts["AT_MAX"]; got != want {
 		t.Errorf("MaxTimestamp = %d, the schema's AT_MAX = %d", got, want)
+	}
+	// The bounds P6.4 adds, each one a number the schema owns: a rules bound
+	// tighter than the schema's would refuse a message the phone accepted, and
+	// the two artifacts are separate files with nothing but this test holding
+	// them together.
+	for _, c := range []struct {
+		what string
+		got  int
+		want int64
+	}{
+		{"MaxMacLength", MaxMacLength, consts["MAC_MAX"]},
+		{"MaxAgentLength", MaxAgentLength, consts["AGENT_MAX"]},
+		{"MaxAgentNameLength", MaxAgentNameLength, consts["AGENT_NAME_MAX"]},
+		{"MaxAgents", MaxAgents, consts["AGENTS_MAX"]},
+		{"MaxOptions", MaxOptions, consts["OPTIONS_MAX"]},
+		{"MaxOptionLength", MaxOptionLength, consts["OPTION_MAX"]},
+		{"MaxTargetLength", MaxTargetLength, consts["TARGET_MAX"]},
+		{"MinShaLength", MinShaLength, consts["SHA_MIN"]},
+		{"MaxShaLength", MaxShaLength, consts["SHA_MAX"]},
+	} {
+		if int64(c.got) != c.want {
+			t.Errorf("%s = %d, the schema's own bound = %d", c.what, c.got, c.want)
+		}
 	}
 	if want := []string{"id", "sender", "text", "at", "mac"}; !slices.Equal(required, want) {
 		t.Errorf("the schema's REQUIRED_FIELDS = %v, want %v", required, want)
@@ -834,10 +1036,20 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 		{`mailbox/$mb/inbox/$msg/sender`, `newData.val().length <= ` + strconv.Itoa(MaxString)},
 		{`mailbox/$mb/inbox/$msg/text`, `newData.val().length <= ` + strconv.Itoa(MaxText)},
 		{`mailbox/$mb/inbox/$msg/at`, `newData.val() <= ` + strconv.FormatInt(MaxTimestamp, 10)},
+		{`mailbox/$mb/inbox/$msg/mac`, `newData.val().length == ` + strconv.Itoa(MaxMacLength)},
+		{`mailbox/$mb/inbox/$msg/agent`, `newData.val().length <= ` + strconv.Itoa(MaxAgentLength)},
+		{`mailbox/$mb/inbox/$msg/options/$i`, `newData.val().length <= ` + strconv.Itoa(MaxOptionLength)},
+		{`mailbox/$mb/inbox/$msg/options/$i`, `$i.matches(` + indexPattern(MaxOptions) + `)`},
+		{`mailbox/$mb/inbox/$msg/action/target/run`, `newData.val().length <= ` + strconv.Itoa(MaxTargetLength)},
 		{`mailbox/$mb/outbox/$msg`, `$msg.length <= ` + strconv.Itoa(MaxKeyLength)},
 		{`mailbox/$mb/outbox/$msg/text`, `newData.val().length <= ` + strconv.Itoa(MaxText)},
 		{`mailbox/$mb/outbox/$msg/at`, `newData.val() <= ` + strconv.FormatInt(MaxTimestamp, 10)},
+		{`mailbox/$mb/outbox/$msg/mac`, `newData.val().length == ` + strconv.Itoa(MaxMacLength)},
 		{`mailbox/$mb/heartbeat/at`, `newData.val() <= ` + strconv.FormatInt(MaxTimestamp, 10)},
+		{`mailbox/$mb/heartbeat/mac`, `newData.val().length == ` + strconv.Itoa(MaxMacLength)},
+		{`mailbox/$mb/heartbeat/agents/$i`, `$i.matches(` + indexPattern(MaxAgents) + `)`},
+		{`mailbox/$mb/heartbeat/agents/$i/id`, `newData.val().length <= ` + strconv.Itoa(MaxAgentLength)},
+		{`mailbox/$mb/heartbeat/agents/$i/name`, `newData.val().length <= ` + strconv.Itoa(MaxAgentNameLength)},
 	} {
 		attrs, ok := paths[c.path]
 		if !ok {
@@ -850,25 +1062,82 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 		}
 	}
 
-	// The fields, per node: exactly what P2.1's template gates today, and every
-	// one of them a field the schema names. An inbox message has the four
-	// required P0.2 fields — `acked` is the phone's ack of a message it spoke,
-	// which lives on an outbox message — and an outbox message has all five.
-	//
-	// P6.3's `mac` is NOT among them yet, and that is the gap P6.4 closes: the
-	// schema now requires a tag on every message and the rules would refuse the
-	// write that carries one. It is listed here, as a want that deliberately
-	// lacks it, so the gap is visible in the test rather than only in a plan;
-	// P6.4 adds "mac" to both lists and the same loop then asserts it. Until
-	// then the second assertion below is what keeps the difference one-way: the
-	// rules may gate FEWER fields than the schema, never a field it does not
-	// name.
+	// The required fields, from the schema's own list rather than from a literal
+	// here: `hasChildren([...])` is what refuses a message with no tag, and a
+	// tag is required on every message of every kind and on the heartbeat. The
+	// heartbeat's list is three of the four (it has no `id`), which the schema
+	// states separately (HEARTBEAT_REQUIRED).
+	msgRequired := "newData.hasChildren(['" + strings.Join(required, "', '") + "'])"
+	for _, p := range []string{`mailbox/$mb/inbox/$msg`, `mailbox/$mb/outbox/$msg`} {
+		attrs, ok := paths[p]
+		if !ok {
+			t.Errorf("the template does not generate /%s", p)
+			continue
+		}
+		v, _ := attrs[".validate"].(string)
+		if !strings.Contains(v, msgRequired) {
+			t.Errorf("/%s .validate = %q, want the schema's required fields (%q)", p, v, msgRequired)
+		}
+	}
+	if attrs, ok := paths[`mailbox/$mb/heartbeat`]; !ok {
+		t.Error("the template does not generate /mailbox/$mb/heartbeat")
+	} else if v, _ := attrs[".validate"].(string); !strings.Contains(v, "newData.hasChildren(['at', 'boot', 'mac'])") {
+		t.Errorf("/mailbox/$mb/heartbeat .validate = %q, want the tag required beside at and boot", v)
+	}
+
+	// The action record's own required set and the merge's head SHA. Not read
+	// from the schema (ACTION_REQUIRED is not exported and this reader does not
+	// follow a local constant), so these are pins: a record without its
+	// confirmation is the shape G11 calls prose, and a merge without the head it
+	// read back is one the consumer cannot check.
+	for _, p := range []string{`mailbox/$mb/inbox/$msg/action`, `mailbox/$mb/outbox/$msg/action`} {
+		attrs, ok := paths[p]
+		if !ok {
+			t.Errorf("the template does not generate /%s", p)
+			continue
+		}
+		v, _ := attrs[".validate"].(string)
+		for _, frag := range []string{
+			"newData.hasChildren(['id', 'verb', 'target', 'confirmation'])",
+			"newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true",
+			"== 'action'",
+		} {
+			if !strings.Contains(v, frag) {
+				t.Errorf("/%s .validate = %q, want it to carry %q", p, v, frag)
+			}
+		}
+	}
+
+	// Every node of the subtree refuses an unknown field. `$other` with
+	// `.validate: false` is the subtree idiom's whole point (F21): without it a
+	// field the schema does not name is stored rather than refused, and the
+	// field set would stop being the version.
+	for _, p := range []string{
+		`mailbox/$mb/inbox/$msg`, `mailbox/$mb/outbox/$msg`, `mailbox/$mb/heartbeat`,
+		`mailbox/$mb/inbox/$msg/action`, `mailbox/$mb/inbox/$msg/action/target`,
+		`mailbox/$mb/inbox/$msg/action/confirmation`, `mailbox/$mb/heartbeat/agents/$i`,
+		`mailbox/$mb/outbox/$msg/action`, `pairing/$uid/request`,
+	} {
+		attrs, ok := paths[p+"/$other"]
+		if !ok {
+			t.Errorf("/%s has no $other child: an unknown field would be stored, not refused", p)
+			continue
+		}
+		if v, ok := attrs[".validate"]; !ok || v != false {
+			t.Errorf("/%s/$other .validate = %v, want false", p, v)
+		}
+	}
+
+	// The fields, per node: the schema's own set, and every one of them a field
+	// the schema names. An inbox message has the required P6.3 fields plus the
+	// optional ones (`acked` is the phone's ack of a message it spoke, which
+	// lives on an outbox message), and an outbox message has all of them.
 	for _, c := range []struct {
 		path string
 		want []string
 	}{
-		{`mailbox/$mb/inbox/$msg`, []string{"id", "sender", "text", "at"}},
-		{`mailbox/$mb/outbox/$msg`, []string{"id", "sender", "text", "at", "acked"}},
+		{`mailbox/$mb/inbox/$msg`, []string{"id", "sender", "text", "at", "mac", "agent", "kind", "options", "reply_to", "action"}},
+		{`mailbox/$mb/outbox/$msg`, []string{"id", "sender", "text", "at", "mac", "acked", "agent", "kind", "options", "reply_to", "action"}},
 	} {
 		if _, ok := paths[c.path]; !ok {
 			t.Errorf("the template does not generate /%s", c.path)
@@ -886,7 +1155,7 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 		want := slices.Clone(c.want)
 		slices.Sort(want)
 		if !slices.Equal(got, want) {
-			t.Errorf("/%s holds %v, P2.1's field set for it is %v", c.path, got, want)
+			t.Errorf("/%s holds %v, the shared schema's field set for it is %v", c.path, got, want)
 		}
 		for _, field := range got {
 			if !slices.Contains(fields, field) {
@@ -950,5 +1219,596 @@ func TestUserReadGrantsAreExactlyTheNamedFamilies(t *testing.T) {
 		if !want[p] {
 			t.Errorf("/%s carries the user claim's read grant (%s) and is not one of the families tension (b1) names", p, r)
 		}
+	}
+}
+
+// rulesMethods are the methods the Realtime Database rules language has: the
+// RuleDataSnapshot methods (val, child, parent, hasChild, hasChildren, exists,
+// getPriority, isNumber, isString, isBoolean) and the string methods
+// (contains, beginsWith, endsWith, replace, toLowerCase, toUpperCase,
+// matches). A method outside the list is not a rule the database runs — the
+// deploy refuses the whole document ("No such method/property"), which is
+// what a `numChildren()` in P6.4's first draft did: the document type-checked
+// here and failed only against the emulator, which was not run.
+var rulesMethods = []string{
+	"val", "child", "parent", "hasChild", "hasChildren", "exists", "getPriority",
+	"isNumber", "isString", "isBoolean",
+	"contains", "beginsWith", "endsWith", "replace", "toLowerCase", "toUpperCase", "matches",
+}
+
+// TestGeneratedRulesUseOnlyRulesLanguageMethods is the check that does not need
+// the emulator: every method a generated expression calls is one the rules
+// language has. It is not a parser; it is the cheap half that catches a method
+// borrowed from the client SDK (DataSnapshot.numChildren, forEach, size).
+func TestGeneratedRulesUseOnlyRulesLanguageMethods(t *testing.T) {
+	call := regexp.MustCompile(`\.([A-Za-z_]+)\(`)
+	walk(rulesTree(t), nil, func(path []string, attrs map[string]any) {
+		for k, v := range attrs {
+			s, ok := v.(string)
+			if !ok {
+				continue
+			}
+			// Regex literals are not calls: drop them before scanning.
+			s = regexLiteral.ReplaceAllString(s, "/re/")
+			for _, m := range call.FindAllStringSubmatch(s, -1) {
+				if !slices.Contains(rulesMethods, m[1]) {
+					t.Errorf("/%s %s calls %s(), which the rules language does not have: the deploy refuses the document", strings.Join(path, "/"), k, m[1])
+				}
+			}
+		}
+	})
+}
+
+// regexLiteral matches a rules regex literal as the generator writes one.
+var regexLiteral = regexp.MustCompile(`/\^[^ ]*\$/`)
+
+// schemaPatterns reads the shared schema's character patterns, by name, as the
+// literal source of each (`/^...$/`).
+func schemaPatterns(t *testing.T) map[string]string {
+	t.Helper()
+	b, err := os.ReadFile(schemaPath)
+	if err != nil {
+		t.Fatalf("reading the shared schema: %v", err)
+	}
+	out := map[string]string{}
+	for _, m := range regexp.MustCompile(`(?m)^const ([A-Z_]+_PATTERN) = (/.*/);$`).FindAllStringSubmatch(string(b), -1) {
+		out[m[1]] = m[2]
+	}
+	return out
+}
+
+// TestMailboxRulesCheckTheSchemasCharacters: the rules language does have
+// `matches()`, so every field whose character set the schema states as a
+// pattern carries the same pattern at the database — the tag and the head SHA
+// are hex, an agent id and a boot id are identities, a run target and a repo
+// target are the schema's run and repo shapes. A list (options, agents) is a
+// list: present means a child at an index below its bound, and a scalar in
+// its place is refused. And a pairing uid is the `p~` uid P6.6 mints.
+func TestMailboxRulesCheckTheSchemasCharacters(t *testing.T) {
+	pats := schemaPatterns(t)
+	for _, c := range []struct{ name, got string }{
+		{"HEX_PATTERN", patternHex},
+		{"IDENTITY_PATTERN", patternIdentity},
+		{"RUN_PATTERN", patternRun},
+		{"REPO_PATTERN", patternRepo},
+	} {
+		if want, ok := pats[c.name]; !ok {
+			t.Errorf("the shared schema no longer defines %s: the rules' copy has nothing to agree with", c.name)
+		} else if c.got != want {
+			t.Errorf("the rules' %s = %s, the shared schema's = %s", c.name, c.got, want)
+		}
+	}
+	paths := generatedPaths(t)
+	for _, dir := range []string{"inbox", "outbox"} {
+		m := `mailbox/$mb/` + dir + `/$msg`
+		for _, c := range []struct{ path, frag string }{
+			{m + `/mac`, ".matches(" + patternHex + ")"},
+			{m + `/agent`, ".matches(" + patternIdentity + ")"},
+			{m + `/action/head_sha`, ".matches(" + patternHex + ")"},
+			{m + `/action/target/run`, ".matches(" + patternRun + ")"},
+			{m + `/action/target/repo`, ".matches(" + patternRepo + ")"},
+			{m + `/options`, "newData.hasChildren()"},
+			{m + `/options/$i`, "$i.matches(" + indexPattern(MaxOptions) + ")"},
+		} {
+			wantFrag(t, paths, c.path, c.frag)
+		}
+	}
+	for _, c := range []struct{ path, frag string }{
+		{`mailbox/$mb/heartbeat/mac`, ".matches(" + patternHex + ")"},
+		{`mailbox/$mb/heartbeat/boot`, ".matches(" + patternIdentity + ")"},
+		{`mailbox/$mb/heartbeat/boot`, "newData.val().length <= " + strconv.Itoa(MaxBootLength)},
+		{`mailbox/$mb/heartbeat/agents`, "newData.hasChildren()"},
+		{`mailbox/$mb/heartbeat/agents/$i`, "$i.matches(" + indexPattern(MaxAgents) + ")"},
+		{`mailbox/$mb/heartbeat/agents/$i/id`, ".matches(" + patternIdentity + ")"},
+		{`mailbox/$mb/heartbeat/agents/$i/name`, "newData.val().length > 0"},
+	} {
+		wantFrag(t, paths, c.path, c.frag)
+	}
+	consts, _, _ := schemaCatalog(t)
+	if int64(MaxBootLength) != consts["BOOT_MAX"] {
+		t.Errorf("MaxBootLength = %d, the schema's BOOT_MAX = %d", MaxBootLength, consts["BOOT_MAX"])
+	}
+	if !strings.Contains(pairingClaim, "auth.uid.beginsWith('p~')") {
+		t.Errorf("pairingClaim = %q, want it bound to the p~ uid P6.6 mints", pairingClaim)
+	}
+}
+
+// TestIndexPattern: the index pattern admits exactly 0..n-1, so a list keyed
+// by its indexes holds at most n entries.
+func TestIndexPattern(t *testing.T) {
+	for _, n := range []int{1, 8, 32} {
+		lit := indexPattern(n)
+		re := regexp.MustCompile(strings.TrimSuffix(strings.TrimPrefix(lit, "/"), "/"))
+		for i := -1; i <= n+1; i++ {
+			if got, want := re.MatchString(strconv.Itoa(i)), i >= 0 && i < n; got != want {
+				t.Errorf("indexPattern(%d) matches %d = %v, want %v", n, i, got, want)
+			}
+		}
+		for _, s := range []string{"", "00", "01", "a", "1a", " 1"} {
+			if re.MatchString(s) {
+				t.Errorf("indexPattern(%d) matches %q", n, s)
+			}
+		}
+	}
+}
+
+func wantFrag(t *testing.T, paths map[string]map[string]any, path, frag string) {
+	t.Helper()
+	attrs, ok := paths[path]
+	if !ok {
+		t.Errorf("the template does not generate /%s", path)
+		return
+	}
+	if v, _ := attrs[".validate"].(string); !strings.Contains(v, frag) {
+		t.Errorf("/%s .validate = %q, want it to carry %q", path, v, frag)
+	}
+}
+
+// TestConfirmTargetsCarryOneShape pins TARGETOK's per-verb arms, and the
+// `confirm` arm in particular.
+//
+// A `confirm` is the verb that authorises a destructive action (D169, G11), and
+// its target resolves to a run or to a repository and a pull request. Both
+// shapes are legal; a target carrying *both* is not, because "which one did
+// they mean?" is a question the consumer would have to answer by guessing. An
+// arm written as an either-shape test — `hasChildren(['run']) ||
+// hasChildren(['repo', 'pr'])` — answers yes to `{run, repo, pr}` and to
+// `{run, repo}`, and the emulator accepts both. The negative half of each arm
+// is what refuses them, so each arm is pinned whole.
+//
+// This is the static half: `emulator_pairing_test.go` writes the two both-shapes
+// targets and watches the database refuse them.
+func TestConfirmTargetsCarryOneShape(t *testing.T) {
+	paths := generatedPaths(t)
+	for _, dir := range []string{"inbox", "outbox"} {
+		p := `mailbox/$mb/` + dir + `/$msg/action/target`
+		for _, c := range []struct{ verb, frag string }{
+			{"merge", "== 'merge' ? (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists())"},
+			{"cancel", "== 'cancel' ? (newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists())"},
+			{"confirm", "((newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) || (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()))"},
+		} {
+			wantFrag(t, paths, p, c.frag)
+			t.Logf("/%s: the %s arm carries %s", p, c.verb, c.frag)
+		}
+	}
+}
+
+// ---- C1.3: the credentials rules -------------------------------------------
+//
+// The rules task of the credentials-service plan (`docs/credentials-service/
+// implementation-plan.md`, task C1.3) adds three things to the template and two
+// constants to `marker.go`. What is pinned here is the half the emulator
+// cannot state: the shape of the generated document, that every location the
+// rules carried before the change still carries byte-for-byte the same rule,
+// and that the credentials generation is a marker of its own rather than a
+// `RulesVersion` bump.
+//
+// The emulator half — what a run token may and may not do under the new nodes —
+// is `creds_emulator_test.go` (build tag firebase).
+
+// credsRoot is /creds, the cascade's shared state (D136, O1). The service's own
+// account is its only writer; the node is explicit in the template rather than
+// left to the root's default deny, so the deployed document says so where a
+// reader looks for it.
+const credsRoot = "creds"
+
+// TestCredsIsDeniedByAnExplicitNode: the template carries an explicit /creds
+// whose .read and .write are the booleans false, and nothing under it carries a
+// grant. The root's default deny already refuses every client (which is what
+// C0.6 pinned), so this changes no behaviour — it makes the denial visible in
+// the generated document, where an edit that opened /creds would have to touch
+// it.
+//
+// The denial is checked over **every** path the document generates under
+// /creds, not over a hand-kept list of the ones a reader would name. The
+// runtime half of this suite (creds_emulator_test.go) is behind the `firebase`
+// build tag and does not run in the job that runs this file, so a grant opened
+// anywhere in the family — a wildcard child such as `creds/leases/$r` carrying
+// a TOKEN read, which the fixed list would not name — has to be caught here,
+// where every `go test` sees it. TestRulesPreexistingPathsUnchanged is the
+// second half of the same guard: it refuses a `creds/…` path that appears out
+// of nowhere (isNewCredsPath).
+//
+// Hand mutation this fails on: dropping the node (the location is then absent,
+// not denied by name), turning either attribute into an expression, or adding
+// any node under /creds with a .read or a .write that is not false.
+func TestCredsIsDeniedByAnExplicitNode(t *testing.T) {
+	paths := generatedPaths(t)
+	attrs, ok := paths[credsRoot]
+	if !ok {
+		t.Fatalf("the template does not generate /%s: the cascade's state must be denied by name, not only by the root", credsRoot)
+	}
+	for _, a := range []string{".read", ".write"} {
+		v, ok := attrs[a]
+		if !ok {
+			t.Errorf("/%s carries no %s: an inherited deny is not the same document as an explicit one", credsRoot, a)
+			continue
+		}
+		if v != false {
+			t.Errorf("/%s %s = %#v, want false: no client token may reach the cascade's state (O1)", credsRoot, a, v)
+		}
+	}
+	// Nothing under it grants anything either: a child grant would re-open the
+	// family the explicit node closes, and the walk is over the document, so a
+	// node this file has never heard of — the ones C1.9 will add — is checked
+	// like the rest.
+	for p, a := range paths {
+		if p != credsRoot && !strings.HasPrefix(p, credsRoot+"/") {
+			continue
+		}
+		for _, attr := range []string{".read", ".write"} {
+			if v, has := a[attr]; has && v != false {
+				t.Errorf("/%s %s = %#v, want false: no client token may reach the cascade's state (O1)", p, attr, v)
+			}
+		}
+	}
+}
+
+// TestAgentEntryCarriesTheCredentialNameAndWaitingUntil: the run's registry
+// entry gains two validated children (C1.3 rule 2). `/agents/$slug/$run` is a
+// closed allowlist (`$other` refuses everything else), so a cascade run's write
+// of the credential it is using, or of the instant it expects to resume at,
+// would be refused until they are named here.
+//
+// Both are validation-only, like every other field of the entry: the parent's
+// `.write: RUN` is the grant, and the child carries the shape. `credential` is
+// the credential's *name* and never a value — the rules can only bound it, and
+// what makes it a name is that the service answers with one — and
+// `waiting_until` is an instant, so it is held to the timestamp bound and not
+// to the amount bound.
+//
+// Hand mutation this fails on: dropping either child (or its $other guard's
+// exception), or widening `waiting_until` to AMOUNT, whose $10M bound would
+// refuse a clock reading after the year 2286 while accepting a negative one.
+func TestAgentEntryCarriesTheCredentialNameAndWaitingUntil(t *testing.T) {
+	paths := generatedPaths(t)
+	entry := "agents/" + slugForPath + "/$run"
+	for _, c := range []struct{ field, want string }{
+		{"credential", "newData.isString() && newData.val().length <= 200"},
+		{"waiting_until", "newData.isNumber() && newData.val() >= 0 && newData.val() <= 9007199254740991 && newData.val() % 1 == 0"},
+	} {
+		p := entry + "/" + c.field
+		attrs, ok := paths[p]
+		if !ok {
+			t.Errorf("the template does not generate /%s: a cascade run cannot record its %s", p, c.field)
+			continue
+		}
+		if _, has := attrs[".write"]; has {
+			t.Errorf("/%s carries a .write of its own: the entry's fields are validated under the parent's RUN grant", p)
+		}
+		v, _ := attrs[".validate"].(string)
+		if !strings.Contains(v, c.want) {
+			t.Errorf("/%s .validate = %q, want it to carry %q", p, v, c.want)
+		}
+		if !strings.Contains(v, "auth.token.rb != null") {
+			t.Errorf("/%s .validate = %q, want RBOK: every field of the entry ties to the launcher's rb claim", p, v)
+		}
+	}
+	// The entry is still a closed allowlist: an unnamed child is refused.
+	if vv, ok := paths[entry+"/$other"]; !ok {
+		t.Errorf("/%s/$other is gone: the entry must refuse a field the schema does not name", entry)
+	} else if vv[".validate"] != false {
+		t.Errorf("/%s/$other .validate = %v, want false", entry, vv[".validate"])
+	}
+}
+
+// byTierPairs are the locations that gain a by-tier split of real spend, each
+// paired with the `spent` leaf whose rule it repeats (C1.3 rule 3). Tier A
+// stays on the existing `notional` nodes; only B and C are real money, and only
+// they are split out.
+func byTierPairs() []struct{ leaf, spent string } {
+	return []struct{ leaf, spent string }{
+		{"runs/" + slugForPath + "/$run/byTier/$tier/spent", "runs/" + slugForPath + "/$run/spent"},
+		{"spend/$day/global/byTier/$tier/spent", "spend/$day/global/spent"},
+		{"spend/$day/repos/" + slugForPath + "/byTier/$tier/spent", "spend/$day/repos/" + slugForPath + "/spent"},
+		{"spend/$day/runs/" + slugForPath + "/$run/byTier/$tier/spent", "spend/$day/runs/" + slugForPath + "/$run/spent"},
+	}
+}
+
+// TestByTierCountersAreValidatedLikeSpent: each by-tier leaf carries exactly the
+// .write and the .validate of the `spent` leaf beside it, and the `$tier`
+// wildcard admits only `b` and `c`. "Validated like today's spent" is the whole
+// requirement (C1.3): a by-tier counter is the same quantity, split by which
+// credential paid for it, so it must be as monotonic, as bounded per write and
+// as tied to the run's own ledger as the total is — and a tier that is not b or
+// c must not be a third place to write money, which is what keeps tier A
+// (notional, never real) out of this family.
+//
+// Hand mutation this fails on: giving a by-tier leaf a .validate of its own
+// (weaker or stronger), dropping the `$tier` test so an arbitrary tier key
+// becomes writable, or dropping `newData.exists()` from its write so a delete
+// (which validation never checks) could lower the counter.
+func TestByTierCountersAreValidatedLikeSpent(t *testing.T) {
+	paths := generatedPaths(t)
+	for _, p := range byTierPairs() {
+		spent, ok := paths[p.spent]
+		if !ok {
+			t.Fatalf("the template no longer generates /%s", p.spent)
+		}
+		attrs, ok := paths[p.leaf]
+		if !ok {
+			t.Errorf("the template does not generate /%s", p.leaf)
+			continue
+		}
+		for _, a := range []string{".write", ".validate"} {
+			got, _ := attrs[a].(string)
+			want, _ := spent[a].(string)
+			if want == "" {
+				t.Fatalf("/%s carries no %s to mirror", p.spent, a)
+			}
+			if got == "" {
+				t.Errorf("/%s carries no %s", p.leaf, a)
+				continue
+			}
+			// The leaf sits `depth` locations deeper than the total it
+			// repeats (byTier/$tier: two), so every new-data chain must reach
+			// the same node through exactly that many more parent() calls.
+			// Everything else -- every bound, every conjunct, every absolute
+			// path -- is identical, which is what "validated like today's
+			// spent" means.
+			depth := strings.Count(p.leaf, "/") - strings.Count(p.spent, "/")
+			wantHere := deeperBy(want, depth)
+			if got != wantHere {
+				t.Errorf("/%s %s = %q, want the rule of /%s at exactly %d more parent(): %q", p.leaf, a, got, p.spent, depth, wantHere)
+			}
+			// The comparison is depth-exact: a leaf whose chains stop one
+			// parent() short is a different rule, not an equal one.
+			if parentChain.MatchString(want) && shallowerByOne(wantHere) == wantHere {
+				t.Errorf("/%s %s: a chain one parent() short compares equal to the right depth", p.leaf, a)
+			}
+		}
+		tier := strings.TrimSuffix(p.leaf, "/spent")
+		if v, _ := paths[tier][".validate"].(string); v != "$tier == 'b' || $tier == 'c'" {
+			t.Errorf("/%s .validate = %q, want the tier key test", tier, v)
+		}
+		if _, has := paths[tier][".write"]; has {
+			t.Errorf("/%s carries a .write above its leaf: a whole-tier write must be denied", tier)
+		}
+	}
+}
+
+// TestAgentEntryFieldsAreTemplateChildren closes the loop between the Go type
+// and the rules: `/agents/$slug/$run` is a closed allowlist, so a field
+// budget.AgentEntry marshals that the template does not name is a write every
+// run makes and the database refuses. The two new children of this task were
+// found exactly that way -- the plan says the template is a closed allowlist,
+// "so these must be added here" -- and this test is what makes the next field
+// impossible to add on one side only.
+//
+// Hand mutation this fails on: adding a field to budget.AgentEntry without
+// naming it in the template (or the reverse: removing a child the struct still
+// writes).
+func TestAgentEntryFieldsAreTemplateChildren(t *testing.T) {
+	// Every field set, so an omitempty one is marshalled too.
+	entry := budget.AgentEntry{
+		Repo: "aurora/web", Workflow: "implement", Title: "t", Stage: "code", Round: 1, Verify: "go",
+		Coder: "m", Reviewer: "m", Recipe: "r", Auth: "cascade", PRURL: "https://example.invalid/1",
+		Action: "tool Bash", Tokens: 1, StartedAt: 1, StageStartedAt: 1, StageDeadline: 1, UpdatedAt: 1,
+		Spent: 1, Halted: "budget", Credential: "a1", WaitingUntil: 2, RequestedBy: "alice@example.invalid",
+	}
+	b, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(b, &fields); err != nil {
+		t.Fatal(err)
+	}
+	paths := generatedPaths(t)
+	parent := "agents/" + slugForPath + "/$run"
+	for f := range fields {
+		if _, ok := paths[parent+"/"+f]; !ok {
+			t.Errorf("budget.AgentEntry marshals %q and the template does not generate /%s: the entry's $other guard refuses the write", f, parent+"/"+f)
+		}
+	}
+	// The interesting two, named so that a rename has to be argued: the
+	// cascade's current credential and the instant it expects to resume at.
+	for _, f := range []string{"credential", "waiting_until"} {
+		if _, ok := fields[f]; !ok {
+			t.Errorf("budget.AgentEntry no longer marshals %q", f)
+		}
+	}
+}
+
+// TestRulesPreexistingPathsUnchanged: every location the generation-3 document
+// carried (testdata/rules.generation3.json, a frozen copy of the golden as main
+// had it) still carries byte-for-byte the same rule. The new document may only
+// add; a rule that moved under a path that already existed is a change to what
+// every installation's runs may do, and it must be seen and named rather than
+// arrive as part of "we added the credentials children".
+//
+// Hand mutation this fails on: editing any existing rule (a loosened bound, a
+// dropped conjunct) while adding the new nodes.
+func TestRulesPreexistingPathsUnchanged(t *testing.T) {
+	raw, err := os.ReadFile("testdata/rules.generation3.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	before, after := map[string]map[string]any{}, generatedPaths(t)
+	walk(doc["rules"], nil, func(path []string, attrs map[string]any) {
+		if len(path) == 0 {
+			return
+		}
+		segs := make([]string, len(path))
+		for i, s := range path {
+			if s == "$slug" { // generatedPaths spells the model slug as slugForPath
+				s = slugForPath
+			}
+			segs[i] = s
+		}
+		before[strings.Join(segs, "/")] = attrs
+	})
+	for p, want := range before {
+		got, ok := after[p]
+		if !ok {
+			t.Errorf("/%s is gone: this change may only add to the rules", p)
+			continue
+		}
+		if !maps.Equal(want, got) {
+			t.Errorf("/%s changed:\n  was %v\n  now %v", p, want, got)
+		}
+	}
+	// And the addition is the one this task makes: the new paths are exactly
+	// the credentials family. Anything else that appears here is a rules change
+	// nobody asked for.
+	for p := range after {
+		if _, ok := before[p]; ok {
+			continue
+		}
+		if !isNewCredsPath(p) {
+			t.Errorf("/%s is new and is not one of this task's additions", p)
+		}
+	}
+}
+
+// isNewCredsPath reports whether p is one of the three things C1.3 adds: the
+// credentials node, a by-tier counter (or the node above one), or the registry
+// entry's two new children. Anything else that appears in the document is a
+// rules change nobody asked for.
+func isNewCredsPath(p string) bool {
+	// The family is one node, denied whole. A path *under* it is not this
+	// task's addition but a change to what the family contains — the shape a
+	// grant hidden under /creds takes — so it is refused here rather than
+	// waved through by a prefix match (review finding M1: a wildcard child
+	// with a TOKEN read passed this test and was caught only by the emulator,
+	// which does not run in the job that runs this file).
+	if p == credsRoot {
+		return true
+	}
+	for _, pair := range byTierPairs() {
+		tier := strings.TrimSuffix(pair.leaf, "/spent") // .../byTier/$tier
+		if p == pair.leaf || p == tier || p == strings.TrimSuffix(tier, "/$tier") {
+			return true
+		}
+	}
+	entry := "agents/" + slugForPath + "/$run/"
+	return p == entry+"credential" || p == entry+"waiting_until"
+}
+
+// TestRulesVersionUnchanged: this task does not move the rules generation. The
+// deployed document changes, but the generations an installation compares are
+// left where they are, and the credentials children get a marker of their own
+// instead (C1.3's "no RulesVersion bump", marker.go):
+//
+//   - projectpolicy.RulesVersion is the generation of the whole document, read
+//     by the deploy's downgrade refusal, the runner's policy gate and doctor's
+//     policy-rules-skew. Moving it would tell every installation whose owner has
+//     not redeployed yet that its rules are older than the binary's, for a
+//     change that adds optional children of nodes runs already write.
+//   - projectpolicy.PolicyRulesVersion gates the policy nodes, which this change
+//     does not touch. It stays 1.
+//   - rules.CredsRulesVersion is the credentials family's own generation, at 1,
+//     which a cascade launch, the init stage and doctor read (C1.19-C1.21).
+//
+// The numbers are asserted rather than referenced so that a bump has to come
+// here and say so.
+//
+// Hand mutation this fails on: bumping any of the three (or lowering
+// CredsRulesVersion), which is what a reviewer must see argued for.
+func TestRulesVersionUnchanged(t *testing.T) {
+	if projectpolicy.RulesVersion != 3 {
+		t.Errorf("projectpolicy.RulesVersion = %d, want 3: this change does not move the document generation", projectpolicy.RulesVersion)
+	}
+	if projectpolicy.PolicyRulesVersion != 1 {
+		t.Errorf("projectpolicy.PolicyRulesVersion = %d, want 1: this change does not touch the policy nodes", projectpolicy.PolicyRulesVersion)
+	}
+	if CredsRulesVersion != 1 {
+		t.Errorf("CredsRulesVersion = %d, want 1: the first generation that carries the credentials children", CredsRulesVersion)
+	}
+	if PathCredsRulesMarker() != "config/limits/credsRules" {
+		t.Errorf("PathCredsRulesMarker() = %q, want config/limits/credsRules", PathCredsRulesMarker())
+	}
+	if PathCredsRulesMarker() == projectpolicy.PathRulesMarker() {
+		t.Errorf("the credentials marker is the rules marker: %q", PathCredsRulesMarker())
+	}
+}
+
+// TestCredsRulesMarkerIsRunReadable: a `cascade` launch reads the credentials
+// marker with the run's own token (C1.19), so the location has to be granted to
+// TOKEN. It inherits that from `config/limits`'s own `.read`, which is what
+// makes the marker cheap to read and impossible to write from a run: no
+// location under /config carries a write a client could satisfy.
+//
+// Hand mutation this fails on: adding a `.write` under config/limits (the
+// marker becomes forgeable by any run of the project), or removing the
+// config/limits read grant.
+func TestCredsRulesMarkerIsRunReadable(t *testing.T) {
+	paths := generatedPaths(t)
+	parent, ok := paths["config/limits"]
+	if !ok {
+		t.Fatal("the template does not generate /config/limits")
+	}
+	if v, _ := parent[".read"].(string); !strings.Contains(v, "auth.token.fp != null") {
+		t.Errorf("/config/limits .read = %v, want the TOKEN grant the marker inherits", parent[".read"])
+	}
+	for _, p := range []string{PathCredsRulesMarker(), projectpolicy.PathRulesMarker()} {
+		if !strings.HasPrefix(p, "config/limits/") {
+			t.Errorf("%s is not under /config/limits: it does not inherit the run-token read", p)
+		}
+	}
+}
+
+// TestRunCannotWriteCredsRulesMarker and TestRunCannotWritePolicyRulesMarker
+// pin, without the emulator, that no location under /config grants any client a
+// write — so neither marker can be forged by a run token. `policyRules` had no
+// such pin; this adds it beside the new one.
+//
+// The markers are the whole reason a run can be refused before it starts: a
+// token that could write `credsRules` could make a `cascade` launch pass a gate
+// the installation has not met. The emulator proves the refusal with a real
+// token (creds_emulator_test.go); this proves the absence of a grant, which is
+// what makes it true everywhere at once.
+//
+// Hand mutation this fails on: granting /config/limits or /config a write (a
+// TOKEN write is the shape an "init writes it as its own account" mistake takes
+// — the deploy writes it over IAM, which bypasses the rules).
+func TestRunCannotWriteCredsRulesMarker(t *testing.T) {
+	assertNoConfigWrites(t, PathCredsRulesMarker())
+}
+
+func TestRunCannotWritePolicyRulesMarker(t *testing.T) {
+	assertNoConfigWrites(t, projectpolicy.PathRulesMarker())
+}
+
+func assertNoConfigWrites(t *testing.T, marker string) {
+	t.Helper()
+	walk(rulesTree(t), nil, func(p []string, attrs map[string]any) {
+		if len(p) == 0 || p[0] != "config" {
+			return
+		}
+		if w, has := attrs[".write"]; has && w != false {
+			t.Errorf("/%s: .write = %v under /config, where the markers are written over IAM only", strings.Join(p, "/"), w)
+		}
+	})
+	// The marker is data under a location the template carries (config/limits):
+	// the run's token reaches it through that node's own read grant, and there
+	// is no node of its own to grant anything on.
+	parent := marker[:strings.LastIndexByte(marker, '/')]
+	if _, ok := generatedPaths(t)[parent]; !ok {
+		t.Errorf("%s has no parent location (%s) in the generated rules", marker, parent)
 	}
 }

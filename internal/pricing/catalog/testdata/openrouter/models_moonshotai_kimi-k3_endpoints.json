@@ -5,10 +5,32 @@
     "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
-     "completion": "0.0000149",
+     "completion": "0.000016",
      "discount": 0,
-     "input_cache_read": "0.00000045",
-     "prompt": "0.00000049"
+     "input_cache_read": "0.000000228",
+     "prompt": "0.000000238"
+    },
+    "tag": "wafer"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.000011936",
+     "discount": 0,
+     "input_cache_read": "0.00000021",
+     "prompt": "0.000000239"
+    },
+    "tag": "inference-net/fp4"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.0000119",
+     "discount": 0,
+     "input_cache_read": "0.000000359",
+     "prompt": "0.00000036"
     },
     "tag": "wafer/us"
    },
@@ -18,19 +40,19 @@
     "pricing": {
      "completion": "0.000015",
      "discount": 0,
-     "input_cache_read": "0.00000028",
-     "prompt": "0.00000058"
+     "input_cache_read": "0.00000023",
+     "prompt": "0.00000065"
     },
-    "tag": "inference-net/fp4"
+    "tag": "makora/fp4"
    },
    {
     "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
-     "completion": "0.00002",
+     "completion": "0.0000149",
      "discount": 0,
-     "input_cache_read": "0.00000029",
-     "prompt": "0.00000072"
+     "input_cache_read": "0.000000319",
+     "prompt": "0.000000666"
     },
     "tag": "morph/fp8"
    },
@@ -38,21 +60,32 @@
     "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
-     "completion": "0.000024",
+     "completion": "0.000003",
      "discount": 0,
-     "input_cache_read": "0.00000045",
-     "prompt": "0.00000072"
+     "input_cache_read": "0.0000006",
+     "prompt": "0.0000008"
     },
-    "tag": "wafer"
+    "tag": "relace/fp4"
    },
    {
     "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
-     "completion": "0.0000135",
+     "completion": "0.000009",
      "discount": 0,
-     "input_cache_read": "0.0000003",
-     "prompt": "0.00000084"
+     "input_cache_read": "0.0000004",
+     "prompt": "0.0000012"
+    },
+    "tag": "sail-research/fp4/us"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.000009",
+     "discount": 0,
+     "input_cache_read": "0.0000004",
+     "prompt": "0.0000012"
     },
     "tag": "sail-research/fp4"
    },
@@ -71,12 +104,12 @@
     "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
-     "completion": "0.00001275",
-     "discount": 0,
-     "input_cache_read": "0.000000204",
-     "prompt": "0.00000153"
+     "completion": "0.00000825",
+     "discount": 0.45,
+     "input_cache_read": "0.000000165",
+     "prompt": "0.00000165"
     },
-    "tag": "makora/fp4"
+    "tag": "decart/mxfp4"
    },
    {
     "context_length": 1048576,
@@ -93,32 +126,10 @@
     "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
-     "completion": "0.0000105",
-     "discount": 0.3,
-     "input_cache_read": "0.00000021",
-     "prompt": "0.0000021"
-    },
-    "tag": "decart/mxfp4"
-   },
-   {
-    "context_length": 1048576,
-    "max_completion_tokens": 943718,
-    "pricing": {
-     "completion": "0.000014",
-     "discount": 0,
-     "input_cache_read": "0.0000003",
-     "prompt": "0.0000024"
-    },
-    "tag": "relace/fp4"
-   },
-   {
-    "context_length": 1048576,
-    "max_completion_tokens": 943718,
-    "pricing": {
-     "completion": "0.000015",
+     "completion": "0.000014519",
      "discount": 0,
      "input_cache_read": "0.00000035",
-     "prompt": "0.00000249"
+     "prompt": "0.00000224"
     },
     "tag": "inference-net/fast"
    },
@@ -143,17 +154,6 @@
      "prompt": "0.00000255"
     },
     "tag": "digitalocean"
-   },
-   {
-    "context_length": 1048576,
-    "max_completion_tokens": 943718,
-    "pricing": {
-     "completion": "0.000013",
-     "discount": 0,
-     "input_cache_read": "0.00000026",
-     "prompt": "0.0000026"
-    },
-    "tag": "parasail/fp4"
    },
    {
     "context_length": 1048576,
@@ -188,6 +188,17 @@
      "prompt": "0.000003"
     },
     "tag": "amazon-bedrock/us-east-2"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.000015",
+     "discount": 0,
+     "input_cache_read": "0.0000003",
+     "prompt": "0.000003"
+    },
+    "tag": "parasail/fp4"
    },
    {
     "context_length": 1048576,
