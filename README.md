@@ -80,7 +80,7 @@ The engine is generic: everything specific to a repository lives in its `fugaro.
 ## Safety and cost controls
 
 **What a run's agent cannot reach**
-- **Your machine.** Your laptop runs the `fugaro` CLI, Terraform and `gcloud` (during `init`) and your own agent; the run's agent is in a Cloud Run container.
+- **Your machine.** Your laptop runs the `fugaro` CLI, Terraform and `gcloud` (during `setup`) and your own agent; the run's agent is in a Cloud Run container.
 - **Other repositories' cloud resources.** Each workflow's job runs as its own service account, which can read only the secrets that workflow mounts and only its own repository's run, cache and lock objects. Each repository builds with its own account into its own registry. **On GitHub the job holds the App's private key**, so a compromised run can mint tokens for every repository the App is installed on: install the App only on repositories Fugaro serves, or use one App per repository for isolation.
 - **Your GitHub Actions workflow files.** On GitHub the App has exactly four repository permissions, Contents Read & write, Pull requests Read & write, Issues Read and Metadata Read, never Workflows, so GitHub refuses a push that changes `.github/workflows/`; each run's token is for one repository only. Code it pushes still runs in the workflows you already have (a `push` trigger runs your scripts with the secrets they expose). Fugaro has no equivalent guard for Bitbucket pipelines. Name the App `<yourname>-fugaro`, install it on the repository, and accept any later permission change on the installation ([docs/git-providers.md](docs/git-providers.md)).
 
