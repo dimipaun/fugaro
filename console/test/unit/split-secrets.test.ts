@@ -21,12 +21,13 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  MAX_AMBIGUOUS_SCAN,
   MAX_SPLIT_SCAN,
-  MAX_TEXT_INPUT_LENGTH,
   resetScanWork,
   sanitizeRefusal,
   sanitizeText,
   scanWorkDone,
+  splitScanWorkDone,
 } from '../../src/shared/sanitize'
 import { createRedactor } from '../../src/source/redact'
 import { realisticSecrets } from '../support/fakeSecrets'
@@ -179,36 +180,60 @@ describe('the split readings stay bounded', () => {
   // 435 ms on a loaded macOS runner, which failed the 0.9.6 and 0.9.7 release
   // gates over a runner that was merely busy. `scanWorkDone` counts what the
   // code chose to do -- the characters `traceCredentials` runs the tracked
-  // rules over, summed across every reading (`resolveReadings`) -- and it is
-  // the same number on every machine and in every run.
+  // rules over, summed across every reading (`resolveReadings`) -- and
+  // `splitScanWorkDone` counts the part of that total the split readings cost,
+  // the part that grows with the number of split places. Both are the same
+  // number on every machine and in every run.
   //
-  // The bound is the resolver's own. `MAX_SPLIT_SCAN` (sanitize.ts) is what one
-  // pass of split readings may cost, readings times characters, and the reading
-  // of the prepared form itself -- which every value pays whatever its places
-  // are -- is at most `MAX_TEXT_INPUT_LENGTH`. A run whose combinations would
-  // cost more than the budget allows is masked whole rather than read
-  // (`MAX_SPLIT_PLACES`, `MAX_SPLIT_SCAN`), so this work cannot grow with the
-  // number of places in the value: that is what makes these five pathological
-  // inputs cost a bounded amount rather than the super-linear amount a reading
-  // per run -- instead of a reading per combination across the runs, the
-  // side-by-side reading `traceSplits` does -- would cost. What is NOT counted
-  // here is each door's own, linear pass over the text (its rule list,
-  // `applyRules`), which is why the bound is stated in the resolver's own terms
-  // rather than as a multiple of the input.
+  // The caps are the resolver's own, per call, for a value of `length`
+  // characters:
+  //
+  //  - the split readings (`traceSplits`) cost at most `2 * (MAX_SPLIT_SCAN +
+  //    length)`. The budget is `MAX_SPLIT_SCAN / prepared.length` readings
+  //    (sanitize.ts), so the pass is at most `MAX_SPLIT_SCAN` characters --
+  //    except that the budget divides by the prepared form while the reading it
+  //    scans is the prepared form plus the SPLIT_MARKs inserted into it, at
+  //    most one per character of it: twice the prepared form. So the pass is
+  //    `2 * MAX_SPLIT_SCAN` where the budget binds, and `2 * length` where it
+  //    does not (a value longer than `MAX_SPLIT_SCAN` is read once, whole,
+  //    since the budget cannot go below one). A run whose combinations would
+  //    cost more than the budget allows is masked whole rather than read
+  //    (`MAX_SPLIT_PLACES`, `MAX_SPLIT_SCAN`), so this cannot grow with the
+  //    number of places in the value: that is what makes these five
+  //    pathological inputs cost a bounded amount rather than the super-linear
+  //    amount a reading per run -- instead of a reading per combination across
+  //    the runs, the side-by-side reading `traceSplits` does -- would cost.
+  //  - every reading together costs at most `MAX_AMBIGUOUS_SCAN + 2 *
+  //    (MAX_SPLIT_SCAN + length) + length`: the split readings above, the one
+  //    reading of the prepared form every value pays, and the ambiguous
+  //    sequence clusters, which the resolver bounds by its own check over
+  //    readings times characters (`resolveAmbiguousSequences`) -- refusing,
+  //    rather than reading, a value it would cost more than `MAX_AMBIGUOUS_SCAN`
+  //    to read.
+  //
+  // Both caps carry the input's own length because `redactText` -- the
+  // recorder door, `redactFreeText` -- has no cap of its own: the document
+  // check (`MAX_REDACTABLE_STRING_LENGTH`) and the feed-line check
+  // (`MAX_REDACTABLE_LINE_LENGTH`) do not apply to it, and the split budget
+  // falls to one reading for anything longer than `MAX_SPLIT_SCAN`. What is
+  // NOT counted is each door's own, linear pass over the text (its rule list,
+  // `applyRules`), which is why the caps are stated in the resolver's own
+  // terms rather than as a multiple of the input.
   //
   // Mutations (verified, run and restored), both in traceSplits:
   //
   //  - drop `count > budget` from the masking test, so a run is read in every
-  //    combination whatever the budget: "four places per word" costs 838,784
-  //    (2.6x the bound) and "six places per word" 3,295,424 (10x), and both
-  //    fail;
+  //    combination whatever the budget: the split readings alone cost 799,466
+  //    for "four places per word" and 3,257,976 for "six places per word",
+  //    over their 655,348 and 655,356 caps, and both fail. (The whole-work
+  //    cap is wider, and does not catch the first of those on its own.)
   //  - make `readings` the sum of the runs' combinations rather than their
   //    maximum -- one reading per run, the quadratic shape, where the
   //    side-by-side reading is one per combination across all of them: on the
-  //    same five inputs shortened to 8 KiB (a full 64 KiB run would take
-  //    minutes) "four places per word" costs 81,837,756, 250x the bound, and
-  //    fails.
-  const WORK_BOUND = MAX_SPLIT_SCAN + MAX_TEXT_INPUT_LENGTH
+  //    same inputs shortened to 8 KiB (a full 64 KiB run would take minutes)
+  //    the split readings cost 11,179,350 for "a zero-width space inside every
+  //    word" and 81,832,842 for "four places per word", 20x and 151x their
+  //    540,668 caps, and both fail.
   const fill = (unit: string): string => unit.repeat(Math.floor(65_536 / unit.length))
   const inputs: readonly (readonly [string, string])[] = [
     ['a zero-width space inside every word', fill('ab​cd ')],
@@ -217,21 +242,28 @@ describe('the split readings stay bounded', () => {
     ['six places per word', fill('a​b​c​d​e​f​g ')],
     ['an SGR between every pair of letters', fill('\u001b[1mab')],
   ]
-  /** work is what `run` cost, in the characters the readings scanned: the
-   * resolver's counter, read after one call and reset before the next. */
-  function work(run: () => unknown): number {
+
+  /** splitCap and totalCap are the two caps above, for a value of `length`. */
+  const splitCap = (length: number): number => 2 * (MAX_SPLIT_SCAN + length)
+  const totalCap = (length: number): number => MAX_AMBIGUOUS_SCAN + 2 * (MAX_SPLIT_SCAN + length) + length
+
+  /** bounded asserts one door's work over one input against those caps: the
+   * counters are read after one call and reset before the next. */
+  function bounded(door: string, input: string, run: () => unknown): void {
     resetScanWork()
     try {
       run()
     } catch {
       // A refusal is an answer, and the work it took is still the work.
     }
-    return scanWorkDone()
+    expect(splitScanWorkDone(), `${door}: the split readings`).toBeLessThanOrEqual(splitCap(input.length))
+    expect(scanWorkDone(), `${door}: every reading`).toBeLessThanOrEqual(totalCap(input.length))
   }
+
   it.each(inputs)('%s', (_name, input) => {
     const redactor = createRedactor()
-    expect(work(() => sanitizeText(input, 'sentence')), 'sentence').toBeLessThanOrEqual(WORK_BOUND)
-    expect(work(() => sanitizeRefusal(input)), 'refusal').toBeLessThanOrEqual(WORK_BOUND)
-    expect(work(() => redactor.redactText(input)), 'recorder').toBeLessThanOrEqual(WORK_BOUND)
+    bounded('sentence', input, () => sanitizeText(input, 'sentence'))
+    bounded('refusal', input, () => sanitizeRefusal(input))
+    bounded('recorder', input, () => redactor.redactText(input))
   })
 })
