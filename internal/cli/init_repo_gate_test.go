@@ -295,10 +295,10 @@ func TestUnknownDetailNamesTheRouteTheRunHas(t *testing.T) {
 		}
 	}
 	// A coding agent's session confirms nothing, so the sentence names no flag
-	// for it to paste: the ordinary origin's clause mentions none at all, and
-	// the other two keep denying it rather than offering it.
+	// for it to paste: the ordinary origin's clause says so rather than
+	// offering --yes, and the other two keep denying it.
 	t.Setenv("CLAUDECODE", "1")
-	if got := convergeOptIn(plain); strings.Contains(got, "--yes") || !strings.Contains(got, "confirms nothing") {
+	if got := convergeOptIn(plain); !strings.Contains(got, "confirms nothing") || strings.Contains(got, "covers it") {
 		t.Errorf("an agent session is handed --yes: %q", got)
 	}
 	for _, oi := range []originInfo{rewritten, other} {
