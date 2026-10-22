@@ -529,7 +529,7 @@ func (p *Provider) FetchPRHead(ctx context.Context, number int) (gitprov.PRHead,
 	}
 	fork := !strings.EqualFold(info.SourceRepo, p.owner+"/"+p.repo)
 	slug, known := p.appSlug(ctx)
-	self := known && d.User.login() == slug+"[bot]" && !fork
+	self := known && d.User.login() == slug+botSuffix && !fork
 	return gitprov.PRHead{
 		SHA: info.HeadSHA, Fork: fork, Open: info.State == gitprov.PROpen,
 		AuthorID: d.User.id(), AuthorLogin: d.User.login(),

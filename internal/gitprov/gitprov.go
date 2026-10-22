@@ -251,8 +251,10 @@ type Provider interface {
 	// reviews and drafts) and reviews with no body are left out.
 	//
 	// Self and SelfKnown say whether a comment was posted as the identity
-	// Fugaro uses, which the adapter looks up (GitHub: the App, GET /app;
-	// Bitbucket: the token's user, GET /user). A lookup the provider
+	// Fugaro uses, which the adapter looks up (GitHub: the App, GET /app
+	// with its JWT when the job holds the App's key, and GET /user with the
+	// run's installation token when the credentials service holds it —
+	// C2.2; Bitbucket: the token's user, GET /user). A lookup the provider
 	// answers definitely (a 4xx other than 408 and 429) leaves SelfKnown
 	// false on every comment, and the answer is kept. A passing failure (a
 	// network error, a 408, 429 or 5xx, a cancelled context) is not kept:
