@@ -23,17 +23,19 @@ import (
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // These are C1.15's runner half: which upstream a run's auth builds, what
 // that upstream carries to the credentials service, and the ID token the job
 // presents there. They ask gatewayUpstream -- the function startGateway
-// builds its options from -- rather than running a whole run, because the
-// cascade's end-to-end path is C1.19's switch: GatewayOn refuses the auth
-// until that task teaches it, so a run's own startGateway cannot reach this
-// code today and a test that insisted on a whole run would be testing the
-// switch instead of the upstream.
+// builds its options from -- rather than running a whole run, because what
+// they are about is the upstream: which one an auth builds, and what it
+// carries. C1.19's own half is here too -- the record a cascade run keeps of
+// the credential the service answered with, which arrives through the
+// gateway's answer (r.serviceAnswer, the one callback startGateway hands
+// over).
 //
 // The one thing here that cannot be made up is the run's own identity: it is
 // the budget session's token, not an environment value, so the wiring test
@@ -82,7 +84,20 @@ func svcRun(t *testing.T, auth string, edit func(*run)) *run {
 // heartbeat, kill watch or lease runs.
 func svcSession(t *testing.T) *budget.Session {
 	t.Helper()
-	db := gcpfake.NewRTDB(t)
+	return svcSessionOn(t, gcpfake.NewRTDB(t))
+}
+
+// svcSessionOn is svcSession against a database the caller holds and with a
+// heartbeat of its own choosing (zero: the default), for a test that has to
+// read what the session writes -- the registry entry a cascade run's
+// credential name reaches goes out on a beat, and that is the writer D141's
+// dashboard reads.
+func svcSessionOn(t *testing.T, db *gcpfake.RTDB, heartbeat ...time.Duration) *budget.Session {
+	t.Helper()
+	var every time.Duration
+	if len(heartbeat) > 0 {
+		every = heartbeat[0]
+	}
 	// The installation's own limits, as `fugaro init --firebase` writes them:
 	// without limits.maxReserveMicros the lease refuses everything, and the
 	// run's gateway would halt on its first call for a reason that is about
@@ -116,7 +131,8 @@ func svcSession(t *testing.T) *budget.Session {
 		IdentityURL: itk.URL, SecureTokenURL: itk.URL,
 		Slug: slug, Run: svcRunID,
 		Grace: time.Minute, Now: time.Now,
-		Log: slog.New(slog.DiscardHandler),
+		HeartbeatEvery: every,
+		Log:            slog.New(slog.DiscardHandler),
 		// The run's redactor, which every session registers its secrets with
 		// before their first use: a real run's is r.addSecret. Nothing here
 		// keeps them, and nothing in these tests prints one.
@@ -675,4 +691,192 @@ func TestServiceAnswerReachesTheRunsWait(t *testing.T) {
 	if !ex.Until.Equal(reset.UTC()) {
 		t.Errorf("the stage was ended until %s, want the reset the service named, %s", ex.Until, reset.UTC())
 	}
+}
+
+// svcServedRun is a cascade run whose service answers served calls: a
+// credentials service stand-in that attaches the credential it is told to and
+// answers with the tier and the credential's name, and the metadata stand-in
+// the job's ID token comes from. It is C1.19's path end to end -- the run's
+// own startGateway, the run's own upstream, the service's own answer reaching
+// the run through the one callback startGateway wires (r.serviceAnswer).
+//
+// name is called on each call, so a test can hold a service that moves from
+// one credential to another between calls.
+func svcServedRun(t *testing.T, name func() string, edit func(*run)) *run {
+	t.Helper()
+	fake, svc := anthropicfake.New(t)
+	fake.Func = func(r *http.Request, body []byte) anthropicfake.Reply {
+		rep := anthropicfake.MessageOK("claude-sonnet-5-5", pricing.Usage{Input: 1, Output: 3})
+		rep.Header = http.Header{
+			gateway.HeaderTier:       []string{gateway.TierB},
+			gateway.HeaderCredential: []string{name()},
+		}
+		return rep
+	}
+	meta := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "job-id-token-from-the-metadata-stand-in")
+	}))
+	t.Cleanup(meta.Close)
+
+	r := svcRun(t, config.AuthCascade, func(r *run) {
+		r.d.Env = []string{
+			credentialsServiceURLEnv + "=" + svc.URL,
+			metadataHostEnv + "=" + strings.TrimPrefix(meta.URL, "http://"),
+		}
+		r.spend = Spend{Mode: "observe", Prices: pricing.Embedded()}
+		if edit != nil {
+			edit(r)
+		}
+	})
+	return r
+}
+
+// svcPost makes the agent's own call through the run's own gateway and returns
+// the answer it got.
+func svcPost(t *testing.T, r *run) (int, string) {
+	t.Helper()
+	if r.gwAgent == nil || r.gwAgent.BaseURL == "" {
+		t.Fatal("the run's gateway did not start")
+	}
+	r.gw.BeginStage(gateway.Stage{Name: "implement", Model: "claude-sonnet-5-5"})
+	req, err := http.NewRequest("POST", r.gwAgent.BaseURL+"/v1/messages",
+		strings.NewReader(`{"model":"claude-sonnet-5-5","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("x-api-key", r.gwAgent.Token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	return resp.StatusCode, string(body)
+}
+
+// TestCascadeRecordsOAuthAccount: a cascade run records which credential its
+// calls were served with (C1.19, D140). The service's answer names it, the
+// run's own gateway hands the answer over, and the record the run ends with
+// -- runstore.Record.OAuthAccount, which `fugaro runs` reads -- carries the
+// name and nothing else: no value ever reaches the job, so none can reach a
+// record.
+func TestCascadeRecordsOAuthAccount(t *testing.T) {
+	r := svcServedRun(t, func() string { return "repo-shared-b" }, func(r *run) {
+		r.rec = &runstore.Record{}
+	})
+	r.sess = svcSession(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := r.startGateway(ctx); err != nil {
+		t.Fatalf("the run's own gateway: %v", err)
+	}
+	defer func() {
+		c, stop := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stop()
+		_ = r.gw.Close(c)
+	}()
+	if code, body := svcPost(t, r); code != http.StatusOK {
+		t.Fatalf("the agent's call was answered %d: %s", code, body)
+	}
+	if got := r.rec.OAuthAccount; got != "repo-shared-b" {
+		t.Errorf("the record names the credential %q, want the one the service answered with", got)
+	}
+
+	// The name is written as one word, the way every untrusted value the run
+	// records is: a name carrying a control or bidi character would be the
+	// whole record's problem, and it is the service's answer, not this build's
+	// text.
+	r.serviceAnswer(gateway.ServiceAnswer{Credential: "shared\u0007c‮e"})
+	if got := r.rec.OAuthAccount; got != "sharedce" {
+		t.Errorf("the record names the credential %q, want the name with what a terminal must not be handed stripped", got)
+	}
+	// An answer that names no credential -- the gateway answering with its own
+	// route's key, which is what a non-cascade run's answers are -- leaves the
+	// record as it stands rather than clearing it.
+	r.serviceAnswer(gateway.ServiceAnswer{Tier: gateway.TierA})
+	if got := r.rec.OAuthAccount; got != "sharedce" {
+		t.Errorf("the record names the credential %q after an answer with none, want it unchanged", got)
+	}
+}
+
+// TestCascadeWritesCurrentCredentialName: the same name reaches the registry
+// entry the dashboard reads while the run is running (C1.3, D141), and it is
+// the credential the run is using now -- a run that moved from one to another
+// shows the later one, not the first it ever used.
+func TestCascadeWritesCurrentCredentialName(t *testing.T) {
+	var mu sync.Mutex
+	current := "repo-shared-a"
+	db := gcpfake.NewRTDB(t)
+	r := svcServedRun(t, func() string { mu.Lock(); defer mu.Unlock(); return current }, func(r *run) {
+		r.rec = &runstore.Record{}
+	})
+	sess := svcSessionOn(t, db, 20*time.Millisecond)
+	if err := sess.Start(context.Background(), budget.AgentEntry{Repo: "acme/app", Auth: config.AuthCascade}); err != nil {
+		t.Fatalf("starting the run's registry entry: %v", err)
+	}
+	t.Cleanup(func() { sess.Finish(context.Background(), "succeeded") })
+	r.sess = sess
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := r.startGateway(ctx); err != nil {
+		t.Fatalf("the run's own gateway: %v", err)
+	}
+	defer func() {
+		c, stop := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stop()
+		_ = r.gw.Close(c)
+	}()
+
+	entry := func() map[string]any {
+		e, _ := db.Value(budget.PathAgent(svcSlug, svcRunID)).(map[string]any)
+		return e
+	}
+	if code, body := svcPost(t, r); code != http.StatusOK {
+		t.Fatalf("the agent's first call was answered %d: %s", code, body)
+	}
+	svcWaitFor(t, "the entry to name the first credential", func() bool {
+		e := entry()
+		n, _ := e["credential"].(string)
+		return n == "repo-shared-a"
+	})
+
+	// The service moves the run to another credential: the entry follows it.
+	mu.Lock()
+	current = "repo-shared-b"
+	mu.Unlock()
+	if code, body := svcPost(t, r); code != http.StatusOK {
+		t.Fatalf("the agent's second call was answered %d: %s", code, body)
+	}
+	svcWaitFor(t, "the entry to name the credential the run is using now", func() bool {
+		e := entry()
+		n, _ := e["credential"].(string)
+		return n == "repo-shared-b"
+	})
+
+	// The name only ever goes out as the name: the entry is written by the
+	// session's own heartbeat, and nothing about the credential's value is the
+	// run's to write.
+	e := entry()
+	if e["auth"] != config.AuthCascade {
+		t.Errorf("the entry's auth is %v, want %s", e["auth"], config.AuthCascade)
+	}
+	if r.rec.OAuthAccount != "repo-shared-b" {
+		t.Errorf("the record names %q, want the credential the run is using now", r.rec.OAuthAccount)
+	}
+}
+
+// svcWaitFor polls cond until it holds, so a test reads the registry entry the
+// session's heartbeat writes rather than the moment it was set.
+func svcWaitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
 }
