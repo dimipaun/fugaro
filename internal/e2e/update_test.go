@@ -369,14 +369,14 @@ func (r *initRepoRig) fugaroInitTyped(t *testing.T, typed string, args ...string
 // installation/default.tfstate and the local config the converge left — so what
 // each run exercises is a re-converge, which is update's own contract ("the
 // re-converge of an installation ... or, with --repo, for the repository of the
-// checkout at PATH"), and it is the door W5.2 renames this file and its tests
-// after (`internal/e2e/update_test.go`, `TestUpdate*`). W5.2 keeps
-// `TestInitRepoBuildsThenDeploys` and `TestInitRepoBuildNeedsConfirmation` as
+// checkout at PATH"), and it is the door W5.2 renamed this file and its tests
+// after (`internal/e2e/update_test.go`, `TestUpdate*`). W5.2 kept
+// `TestUpdateBuildsThenDeploys` and `TestUpdateBuildNeedsConfirmation` as
 // the only candidates for `TestSetup*`, and that split is the owner's to call
 // with W1.3; all 27 run under this one word until then.
 //
-// The word is one constant in one place because it is one decision: W5.2 moves
-// it here and nothing else in the file moves with it. Every assertion below
+// The word is one constant in one place because it is one decision: W5.2 moved
+// it here and nothing else in the file moved with it. Every assertion below
 // stays as it is.
 const convergeCmd = "update"
 
@@ -607,7 +607,7 @@ func (r *initRepoRig) localConfig(t *testing.T) *localcfg.Config {
 	return lc
 }
 
-func TestInitRepoAdoptsBootstrapResources(t *testing.T) {
+func TestUpdateAdoptsBootstrapResources(t *testing.T) {
 	r := sandboxRig(t)
 	r.bootstrap(t)
 	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
@@ -669,7 +669,7 @@ func TestInitRepoAdoptsBootstrapResources(t *testing.T) {
 	}
 }
 
-func TestInitRepoFreshPrintsSecrets(t *testing.T) {
+func TestUpdateFreshPrintsSecrets(t *testing.T) {
 	r := sandboxRig(t)
 	res := r.fugaroInit(t, "--repo", r.checkout, "--yes")
 	if res.code != 0 {
@@ -698,7 +698,7 @@ func TestInitRepoFreshPrintsSecrets(t *testing.T) {
 	}
 }
 
-func TestInitRepoBuildsThenDeploys(t *testing.T) {
+func TestUpdateBuildsThenDeploys(t *testing.T) {
 	r := sandboxRig(t)
 	r.storedSecrets()
 	r.script(t, "repo", 1, map[string]any{
@@ -755,7 +755,7 @@ func TestInitRepoBuildsThenDeploys(t *testing.T) {
 // such, so fugaro update enables the Vertex AI API; the first one says to
 // rerun the door the run is at (W2.1: this rig runs `fugaro update`, and the
 // warning names it), which the assertion below quotes.
-func TestInitRepoRecordsVertex(t *testing.T) {
+func TestUpdateRecordsVertex(t *testing.T) {
 	r := newInitRepoRig(t, "acme/sandbox", "https://bitbucket.org/acme/sandbox.git", func(y string) string {
 		return strings.Replace(y, "auth: oauth", "auth: vertex", 1)
 	})
@@ -784,7 +784,7 @@ func TestInitRepoRecordsVertex(t *testing.T) {
 // A base image outside the installation's base registry is a warning, not
 // a refusal: the build account reads only that registry, so its builds
 // would fail at the pull.
-func TestInitRepoWarnsBaseImageOutsideBaseRegistry(t *testing.T) {
+func TestUpdateWarnsBaseImageOutsideBaseRegistry(t *testing.T) {
 	r := sandboxRig(t)
 	legacy := strings.Replace(initRepoBaseImage, "/fugaro-base/", "/fugaro/", 1)
 	if err := os.WriteFile(r.cfg, []byte(strings.Replace(r.cfgText, initRepoBaseImage, legacy, 1)), 0o600); err != nil {
@@ -807,7 +807,7 @@ func TestInitRepoWarnsBaseImageOutsideBaseRegistry(t *testing.T) {
 // fugaro update --repo reads the installation's outputs in a directory of its own,
 // so the installation's workdir (a fugaro update running meanwhile, or
 // terraform run there by hand) keeps its tfvars, imports and saved plan.
-func TestInitRepoLeavesInstallationWorkdir(t *testing.T) {
+func TestUpdateLeavesInstallationWorkdir(t *testing.T) {
 	r := sandboxRig(t)
 	dir, err := infra.InstallationWorkdir(os.Getenv, initRepoProject)
 	if err != nil {
@@ -836,7 +836,7 @@ func TestInitRepoLeavesInstallationWorkdir(t *testing.T) {
 // A first build that fails comes after the first apply, which already
 // made the repository's resources: the repository still joins the local
 // config, and what it still needs is still printed, before the exit 2.
-func TestInitRepoFailedBuildStillRecordsRepo(t *testing.T) {
+func TestUpdateFailedBuildStillRecordsRepo(t *testing.T) {
 	r := sandboxRig(t)
 	r.storedSecrets()
 	r.build.SetStep("build", func(string) error { return errors.New("the build broke") })
@@ -856,7 +856,7 @@ func TestInitRepoFailedBuildStillRecordsRepo(t *testing.T) {
 	}
 }
 
-func TestInitRepoAdoptedSwitchesImageAfterBuild(t *testing.T) {
+func TestUpdateAdoptedSwitchesImageAfterBuild(t *testing.T) {
 	r := sandboxRig(t)
 	r.bootstrap(t)
 	r.script(t, "repo", 1, map[string]any{
@@ -897,7 +897,7 @@ func TestInitRepoAdoptedSwitchesImageAfterBuild(t *testing.T) {
 	}
 }
 
-func TestInitRepoRefusesForeign(t *testing.T) {
+func TestUpdateRefusesForeign(t *testing.T) {
 	r := sandboxRig(t)
 	id := r.spec.Secrets["bitbucket-token"]
 	r.sm.Seed(id, withLabels(managedLabels, gcp.LabelRepo, "someone-else", gcp.LabelSecret, "bitbucket-token"), []byte("v"))
@@ -916,7 +916,7 @@ func TestInitRepoRefusesForeign(t *testing.T) {
 	}
 }
 
-func TestInitRepoIdempotent(t *testing.T) {
+func TestUpdateIdempotent(t *testing.T) {
 	r := sandboxRig(t)
 	r.storedSecrets()
 	// Everything an earlier run made: the job on the new image, the
@@ -965,7 +965,7 @@ func TestInitRepoIdempotent(t *testing.T) {
 	}
 }
 
-func TestInitRepoGitHubNeedsAppID(t *testing.T) {
+func TestUpdateGitHubNeedsAppID(t *testing.T) {
 	r := newInitRepoRig(t, "acme/webapp", "https://github.com/acme/webapp.git", func(y string) string {
 		return strings.Replace(y, "provider: bitbucket, base_branch: master", "provider: github, base_branch: main", 1)
 	})
@@ -997,7 +997,7 @@ func TestInitRepoGitHubNeedsAppID(t *testing.T) {
 	}
 }
 
-func TestInitRepoPrintVarsNoCalls(t *testing.T) {
+func TestUpdatePrintVarsNoCalls(t *testing.T) {
 	r := sandboxRig(t)
 	before := r.requests()
 	res := r.fugaroInit(t, "--repo", r.checkout, "--print-vars", "--allow-job-delete")
@@ -1026,7 +1026,7 @@ func TestInitRepoPrintVarsNoCalls(t *testing.T) {
 	}
 }
 
-func TestInitRepoAllowJobDeleteHighlighted(t *testing.T) {
+func TestUpdateAllowJobDeleteHighlighted(t *testing.T) {
 	r := sandboxRig(t)
 	res := r.fugaroInit(t, "--repo", r.checkout, "--allow-job-delete", "--plan-only")
 	if res.code != 0 {
@@ -1077,7 +1077,7 @@ func exists(t *testing.T, b *blobx.Bucket, key string) bool {
 // After the installation's --forget (state rm), its state keeps its
 // outputs but manages nothing: update --repo refuses to plan against it,
 // and says to run fugaro setup first.
-func TestInitRepoRefusesForgottenInstallation(t *testing.T) {
+func TestUpdateRefusesForgottenInstallation(t *testing.T) {
 	r := sandboxRig(t)
 	r.script(t, "installation", -1, map[string]any{"output": map[string]any{"stdout": installationOutputs(t)}, "show": map[string]any{"stdout": stateEmpty}})
 	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
@@ -1092,7 +1092,7 @@ func TestInitRepoRefusesForgottenInstallation(t *testing.T) {
 // An installation applied before the tag mover role existed outputs no
 // role_ids.tag_mover: update --repo refuses to plan a grant of a role that
 // isn't there, and says to run fugaro setup first.
-func TestInitRepoRefusesInstallationWithoutTagMover(t *testing.T) {
+func TestUpdateRefusesInstallationWithoutTagMover(t *testing.T) {
 	r := sandboxRig(t)
 	var outs map[string]map[string]any
 	if err := json.Unmarshal([]byte(installationOutputs(t)), &outs); err != nil {
@@ -1115,7 +1115,7 @@ func TestInitRepoRefusesInstallationWithoutTagMover(t *testing.T) {
 
 // An installation applied before M9a has no project_name: every job
 // carries the name, so fugaro update --repo refuses it and names the fix.
-func TestInitRepoRefusesUnnamedInstallation(t *testing.T) {
+func TestUpdateRefusesUnnamedInstallation(t *testing.T) {
 	r := sandboxRig(t)
 	var outs map[string]map[string]any
 	if err := json.Unmarshal([]byte(installationOutputs(t)), &outs); err != nil {
@@ -1136,7 +1136,7 @@ func TestInitRepoRefusesUnnamedInstallation(t *testing.T) {
 	}
 }
 
-func TestInitRepoForget(t *testing.T) {
+func TestUpdateForget(t *testing.T) {
 	r, state, key := forgetRig(t)
 	// Without a confirmation, nothing is forgotten.
 	res := r.fugaroInit(t, "--repo", r.checkout, "--forget")
@@ -1166,7 +1166,7 @@ func TestInitRepoForget(t *testing.T) {
 // that fail with 409: the custom roles, the scheduler account, the log
 // bucket (once undeleted) and the repository's Scheduler job, next to
 // what they imported before.
-func TestInitForgetThenReinitImports(t *testing.T) {
+func TestUpdateForgetThenReinitImports(t *testing.T) {
 	r, _, _ := forgetRig(t)
 	r.bootstrap(t)
 	spec := r.spec
@@ -1254,7 +1254,7 @@ func TestInitForgetThenReinitImports(t *testing.T) {
 // A run that stops between state rm and the object's delete leaves a state
 // with outputs but no resources; the next run skips state rm (which would
 // fail on an address that is gone) and deletes the object.
-func TestInitRepoForgetResumesAfterPartialFailure(t *testing.T) {
+func TestUpdateForgetResumesAfterPartialFailure(t *testing.T) {
 	r, state, key := forgetRig(t)
 	r.gcs.FailObjectDeletes(1)
 	res := r.fugaroInit(t, "--repo", r.checkout, "--forget", "--yes")
@@ -1289,7 +1289,7 @@ func TestInitRepoForgetResumesAfterPartialFailure(t *testing.T) {
 	}
 }
 
-func TestInitRepoForgetStateRmFailsKeepsObject(t *testing.T) {
+func TestUpdateForgetStateRmFailsKeepsObject(t *testing.T) {
 	r, state, key := forgetRig(t)
 	r.script(t, "repo", -1, map[string]any{
 		"show":     map[string]any{"stdout": stateManaged},
@@ -1304,7 +1304,7 @@ func TestInitRepoForgetStateRmFailsKeepsObject(t *testing.T) {
 	}
 }
 
-func TestInitRepoForgetRefusesUnversionedStateBucket(t *testing.T) {
+func TestUpdateForgetRefusesUnversionedStateBucket(t *testing.T) {
 	r, state, key := forgetRig(t)
 	r.gcs.SetVersioning(initRepoStateBucket, false)
 	res := r.fugaroInit(t, "--repo", r.checkout, "--forget", "--yes")
@@ -1316,7 +1316,7 @@ func TestInitRepoForgetRefusesUnversionedStateBucket(t *testing.T) {
 	}
 }
 
-func TestInitRepoNeedsInstallation(t *testing.T) {
+func TestUpdateNeedsInstallation(t *testing.T) {
 	r := sandboxRig(t)
 	if err := r.gcs.Bucket(t, initRepoStateBucket).Delete(context.Background(), infra.StatePrefixInstallation+"/default.tfstate"); err != nil {
 		t.Fatal(err)
@@ -1327,7 +1327,7 @@ func TestInitRepoNeedsInstallation(t *testing.T) {
 	}
 }
 
-func TestInitRepoNeedsFugaroYAML(t *testing.T) {
+func TestUpdateNeedsFugaroYAML(t *testing.T) {
 	r := sandboxRig(t)
 	testutil.Git(t, r.checkout, "rm", "-q", "fugaro.yaml")
 	res := r.fugaroInit(t, "--repo", r.checkout, "--yes")
@@ -1336,7 +1336,7 @@ func TestInitRepoNeedsFugaroYAML(t *testing.T) {
 	}
 }
 
-func TestInitRepoRefusesInstallationFlags(t *testing.T) {
+func TestUpdateRefusesInstallationFlags(t *testing.T) {
 	r := sandboxRig(t)
 	for _, args := range [][]string{
 		{"--repo", r.checkout, "--config-only"},
@@ -1362,7 +1362,7 @@ func TestInitRepoRefusesInstallationFlags(t *testing.T) {
 // terminal and no --yes, or --json without --yes), it is not started: the banner
 // and a warning are shown, everything else is done, and the run exits 1, the
 // build left for you.
-func TestInitRepoBuildNeedsConfirmation(t *testing.T) {
+func TestUpdateBuildNeedsConfirmation(t *testing.T) {
 	r := sandboxRig(t)
 	r.storedSecrets()
 	// A first run records the repository without building.
@@ -1412,7 +1412,7 @@ func TestInitRepoBuildNeedsConfirmation(t *testing.T) {
 // fugaro update --repo on a project where Cloud Resource Manager is disabled
 // enables it once confirmed, and a disabled Cloud Scheduler hides nothing
 // to adopt: the check's Scheduler job is planned as a create.
-func TestInitRepoEnablesResourceManager(t *testing.T) {
+func TestUpdateEnablesResourceManager(t *testing.T) {
 	r := sandboxRig(t)
 	r.bootstrap(t)
 	if r.spec.Check == nil {
@@ -1462,7 +1462,7 @@ func TestInitRepoEnablesResourceManager(t *testing.T) {
 
 // fugaro update --repo with the Storage API disabled fails as a remote error
 // at the state bucket, not as "no installation: run fugaro setup first".
-func TestInitRepoStorageDisabledIsRemote(t *testing.T) {
+func TestUpdateStorageDisabledIsRemote(t *testing.T) {
 	r := sandboxRig(t)
 	r.su.Disable("storage.googleapis.com", r.gcs.Server)
 	res := r.fugaroInit(t, "--repo", r.checkout, "--plan-only", "--yes")
