@@ -174,6 +174,95 @@ func TestByTierSplitDropsATierWithNoLeaf(t *testing.T) {
 	}
 }
 
+// TestCascadeRunHaltsWhenRulesRefuseTheByTierCounters (C1.16, C1.17): the
+// by-tier leaves are as new as the cascade, and a database whose rules
+// predate them is a deployment C1.3's marker can miss. What the run meets is
+// a permission refusal on the write that carried the split, and
+// probeByTierKeys tells it from a blip the way checkCascadeKeys does for the
+// registry entry: the same update, without the split's leaves.
+//
+// Refused with them and accepted without them, the run halts named -- the
+// redeploy is the fix -- and the write is not retried. The totals of that
+// same update land: the run keeps its spend and loses only the rows that say
+// which tier paid it, which is the direction the split's own status
+// (display-only, C1.3) makes safe.
+func TestCascadeRunHaltsWhenRulesRefuseTheByTierCounters(t *testing.T) {
+	f := newFixture(t)
+	s := f.started(budget.AgentEntry{Stage: "implement"})
+	ctx := context.Background()
+	d := today()
+	if _, err := s.Lease().Grant(ctx, 1_000_000); err != nil {
+		t.Fatal(err)
+	}
+	s.SetUsage(func() budget.Micros { return 300_000 })
+	// The document such a database has deployed refuses every write under its
+	// byTier nodes (the $other branch of a document that never heard of the
+	// child). Deny is that rule shape: a path and every node above or below
+	// it. DenyKeys would not do -- it matches a key at the top level of a
+	// write's *value*, and a multi-path update keys its leaves by path.
+	for _, path := range []string{
+		budget.PathRun(slug, runID) + "/byTier",
+		budget.PathSpendRun(d, slug, runID) + "/byTier",
+		budget.PathSpendRepo(d, slug) + "/byTier",
+		budget.PathSpendGlobal(d) + "/byTier",
+	} {
+		f.db.Deny(path)
+	}
+	err := s.Lease().Report(ctx, gateway.StageReport{Calls: 1, Used: 300_000, ByTier: map[string]pricing.Micros{gateway.TierB: 300_000}})
+	if err == nil {
+		t.Fatal("a refused split reported no error")
+	}
+	h, ok := f.nextHalt(3 * time.Second)
+	if !ok {
+		t.Fatal("the run was not halted; a refused by-tier counter must halt it named")
+	}
+	if h.Reason != budget.ReasonCredsRulesDenied || h.Scope != budget.ScopeRun {
+		t.Fatalf("halt = %+v, want %s/%s", h, budget.ReasonCredsRulesDenied, budget.ScopeRun)
+	}
+	if !contains(h.Detail, "fugaro init --firebase") {
+		t.Errorf("the halt's detail does not name the redeploy: %q", h.Detail)
+	}
+	// The totals of the refused update landed without the split.
+	if f.run("spent") != 300_000 || f.repo(d, "spent") != 300_000 {
+		t.Fatalf("the run lost its own spend to a refused split: run %d, repo %d", f.run("spent"), f.repo(d, "spent"))
+	}
+	runB := budget.PathRunByTier(slug, runID, budget.TierB) + "/spent"
+	if got := f.num(runB); got != 0 {
+		t.Fatalf("the split was written into rules that refuse it: %d", got)
+	}
+	time.Sleep(150 * time.Millisecond) // several heartbeats
+	if got := f.num(runB); got != 0 {
+		t.Fatalf("the split was retried after the halt: %d", got)
+	}
+	if h2, ok := f.nextHalt(100 * time.Millisecond); ok {
+		t.Fatalf("a second halt: %+v", h2)
+	}
+}
+
+// TestByTierProbeIsNotABlanketDrop (C1.16): the probe is not a run that
+// stops splitting whenever a write is refused. The same split the test above
+// has refused is written and kept when the rules know it -- otherwise that
+// test would pass for a run that never wrote a by-tier leaf at all.
+func TestByTierProbeIsNotABlanketDrop(t *testing.T) {
+	f := newFixture(t)
+	s := f.started(budget.AgentEntry{Stage: "implement"})
+	ctx := context.Background()
+	if _, err := s.Lease().Grant(ctx, 1_000_000); err != nil {
+		t.Fatal(err)
+	}
+	s.SetUsage(func() budget.Micros { return 300_000 })
+	if err := s.Lease().Report(ctx, gateway.StageReport{Calls: 1, Used: 300_000, ByTier: map[string]pricing.Micros{gateway.TierB: 300_000}}); err != nil {
+		t.Fatal(err)
+	}
+	runB := budget.PathRunByTier(slug, runID, budget.TierB) + "/spent"
+	if got := f.num(runB); got != 300_000 {
+		t.Fatalf("the split is %d, want the 300000 the stage reported", got)
+	}
+	if h, ok := f.nextHalt(100 * time.Millisecond); ok {
+		t.Fatalf("a run whose rules accept the split was halted: %+v", h)
+	}
+}
+
 // TestNoTierRunWritesNoByTierLeaf (C1.16, C1.3): the by-tier leaves are the
 // cascade's, and a run whose calls carry no tier writes none of them --
 // including a run whose money is entirely notional (an oauth run). That is

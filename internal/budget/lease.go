@@ -571,6 +571,66 @@ func (s *Session) plan(ctx context.Context) (upd map[string]any, took pending, m
 // usage write reads together.
 type dayCounters struct{ repo, global Counters }
 
+// byTierIn is the path segment every by-tier leaf shares, which is what an
+// update is asked about and stripped by.
+const byTierIn = "/byTier/"
+
+func carriesByTier(upd map[string]any) bool {
+	for k := range upd {
+		if strings.Contains(k, byTierIn) {
+			return true
+		}
+	}
+	return false
+}
+
+// probeByTierKeys is checkCascadeKeys's twin for the by-tier split (C1.16),
+// and it runs only when an update carrying the split was refused with a
+// permission error: it asks the deployed rules the one question a run can
+// ask them, by writing the very same update without the split's leaves.
+//
+// Refused with them and accepted without them, the split's counters are what
+// the deployed document does not know -- C1.3's `credsRules` marker cannot
+// catch that, because an older Fugaro redeploying its own document leaves the
+// marker at a generation it does not know -- and the run halts named (C1.17)
+// rather than dropping the split silently: a run whose real spend is
+// accounted for under no tier is a run nobody can attribute spend to, which
+// is the one thing the split exists for. It is not retried: the redeploy is
+// the fix, and it is what the halt's detail names.
+//
+// The write that landed is the run's own usage without the split, so the run
+// keeps its totals and loses only the by-tier rows: that is the fail-safe
+// direction, and it is why this probe may write at all.
+//
+// Anything else -- refused without them too (the stale race the flush already
+// retries), or a failure that is not a permission refusal (an outage, which
+// the flush's own error carries) -- says nothing about the split, and the
+// answer is not cached: the next refusal asks again, exactly as the registry
+// probe does (M11).
+func (s *Session) probeByTierKeys(ctx context.Context, upd map[string]any) (refused bool, err error) {
+	rest := make(map[string]any, len(upd))
+	for k, v := range upd {
+		if !strings.Contains(k, byTierIn) {
+			rest[k] = v
+		}
+	}
+	if len(rest) == 0 {
+		// The split was all there was: a write of nothing proves nothing
+		// about the rules, and an empty patch is a no-op either way.
+		return false, nil
+	}
+	switch err := s.db.Patch(ctx, "", rest); {
+	case err == nil:
+		s.dbOK()
+		s.halt(Halt{Reason: ReasonCredsRulesDenied, Scope: ScopeRun, Detail: byTierDeniedDetail})
+		return true, fmt.Errorf("%w: %s", rtdb.ErrPermission, byTierDeniedDetail)
+	case errors.Is(err, rtdb.ErrPermission):
+		return false, nil
+	default:
+		return false, nil
+	}
+}
+
 // planByTier adds the by-tier split of the run's settled money to the update
 // (C1.16, D140): the same quantity `spent` is, on the run's lifetime ledger,
 // the run's share of each day it holds a lease on, and the repository's and
@@ -702,6 +762,7 @@ func (s *Session) flush(ctx context.Context, extra map[string]any, source string
 	s.wmu.Lock()
 	defer s.wmu.Unlock()
 	stale := 0
+	probed := false
 	for rounds := 0; rounds < 20; {
 		upd, took, more, err := s.plan(ctx)
 		if err != nil {
@@ -729,6 +790,22 @@ func (s *Session) flush(ctx context.Context, extra map[string]any, source string
 				return nil
 			}
 		case errors.Is(err, rtdb.ErrPermission):
+			if !probed && carriesByTier(merged) {
+				// This update carried the by-tier split into the refusal:
+				// ask the rules, with one write of its own, whether the
+				// split is what they do not know (C1.16). The probe is not
+				// repeated in this flush: a refusal that is not the split's
+				// is the stale race the loop already retries.
+				probed = true
+				if refused, herr := s.probeByTierKeys(ctx, merged); refused {
+					// The totals landed without the split. Take everything
+					// off the pending figures -- the totals because they are
+					// written, the split because it is not retried -- and end
+					// the run named.
+					s.commit(took)
+					return s.observe(source, herr)
+				}
+			}
 			stale++
 			if stale >= maxStale {
 				werr := fmt.Errorf("budget: %d usage writes in a row were denied", stale)
