@@ -646,9 +646,11 @@ func TestProvisionCredentialsAndBatchAreIndependentApplies(t *testing.T) {
 //   - what the opt-in removes is every REPOSITORY job's model credential, in
 //     EVERY agent.auth mode (internal/infra/spec.go's dropModelMounts, which
 //     the repository roots run for oauth and api-key as much as for cascade),
-//   - the runner half that would fetch one from the service at call time
-//     (C1.19) is not in this release, so until it lands no re-applied
-//     repository job has a model credential at all, and
+//     and the GitHub App's private key's mount and accessor with it,
+//   - the service is opt-in and dormant until this stage deploys it, and what
+//     reads a credential from it is a `cascade` workflow (C1.15, C1.19): a run
+//     on oauth or api-key reads the credential mounted in its own job, which
+//     the opt-in takes away, so those installations should not opt in yet, and
 //   - the SHARED project jobs are outside it: credentials_service reaches the
 //     installation and workflow modules only, so modules/project keeps
 //     mounting its provider keys and CLAUDE_CODE_OAUTH_TOKEN with their
@@ -685,8 +687,9 @@ func TestCredentialsStageTextsSayWhatTheOptInDoes(t *testing.T) {
 		"oauth and api-key as much as cascade",
 		"does NOT reach the shared project jobs",
 		"CLAUDE_CODE_OAUTH_TOKEN",
-		"in this release yet",
-		"no re-applied repository job has a model credential at all",
+		"opt-in and dormant until this stage deploys it",
+		"should not opt in yet",
+		"would have no model credential at all",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("the confirmation does not say %q:\n%s", want, s)
@@ -695,6 +698,7 @@ func TestCredentialsStageTextsSayWhatTheOptInDoes(t *testing.T) {
 	for _, unwanted := range []string{
 		"asks this service instead",
 		"every model credential the installation holds",
+		"in this release yet",
 	} {
 		if strings.Contains(s, unwanted) {
 			t.Errorf("the confirmation still says %q:\n%s", unwanted, s)
@@ -718,8 +722,9 @@ func TestCredentialsStageTextsSayWhatTheOptInDoes(t *testing.T) {
 		"oauth and api-key as much as cascade",
 		"does NOT reach the shared project jobs",
 		"CLAUDE_CODE_OAUTH_TOKEN",
-		"in this release yet",
-		"no re-applied repository job has a model credential to use",
+		"opt-in and dormant until this stage deploys it",
+		"should not opt in yet",
+		"would have no model credential at all",
 	} {
 		if !strings.Contains(f.Usage, want) {
 			t.Errorf("the flag's help does not say %q:\n%s", want, f.Usage)
@@ -727,6 +732,9 @@ func TestCredentialsStageTextsSayWhatTheOptInDoes(t *testing.T) {
 	}
 	if strings.Contains(f.Usage, "asks the service instead") {
 		t.Errorf("the flag's help still promises that a job asks the service instead:\n%s", f.Usage)
+	}
+	if strings.Contains(f.Usage, "in this release yet") {
+		t.Errorf("the flag's help still says the run-reading half is not in this release, though this release wires a cascade run to the service (C1.15, C1.19):\n%s", f.Usage)
 	}
 }
 

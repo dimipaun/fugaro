@@ -36,14 +36,15 @@ import (
 // moving the shared jobs over is C3.9, and it is not in this release. An
 // owner consenting to this step is consenting to what it really covers.
 //
-// What it does NOT yet do — and what its confirmation and the flag's help say
-// in as many words — is hand a run that credential either: the repository
-// roots' half (this release's: those jobs stop mounting their model
-// credential) is in, the runner's half (C1.19, the wiring that fetches one
-// from the service at call time) is not. So on an installation whose roots
-// have been re-applied since the opt-in, no re-applied repository job has a
-// model credential at all until C1.19 lands. Turning it on early costs
-// exactly that, and the owner is told so before they type the project's name.
+// What reads a credential from the service is a `cascade` workflow, whose
+// runs this release wires to it (C1.15, the runner's service upstream; C1.19,
+// the cascade launch). A run on oauth or api-key reads the model credential
+// mounted in its own job, and the opt-in takes that mount away (C1.20), so an
+// installation whose repository workflows run on oauth or api-key should not
+// opt in yet: after a re-apply their jobs would have no model credential at
+// all. Turning it on costs exactly that, and the owner is told so — the
+// confirmation and the flag's help say it in as many words — before they type
+// the project's name.
 //
 // That is why, exactly as the compute backend's provisioning is,
 // it is registered noYes, its confirmation is the project's name typed at a
@@ -234,7 +235,7 @@ func (s *credentialsStage) Apply(ctx context.Context, _ initflow.Env) (out initf
 
 	// The confirmation, typed at a real terminal: --yes never covers this
 	// stage, and a run that cannot ask leaves it for the owner.
-	what := fmt.Sprintf("turns ON the credentials service in GCP project %s: a Cloud Run service (%s) running the image %s, its own service account, and one Secret Manager bundle secret whose accessor grant is the service's alone. It is the identity the REPOSITORY jobs' model credentials move to: every workflow job of every repository root re-applied after this drops its model credential — in every agent.auth mode, oauth and api-key as much as cascade — and its account's accessor on it, and gets an invoker grant on the service instead. It does NOT reach the shared project jobs, which keep mounting their provider keys and CLAUDE_CODE_OAUTH_TOKEN with their grants (C3.9 moves those). And the part that would give a run a credential from this service instead is NOT in this release yet, so until it lands no re-applied repository job has a model credential at all (%s)",
+	what := fmt.Sprintf("turns ON the credentials service in GCP project %s: a Cloud Run service (%s) running the image %s, its own service account, and one Secret Manager bundle secret whose accessor grant is the service's alone. It is opt-in and dormant until this stage deploys it: nothing of the service exists in the installation before this runs, and no job changes until a repository root is re-applied with the opt-in on. It is then the identity the REPOSITORY jobs' model credentials move to: every workflow job of every repository root re-applied after this drops its model credential — in every agent.auth mode, oauth and api-key as much as cascade — and its account's accessor on it, and the GitHub App's private key's mount and accessor with it, and gets an invoker grant on the service instead. What reads a credential from the service is a cascade workflow, whose runs this release wires to it (C1.15, C1.19): a run on oauth or api-key reads the model credential mounted in its own job, which this opt-in takes away, so an installation whose repository workflows run on oauth or api-key should not opt in yet — after a re-apply their jobs would have no model credential at all. It does NOT reach the shared project jobs, which keep mounting their provider keys and CLAUDE_CODE_OAUTH_TOKEN with their grants (C3.9 moves those) (%s)",
 		e.lc.GCPProject, infra.CredentialsServiceName, s.image, counts.String())
 	confirmed, reachable, err := r.askTyped(what)
 	if err != nil {
