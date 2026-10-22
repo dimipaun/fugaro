@@ -340,6 +340,91 @@ func TestProbeClearsOnSuccess(t *testing.T) {
 	}
 }
 
+// callDetached makes a call with a context the test owns, and reads nothing of
+// the answer: what the test that uses it measures is what the service recorded,
+// and a client that hung up mid-call may never see an answer at all.
+func (s *svc) callDetached(t *testing.T, ctx context.Context, body string) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.http.URL+MessagesPath, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("building the call: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+s.jobToken())
+	req.Header.Set(HeaderRunIdentity, s.runToken())
+	req.Header.Set(HeaderRunJob, s.job)
+	req.Header.Set("Anthropic-Version", "2023-06-01")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := s.http.Client().Do(req)
+	if err != nil {
+		// The client's own context ended, which is the disconnect this test
+		// makes. Anything else is the fixture.
+		if ctx.Err() == nil {
+			t.Fatalf("the call failed for a reason that is not the disconnect: %v", err)
+		}
+		return
+	}
+	resp.Body.Close()
+}
+
+// TestProbeSurvivesAClientDisconnect is the probe's own when its caller goes
+// away: the run hangs up while the probe is in flight, and the probe's answer
+// is still recorded — the mark is cleared and the audit line says the
+// credential worked.
+//
+// The disconnect is made from inside the upstream, at the first request, so it
+// lands while the probe is in flight rather than before it: the caller's
+// context is cancelled as the probe's request arrives. What the test then reads
+// is the state and the audit line, because a client that hung up is owed and
+// gets no answer.
+//
+// Both of the alternatives are wrong in the same direction. A probe left on the
+// caller's context is cancelled by the hang-up, and the service then writes the
+// credential down as failed — an audit line saying "exhausted" for an answer
+// nobody read, and a wait doubled to punish a credential for the client's own
+// abandonment.
+func TestProbeSurvivesAClientDisconnect(t *testing.T) {
+	s, auditLog := probeSvc(t, nil)
+	s.backedOff("default", s.now.Add(-time.Hour), creds.DefaultBackoffInitial)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var once sync.Once
+	s.up.Func = func(*http.Request, []byte) anthropicfake.Reply {
+		// The run hangs up here: this is the probe's request arriving, and the
+		// caller's context ends while the service is still reading it. The
+		// answer is then held back a moment, so the hang-up has certainly
+		// landed by the time it arrives — a probe on the caller's context is
+		// aborted the instant the context does, and one that is not cannot be
+		// reached by it at all.
+		once.Do(cancel)
+		time.Sleep(20 * time.Millisecond)
+		return anthropicfake.MessageOK(testModel, testUsage)
+	}
+
+	s.callDetached(t, ctx, callBody("real-work"))
+
+	// The answer arrives on the state and the audit line rather than on the
+	// connection, and it arrives after the call has returned — the client is
+	// gone, so nothing here waits for the answer except this.
+	waitFor(t, "the probe's answer to be recorded", func() bool { return auditLog.Len() > 0 })
+
+	// The probe alone: the run's own call cannot be sent once its client has
+	// gone, and a second request here would mean the service tried anyway.
+	if got := s.up.Count(); got != 1 {
+		t.Fatalf("the upstream saw %d requests, want the probe alone", got)
+	}
+	line, ok := probeLine(t, auditLog)
+	if !ok {
+		t.Fatal("a probe wrote no audit line")
+	}
+	if got := line["status"]; got != StatusOK {
+		t.Errorf("the audit line says %q, want %q: the probe was answered, and a caller's hang-up is not the credential's", got, StatusOK)
+	}
+	if m, ok := s.state.mark("default"); !ok || !m.Available() {
+		t.Errorf("the mark is %+v, want it cleared: the probe's answer was still recorded", m)
+	}
+}
+
 // TestProbeDoublesOnFailure: a probe that did not work leaves the wait doubled,
 // and the run is told the wait its own state now names — the probe's answer is
 // never the run's answer, and the call is not sent to a credential that just

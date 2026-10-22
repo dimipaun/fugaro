@@ -62,6 +62,12 @@ package credsvc
 //     the subscription path. The model is the one exception and it is the
 //     question itself: a probe asks whether the credential can serve THIS
 //     run's work, and the model is what the work is.
+//   - The probe is the service's, not the client's. It is detached from the
+//     caller's context and bounded by the service (probeBudget, below
+//     probeLeaseTTL): the call, the audit line and the mark are facts about a
+//     credential, and a run that hangs up mid-probe must not be able to discard
+//     them — a detached probe's answer is still recorded, and an aborted one is
+//     not mistaken for a credential that failed.
 //
 // Nothing here writes a credential's value anywhere: not to the client (the
 // probe's answer is read for its status and closed, never relayed), not to the
@@ -115,6 +121,21 @@ const (
 	// never be probed again because a dead instance's claim never lapsed costs
 	// the run every call it makes.
 	probeLeaseTTL = 10 * time.Minute
+
+	// probeBudget is how long a probe's own work may take once it is detached
+	// from the client: the upstream call, and — under a budget of its own, so a
+	// call that used all of this one cannot starve the write that records its
+	// answer — the audit line and the mark.
+	//
+	// It is BELOW probeLeaseTTL, and that is the point of the number: a probe
+	// this budget abandons must not still be in flight when its claim lapses,
+	// or a second instance would take the slot and probe the credential
+	// alongside the first one the service gave up on. Five minutes is also the
+	// longest a minimal, non-streaming probe is worth waiting for: the
+	// subscription path's own header bound is ten (oauthResponseHeaderTimeout),
+	// and a credential that has not answered one token in half of it is not
+	// going to answer the run's work either.
+	probeBudget = 5 * time.Minute
 
 	// probeVersion is the API version a probe asks with: the one the client's
 	// SDK sends, and the one Check 90 proved Anthropic-Version mandatory with
@@ -450,7 +471,26 @@ func (s *Server) probeOne(ctx context.Context, sel *creds.Selector, id Identity,
 	// already made, so a client that hung up while the probe was in flight must
 	// not be the reason the next run's probe is refused.
 	defer s.releaseProbe(context.WithoutCancel(ctx), e.Name, run)
-	ans, err := s.send(ctx, probe, e)
+	// The probe's own work is detached from the client's context, and bounded
+	// (cascade.go does the same for the one mark it writes from an answer that
+	// was already streamed). A run that hangs up mid-probe must not be the
+	// reason a credential's question goes unanswered: the call has already been
+	// made and charged, and everything below it — the answer being read, the
+	// audit line, the mark — is a fact about the credential rather than about
+	// the client. Left on the client's context, a disconnect turns a successful
+	// probe into a discarded one whose audit line reads "exhausted": the
+	// credential keeps a wait nobody asked for, twice, if the client's own
+	// abandonment is counted as the credential failing.
+	//
+	// Two phases, one bound: the call, then the recording. The recording gets
+	// the budget afresh rather than inheriting whatever the call left, because a
+	// probe that used its whole budget must still be able to write the answer it
+	// took five minutes to get.
+	sendCtx, sendDone := context.WithTimeout(context.WithoutCancel(ctx), probeBudget)
+	ans, err := s.send(sendCtx, probe, e)
+	sendDone()
+	recordCtx, recordDone := context.WithTimeout(context.WithoutCancel(ctx), probeBudget)
+	defer recordDone()
 	reset := time.Time{}
 	var outcome probeOutcome
 	if ans != nil {
@@ -465,7 +505,7 @@ func (s *Server) probeOne(ctx context.Context, sel *creds.Selector, id Identity,
 		outcome, reset = classifyProbe(nil, err, s.now())
 	}
 	status := probeStatus(outcome)
-	if aerr := s.audit.Write(ctx, id.Audit(AuditEvent{
+	if aerr := s.audit.Write(recordCtx, id.Audit(AuditEvent{
 		Credential: e.Name,
 		Tier:       wireTier(c.Tier),
 		Purpose:    PurposeProbe,
@@ -478,13 +518,13 @@ func (s *Server) probeOne(ctx context.Context, sel *creds.Selector, id Identity,
 	var werr error
 	switch outcome {
 	case probeWorked:
-		_, werr = sel.Probed(ctx, c.Name, c.Tier)
+		_, werr = sel.Probed(recordCtx, c.Name, c.Tier)
 	case probeRefused:
-		_, werr = sel.Broken(ctx, c.Name)
+		_, werr = sel.Broken(recordCtx, c.Name)
 	case probeLimited:
-		_, werr = sel.Exhausted(ctx, c.Name, c.Tier, reset)
+		_, werr = sel.Exhausted(recordCtx, c.Name, c.Tier, reset)
 	default:
-		_, werr = sel.ProbeFailed(ctx, c.Name, c.Tier)
+		_, werr = sel.ProbeFailed(recordCtx, c.Name, c.Tier)
 	}
 	if werr != nil {
 		// The mark could not be written, which is the forward path's own
