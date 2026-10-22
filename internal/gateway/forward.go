@@ -1092,7 +1092,7 @@ var hopByHop = map[string]bool{
 // upstream kind that answers with them would have to remember this list.
 var dropResponseHeaders = map[string]bool{
 	"Anthropic-Organization-Id": true, "Set-Cookie": true, "Set-Cookie2": true,
-	HeaderTier: true, HeaderCredential: true, HeaderSwitch: true,
+	HeaderTier: true, HeaderCredential: true, HeaderSwitch: true, HeaderProbe: true,
 }
 
 func copyResponseHeaders(dst, src http.Header, decoded bool) {
