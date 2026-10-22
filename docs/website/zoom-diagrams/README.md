@@ -76,10 +76,14 @@ level the reader is on is computed from the reader's own scroll position, writte
 `position: sticky` box whose height is one viewport of scroll per level. **The section declares no
 CSS scroll timeline and no CSS animation at all**, so the site's universal rule has nothing of the
 section's to neutralise, freeze or leave alone; its one piece of motion is a `transition` on
-`opacity` and `transform`, written inside `@media (prefers-reduced-motion: no-preference)` with a
+`opacity`, `transform` and the `visibility` step that keeps the level leaving on screen under the
+one arriving — a crossfade rather than a dip to the background — written inside
+`@media (prefers-reduced-motion: no-preference)` with a
 `reduce` block that puts the four stills back — and the script stands the section down for a reader
 who has asked for less motion before it writes anything, and again if the preference arrives under
-a page that is already pinned. **The brief's "animated" half is therefore achieved without the
+a page that is already pinned, **including the two paths that could have pinned them anyway**: the
+fragment they arrived on, which is the browser's own jump in the stills, and the marker they press,
+which is left to the anchor. **The brief's "animated" half is therefore achieved without the
 timeline the spike was about**, and the stills of Part 4 remain what a reader with no script, a
 reader who asked for less motion and a browser too old to answer `matchMedia` are given.
 
