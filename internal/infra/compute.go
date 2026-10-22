@@ -138,8 +138,12 @@ type ComputeSpec struct {
 	Subnetwork string `json:"subnetwork"`
 
 	Names ComputeNames `json:"names"`
-	// ManageAPIs is false with fugaro update --skip-apis: the project's APIs
-	// are managed elsewhere, so this root enables neither Compute nor Batch.
+	// ManageAPIs is false when the plan is built with
+	// tfvars.InstallOptions.SkipAPIs, which says the project's APIs are
+	// managed elsewhere: this root then enables neither Compute nor Batch.
+	// Nothing sets that field today, so every plan the CLI makes manages
+	// them; the Firebase root's own `skip_apis` (FirebaseSpec.SkipAPIs) is a
+	// different variable of a different root.
 	ManageAPIs bool `json:"manage_apis"`
 
 	Launchers []string `json:"launchers"`

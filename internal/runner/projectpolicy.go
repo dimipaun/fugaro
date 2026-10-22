@@ -353,7 +353,7 @@ func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 			c.err = fmt.Errorf("the run's budget token could not be read from the runs bucket, though the launcher minted one for this run (FUGARO_BUDGET_TOKEN is set in the job's environment); the run cannot tell a refused read from a missing object. Either %s — then start a new run (fugaro run with the same task): this run has launched, and retrying its run id only reports it — or the object is gone (a launch that failed and was cleaned up, or the bucket's day-long lifecycle rule): launch the run again", grant)
 			return nil, c.err
 		}
-		c.err = fmt.Errorf("the run's budget token could not be read from the runs bucket: the run was not launched with one, or %s — either way, start a new run (fugaro run with the same task): this run has launched, and retrying its run id only reports it — and when the grant is the cause, an operator runs that init first", grant)
+		c.err = fmt.Errorf("the run's budget token could not be read from the runs bucket: the run was not launched with one, or %s — either way, start a new run (fugaro run with the same task): this run has launched, and retrying its run id only reports it — and when the grant is the cause, an operator runs that update first", grant)
 		return nil, c.err
 	default:
 		c.err = err

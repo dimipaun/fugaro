@@ -234,12 +234,18 @@ var liveRoots = []string{
 
 // initNameRE is what counts as naming the command: two spellings. The command
 // as prose and as a user-facing string writes it -- `fugaro init` -- and the
-// bare `init --<flag>` form, which every comment-only mention uses and which
+// bare `init --<flag>` form, which a comment-only mention used and which
 // `fugaro init` does not match: the rerun line the retired command prints is
 // `fugaro init --repo . --retire`, the deprecation warnings name `init --repo`
-// on its own, and the dozens of comments in internal/infra, internal/localcfg
-// and internal/runner name the flag that did the thing (`init
-// --firebase-project`, `init --skip-apis`, `init --print-vars`).
+// on its own, and the comments that named the flag that did the thing --
+// `init --firebase-project` across internal/infra, internal/localcfg and
+// internal/runner, `init --create-project` in internal/localcfg,
+// `init --expect-digest` in internal/mirror -- were dozens until this
+// branch's rename pass (022f8ad8) gave each one the door it belongs to, which
+// is why the walk below finds none of them today. The alternative stays
+// because that is the spelling a *new* comment reaches for, and a census that
+// read one as clean would enforce nothing exactly where the rename did most of
+// its work.
 //
 // **W2.6 wrote the second alternative as `init --repo`, and that was too
 // narrow**: it caught the one flag a live document happened to spell and left
@@ -519,12 +525,17 @@ const censusBinarySniff = 8192
 // bytes are flattened before they are matched -- line-comment markers dropped,
 // whitespace collapsed -- because prose and Go comments wrap, and a census
 // that only saw the unwrapped spelling would miss the mention the moment
-// somebody re-wrapped the sentence. Four files in this tree name the command
-// in one of those spellings and nothing else: the `fugaro managed` Long help
-// string wraps it across a line break (`internal/cli/managed_apply.go`), and
-// three comments wrap it across a `//` marker
-// (`internal/cli/project_job.go`, `internal/gcpfake/firebasemgmt.go`,
-// `internal/infra/managed/untrusted_test.go`). flattenDoc is the same
+// somebody re-wrapped the sentence. Four files were the census's own examples
+// of that hazard, each naming the command in one of those spellings and nothing
+// else:
+// the `fugaro managed` Long help string wrapped it across a line break
+// (`internal/cli/managed_apply.go`), and three comments wrapped it across a
+// `//` marker (`internal/cli/project_job.go`,
+// `internal/gcpfake/firebasemgmt.go`,
+// `internal/infra/managed/untrusted_test.go`). The rename has since reached all
+// four, so they stand here as the hazard's shape and not as files that still
+// carry a mention -- which is what a later re-wrap of any sentence would make
+// again. flattenDoc is the same
 // normalisation docs_base_test.go uses for this exact hazard, reused rather
 // than reimplemented so the two cannot disagree.
 //
@@ -700,7 +711,7 @@ func TestCensusNamesInitMatchesBothSpellingsAndTheOtherCommand(t *testing.T) {
 		{"a bare flag, create-project", "the project was created by this run (init --create-project)\n", true},
 		{"a bare flag, print-vars", "printVarsUngatedInstallation is init --print-vars's warning\n", true},
 		{"a bare flag, wrapped across a // marker", "// and a marker above this\n// binary says so. init\n// --firebase-project deploys the rules\n", true},
-		{"a bare flag, skip-apis", "ManageAPIs is false with init --skip-apis\n", true},
+		{"a bare flag, expect-digest", "Plan's expect digest (init --expect-digest) pins one\n", true},
 		{"the other command alone", "fugaro config init --yes writes the minimal fugaro.yaml\n", false},
 		{"the other command, with the retired one beside it", "fugaro config init --yes writes it; the old text said init --repo\n", true},
 		{"neither spelling", "fugaro setup --repo and fugaro update --firebase-project\n", false},

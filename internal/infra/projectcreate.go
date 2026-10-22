@@ -540,7 +540,7 @@ func LinkBilling(ctx context.Context, pc *ProjectClients, id, account string, ex
 		case err != nil:
 			return &ProjectError{Kind: ProjectLinkGuard, Err: fmt.Errorf("not linking billing to project %s: its billing cannot be read right before the link: %w", id, err)}
 		case bi.BillingEnabled || bi.BillingAccountName != "":
-			return &ProjectError{Kind: ProjectLinkGuard, Err: fmt.Errorf("not linking billing to project %s: it is now linked to a billing account, and init never replaces a link", id)}
+			return &ProjectError{Kind: ProjectLinkGuard, Err: fmt.Errorf("not linking billing to project %s: it is now linked to a billing account, and fugaro never replaces a link", id)}
 		}
 	}
 	_, err := pc.Billing.Projects.UpdateBillingInfo("projects/"+id, &billing.ProjectBillingInfo{BillingAccountName: "billingAccounts/" + account}).Context(ctx).Do()
