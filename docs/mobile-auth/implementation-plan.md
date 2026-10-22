@@ -1,11 +1,16 @@
 # The mobile app's sign-in, pairing and allowlist — the implementation plan
 
-**Status: plan only; no code is implemented; approval gate open.** This plan follows from
-[reconciliation.md](reconciliation.md), which wins wherever it disagrees with [spec.md](spec.md).
+**Status: plan only; no code is implemented; the owner approval gate is passed.** This plan
+follows from [reconciliation.md](reconciliation.md), which wins wherever it disagrees with
+[spec.md](spec.md).
 Every path and symbol below was re-read against `main` at `d9dda8f3` (`cli: fugaro --version and
 fugaro -v print the version, like fugaro version (#794)`) on **2026-10-21**, and is cited by **path
 and symbol, never by line number**. A path marked **new** does not exist yet.
 **Owner: Dimi Paun. Date: 2026-10-21.**
+**Amended 2026-10-22**: the owner answered **D221–D236, each as recommended**, and passed this
+plan's owner approval gate (§11) for the two parts that need nothing built — **P0 and P1**.
+**P2, P3, P4, P5 and P6 were not opened**: P3, P4 and P5 wait on the mobile Phase 6 tasks this work
+extends (P6.6 and P6.8, approved 2026-10-18 and unbuilt) and on each other, and §11 says so in full.
 
 **Every part is independently mergeable.** A part lands, it is verified, and the tree works with it
 and without the parts after it. **Target release: the first release after the mobile Phase 6 tasks
@@ -13,9 +18,10 @@ this work extends — D236's recommendation — and not 0.11.0**, which the cent
 (`docs/central-orchestrator/implementation-plan.md`) and the rigor modes work (open PR #773) hold.
 No part assumes a release that has not shipped.
 
-**The plan is written to D221–D236, and the owner must answer them.** Each recommendation is the
-one the parts mean, and every part names the decision it would be rewritten for. **The plan is
-also written to a second thing it cannot supply itself**: the mobile work's Phase 6 tasks —
+**The plan is written to D221–D236, and the owner has answered them — all sixteen as recommended,
+on 2026-10-22.** Each recommendation is the one the parts mean, and every part names the decision
+it would be rewritten for. **The plan is also written to a second thing it cannot supply
+itself**: the mobile work's Phase 6 tasks —
 `docs/mobile/implementation-plan.md`'s **P6.6** (`internal/cli/pair.go`,
 `internal/budget/token/device.go`) and **P6.8** (`mobile/src/pairing/`) — are **approved 2026-10-18
 and unbuilt**, and this work extends both. **Nothing here can be merged before they exist**, which
@@ -166,9 +172,10 @@ reviewer, the usual path), **careful** (a reviewer who reads the record, the rul
 model** — this plan asks for Opus — with its own paragraph in the pull request body saying what was
 reviewed and what was not).
 
-**P0 and P1 need no new decision and can start as soon as the owner says so.** P2 needs D222/D225.
-P3 needs the Phase 6 pair to exist. P4 needs Phase 6's P6.8. P5 needs P3. P6 needs only D221's
-answer.
+**P0 and P1 need no new decision, and the owner's approval of 2026-10-22 opens both.** P2 needs
+D222/D225. P3 needs the Phase 6 pair to exist. P4 needs Phase 6's P6.8. P5 needs P3. P6 needs only
+D221's answer. **The decisions are answered and the parts are not**: P0 and P1 are the two the
+owner approved, and every other part is still reviewed on its own, on a branch of its own.
 
 ---
 
@@ -697,6 +704,13 @@ there is no live action of any kind in this work, and no step of any check is ru
 5. **Naming the release and the branch**: this plan recommends **the first release after the mobile
    Phase 6 tasks — not 0.11.0** (D236), and says that no part assumes a release that has not
    shipped.
+
+**Passed 2026-10-22.** The owner answered **D221–D236, each as recommended** — so §4's clauses 2,
+3 and 4 are answered, clause 5's release is the one D236 recommends, and clause 1's confirmation
+stands on the Phase 6 tasks being the ones that land — and approved **P0 and P1**, the two parts
+that wait on nothing built. **What the gate did not open is as much a part of it**: **P2** waits on
+nothing but its own approval, **P3, P4 and P5 wait on P6.6 and P6.8**, and **P6** waits on nothing
+but D221 — and a part that lands is still reviewed on its own, with its own reviewer tier.
 
 **What this gate is not.** It is not an approval of any part: approving the plan answers §4's
 decisions, and each part is still reviewed on its own — five of them by an independent reviewer on
