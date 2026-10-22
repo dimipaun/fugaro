@@ -42,6 +42,11 @@ package credsvc
 // another package's, because an upstream's error text is not this service's to
 // hand to a run.
 //
+// A mint is audited through C1.13's auditor (audit.go, PurposeMint, no tier)
+// like every other act of this service that touches a credential, and the
+// auditor's fail-closed rule is the mint's: a token whose line cannot be
+// written is handed to nobody.
+//
 // How the key gets into the bundle is C1.25's half, which the plan's C2.1 file
 // list names (internal/cli/creds.go, the same key through `fugaro creds set`).
 // That file is NOT on this branch — no `creds` command exists here yet — so on
@@ -87,10 +92,6 @@ const maxMintRequestBytes = 4 << 10
 // name an App is refused by this service rather than by GitHub.
 var appIDRE = regexp.MustCompile(`^[0-9]{1,20}$`)
 
-// mintPurpose is the audit line's purpose for a mint (C1.13's shape: run,
-// repository, credential name, purpose, status).
-const mintPurpose = "github-installation-token"
-
 // The mint's own refusals. They are sentinels so a test and a reader can tell
 // them apart, and every one of them is a sentence written here: none repeats
 // GitHub's own error text, which is another service's and can carry up to 512
@@ -113,6 +114,11 @@ var (
 	ErrMintRepository = errors.New("credsvc: the calling job's repository is not one this service mints a GitHub token for")
 	// ErrMintGitHub is GitHub refusing the mint, or the call to it failing.
 	ErrMintGitHub = errors.New("credsvc: GitHub did not mint an installation token")
+	// ErrMintUnaudited is a mint GitHub granted and C1.13's auditor could not
+	// record. The token exists at GitHub and reaches nobody: this service will
+	// not hand a run a credential it could not write a line for (D143's
+	// fail-closed rule), and a token cannot be unminted.
+	ErrMintUnaudited = errors.New("credsvc: the mint could not be audited, so no installation token was issued")
 )
 
 // MintRequest is the body of a mint call: the GitHub App's ID, and nothing
@@ -208,31 +214,28 @@ func appKey(b *Bundle) (*rsa.PrivateKey, error) {
 // body, read the App key, resolve the repository, mint, and answer.
 //
 // Every refusal is a state_unavailable refusal — the run halts on it (D143) and
-// never falls back to a key of its own — and the audit line is written whether
-// the mint issued or refused (C1.13: one line per issuance and per probe).
+// never falls back to a key of its own — and every one is audited through
+// C1.13's auditor (auditMint), whether the mint issued or refused, because a
+// mint is one of the acts that file exists to record.
 func (s *Server) mint(ctx context.Context, w http.ResponseWriter, r *http.Request, id Identity, ja JobAccount) {
 	req, err := readMintRequest(r)
 	if err != nil {
-		s.auditMint(id, ja, "refused")
-		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, err.Error())
+		s.refuseMint(ctx, w, id, err.Error())
 		return
 	}
 	owner, repo, err := mintRepository(ja.Repo)
 	if err != nil {
-		s.auditMint(id, ja, "refused")
-		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, err.Error())
+		s.refuseMint(ctx, w, id, err.Error())
 		return
 	}
 	b, err := s.cfg.Bundles.Load(ctx)
 	if err != nil {
-		s.auditMint(id, ja, "refused")
-		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, BundleRefusal(err))
+		s.refuseMint(ctx, w, id, BundleRefusal(err))
 		return
 	}
 	key, err := appKey(b)
 	if err != nil {
-		s.auditMint(id, ja, "refused")
-		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, err.Error())
+		s.refuseMint(ctx, w, id, err.Error())
 		return
 	}
 	token, expires, err := github.MintInstallationToken(ctx, github.Options{
@@ -251,7 +254,7 @@ func (s *Server) mint(ctx context.Context, w http.ResponseWriter, r *http.Reques
 		// installation), and it is logged beside the name of the credential
 		// and never beside its value.
 		attrs := []any{
-			"purpose", mintPurpose, "credential", config.GitHubAppKeySecret,
+			"purpose", PurposeMint, "credential", config.GitHubAppKeySecret,
 			"repository", ja.Repo, "run", id.Run,
 		}
 		var se *httpjson.StatusError
@@ -259,37 +262,74 @@ func (s *Server) mint(ctx context.Context, w http.ResponseWriter, r *http.Reques
 			attrs = append(attrs, "status", se.Status)
 		}
 		s.log.Warn("credsvc: the GitHub installation token could not be minted", attrs...)
-		s.auditMint(id, ja, "failed")
-		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, ErrMintGitHub.Error())
+		s.refuseMint(ctx, w, id, ErrMintGitHub.Error())
 		return
 	}
-	s.auditMint(id, ja, "issued")
+	// The audit line is written BEFORE the token is handed over, and a line
+	// that cannot be written is a refusal (C1.13, D143: an issuance that
+	// cannot be audited is not made). A token cannot be unminted at GitHub, so
+	// what "not made" means here is that it reaches nobody: no answer carries
+	// it, no log line and no error does either, and the run halts on
+	// state_unavailable like any other refusal of this endpoint.
+	if err := s.auditMint(ctx, id, StatusOK); err != nil {
+		s.log.Error("credsvc: the mint's audit line was not written", "error", err)
+		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, ErrMintUnaudited.Error())
+		return
+	}
 	writeMintAnswer(w, MintResponse{Token: token, ExpiresAt: expires, Repository: ja.Repo})
 }
 
-// auditMint writes the audit line for one mint: run, repository, credential
-// name, purpose, status. It is C1.13's shape as that task's plan writes it,
-// and it carries no tier: the App key is not spent on a call, so it has none.
+// refuseMint audits a refused mint and answers it.
 //
-// C1.13 is the task that owns the service's audit line, and it writes it in
-// internal/credsvc/audit.go, which is NOT landed on this branch — so this is a
-// local spelling of that shape rather than a call into its writer, and it is
-// the ONE reconciliation C2.1 owes when C1.13 lands: fold this line into
-// C1.13's writer, keeping the fields below and keeping the tier absent (a tier
-// names the credential a model call spent, and a mint spends none). The shape
-// is pinned by TestMintAudited so the fold is a move and not a rewrite.
+// The audit line comes first, and the answer is the same whatever the line
+// does: an act this service will not record is not made, and a mint it refuses
+// is not made either way, so the run gets the refusal it would have got and the
+// operator gets the auditor's own error on the service's log. (The issuance
+// path is the one where the two differ, and it refuses on a line it could not
+// write — see mint.)
 //
-// The line names the App key and never its value, and the token that was
-// minted is in neither.
-func (s *Server) auditMint(id Identity, ja JobAccount, status string) {
-	s.log.Info("credsvc: github installation token",
-		"purpose", mintPurpose,
-		"credential", config.GitHubAppKeySecret,
-		"repository", ja.Repo,
-		"run", id.Run,
-		"job", id.Job,
-		"status", status,
-	)
+// The refusal's message is the caller's, and it is always one of this file's
+// own sentences: GitHub's text is never relayed.
+func (s *Server) refuseMint(ctx context.Context, w http.ResponseWriter, id Identity, message string) {
+	if err := s.auditMint(ctx, id, ErrorStateUnavailable); err != nil {
+		s.log.Error("credsvc: the mint's audit line was not written", "error", err)
+	}
+	s.refuse(w, StatusUnavailable, ErrorStateUnavailable, message)
+}
+
+// auditMint writes one mint's line through C1.13's auditor (audit.go), which
+// is the service's one writer of audit lines: the event is completed from the
+// identity the service verified (Identity.Audit — the run, the repository slug,
+// the job the run reported and the account that called, and none of them from
+// anything a caller typed), the credential is the App key's NAME, the purpose
+// is PurposeMint, and there is NO tier.
+//
+// The absent tier is the shape C1.13 defines for a mint and not an omission: a
+// tier names the model credential a call spent (A, B or C), the App key is not
+// a model credential of the cascade and is spent on no call, and the auditor
+// REFUSES a tier on a mint rather than recording one this service never
+// assigned. So a mint is recorded without inventing a tier for the key.
+//
+// The status is C1.13's own vocabulary, not one of this file's words: StatusOK
+// for a token that was issued, and the refusal's wire error type for one that
+// was not. Every refusal this endpoint writes is state_unavailable, which is
+// the error type the wire contract and this file already share — so the status
+// is a word the runner's halt message and the operator's line read alike.
+//
+// Nothing in the event can carry a value: the App key's value and the minted
+// token have no field to be written into, the credential field is the name,
+// and the auditor's own redaction (armed by whoever built it, WithAuditScrub)
+// runs over every field before any rule looks at one.
+//
+// A returned error means the act was not recorded and the caller must not go
+// on with it — the mint's answer is a refusal in that case, and a refusal's
+// answer is the refusal it already had.
+func (s *Server) auditMint(ctx context.Context, id Identity, status string) error {
+	return s.cfg.Audit.Write(ctx, id.Audit(AuditEvent{
+		Credential: config.GitHubAppKeySecret,
+		Purpose:    PurposeMint,
+		Status:     status,
+	}))
 }
 
 // writeMintAnswer writes the mint's answer. It is the one answer of this

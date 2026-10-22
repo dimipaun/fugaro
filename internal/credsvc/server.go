@@ -166,6 +166,13 @@ type Config struct {
 	Policy PolicyReader
 	// State is the cascade's shared state under creds/.
 	State creds.Store
+	// Audit is C1.13's auditor: the one writer of the service's audit lines,
+	// and the seam the service's own redaction is armed at (WithAuditScrub).
+	// Every act of this service that touches a credential is recorded through
+	// it — a mint (C2.1) writes its line here — and an act that cannot be
+	// audited is not made (D143), so NewServer refuses a service without one
+	// rather than building one whose mints could only refuse.
+	Audit *Auditor
 	// Kills reads the operator's two stop switches.
 	Kills KillReader
 	// DB is the one database write the service makes outside the cascade: the
@@ -284,6 +291,13 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	if cfg.Kills == nil {
 		return nil, errors.New("credsvc: the service cannot read the stop switches")
+	}
+	if cfg.Audit == nil {
+		// C1.13: an issuance that cannot be audited is not made. A service with
+		// no auditor is a service whose every mint would refuse, so it is
+		// refused here — where an operator sees it at startup — rather than
+		// discovered as a run that halts.
+		return nil, errors.New("credsvc: the service has no auditor, so an issuance it made could not be audited")
 	}
 	if cfg.DB == nil {
 		return nil, errors.New("credsvc: the service cannot remove an ended run's placement")

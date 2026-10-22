@@ -17,8 +17,10 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -466,45 +468,173 @@ func TestMintRefusesEndedRun(t *testing.T) {
 	}
 }
 
-// TestMintAudited: every mint writes one audit line (C1.13's shape: run,
-// repository, credential name, purpose, status) and no line carries a value —
-// not the token that was issued and not the App key that signed it. A refusal
-// writes one too, because a refused mint is the other half of "every issuance
-// is logged" (C1.13: one line per issuance and per probe).
+// TestMintAudited: a mint writes C1.13's audit line, through C1.13's auditor
+// and not through a spelling of its own — one line per act, an issuance and a
+// refusal alike, carrying the contract's fields and no value.
+//
+// The event is the one C1.13 defines for a mint: PurposeMint, the App key's
+// NAME as the credential, and NO tier (the App key is not a model credential
+// of the cascade, and C1.13 refuses a tier on a mint rather than recording one
+// this service never assigned). The status is C1.13's own vocabulary: StatusOK
+// for a token that was issued, and the refusal's wire error type — for every
+// refusal this endpoint writes, state_unavailable — for one that was not.
 func TestMintAudited(t *testing.T) {
 	s, gh := mintSvc(t, nil)
 	resp, body := s.mintCall(t, mintBody(testAppID))
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("the answer is %d, want 200: %s", resp.StatusCode, body)
 	}
-	logs := s.logs.String()
-	for _, want := range []string{mintPurpose, config.GitHubAppKeySecret, testRepo, s.run, s.job, "issued"} {
-		if !strings.Contains(logs, want) {
-			t.Errorf("the audit line does not name %q:\n%s", want, logs)
+	lines := mintAuditLines(t, s)
+	if len(lines) != 1 {
+		t.Fatalf("the mint wrote %d audit lines, want one per act: %v", len(lines), lines)
+	}
+	line := lines[0]
+	checkAuditShape(t, line)
+	for field, want := range map[string]any{
+		"purpose":    PurposeMint,
+		"credential": config.GitHubAppKeySecret,
+		"status":     StatusOK,
+		"run":        s.run,
+		"repository": s.slug,
+		"job":        s.job,
+		"caller":     testJobSA,
+		// The tier is present and EMPTY: C1.13 writes every field, empty ones
+		// included, so a reader does not have to tell "not known" from "not
+		// there" — and a tier here would be refused rather than recorded.
+		"tier": "",
+	} {
+		if got := line[field]; got != want {
+			t.Errorf("the mint's audit line %s = %v, want %q", field, got, want)
 		}
 	}
 	for _, secret := range []string{gh.token, appKeyPEM(t), fakeCred(t, "default")} {
-		if strings.Contains(logs, secret) {
+		if strings.Contains(s.audit.String(), secret) {
 			t.Fatal("the audit line carries a credential value")
 		}
 	}
 
-	// A refusal is audited too, and names no value either.
-	s.logs.b.Reset()
+	// A refusal is audited too, with the refusal's own status and no value
+	// either — and the message the refusal carried to the run is not in the
+	// line: the line is the contract's fields, and a refusal's sentence is the
+	// run's.
+	s.audit.b.Reset()
 	resp, body = s.mintCall(t, mintBody("not-a-number"))
 	if resp.StatusCode != StatusUnavailable {
 		t.Fatalf("the answer is %d, want %d", resp.StatusCode, StatusUnavailable)
 	}
-	logs = s.logs.String()
-	if !strings.Contains(logs, "refused") || !strings.Contains(logs, config.GitHubAppKeySecret) {
-		t.Errorf("a refused mint wrote no audit line naming the credential:\n%s", logs)
+	lines = mintAuditLines(t, s)
+	if len(lines) != 1 {
+		t.Fatalf("the refused mint wrote %d audit lines, want one: %v", len(lines), lines)
+	}
+	line = lines[0]
+	checkAuditShape(t, line)
+	for field, want := range map[string]any{
+		"purpose":    PurposeMint,
+		"credential": config.GitHubAppKeySecret,
+		"status":     ErrorStateUnavailable,
+		"run":        s.run,
+		"repository": s.slug,
+		"tier":       "",
+	} {
+		if got := line[field]; got != want {
+			t.Errorf("the refusal's audit line %s = %v, want %q", field, got, want)
+		}
 	}
 	for _, secret := range []string{gh.token, appKeyPEM(t), "not-a-number"} {
-		if strings.Contains(logs, secret) {
+		if strings.Contains(s.audit.String(), secret) {
 			t.Errorf("the refusal's audit line carries %q", secret)
 		}
 	}
 }
+
+// mintAuditLines parses the lines C1.13's auditor wrote for this fixture. They
+// are the auditor's own lines and not the service's (the fixture builds the
+// auditor on its own handler, server_test.go), so what this reads is the
+// contract's line and nothing the service's logger added to it.
+func mintAuditLines(t *testing.T, s *svc) []map[string]any {
+	t.Helper()
+	return parseAuditLines(t, s.audit.String())
+}
+
+// TestMintRefusesWhenItCannotBeAudited: C1.13's fail-closed rule is the mint's
+// too (D143). A token whose line cannot be written is a token this service does
+// not hand to anybody — the answer is a refusal and the token is in no answer,
+// no log line and no error — and a mint it REFUSED is answered as the refusal
+// it already was, because an act this service will not record is not made
+// either way and the refusal is not the act.
+//
+// The auditor cannot be built unarmed (NewAuditor) and cannot be built without
+// a handler, so "cannot be audited" is the two halves C1.13's line() names: a
+// handler that fails to write, and a log that does not record at the line's
+// level.
+func TestMintRefusesWhenItCannotBeAudited(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		handler slog.Handler
+	}{
+		{name: "a handler that fails to write", handler: &recordHandler{err: errors.New("the log is not recording")}},
+		{name: "a log that does not record the level", handler: &levelOffHandler{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			auditor, err := NewAuditor(tc.handler, armed())
+			if err != nil {
+				t.Fatalf("NewAuditor: %v", err)
+			}
+			s, gh := mintSvc(t, func(_ *svc, cfg *Config) { cfg.Audit = auditor })
+			resp, body := s.mintCall(t, mintBody(testAppID))
+			if resp.StatusCode != StatusUnavailable {
+				t.Fatalf("the answer is %d, want %d: a token this service could not audit is handed to nobody", resp.StatusCode, StatusUnavailable)
+			}
+			got := refusal(t, resp.StatusCode, body)
+			if got.Error != ErrorStateUnavailable || !strings.Contains(got.Message, ErrMintUnaudited.Error()) {
+				t.Errorf("the refusal is %+v, want state_unavailable and the unaudited class", got)
+			}
+			if n := gh.count(); n != 2 {
+				t.Errorf("GitHub saw %d requests, want the lookup and the mint: the token was minted and then withheld", n)
+			}
+			// The token reaches nothing the run or an operator can read: not
+			// the answer, not the service's own log.
+			if strings.Contains(string(body), gh.token) || strings.Contains(s.logs.String(), gh.token) {
+				t.Fatal("the token was handed out by a mint that could not be audited")
+			}
+			// The operator gets the auditor's own error, which names the field
+			// and the class and never a value (C1.13).
+			if logs := s.logs.String(); !strings.Contains(logs, "audit line was not written") {
+				t.Errorf("the service did not log the audit failure:\n%s", logs)
+			}
+		})
+	}
+
+	// The other half: a refused mint is still refused, and the audit failure is
+	// on the service's log rather than in the run's answer.
+	t.Run("a refusal is still refused", func(t *testing.T) {
+		auditor, err := NewAuditor(&recordHandler{err: errors.New("the log is not recording")}, armed())
+		if err != nil {
+			t.Fatalf("NewAuditor: %v", err)
+		}
+		s, gh := mintSvc(t, func(_ *svc, cfg *Config) { cfg.Audit = auditor })
+		resp, body := s.mintCall(t, mintBody("not-a-number"))
+		if resp.StatusCode != StatusUnavailable {
+			t.Fatalf("the answer is %d, want %d", resp.StatusCode, StatusUnavailable)
+		}
+		if got := refusal(t, resp.StatusCode, body); got.Error != ErrorStateUnavailable {
+			t.Errorf("the refusal is %q, want %q", got.Error, ErrorStateUnavailable)
+		}
+		if n := gh.count(); n != 0 {
+			t.Errorf("GitHub saw %d requests for a body this service cannot read, want none", n)
+		}
+	})
+}
+
+// levelOffHandler is a handler that records nothing: Enabled is false for every
+// level, which is the half of "cannot be audited" a level-filtered log is
+// (C1.13's line(): slog's own LogAttrs would drop such a record silently).
+type levelOffHandler struct{}
+
+func (levelOffHandler) Enabled(context.Context, slog.Level) bool  { return false }
+func (levelOffHandler) Handle(context.Context, slog.Record) error { return nil }
+func (levelOffHandler) WithAttrs([]slog.Attr) slog.Handler        { return levelOffHandler{} }
+func (levelOffHandler) WithGroup(string) slog.Handler             { return levelOffHandler{} }
 
 // TestMintFailsClosedWithNoAppKeyInTheBundle: a bundle that holds no App key
 // is a typed refusal and never a fallback. The service has no other key to
@@ -691,17 +821,29 @@ func TestMintRelaysNoGitHubTextAndHaltsTheRun(t *testing.T) {
 	if strings.Contains(got.Message, marker) || strings.Contains(got.Message, "401") {
 		t.Errorf("the refusal carries GitHub's own text: %q", got.Message)
 	}
-	if strings.Contains(s.logs.String(), marker) {
-		t.Error("a log line carries GitHub's own text")
+	if strings.Contains(s.audit.String(), marker) {
+		t.Error("the audit line carries GitHub's own text")
 	}
 	// The operator's line is still written, so a broken App is diagnosable —
 	// by the status GitHub answered with, which is the thing an operator acts
-	// on — and the audit line records the failure.
+	// on — and the audit line records the refusal with C1.13's own status for
+	// it, which is the wire error type the run halted on and not a word of this
+	// file's.
 	logs := s.logs.String()
-	for _, want := range []string{"could not be minted", "failed", "status=401"} {
+	for _, want := range []string{"could not be minted", "status=401"} {
 		if !strings.Contains(logs, want) {
 			t.Errorf("a failed mint's log does not name %q:\n%s", want, logs)
 		}
+	}
+	lines := mintAuditLines(t, s)
+	if len(lines) != 1 {
+		t.Fatalf("a failed mint wrote %d audit lines, want one: %v", len(lines), lines)
+	}
+	if got := lines[0]["status"]; got != ErrorStateUnavailable {
+		t.Errorf("the failed mint's audit line status = %v, want %q", got, ErrorStateUnavailable)
+	}
+	if got := lines[0]["credential"]; got != config.GitHubAppKeySecret {
+		t.Errorf("the failed mint's audit line credential = %v, want %q", got, config.GitHubAppKeySecret)
 	}
 }
 

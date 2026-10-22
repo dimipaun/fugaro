@@ -495,6 +495,11 @@ type svc struct {
 	state  *fakeStore
 	nodes  *fakePatcher
 	logs   *logBuf
+	// audit is where C1.13's audit lines go. They are written to their own
+	// handler and not to the service's logger (NewAuditor takes the handler),
+	// so a test reads the contract's line apart from the service's own lines —
+	// which is the property C1.13's file is built on.
+	audit *logBuf
 }
 
 func newSvc(t *testing.T) *svc { return newSvcWith(t, nil) }
@@ -530,6 +535,12 @@ func newSvcWith(t *testing.T, mutate func(*svc, *Config)) *svc {
 		state: newFakeStore(),
 		nodes: &fakePatcher{nodes: map[string]any{}},
 		logs:  &logBuf{},
+		audit: &logBuf{},
+	}
+	auditor, err := NewAuditor(slog.NewJSONHandler(s.audit, nil),
+		WithAuditScrub(s.fixtureScrub()))
+	if err != nil {
+		t.Fatalf("NewAuditor: %v", err)
 	}
 	cfg := Config{
 		Auth:    f.auth,
@@ -537,6 +548,7 @@ func newSvcWith(t *testing.T, mutate func(*svc, *Config)) *svc {
 		Policy:  s.policy,
 		State:   s.state,
 		Kills:   s.kills,
+		Audit:   auditor,
 		JobAccounts: []JobAccount{
 			{Email: testJobSA, Slug: f.slug, Repo: testRepo},
 			{Email: testOtherSA, Slug: testSlug(t, testOtherRepoPath), Repo: testOtherRepo},
@@ -562,6 +574,36 @@ func newSvcWith(t *testing.T, mutate func(*svc, *Config)) *svc {
 // credsRun is the run this fixture's calls are made for, as creds names it:
 // the slug the run token carries and the run id it carries.
 func (s *svc) credsRun() creds.Run { return creds.Run{Slug: s.slug, ID: s.run} }
+
+// fixtureScrub is the service's own redaction as C1.11's loader arms the real
+// one: it removes the values the fixture's own bundle documents hold, so a
+// value that reached an audit line would be replaced rather than written, and
+// a test that finds one has found a leak the redaction did not catch.
+//
+// It reads the documents through the source at call time rather than at
+// fixture time, so the tests that swap the bundle — the App key's own tests,
+// which hand it a document holding a private key — are scrubbed for what they
+// swapped in. The documents are parsed with the loader itself (ParseBundle), so
+// the values are the ones the service would hold and not a second reading of
+// the same text; a document the loader refuses contributes nothing, which is
+// right, because a value in a document the service will not read is a value it
+// never holds.
+func (s *svc) fixtureScrub() func(string) string {
+	return func(in string) string {
+		for _, doc := range s.src.docs {
+			b, err := ParseBundle(doc)
+			if err != nil {
+				continue
+			}
+			for _, e := range b.Entries() {
+				if v := e.Value(); v != "" {
+					in = strings.ReplaceAll(in, v, "[redacted]")
+				}
+			}
+		}
+		return in
+	}
+}
 
 // post sends one call to the service as the fixture's run: a job token in
 // Authorization, the run identity in its own header, and the job name the run
