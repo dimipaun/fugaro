@@ -12,6 +12,7 @@ package runner
 // (gitRunIdentity), and everything else is the job's environment.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -23,13 +24,17 @@ import (
 	"testing"
 	"time"
 
+	"gocloud.dev/blob/memblob"
 	"golang.org/x/oauth2"
 
+	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -517,5 +522,115 @@ func TestLocalRunRefusesTheService(t *testing.T) {
 	}
 	if calls := svc.mintCalls(); len(calls) != 0 {
 		t.Errorf("a local run called the credentials service %d times", len(calls))
+	}
+}
+
+// TestTheMintsRunIdentityIsThePolicyReadsSession: the identity a mint
+// presents is the session the run's OWN policy read exchanged, and this test
+// drives that read for real instead of planting the field.
+//
+// The ordering is why it matters. The run's first git credential is the
+// clone's, and it comes before the budget session exists (startBudgetBackend
+// runs after the clone), so r.ident.tok -- the session exchangeIdentity keeps
+// -- is the only identity the run has at its first mint. Here the launcher's
+// sealed token is taken out of the runs bucket and exchanged at the Firebase
+// fake, exactly as budgetClient does, and the git credential is then asked
+// for: what the service receives must be a token THAT exchange issued, for
+// this run's uid.
+//
+// Mutation (delete `r.ident.tok = tok` from exchangeIdentity, projectpolicy.go):
+// the run has no identity at its first credential, ServiceTokens refuses with
+// ErrServiceTokensIdentity, and openProvider fails -- which is what a
+// service-on run would do at its clone, before any checkout.
+func TestTheMintsRunIdentityIsThePolicyReadsSession(t *testing.T) {
+	ctx := context.Background()
+	// Real time, not a fixture date: the Firebase fake judges the exchange's
+	// own claims by its clock, so a mint in the past would be refused by the
+	// fake rather than by this run.
+	now := time.Now()
+	svc := newGitServiceFake(t, now)
+	meta := gitMetadataFake(t, gitServiceIDToken)
+
+	bucket := memblob.OpenBucket(nil)
+	defer bucket.Close()
+	blobs := blobx.Wrap(bucket)
+	key := bytes.Repeat([]byte{0x5a}, token.KeySize)
+	iam := gcpfake.NewIAMCredentials(t)
+	iam.AddSigner(svcSignerEmail)
+	itk := gcpfake.NewIdentityToolkit(t, iam, svcAPIKey, svcProject)
+	db := gcpfake.NewRTDB(t)
+	signer, err := token.NewIAMSigner(svcSignerEmail,
+		oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "ya29.launcher"}), token.WithIAMEndpoint(iam.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	custom, err := token.MintAt(ctx, signer, token.Claims{
+		Slug: svcSlug, Run: svcRunID, FX: token.ExpiryFX(now, 3*time.Hour), FP: svcProject, RB: "owner@example.invalid",
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The launcher's token where the launcher leaves it: sealed, under
+	// tokens/ in the runs bucket.
+	if err := token.PutObject(ctx, blobs, svcSlug, svcRunID, custom, key); err != nil {
+		t.Fatal(err)
+	}
+
+	env := []string{
+		providers.EnvGitHubAppID + "=1234",
+		credentialsServiceURLEnv + "=" + svc.srv.URL,
+		metadataHostEnv + "=" + strings.TrimPrefix(meta.URL, "http://"),
+	}
+	r := svcRun(t, "api-key", func(r *run) {
+		r.d.Env = env
+		r.d.OpenProvider = providers.FromEnv(env, svc.srv.Client(), nil)
+		r.d.Bucket = blobs
+		r.d.Store = runstore.Open(bucket, svcSlug, svcRunID)
+		r.d.Backend = Backend{
+			RTDBURL: db.URL, APIKey: svcAPIKey, TokenMarked: true, TokenKey: key,
+			Tune: func(c *budget.Config) { c.IdentityURL, c.SecureTokenURL = itk.URL, itk.URL },
+		}
+		r.spec = &task.Spec{Version: 1, RunID: svcRunID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature"}
+	})
+
+	// The run's own policy read, as bootstrap makes it: the launcher's token
+	// is taken and exchanged, and no budget session exists yet.
+	if _, found, err := r.projectPolicy(ctx); err != nil || found {
+		t.Fatalf("the run's policy read: found %t, %v", found, err)
+	}
+	if r.sess != nil {
+		t.Fatal("the fixture opened a budget session: the mint's identity must be the read's")
+	}
+
+	// The run's first git credential, which is the clone's.
+	if err := r.openProvider(ctx, gitprov.KindGitHub, "the --provider flag"); err != nil {
+		t.Fatalf("the run's first git credential: %v", err)
+	}
+	calls := svc.mintCalls()
+	if len(calls) != 1 {
+		t.Fatalf("the service answered %d mint calls, want 1", len(calls))
+	}
+	// The header is a token this fake signed -- and only this fake's own
+	// exchange could have produced one -- and it names this run.
+	claims, err := itk.IDTokenClaims(calls[0].run)
+	if err != nil {
+		t.Fatalf("the mint's run identity is not a token the run's own exchange issued: %v", err)
+	}
+	if want := token.UID(svcSlug, svcRunID); claims["sub"] != want {
+		t.Fatalf("the mint's run identity is a token for %v, want this run's %s", claims["sub"], want)
+	}
+	if claims["fs"] != svcSlug || claims["fr"] != svcRunID {
+		t.Fatalf("the mint's run identity claims %v/%v, want %s/%s", claims["fs"], claims["fr"], svcSlug, svcRunID)
+	}
+	if itk.Exchanges() != 1 {
+		t.Errorf("the run's identity was exchanged %d times, want 1 (the policy read's own)", itk.Exchanges())
+	}
+	if want := svc.token; r.auth.Token != want {
+		t.Errorf("the run's git credentials are %q, want the service's token", r.auth.Token)
+	}
+	// And the read kept that session on the run, which is what the mint above
+	// just read: the same identity either way.
+	if r.ident.tok == nil || r.ident.tok.Token() != calls[0].run {
+		t.Error("the run does not hold the session its mint presented")
 	}
 }
