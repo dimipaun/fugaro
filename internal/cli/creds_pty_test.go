@@ -8,90 +8,82 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
-	"github.com/dimipaun/fugaro/internal/credsvc"
 )
 
-// TestCredsSetReadsHiddenPrompt: at a real terminal, `fugaro creds set` reads
-// the value the way `fugaro secrets set` does — a hidden prompt, no echo —
-// and never from an argument, a flag or the environment. The terminal is a
-// pseudo-terminal (secrets_pty_test.go's newTTY), so this is the one path
-// TestCredsSetValueNeverFromArgvOrEnv cannot reach: a value pasted at the
-// prompt.
+// The App key is refused at a terminal BEFORE anything is read: the hidden
+// prompt takes one line, and a prompt that took the -----BEGIN line and then
+// failed would have had the operator paste a private key into a terminal for
+// nothing. The refusal is the same sentence `fugaro secrets set` makes for its
+// one multi-line secret (readSecret, secrets.go), with this command's name,
+// and it names the way in: stdin, from the key file.
 //
-// The command runs in its own goroutine because it blocks in the read until
-// the line arrives; the pty's ECHO flag is what tells the test the prompt has
-// been reached, and the result comes back on a channel (which is also what
-// makes the buffers below safe to read).
-func TestCredsSetReadsHiddenPrompt(t *testing.T) {
+// The pty is real, and nothing is ever written to it — the point is that the
+// command answers without waiting for a line, which is why this test has no
+// timeout of its own: a prompt that read would hang here.
+func TestCredsSetRefusesTheAppKeyAtATerminal(t *testing.T) {
+	f := credsFixtureFor(t)
+	f.seed(t, nil)
 	tty := newTTY(t)
-	if !tty.echo(t) {
-		t.Fatal("a fresh pty has ECHO off")
+	cmd := NewRootCmd()
+	var out, errOut bytes.Buffer
+	cmd.SetIn(tty.tty)
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"creds", "set", config.GitHubAppKeySecret})
+	err := cmd.Execute()
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("creds set %s at a terminal = %v, want a user error", config.GitHubAppKeySecret, err)
 	}
-	sm := credsFixtureFor(t)
-	sm.seed(t, nil)
-	value := credsValue(t, "prompt")
-
-	type result struct {
-		out, errOut string
-		err         error
+	for _, want := range []string{"hidden prompt can't take", "< PATH-TO-THE-KEY-FILE", config.GitHubAppKeySecret} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal is %q, want it to say %q", err, want)
+		}
 	}
-	done := make(chan result, 1)
-	go func() {
-		cmd := NewRootCmd()
-		var out, errOut bytes.Buffer
-		cmd.SetIn(tty.tty)
-		cmd.SetOut(&out)
-		cmd.SetErr(&errOut)
-		cmd.SetArgs(NormalizeRepoArgs([]string{"creds", "set", config.ClaudeOAuthToken}))
-		err := cmd.Execute()
-		done <- result{out.String(), errOut.String(), err}
-	}()
-
-	tty.waitEcho(t, false) // off while the value is read
-	if _, err := tty.master.WriteString(value + "\n"); err != nil {
-		t.Fatal(err)
+	if n := f.writes(); n != 0 {
+		t.Fatalf("%d version(s) written at a terminal", n)
 	}
-	r := <-done
-	if r.err != nil {
-		t.Fatalf("%v (stderr %q)", r.err, r.errOut)
-	}
-	tty.waitEcho(t, true) // and back on afterwards
-
-	if got := sm.value(t); !strings.Contains(got, config.ClaudeOAuthToken+": "+value) {
-		t.Fatalf("the bundle is %q, want the value just typed", got)
-	}
-	if !strings.Contains(r.errOut, "Paste the value for "+config.ClaudeOAuthToken+" (input hidden)") {
-		t.Errorf("the prompt was not printed: %q", r.errOut)
-	}
-	if strings.Contains(r.errOut, "trailing newline") {
-		t.Errorf("the hidden prompt's read keeps its own newline handling: %q", r.errOut)
-	}
-	if !strings.Contains(r.out, "version 1") {
-		t.Errorf("the write was not reported: %q", r.out)
-	}
-	assertNoValue(t, r.out+r.errOut, value)
-
-	// What the terminal itself displayed: the value was typed into it, so an
-	// echo that leaked would be here and nowhere else.
-	if got := tty.displayed(); strings.Contains(got, value) {
-		t.Errorf("the terminal echoed the value: %q", got)
-	}
-	// The command reads the bundle document and nothing else, and it is the
-	// only secret in this fixture: no other value was read, and none was
-	// written anywhere but the one container.
-	if got := sm.Accessed(); len(got) != 0 && !slicesAll(got, credsvc.BundleSecretID("aurora")) {
-		t.Errorf("values were read from %q", got)
+	// The value was never read, so nothing of a key can be in the answer: what
+	// the terminal displayed is the prompt and not the input, and no key was
+	// ever typed for it to echo.
+	if shown := tty.displayed(); strings.Contains(shown, "PRIVATE KEY") {
+		t.Errorf("the terminal displayed a key: %q", shown)
 	}
 }
 
-// slicesAll reports whether every element of got is want. It is here rather
-// than slices.Equal because the number of reads is not what this asserts: it
-// is that the only container read is the bundle.
-func slicesAll(got []string, want string) bool {
-	for _, g := range got {
-		if g != want {
-			return false
-		}
+// The same terminal, for a model credential, still gets the hidden prompt: the
+// refusal above is about the App key's shape and not about `creds set` at a
+// terminal, and the one-line path is unchanged. A value pasted at the prompt
+// is stored and echoed by nothing.
+func TestCredsSetPromptsForAModelCredentialAtATerminal(t *testing.T) {
+	f := credsFixtureFor(t)
+	f.seed(t, nil)
+	value := credsValue(t, "prompted")
+	tty := newTTY(t)
+	cmd := NewRootCmd()
+	var out, errOut bytes.Buffer
+	cmd.SetIn(tty.tty)
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"creds", "set", config.ClaudeOAuthToken})
+	done := make(chan error, 1)
+	go func() { done <- cmd.Execute() }()
+	// The hidden prompt has no echo, so the value goes in and the terminal
+	// shows nothing of it. waitEcho is what says the prompt is up (readHidden
+	// turns echo off before it reads).
+	tty.waitEcho(t, false)
+	if _, err := tty.master.WriteString(value + "\n"); err != nil {
+		t.Fatal(err)
 	}
-	return true
+	if err := <-done; err != nil {
+		t.Fatalf("creds set at a terminal = %v (stderr %q)", err, errOut.String())
+	}
+	if n := f.writes(); n != 1 {
+		t.Fatalf("%d version(s) written, want 1", n)
+	}
+	if shown := tty.displayed(); strings.Contains(shown, value) {
+		t.Fatalf("the terminal echoed the value: %q", shown)
+	}
+	if strings.Contains(out.String()+errOut.String(), value) {
+		t.Fatalf("a value leaked: %q", out.String()+errOut.String())
+	}
 }
