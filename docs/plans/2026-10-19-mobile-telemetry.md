@@ -1246,13 +1246,19 @@ line below is a claim this plan makes **without** a source in this tree:
    change reads the project's IAM**, no live action of any kind is taken, and **no service
    account, key or credential is read or named**. If the project's membership differs from the
    answer, §5 is what is wrong and the owner's correction is what fixes it.
-10. **Nothing under `mobile/`, `shared/` or `website/` was run for this change.** No `npm test`
-   ran in any of the three, no `expo prebuild` ran, no `eas build` ran, and no Firebase project
-   exists. The plan's own pin (`internal/cli/docs_mobile_telemetry_test.go`) is the only
-   executable thing this change adds, and it is run by the Go suite; **it asserts nothing about
-   an app, because there is no app behaviour yet to assert.** A reader who wants the app's
-   tests run before P7.1 starts should run `cd mobile && npm ci && npm test` — the command
-   §10.2 gives every task — because **no CI job here runs it**.
+10. **Nothing under `mobile/`, `shared/` or `website/` was run for this change.** The machine
+   this plan was rebuilt on has **no Node** (`node --version` → `command not found`; the
+   repository's `mise.toml` pins `go` and `terraform` and no Node toolchain), so no `npm test`
+   ran in any of the three, no `npm ci` ran, no `expo prebuild` ran, no `eas build` ran, and no
+   Firebase project exists. The plan's own pin
+   (`internal/cli/docs_mobile_telemetry_test.go`) is the only executable thing this change adds,
+   and it is run by the Go suite; **it asserts nothing about an app, because there is no app
+   behaviour yet to assert.** Two consequences a reader should carry: **`website/test/privacy.mjs`
+   was read and not run** — landing this plan flips its `planExists` branch, which *relaxes*
+   direction B rather than tightening it, and the guarded `EARLIER_BUILDS` assertion is skipped
+   once the file is in the tree — and a reader who wants the app's tests run before P7.1 starts
+   should run `cd mobile && npm ci && npm test`, the command §10.2 gives every task, because
+   **no CI job here runs it**.
 
 ---
 
