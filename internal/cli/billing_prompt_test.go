@@ -186,6 +186,48 @@ func TestPickerPicksByNumberAndReasksOnNonsense(t *testing.T) {
 	}
 }
 
+// TestPickerEnterOnSeveralAccountsAsksAgain: one account is the answer Enter
+// takes (below); with more than one there is no default, and an empty line is
+// no answer at all — the question asks again rather than linking an account
+// nobody picked. It is the account the run links, and a link may incur
+// charges, so Enter must never mean "the first one".
+func TestPickerEnterOnSeveralAccountsAsksAgain(t *testing.T) {
+	f := gcpfake.NewBilling(t)
+	first, second := pickerAccountID(t, "one"), pickerAccountID(t, "two")
+	f.AddAccountNamed(first, "the operator's own account", true)
+	f.AddAccountNamed(second, "a second account", true)
+	offered := []string{first, second}
+	sort.Strings(offered)
+
+	// Enter first, then the second account's number: what is linked is what
+	// was picked, not what Enter would have taken.
+	r, out := pickerRun(t, true, pickerAnswers("\n2"), nil)
+	pickerSources(t, f)
+	if err := r.gatherInputs(t.Context()); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if r.o.linkBilling != offered[1] {
+		t.Errorf("Enter on a list of two left the question answered with %q, want the number typed after it (%q)\n%s", r.o.linkBilling, offered[1], out)
+	}
+	if n := strings.Count(out.String(), "Billing account"); n < 2 {
+		t.Errorf("the empty answer was taken as an answer: the question was shown %d time(s), want it asked again\n%s", n, out)
+	}
+	if strings.Contains(out.String(), "[1]") {
+		t.Errorf("the question offers a default it does not have — with two accounts there is nothing for Enter to take:\n%s", out)
+	}
+
+	// Enter with nothing after it is not an answer either: the run is refused
+	// with nothing linked, rather than linked to the first account.
+	r, out = pickerRun(t, true, pickerAnswers("\n\n\n"), nil)
+	pickerSources(t, f)
+	if err := r.gatherInputs(t.Context()); err == nil {
+		t.Errorf("three empty answers answered the question:\n%s", out)
+	}
+	if r.o.linkBilling != "" {
+		t.Errorf("an account was linked out of an empty answer: %q", r.o.linkBilling)
+	}
+}
+
 // TestPickerSingleAccountIsTheDefault: one account is the answer Enter takes,
 // so an operator with one account types nothing.
 func TestPickerSingleAccountIsTheDefault(t *testing.T) {
@@ -417,14 +459,20 @@ func TestPickerNeverRunsUnderYes(t *testing.T) {
 	}
 }
 
-// TestPickerLeavesTheRunAsTodayWhenNoSourceAnswers: the API refused and gcloud
-// is not on PATH (W4.2's fallback), so there is nothing to offer and nothing
-// to say — the question prints nothing of its own and records nothing. The run
-// falls back to today's text, which the project stage prints with the guided
-// line (F6).
-func TestPickerLeavesTheRunAsTodayWhenNoSourceAnswers(t *testing.T) {
+// TestPickerNoSourceSaysSoAndRecordsNothing: the API refused and gcloud is not
+// on PATH (W4.2's fallback), so there is nothing to offer. The question says
+// that in one line and records nothing; the run falls back to today's text,
+// which the project stage prints with the guided line (F6).
+//
+// The line is value-free — no account, no project, no API message, not even
+// the refusal's own words, which can name a project, a permission or an
+// account — and it is what tells a run that could not read the list apart from
+// a run with no picker at all: Check 111 records which source answered, and
+// here the answer is neither.
+func TestPickerNoSourceSaysSoAndRecordsNothing(t *testing.T) {
 	f := gcpfake.NewBilling(t)
-	f.AddAccountNamed(pickerAccountID(t, "one"), "the operator's own account", true)
+	acct := pickerAccountID(t, "one")
+	f.AddAccountNamed(acct, "the operator's own account", true)
 	f.RefusePath("/v1/billingAccounts", http.StatusForbidden, "PERMISSION_DENIED", "IAM_PERMISSION_DENIED", "The caller does not have permission")
 	r, out := pickerRun(t, true, pickerAnswers(""), nil)
 	pickerSources(t, f) // a refusing API and no gcloud on PATH
@@ -434,8 +482,21 @@ func TestPickerLeavesTheRunAsTodayWhenNoSourceAnswers(t *testing.T) {
 	if r.o.linkBilling != "" {
 		t.Errorf("an account was recorded with no source answering: %q", r.o.linkBilling)
 	}
-	if got := strings.ToLower(out.String()); strings.Contains(got, "billing account") {
-		t.Errorf("the question printed something of its own when nothing could be listed:\n%s", out)
+	if !strings.Contains(out.String(), "could not be listed") {
+		t.Errorf("the question does not say the accounts could not be listed, so the operator cannot tell this run from one with no picker at all:\n%s", out)
+	}
+	// Value-free: nothing of the answer that could not be read is repeated.
+	for _, leak := range []string{
+		acct,
+		"the operator's own account",
+		"billingAccounts/",
+		"proj-1234",                           // the project being set up
+		"The caller does not have permission", // the API's own words
+		"1)",                                  // a numbered list
+	} {
+		if strings.Contains(out.String(), leak) {
+			t.Errorf("the line about the unreadable list carries %q:\n%s", leak, out)
+		}
 	}
 }
 
@@ -577,24 +638,65 @@ func TestPickerStoresNothing(t *testing.T) {
 	// The same stdin twice: once where a source answers (the picker runs), and
 	// once where neither source answers (it does not, and the run is today's).
 	// The two options values must differ in the account and in nothing else.
-	asked := func(seam func(*testing.T)) *initOptions {
-		firstRunEnv(t)
+	//
+	// What the question may leave behind is watched in the two places a Go run
+	// can leave it: the filesystem — the whole root a first run is given, HOME
+	// and every XDG root and the working directory under it, so a file written
+	// anywhere this run may write is seen — and stderr. The account list is
+	// the run's own stdout and nowhere else: not a file, not stderr.
+	asked := func(seam func(*testing.T)) (*initOptions, string) {
+		t.Helper()
+		root := firstRunEnv(t)
 		fakeTerminal(t)
 		seam(t)
-		home := os.Getenv("HOME")
-		before := filesUnder(t, home)
-		o := &initOptions{door: setupDoor.name}
-		r := &initRun{o: o, w: &strings.Builder{}, in: bufio.NewReader(strings.NewReader(pickerAnswers("1"))), cmd: NewRootCmd()}
-		if err := r.gatherInputs(t.Context()); err != nil {
+		before := filesUnder(t, root)
+		// stderr is captured outside that root, so the capture is not itself a
+		// file the snapshot below would report as the run's own writing.
+		errFile, err := os.Create(filepath.Join(t.TempDir(), "stderr"))
+		if err != nil {
 			t.Fatal(err)
 		}
-		if got := filesUnder(t, home); !reflect.DeepEqual(before, got) {
-			t.Errorf("the question wrote files under HOME: %v, want %v", got, before)
+		oldErr := os.Stderr
+		os.Stderr = errFile
+		t.Cleanup(func() { os.Stderr = oldErr }) // a panic in the run must not leave the test binary's stderr pointed at a closed file
+		o := &initOptions{door: setupDoor.name}
+		r := &initRun{o: o, w: &strings.Builder{}, in: bufio.NewReader(strings.NewReader(pickerAnswers("1"))), cmd: NewRootCmd()}
+		gerr := r.gatherInputs(t.Context())
+		os.Stderr = oldErr
+		if err := errFile.Close(); err != nil {
+			t.Fatal(err)
 		}
-		return o
+		if gerr != nil {
+			t.Fatal(gerr)
+		}
+		got := filesUnder(t, root)
+		if !reflect.DeepEqual(before, got) {
+			t.Errorf("the question wrote under the run's own root (%s): %v, want %v", root, got, before)
+		}
+		for _, p := range got {
+			b, rerr := os.ReadFile(filepath.Join(root, p))
+			if rerr != nil {
+				continue
+			}
+			if strings.Contains(string(b), picked) || strings.Contains(string(b), "billingAccounts/") {
+				t.Errorf("%s carries the account list the question read", p)
+			}
+		}
+		captured, err := os.ReadFile(errFile.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return o, string(captured)
 	}
-	answered := asked(func(t *testing.T) { pickerSources(t, f) })
-	control := asked(noBillingSources)
+	answered, errOut := asked(func(t *testing.T) { pickerSources(t, f) })
+	control, controlErr := asked(noBillingSources)
+	for _, out := range []string{errOut, controlErr} {
+		for _, leak := range []string{picked, "the operator's own account", "billingAccounts/", "1)"} {
+			if strings.Contains(out, leak) {
+				t.Errorf("the account list reached stderr (%q):\n%s", leak, out)
+			}
+		}
+	}
 	if answered.linkBilling != picked {
 		t.Fatalf("the picker recorded %q, want %q", answered.linkBilling, picked)
 	}
@@ -605,7 +707,7 @@ func TestPickerStoresNothing(t *testing.T) {
 	}
 
 	// A second question lists again: nothing is kept between runs.
-	if second := asked(func(t *testing.T) { pickerSources(t, f) }); second.linkBilling != picked {
+	if second, _ := asked(func(t *testing.T) { pickerSources(t, f) }); second.linkBilling != picked {
 		t.Errorf("the second run's answer: %q, want %q", second.linkBilling, picked)
 	}
 	if n := billingListCalls(f); n != 2 {

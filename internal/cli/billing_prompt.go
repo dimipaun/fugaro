@@ -27,10 +27,14 @@ import (
 // name are shown, nothing is cached, written or logged, and the account a
 // project is already linked to is never read or printed.
 //
-// Where any of that fails — one of the four conditions, or neither source
-// answering — nothing is listed, nothing is recorded, and the run is exactly
-// the run it was before this task (reconciliation F6): the project stage's own
-// guided line is what the operator sees then.
+// Where any of that fails — one of the four conditions — nothing is listed,
+// nothing is recorded, and the run is exactly the run it was before this task
+// (reconciliation F6): the project stage's own guided line is what the
+// operator sees then. Where the question ran and neither source answered, the
+// run is that run plus one value-free line saying the list could not be read
+// (askBilling): an owner who asked for the list and got silence cannot tell it
+// from a run with no picker at all, and Check 111 records which source
+// answered — here, neither.
 
 // billingNoAccount is the answer that links nothing now. A list can hold an
 // account the operator does not want to use yet, and a question with no way
@@ -90,10 +94,15 @@ func (r *initRun) askBilling(ctx context.Context) error {
 	opts.Project = project
 	accounts, source, err := billing.ListWithFallback(ctx, opts)
 	if err != nil {
-		// Neither source answered. There is nothing to offer and nothing to
-		// say: the API's refusal is about a list this run did not need, and
-		// the project stage prints the guided line for an account it does not
-		// know. The run goes on exactly as it did before this task.
+		// Neither source answered. Nothing is offered and nothing is recorded,
+		// and the one line below is all this says about it: the refusal itself
+		// is not printed — it is the API's own words about a list this run did
+		// not need, and it can name a project, a permission or an account —
+		// and the project stage prints the guided line for an account it does
+		// not know. Without the line, a run that could not read the list is
+		// indistinguishable from a run with no picker at all, and Check 111
+		// records which source answered: neither.
+		fmt.Fprintf(r.w, "Billing accounts could not be listed (neither the Cloud Billing API nor %s answered).\n", billing.GcloudBin)
 		return nil
 	}
 	if len(accounts) == 0 {
