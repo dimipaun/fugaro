@@ -187,6 +187,50 @@ func (s *Server) settle(st *stageState, w pricing.Micros, c charge) {
 	s.checkLocked()
 }
 
+// settleProbe charges a probe the credentials service made while answering
+// this run's call (C1.12), by the tier the probe was made on (C1.16): a
+// probe on tier A is notional, a probe on any other tier is money, exactly as
+// the call that owed it settles.
+//
+// It is not a settle: there is no reservation to release. A probe is made
+// inside the service's answer to one client request, and that request's own
+// reservation is what covers the service's work (C1.11) — the probe is a
+// second upstream call inside it, so the run pays for it over and above what
+// the request reserved and the amount is charged whole rather than against
+// w. The overrun bookkeeping is left alone for the same reason: an overrun is
+// a reservation the call outgrew, and this is not a reservation.
+//
+// It leaves the last call's cache state untouched too (F24): what the run had
+// cached is the answering call's own usage, and a probe -- a minimal call the
+// service built, whose answer is closed unread -- says nothing about it.
+func (s *Server) settleProbe(st *stageState, tier, model string, amount pricing.Micros) {
+	if amount <= 0 || tier == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	real := tier != TierA
+	if real {
+		s.used = satAdd(s.used, amount)
+	} else {
+		s.notional = satAdd(s.notional, amount)
+	}
+	r := &st.rep
+	r.Calls++ // it is a call: it reached the upstream and somebody paid for it
+	if real {
+		r.Used = satAdd(r.Used, amount)
+		if tier == TierB || tier == TierC {
+			r.ByTier[tier] = satAdd(r.ByTier[tier], amount)
+		}
+	} else {
+		r.Notional = satAdd(r.Notional, amount)
+	}
+	r.ByModel[model] = satAdd(r.ByModel[model], amount)
+	s.log.Info("budget: a probe settled", "stage", st.st.Name, "tier", tier,
+		"model", logValue(model), "micros", int64(amount), "notional", !real)
+	s.checkLocked()
+}
+
 // SwitchCost is what one credential switch is estimated to cost (F24,
 // D140): the cache the last call had already read, re-read as a miss on the
 // tier that answered it. It is a figure about the switch, never about a

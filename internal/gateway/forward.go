@@ -52,6 +52,18 @@ var routedKeys = []string{
 // maxJSONDepth bounds how deeply a request body may nest.
 const maxJSONDepth = 512
 
+// probeMaxTokens is the output bound of the minimal call the credentials
+// service sends when it probes a backed-off credential (C1.12's
+// probeMaxTokens, respelled here because the package exports no constant for
+// it: the two must agree, and the gateway is the one that prices the probe).
+//
+// It is what a probe is priced at (C1.16): the smallest Messages call this
+// gateway can send, on the run's own model. The probe's body is a few dozen
+// bytes the service built, and never the run's body -- pricing the probe by
+// the run's own request would charge the run's whole context for a question
+// about a credential.
+const probeMaxTokens = 1
+
 // parseRequest reads a Messages body. An error is a malformed request
 // (400, not a violation); a shape the budget can't price is returned as
 // parsed.violation. On Vertex the model comes from the path.
@@ -649,8 +661,19 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request, rt route
 	// Whatever happens below, the call settles exactly once. Until an
 	// outcome is known it is charged its full reservation.
 	out := outcome{charge: charge{amount: w0, unreconciled: w0, model: p.model, sent: true}, settled: settledReserved, pricedAs: cl.pricedAs}
+	// The tiers the service probed while answering this call (C1.12), empty
+	// until its answer says which they were.
+	var probed []string
 	defer func() {
 		out.route = cl.route
+		// A probe is a call the run pays for (C1.16), and it settles
+		// before the call that owed it: what the run had cached is the
+		// answering call's own usage (F24), this gateway never reads a
+		// probe's usage, and a probe settled after its call would be the
+		// last word on the cache instead of the call.
+		for _, t := range probed {
+			s.settleProbe(st, t, p.model, m.WorstCase(pricing.Request{MaxTokens: probeMaxTokens}))
+		}
 		s.settle(st, w0, out.charge)
 		cl.charged, cl.settled, cl.pricedAs, cl.servingModel, cl.usage, cl.errorType, cl.reported =
 			out.amount, out.settled, out.pricedAs, out.servingModel, out.usage, out.errorType, out.reported
@@ -661,7 +684,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request, rt route
 	// served and this gateway could not price is still a call the run
 	// pays for at the tier it was served from.
 	var served string
-	out = s.forward(w, r, rt, body, p, known, w0, &cl.status, &served)
+	out = s.forward(w, r, rt, body, p, known, w0, &cl.status, &served, &probed)
 	out.charge.tier = served
 }
 
@@ -678,7 +701,7 @@ func zeroOutcome(model string, sent bool) outcome {
 
 // forward sends the call upstream and copies the response back without
 // buffering, teeing it to the usage parser, and says how it settles.
-func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body []byte, p parsed, known bool, w0 pricing.Micros, status *int, tier *string) outcome {
+func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body []byte, p parsed, known bool, w0 pricing.Micros, status *int, tier *string, probed *[]string) outcome {
 	reserved := outcome{charge: charge{amount: w0, unreconciled: w0, model: p.model, sent: true}, settled: settledReserved, pricedAs: pricedTable}
 	if !known {
 		reserved.pricedAs = pricedMax
@@ -751,8 +774,9 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		// the switch, and the refusals that are the service's own answer and
 		// are never relayed. A model answer (2xx, or a model error the
 		// service relayed) is not touched: it goes on to the pump below.
-		st, done, served := s.serviceAnswer(w, resp, true)
+		st, done, served, probes := s.serviceAnswer(w, resp, true)
 		*tier = served // "" when the answer carried none, which is a halt or a relayed error
+		*probed = probes
 		if done {
 			*status = st
 			// A 2xx this gateway could not account by is a model answer the
@@ -1301,7 +1325,7 @@ func (s *Server) forwardFree(w http.ResponseWriter, r *http.Request, rt route) {
 		// answer is not asked for a tier -- but a refusal is the service's
 		// own answer here too, and is acted on rather than copied to the
 		// agent (D143). A model answer passed through.
-		if _, done, _ := s.serviceAnswer(w, resp, false); done {
+		if _, done, _, _ := s.serviceAnswer(w, resp, false); done {
 			return
 		}
 	}

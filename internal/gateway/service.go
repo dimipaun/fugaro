@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -73,7 +74,7 @@ const (
 )
 
 // The answer headers of the contract (credsvc.HeaderTier,
-// credsvc.HeaderCredential, credsvc.HeaderSwitch).
+// credsvc.HeaderCredential, credsvc.HeaderSwitch, credsvc.HeaderProbe).
 const (
 	// HeaderTier is the credential tier that answered: TierA, TierB or
 	// TierC. A Messages call settles by it (C1.16).
@@ -84,6 +85,12 @@ const (
 	// HeaderSwitch, when present, is the JSON of a switch: this call moved
 	// from one credential to another inside the service.
 	HeaderSwitch = "X-Fugaro-Switch"
+	// HeaderProbe, when present, names the tiers the service probed while
+	// answering this call, comma separated and once each. A probe is a call
+	// the run pays for, and this is the only place the run can learn of it
+	// (C1.12, C1.16): it settles as notional on tier A and as money on any
+	// other tier.
+	HeaderProbe = "X-Fugaro-Probed"
 )
 
 // The credential tiers, as they are spelled on the wire (credsvc.TierA and
@@ -215,6 +222,15 @@ type ServiceAnswer struct {
 	// record's "estimated cache-miss cost", and the service cannot supply
 	// it: what the run has cached is the gateway's own knowledge.
 	SwitchCost SwitchCost
+	// Probed is every tier the service made a probe on while answering this
+	// call (C1.12's HeaderProbe), once each and in the order it made them.
+	// A probe is a call, so it is the run's to account for (C1.16), and the
+	// service is the only place that knows it happened: its own answer is
+	// closed unread, and its audit line is the service's record, not the
+	// run's. The tiers are what the ledger needs and the names are not
+	// carried -- which credential was probed is C1.13's line, and the run
+	// learns the name of the credential that ANSWERED from Credential.
+	Probed []string
 	// Exhausted, when set, is the service's typed answer that no credential
 	// is usable before its instant: this call was not served, and the one
 	// thing to do about it is wait (C1.17). Every other field is then the
@@ -290,7 +306,7 @@ func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) 
 	// The service's own answer headers mean nothing in a request, and a
 	// client that sent them must not have them arrive as if the service had
 	// answered with them.
-	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch} {
+	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch, HeaderProbe} {
 		h.Del(k)
 	}
 	h.Set("Authorization", "Bearer "+id)
@@ -443,6 +459,47 @@ func credentialHeaders(h http.Header) (tier, name string, ok bool, err error) {
 func switchValue(h http.Header) (string, error) {
 	v, _, err := responseHeader(h, HeaderSwitch)
 	return v, err
+}
+
+// maxProbedTiers is how many tiers the probe header can name: the tiers are a
+// closed set of three and a call probes at most one credential per tier
+// (C1.12). It is credsvc's own bound (maxProbedTiers), respelled because the
+// package exports it only as the writer's rule; a list longer than it is not
+// this contract's, and is refused rather than read.
+const maxProbedTiers = 3
+
+// probedTiers reads the tiers the service probed while answering this call
+// (C1.12's HeaderProbe). No answer carrying none is the common case and is
+// not an error: a call the service could serve without asking a backed-off
+// credential anything probed nothing.
+//
+// Every refusal here is the reader's own sentence: the tiers arrive as header
+// text from another process, and a tier that is not one of the contract's
+// three is a value this ledger must not be asked to charge by -- the by-tier
+// split has a leaf for B and C and none for anything else (C1.16).
+func probedTiers(h http.Header) ([]string, error) {
+	value, present, err := responseHeader(h, HeaderProbe)
+	if err != nil {
+		return nil, err
+	}
+	if !present {
+		return nil, nil
+	}
+	parts := strings.Split(value, ",")
+	if len(parts) > maxProbedTiers {
+		return nil, errors.New("the answer's probe header names more tiers than this contract carries")
+	}
+	seen := make(map[string]bool, len(parts))
+	for _, tier := range parts {
+		if !validTier(tier) {
+			return nil, errors.New("the answer's probed tier isn't one this contract carries")
+		}
+		if seen[tier] {
+			return nil, errors.New("the answer's probe header names one tier twice")
+		}
+		seen[tier] = true
+	}
+	return parts, nil
 }
 
 // serviceRefusal is the JSON body of a refusal, the mirror of credsvc's
@@ -620,28 +677,39 @@ func exhaustedAnswer(e serviceRefusal) (Exhausted, error) {
 // write) halts the run rather than settling by a guess. A token count is free
 // and settles nothing, and asks for nothing.
 //
+// The probes the answer reports (HeaderProbe, C1.12) come back with the tier:
+// each one is a call the run paid for and settles the same way the call does,
+// by the tier it was made on (C1.16).
+//
 // A non-2xx answer is read as a refusal only when it is one; a model error
 // the service relayed is its own writer's text, reaches the agent as it does
 // today, and its body is put back on the response for the relay to stream. A
 // refusal is never relayed: it is fugaro's own answer, it names the project's
 // credentials, and the agent has no business seeing the set of them (D143).
-func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needTier bool) (status int, done bool, tier string) {
+func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needTier bool) (status int, done bool, tier string, probed []string) {
 	if resp.StatusCode/100 == 2 {
 		if !needTier {
-			return resp.StatusCode, false, ""
+			return resp.StatusCode, false, "", nil
 		}
 		tier, name, ok, err := credentialHeaders(resp.Header)
 		if err == nil && !ok {
 			err = errors.New("the answer carries no tier")
 		}
 		if err != nil {
-			return s.haltService(w, stateDetailUnreadable), true, ""
+			return s.haltService(w, stateDetailUnreadable), true, "", nil
 		}
 		sw, err := switchValue(resp.Header)
 		if err != nil {
-			return s.haltService(w, stateDetailUnreadable), true, ""
+			return s.haltService(w, stateDetailUnreadable), true, "", nil
 		}
-		a := ServiceAnswer{Tier: tier, Credential: name, Switch: sw}
+		if probed, err = probedTiers(resp.Header); err != nil {
+			// An answer whose probes cannot be read is a halt rather than a
+			// ledger input dropped: the call was made and somebody paid for
+			// it, and a run that cannot say so would report a spend it did
+			// not make.
+			return s.haltService(w, stateDetailUnreadable), true, "", nil
+		}
+		a := ServiceAnswer{Tier: tier, Credential: name, Switch: sw, Probed: probed}
 		if sw != "" {
 			// A switch's cache-miss cost is the gateway's to estimate
 			// (F24): it is computed here, where the last call's usage is,
@@ -649,7 +717,7 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 			a.SwitchCost = s.switchCost(tier)
 		}
 		s.answer(a)
-		return resp.StatusCode, false, tier
+		return resp.StatusCode, false, tier, probed
 	}
 	head, rerr := io.ReadAll(io.LimitReader(resp.Body, maxServiceRefusalBytes))
 	// Whatever this answer turns out to be, the reader above has consumed
@@ -659,7 +727,7 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 	if rerr != nil {
 		// A body that broke mid-read, before any of it reached the agent:
 		// not a refusal this code can read, and not one to relay.
-		return s.haltService(w, stateDetailUnreadable), true, ""
+		return s.haltService(w, stateDetailUnreadable), true, "", nil
 	}
 	e, ok, err := readServiceRefusal(resp.StatusCode, head)
 	if !ok {
@@ -683,18 +751,18 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 		// as it always did. The run is not stopped by it either: another
 		// credential, or a person, may be what fixes it.
 		if (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) && !modelErrorEnvelope(head) {
-			return s.haltService(w, stateDetailUnadmitted), true, ""
+			return s.haltService(w, stateDetailUnadmitted), true, "", nil
 		}
-		return resp.StatusCode, false, "" // a model error the service relayed
+		return resp.StatusCode, false, "", nil // a model error the service relayed
 	}
 	if err != nil {
-		return s.haltService(w, stateDetailUnreadable), true, ""
+		return s.haltService(w, stateDetailUnreadable), true, "", nil
 	}
 	switch e.Error {
 	case ErrorExhaustedUntil:
 		ex, err := exhaustedAnswer(e)
 		if err != nil {
-			return s.haltService(w, stateDetailUnreadable), true, ""
+			return s.haltService(w, stateDetailUnreadable), true, "", nil
 		}
 		// The wait is not a halt: the runner decides what to do about it
 		// (C1.17), and until it does the call is answered retryably and
@@ -703,17 +771,17 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 		s.answer(ServiceAnswer{Exhausted: &ex})
 		writeError(w, http.StatusServiceUnavailable, "api_error",
 			"fugaro: the credentials service has no credential available before "+ex.ResetAt.UTC().Format(time.RFC3339))
-		return http.StatusServiceUnavailable, true, ""
+		return http.StatusServiceUnavailable, true, "", nil
 	case ErrorStateUnavailable:
-		return s.haltService(w, refusalDetail(e.Error)), true, ""
+		return s.haltService(w, refusalDetail(e.Error)), true, "", nil
 	case ErrorUnverifiedRunIdentity, ErrorUnverifiedJobIdentity:
-		return s.haltService(w, refusalDetail(e.Error)), true, ""
+		return s.haltService(w, refusalDetail(e.Error)), true, "", nil
 	}
 	// A refusal whose type this release does not know. It is the service's
 	// own answer and is not relayed, and the call cannot be accounted for
 	// either: stop rather than improvise (D143's posture). The type is from
 	// a closed set the service writes, and is not echoed into the detail.
-	return s.haltService(w, stateDetailUnreadable), true, ""
+	return s.haltService(w, stateDetailUnreadable), true, "", nil
 }
 
 // replayBody is a response body whose first bytes were read and put back.

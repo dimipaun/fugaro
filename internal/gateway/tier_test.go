@@ -3,6 +3,7 @@ package gateway
 import (
 	"math"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -385,5 +386,203 @@ func TestSwitchCostUnmeasuredAfterACallThatReportedNoUsage(t *testing.T) {
 	}
 	if !last.SwitchCost.Unmeasured || last.SwitchCost.USD != 0 {
 		t.Errorf("the switch after a call with no usage is estimated at %+v, want unmeasured", last.SwitchCost)
+	}
+}
+
+// probeReply is a served Messages answer by a call whose credential was
+// probed first (C1.12): the contract's own headers, plus HeaderProbe naming
+// the tiers the service's probes were made on.
+func probeReply(tier, name string, u pricing.Usage, probed ...string) anthropicfake.Reply {
+	r := tierReply(tier, name, u)
+	r.Header.Set(HeaderProbe, strings.Join(probed, ","))
+	return r
+}
+
+// TestAProbeSettlesByTheTierItWasMadeOn is C1.16's rule for a probe: the
+// service asked a backed-off credential whether it works before serving this
+// call (C1.12), so a call was made that the run pays for -- accounted
+// notional on tier A and money on any other tier, by the tier the PROBE was
+// made on and not the tier that answered.
+//
+// The two split apart on the third case, which is the one that matters: a
+// probe that found tier A dead leaves the call to be served from B, and the
+// probe's figure must land as notional while the call's lands as money.
+func TestAProbeSettlesByTheTierItWasMadeOn(t *testing.T) {
+	u := pricing.Usage{Input: 6000, Output: 40}
+	body := msg(sonnet, 100)
+	c := cost(t, sonnet, u)
+	// The call's own usage is dearer than its reservation, which is the one
+	// overrun in this test: what a probe must not add to.
+	w := worst(t, sonnet, body, 100, "")
+	if c <= w {
+		t.Fatalf("the fixture no longer charges over its reservation (%s vs %s)", dollars(c), dollars(w))
+	}
+	// What one probe can cost: the minimal call the service builds, priced
+	// at the model's worst case (one output token, the body's own floor).
+	p := model(t, sonnet).WorstCase(pricing.Request{MaxTokens: probeMaxTokens})
+	if p <= 0 || p >= c {
+		t.Fatalf("the fixture's probe figure (%s) is not smaller than the call's (%s)", dollars(p), dollars(c))
+	}
+	for _, tc := range []struct {
+		name     string
+		tier     string
+		probed   []string
+		used     pricing.Micros
+		notional pricing.Micros
+		byTier   map[string]pricing.Micros
+	}{
+		{"tier A's own probe is notional", TierA, []string{TierA}, 0, c + p, map[string]pricing.Micros{}},
+		{"tier B's probe is money", TierB, []string{TierB}, c + p, 0, map[string]pricing.Micros{TierB: c + p}},
+		{"a probe on A under a call served from B", TierB, []string{TierA}, c, p, map[string]pricing.Micros{TierB: c}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _ := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+				return probeReply(tc.tier, "repo-a", u, tc.probed...)
+			}, enforceCap(p+c*10))
+			if resp, b := h.post(msg(sonnet, 100)); resp.StatusCode != http.StatusOK {
+				t.Fatalf("the call: %d %s", resp.StatusCode, b)
+			}
+			rep := h.gw.EndStage()
+			if rep.Used != tc.used || rep.Notional != tc.notional {
+				t.Errorf("the stage reports used %s notional %s, want %s and %s",
+					dollars(rep.Used), dollars(rep.Notional), dollars(tc.used), dollars(tc.notional))
+			}
+			// The probe and the call it was made for: two calls reached an
+			// upstream and the run says so.
+			if rep.Calls != 2 {
+				t.Errorf("the stage counts %d calls, want the probe and the call", rep.Calls)
+			}
+			if len(rep.ByTier) != len(tc.byTier) {
+				t.Fatalf("the by-tier split is %v, want %v", rep.ByTier, tc.byTier)
+			}
+			for tier, want := range tc.byTier {
+				if rep.ByTier[tier] != want {
+					t.Errorf("the by-tier split's %s is %s, want %s", tier, dollars(rep.ByTier[tier]), dollars(want))
+				}
+			}
+			// Everything charged is in the model split, whichever way it
+			// settled: the probe's model is the run's own.
+			if rep.ByModel[sonnet] != tc.used+tc.notional {
+				t.Errorf("the model split is %v, want every figure charged", rep.ByModel)
+			}
+			if l := h.gw.Ledger(); l.Used != tc.used || l.Notional != tc.notional || l.Reserved != 0 {
+				t.Errorf("ledger %+v, want used %s notional %s and nothing reserved", l, dollars(tc.used), dollars(tc.notional))
+			}
+			// A probe is charged whole and is not an overrun: it holds no
+			// reservation of its own. It sits inside the answering
+			// request's, which is what C1.11's one reservation covers, and
+			// the only overrun here is the call's own usage over what that
+			// reservation held.
+			wantOver := pricing.Micros(0)
+			if tc.tier != TierA {
+				wantOver = c - w
+			}
+			if rep.Overrun != wantOver || rep.Unreconciled != 0 {
+				t.Errorf("overrun %s (want the call's own %s) and %s unreconciled",
+					dollars(rep.Overrun), dollars(wantOver), dollars(rep.Unreconciled))
+			}
+		})
+	}
+}
+
+// TestAProbeCountsAgainstTheCapOnTierB: money is money (D140, F25): a
+// tier-B probe is spend like any other, so a cap that holds the call and its
+// probe but not a second call refuses the second one.
+func TestAProbeCountsAgainstTheCapOnTierB(t *testing.T) {
+	u := pricing.Usage{Input: 6000, Output: 40}
+	body := msg(sonnet, 100)
+	w := worst(t, sonnet, body, 100, "")
+	p := model(t, sonnet).WorstCase(pricing.Request{MaxTokens: probeMaxTokens})
+	// Room for one call (its reservation, w) and its probe, and not for a
+	// second call's reservation on top of them.
+	h, _ := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+		return probeReply(TierB, "repo-a", u, TierB)
+	}, enforceCap(w+p+1))
+
+	if resp, b := h.post(body); resp.StatusCode != http.StatusOK {
+		t.Fatalf("the first call: %d %s", resp.StatusCode, b)
+	}
+	if resp, b := h.post(body); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("the second call was not refused by the cap the probe helped reach: %d %s", resp.StatusCode, b)
+	}
+	if halt, ok := h.halted(); !ok || halt.Reason != "run_cap" {
+		t.Errorf("the halt is %+v, want the run cap", halt)
+	}
+}
+
+// TestAProbeLeavesWhatTheRunHadCached: a probe's own answer is closed unread
+// by the service (C1.12), so this gateway knows nothing of what the probe
+// read -- and what the run had cached is the answering call's usage. A
+// switch that follows a call which was served after a probe must still
+// estimate the miss from that call (F24): a probe mistaken for it would make
+// the figure unmeasured, and a figure that reads "unmeasured" for a cache
+// the gateway saw is a switch reported as costing nothing.
+func TestAProbeLeavesWhatTheRunHadCached(t *testing.T) {
+	cached := int64(300)
+	u := pricing.Usage{Input: 900, CacheRead: cached, Output: 40}
+	const want = 0.00054 // 300 cached tokens at sonnet's rates, as TestSwitchLogRecorded
+	var answers []ServiceAnswer
+	var n atomic.Int64
+	h, _ := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+		if n.Add(1) == 1 {
+			return probeReply(TierA, "repo-a", u, TierA)
+		}
+		r := tierReply(TierB, "repo-shared-b", pricing.Usage{Input: 800, Output: 40})
+		r.Header.Set(HeaderSwitch, `{"from":"repo-a","to":"repo-shared-b","reason":"exhausted"}`)
+		return r
+	}, func(o *Options) {
+		o.OnServiceAnswer = func(a ServiceAnswer) { answers = append(answers, a) }
+	})
+
+	if resp, b := h.post(msg(sonnet, 100)); resp.StatusCode != http.StatusOK {
+		t.Fatalf("the probed call: %d %s", resp.StatusCode, b)
+	}
+	h.gw.EndStage()
+	h.gw.BeginStage(defaultStage)
+	if resp, b := h.post(msg(sonnet, 100)); resp.StatusCode != http.StatusOK {
+		t.Fatalf("the call that switched: %d %s", resp.StatusCode, b)
+	}
+	h.gw.EndStage()
+
+	if len(answers) != 2 {
+		t.Fatalf("the hook was told about %d answers, want 2", len(answers))
+	}
+	if got := answers[0]; len(got.Probed) != 1 || got.Probed[0] != TierA {
+		t.Errorf("the probed answer was read as %v, want the tier the probe was made on", got.Probed)
+	}
+	got := answers[1]
+	if len(got.Probed) != 0 {
+		t.Errorf("a call that probed nothing carries %v", got.Probed)
+	}
+	if got.SwitchCost.Unmeasured || math.Abs(got.SwitchCost.USD-want) > 1e-9 {
+		t.Errorf("the switch's cache miss was estimated at %+v, want the probed call's own cache reads", got.SwitchCost)
+	}
+}
+
+// TestAProbedTierThatIsNotTheContractsHalts: the tiers of the probe header
+// are a closed set the ledger charges by (C1.16's by-tier split has a leaf
+// for B and C and none for anything else), so an answer naming one this
+// contract does not carry is a halt rather than a figure nobody can place.
+func TestAProbedTierThatIsNotTheContractsHalts(t *testing.T) {
+	for _, value := range []string{"D", "A,A", "A,B,C,A", "a", "repo-a", ""} {
+		t.Run(value, func(t *testing.T) {
+			h, _ := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+				r := tierReply(TierA, "repo-a", pricing.Usage{Input: 900, Output: 40})
+				r.Header.Set(HeaderProbe, value)
+				return r
+			}, enforceCap(pricing.Micros(1_000_000)))
+			resp, _ := h.post(msg(sonnet, 100))
+			if resp.StatusCode != http.StatusForbidden {
+				t.Fatalf("a probe header of %q was accepted: %d", value, resp.StatusCode)
+			}
+			if halt, ok := h.halted(); !ok {
+				t.Error("the run was not halted")
+			} else if len(value) > 1 && strings.Contains(halt.Detail, value) {
+				t.Errorf("the halt's detail quotes the header: %q", halt.Detail)
+			}
+			if rep := h.gw.EndStage(); rep.Calls != 1 {
+				t.Errorf("the stage counts %d calls, want the one that settled at its reservation", rep.Calls)
+			}
+		})
 	}
 }
