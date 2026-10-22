@@ -1320,13 +1320,14 @@ function applyTracked(state: Traced, rule: TrackedRule, nested: boolean, covered
  */
 let scanWork = 0
 
-/** resetScanWork zeroes `scanWork`, so a test measures one call's own work. */
+/** resetScanWork zeroes the counter (`scanWork`), so a test measures one
+ * call's own work. */
 export function resetScanWork(): void {
   scanWork = 0
 }
 
-/** scanWorkDone is the characters every reading has been scanned over since
- * `resetScanWork` (the module's own counter: see `scanWork`). */
+/** scanWorkDone is the characters the readings have scanned since the last
+ * `resetScanWork` (see `scanWork`). */
 export function scanWorkDone(): number {
   return scanWork
 }
