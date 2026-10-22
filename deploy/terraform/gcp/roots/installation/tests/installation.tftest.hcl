@@ -2175,3 +2175,161 @@ run "credentials_service_image_must_be_a_whole_digest" {
 
   expect_failures = [var.credentials_service]
 }
+
+# The four facts the process is configured with, held to their shape at plan
+# time (modules/installation/variables.tf, the second validation). A stale or
+# hand-edited terraform.tfvars.json is what that block exists to stop - the
+# service reads every one of these from its environment and refuses to serve
+# without them, so an installation that planned a bad one would halt every run
+# that reached it (D143) while the plan reported success.
+#
+# The five runs below are the other half of the variable's two image runs
+# above: each states one bad value and requires the plan to refuse it, so the
+# guard cannot be weakened or deleted without a red test. The Go layer refuses
+# the same shapes as they are derived (TestCredentialsRefusesWithoutTheFirebaseFacts),
+# but that is the layer this file's inputs never pass through: a tfvars that
+# was edited by hand, or written by an older fugaro, reaches Terraform without
+# it.
+
+# An empty job table is a service that binds no run to a repository: it admits
+# nobody, which an operator would read as healthy while every run halted.
+run "credentials_service_job_table_must_not_be_empty" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts     = []
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
+# A row with a field missing: the account's name is derived from the workflow
+# and the repository's slug from the provider and the repository, so an empty
+# field is a job whose account cannot be derived at all.
+run "credentials_service_job_row_needs_all_three_fields" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = ""
+      }]
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
+# The Firebase project is a project ID, not a display name and not the Fugaro
+# project: it is the aud and iss a run's identity is verified against, and a
+# revision configured with the wrong one refuses every caller.
+run "credentials_service_firebase_project_must_be_a_project_id" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "Aurora Firebase"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
+# A database URL with a path is not the database: the readers are built on the
+# URL itself, and a path silently reads the wrong tree (history.tf's own rule,
+# restated here rather than trusted to whoever wrote the tfvars).
+run "credentials_service_rtdb_url_must_be_a_whole_url" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com/runs"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
+# The audience, once the stage knows it: a non-empty URL that is not the
+# https://<host> form Cloud Run serves on admits no ID token at all, so it is
+# refused here rather than left to the revision that would silently admit
+# nobody. (An ABSENT url is the other case and is admitted: the first apply
+# writes credentials.tf's unassigned placeholder, run above.)
+run "credentials_service_url_must_be_an_https_host" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
+      url = "http://fugaro-credentials.us-east5.run.app"
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
