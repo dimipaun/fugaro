@@ -192,7 +192,9 @@ ships the check writes them"* is [../../design/voice.md](../../design/voice.md)
 §5.3's convention, the one the project-centric plan sets and the console plan
 follows; and *"A check is never run before its text is in the register"* is
 [docs/mobile/implementation-plan.md](../implementation-plan.md)'s own sentence —
-and no phase here is approved. D219 records the choice.
+and no part that could write one is approved: **VS0, the only approved part, is
+the machine and its tests, and VS7 is where a check's text would be written**.
+D219 records the choice.
 
 | # | The check's subject (the text is VS7's) | Covers | Runs on |
 |---|---|---|---|
@@ -222,7 +224,8 @@ or the network.
 
 **Implemented 2026-10-22** (D205 answered as recommended; the owner approved
 VS0.1–VS0.3 and nothing else). The three tasks below are in `mobile/` on the
-branch of **PR #921**, with `npm test` at 700 pass, 0 fail; the files, the tests
+branch of **PR #921**, with `npm test` at 701 pass, 0 fail (the whole mobile
+suite, of which 51 are this folder's); the files, the tests
 and the verification each task names were written as they stand here, and the
 two places the code had to decide something this plan leaves open are named in
 that pull request (the six app-side events beside §5's six, and

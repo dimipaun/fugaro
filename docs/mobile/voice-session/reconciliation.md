@@ -485,7 +485,8 @@ and this branch is not, so this branch merges second and yields 112.** This work
 therefore takes **113–118** — six checks, listed in the plan — exactly as
 [docs/setup-wizard/](../../setup-wizard/) recorded for the 110/111 collision, and
 **writes none of them into the register**, because the phase that ships a check
-writes it and no phase here is approved. Decision **D219**.
+writes it and the only phase approved here — VS0, the machine and its tests
+(2026-10-22) — ships none. Decision **D219**.
 
 ---
 
