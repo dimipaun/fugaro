@@ -162,21 +162,66 @@ func probeSvc(t *testing.T, mutate func(*svc, *Config)) (*svc, *bytes.Buffer) {
 	return s, auditLog
 }
 
+// testPolicyDocBackoff is the probe fixture's policy with the backoff written
+// out: what an installation publishes when it wants a backed-off credential
+// retried sooner than the probe claim's own TTL. Decode is the reader the
+// service deploys, so a value it would refuse (a cap below the initial wait) is
+// not one of these.
+func testPolicyDocBackoff(initial, cap string) string {
+	return `{
+		"version": 3,
+		"budget": {"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
+		"accounts": {
+			"default": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]},
+			"` + testAccount + `": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]}
+		},
+		"credentials": {"fallback": "oauth-only", "stop_after_exhaustion_per_window": false,
+			"backoff": {"initial": "` + initial + `", "cap": "` + cap + `"}}
+	}`
+}
+
 // backedOff plants the state a probe is owed for: a backed-off mark whose own
 // wait has passed, which is what creds answers NeedsProbe for and what the
 // selection path probes. since is when the exhaustion that opened it happened,
 // and backoff is the wait in force.
 func (s *svc) backedOff(name string, since time.Time, backoff time.Duration) creds.Mark {
+	return s.backedOffDue(name, since, backoff, s.now.Add(-time.Minute))
+}
+
+// backedOffDue plants a backed-off mark whose wait ran out at a chosen instant.
+// The instant matters to a test that wants one candidate to be the earliest due:
+// firstDue answers the earliest one, and a tie is answered by the order the
+// bundle happens to be in, which a test must not rely on to make a claim.
+func (s *svc) backedOffDue(name string, since time.Time, backoff time.Duration, until time.Time) creds.Mark {
 	m := creds.Mark{
 		State:   creds.StateBackedOff,
 		Since:   since,
 		Backoff: backoff,
-		Until:   s.now.Add(-time.Minute),
+		Until:   until,
 	}
 	s.state.mu.Lock()
 	defer s.state.mu.Unlock()
 	s.state.marks[name] = m
 	return m
+}
+
+// tierBName is the name of the bundle's paid key, read from the bundle the
+// service serves: the document's keys are the platform's own, so no test spells
+// one.
+func (s *svc) tierBName(t *testing.T) string {
+	t.Helper()
+	b, err := s.server.cfg.Bundles.Load(context.Background())
+	if err != nil {
+		t.Fatalf("loading the bundle: %v", err)
+	}
+	for _, e := range b.Entries() {
+		if e.Tier == creds.TierB {
+			return e.Name
+		}
+	}
+	t.Fatal("the fixture's bundle holds no tier-B credential")
+	return ""
 }
 
 // broken plants a mark a probe must never run on: a 401 (D139), which only an
@@ -415,15 +460,251 @@ func TestOneProbeAtATime(t *testing.T) {
 	if got := s.up.Count(); got != 2 {
 		t.Errorf("the upstream saw %d requests, want the probe and the run's call", got)
 	}
+	// The claim the probe took is let go once the probe is done with it: the
+	// node stays (the store has no delete, deliberately) and it says who probed
+	// and that they are finished, which is a claim that is not in force. What
+	// stands for the whole TTL is only an instance that dies mid-probe and never
+	// reaches the release.
 	claim, ok := s.probes.claim(t, "default")
 	if !ok {
 		t.Fatal("the probe wrote no claim on the credential's slot")
 	}
-	if want := s.now.Add(probeLeaseTTL); !claim.Until.Equal(want) {
-		t.Errorf("the claim stands until %s, want %s: a bound that lapses, not a lock", claim.Until, want)
+	if claim.Until.After(s.now) {
+		t.Errorf("the claim stands until %s, want it released when the probe finished (%s)", claim.Until, s.now)
 	}
 	if claim.Run != s.run || claim.Slug != s.slug {
 		t.Errorf("the claim names %s/%s, want the run that made the probe (%s/%s)", claim.Slug, claim.Run, s.slug, s.run)
+	}
+}
+
+// TestProbeClaimDoesNotBlockTheNextProbe is the release, as an installation
+// experiences it. A policy may set a first backoff shorter than the probe
+// claim's own TTL (projectpolicy accepts a minute), so a credential can be due
+// for its second probe long before the claim written by its first one would
+// have lapsed. If the probe held the claim for the whole TTL, that second probe
+// would be refused — and the run would be answered the wait in force, which is
+// already in the past by then, so a runner that acts on the typed wait re-runs
+// the stage in a loop until the claim expires.
+func TestProbeClaimDoesNotBlockTheNextProbe(t *testing.T) {
+	s, _ := probeSvc(t, func(sv *svc, _ *Config) {
+		sv.policy.shared = decodeTestPolicy(t, testPolicyDocBackoff("1m", "5h"))
+	})
+	since := s.now.Add(-time.Hour)
+	s.backedOff("default", since, time.Minute)
+	s.up.Script = []anthropicfake.Reply{
+		anthropicfake.Error(http.StatusInternalServerError, "api_error", "overloaded"),
+		anthropicfake.MessageOK(testModel, testUsage),
+		anthropicfake.MessageOK(testModel, testUsage),
+	}
+
+	// The first call probes, the probe fails, and the wait doubles — to two
+	// minutes, which is well inside the claim's ten.
+	resp, body := s.call(t, callBody("real-work"))
+	if resp.StatusCode != StatusExhaustedUntil {
+		t.Fatalf("the first call answered %d %s, want the typed wait", resp.StatusCode, body)
+	}
+	if m, _ := s.state.mark("default"); m.Backoff != 2*time.Minute {
+		t.Fatalf("the wait in force is %s, want the first wait doubled (2m)", m.Backoff)
+	}
+
+	// The two minutes pass. The second call probes again — the credential's own
+	// slot is free the moment its first probe finished — and this probe works,
+	// so the call is served rather than answered a wait that is behind it.
+	s.backedOff("default", since, time.Minute)
+	resp, body = s.call(t, callBody("real-work"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the second call answered %d %s, want it served: the first probe's claim must not refuse the next probe", resp.StatusCode, body)
+	}
+	if got := s.up.Count(); got != 3 {
+		t.Errorf("the upstream saw %d requests, want two probes and the run's call", got)
+	}
+	if m, _ := s.state.mark("default"); !m.Available() {
+		t.Errorf("the second probe's success left the mark at %+v, want it cleared", m)
+	}
+}
+
+// TestProbeOnAUsageLimit: a probe answered by a usage limit is the exhaustion
+// the answer reports, and the reset it names is the wait the run is given. The
+// credential is not asked again in this call, and the audit line says the
+// credential stayed held.
+func TestProbeOnAUsageLimit(t *testing.T) {
+	s, auditLog := probeSvc(t, nil)
+	s.backedOff("default", s.now.Add(-time.Hour), creds.DefaultBackoffInitial)
+	reset := s.now.Add(10 * time.Minute)
+	reply := anthropicfake.Error(http.StatusTooManyRequests, "rate_limit_error", "usage limit reached")
+	reply.Header = http.Header{"Retry-After": []string{"600"}}
+	s.up.Script = []anthropicfake.Reply{reply}
+
+	resp, body := s.call(t, callBody("real-work"))
+	if resp.StatusCode != StatusExhaustedUntil {
+		t.Fatalf("the call answered %d %s, want the typed wait", resp.StatusCode, body)
+	}
+	if got := wait(t, resp, body); !got.Equal(reset) {
+		t.Errorf("the run was told to wait until %s, want the reset the probe reported (%s)", got, reset)
+	}
+	if got := s.up.Count(); got != 1 {
+		t.Errorf("the upstream saw %d requests, want the probe alone", got)
+	}
+
+	m, _ := s.state.mark("default")
+	if m.State != creds.StateExhausted {
+		t.Errorf("a probe answered 429 left state %q, want %q", m.State, creds.StateExhausted)
+	}
+	if !m.Until.Equal(reset) {
+		t.Errorf("the mark holds until %s, want the reported reset (%s)", m.Until, reset)
+	}
+	if !m.Since.Equal(s.now) {
+		t.Errorf("the mark is dated %s, want the instant the exhaustion was observed (%s)", m.Since, s.now)
+	}
+
+	line, ok := probeLine(t, auditLog)
+	if !ok {
+		t.Fatal("a probe wrote no audit line")
+	}
+	checkAuditShape(t, line)
+	if got := line["status"]; got != ReasonExhausted {
+		t.Errorf("the audit line's status is %q, want %q", got, ReasonExhausted)
+	}
+}
+
+// TestProbeOnAUsageLimitWithNoReset: the other half of the same arm. A usage
+// limit that names no reset time is C1.9's backoff — a credential exhausted
+// without saying when it comes back — so the wait doubles from the wait in
+// force, and Since moves, because the credential WAS exhausted again (unlike a
+// 5xx, which is the same exhaustion reported once more).
+func TestProbeOnAUsageLimitWithNoReset(t *testing.T) {
+	s, auditLog := probeSvc(t, nil)
+	s.backedOff("default", s.now.Add(-time.Hour), creds.DefaultBackoffInitial)
+	s.up.Script = []anthropicfake.Reply{
+		anthropicfake.Error(http.StatusTooManyRequests, "rate_limit_error", "usage limit reached"),
+	}
+
+	resp, body := s.call(t, callBody("real-work"))
+	if resp.StatusCode != StatusExhaustedUntil {
+		t.Fatalf("the call answered %d %s, want the typed wait", resp.StatusCode, body)
+	}
+	m, _ := s.state.mark("default")
+	if m.State != creds.StateBackedOff {
+		t.Errorf("a 429 with no reset left state %q, want %q: it is the backed-off case", m.State, creds.StateBackedOff)
+	}
+	if m.Backoff != 2*creds.DefaultBackoffInitial {
+		t.Errorf("the wait in force is %s, want the first wait doubled (%s)", m.Backoff, 2*creds.DefaultBackoffInitial)
+	}
+	if want := s.now.Add(2 * creds.DefaultBackoffInitial); !m.Until.Equal(want) {
+		t.Errorf("the mark holds until %s, want %s", m.Until, want)
+	}
+	if !m.Since.Equal(s.now) {
+		t.Errorf("the mark is dated %s, want the instant of this exhaustion (%s): the credential was exhausted again", m.Since, s.now)
+	}
+	if got := wait(t, resp, body); !got.Equal(m.Until) {
+		t.Errorf("the run waits until %s and the mark holds until %s", got, m.Until)
+	}
+	line, ok := probeLine(t, auditLog)
+	if !ok {
+		t.Fatal("a probe wrote no audit line")
+	}
+	if got := line["status"]; got != ReasonExhausted {
+		t.Errorf("the audit line's status is %q, want %q", got, ReasonExhausted)
+	}
+}
+
+// TestNoProbeOnThePaidKeyUnderOAuthOnly is D152 on the probe's own path: under
+// `oauth-only` the paid tier is not in the cascade, so a probe must not reach it
+// either — a probe on the paid key is a real billable call, and a successful one
+// would clear its mark and hand the next selection a usable paid key under a
+// policy that says never. The fixture's bundle holds the project's key
+// (`testBundleDoc`) and the policy admits only the shared account, and the paid
+// key's mark is deliberately the more overdue of the two, so a probe that chose
+// by overdue-ness alone would choose it.
+func TestNoProbeOnThePaidKeyUnderOAuthOnly(t *testing.T) {
+	s, auditLog := probeSvc(t, nil)
+	// The paid key's name is the bundle's, not the test's: the document's keys
+	// are the platform's own (config.AnthropicSecret), so it is read off the
+	// bundle the service serves rather than spelled here — a mark planted under
+	// a name no credential has would make this test pass by never being
+	// eligible in the first place.
+	paidName := s.tierBName(t)
+	// The paid key is planted as the EARLIEST due of the two, so a probe that
+	// only consults the marks — one that did not ask the policy which tiers it
+	// admits — picks it. A tie would be answered by the bundle's order, and the
+	// test would pass without ever exercising the filter.
+	paid := s.backedOffDue(paidName, s.now.Add(-time.Hour), creds.DefaultBackoffInitial, s.now.Add(-30*time.Minute))
+	s.backedOff("default", s.now.Add(-time.Minute), creds.DefaultBackoffInitial)
+	// One reply more than the correct path needs, so that a service that probes
+	// the paid key as well is still able to answer the run: the assertions below
+	// then say what went wrong instead of the fixture running out of script.
+	s.up.Script = []anthropicfake.Reply{
+		anthropicfake.MessageOK(testModel, testUsage),
+		anthropicfake.MessageOK(testModel, testUsage),
+		anthropicfake.MessageOK(testModel, testUsage),
+	}
+
+	resp, body := s.call(t, callBody("real-work"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the call answered %d %s, want it served by the shared credential", resp.StatusCode, body)
+	}
+	seen := s.up.Seen()
+	// Every request and every header of it, not request zero's Authorization: a
+	// service that probed the paid key would spend it and then probe the shared
+	// one too, so the evidence is not only in the first request — and a tier-B
+	// credential is attached as x-api-key (forward.go), so the bearer header
+	// alone says nothing about the key this test is named for.
+	for _, r := range seen {
+		for k, vs := range r.Header {
+			for _, v := range vs {
+				if strings.Contains(v, fakeCred(t, "paid")) {
+					t.Fatalf("a request carried the project's paid key in %s, under a policy that never spends it", k)
+				}
+			}
+		}
+	}
+	if len(seen) != 2 {
+		t.Fatalf("the upstream saw %d requests, want a probe and the run's call", len(seen))
+	}
+	auth := seen[0].Header.Get("Authorization")
+	if !strings.Contains(auth, fakeCred(t, "default")) {
+		t.Error("the probe did not carry the shared credential the policy admits")
+	}
+	if m, ok := s.state.mark(paidName); !ok || m != paid {
+		t.Errorf("the paid key's mark is %+v, want it untouched (%+v)", m, paid)
+	}
+	line, ok := probeLine(t, auditLog)
+	if !ok {
+		t.Fatal("a probe wrote no audit line")
+	}
+	if got := line["credential"]; got != "default" {
+		t.Errorf("the audit line names %q, want the shared credential that was probed", got)
+	}
+}
+
+// TestProbeCandidatesFollowThePolicy pins probeCandidates' two answers directly,
+// because the selection path can only show the one that is in force: the paid
+// tier is offered a probe under `fallback: auto` and withdrawn under
+// `oauth-only`, and a Settings built without a fallback (the zero value) is the
+// withdrawing one.
+func TestProbeCandidatesFollowThePolicy(t *testing.T) {
+	cands := []creds.Credential{
+		{Name: "default", Tier: creds.TierA},
+		{Name: "paid", Tier: creds.TierB},
+	}
+	for _, tc := range []struct {
+		name string
+		set  creds.Settings
+		want int
+	}{
+		{"oauth-only", creds.Settings{Fallback: creds.OAuthOnly}, 1},
+		{"no fallback written", creds.Settings{}, 1},
+		{"auto", creds.Settings{Fallback: creds.Auto}, 2},
+	} {
+		got := probeCandidates(cands, tc.set)
+		if len(got) != tc.want {
+			t.Errorf("%s: %d candidates are open to a probe, want %d", tc.name, len(got), tc.want)
+		}
+		for _, c := range got {
+			if c.Tier != creds.TierA && !tc.set.Fallback.Spends() {
+				t.Errorf("%s: %q of tier %s is open to a probe under a policy that does not spend", tc.name, c.Name, c.Tier)
+			}
+		}
 	}
 }
 

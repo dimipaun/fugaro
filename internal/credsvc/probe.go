@@ -27,8 +27,14 @@ package credsvc
 //     whose own wait has passed (Mark.NeedsProbe). Never on a broken credential
 //     — a probe is not what clears a 401 — and never on an exhausted one, whose
 //     reset is a time rather than a question. The credentials it can be run on
-//     are the ones this call was offered, so a probe never reaches a credential
-//     the policy did not admit.
+//     are the ones this call was offered AND the ones the policy admits: the
+//     candidate list carries every credential in the bundle, and it is
+//     creds.Select's tiers() that keeps the paid tier out of the cascade — a
+//     probe decides for itself and so has to ask the same question
+//     (probeCandidates). A probe that did not would spend the project's money
+//     under `oauth-only` (D152) on a credential Select would never have chosen,
+//     and — worse — would clear its mark, handing the next selection a usable
+//     paid key under a policy that says never.
 //   - One probe per credential at a time, and one per credential per call. The
 //     prober first takes a lease under creds/, conditionally, so two instances
 //     that notice the same backed-off credential at the same instant do not
@@ -326,7 +332,7 @@ func (s *Server) probeDue(ctx context.Context, sel *creds.Selector, id Identity,
 		// which it has already answered with) is what the run is told.
 		return false
 	}
-	c, ok := firstDue(cands, marks, now, probed)
+	c, ok := firstDue(probeCandidates(cands, sel.Settings), marks, now, probed)
 	if !ok {
 		// A selection said a probe is due and the marks say none is: the state
 		// moved between the two reads (another instance probed the credential,
@@ -343,6 +349,36 @@ func (s *Server) probeDue(ctx context.Context, sel *creds.Selector, id Identity,
 		return false
 	}
 	return s.probeOne(ctx, sel, id, creds.Run{Slug: id.Slug, ID: id.Run}, c, e, cl)
+}
+
+// probeCandidates is the candidates a probe may run on, which is the candidates
+// the policy admits and not the ones the bundle holds.
+//
+// The two lists are not the same, and that is the whole reason this exists: the
+// bundle's candidates are every credential the caller offered, and the tier
+// filter that keeps the paid key out of the cascade under `oauth-only` lives
+// inside creds.Select (Settings.tiers, D152). A probe is made on a credential
+// the selection did NOT hand back — it is made because none could be handed
+// back — so it cannot inherit that filter and has to apply it itself. Asking
+// creds' own accessor rather than restating the rule keeps the two in step:
+// Fallback.Spends is what tiers() reads, and its zero value (no written
+// fallback) does not spend, which is the fail-closed direction for a Settings
+// this service did not build.
+//
+// The tier-A half is what is left when the policy does not spend, which is
+// reachableOnly's rule on the probe's side: a tier-B credential is a
+// possibility only under a written `fallback: auto`.
+func probeCandidates(cands []creds.Credential, set creds.Settings) []creds.Credential {
+	if set.Fallback.Spends() {
+		return cands
+	}
+	out := make([]creds.Credential, 0, len(cands))
+	for _, c := range cands {
+		if c.Tier == creds.TierA {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // firstDue is the candidate a probe is due on: the most overdue of the ones
@@ -398,6 +434,22 @@ func (s *Server) probeOne(ctx context.Context, sel *creds.Selector, id Identity,
 	if !claimed {
 		return false
 	}
+	// The slot is let go as soon as this probe is done with it. The claim is
+	// held against a CONCURRENT probe and not against the next one, and it is
+	// the only thing that must be true while the call is in flight — so holding
+	// it for its whole TTL after the answer landed would refuse the next probe
+	// to whoever asks first, this instance included. That is not a theoretical
+	// case: an installation whose policy sets `backoff.initial` below the claim's
+	// TTL (projectpolicy accepts one minute) has a credential due for its second
+	// probe long before the claim written by its first one has lapsed, and a run
+	// refused there is answered a wait that is already in the past — a runner
+	// re-running the stage in a loop until the claim expires. Releasing it on the
+	// way out, on every path, is the fix; the TTL stays what it is, which is the
+	// bound on an instance that dies mid-probe and never reaches this line.
+	// WithoutCancel: letting the slot go is bookkeeping about a call that was
+	// already made, so a client that hung up while the probe was in flight must
+	// not be the reason the next run's probe is refused.
+	defer s.releaseProbe(context.WithoutCancel(ctx), e.Name, run)
 	ans, err := s.send(ctx, probe, e)
 	reset := time.Time{}
 	var outcome probeOutcome
@@ -509,6 +561,49 @@ func (s *Server) claimProbe(ctx context.Context, name string, run creds.Run) (ok
 	// an operator's attention while a lost race is not.
 	s.log.Warn("credsvc: the probe lease could not be taken", "credential", name, "error", last)
 	return false, nil
+}
+
+// releaseProbe lets one credential's probe slot go, by writing the claim that
+// stands on it back with a time that is not in the future. The store has no
+// delete, deliberately (creds' own rule for everything under creds/), so a
+// claim is released by lapsing it rather than by removing it — which is also
+// what an operator reading the subtree wants to see: the node stays, and it
+// says who probed last and that they are done.
+//
+// Only this run's own claim is released. If the node no longer names this run,
+// another instance's claim replaced this one (this probe outlasted the TTL, and
+// the slot was taken again while it was still in flight), and writing over that
+// would be letting go of a claim that is holding somebody else's probe — the
+// one thing the claim exists to prevent.
+//
+// A release that cannot be written is logged and nothing else: the claim then
+// lapses by its own TTL, which is the bound it already had, and the probe's own
+// result is unaffected — this runs after the mark is written.
+func (s *Server) releaseProbe(ctx context.Context, name string, run creds.Run) {
+	now := s.now()
+	path := probeLeasePath(name)
+	var last error
+	for i := 0; i < creds.DefaultAttempts; i++ {
+		var cur probeLease
+		etag, found, err := s.cfg.Probes.GetETag(ctx, path, &cur)
+		if err != nil {
+			last = err
+			break
+		}
+		if !found || cur.Slug != run.Slug || cur.Run != run.ID {
+			return
+		}
+		// Until is now, which is not "after now": claimProbe reads a claim as
+		// live only while its Until is in the future, so this is the released
+		// form of the same node.
+		if err := s.cfg.Probes.PutIfMatch(ctx, path, etag, probeLease{Slug: run.Slug, Run: run.ID, Until: now}); err == nil {
+			return
+		} else {
+			last = err
+		}
+	}
+	s.log.Warn("credsvc: a probe's claim could not be released, so it stands until it lapses",
+		"credential", name, "error", last)
 }
 
 // NewProbeAuditor returns the auditor this service's probed acts are written
