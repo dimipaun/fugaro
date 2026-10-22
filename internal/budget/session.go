@@ -482,8 +482,10 @@ func (s *Session) readState(ctx context.Context, day int64) (State, error) {
 
 // AdmitOptions say what the run needs from the backend.
 type AdmitOptions struct {
-	// Gateway: the run's model calls are leased (api-key and vertex). An
-	// oauth run has no lease and is checked for kill switches only.
+	// Gateway: the run's model calls are leased (api-key, vertex and the
+	// cascade, whose calls the credentials service's upstream carries,
+	// C1.19). An oauth run has no lease and is checked for kill switches
+	// only.
 	Gateway bool
 	// LocalEnforce: the run's merged mode is enforce, whatever the project's.
 	LocalEnforce bool

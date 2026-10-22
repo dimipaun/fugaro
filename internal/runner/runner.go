@@ -38,6 +38,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
@@ -547,6 +548,41 @@ func (r *run) createRecord(ctx context.Context) error {
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
 	defer cancel()
 	return createRecord(r.d.Store, wctx, r.rec)
+}
+
+// recordCredential is the cascade's own record (C1.19, D140): the name -- never
+// the value, which never leaves the service -- of the credential the run's
+// cascade answered a call with. It is written in two places, each the one its
+// reader has: the record the run ends with (runstore.Record.OAuthAccount,
+// which `fugaro runs` reads when a record exists) and the registry entry the
+// dashboard reads while the run is running (budget.AgentEntry.Credential).
+//
+// The name is whatever the service answered, so it is written as one word: a
+// name carrying a control or bidi character would have the whole PATCH denied
+// and freeze the run's registry, which clipEntry's clipString already strips
+// (internal/budget) -- this is the second bound, for the record, which no
+// clipEntry sees.
+//
+// A cascade run is the only run whose agent.auth makes a credential that is not
+// its own visible to it, and the gateway only ever forwards to the credentials
+// service for one, so no test of agent.auth is needed here to keep another
+// run's record untouched: a non-cascade run's answers carry no credential, the
+// gateway having answered them itself with its own route's key.
+//
+// Its one caller is serviceAnswer (internal/runner/gateway.go), the callback
+// startGateway hands the gateway: the write is here, with the run's other
+// record writers, and the answer that decides it arrives there.
+func (r *run) recordCredential(name string) {
+	name = safetext.Field(name)
+	if name == "" {
+		return
+	}
+	r.mu.Lock()
+	if r.rec != nil && r.rec.OAuthAccount != name {
+		r.rec.OAuthAccount = name
+	}
+	r.mu.Unlock()
+	r.noteRegistry(func(e *budget.AgentEntry) { e.Credential = name })
 }
 
 // errOwnerUnknown means the first record's create failed and nothing

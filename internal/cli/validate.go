@@ -1071,18 +1071,23 @@ func routingInertWhy(why runner.RoutingInert, auth, mode string) string {
 	case runner.RoutingInertNoGateway:
 		// The cascade is the one auth whose gateway is not a model API's
 		// credential: a cascade run's calls are carried by the credentials
-		// service (D133, D143), and runner.GatewayOn answers false for the value
-		// because it knows api-key and vertex only — teaching it `cascade` is
-		// plan Task C1.19. So the reach is the same today and this clause's
-		// conclusion stands, but the reason below is false of it: the cascade's
-		// gateway is precisely the one that does not need a credential of the
-		// job's own, and the sentence would read as "the cascade has no
-		// credential for a gateway to carry", the opposite of what the value
-		// asks for. The arm below says what is true instead.
+		// service (D133, D143). runner.GatewayOn answers true for it (C1.19),
+		// so the only way a cascade run reaches this arm is a budget that is
+		// off — and there the generic sentence below would be false of it: the
+		// cascade's gateway is precisely the one that does not need a
+		// credential of the job's own, and the sentence would read as "the
+		// cascade has no credential for a gateway to carry", the opposite of
+		// what the value asks for. The arm below says what is true instead.
 		if auth == config.AuthCascade {
-			return "no run of this configuration has a gateway (agent.auth is " + config.AuthCascade + " and budget.mode is " + m + ": a cascade run's gateway is the credentials service's, and this Fugaro's runner does not put one in front of a cascade run yet)"
+			return "no run of this configuration has a gateway (agent.auth is " + config.AuthCascade + " and budget.mode is " + m + ": a cascade run's gateway forwards to the credentials service, which is an observing or enforcing budget's to start)"
 		}
 		return "no run of this configuration has a gateway (agent.auth is " + auth + " and budget.mode is " + m + ": the gateway needs a model API's credential and an observing or enforcing budget)"
+	case runner.RoutingInertCascadeOtherAuth:
+		// via: cascade names no model and routes no call: it is the switch that
+		// puts the credentials service in front of a run, so it acts on the
+		// workflow that asked for it and nothing else (O3, D133). The default
+		// arm's "via: direct" would be a false reading of the same file.
+		return "via: cascade acts only on the workflow that asked for it (agent.auth is " + auth + ", not " + config.AuthCascade + ")"
 	case runner.RoutingInertAutoVertex:
 		return "via: auto does not route a Vertex run (Vertex serves Claude under the project's own credential, and its jobs carry no Anthropic API key)"
 	case runner.RoutingInertNoSwitch:
