@@ -7,9 +7,10 @@ file, no generated page, no test and no golden was touched.
 ## Where it landed
 
 `26ea375c`, *website: the getting-started sequence is `fugaro setup`, and the CLI reference is
-regenerated* — pull request **#850**, merged 2026-10-21, an ancestor of this branch's base
-`e9dc9be2`. Its commit line is verbatim the one `### Task W2.4` names under **Commit**, and its
-diff is the task.
+regenerated (#850)* — merged 2026-10-21, an ancestor of this branch's base `e9dc9be2`. Its
+subject is the one `### Task W2.4` names under **Commit**, plus the pull request's number and
+backticks around `fugaro setup`, which the plan's plain-text line does not carry; its diff is
+the task.
 
 ## Why this note does not spell the retired verb
 
@@ -24,10 +25,8 @@ grep below is stated rather than pasted.
 
 | W2.4's file | state on `main` |
 |---|---|
-| `website/data/install.yaml` | the `plugin` path's three commands are `fugaro setup`, `/fugaro:setup` and `fugaro upgrade --local` (lines 107–119), and its `note:` says “fugaro setup wires them into
-the checkout”. The retired verb is gone. |
-| `website/src/pages/getting-started.astro` | the `#setup` `<ol>` is **three** steps — the cloud preconditions, `fugaro setup` in the reader's own terminal, `/fugaro:setup` in the agent — and both `doc('docs/gcp-setup.md', …)` links carry the fragment `the-short-path-fugaro-setup-then-fugarosetup` (lines 491 and 507). The commands are read from `install.yaml`'s `plugin` path (`installCommand` / `agentCommand`, lines 166–172) rather than typed into a step, and the
-page's prose about passing flags is gone. |
+| `website/data/install.yaml` | the `plugin` path's three commands are `fugaro setup`, `/fugaro:setup` and `fugaro upgrade --local` (lines 107–119), and its `note:` says “fugaro setup wires them into the checkout”. The retired verb is gone. |
+| `website/src/pages/getting-started.astro` | the `#setup` `<ol>` is **three** steps — the cloud preconditions, `fugaro setup` in the reader's own terminal, `/fugaro:setup` in the agent — and both `doc('docs/gcp-setup.md', …)` links carry the fragment `the-short-path-fugaro-setup-then-fugarosetup` (lines 491 and 507). The commands are read from `install.yaml`'s `plugin` path (`installCommand` / `agentCommand`, lines 166–172) rather than typed into a step, and the page's prose about passing flags is gone. |
 | `website/src/components/Changelog.astro` | the `escapeHTML` comment no longer quotes a retired-command release line; it now names `fugaro image build --repo` and `--base`, and says a dated release record keeps the name it shipped with. |
 | `website/test/caps-and-costs.mjs` | the setup-steps case reads the plugin path's two commands as `installCommand` / `agentCommand` and asserts the band prints them in `[installCommand, agentCommand, installCommand]` order. |
 | `website/README.md` | the two round-log sentences that quoted the retired verb were reworded (the spacing-gate bullet and the byte-figure bullet). |
@@ -58,7 +57,7 @@ started in the same commit.
   - `GOFLAGS=-p=1 go test ./internal/cli -run 'TestCensusNamesInitReadsPastTheHead|TestCensusOutputAndExemptArePinned|TestCensusOutputCoversEveryIgnoredPathTheWalksReach|TestLiveInitCensusMatchesTheFrozenList|TestLiveInitCensusRootsAreTheOnlyOnesThatNameIt' -count=1` → `ok`
   - `GOFLAGS=-p=1 go test ./plugin/... -run 'Readme|Skill|Lint' -count=1` → `ok`
 - The `docs/gcp-setup.md` heading the two page links resolve to exists and reads
-  `## The short path: \`fugaro setup\`, then \`/fugaro:setup\`` (line 13).
+  ``## The short path: `fugaro setup`, then `/fugaro:setup` `` (line 13).
 
 ## What was not verified here
 
