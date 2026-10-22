@@ -273,8 +273,12 @@ func (r *initRun) billingAPIOff(ctx context.Context, opts billing.Options, err e
 // (ErrDisabled.EnableCommand), which needs no API of this run's and is the same
 // one the refusal prints for another project. The guided `gcloud billing
 // projects link` line is the project stage's to print, and it prints it.
+//
+// "Nothing was enabled" and not "this run enables nothing": it is reached after
+// a gcloud that failed as well as after a decline, and the one true thing about
+// both is that no API's state changed.
 func (r *initRun) billingEnableLeft(off *billing.ErrDisabled) {
-	fmt.Fprintf(r.w, "This run enables nothing. Run:\n  %s\nthen run this again, or link an account you already have.\n", off.EnableCommand)
+	fmt.Fprintf(r.w, "Nothing was enabled. Run:\n  %s\nthen run this again, or link an account you already have.\n", off.EnableCommand)
 }
 
 // enableBillingAPI runs the enable line through gcloud, the same injected seam
