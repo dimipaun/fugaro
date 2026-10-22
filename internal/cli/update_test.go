@@ -54,9 +54,15 @@ func TestUpdateRefusesCreateProjectAndLinkBilling(t *testing.T) {
 			if got := ExitCode(err); got != ExitUserError {
 				t.Errorf("exit %d, want %d", got, ExitUserError)
 			}
+			// The sentence itself, not the two words in it: another guard
+			// about --create-project also says "fugaro setup" (the missing
+			// --gcp-project it needs), so a door that stopped refusing the flag
+			// by name would still satisfy a looser check — which is the bug
+			// this arm is for.
 			got := out + errOut + ErrorText(err)
-			if !strings.Contains(got, tc.flag) || !strings.Contains(got, "fugaro setup") {
-				t.Errorf("the refusal does not name the flag and the door that owns it: %q", got)
+			want := "fugaro update does not take " + tc.flag + ": that is fugaro setup's"
+			if !strings.Contains(got, want) {
+				t.Errorf("the refusal does not name the flag and the door that owns it: %q, want %q in it", got, want)
 			}
 			noCloudTouched(t, r, "fugaro update "+tc.flag)
 		})
