@@ -258,6 +258,84 @@ func TestABindingRefusalIsAudited(t *testing.T) {
 	}
 }
 
+// TestARequestShapeRefusalIsAudited: the request-shape refusals
+// (request_refused) are answered after admission — the run, its repository, the
+// job and the account are verified — so they are recorded like every other
+// refusal on this path, and the status is the contract's own word for them
+// (wire.go's ErrorRequestRefused, which audit.go's ValidStatus carries): the
+// line's vocabulary is the wire's, so there was never a name to invent.
+//
+// No credential is named, and truthfully so: the whole point of answering these
+// here is that the bundle has not been read, so no credential was chosen and
+// none was touched. The refusal's sentence is the run's and not the line's — the
+// line is the contract's fields.
+func TestARequestShapeRefusalIsAudited(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		share func(t *testing.T) string
+		body  string
+	}{
+		{
+			name: "the project publishes no allow-list",
+			share: func(t *testing.T) string {
+				return testPolicyDocNoAllowList()
+			},
+			body: callBody("no-allow-list"),
+		},
+		{
+			name: "the model is not one the project pins",
+			share: func(t *testing.T) string {
+				return testPolicyDocAllowed(testModel)
+			},
+			body: `{"model":"claude-opus-5-5","max_tokens":16,"messages":[{"role":"user","content":"unpinned"}]}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, auditLog := auditSvc(t, func(s *svc, _ *Config) {
+				s.policy.shared = decodeTestPolicy(t, tc.share(t))
+			})
+			resp, body := s.call(t, tc.body)
+			if resp.StatusCode != StatusRequestRefused {
+				t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusRequestRefused, body)
+			}
+			if e := refusal(t, resp.StatusCode, body); e.Error != ErrorRequestRefused {
+				t.Errorf("the refusal is %q, want %q", e.Error, ErrorRequestRefused)
+			}
+			lines := forwardLines(t, auditLog)
+			if len(lines) != 1 {
+				t.Fatalf("a refused call wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+			}
+			line := lines[0]
+			checkAuditShape(t, line)
+			for field, want := range map[string]any{
+				"run":        s.run,
+				"repository": s.slug,
+				"job":        s.job,
+				"caller":     testJobSA,
+				"credential": "",
+				"tier":       "",
+				"purpose":    PurposeForward,
+				"status":     ErrorRequestRefused,
+			} {
+				if got := line[field]; got != want {
+					t.Errorf("the request refusal's audit line %s = %v, want %q", field, got, want)
+				}
+			}
+			if n := s.up.Count(); n != 0 {
+				t.Errorf("the upstream saw %d requests, want none: a refused request is not forwarded", n)
+			}
+			if n := s.src.readCount(); n != 0 {
+				t.Errorf("the bundle was read %d times, want 0: the refusal comes before the one document that holds a credential", n)
+			}
+			for _, v := range fixtureValues(t) {
+				if strings.Contains(auditLog.String(), v) {
+					t.Errorf("the refusal's audit line carries a credential's value: %s", auditLog.String())
+				}
+			}
+		})
+	}
+}
+
 // TestACallIsRefusedWhenItCannotBeAudited is C1.13's fail-closed rule on the
 // answer path (D143): an issuance this service cannot audit is not made. The
 // upstream answered — the call is out of this service's hands by then — so what

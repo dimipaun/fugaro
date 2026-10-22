@@ -403,18 +403,20 @@ func NewServer(cfg Config) (*Server, error) {
 // refusal, the first one that has a whole identity to name, is the first one
 // recorded.
 //
-// The request-shape refusals (request_refused) are the one refusal after
-// admission this path does not record, and the reason is the contract's own:
-// those are answered before the bundle is read — no credential is touched at all
-// — and the audit line's status is the wire's vocabulary (audit.go's
-// ValidStatus), which has no word for them. Writing one would need a status this
-// service invented.
+// The refusals with no line are the ones above that point, and only those: no
+// refusal this service answers once it has an identity in hand goes
+// unrecorded, the request-shape refusals included — they are answered before
+// the bundle is read, which is why their line names no credential, but they are
+// answered with the identity in hand and the status they carry is the
+// contract's own word for them (wire.go's request_refused, audit.go's
+// validErrorType). So there is no refusal on this path this log cannot say.
 //
-// A line carries the purpose of the ROUTE the call asked for and not the
-// branch it was answered in, which is why the two refusals above the mint's
-// branch (the stop switches) read it off the URL: a stopped service mints
-// nothing and proxies nothing, and which of the two was asked for is the one
-// thing those refusals know.
+// A line carries the purpose and the credential of the ROUTE the call asked
+// for and not the branch it was answered in, which is why the refusals above
+// the mint's branch (the binding and the stop switches) read both off the URL:
+// a stopped service mints nothing and proxies nothing, and which of the two was
+// asked for is the one thing those refusals know — including that a mint's
+// credential is the App key, the only one that endpoint has.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	if r.Method != http.MethodPost || (r.URL.Path != MessagesPath && r.URL.Path != CountTokensPath && r.URL.Path != MintPath) {
@@ -524,7 +526,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// out and no credential value is anywhere in it, because none was
 		// touched.
 		if noAllowList := requestNoAllowListRefusal(shared); noAllowList != "" {
-			s.refuse(w, StatusRequestRefused, ErrorRequestRefused, requestRefused+noAllowList)
+			s.refuseCall(ctx, w, id, PurposeForward, "", "", StatusRequestRefused, ErrorRequestRefused, requestRefused+noAllowList)
 			return
 		}
 		refusal, err := s.requestRefusal(shared, cl.body)
@@ -541,7 +543,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// tool type or field it objects to — that is what makes it
 			// actionable — but no credential value is anywhere in it: none was
 			// touched.
-			s.refuse(w, StatusRequestRefused, ErrorRequestRefused, requestRefused+refusal)
+			s.refuseCall(ctx, w, id, PurposeForward, "", "", StatusRequestRefused, ErrorRequestRefused, requestRefused+refusal)
 			return
 		}
 	}
