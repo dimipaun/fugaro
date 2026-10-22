@@ -730,7 +730,11 @@ func (r *run) openProvider(ctx context.Context, kind, from string) error {
 	// first GitAuth below, and it is not optional -- a provider that took
 	// ServiceHeldKey refuses every token until one is installed, so a run
 	// that skipped this would stop rather than mint in-job.
-	if src := r.serviceTokens(); src != nil {
+	src, err := r.serviceTokens()
+	if err != nil {
+		return err
+	}
+	if src != nil {
 		if s, ok := p.(gitprov.ServiceTokenSetter); ok {
 			s.UseServiceTokens(src)
 		}
@@ -748,6 +752,13 @@ func (r *run) openProvider(ctx context.Context, kind, from string) error {
 // service off the App's key is the job's own and its provider mints tokens
 // itself, as it always did.
 //
+// A LOCAL run whose environment names a service is refused rather than
+// served, in the words serviceUpstream refuses the same situation in (D149):
+// `fugaro exec` runs on the developer's own credentials and never through
+// the credentials service, and a local run has no run identity for a mint to
+// be verified by, so the only thing the service could do here is refuse the
+// run later, further from the reason.
+//
 // The two identities a mint is verified by are the run's own Firebase ID
 // token (runIDToken) and the job's Google ID token for the service's URL
 // (metadataIDToken), and the job name is what the run reports it is in. The
@@ -755,10 +766,13 @@ func (r *run) openProvider(ctx context.Context, kind, from string) error {
 //
 // It is built per provider, so each provider has the cache ServiceTokens
 // documents -- one mint per hour per provider, not one per API call.
-func (r *run) serviceTokens() *github.ServiceTokens {
+func (r *run) serviceTokens() (*github.ServiceTokens, error) {
 	url := envLookup(r.d.Env, providers.EnvCredentialsServiceURL)
 	if url == "" {
-		return nil
+		return nil, nil
+	}
+	if r.d.Local {
+		return nil, fmt.Errorf("this is a local run (%s) and its environment names a credentials service in %s: %s runs on the developer's own credentials and never through the credentials service (D149), and a local run has no run identity for a mint to be verified by. Unset %s to use the credentials this environment holds, or run this as a job", execName, providers.EnvCredentialsServiceURL, execName, providers.EnvCredentialsServiceURL)
 	}
 	// The job name is a claim the service holds to its own rule and decides
 	// nothing from (C1.10), and a run that cannot name its job is a refusal
@@ -777,7 +791,7 @@ func (r *run) serviceTokens() *github.ServiceTokens {
 		RunIDToken: r.runIDToken,
 		Job:        job,
 		Now:        r.d.Now,
-	}
+	}, nil
 }
 
 // runIDToken is the run's own Firebase ID token: the identity the budget

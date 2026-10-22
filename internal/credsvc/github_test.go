@@ -1049,9 +1049,13 @@ func TestTheServiceTokenContractIsTheMints(t *testing.T) {
 		}
 	}
 	// The answer is an object of those fields and no credential of its own:
-	// the App key that signs the mint is nowhere in it.
+	// the App key that signs the mint is nowhere in it. The check is for the
+	// key's PEM CORE and not the whole PEM, because what is read here is JSON
+	// and a multi-line value's newlines are escaped -- the trap pemCore's own
+	// comment describes, and a whole-PEM comparison would pass without
+	// looking at anything.
 	for _, v := range fields {
-		if strings.Contains(string(v), appKeyPEM(t)) {
+		if strings.Contains(string(v), pemCore(t)) {
 			t.Errorf("a mint's answer carries the App key")
 		}
 	}

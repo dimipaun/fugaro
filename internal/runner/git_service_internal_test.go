@@ -34,15 +34,21 @@ import (
 )
 
 const (
-	// gitServiceToken is the installation token the stand-in service mints.
-	// It is built at run time from a prefix and the test's name (Convention
-	// 2), never written as a token-shaped literal.
+	// gitServiceTokenPrefix is the shape of the installation token the
+	// stand-in service mints. The token is built at run time from this prefix
+	// and the test's name (Convention 2), never written as a token-shaped
+	// literal.
 	gitServiceTokenPrefix = "ghs_fixture_run_token_"
-	// gitServiceIDToken and gitServiceRunToken stand in for the two
-	// identities a mint carries. Neither is a credential: the first is what
-	// the fake metadata server answers, the second what the fake identity
-	// toolkit's exchange yields.
+	// plantedAppKeyEnv is where a job's App key would be if the installation
+	// had no credentials service. The fixtures here never set it, and the
+	// tests assert that nothing could have read one: with the service on, the
+	// key is the service's (C2.2, D145).
 	plantedAppKeyEnv = "FUGARO_GITHUB_APP_PRIVATE_KEY"
+	// gitServiceIDToken is what the fake metadata server answers: the job's
+	// Google ID token, one of the two identities a mint presents. It is not a
+	// credential of any kind, and the service's own fixture tokens are the
+	// same shape (gateway_service_internal_test.go's "job-id-token-1").
+	gitServiceIDToken = "job-id-token-1"
 )
 
 // gitServiceFake is the credentials service as a run's git path meets it: one
@@ -197,7 +203,7 @@ func gitServiceRun(t *testing.T, svc *gitServiceFake, meta *httptest.Server, id 
 func TestNoAppKeyReadWithService(t *testing.T) {
 	now := time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)
 	svc := newGitServiceFake(t, now)
-	meta := gitMetadataFake(t, "job-id-token-1")
+	meta := gitMetadataFake(t, gitServiceIDToken)
 	id := gitRunIdentity(t)
 	r := gitServiceRun(t, svc, meta, id, nil)
 	r.d.Now = func() time.Time { return now }
@@ -221,7 +227,7 @@ func TestNoAppKeyReadWithService(t *testing.T) {
 	if call.path != "/v1/github/installation-token" {
 		t.Errorf("the mint was asked at %s", call.path)
 	}
-	if want := "Bearer job-id-token-1"; call.auth != want {
+	if want := "Bearer " + gitServiceIDToken; call.auth != want {
 		t.Errorf("the mint's job identity is %q, want %q", call.auth, want)
 	}
 	if want := id.Token(); call.run != want || want == "" {
@@ -250,7 +256,7 @@ func TestNoAppKeyReadWithService(t *testing.T) {
 func TestGitAuthFromService(t *testing.T) {
 	now := time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)
 	svc := newGitServiceFake(t, now)
-	meta := gitMetadataFake(t, "job-id-token-1")
+	meta := gitMetadataFake(t, gitServiceIDToken)
 	r := gitServiceRun(t, svc, meta, gitRunIdentity(t), nil)
 	// The clock the runner keeps is the fake service's own, so the cached
 	// token's life is read the way the service wrote it.
@@ -329,15 +335,23 @@ func TestServiceTokenRefusalsCarryNoValue(t *testing.T) {
 			},
 			wantIn: "not a mint's",
 		},
+		{
+			// The one case where a real token exists: the service minted one
+			// and answered with it, and it must not reach the run -- the
+			// token would expire inside the validity bootstrap asked for
+			// (bootstrapAuthMinValid), so the run is refused rather than
+			// handed a credential it cannot honor. It is never printed
+			// either, which is what the planted-value loop below holds.
+			name:   "a token with too little life",
+			plant:  func(f *gitServiceFake) { f.expires = now.Add(time.Minute) },
+			wantIn: "expires too soon",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := newGitServiceFake(t, now)
-			// A short-lived answer is refused as well, and it is the one
-			// refusal where a real token exists and must not surface.
-			svc.expires = now.Add(time.Minute)
 			tc.plant(svc)
-			meta := gitMetadataFake(t, "job-id-token-1")
+			meta := gitMetadataFake(t, gitServiceIDToken)
 			r := gitServiceRun(t, svc, meta, gitRunIdentity(t), nil)
 			r.d.Now = func() time.Time { return now }
 
@@ -352,14 +366,14 @@ func TestServiceTokenRefusalsCarryNoValue(t *testing.T) {
 			if !strings.Contains(msg, tc.wantIn) {
 				t.Errorf("the refusal %q does not say what happened (%q)", msg, tc.wantIn)
 			}
-			for _, planted := range []string{svc.token, plantedRunToken, "job-id-token-1", "planted upstream text", "not json at all"} {
+			for _, planted := range []string{svc.token, plantedRunToken, gitServiceIDToken, "planted upstream text", "not json at all"} {
 				if strings.Contains(msg, planted) {
 					t.Errorf("a value reached the refusal: %q", msg)
 				}
 			}
 			// The run reports the refusal with its own redactor, which must
 			// not change what a value-free sentence says.
-			if got := r.redact(msg); strings.Contains(got, svc.token) || strings.Contains(got, "job-id-token-1") {
+			if got := r.redact(msg); strings.Contains(got, svc.token) || strings.Contains(got, gitServiceIDToken) {
 				t.Errorf("the redacted refusal carries a value: %q", got)
 			}
 		})
@@ -395,7 +409,7 @@ func TestNoAppKeyReadWhenTheServiceRefusesIdentity(t *testing.T) {
 			svc := newGitServiceFake(t, now)
 			var meta *httptest.Server
 			if tc.meta {
-				meta = gitMetadataFake(t, "job-id-token-1")
+				meta = gitMetadataFake(t, gitServiceIDToken)
 			}
 			r := gitServiceRun(t, svc, meta, gitRunIdentity(t), tc.edit)
 			r.d.Now = func() time.Time { return now }
@@ -448,5 +462,60 @@ func TestBitbucketUnchanged(t *testing.T) {
 	}
 	if calls := svc.mintCalls(); len(calls) != 0 {
 		t.Errorf("a bitbucket run called the credentials service %d times, want none (the service holds no bitbucket credential, D145)", len(calls))
+	}
+}
+
+// TestTheServiceURLIsOneSpelling: the "the service is on" fact is spelled in
+// two packages -- providers.EnvCredentialsServiceURL, which FromEnv reads to
+// decide whether to open a keyless provider, and the runner's own
+// credentialsServiceURLEnv, which serviceTokens reads to decide whether to
+// install the service. They must be the same string: a drift would be silent
+// and total, with the opener going keyless on one value while the runner
+// installed on the other, and every service-on GitHub run stopping on
+// github.ErrServiceTokensIdentity. The two spellings are held together here
+// because this is the only package that can see both (providers cannot import
+// the runner, and the runner's gateway constant is unexported).
+func TestTheServiceURLIsOneSpelling(t *testing.T) {
+	if providers.EnvCredentialsServiceURL != credentialsServiceURLEnv {
+		t.Errorf("the service's URL is spelled %q in internal/gitprov/providers and %q in the runner: a job's environment is read for one and installed on the other, so the two must be one string",
+			providers.EnvCredentialsServiceURL, credentialsServiceURLEnv)
+	}
+}
+
+// TestLocalRunRefusesTheService: a local `fugaro exec` whose environment names
+// a credentials service is refused up front, in D149's own words, rather than
+// opening a keyless provider and dying later on an identity it cannot present
+// -- the same refusal serviceUpstream makes of the same situation for the
+// model path. Nothing is called at the service, and the refusal carries no
+// value.
+func TestLocalRunRefusesTheService(t *testing.T) {
+	now := time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)
+	svc := newGitServiceFake(t, now)
+	env := []string{
+		providers.EnvGitHubAppID + "=1234",
+		credentialsServiceURLEnv + "=" + svc.srv.URL,
+	}
+	r := svcRun(t, "api-key", func(r *run) {
+		r.d.Local = true
+		r.d.Env = env
+		r.d.OpenProvider = providers.FromEnv(env, svc.srv.Client(), nil)
+		r.spec = &task.Spec{Version: 1, RunID: svcRunID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature"}
+	})
+	r.d.Now = func() time.Time { return now }
+
+	err := r.openProvider(context.Background(), gitprov.KindGitHub, "the --provider flag")
+	if err == nil {
+		t.Fatal("a local run whose environment names a credentials service opened a github provider")
+	}
+	for _, want := range []string{execName, "D149", providers.EnvCredentialsServiceURL} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not name %q", err, want)
+		}
+	}
+	if errors.Is(err, github.ErrServiceTokensIdentity) {
+		t.Errorf("the refusal is the service's own identity refusal (%v), not the local-run rule of D149", err)
+	}
+	if calls := svc.mintCalls(); len(calls) != 0 {
+		t.Errorf("a local run called the credentials service %d times", len(calls))
 	}
 }
