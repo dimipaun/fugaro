@@ -45,7 +45,7 @@ func (o *initOptions) checkCreateProject() error {
 	if !o.createProject {
 		switch {
 		case o.managed:
-			return userErr("--managed goes with --create-project: it is what a project this run creates is, and only a creation can be one — an existing project is made managed by the owner's own command instead (never by update --firebase, which adds Firebase to a project someone else made). To create a managed project: fugaro setup --create-project --gcp-project <id> --managed --budget <amount> --budget-currency <code> --billing-account <id>; to flag one that already exists: fugaro managed flag <id> --budget <amount> --budget-currency <code>, before a person, who types its ID")
+			return userErr("--managed goes with --create-project: it is what a project this run creates is, and only a creation can be one — an existing project is made managed by the owner's own command instead (never by update --firebase-project, which adds Firebase to a project someone else made). To create a managed project: fugaro setup --create-project --gcp-project <id> --managed --budget <amount> --budget-currency <code> --billing-account <id>; to flag one that already exists: fugaro managed flag <id> --budget <amount> --budget-currency <code>, before a person, who types its ID")
 		case o.linkBilling != "":
 			return userErr("--link-billing goes with --create-project (both flags, explicitly: fugaro setup links billing only to a project it was asked to create or adopt). To link billing yourself: gcloud billing projects link <project> --billing-account=<account>")
 		case o.parent != "" || o.displayName != "":
@@ -78,8 +78,13 @@ func (o *initOptions) checkCreateProject() error {
 	case o.cloud.gcpProject == "":
 		return userErr("--create-project needs --gcp-project <id>: the ID to create (fugaro setup never uses the gcloud default project)")
 	}
-	if o.firebase != "" && o.firebase != o.cloud.gcpProject {
-		return userErr("--create-project creates --gcp-project %s, and --firebase %s is another project: fugaro setup creates only one, and only the project that holds the installation; create %s yourself, or pass --firebase %s", o.cloud.gcpProject, o.firebase, o.firebase, o.cloud.gcpProject)
+	// The pairing rule, read through the default (firebaseProject, D7): a
+	// project this run creates is its own Firebase project, which is the
+	// default path, and the only way it is another one is --firebase-project
+	// saying so — refused, because fugaro setup creates one project and only
+	// the project that holds the installation.
+	if fp := o.firebaseProject(); fp != o.cloud.gcpProject {
+		return userErr("--create-project creates --gcp-project %s, and --firebase-project %s is another project: fugaro setup creates only one, and only the project that holds the installation; create %s yourself, or pass --firebase-project %s", o.cloud.gcpProject, fp, fp, o.cloud.gcpProject)
 	}
 	if err := infra.ValidateNewProjectID(o.cloud.gcpProject); err != nil {
 		return userErr("--gcp-project: %v", err)

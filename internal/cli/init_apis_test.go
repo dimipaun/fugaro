@@ -220,7 +220,7 @@ func TestPlanOnlyYesChangesNothing(t *testing.T) {
 }
 
 // --plan-only never lets --yes confirm anything, in any mode: the converge,
-// --firebase, --repo, with or without --json and --non-interactive. With the
+// --firebase-project, --repo, with or without --json and --non-interactive. With the
 // Cloud Resource Manager API disabled no enable call is made.
 func TestPlanOnlyYesNeverConfirmsInAnyMode(t *testing.T) {
 	noEnableWait(t, 1)
@@ -228,7 +228,7 @@ func TestPlanOnlyYesNeverConfirmsInAnyMode(t *testing.T) {
 		"converge":                 {"setup", "--plan-only", "--yes"},
 		"--json":                   {"setup", "--plan-only", "--yes", "--json"},
 		"--non-interactive":        {"setup", "--plan-only", "--yes", "--non-interactive"},
-		"--firebase":               {"setup", "--plan-only", "--yes", "--firebase", initProject},
+		"--firebase-project":       {"setup", "--plan-only", "--yes", "--firebase-project", initProject},
 		"--repo":                   {"setup", "--repo", "--plan-only", "--yes"},
 		"--repo --non-interactive": {"setup", "--repo", "--plan-only", "--yes", "--non-interactive", "--json"},
 	} {

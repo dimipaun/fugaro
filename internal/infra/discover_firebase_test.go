@@ -486,7 +486,7 @@ func TestForeignMinterMessage(t *testing.T) {
 	got := foreignMinterMessage("fugaro-token-signer@fp-1234.iam.gserviceaccount.com", "fp-1234", []string{"user:old@example.com"})
 	want := `token signer fugaro-token-signer@fp-1234.iam.gserviceaccount.com grants fugaroTokenMinter to members who are not this installation's launchers or operators:
   user:old@example.com
-Each could mint run tokens. Remove them, then rerun fugaro update --firebase fp-1234:
+Each could mint run tokens. Remove them, then rerun fugaro update --firebase-project fp-1234:
   gcloud iam service-accounts remove-iam-policy-binding fugaro-token-signer@fp-1234.iam.gserviceaccount.com --project fp-1234 --member=user:old@example.com --role=projects/fp-1234/roles/fugaroTokenMinter
 Or add them as launchers or operators if they should keep it.`
 	if got != want {
@@ -498,7 +498,7 @@ Or add them as launchers or operators if they should keep it.`
 	want = `token signer s@fp-1234.iam.gserviceaccount.com grants fugaroTokenMinter to members who are not this installation's launchers or operators:
   allUsers
   user:old@example.com
-Each could mint run tokens. Remove them, then rerun fugaro update --firebase fp-1234:
+Each could mint run tokens. Remove them, then rerun fugaro update --firebase-project fp-1234:
   gcloud iam service-accounts remove-iam-policy-binding s@fp-1234.iam.gserviceaccount.com --project fp-1234 --member=allUsers --role=projects/fp-1234/roles/fugaroTokenMinter
   gcloud iam service-accounts remove-iam-policy-binding s@fp-1234.iam.gserviceaccount.com --project fp-1234 --member=user:old@example.com --role=projects/fp-1234/roles/fugaroTokenMinter
 Or add them as launchers or operators if they should keep it.`
@@ -512,7 +512,7 @@ Or add them as launchers or operators if they should keep it.`
 	want = `token signer fugaro-token-signer@fp-1234.iam.gserviceaccount.com grants roles/owner, which Fugaro never grants on it, to:
   user:a@x.com
   user:b@x.com (under a condition)
-Each could act as the signer and mint run tokens. Remove them, then rerun fugaro update --firebase fp-1234:
+Each could act as the signer and mint run tokens. Remove them, then rerun fugaro update --firebase-project fp-1234:
   gcloud iam service-accounts remove-iam-policy-binding fugaro-token-signer@fp-1234.iam.gserviceaccount.com --project fp-1234 --member=user:a@x.com --role=roles/owner
   gcloud iam service-accounts remove-iam-policy-binding fugaro-token-signer@fp-1234.iam.gserviceaccount.com --project fp-1234 --member=user:b@x.com --role=roles/owner --all`
 	if got != want {

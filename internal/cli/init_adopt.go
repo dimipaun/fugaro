@@ -99,7 +99,7 @@ func (e *initEngine) adoptGuard(stage string) error {
 func adoptNotes(outs infra.InstallationOutputs, door string) []string {
 	lines := []string{
 		"the local config was copied from the installation's outputs: launchers, operators, registry cleanup (on, or dry-run when the outputs say a dry run), log isolation and the budget backend's history account; they do not carry the alert email, the scheduler region, whether cleanup is dry-run or off, or the Firebase project,",
-		"so a plan from this machine can differ from what the owner applied and look noisy: do not apply an installation plan from here; ask an owner to run fugaro update, passing --alert-email, --scheduler-region, --registry-cleanup and --firebase as they did",
+		"so a plan from this machine can differ from what the owner applied and look noisy: do not apply an installation plan from here; ask an owner to run fugaro update, passing --alert-email, --scheduler-region, --registry-cleanup and --firebase-project as they did",
 	}
 	return append(lines, roleNotes(outs, door)...)
 }
@@ -130,7 +130,7 @@ func roleNotes(outs infra.InstallationOutputs, door string) []string {
 // adoptBudget fills next's budget section from the Firebase root's outputs
 // (the realtime database's URL, the Firebase project, its restricted web API
 // key and the token signer), so a teammate's watch and runs find the budget
-// backend without an owner's update --firebase. Read only: terraform init and
+// backend without an owner's update --firebase-project. Read only: terraform init and
 // output in the Firebase root, which needs no variables and changes no state.
 // None of the four is a secret (the API key is restricted by design) and
 // nothing the outputs do not hold is written: not the mode, not the caps. An
@@ -142,14 +142,14 @@ func (r *initRun) adoptBudget(ctx context.Context, e *initEngine, outs infra.Ins
 		return // no budget backend: nothing to find
 	}
 	skip := func(why string) {
-		fmt.Fprintf(r.w, "the budget section of the local config was left empty (%s); watch and the budget commands need it: an owner's fugaro update --firebase <project> fills it, or rerun this once the Firebase root's state can be read\n", why)
+		fmt.Fprintf(r.w, "the budget section of the local config was left empty (%s); watch and the budget commands need it: an owner's fugaro update --firebase-project <project> fills it, or rerun this once the Firebase root's state can be read\n", why)
 	}
 	switch ok, err := infra.StateExists(ctx, e.c, e.spec.StateBucket, infra.StatePrefixFirebase); {
 	case err != nil:
 		skip("the Firebase root's state could not be listed: " + oneLineCLI(err.Error()))
 		return
 	case !ok:
-		skip("there is no Firebase root state in gs://" + e.spec.StateBucket + ", so the budget backend was not deployed with --firebase")
+		skip("there is no Firebase root state in gs://" + e.spec.StateBucket + ", so the budget backend was not deployed with --firebase-project")
 		return
 	}
 	fdir, err := infra.FirebaseWorkdir(os.Getenv, e.lc.GCPProject)
@@ -182,7 +182,7 @@ func (r *initRun) adoptBudget(ctx context.Context, e *initEngine, outs infra.Ins
 		return
 	}
 	// The outputs are state anyone with the state bucket can write: they must
-	// all be one Firebase project's (the one passed with --firebase, else the
+	// all be one Firebase project's (the one passed with --firebase-project, else the
 	// one they name), or none is kept.
 	if err := infra.CheckFirebaseOutputsFor(fo, r.o.firebase, e.lc.Endpoints.NoAuth); err != nil {
 		skip(oneLineCLI(err.Error()))

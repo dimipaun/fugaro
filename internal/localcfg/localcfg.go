@@ -206,13 +206,13 @@ type Budget struct {
 	AllowedModels []string `yaml:"allowed_models,omitempty"`
 	// RTDBURL is the project's Firebase Realtime Database (the budget
 	// backend of M9b), which fugaro budget reads and writes. Set by fugaro
-	// update --firebase; empty means the project has none.
+	// update --firebase-project; empty means the project has none.
 	RTDBURL string `yaml:"rtdb_url,omitempty"`
 	// FirebaseProject is the project's own Firebase project (the FP) and
 	// FirebaseAPIKey its restricted web API key (not a secret: it may call
 	// only Identity Toolkit and Secure Token). TokenSigner is the signer
 	// account the launcher mints run tokens as. All four are written by
-	// fugaro update --firebase from the Firebase root's outputs.
+	// fugaro update --firebase-project from the Firebase root's outputs.
 	FirebaseProject string `yaml:"firebase_project,omitempty"`
 	FirebaseAPIKey  string `yaml:"firebase_api_key,omitempty"`
 	TokenSigner     string `yaml:"token_signer,omitempty"`
@@ -371,7 +371,7 @@ type Terraform struct {
 	Operators   []string `yaml:"operators,omitempty"`
 	// BudgetAdmins are further budget admins on the Firebase project, IAM
 	// members (user:, group: or serviceAccount:); the GCP project's owners
-	// and editors are admins too, read when fugaro update --firebase runs.
+	// and editors are admins too, read when fugaro update --firebase-project runs.
 	BudgetAdmins []string `yaml:"budget_admins,omitempty"`
 	// RegistryCleanup (dry-run, on or off), NoLogIsolation and BudgetBackend
 	// are the installation's switches that exist as flags: adopt mode copies
@@ -576,20 +576,20 @@ type Endpoints struct {
 	ResourceManager  string `yaml:"resource_manager,omitempty"`
 	CloudScheduler   string `yaml:"cloud_scheduler,omitempty"`
 	ServiceUsage     string `yaml:"service_usage,omitempty"`
-	// CloudBilling is read by fugaro update --firebase to check that the
+	// CloudBilling is read by fugaro update --firebase-project to check that the
 	// Firebase project has billing.
 	CloudBilling string `yaml:"cloud_billing,omitempty"`
-	// FirebaseDatabase lists the Firebase project's databases (init --firebase).
+	// FirebaseDatabase lists the Firebase project's databases (init --firebase-project).
 	FirebaseDatabase string `yaml:"firebase_database,omitempty"`
-	// APIKeys reads the Firebase project's API keys (init --firebase).
+	// APIKeys reads the Firebase project's API keys (init --firebase-project).
 	APIKeys string `yaml:"api_keys,omitempty"`
 	// FirebaseManagement is where init --create-project adds Firebase to a
 	// project it creates (Firebase Management v1beta1).
 	FirebaseManagement string `yaml:"firebase_management,omitempty"`
-	// IdentityToolkit is where init --firebase ensures Identity Platform is
+	// IdentityToolkit is where init --firebase-project ensures Identity Platform is
 	// initialized in the Firebase project (Identity Toolkit's REST API).
 	IdentityToolkit string `yaml:"identity_toolkit,omitempty"`
-	// Firestore and FirebaseRules are where init --firebase ensures the
+	// Firestore and FirebaseRules are where init --firebase-project ensures the
 	// Firebase project's Firestore database exists and deploys its deny-all
 	// security rules (the Firestore and Firebase Rules REST APIs).
 	Firestore     string `yaml:"firestore,omitempty"`

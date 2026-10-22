@@ -127,7 +127,7 @@ func History0(t *testing.T, deploy bool) HistorySpec {
 }
 
 // TestFirebaseVarsPlan plans the Firebase root with the tfvars fugaro update
-// --firebase writes, against mock providers.
+// --firebase-project writes, against mock providers.
 func TestFirebaseVarsPlan(t *testing.T) {
 	// aurora-fp is the two-project layout; proj-1234 is the installation's
 	// own project (the same-project layout).

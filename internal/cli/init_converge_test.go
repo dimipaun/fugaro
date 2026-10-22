@@ -60,7 +60,7 @@ func (c convergeJSON) state(name string) string {
 
 // From nothing (no state bucket yet, a plan with changes): the converge
 // creates, applies and reports each stage; the Firebase stage is skipped
-// without --firebase.
+// without --firebase-project.
 func TestConvergeFromNothing(t *testing.T) {
 	r := newInitRig(t)
 	out, _, err := executeStdin(t, "", "setup", "--yes", "--json")
@@ -321,13 +321,13 @@ func TestSecretsHeldReachTheLoopsRedaction(t *testing.T) {
 	}
 }
 
-// --firebase runs through the loop: the installation stage is skipped (its
+// --firebase-project runs through the loop: the installation stage is skipped (its
 // applies are the Firebase engine's), the Firebase stage applies, and
 // there are still three applies.
 func TestFirebaseRunsThroughTheLoop(t *testing.T) {
 	r := newFBRig(t)
 	r.historyImage()
-	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase", fpID, "--budget-mode", "observe", "--yes", "--json")
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--budget-mode", "observe", "--yes", "--json")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}

@@ -232,7 +232,7 @@ The published policy carries the account axis in a node the previous release can
    ```
 
    `--delete` puts the project back on the ceiling its jobs' environments carry, so make it a
-   step of its own and not a repair. A re-run of `fugaro update --firebase` is deliberately **not**
+   step of its own and not a repair. A re-run of `fugaro update --firebase-project` is deliberately **not**
    the remedy: it deploys the rules template and marker and never writes `config/policy/shared`.
 
    **Read the list out first: the publish that follows rebuilds it.** With no node to replace,
@@ -268,7 +268,7 @@ The published policy carries the account axis in a node the previous release can
    step 3 ran:
 
    ```bash
-   fugaro update --firebase <gcp-project>
+   fugaro update --firebase-project <gcp-project>
    ```
 
    `fugaro image refresh` re-pins `base_images` and moves each repository's own jobs, but never a
