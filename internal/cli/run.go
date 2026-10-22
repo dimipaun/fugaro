@@ -1334,6 +1334,7 @@ func printRecipeNote(warn io.Writer, rr *resolvedRecipe, explicit bool) {
 // (artifactShadowedOnBatchRefusal), since nothing on this path can then say the
 // run is not an artifact one. All are asked before anything about this launch
 // is written, so none leaves a task or an execution behind.
+
 // cascadeLaunchRefusal is the launcher's own side of the cascade's rules
 // (C1.19): a `agent.auth: cascade` workflow is refused here, before the claim
 // is taken, before a budget token is minted and before any byte is written —

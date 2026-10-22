@@ -282,9 +282,11 @@ const execName = "fugaro exec"
 // that answered (C1.19): a cascade run is the one run whose credential is not
 // its own, so it is the one run that has to record which one it spent on --
 // the record `/runs/<id>/result.json` carries (D140) and the registry entry
-// the dashboard reads (C1.3). Both are written here, where the answer arrives,
-// because a second reader of the same contract is how two records come to
-// disagree. The tier a call settled by and the switch are C1.16's ledger.
+// the dashboard reads (C1.3). Both are written by r.recordCredential
+// (runner.go, with the run's other record writers) and decided here, where the
+// answer arrives, because a second reader of the same contract is how two
+// records come to disagree. The tier a call settled by and the switch are
+// C1.16's ledger.
 //
 // The typed answer is turned back into the contract's own type
 // (credsvc.ExhaustedUntil) rather than a runner type of its own: the wire

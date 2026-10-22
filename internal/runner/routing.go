@@ -58,7 +58,8 @@ func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
 		// O2 (the owner's ruling of 2026-10-17): a repository may ask for the
 		// cascade, and only the operator-written project policy enables it. A
 		// cascade workflow whose policy does not carry the switch is refused
-		// here, before the run opens anything, naming exactly what to set —
+		// here, in bootstrap, before any model call and before a pin moves,
+		// naming exactly what to set —
 		// `fugaro validate` refuses the same file on the author's own machine
 		// (C1.1's cascadeProblems), and this is the run's own side of it.
 		var via string
