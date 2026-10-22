@@ -572,3 +572,46 @@ func TestCascadeRefusedWithoutPolicySwitch(t *testing.T) {
 		}
 	}
 }
+
+// TestLocalCascadeIsRefusedAsALocalRun (D149, C1.19): a local `fugaro exec` on
+// a cascade file is refused for what it is, and *before* the switch is judged.
+// `fugaro exec` never cascades — it runs on the developer's own credentials and
+// has no path to a private service — so the O2 refusal's remedy (the operator
+// publishes the switch) cannot fix this run, and a developer who published
+// nothing has to be told the fix that is theirs (use api-key or oauth locally)
+// rather than sent at a policy that would change nothing for a local run.
+//
+// The order is the point: applyRouting judges the auth here, in bootstrap, for
+// every local run; the other place D149 is said (serviceUpstream) is behind the
+// gateway, reached only by a run whose mode turns it on — and a local cascade
+// file is usually mode-off or unset, where agent.BuildEnv answers instead — so
+// a local run whose mode *is* on was refused for the switch until this arm
+// moved ahead of it.
+//
+// Mutation (run, restored): move the local arm back below the O2 check and this
+// test's first case fails with the operator's remedy; drop it entirely and the
+// run is refused by agent.BuildEnv's own message instead.
+func TestLocalCascadeIsRefusedAsALocalRun(t *testing.T) {
+	r := cascadeRun(t, nil)
+	r.d.Local = true
+	err := r.applyRouting(r.projPolicy.policy, false)
+	if err == nil {
+		t.Fatal("a local cascade run was admitted")
+	}
+	for _, want := range []string{execName, "D149", "api-key or oauth"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the local refusal does not name %q: %v", want, err)
+		}
+	}
+	for _, refuse := range []string{"routing.claude", "project policy publish"} {
+		if strings.Contains(err.Error(), refuse) {
+			t.Errorf("a local run is sent at the switch's remedy (%q), which no local invocation can be fixed by: %v", refuse, err)
+		}
+	}
+	// The same file on a job keeps the operator's remedy: the local refusal is
+	// about the invocation, not about the cascade.
+	r = cascadeRun(t, nil)
+	if err := r.applyRouting(r.projPolicy.policy, false); err == nil || !strings.Contains(err.Error(), "project policy publish") {
+		t.Errorf("a cascade job with no switch: %v, want the O2 refusal naming the policy", err)
+	}
+}

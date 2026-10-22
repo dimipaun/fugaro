@@ -55,6 +55,16 @@ func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
 		auth = r.cfg.Agent.Auth
 	}
 	if auth == config.AuthCascade {
+		if r.d.Local {
+			// D149 first, before the switch is judged: `fugaro exec` is
+			// unchanged by the cascade, so the O2 refusal below — whose remedy
+			// is the operator publishing a policy — is no remedy here. This is
+			// the only place a local run's cascade file is answered *as* a
+			// local run: the other sentence for it (serviceUpstream, D149
+			// too) is behind the gateway, and a local run with the budget off
+			// or unset never reaches it (agent.BuildEnv answers instead).
+			return cascadeLocalRefusal()
+		}
 		// O2 (the owner's ruling of 2026-10-17): a repository may ask for the
 		// cascade, and only the operator-written project policy enables it. A
 		// cascade workflow whose policy does not carry the switch is refused

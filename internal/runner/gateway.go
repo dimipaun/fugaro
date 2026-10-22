@@ -192,6 +192,25 @@ func (r *run) gatewayUpstream(ctx context.Context) (gateway.Upstream, error) {
 	return up, nil
 }
 
+// cascadeLocalRefusal is D149's refusal of a cascade auth in a local run, kept
+// in one place because two doers say it: the service upstream below, and the
+// routing switch's own arm in bootstrap (routing.go's applyRouting), which
+// judges the auth before a gateway is ever started.
+//
+// The second caller is why this is not just a line in serviceUpstream: that
+// function is reached only through the gateway, and only for a run whose mode
+// turns the gateway on — while a local `fugaro exec` is usually mode-off or
+// mode-unset, so its cascade file was answered by agent.BuildEnv instead
+// ("agent.auth cascade needs..."), and a local run whose mode *is* on was
+// refused for the switch, with the operator's remedy (publish the policy),
+// which no local invocation can be fixed by: `fugaro exec` never cascades.
+// The local invocation's own sentence is the one that names the fix — use
+// api-key or oauth locally — so applyRouting says this before it judges the
+// switch at all.
+func cascadeLocalRefusal() error {
+	return fmt.Errorf("agent.auth is %s and this is a local run: %s runs on the developer's own credentials and never through the credentials service (D149). Use agent.auth api-key or oauth locally", config.AuthCascade, execName)
+}
+
 // serviceUpstream is the credentials service's upstream for a cascade run
 // (C1.15, D135): the service's URL from the job's environment, and the two
 // identities every call carries -- the job's Google ID token, minted from
@@ -228,7 +247,7 @@ func (r *run) gatewayUpstream(ctx context.Context) (gateway.Upstream, error) {
 // stops here.
 func (r *run) serviceUpstream() (gateway.Upstream, error) {
 	if r.d.Local {
-		return gateway.Upstream{}, fmt.Errorf("starting the gateway: agent.auth is %s and this is a local run: %s runs on the developer's own credentials and never through the credentials service (D149). Use agent.auth api-key or oauth locally", config.AuthCascade, execName)
+		return gateway.Upstream{}, fmt.Errorf("starting the gateway: %w", cascadeLocalRefusal())
 	}
 	url := envLookup(r.d.Env, credentialsServiceURLEnv)
 	if url == "" {
