@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -28,6 +29,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitops"
@@ -239,11 +241,17 @@ type run struct {
 	sess   *budget.Session
 	frozen bool
 	// The gateway, when the budget is on for an api-key or vertex run, and
-	// what its stages cost; all guarded by mu.
+	// what its stages cost; all guarded by mu. gwUsed is the money its calls
+	// settled -- the run's billed model spend -- and gwNotional is the tier-A
+	// part of them, which is the subscription's and never the run's (C1.16,
+	// D140): the two are disjoint, and their sum is the run's whole model
+	// figure (record.CostUSD, cost.model_usd). Only a cascade run's calls
+	// carry a tier, so gwNotional is 0 for every other run.
 	gw           *gateway.Server
 	gwAgent      *agent.Gateway
 	gwClosed     bool
 	gwUsed       pricing.Micros
+	gwNotional   pricing.Micros
 	lastStage    *gateway.StageReport
 	modelBy      map[string]pricing.Micros
 	routeBy      map[string]pricing.Micros
@@ -441,7 +449,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		}
 		wctx, cancelWrite := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
 		defer cancelWrite()
-		if werr := writeRecord(d.Store, wctx, r.rec); werr != nil && err == nil {
+		if werr := writeRecord(d.Store, wctx, r.recordSnapshot()); werr != nil && err == nil {
 			err = fmt.Errorf("writing run record: %w", werr)
 		}
 		rec = r.rec
@@ -540,9 +548,39 @@ func (r *run) save(ctx context.Context) {
 	}
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
 	defer cancel()
-	if err := writeRecord(r.d.Store, wctx, r.rec); err != nil {
+	if err := writeRecord(r.d.Store, wctx, r.recordSnapshot()); err != nil {
 		r.d.Log.Warn("writing run record failed", "err", err)
 	}
+}
+
+// recordSnapshot is the record as a write encodes it: a copy taken under the
+// run's lock, so the encode -- which reads every field of the record -- cannot
+// read a field another goroutine is writing.
+//
+// The record has two writers that are not the goroutine a save runs on: the
+// credentials service's per-call answer, which names the credential the call
+// was served with (recordCredential, C1.19) and logs the switch it made
+// (recordSwitch, C1.16), and nothing else. Both hold r.mu, so a copy taken
+// under it is consistent with them; every other field is written by the run's
+// own goroutine, which is the one that saves, and by the checkpoint poll,
+// which is a goroutine of its own and writes the run branch's tip (C1.10's
+// poll) — the poll's own writes are ordered with its own save, which is what
+// makes the copy enough here rather than a lock held around the write.
+//
+// The copy is shallow, and that is deliberate: the callback goroutines only
+// ever append to the record's slices and set scalars, both under the lock, so
+// what a snapshot's slice header covers cannot be rewritten after it — an
+// append writes past the length the header was copied with. A field a
+// callback goroutine ever comes to mutate in place (a map entry, say) would
+// have to be deep-copied here, and this is the comment that says so.
+func (r *run) recordSnapshot() *runstore.Record {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.rec == nil {
+		return nil
+	}
+	cp := *r.rec
+	return &cp
 }
 
 // createRecord creates result.json if absent, within recordWriteTimeout.
@@ -585,6 +623,46 @@ func (r *run) recordCredential(name string) {
 	}
 	r.mu.Unlock()
 	r.noteRegistry(func(e *budget.AgentEntry) { e.Credential = name })
+}
+
+// recordSwitch writes the run's switch log (C1.16, D140): the call that just
+// was answered moved from one credential to another, and what the service said
+// about it -- from, to and the reason word -- joins the record beside the
+// cache-miss estimate only the gateway can make (F24, gateway.SwitchCost).
+//
+// raw is the contract's switch header exactly as it arrived (the gateway
+// validates nothing of its content: a switch is the run's record, not a ledger
+// input), so it is read back with the contract's own reader -- credsvc's, the
+// one the service writes it with -- rather than a second reading kept here. A
+// header that reader refuses is logged and dropped: the switch is a record of
+// what the run did and decides nothing, so a call whose switch this code cannot
+// read is still a call that was made, and nothing here echoes the value (it is
+// text from another process).
+//
+// Its caller is serviceAnswer (gateway.go), the same hand-off recordCredential
+// has, and for the same reason: the answer is the only place the switch exists,
+// and one writer of the record's switch log is what keeps its order the order
+// the gateway settled the calls in.
+func (r *run) recordSwitch(raw string, cost gateway.SwitchCost) {
+	if raw == "" {
+		return
+	}
+	h := http.Header{}
+	h.Set(credsvc.HeaderSwitch, raw)
+	sw, ok, err := credsvc.SwitchHeader(h)
+	if err != nil || !ok {
+		r.d.Log.Warn("the service's switch could not be read; the call is recorded without it")
+		return
+	}
+	e := runstore.Switch{
+		From: sw.From, To: sw.To, Reason: sw.Reason,
+		CacheMissUSD: cost.USD, CacheMissUnmeasured: cost.Unmeasured,
+	}
+	r.mu.Lock()
+	if r.rec != nil {
+		r.rec.Switches = append(r.rec.Switches, e)
+	}
+	r.mu.Unlock()
 }
 
 // errOwnerUnknown means the first record's create failed and nothing
@@ -2272,14 +2350,7 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.mu.Unlock()
 	}
 	if r.gw != nil {
-		// The gateway's figure is the run's cost; Claude Code's is only a
-		// cross-check. A halt it raised after the watcher looked is
-		// recorded now.
-		r.drainHalt()
-		r.crossCheckCost(name, res.CostUSD, stageCtx.Err() != nil || r.haltValue() != nil)
-		r.mu.Lock()
-		r.rec.CostUSD = r.gwUsed.USD()
-		r.mu.Unlock()
+		r.recordGatewayStageCost(name, res.CostUSD, stageCtx.Err() != nil || r.haltValue() != nil)
 	} else {
 		r.rec.CostUSD += res.CostUSD
 	}

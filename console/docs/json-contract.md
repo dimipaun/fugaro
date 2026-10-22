@@ -389,7 +389,7 @@ reads:
 | `pr_url` | string | **yes** | the URL as the host gave it |
 | `execution`, `log_url` | string | **yes** | `log_url` is what `logs RUN --url` prints |
 | `created` | time.Time | no | RFC 3339 |
-| `cost` | `runstore.Cost` | no | model/compute dollars and the spend basis — *notional* when `ModelBasis == BasisSubscription` |
+| `cost` | `runstore.Cost` | no | model/compute dollars: `model_usd` is the **whole** model figure and `model_notional_usd` the subscription's part of it (C1.16, P12 — a mixed cascade run's `model_basis` is `api-list` for the whole run, so the basis is only the fallback for a row written before the split existed) |
 | `image_age_s` | `*int64` | **yes** | null = unknown |
 | `terminal`, `settled` | bool | no | |
 | `branch`, `outcome` | string | **yes** | |
@@ -1041,8 +1041,8 @@ behind **both** `rows` and `totals`; the counts are an embedded `Counts`
 | `succeeded`, `failed`, `halted`, `infra_error` | int | no | the four settled statuses, spelled as `result.json` spells them |
 | `other` | int | no | a record that settled as none of the four: still running, or cancelled |
 | `no_record` | int | no | **no usable `result.json`**: not finalised yet, or the object cannot be read. Its status and its money are unknown — never a measured `0` |
-| `counted_usd` | float64 | no | the group's **model** dollars that count toward the caps (`model_basis` `api-list`/vertex). Compute is attributed to nobody, here or in the budget database's own person view |
-| `notional_usd` | float64 | no | the group's model dollars on a **subscription** (`agent.auth oauth`): **notional**, counted toward no cap and nobody's bill. Kept apart from `counted_usd` by construction and never summed with it |
+| `counted_usd` | float64 | no | the group's **model** dollars that count toward the caps: the money part of a run's model figure, `model_usd` minus `model_notional_usd` (C1.16/P12 — **not** a reading of `model_basis`, which the CLI's own `runs stats` help spells out). Compute is attributed to nobody, here or in the budget database's own person view |
+| `notional_usd` | float64 | no | the part of the group's model figure a **subscription** paid: the whole figure of a run on `agent.auth oauth`, and the tier-A dollars of a cascade run, whose basis is `api-list` like any api-key run's. **Notional** — counted toward no cap and nobody's bill, kept apart from `counted_usd` by construction and never summed with it. The basis is the fallback for a record written before the breakdown existed |
 | `counted_runs` | int | no | the sample `avg_counted_usd` is over: the runs whose record settled a real-dollar cost. Published because an average without its sample is a figure a reader cannot weigh |
 | `avg_counted_usd` | float64 | no | `counted_usd / counted_runs`, rounded to the cent; `0` with `counted_runs` `0`, which is *unavailable* ("no run to average"), not `$0.00 a run` |
 

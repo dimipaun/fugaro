@@ -168,8 +168,9 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
  * `mode`, `state`, `health`, `status`, `outcome`, `auth` and `deadline` are
  * enums the CLI writes from its own constant tables; `day`, `now`, `at` and
  * `created` are timestamps; `model_basis` is the spend basis (`subscription`
- * or `api-list`), which decides whether a dollar figure is notional and is
- * therefore a *value* the console compares and never a label it draws.
+ * or `api-list`) and is therefore a *value* the console compares and never a
+ * label it draws -- and since C1.16 the split itself is `model_notional_usd`,
+ * with the basis only the fallback for a row that carries none (P12).
  */
 export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   'mode',
@@ -535,19 +536,26 @@ export interface LiveDocument {
   readonly queuedNote: string | null
 }
 
-/** CostView is the six fields of `runstore.Cost` the console reads. */
+/** CostView is the seven fields of `runstore.Cost` the console reads. */
 export interface CostView {
   readonly modelUsd: Reading
+  /** modelNotionalUsd is the part of `modelUsd` a subscription paid for
+   * (C1.16, P12/D140: "every reader of the run's dollars must split on the new
+   * field rather than on `ModelBasis`"). `modelUsd` is the **whole** model
+   * figure -- money and the plan's list price together -- so a reader draws
+   * `modelUsd` minus this as the billed dollars, and never the whole figure. A
+   * row written before C1.16 has no such key (`omitempty`), and then the
+   * subscription basis is what says the row's whole figure was the plan's:
+   * unavailable here, which is the state the screens fall back on. */
+  readonly modelNotionalUsd: Reading
   readonly computeUsd: Reading
   readonly computeEstimated: boolean
   readonly totalUsd: Reading
-  /** modelBasis says what `modelUsd` *is*: billed when it is `api-list`, a
-   * subscription's notional spend when it is `subscription`
-   * (`runstore.BasisSubscription`). There is deliberately no
-   * `modelNotionalUsd` here: `runstore.Cost` has no such key -- the notional
-   * split exists once per *sum*, on `runview.Totals.model_notional_usd`, and
-   * reading it off a single row would have been a reading that is permanently
-   * unavailable on every document the CLI can produce. */
+  /** modelBasis is the basis the run's model figure was charged on
+   * (`api-list`, or `subscription` for an all-notional row, and it is
+   * `api-list` for the whole of a mixed cascade run -- `runstore.BasisSubscription`).
+   * It is the **fallback** for a row that carries no `modelNotionalUsd`, never
+   * the split itself. */
   readonly modelBasis: string
 }
 
@@ -993,6 +1001,7 @@ function costAt(raw: unknown, field: string, where: string): CostView {
   const cost = objectAt(raw, field, where)
   return {
     modelUsd: readingOf(cost, 'model_usd', `${field}.model_usd`),
+    modelNotionalUsd: readingOf(cost, 'model_notional_usd', `${field}.model_notional_usd`),
     computeUsd: readingOf(cost, 'compute_usd', `${field}.compute_usd`),
     // `compute_estimated`: when it is false, `compute_usd` 0 means "not
     // estimated", not "free" -- so the flag is the state of the number, exactly

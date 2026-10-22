@@ -184,6 +184,31 @@ func TestJoinCostUsesExecutionAndBasis(t *testing.T) {
 	}
 }
 
+// TestJoinCostKeepsAMixedRunsNotionalOutOfTheBill (P12, D140): a cascade run's
+// model figure is money and the subscription's dollars together, and its basis
+// is api-list for the whole run. Rebuilding the row's cost from ModelUSD and
+// the basis would bill the notional part -- in `runs ls`, in the console's
+// totals and in everything that reads a row -- so the row keeps the record's
+// notional part, and the totals split on it rather than on the basis.
+func TestJoinCostKeepsAMixedRunsNotionalOutOfTheBill(t *testing.T) {
+	mixed := runstore.NewCost(3, 0.5, runstore.BasisAPIList).WithNotional(2)
+	record := rec(runstore.StatusSucceeded, &mixed)
+	record.CostUSD = 3 // the record's own model figure, the whole of it
+	row := Join(Input{Task: spec, Launch: launch, Record: record, Exec: exec(backend.StateSucceeded)}, prices, now)
+	if row.Cost.ModelUSD != 3 || row.Cost.ModelNotionalUSD != 2 || row.Cost.ModelMoneyUSD() != 1 {
+		t.Fatalf("the row's cost = %+v, want model_usd 3 with 2 of it notional", row.Cost)
+	}
+	// 30 minutes × 4 vCPU × $0.00001 = $0.072 compute, billed beside the money
+	// part alone.
+	if row.Cost.TotalUSD != 1.07 {
+		t.Fatalf("the row's total_usd = %v, want the money part and the compute, not the notional", row.Cost.TotalUSD)
+	}
+	tot := Sum([]Row{row})
+	if tot.ModelNotionalUSD != 2 || tot.ModelUSD != 1 || tot.TotalUSD != 1.07 {
+		t.Fatalf("totals = %+v, want $1 of billed model spend and $2 notional", tot)
+	}
+}
+
 // A running record with no deadline and no execution the backend knows
 // can never finish on its own: infra_error.
 func TestJoinRunningWithoutDeadlineOrExecution(t *testing.T) {
