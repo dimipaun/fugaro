@@ -303,6 +303,86 @@ func TestCascadeRunHaltsWhenRulesRefuseTheByTierCounters(t *testing.T) {
 	}
 }
 
+// TestByTierProbeDoesNotHaltOnARacedSharedCounter (C1.16, C1.17): every
+// cascade run in a repository writes the two shared day counters, so an
+// update carrying the split can be refused for a reason that is not the
+// deployed rules at all -- another run settled its own share of the day
+// between this run's read and its patch, leaving the value this run meant to
+// write below the one the rules now see. The leaves under the run's own
+// nodes cannot be refused that way (one session writes them, serialized), so
+// the probe asks the rules about those first: a write the rules take there
+// says the split is known and the refusal was the race, and the run retries
+// instead of halting an operator whose database is fine with a redeploy it
+// does not need.
+func TestByTierProbeDoesNotHaltOnARacedSharedCounter(t *testing.T) {
+	f := newFixture(t)
+	s := f.started(budget.AgentEntry{Stage: "implement"})
+	ctx := context.Background()
+	d := today()
+	if _, err := s.Lease().Grant(ctx, 1_000_000); err != nil {
+		t.Fatal(err)
+	}
+	s.SetUsage(func() budget.Micros { return 300_000 })
+	// The other run's settlement of the same day's tier-B share: it is on
+	// the shared counters, above what this run is about to write, and the
+	// rules refuse the update that follows it (a decrease). The fake does
+	// not model the rules, so DenyNext is that refusal; the values are the
+	// other run's, and they are what the shared rows hold afterwards.
+	f.db.Set(budget.PathSpendRepoByTier(d, slug, budget.TierB)+"/spent", 400_000)
+	f.db.Set(budget.PathSpendGlobalByTier(d, budget.TierB)+"/spent", 900_000)
+	f.db.DenyNext(1)
+	if err := s.Lease().Report(ctx, gateway.StageReport{Calls: 1, Used: 300_000,
+		ByTier: map[string]pricing.Micros{gateway.TierB: 300_000}}); err != nil {
+		t.Fatalf("a split refused by another run's write reported %v", err)
+	}
+	if h, ok := f.nextHalt(300 * time.Millisecond); ok {
+		t.Fatalf("another cascade run's settlement halted this one: %+v", h)
+	}
+	// The run's money landed, and so did the two leaves under its own nodes:
+	// the probe's write carried them, the rules took it, and the round is off
+	// the pending figures.
+	if got := f.run("spent"); got != 300_000 {
+		t.Errorf("the run's own spend is %d, want 300000", got)
+	}
+	if got := f.share(d, "spent"); got != 300_000 {
+		t.Errorf("the run's share of the day is %d, want 300000", got)
+	}
+	if got := f.num(budget.PathRunByTier(slug, runID, budget.TierB) + "/spent"); got != 300_000 {
+		t.Errorf("the run's own tier-B counter is %d, want 300000", got)
+	}
+	if got := f.num(budget.PathSpendRunByTier(d, slug, runID, budget.TierB) + "/spent"); got != 300_000 {
+		t.Errorf("the run's own tier-B share of the day is %d, want 300000", got)
+	}
+	// The two shared rows are what the probe could not write -- writing them
+	// is what another run's update refused -- so this run's round is not in
+	// them; they hold the other run's own figures and nothing of this one's.
+	// The money and the run's own rows are unaffected, the split is a
+	// display figure nothing decides on (C1.3), and the alternative -- a
+	// retry that moved the run's own leaves a second time, or the halt this
+	// test exists to rule out -- is worse for the run than a shared row one
+	// settlement behind.
+	if got := f.repo(d, "byTier/b/spent"); got != 400_000 {
+		t.Errorf("the repository's tier-B row is %d, want the other run's 400000", got)
+	}
+	if got := f.global(d, "byTier/b/spent"); got != 900_000 {
+		t.Errorf("the project's tier-B row is %d, want the other run's 900000", got)
+	}
+	// And the run is not left half-broken: the next round settles its money
+	// and splits all four leaves again, from the values it reads.
+	s.SetUsage(func() budget.Micros { return 400_000 })
+	if err := s.Lease().Report(ctx, gateway.StageReport{Calls: 1, Used: 100_000,
+		ByTier: map[string]pricing.Micros{gateway.TierB: 100_000}}); err != nil {
+		t.Fatalf("the round after the race reported %v", err)
+	}
+	want := [4]int64{400_000, 400_000, 500_000, 1_000_000}
+	if got := byTier(f, d, budget.TierB); got != want {
+		t.Errorf("the four tier-B leaves are %v, want %v", got, want)
+	}
+	if h, ok := f.nextHalt(100 * time.Millisecond); ok {
+		t.Fatalf("a second halt: %+v", h)
+	}
+}
+
 // TestByTierProbeIsNotABlanketDrop (C1.16): the probe is not a run that
 // stops splitting whenever a write is refused. The same split the test above
 // has refused is written and kept when the rules know it -- otherwise that

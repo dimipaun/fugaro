@@ -575,59 +575,139 @@ type dayCounters struct{ repo, global Counters }
 // update is asked about and stripped by.
 const byTierIn = "/byTier/"
 
+// isByTierLeaf reports whether key names one of the split's leaves.
+func isByTierLeaf(key string) bool { return strings.Contains(key, byTierIn) }
+
 func carriesByTier(upd map[string]any) bool {
 	for k := range upd {
-		if strings.Contains(k, byTierIn) {
+		if isByTierLeaf(k) {
 			return true
 		}
 	}
 	return false
 }
 
-// probeByTierKeys is checkCascadeKeys's twin for the by-tier split (C1.16),
-// and it runs only when an update carrying the split was refused with a
-// permission error: it asks the deployed rules the one question a run can
-// ask them, by writing the very same update without the split's leaves.
-//
-// Refused with them and accepted without them, the split's counters are what
-// the deployed document does not know -- C1.3's `credsRules` marker cannot
-// catch that, because an older Fugaro redeploying its own document leaves the
-// marker at a generation it does not know -- and the run halts named (C1.17)
-// rather than dropping the split silently: a run whose real spend is
-// accounted for under no tier is a run nobody can attribute spend to, which
-// is the one thing the split exists for. It is not retried: the redeploy is
-// the fix, and it is what the halt's detail names.
-//
-// The write that landed is the run's own usage without the split, so the run
-// keeps its totals and loses only the by-tier rows: that is the fail-safe
-// direction, and it is why this probe may write at all.
-//
-// Anything else -- refused without them too (the stale race the flush already
-// retries), or a failure that is not a permission refusal (an outage, which
-// the flush's own error carries) -- says nothing about the split, and the
-// answer is not cached: the next refusal asks again, exactly as the registry
-// probe does (M11).
-func (s *Session) probeByTierKeys(ctx context.Context, upd map[string]any) (refused bool, err error) {
-	rest := make(map[string]any, len(upd))
+// without copies upd without the keys drop refuses.
+func without(upd map[string]any, drop func(string) bool) map[string]any {
+	out := make(map[string]any, len(upd))
 	for k, v := range upd {
-		if !strings.Contains(k, byTierIn) {
-			rest[k] = v
+		if !drop(k) {
+			out[k] = v
 		}
 	}
-	if len(rest) == 0 {
+	return out
+}
+
+// underAny reports whether key is a leaf under one of prefixes.
+func underAny(key string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(key, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// tierProbe is what one run of probeByTierKeys learned about the deployed
+// rules and the by-tier split.
+type tierProbe int
+
+const (
+	// tierProbeUnavailable: the writes settled nothing -- refused both ways,
+	// an outage, a write there was nothing to send. The flush's own stale
+	// retry has it.
+	tierProbeUnavailable tierProbe = iota
+	// tierProbeRace: a write carrying the split's leaves under the run's own
+	// nodes was taken, so the rules know the split, and the refusal that
+	// summoned the probe was another cascade run's settlement of the shared
+	// day counters between this run's read and its patch. The run retries it;
+	// a race is not a redeploy (C1.17).
+	tierProbeRace
+	// tierProbeSplitRefused: refused with the run's own by-tier leaves in the
+	// write and accepted without them, so they are what the deployed document
+	// does not know -- C1.3's `credsRules` marker cannot catch that, because
+	// an older Fugaro redeploying its own document leaves the marker at a
+	// generation it does not know.
+	tierProbeSplitRefused
+)
+
+// probeByTierKeys is checkCascadeKeys's twin for the by-tier split (C1.16),
+// and it runs only when an update carrying the split was refused with a
+// permission error: it asks the deployed rules, with two writes of its own,
+// which of the split's leaves they do not know.
+//
+// The two questions are asked in the order that tells a race from a redeploy,
+// and the first is the one that decides a healthy run:
+//
+//  1. The same update without the two shared day leaves -- the repository's
+//     and the project's rows under `spend/$day` -- which leaves in the write
+//     only the split's leaves under the run's own nodes: the run's lifetime
+//     counter and its share of the day. Every cascade run in the repository
+//     writes the shared counters, so a refusal of one of them is as often
+//     another run's settlement landing between this run's read and its patch
+//     as it is an absent leaf: what this run planned to write was an increase
+//     on the value it read and is a decrease on the value the rules now see.
+//     The run's own leaves have this session as their only writer (s.wmu
+//     serializes every write of them), so a rule that takes a write onto them
+//     is a rule that knows the split. Taken: the refusal was that race, and
+//     the answer is tierProbeRace.
+//  2. Refused there too, the same update with no by-tier leaf at all. Taken,
+//     the run's own by-tier leaves are what the rules refuse -- nothing else
+//     can refuse them -- and the answer is tierProbeSplitRefused: the run
+//     halts named (C1.17) rather than dropping the split silently, because a
+//     run whose real spend is accounted for under no tier is a run nobody can
+//     attribute spend to, which is the one thing the split exists for. The
+//     write that landed is the run's own usage without the split, so the run
+//     keeps its totals and loses only the by-tier rows: that is the fail-safe
+//     direction, and it is why this probe may write at all.
+//
+// Anything else -- refused both ways (the stale race the flush already
+// retries), a failure that is not a permission refusal (an outage, a read
+// that failed) -- says nothing about the split, and no answer is cached: the
+// next refusal asks again, exactly as the registry probe does (M11).
+//
+// The first question's write lands the rest of the round -- its totals, its
+// counts, and its leaves under the run's own nodes -- without the two shared
+// rows, so the flush takes that round off its pending figures: retrying a
+// round the probe already wrote would count its increments twice. The two
+// shared rows of that round are what the probe could not write, and nothing
+// re-derives them afterwards. That is the cost of not halting a healthy run
+// over another run's write: the split is a display figure nothing decides on
+// (C1.3), the money is in `spent` in every case, and the race it costs a row
+// to is the other run's.
+func (s *Session) probeByTierKeys(ctx context.Context, upd map[string]any) tierProbe {
+	slug := s.cfg.Slug
+	today := Day(s.now())
+	// The two shared day counters, on both days a run may split onto: the
+	// repository's and the project's by-tier rows. A key under one of these
+	// is the part of the update no run can prove anything with.
+	shared := []string{
+		PathSpendRepo(today, slug) + "/byTier/",
+		PathSpendGlobal(today) + "/byTier/",
+		PathSpendRepo(today-1, slug) + "/byTier/",
+		PathSpendGlobal(today-1) + "/byTier/",
+	}
+	if own := without(upd, func(k string) bool { return underAny(k, shared) }); len(own) > 0 {
+		switch err := s.db.Patch(ctx, "", own); {
+		case err == nil:
+			s.dbOK()
+			return tierProbeRace
+		case !errors.Is(err, rtdb.ErrPermission):
+			return tierProbeUnavailable
+		}
+	}
+	plain := without(upd, isByTierLeaf)
+	if len(plain) == 0 {
 		// The split was all there was: a write of nothing proves nothing
 		// about the rules, and an empty patch is a no-op either way.
-		return false, nil
+		return tierProbeUnavailable
 	}
-	switch err := s.db.Patch(ctx, "", rest); {
+	switch err := s.db.Patch(ctx, "", plain); {
 	case err == nil:
 		s.dbOK()
-		s.halt(Halt{Reason: ReasonCredsRulesDenied, Scope: ScopeRun, Detail: byTierDeniedDetail})
-		return true, fmt.Errorf("%w: %s", rtdb.ErrPermission, byTierDeniedDetail)
-	case errors.Is(err, rtdb.ErrPermission):
-		return false, nil
+		return tierProbeSplitRefused
 	default:
-		return false, nil
+		return tierProbeUnavailable
 	}
 }
 
@@ -804,18 +884,34 @@ func (s *Session) flush(ctx context.Context, extra map[string]any, source string
 		case errors.Is(err, rtdb.ErrPermission):
 			if !probed && carriesByTier(merged) {
 				// This update carried the by-tier split into the refusal:
-				// ask the rules, with one write of its own, whether the
-				// split is what they do not know (C1.16). The probe is not
+				// ask the rules, with writes of its own, which of the
+				// split's leaves they do not know (C1.16). The probe is not
 				// repeated in this flush: a refusal that is not the split's
 				// is the stale race the loop already retries.
 				probed = true
-				if refused, herr := s.probeByTierKeys(ctx, merged); refused {
-					// The totals landed without the split. Take everything
-					// off the pending figures -- the totals because they are
-					// written, the split because it is not retried -- and end
-					// the run named.
+				switch out := s.probeByTierKeys(ctx, merged); out {
+				case tierProbeSplitRefused:
+					// The rules do not know the split. The write the probe
+					// landed was this round's own without its by-tier
+					// leaves: the totals are written, the split is not
+					// retried, and the run ends named -- the redeploy is the
+					// fix, and it is what the detail names.
+					s.halt(Halt{Reason: ReasonCredsRulesDenied, Scope: ScopeRun, Detail: byTierDeniedDetail})
 					s.commit(took)
-					return s.observe(source, herr)
+					return s.observe(source, fmt.Errorf("%w: %s", rtdb.ErrPermission, byTierDeniedDetail))
+				case tierProbeRace:
+					// The rules know the split, and the refusal was another
+					// cascade run's write to a shared day counter between
+					// this round's read and its patch. The probe's write was
+					// this round's update without those two shared leaves,
+					// so the round is on the database -- its run-own split
+					// included -- and is taken off the pending figures:
+					// retrying a round the probe already wrote would count
+					// its increments twice (probeByTierKeys).
+					s.commit(took)
+					extra = nil
+					rounds++
+					continue
 				}
 			}
 			stale++
