@@ -1,0 +1,352 @@
+package credsvc
+
+// The cascade's tests (C1.11): which credential a call goes to, what an answer
+// means, and what the run is told when nothing can serve it.
+//
+// Everything here is hermetic (Convention 9): the upstream is
+// internal/gateway/anthropicfake on loopback, the policy is a decoded document,
+// the state is a map, and nothing in this file is, or looks like, a credential
+// (Convention 2) — every value is built at run time by fakeCred.
+
+import (
+	"bufio"
+	"net/http"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
+)
+
+// waitFor polls until f is true, or fails the test having waited long enough.
+//
+// It exists for the one mark this service writes after the answer has reached
+// the client: a usage limit inside a stream is learned as the stream ends, so
+// the write races the client's read of the last byte, and a test that read the
+// state once would be a test that is sometimes red.
+func waitFor(t *testing.T, what string, f func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if f() {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("waited 10s for %s", what)
+}
+
+// hold writes an exhausted mark on a credential, as a call before this one
+// would have: the exhaustion opened at since and holds until until.
+func (s *svc) hold(name string, since, until time.Time) {
+	s.state.mu.Lock()
+	defer s.state.mu.Unlock()
+	s.state.marks[name] = creds.Mark{State: creds.StateExhausted, Since: since, Until: until}
+}
+
+// ---------------------------------------------------------------------------
+// The red step
+// ---------------------------------------------------------------------------
+
+// TestCascadeNeverRetriesAfterStreamStarted is the plan's red step (C1.11) and
+// the boundary of the retry rule: a usage limit that arrives INSIDE a 200
+// stream has already given the client its bytes, so the call is the client's
+// and the credential is marked rather than retried.
+//
+// The strongest assertion here is the fake upstream's own: it answers exactly
+// one request and fails the test on a second (anthropicfake.serve), so a
+// service that retried would fail this test twice over. The mark is read
+// through waitFor because the service writes it once the last byte is on its
+// way, which is after the client's read has returned.
+func TestCascadeNeverRetriesAfterStreamStarted(t *testing.T) {
+	s := newSvc(t)
+	s.up.Script = []anthropicfake.Reply{{
+		Status: http.StatusOK,
+		Events: []anthropicfake.Event{
+			anthropicfake.StartEvent(testModel, testUsage),
+			{Name: "error", Data: `{"type":"error","error":{"type":"` + rateLimitEventType + `","message":"usage limit reached"}}`},
+		},
+	}}
+	resp := s.post(t, MessagesPath, callBody("stream-limit"), func(r *http.Request) {
+		r.Header.Set("Accept", "text/event-stream")
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the answer is %d, want 200: a limit inside a stream is the client's answer", resp.StatusCode)
+	}
+	if got := resp.Header.Get(HeaderCredential); got != "alice" {
+		t.Fatalf("%s = %q, want the credential the round robin picked", HeaderCredential, got)
+	}
+	var stream strings.Builder
+	br := bufio.NewReader(resp.Body)
+	for {
+		ev := readEvent(t, br)
+		if ev == "" {
+			break
+		}
+		stream.WriteString(ev)
+	}
+	if !strings.Contains(stream.String(), rateLimitEventType) {
+		t.Fatalf("the client's stream does not carry the upstream's usage limit:\n%s", stream.String())
+	}
+	if got := resp.Header.Get(HeaderSwitch); got != "" {
+		t.Errorf("%s = %q, want no switch: the call ended where it started", HeaderSwitch, got)
+	}
+	if n := s.up.Count(); n != 1 {
+		t.Fatalf("the upstream saw %d requests, want 1: a limit inside a stream is never retried", n)
+	}
+	waitFor(t, "the credential to be marked", func() bool {
+		m, ok := s.state.mark("alice")
+		return ok && m.State == creds.StateBackedOff
+	})
+	// The limit named no reset, which is the shape U3 leaves open until a
+	// subscription usage limit is observed: C1.9's backoff, not a reset.
+	m, _ := s.state.mark("alice")
+	if want := s.now.Add(creds.DefaultBackoffInitial); !m.Until.Equal(want) {
+		t.Errorf("the mark holds until %v, want %v", m.Until, want)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The two answers a credential can give
+// ---------------------------------------------------------------------------
+
+// TestCascadeSwitchesOnUsageLimitBeforeFirstByte: a 429 arrives as a status, so
+// nothing has been streamed and the call is retried — on another credential,
+// never on this one. The credential is held until the reset the answer named,
+// the client is told which credential answered, and the answer carries the
+// switch record of the move.
+func TestCascadeSwitchesOnUsageLimitBeforeFirstByte(t *testing.T) {
+	s := newSvc(t)
+	s.up.Script = []anthropicfake.Reply{
+		{
+			Status: http.StatusTooManyRequests,
+			Header: http.Header{"Retry-After": []string{"3600"}},
+			Body:   `{"type":"error","error":{"type":"` + rateLimitEventType + `","message":"usage limit reached"}}`,
+		},
+		anthropicfake.MessageOK(testModel, testUsage),
+	}
+	resp, body := s.call(t, callBody("switch"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the answer is %d, want the second credential's 200", resp.StatusCode)
+	}
+	if got := resp.Header.Get(HeaderTier); got != TierA {
+		t.Errorf("%s = %q, want %q", HeaderTier, got, TierA)
+	}
+	if got := resp.Header.Get(HeaderCredential); got != "default" {
+		t.Errorf("%s = %q, want default: alice answered the usage limit", HeaderCredential, got)
+	}
+	sw, ok, err := SwitchHeader(resp.Header)
+	if err != nil {
+		t.Fatalf("the switch header is not one this contract can read: %v", err)
+	}
+	if !ok {
+		t.Fatal("the answer carries no switch header: this call moved")
+	}
+	if sw.From != "alice" || sw.To != "default" || sw.Reason != ReasonExhausted {
+		t.Errorf("switch = %+v, want alice -> default because it was exhausted", sw)
+	}
+	if strings.Contains(string(body), rateLimitEventType) {
+		t.Fatal("the upstream's usage limit reached the client: it is about a credential the run does not hold")
+	}
+	if n := s.up.Count(); n != 2 {
+		t.Fatalf("the upstream saw %d requests, want 2: a 429 before any byte is retried once", n)
+	}
+	// The retry went out with the second credential: a retry on the same one
+	// would be a second charge for one call.
+	if got, want := s.up.Seen()[1].Header.Get("Authorization"), "Bearer "+fakeCred(t, "default"); got != want {
+		t.Errorf("the retry's Authorization is not the second credential's")
+	}
+	m, ok := s.state.mark("alice")
+	if !ok || m.State != creds.StateExhausted {
+		t.Fatalf("alice's mark is %q/%v, want an exhaustion until the reset the answer named", m.State, ok)
+	}
+	if want := s.now.Add(time.Hour); !m.Until.Equal(want) {
+		t.Errorf("the hold is until %v, want %v (Retry-After: 3600)", m.Until, want)
+	}
+}
+
+// TestCascade401MarksBroken: D139's mark, and the answer the run is not shown.
+// A 401 says the credential is dead and only an operator clears it (C1.21), so
+// the credential is taken out of rotation and the call moves on; the upstream's
+// own authentication error is not forwarded, because it is about a credential
+// the run does not hold.
+func TestCascade401MarksBroken(t *testing.T) {
+	s := newSvc(t)
+	s.up.Script = []anthropicfake.Reply{
+		{Status: http.StatusUnauthorized, Body: `{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}`},
+		anthropicfake.MessageOK(testModel, testUsage),
+	}
+	resp, body := s.call(t, callBody("broken"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the answer is %d, want the second credential's 200", resp.StatusCode)
+	}
+	if strings.Contains(string(body), "authentication_error") {
+		t.Fatal("the upstream's authentication error reached the client: it is about a credential the run does not hold")
+	}
+	if got := resp.Header.Get(HeaderCredential); got != "default" {
+		t.Errorf("%s = %q, want default", HeaderCredential, got)
+	}
+	sw, ok, err := SwitchHeader(resp.Header)
+	if err != nil || !ok {
+		t.Fatalf("the answer carries no readable switch header (err %v)", err)
+	}
+	if sw.From != "alice" || sw.To != "default" || sw.Reason != ReasonBroken {
+		t.Errorf("switch = %+v, want alice -> default because it answered 401", sw)
+	}
+	if n := s.up.Count(); n != 2 {
+		t.Fatalf("the upstream saw %d requests, want 2", n)
+	}
+	m, ok := s.state.mark("alice")
+	if !ok || m.State != creds.StateBroken {
+		t.Fatalf("alice's mark is %q, want %q", m.State, creds.StateBroken)
+	}
+}
+
+// TestCascadeOAuthOnlyWaits: D152's other half. Under `oauth-only` the paid
+// tier is not in the cascade at all, so a wait that is longer than the
+// threshold is still a wait — there is nothing to move to — and the run is told
+// the instant rather than served by a key the policy does not admit.
+func TestCascadeOAuthOnlyWaits(t *testing.T) {
+	s := newSvcWith(t, func(s *svc, _ *Config) {
+		s.policy.shared = decodeTestPolicy(t, testPolicyDocWith("oauth-only"))
+	})
+	// Both shared tokens are held well past the threshold. The paid key is in
+	// the bundle and the project's own node offers it: the policy is what keeps
+	// it out, and that is the whole of this test.
+	held := s.now.Add(6 * time.Hour)
+	s.hold("alice", s.now.Add(-time.Minute), held)
+	s.hold("default", s.now.Add(-time.Minute), held)
+	resp, body := s.call(t, callBody("wait"))
+	if resp.StatusCode != StatusExhaustedUntil {
+		t.Fatalf("the answer is %d, want the typed wait (%d)", resp.StatusCode, StatusExhaustedUntil)
+	}
+	eu, ok, err := ReadExhaustedUntil(resp.StatusCode, body)
+	if err != nil {
+		t.Fatalf("the wait is not one this contract can read: %v", err)
+	}
+	if !ok {
+		t.Fatalf("the answer is not an exhausted_until: %s", body)
+	}
+	if !eu.ResetAt.Equal(held) {
+		t.Errorf("the wait is until %v, want %v", eu.ResetAt, held)
+	}
+	if len(eu.Tried) != 0 {
+		t.Errorf("tried = %+v, want none: nothing was sent", eu.Tried)
+	}
+	if n := s.up.Count(); n != 0 {
+		t.Fatalf("the upstream saw %d requests, want none: the run waits", n)
+	}
+}
+
+// TestCascadeAutoFallsToB: D152's first half. The same state under
+// `fallback: auto` moves to the project's own paid key, which is real money and
+// so carries tier B on the answer. It is not a switch: the switch record is for
+// a move between credentials of one cascade, and this call's cascade never had
+// a credential to move off.
+func TestCascadeAutoFallsToB(t *testing.T) {
+	s := newSvc(t) // the fixture's policy is `fallback: auto`
+	held := s.now.Add(6 * time.Hour)
+	s.hold("alice", s.now.Add(-time.Minute), held)
+	s.hold("default", s.now.Add(-time.Minute), held)
+	resp, body := s.call(t, callBody("paid"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the answer is %d, want the paid key's 200: %s", resp.StatusCode, body)
+	}
+	if got := resp.Header.Get(HeaderTier); got != TierB {
+		t.Errorf("%s = %q, want %q: the project's own key is real money", HeaderTier, got, TierB)
+	}
+	if got := resp.Header.Get(HeaderCredential); got != "anthropic-api-key" {
+		t.Errorf("%s = %q, want the project's key", HeaderCredential, got)
+	}
+	if got := resp.Header.Get(HeaderSwitch); got != "" {
+		t.Errorf("%s = %q, want none: a tier change is not a switch", HeaderSwitch, got)
+	}
+	if n := s.up.Count(); n != 1 {
+		t.Fatalf("the upstream saw %d requests, want 1", n)
+	}
+	req := s.up.Seen()[0]
+	if got := req.Header.Get("x-api-key"); got != fakeCred(t, "paid") {
+		t.Error("the call did not carry the project's key")
+	}
+	if got := req.Header.Get("Authorization"); got != "" {
+		t.Error("the call carried an Authorization header a tier-B call must not have")
+	}
+}
+
+// TestCascadeStickyAcrossCalls: D154's stickiness, and it is checked against
+// the round robin rather than in its absence. The second call is made after the
+// round-robin counter has moved, so a service that re-ran the tie-break would
+// answer with the other credential; the run keeps the one it is on for as long
+// as that credential can serve it, because the prompt cache is what the
+// stickiness is for.
+func TestCascadeStickyAcrossCalls(t *testing.T) {
+	s := newSvc(t)
+	s.up.Script = []anthropicfake.Reply{
+		anthropicfake.MessageOK(testModel, testUsage),
+		anthropicfake.MessageOK(testModel, testUsage),
+	}
+	first, _ := s.call(t, callBody("first"))
+	name := first.Header.Get(HeaderCredential)
+	if name == "" {
+		t.Fatal("the first answer names no credential")
+	}
+	if got := first.Header.Get(HeaderSwitch); got != "" {
+		t.Errorf("the first answer carries a switch: %s", got)
+	}
+	if placed, ok := s.state.placed(s.credsRun()); !ok || placed != name {
+		t.Fatalf("the run is placed on %q (%v), want %q", placed, ok, name)
+	}
+	// Move the round robin on, so the tie-break the first call made would now
+	// answer with the other credential.
+	s.state.mu.Lock()
+	s.state.rr++
+	s.state.mu.Unlock()
+
+	second, _ := s.call(t, callBody("second"))
+	if got := second.Header.Get(HeaderCredential); got != name {
+		t.Errorf("the second call went to %q, want %q: a run keeps the credential it is on", got, name)
+	}
+	if got := second.Header.Get(HeaderSwitch); got != "" {
+		t.Errorf("the second answer carries a switch: %s", got)
+	}
+	if n := s.up.Count(); n != 2 {
+		t.Fatalf("the upstream saw %d requests, want 2", n)
+	}
+	if got, want := s.up.Seen()[1].Header.Get("Authorization"), s.up.Seen()[0].Header.Get("Authorization"); got != want {
+		t.Error("the second call carried a different credential from the first")
+	}
+}
+
+// TestCascadeUsesAdmittedAccountsOnly: O4's admission, from the cascade's side.
+// The repository's own node admits one of the two shared accounts, so the other
+// is never a candidate — it is not selected, and it is not sent to. The round
+// robin would have picked it first, which is what makes this a test of the
+// admission rather than of the order.
+func TestCascadeUsesAdmittedAccountsOnly(t *testing.T) {
+	s := newSvcWith(t, func(s *svc, _ *Config) {
+		s.policy.admissions[s.slug] = decodeTestChild(t, testChildDoc("default"))
+	})
+	resp, _ := s.call(t, callBody("admitted"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the answer is %d, want 200", resp.StatusCode)
+	}
+	if got := resp.Header.Get(HeaderCredential); got != "default" {
+		t.Fatalf("%s = %q, want default: alice is not admitted to this repository", HeaderCredential, got)
+	}
+	if n := s.up.Count(); n != 1 {
+		t.Fatalf("the upstream saw %d requests, want 1", n)
+	}
+	auth := s.up.Seen()[0].Header.Get("Authorization")
+	if !strings.Contains(auth, fakeCred(t, "default")) {
+		t.Error("the call did not carry the admitted account's token")
+	}
+	if strings.Contains(auth, fakeCred(t, testAccount)) {
+		t.Fatal("the call carried the account the repository is not admitted to")
+	}
+	if got := s.policy.readAdmissions(); !slices.Equal(got, []string{s.slug}) {
+		t.Errorf("the admissions read were %v, want just this repository's", got)
+	}
+}
