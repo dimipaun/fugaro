@@ -60,16 +60,19 @@ func (e *initEngine) authState(o originInfo) (repoAuth, error) {
 	return authNeeded, nil
 }
 
-// checkoutNote is printed once before the gate when installation-only flags
-// are given in a checkout that the gate would ask about. W3.4 rewords it: the
+// checkoutNote is printed once, immediately before the wizard's question, when
+// installation-only flags are given in a checkout the question is about (so it
+// is printed exactly where that question is asked: not by an `update` run,
+// which asks none, and not by a run that cannot ask). W3.4 rewords it: the
 // question below it is now how a reader asks for the installation alone, so
 // the note points at the answer rather than at another command.
 const checkoutNote = "this checkout's repository is not onboarded; the converge in a checkout also onboards its repository, unless the question about it is answered no. To set up only the installation, run fugaro setup from outside the checkout."
 
 // enrolNote is the one line a run since W3.4 prints when there is no checkout
 // to ask about: a repository is enrolled by the run that is in a checkout of
-// it, and that run is `fugaro setup --repo` there (D5: `setup` owns repository
-// enrolment, `update` never enrols).
+// it, and the line names `fugaro setup --repo`, the run D5 gives enrolment to.
+// It says nothing about the other door: what `update` does with an unlisted
+// repository of its own is W5.1's to settle.
 func enrolNote() string {
 	return "to enrol a repository later, run " + selfCommand() + " setup --repo in a checkout of it"
 }
@@ -155,9 +158,11 @@ func notOnboardingDetail(o originInfo) string {
 //
 // Since W3.4 the setup door asks the wizard's first-repository question first
 // (asksOnboard): the answer yes changes nothing about the gate below it, and
-// the answer no skips the repository stage, which says how to enrol the
-// repository later. Outside a checkout there is nothing to ask about, so that
-// run prints the one line saying how a repository is enrolled (enrolNote).
+// the answer no is the run's — the repository is declined for every stage
+// (declineRepo), and the repository stage reports that it is not onboarding it
+// and says how to enrol it later. Outside a checkout there is nothing to ask
+// about, so that run prints the one line saying how a repository is enrolled
+// (enrolNote).
 func (e *initEngine) gateEarly(ctx context.Context) {
 	if e.repo == nil {
 		return
@@ -173,21 +178,39 @@ func (e *initEngine) gateEarly(ctx context.Context) {
 	if a, err := e.authState(tg.origin); err != nil || a != authAsk {
 		return
 	}
-	if len(e.r.o.installationFlags()) > 0 {
+	ask := e.asksOnboard(tg.origin)
+	if len(e.r.o.installationFlags()) > 0 && ask {
 		fmt.Fprintln(e.r.w, "note: "+checkoutNote)
 	}
-	if e.asksOnboard(tg.origin) {
-		if yes, err := e.askOnboard(tg.origin); err == nil && !yes {
+	if ask {
+		yes, err := e.askOnboard(tg.origin)
+		if err == nil && !yes {
+			// The answer is the run's, not this stage's: the repository is
+			// left out for every stage behind the gate — the secrets and the
+			// plugin wiring write into the checkout and the project, and they
+			// read the same answer instead of asking for the owner/name again
+			// — and the repository stage is the one that says so itself.
 			e.repo.notOnboarding = true
+			e.declineRepo(tg.origin)
 			return
 		}
 	}
 	if ok, err := e.confirmRepo(tg.root, tg.origin); err == nil && !ok {
-		if e.declined == nil {
-			e.declined = map[string]bool{}
-		}
-		e.declined[strings.ToLower(tg.origin.typed())] = true
+		e.declineRepo(tg.origin)
 	}
+}
+
+// declineRepo remembers, for the rest of the run, that this repository is not
+// onboarded: every stage behind the gate reads it (authState's declined case)
+// and none of them asks for it again. It is how the owner/name that was not
+// typed at the gate is remembered, and how the wizard's question answered no
+// is carried to the stages before the repository one (the secrets and the
+// plugin wiring), which otherwise ask for the same owner/name themselves.
+func (e *initEngine) declineRepo(o originInfo) {
+	if e.declined == nil {
+		e.declined = map[string]bool{}
+	}
+	e.declined[strings.ToLower(o.typed())] = true
 }
 
 // asksEnrolNote is whether a run with no checkout to ask about says how a

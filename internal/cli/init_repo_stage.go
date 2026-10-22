@@ -28,9 +28,9 @@ type repositoryStage struct {
 	warned bool
 	// notOnboarding is the wizard's first-repository question answered no at
 	// the start of the run (W3.4): this repository is left as it is, so this
-	// stage has nothing to do and nothing to ask for. Only this stage reads
-	// it: the plugin wiring is a different write with a confirmation of its
-	// own, and the question does not answer for it.
+	// stage has nothing to do and nothing to ask for — it says so in its own
+	// line, unlike the stages before it, which take the same answer through
+	// the engine's declined set and report needs-you (gateEarly's declineRepo).
 	notOnboarding bool
 }
 

@@ -338,25 +338,69 @@ func TestSetupAsksToOnboardTheCheckoutsRepository(t *testing.T) {
 		t.Errorf("the skip does not say how to onboard the repository later: %q", st.Detail)
 	}
 
-	// A run that cannot ask is asked nothing: --yes, --json and
-	// --non-interactive never cover onboarding an unlisted repository, and the
-	// wizard's question does not stand in for the typed confirmation they
-	// lack — nor is a pipe a terminal to ask at.
+	// A run that does not ask the question is not asked it: --yes, --json and
+	// --non-interactive never cover onboarding an unlisted repository, a pipe
+	// is not a terminal to ask at, and `fugaro update` is not the wizard.
 	for name, tc := range map[string]struct {
+		door     string
 		o        *initOptions
 		terminal bool
 	}{
-		"--yes":             {o: &initOptions{yes: true}, terminal: true},
-		"--json":            {o: &initOptions{asJSON: true}, terminal: true},
-		"--non-interactive": {o: &initOptions{nonInteractive: true}, terminal: true},
-		"a pipe":            {o: &initOptions{}},
+		"--yes":             {door: setupDoor.name, o: &initOptions{yes: true}, terminal: true},
+		"--json":            {door: setupDoor.name, o: &initOptions{asJSON: true}, terminal: true},
+		"--non-interactive": {door: setupDoor.name, o: &initOptions{nonInteractive: true}, terminal: true},
+		"a pipe":            {door: setupDoor.name, o: &initOptions{}},
+		"the update door":   {door: updateDoor.name, o: &initOptions{}, terminal: true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, out := gateRig(t, setupDoor.name, gateOrigin(), gateCheckoutYAML(), "\n", tc.o, tc.terminal)
+			_, out := gateRig(t, tc.door, gateOrigin(), gateCheckoutYAML(), "\n", tc.o, tc.terminal)
 			if strings.Contains(out.String(), asked) {
-				t.Errorf("a run that can not ask was asked whether to onboard the repository:\n%s", out)
+				t.Errorf("a run that does not ask was asked whether to onboard the repository:\n%s", out)
 			}
 		})
+	}
+}
+
+// TestSetupConvergeAfterNoLeavesTheRepositoryAlone drives a whole converge in a
+// checkout of a repository the project does not list and answers no to the
+// wizard's question (W3.4). The answer is the run's, not the repository
+// stage's: the stages behind the same gate take it through the engine's
+// declined set — so the secrets stage (7) and the plugin wiring (8), which
+// write into the project and the checkout, do not offer to ask for the
+// owner/name again — and the repository stage (9) is the one that says it is
+// not onboarding it. Without that the answer is asked again straight away, and
+// typing the name there stores the repository's secrets and wires its checkout
+// while the repository stage reports that nothing is being onboarded.
+func TestSetupConvergeAfterNoLeavesTheRepositoryAlone(t *testing.T) {
+	releaseBuild(t, "0.2.0")
+	r := newInitRig(t)
+	r.stateBucket()
+	t.Chdir(repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", initProjectName, "")))
+	fakeTerminal(t)
+	e := rigEngine(t, r, &initOptions{planOnly: true, githubAppID: "12345", door: setupDoor.name})
+	var out syncBuf
+	e.r.in = bufio.NewReader(strings.NewReader(onboardAnswerNo + "\n"))
+	e.r.w = &out
+	_ = e.converge(t.Context())
+	if !strings.Contains(out.String(), "Onboard acme/app") {
+		t.Fatalf("the converge did not ask whether to onboard the checkout's repository:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "Type acme/app") {
+		t.Errorf("a stage behind the gate asked for the owner/name again:\n%s", out.String())
+	}
+	for _, willAsk := range []string{
+		"after you confirm the repository",       // the secrets stage
+		"asks you to type the repository's name", // the plugin wiring
+	} {
+		if strings.Contains(out.String(), willAsk) {
+			t.Errorf("a stage still means to ask for the repository (%q):\n%s", willAsk, out.String())
+		}
+	}
+	if !strings.Contains(out.String(), "not onboarding acme/app") {
+		t.Errorf("the repository stage does not say it is not onboarding it:\n%s", out.String())
+	}
+	if len(e.authorized) != 0 {
+		t.Errorf("the answer no opted the repository in: %v", e.authorized)
 	}
 }
 

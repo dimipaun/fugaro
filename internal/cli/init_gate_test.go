@@ -522,10 +522,12 @@ func TestUnknownRepoQuestionComesBeforeAnyPlan(t *testing.T) {
 }
 
 // An installation-only flag run inside a checkout of a repository the project
-// does not list yet gets one note before the guard's prompt: the converge in a
-// checkout also onboards its repository, unless the wizard's question is
-// answered no (W3.4). Nothing else prints it, and the guard itself is
-// unchanged.
+// does not list yet gets one note, immediately before the guard's prompt: the
+// converge in a checkout also onboards its repository, unless the question
+// about it is answered no (W3.4). The note is the wizard's question's own
+// introduction, so it is printed exactly where that question is asked — a run
+// of the update door, which asks none, prints nothing — and nothing else
+// prints it; the guard itself is unchanged.
 func TestInstallationFlagNoteInUnonboardedCheckout(t *testing.T) {
 	const note = "this checkout's repository is not onboarded; the converge in a checkout also onboards its repository, unless the question about it is answered no. To set up only the installation, run fugaro setup from outside the checkout."
 	releaseBuild(t, "0.2.0")
@@ -538,16 +540,17 @@ func TestInstallationFlagNoteInUnonboardedCheckout(t *testing.T) {
 		outside bool
 		want    int
 	}{
-		"--base, unknown repo":       {o: &initOptions{baseKinds: []string{"base"}}, want: 1},
-		"--budget, unknown repo":     {o: &initOptions{budget: 5}, want: 1},
-		"two flags, still once":      {o: &initOptions{baseKinds: []string{"base"}, budget: 5}, want: 1},
-		"no installation flag":       {o: &initOptions{}, want: 0},
-		"--yes: no prompt":           {o: &initOptions{baseKinds: []string{"base"}, yes: true}, want: 0},
-		"--non-interactive":          {o: &initOptions{baseKinds: []string{"base"}, nonInteractive: true}, want: 0},
-		"--json: no prompt":          {o: &initOptions{baseKinds: []string{"base"}, asJSON: true}, want: 0},
-		"--onboard-repo given":       {o: &initOptions{baseKinds: []string{"base"}, onboardRepo: "acme/app"}, want: 0},
-		"--base, repository listed":  {o: &initOptions{baseKinds: []string{"base"}}, known: true, want: 0},
-		"--base, outside a checkout": {o: &initOptions{baseKinds: []string{"base"}}, outside: true, want: 0},
+		"--base, unknown repo":       {o: &initOptions{door: setupDoor.name, baseKinds: []string{"base"}}, want: 1},
+		"--budget, unknown repo":     {o: &initOptions{door: setupDoor.name, budget: 5}, want: 1},
+		"two flags, still once":      {o: &initOptions{door: setupDoor.name, baseKinds: []string{"base"}, budget: 5}, want: 1},
+		"no installation flag":       {o: &initOptions{door: setupDoor.name}, want: 0},
+		"--yes: no prompt":           {o: &initOptions{door: setupDoor.name, baseKinds: []string{"base"}, yes: true}, want: 0},
+		"--non-interactive":          {o: &initOptions{door: setupDoor.name, baseKinds: []string{"base"}, nonInteractive: true}, want: 0},
+		"--json: no prompt":          {o: &initOptions{door: setupDoor.name, baseKinds: []string{"base"}, asJSON: true}, want: 0},
+		"--onboard-repo given":       {o: &initOptions{door: setupDoor.name, baseKinds: []string{"base"}, onboardRepo: "acme/app"}, want: 0},
+		"--base, repository listed":  {o: &initOptions{door: setupDoor.name, baseKinds: []string{"base"}}, known: true, want: 0},
+		"--base, outside a checkout": {o: &initOptions{door: setupDoor.name, baseKinds: []string{"base"}}, outside: true, want: 0},
+		"--base, the update door":    {o: &initOptions{door: updateDoor.name, baseKinds: []string{"base"}}, want: 0},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if tc.outside {
@@ -556,7 +559,11 @@ func TestInstallationFlagNoteInUnonboardedCheckout(t *testing.T) {
 				checkout(t)
 			}
 			fakeTerminal(t)
-			e, out := stageEngine(t, "no\n", tc.o)
+			// The question is answered yes, so the note's own claim — it
+			// comes before the guard's prompt — is the thing under test; the
+			// owner/name the guard asks for is not typed (the input ends
+			// there), which is a decline either way.
+			e, out := stageEngine(t, onboardAnswerYes+"\n", tc.o)
 			if !tc.known {
 				unknownRepo(e)
 			}

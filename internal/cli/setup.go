@@ -251,13 +251,13 @@ and keeps its own confirmations, the first image build's included.
 
 In a checkout whose repository the local config does not list yet, the converge
 asks first whether to onboard it ("Onboard owner/name?", Enter takes yes, before
-any plan): no leaves the repository as it is and says how to enrol it later. The
-question authorizes nothing — yes goes on to the same typed owner/name every
-unlisted repository needs — and a run that cannot ask (--yes,
---non-interactive, --json, a pipe, a coding agent's environment) asks nothing
-and is unchanged. Run outside a checkout there is nothing to ask about, so setup
-prints the one line saying how a repository is enrolled later: setup --repo, in
-a checkout of it. setup owns repository enrolment; update never enrols one.
+any plan): no leaves the repository as it is for the rest of the run — no later
+stage asks for it again — and says how to enrol it later. The question
+authorizes nothing — yes goes on to the same typed owner/name every unlisted
+repository needs — and a run that cannot ask (--yes, --non-interactive, --json,
+a pipe, a coding agent's environment) asks nothing and is unchanged. Run outside
+a checkout there is nothing to ask about, so setup prints the one line saying
+how a repository is enrolled later: setup --repo, in a checkout of it.
 
 Both stages act only on a repository the project's local config already lists,
 or one you opt in: a repository not listed yet needs its owner/name typed at
