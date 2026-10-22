@@ -348,13 +348,22 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		// Off by default, opt-in, and the flag that opts in.
 		"fugaro init --provision-credentials",
 		"with it off",
-		// The job holds nothing.
-		"a job holds no model credential at all",
+		// The job holds nothing — and the one job that is not reached, named
+		// rather than left to be assumed, because a shared project job keeps
+		// its accessors and its token mount.
+		"a per-repository job holds no model credential at all",
+		"a shared project job is the one job it does not reach",
 		"fugaro creds set",
 		// The invariant, spelled as the code enforces it.
 		"an OAuth token is only ever sent to Anthropic's own endpoint",
-		// Unreachable halts rather than falls back (D143).
+		// Unreachable halts rather than falls back (D143) — and the claim is
+		// scoped to the job the opt-in reaches: a shared project job keeps its
+		// mounts, so "the job has nothing to fall back to" is only true of a
+		// per-repository job, and the shared job is refused rather than served
+		// from its own token.
 		"never falls back",
+		"the mount is the opt-in's, not the outage's",
+		"refused at the gateway rather than answered from the job's own token",
 		// The stop flag.
 		"fugaro budget kill --all",
 		// The revocation, stated exactly: write-once outcome, and fx as the
