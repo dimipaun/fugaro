@@ -5863,7 +5863,7 @@ echo "Check 89 ready: $TAG at $SHA — $APP"
 - **Nothing public was created, so there is no public release to withdraw** — that is C8's point, and if step 3's negative ever fails, the restore is the halt named there, recorded with what was exposed and for how long.
 - The signing credentials are yours and stay where they were (EAS's servers or your machine). No step here creates, rotates, exports or deletes one, and none is ever pasted.
 
-## Check 100: the QR pairing, and what the code proves (installation `fugaro`, project `fugaro-dev`, with your own phone; run by you; NOT RUN)
+## Check 100: the QR pairing, and what the code proves (installation `fugaro`, never `belong`, project `fugaro-dev`, with your own phone; run by you; NOT RUN)
 
 **NOT RUN.** Task P6.11 writes this check and running it is the owner's; its subject is the functional spec's §4.1 pairing, the reconciliation's **U5** (*a custom token's `exp` below an hour is honoured by `signInWithCustomToken`*) and the owner's amendment of 2026-10-20. It is written now and run after the release that carries `fugaro pair` — a check is never run before its text is in the register — and **the guard stops today**: neither `fugaro pair` (`internal/cli/pair.go`, P6.6) nor the app's pairing screen (`mobile/src/pairing/`, P6.8) is built, so nothing can mint a pairing token and no phone can scan one.
 

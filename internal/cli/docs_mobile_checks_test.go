@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -271,6 +272,275 @@ func TestDocsMobileChecklistHasCheck81And82And89(t *testing.T) {
 		}
 		if !strings.Contains(section81, c.name) {
 			t.Errorf("## Check 81: does not name %s, one of the P2.2/P6.4 cases it is the live counterpart of", c.name)
+		}
+	}
+}
+
+// TestDocsMobileChecklistHasChecks100To104 pins P6.11's half of the mobile plan
+// in docs/gcp-live-checklist.md: the five summary-table rows, the five sections
+// they point at, the register paragraph that records whose numbers they are and
+// which task wrote them, and the guards, each of which has to stop for a reason
+// the owner can read (the task that builds what is missing) rather than looking
+// like a broken checkout.
+//
+// The five are the mobile functional spec v0.1's Phase 6 checks, and the
+// reconciliation's §5 maps its own unverified claims onto them -- U5 is 100, U2
+// is 101, U1 is 102, U4 is 103 and U3 is 104. That mapping is read out of that
+// document's table here rather than restated, and every row and every section
+// has to name its U: a check that quietly answers a different claim is the
+// failure this half exists for.
+//
+// Check 100 is the one the owner amended, so it is the one this test holds
+// hardest. The register has to say, in the section and not only in the row, that
+// **pairing is discovery, not identity**: the code carries the project's config
+// and one short-lived `p~` custom token and no key, grants no access by itself,
+// and the allowlist is the device node (`rules.PathDevices`, derived here rather
+// than typed) whose entry carries the **administered email**, with an unverified
+// address **refused at pairing** and sign-in left at **custom tokens only**. The
+// last two are the code's today for the CLI, so they are held to it:
+// init_members.go's `userEmail` -- which `authenticatedUser` calls -- is what
+// refuses an unverified address and a service account's, and init_firebase.go's
+// `refusePublicSignUp` is what refuses a public sign-in, with the sentence the
+// register quotes in its message. The three documents that carry the amendment
+// (docs/mobile/README.md's line of 2026-10-20, the spec's own amendment notes and
+// this register) are required to say the same thing, so a check written from the
+// older reading of pairing fails here instead of reading as checked.
+//
+// What this test does NOT do is assert that the paths a guard stops on are
+// missing: the guard is `[ -f ... ] || stop`, which is right on both sides of the
+// task landing, and an assertion of absence would have to be deleted by whichever
+// of P6.6, P6.7, P6.8, P6.10 or P6.12 merges next -- the task id the guard names
+// is the durable half of "this stops for a known reason".
+func TestDocsMobileChecklistHasChecks100To104(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	flat := strings.Join(strings.Fields(doc), " ")
+
+	// The paragraph: the allocation, the task, and that none of the five has run.
+	for _, want := range []string{
+		"are written by Task P6.11 (2026-10-22)",
+		"**105–109 are reserved and unused**",
+		"**U5** is 100, **U2** is 101, **U1** is 102, **U4** is 103 and **U3** is 104",
+		"the highest written `## Check N` section in this file was **113**",
+		"**All five are owner-run and none has been run.**",
+		"Each needs a **release build** of `fugaro` that carries `fugaro pair` — **0.10.0 or later**",
+		"Check 103 is aimed at the sandbox repository and never at `belong`",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("%s does not carry %q: the register is where a reader learns whose numbers 100–104 are, which task wrote them, when they may be run and that none has been (plan Task P6.11)", path, want)
+		}
+	}
+
+	// The mapping is the reconciliation's table, read rather than restated.
+	reconPath := "docs/mobile/functional-spec-reconciliation.md"
+	recon := readDoc(t, reconPath)
+	uRE := regexp.MustCompile(`^\| (U[1-5]) \|.*check ([0-9]{3})`)
+	wantU := map[string]string{}
+	for _, line := range strings.Split(recon, "\n") {
+		if m := uRE.FindStringSubmatch(line); m != nil {
+			wantU[m[2]] = m[1]
+		}
+	}
+	if len(wantU) != 5 {
+		t.Fatalf("%s's UNVERIFIED table names %d of the five U-numbers against a check number, want 5: this test reads the 100–104 mapping out of that table, and a table it cannot read is a mapping nothing holds the register to", reconPath, len(wantU))
+	}
+
+	for _, c := range []struct {
+		n       string
+		row     []string
+		wants   []string
+		stops   []string
+		mustNot []string
+	}{
+		{
+			n:   "100",
+			row: []string{"Pairing is discovery, not identity", "no key", "device node", "administered email", "unverified email is refused", "custom tokens only", "never `belong`", "fugaro-dev", "with your own phone"},
+			wants: []string{
+				"NOT RUN",
+				"**Pairing is discovery, not identity",
+				"grants no access by itself",
+				rules.PathDevices,
+				"**administered email**",
+				"**refuses an unverified email**",
+				"`userEmail`",
+				"`email_verified`",
+				"`refusePublicSignUp`",
+				"**custom tokens only**",
+				"The web API key is public, so only custom tokens signed by Fugaro's signer may work",
+				"`PAIRING`",
+				"config/pairing/$UID/request",
+				"**FACT:**",
+				"**Passes when:**",
+				"**Fails when:**",
+				"**Paste back:**",
+				"**Restore.**",
+				"never `belong`",
+			},
+			stops:   []string{"[ -f \"$ROOT/internal/cli/pair.go\" ]", "[ -d \"$ROOT/mobile/src/pairing\" ]", "Task P6.6", "Task P6.8", `*dev*`},
+			mustNot: []string{"FUGARO_LIVE_", "database secret"},
+		},
+		{
+			n:   "101",
+			row: []string{"revoke", "device node", "before", "never `belong`", "fugaro-dev"},
+			wants: []string{
+				"NOT RUN",
+				"`fugaro pair revoke`",
+				"deletes the **node first**",
+				"denied",
+				rules.PathDevices,
+				"**FACT:**",
+				"**Passes when:**",
+				"**Fails when:**",
+				"**Paste back:**",
+				"**Restore.**",
+			},
+			stops:   []string{"[ -f \"$ROOT/internal/cli/pair.go\" ]", "Task P6.6"},
+			mustNot: []string{"FUGARO_LIVE_", "database secret"},
+		},
+		{
+			n:   "102",
+			row: []string{"recognition rate", "oldest", "airplane mode", "misroutes"},
+			wants: []string{
+				"NOT RUN",
+				"**recognition rate**",
+				"airplane mode",
+				"**false-accept count**",
+				"near miss",
+				"Check 85",
+				"**FACT:**",
+				"**Passes when:**",
+				"**Fails when:**",
+				"**Paste back:**",
+				"**Restore.**",
+			},
+			stops:   []string{"[ -d \"$ROOT/mobile/src/voice\" ]", "[ -f \"$ROOT/internal/cli/pair.go\" ]", "Task P6.6", "P6.8", "P6.12"},
+			mustNot: []string{"FUGARO_LIVE_", "EXPO_TOKEN"},
+		},
+		{
+			n:   "103",
+			row: []string{"cancel", "merge", "edgeappinc/fugarosandbox", "never `belong`", "misheard", "replayed", "another target"},
+			wants: []string{
+				"NOT RUN",
+				"on the sandbox repository only",
+				"edgeappinc/fugarosandbox",
+				"never `belong`",
+				"read-back",
+				"**A misheard confirm.**",
+				"**A replayed confirm.**",
+				"**A confirm for another target.**",
+				"branch protection",
+				"**FACT:**",
+				"**Passes when:**",
+				"**Fails when:**",
+				"**Paste back:**",
+				"**Restore.**",
+			},
+			stops:   []string{"[ -f \"$ROOT/internal/cli/mailbox.go\" ]", "P6.7", "REPO=${REPO:-edgeappinc/fugarosandbox}", "case \"$REPO\" in edgeappinc/fugarosandbox)", "never on belong"},
+			mustNot: []string{"FUGARO_LIVE_", "database secret", "belong/"}, // `belong` is named to forbid it, never as a target
+		},
+		{
+			n:   "104",
+			row: []string{"offline", "never `belong`", "nothing is delivered late", "action record"},
+			wants: []string{
+				"NOT RUN",
+				"airplane mode",
+				"stale",
+				"action record",
+				"delivered late",
+				"**FACT:**",
+				"**Passes when:**",
+				"**Fails when:**",
+				"**Paste back:**",
+				"**Restore.**",
+			},
+			stops:   []string{"[ -d \"$ROOT/mobile/src/mailbox\" ]", "[ -f \"$ROOT/internal/cli/mailbox.go\" ]", "P6.10", "P6.7", "Task P6.6"},
+			mustNot: []string{"FUGARO_LIVE_", "database secret"},
+		},
+	} {
+		u := wantU[c.n]
+		if u == "" {
+			t.Errorf("%s's UNVERIFIED table names no check %s: the register writes it, and that table is what this test reads its U-number from", reconPath, c.n)
+			continue
+		}
+
+		// The row, first: it is what the owner reads before the section.
+		row := ""
+		for _, line := range strings.Split(doc, "\n") {
+			if strings.HasPrefix(line, "| "+c.n+" |") {
+				if row != "" {
+					t.Errorf("%s has more than one `| %s |` row: one check, one row", path, c.n)
+				}
+				row = line
+			}
+		}
+		if row == "" {
+			t.Errorf("the summary table has no `| %s |` row: the check is in the register's index or it is not in the register", c.n)
+		} else {
+			for _, want := range append([]string{"USER-RUN, NOT RUN", "**you** run it", "no agent runs any step of it", "**" + u + "**", `See "Check ` + c.n + `" below`}, c.row...) {
+				if !strings.Contains(row, want) {
+					t.Errorf("the `| %s |` row does not carry %q: %s", c.n, want, row)
+				}
+			}
+		}
+
+		// Then the section, its guard, and the reason the guard stops.
+		section := docSection(t, path, doc, "## Check "+c.n+":")
+		for _, want := range append([]string{"**" + u + "**", "**Guard block"}, c.wants...) {
+			if !strings.Contains(section, want) {
+				t.Errorf("## Check %s: does not carry %q: a live check says whose claim it settles, what to run and look at, when it passes and what failing looks like (plan Task P6.11; the reconciliation's %s)", c.n, want, u)
+			}
+		}
+		for _, refuse := range c.mustNot {
+			if strings.Contains(section, refuse) {
+				t.Errorf("## Check %s: carries %q, which would make an owner-run check something else: these five are yours to run after the release that carries `fugaro pair`, and no environment-gated harness, database secret or store credential belongs in one (the plan's Global Constraints 9, 10 and 11; C8)", c.n, refuse)
+			}
+		}
+		guard := codeBlockAfter(t, section, "# === Check "+c.n+": setup + guard.")
+		if !strings.Contains(guard, "set -u") {
+			t.Errorf("## Check %s: the guard block does not open with `set -u`: an unset variable in a block the owner re-runs before every step is a command that runs against the wrong thing instead of stopping", c.n)
+		}
+		for _, want := range c.stops {
+			if !strings.Contains(guard, want) {
+				t.Errorf("## Check %s: the guard block does not carry %q: each guard stops on a path this checkout may not have and names the task that builds it, so a stop the owner reads says which task is missing rather than looking like a broken checkout (Task P6.11; P6.6, P6.7, P6.8, P6.10, P6.12)", c.n, want)
+			}
+		}
+	}
+
+	// The amendment check 100 is written to, in all three places it is recorded:
+	// docs/mobile/README.md's status line of 2026-10-20, the spec's own amendment
+	// notes, and the register's section. Each sentence is required in each
+	// document, so a register that drifted back to "the QR is the identity" -- or a
+	// README that dropped the amendment the register cites -- fails here.
+	for _, want := range []string{
+		"pairing is discovery, not identity",
+		"custom tokens only",
+	} {
+		for _, d := range []string{"docs/mobile/README.md", "docs/mobile/functional-spec-v0.1.md"} {
+			if !strings.Contains(strings.Join(strings.Fields(readDoc(t, d)), " "), want) {
+				t.Errorf("%s does not carry %q: check 100 is written to the amendment of 2026-10-20, and the documents that record it are where the sentence comes from", d, want)
+			}
+		}
+	}
+	for _, want := range []string{"The entry carries an administered email, and an unverified email is refused at pairing"} {
+		if !strings.Contains(strings.Join(strings.Fields(readDoc(t, "docs/mobile/functional-spec-v0.1.md")), " "), want) {
+			t.Errorf("docs/mobile/functional-spec-v0.1.md does not carry %q, which check 100 step 4 records: that note is the amendment's own text (edit 7), and the check reads the refusal out of it rather than provoking it", want)
+		}
+	}
+
+	// And the last two halves of that rule are the code's today for the CLI, so
+	// they are held to it: userEmail (which authenticatedUser calls) refuses an
+	// unverified address and a service account's, and refusePublicSignUp refuses a
+	// public sign-in with the sentence the register quotes.
+	members := readSrc(t, "init_members.go")
+	for _, want := range []string{"func userEmail(", "userEmail(ctx, hc, userinfoURL)", `json:"email_verified"`, "is not verified", ".gserviceaccount.com"} {
+		if !strings.Contains(members, want) {
+			t.Errorf("internal/cli/init_members.go does not carry %q, which check 100 step 4 names as the shape the pairing refusal already has for the CLI: %s", want, "a symbol that moved leaves the check citing nothing")
+		}
+	}
+	firebase := readSrc(t, "init_firebase.go")
+	for _, want := range []string{"func refusePublicSignUp(", "The web API key is public, so only custom tokens signed by Fugaro's signer may work"} {
+		if !strings.Contains(firebase, want) {
+			t.Errorf("internal/cli/init_firebase.go does not carry %q, which check 100 quotes for the sign-in half of the amendment: sign-in is custom tokens only, and this refusal is the code that makes that true", want)
 		}
 	}
 }
