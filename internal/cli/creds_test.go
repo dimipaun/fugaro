@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -441,6 +442,38 @@ func TestCredsSetValueNeverFromArgvOrEnv(t *testing.T) {
 	}
 }
 
+// creds ls takes no argument, and cobra's own answer to one — `unknown command
+// "<value>" for "fugaro creds ls"` — is the argument quoted back. The argument
+// position is one a pasted value lands in, and this command may not print one
+// (its own help says so), so it refuses without echoing, before anything is
+// read and before the cloud is opened. The container is never touched: the
+// fixture would fail the test on any request it did not expect, and the
+// assertion below says so.
+func TestCredsLsNeverEchoesAnArgument(t *testing.T) {
+	f := credsFixtureFor(t)
+	f.seed(t, []byte(config.ClaudeOAuthToken+": "+credsValue(t, "existing")+"\n"))
+	value := credsValue(t, "lsarg")
+
+	for _, args := range [][]string{
+		{"creds", "ls", value},
+		{"creds", "ls", value, value},
+	} {
+		out, errOut, err := execute(t, args...)
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("%v = %v, want a refusal", args, err)
+		}
+		if leak := out + errOut + err.Error(); strings.Contains(leak, value) {
+			t.Fatalf("the argument was echoed back: %q", leak)
+		}
+		if !strings.Contains(err.Error(), "takes no argument") {
+			t.Errorf("%v: the refusal is not the command's own: %v", args, err)
+		}
+	}
+	if n := f.reads(); n != 0 {
+		t.Fatalf("an argument was refused only after %d read(s) of the bundle", n)
+	}
+}
+
 // Owner-run only, and the refusal comes first: before anything is read and
 // before the cloud is opened, in a coding agent's session and in a run's own
 // process. Nothing of the bundle — not even its existence — reaches either.
@@ -682,34 +715,58 @@ func TestCredsLsRefusesAnUnreadableBundle(t *testing.T) {
 // The redaction path: a server that echoes back what it was sent — the
 // document, raw or base64 — must not get a value onto the operator's terminal
 // or into an error. The fake has one hook that echoes a payload
-// (FailAddVersion) and the re-read has a seam, so both halves of the write are
-// exercised, and `creds ls` is exercised through a document the loader refuses
-// that holds a value in the wrong place.
+// (EchoAddVersionPayload) and the re-read has a seam, so both halves of the
+// write are exercised, and `creds ls` is exercised through a document the
+// loader refuses that holds a value in the wrong place.
+//
+// The document is the payload, and the document holds EVERY credential in the
+// bundle: the credential being set is the easy half. The fixture seeds a
+// second one — the project's Anthropic API key — and it is the value that
+// would leak, because the command holds it (it parsed the document it is about
+// to rewrite) and a server that repeats its request body hands the whole thing
+// back. Both echoes are the real bytes: the fake repeats the payload it
+// received, so nothing here is a guess at what the command sends.
 func TestCredsCommandsNeverLogAValue(t *testing.T) {
 	f := credsFixtureFor(t)
 	value := credsValue(t, "echoed")
-	f.seed(t, []byte(config.ClaudeOAuthToken+": "+credsValue(t, "existing")+"\n"))
+	other := credsValue(t, "other")
+	f.seed(t, []byte(config.AnthropicSecret+": "+other+"\n"+config.ClaudeOAuthToken+": "+credsValue(t, "existing")+"\n"))
 
-	// The write's own answer: a server that repeats the payload it received.
-	f.FailAddVersion = "the payload was " + value + " (" + base64.StdEncoding.EncodeToString([]byte(value)) + ")"
+	// The write's own answer: a server that repeats the payload it received,
+	// decoded and as it was sent. The other credential is in it either way.
+	f.EchoAddVersionPayload = true
 	out, errOut, err := executeStdin(t, value+"\n", "creds", "set", config.ClaudeOAuthToken)
 	if err == nil {
 		t.Fatal("a refused write succeeded")
 	}
-	assertNoValue(t, out+errOut+err.Error(), value)
+	if !strings.Contains(err.Error(), "the payload was") {
+		t.Fatalf("the fake's echo did not reach the error, so this proves nothing: %v", err)
+	}
+	assertNoValue(t, out+errOut+err.Error(), value, other)
+	assertRedacted(t, out+errOut+err.Error(), value, other)
 
 	// The read-back's answer: a server that echoes the document it served.
-	f.FailAddVersion = ""
+	// The seam runs the real read first, so the bytes echoed are the document
+	// the command just wrote and verified — not a copy the test keeps.
+	f.EchoAddVersionPayload = false
 	restore := credsWriteBack
 	t.Cleanup(func() { credsWriteBack = restore })
-	credsWriteBack = func(context.Context, *bundleStore) (bundleDoc, error) {
-		return bundleDoc{}, errors.New("the server echoed " + value + " and " + base64.StdEncoding.EncodeToString([]byte(value)))
+	credsWriteBack = func(ctx context.Context, s *bundleStore) (bundleDoc, error) {
+		back, err := restore(ctx, s)
+		if err != nil {
+			return bundleDoc{}, err
+		}
+		return bundleDoc{}, errors.New("the server echoed " + string(back.raw) + " and " + base64.StdEncoding.EncodeToString(back.raw))
 	}
 	out, errOut, err = executeStdin(t, value+"\n", "creds", "set", config.ClaudeOAuthToken)
 	if err == nil {
 		t.Fatal("a write whose read-back failed succeeded")
 	}
-	assertNoValue(t, out+errOut+err.Error(), value)
+	if !strings.Contains(err.Error(), "the server echoed") {
+		t.Fatalf("the seam's echo did not reach the error, so this proves nothing: %v", err)
+	}
+	assertNoValue(t, out+errOut+err.Error(), value, other)
+	assertRedacted(t, out+errOut+err.Error(), value, other)
 
 	// The listing's answer: a document that is not one the loader accepts and
 	// that holds the value where a name belongs.
@@ -720,6 +777,19 @@ func TestCredsCommandsNeverLogAValue(t *testing.T) {
 		t.Fatal("a bundle holding a value as a key was listed")
 	}
 	assertNoValue(t, out+errOut+err.Error(), value)
+}
+
+// assertRedacted fails if s still carries a secret the way the production
+// redactor would catch it — the raw bytes, the JSON escape, a line of a
+// multi-line secret, and the encoded forms (the base64 cores of a secret of at
+// least encodedMin bytes, which is how an unaligned base64 stream is read).
+// assertNoValue is the hand-written half and this is the redactor's own notion
+// of a form; the two disagreeing is the interesting failure.
+func assertRedacted(t *testing.T, s string, secrets ...string) {
+	t.Helper()
+	if got := agent.Redact(s, secrets); got != s {
+		t.Fatalf("the text still carries a secret the redactor would remove: %q -> %q", s, got)
+	}
 }
 
 // credsChunkBytes is the length of a middle run of a value that counts as a

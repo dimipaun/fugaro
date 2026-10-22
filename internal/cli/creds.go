@@ -213,7 +213,17 @@ while the service is in fact issuing from one this command could not read.
 
 It is refused from a coding agent's session and from a run's process, before
 anything is read.`,
-		Args: cobra.NoArgs,
+		// cobra.NoArgs answers `fugaro creds ls <value>` with `unknown command
+		// "<value>" for "fugaro creds ls"` — the argument quoted back, which is
+		// the one thing this command may not do. The argument position is one a
+		// pasted value lands in, so it is refused without being echoed, as
+		// `creds set` refuses its own.
+		Args: func(_ *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				return userErr("creds ls takes no argument, and the argument is not echoed: this position is one a pasted value can land in. Nothing was read")
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return credsLs(cmd, o)
 		},
@@ -438,15 +448,17 @@ func (s *bundleStore) apiErr(op string, err error) error {
 
 // remoteErr is a store failure as the command reports it: the remote exit
 // code, the text bounded to one printable field (safetext: a server may echo a
-// body) and every form of value redacted out of it (a server may echo what it
-// received, raw or base64 as sent). A refusal this command already made
-// (apiErr's userErr) is returned as it is: it carries no server text.
-func remoteErr(err error, value []byte) error {
+// body) and every form of every secret in forms redacted out of it (a server
+// may echo what it received, raw or base64 as sent). forms is the caller's
+// writeForms or secretForms, never a single value where the request carried a
+// document: see writeForms. A refusal this command already made (apiErr's
+// userErr) is returned as it is: it carries no server text.
+func remoteErr(err error, forms []string) error {
 	var ee *ExitError
 	if errors.As(err, &ee) {
 		return err
 	}
-	return remote(errors.New(safetext.Field(agent.Redact(err.Error(), secretForms(value)))))
+	return remote(errors.New(safetext.Field(agent.Redact(err.Error(), forms))))
 }
 
 // secretForms is every form of value a server could echo back: the bytes as
@@ -456,6 +468,30 @@ func secretForms(value []byte) []string {
 		return nil
 	}
 	return []string{string(value), base64.StdEncoding.EncodeToString(value)}
+}
+
+// writeForms is every form of secret a failed write can echo back, and it is
+// the DOCUMENT's forms rather than the one value being set: AddVersion's
+// payload is the whole document, so a server that repeats its request body —
+// or its own answer to the re-read — hands back every other credential in the
+// bundle, each of them as readable as the one being written. The forms are the
+// document as it was sent (agent.Redact registers its lines and its JSON escape
+// too), every value the loader finds in it, raw and base64, and the new value
+// itself.
+//
+// The document is parsed rather than assumed: a document the loader refuses
+// never reaches a write (credsDocRefusal answers first), so the parse here is
+// the same one that already succeeded, and a nil bundle only means there is
+// nothing to add to the document's own forms.
+func writeForms(doc, value []byte) []string {
+	forms := secretForms(doc)
+	forms = append(forms, secretForms(value)...)
+	if b, err := credsvc.ParseBundle(doc); err == nil {
+		for _, e := range b.Entries() {
+			forms = append(forms, secretForms([]byte(e.Value()))...)
+		}
+	}
+	return forms
 }
 
 // credsSet is `fugaro creds set NAME`: the order is who is running, the name,
@@ -519,11 +555,11 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string) error {
 	}
 	version, err := store.add(ctx, doc)
 	if err != nil {
-		return remoteErr(err, value)
+		return remoteErr(err, writeForms(doc, value))
 	}
 	back, err := credsWriteBack(ctx, store)
 	if err != nil {
-		return remoteErr(err, value)
+		return remoteErr(err, writeForms(doc, value))
 	}
 	if back.version != version || !bytes.Equal(back.raw, doc) {
 		return credsLostUpdate(store.id, version, back.version)
@@ -535,7 +571,7 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string) error {
 	if replaced != "" && replaced != version {
 		if err := store.disable(ctx, replaced); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s. Version %s of %s is still ENABLED, so the credential it holds is still readable by anyone who can read the container: disable it yourself with gcloud secrets versions disable %s --secret=%s\n",
-				remoteErr(err, value), safetext.Field(replaced), safetext.Field(store.id), safetext.Field(replaced), safetext.Field(store.id))
+				remoteErr(err, writeForms(doc, value)), safetext.Field(replaced), safetext.Field(store.id), safetext.Field(replaced), safetext.Field(store.id))
 		} else {
 			retired = true
 		}

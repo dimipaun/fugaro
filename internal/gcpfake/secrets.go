@@ -41,6 +41,12 @@ type Secrets struct {
 	// FailAddVersion, when set, makes addVersion answer 400 with this
 	// message, so a test can make a server echo the payload.
 	FailAddVersion string
+	// EchoAddVersionPayload, when set, makes addVersion answer 400 with the
+	// payload it received, decoded and as it was sent (base64), which is what
+	// a server that repeats its request body hands back. The test does not
+	// have to know the bytes: this is the payload the client actually sent,
+	// which for the bundle is the whole document and every credential in it.
+	EchoAddVersionPayload bool
 	// OnCreate, when set, is called with the secret ID before a create is
 	// handled (without the fake's lock), so a test can make the secret
 	// appear between the client's get and its create.
@@ -377,10 +383,6 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "not found")
 			return
 		}
-		if f.FailAddVersion != "" {
-			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", f.FailAddVersion)
-			return
-		}
 		var req struct {
 			Payload struct {
 				Data string `json:"data"`
@@ -393,6 +395,19 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		if err != nil || len(data) == 0 || len(data) > 64*1024 {
 			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "bad payload")
+			return
+		}
+		if f.FailAddVersion != "" {
+			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", f.FailAddVersion)
+			return
+		}
+		if f.EchoAddVersionPayload {
+			// Both spellings a repeating server produces: the payload decoded,
+			// and the payload as the request carried it. The body is JSON, so
+			// the decoded form is the one an unhelpful message would carry and
+			// the base64 is the one a raw body echo carries.
+			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT",
+				"the payload was "+string(data)+" (as sent: "+req.Payload.Data+")")
 			return
 		}
 		s.versions = append(s.versions, data)
