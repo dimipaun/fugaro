@@ -63,11 +63,12 @@ package credsvc
 //     question itself: a probe asks whether the credential can serve THIS
 //     run's work, and the model is what the work is.
 //   - The probe is the service's, not the client's. It is detached from the
-//     caller's context and bounded by the service (probeBudget, below
-//     probeLeaseTTL): the call, the audit line and the mark are facts about a
-//     credential, and a run that hangs up mid-probe must not be able to discard
-//     them — a detached probe's answer is still recorded, and an aborted one is
-//     not mistaken for a credential that failed.
+//     caller's context and bounded by the service (probeBudget and
+//     probeRecordBudget, together below probeLeaseTTL): the call, the audit line
+//     and the mark are facts about a credential, and a run that hangs up
+//     mid-probe must not be able to discard them — a detached probe's answer is
+//     still recorded, and an aborted one is not mistaken for a credential that
+//     failed.
 //
 // Nothing here writes a credential's value anywhere: not to the client (the
 // probe's answer is read for its status and closed, never relayed), not to the
@@ -122,20 +123,24 @@ const (
 	// the run every call it makes.
 	probeLeaseTTL = 10 * time.Minute
 
-	// probeBudget is how long a probe's own work may take once it is detached
-	// from the client: the upstream call, and — under a budget of its own, so a
-	// call that used all of this one cannot starve the write that records its
-	// answer — the audit line and the mark.
+	// probeBudget is how long a probe's own upstream call may take once it is
+	// detached from the client, and probeRecordBudget is how long the audit line
+	// and the mark that record its answer may then take.
 	//
-	// It is BELOW probeLeaseTTL, and that is the point of the number: a probe
-	// this budget abandons must not still be in flight when its claim lapses,
-	// or a second instance would take the slot and probe the credential
-	// alongside the first one the service gave up on. Five minutes is also the
-	// longest a minimal, non-streaming probe is worth waiting for: the
-	// subscription path's own header bound is ten (oauthResponseHeaderTimeout),
-	// and a credential that has not answered one token in half of it is not
-	// going to answer the run's work either.
-	probeBudget = 5 * time.Minute
+	// The two together are BELOW probeLeaseTTL, and that is the point of the
+	// numbers: a probe still in flight when its own claim lapses is a probe
+	// another instance may start alongside (the claim is a bound, not a lock),
+	// so the whole of the work is bounded under the claim it took. Five minutes
+	// is also the longest a minimal, non-streaming probe is worth waiting for —
+	// the subscription path's own header bound is ten
+	// (oauthResponseHeaderTimeout), and a credential that has not answered one
+	// token in half of it is not going to answer the run's work either — and the
+	// recording gets a minute of its own rather than whatever the call left,
+	// because a probe that used its whole budget must still be able to write the
+	// answer it took five minutes to get. Two small writes under a minute is
+	// generous on purpose: the cost of running out is a real answer discarded.
+	probeBudget       = 5 * time.Minute
+	probeRecordBudget = time.Minute
 
 	// probeVersion is the API version a probe asks with: the one the client's
 	// SDK sends, and the one Check 90 proved Anthropic-Version mandatory with

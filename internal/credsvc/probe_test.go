@@ -634,6 +634,17 @@ func TestWaitWhenAProbeIsOwedAndNotMade(t *testing.T) {
 	}
 }
 
+// TestTheProbesOwnWorkIsBoundedUnderItsClaim pins the relationship the two
+// bounds exist for: the claim is what keeps a second instance off the
+// credential, and it is a bound rather than a lock, so a probe that is still
+// running when its claim lapses is a probe another instance may start beside
+// it. The call and the recording together must therefore end inside the claim.
+func TestTheProbesOwnWorkIsBoundedUnderItsClaim(t *testing.T) {
+	if got := probeBudget + probeRecordBudget; got >= probeLeaseTTL {
+		t.Errorf("a probe's own work may run for %s, want under the %s its claim stands for: past that, two instances probe the same credential together", got, probeLeaseTTL)
+	}
+}
+
 // TestProbeClaimDoesNotBlockTheNextProbe is the release, as an installation
 // experiences it. A policy may set a first backoff shorter than the probe
 // claim's own TTL (projectpolicy accepts a minute), so a credential can be due
