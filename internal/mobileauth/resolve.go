@@ -132,7 +132,9 @@ type judgment struct {
 	// unusable is why a naming entry could not be used, and "" when none failed
 	// to be: it is the clause Resolve builds its refusal from. A judgment can
 	// carry both a role and a reason (one entry naming a key is broken and
-	// another is well formed), and Resolve reads the role first.
+	// another is well formed), and Resolve reads the role first — a broken entry
+	// is not a poison pill for the same key's usable one. A judgment can never
+	// carry a fatal AND a role: the first unreadable entry ends the reading.
 	unusable string
 	// fatal is why the list cannot be read at all — an entry whose value is not
 	// a form this package can normalise, named by its position and never by its
