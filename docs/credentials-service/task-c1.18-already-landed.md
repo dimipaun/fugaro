@@ -49,7 +49,7 @@ what the task says it carries.**
 | `modules/workflow/sa.tf` — model accessors dropped only when the opt-in is on, plus the job SA's `run.invoker` | Present: `sa.tf` keeps `roles/secretmanager.secretAccessor` behind `var.credentials_service == null \|\| !…` and adds `google_cloud_run_v2_service_iam_member "credentials"` with `role = "roles/run.invoker"`, `count = var.credentials_service == null ? 0 : 1` |
 | `modules/workflow/variables.tf`, `modules/repo/workflows.tf` — name and region passed down | Present; `modules/repo/workflows.tf` reads `credentials_service = var.installation.credentials_service` |
 | `roots/installation/tests/installation.tftest.hcl` and the repo root's tests | Present at `deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl` and `…/roots/repo/tests/repo.tftest.hcl` (note the path: `roots/` sits under `deploy/terraform/gcp/`, and the root's own tests live in a `tests/` subdirectory) |
-| The cover's cases in `internal/infra/tf/cover.go` | Present: `credentialsImageOK` is used five times in `cover.go` and asserted twice in `cover_test.go` |
+| The cover's cases in `internal/infra/tf/cover.go` | Present: `credentialsImageOK` is defined in `cover.go` and called from the service case in `Cover.attributes`, and the two tests below exercise it through `Cover` |
 
 **Every test the task's Tests line names is declared in the tree**, which is how
 the plan's own guard (`internal/cli/docs_credentials_plan_tests_test.go`) would
