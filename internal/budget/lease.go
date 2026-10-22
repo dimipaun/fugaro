@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/gateway"
@@ -254,12 +255,14 @@ type pending struct {
 	tokens   int64
 	overrun  Micros
 	byModel  map[string]Micros   // gateway runs: settled spend by serving model
-	notional Micros              // oauth runs: Claude Code's own figure
+	byTier   map[string]Micros   // cascade runs: settled money by the tier that paid for it (C1.16)
+	notional Micros              // a subscription's figure: Claude Code's own, or the gateway's tier A (C1.16)
 	nby      map[string]ModelUse // oauth runs: usage by model
 }
 
 func (p pending) empty() bool {
-	return p.calls == 0 && p.tokens == 0 && p.overrun == 0 && len(p.byModel) == 0 && p.notional == 0 && len(p.nby) == 0
+	return p.calls == 0 && p.tokens == 0 && p.overrun == 0 && len(p.byModel) == 0 &&
+		len(p.byTier) == 0 && p.notional == 0 && len(p.nby) == 0
 }
 
 func (p pending) clone() pending {
@@ -268,11 +271,33 @@ func (p pending) clone() pending {
 	for k, v := range p.byModel {
 		q.byModel[k] = v
 	}
+	q.byTier = map[string]Micros{}
+	for k, v := range p.byTier {
+		q.byTier[k] = v
+	}
 	q.nby = map[string]ModelUse{}
 	for k, v := range p.nby {
 		q.nby[k] = v
 	}
 	return q
+}
+
+// tierKey maps the tier a stage report carries to the database's spelling:
+// the credentials service's answer says "B" and "C" (the gateway's TierB and
+// TierC, C1.15) and the rules' byTier node says "b" and "c". ok is false for
+// anything else, and the split drops such a tier rather than guessing at it.
+//
+// It is the untrusted-input end of the same rule the path builders enforce by
+// panicking (a tier they have no leaf for) and planByTier enforces by asking
+// for b and c and nothing else. Two things make the check worth its line: a
+// tier that is not the contract must never become a key the database is asked
+// to hold, and a key nothing ever writes would sit in the run's pending
+// figures for the rest of the run, keeping it from ever reporting itself
+// settled (empty) -- reads for a row that can never be written. The money is
+// in the totals either way: only the display split loses a row.
+func tierKey(tier string) (string, bool) {
+	k := strings.ToLower(tier)
+	return k, k == TierB || k == TierC
 }
 
 // modelName makes a model name usable as a key.
@@ -298,6 +323,27 @@ func (s *Session) report(ctx context.Context, rep gateway.StageReport) error {
 	for m, v := range rep.ByModel {
 		s.pend.byModel[modelName(m)] = add(s.pend.byModel[modelName(m)], v)
 	}
+	// The split of the settled money by the tier that paid for it (C1.16,
+	// D140). Only a call that went through the credentials service carries a
+	// tier, so only a cascade run reports one and no other run writes a
+	// byTier leaf: that is what "written only by a cascade run" means here.
+	for t, v := range rep.ByTier {
+		k, ok := tierKey(t)
+		if !ok || v <= 0 {
+			continue
+		}
+		if s.pend.byTier == nil {
+			s.pend.byTier = map[string]Micros{}
+		}
+		s.pend.byTier[k] = add(s.pend.byTier[k], v)
+	}
+	// A tier-A call is the run's subscription, not money (D140): it settles
+	// as notional, which is the figure an oauth stage's own total_cost_usd
+	// settles as (AddNotional), so it lands on the same leaves and feeds no
+	// cap. notionalTotal is not raised here: it is what the registry shows a
+	// run whose spend nobody else reports, and a gateway run's entry shows
+	// the gateway's own settled figure instead (snapshotEntry).
+	s.pend.notional = add(s.pend.notional, rep.Notional)
 	s.mu.Unlock()
 	return s.flush(ctx, nil, "report")
 }
@@ -338,7 +384,7 @@ func (s *Session) plan(ctx context.Context) (upd map[string]any, took pending, m
 	}
 	s.mu.Unlock()
 	upd = map[string]any{}
-	took = pending{byModel: map[string]Micros{}, nby: map[string]ModelUse{}}
+	took = pending{byModel: map[string]Micros{}, byTier: map[string]Micros{}, nby: map[string]ModelUse{}}
 	// The per-write bound of every amount is the largest single lease. An
 	// oauth run is admitted without one, so it is needed only to report.
 	var maxRes Micros
@@ -359,13 +405,12 @@ func (s *Session) plan(ctx context.Context) (upd map[string]any, took pending, m
 	today := Day(s.now())
 	slug, run := s.cfg.Slug, s.cfg.Run
 
-	type counters struct{ repo, global Counters }
-	cache := map[int64]*counters{}
-	counterAt := func(day int64) (*counters, error) {
+	cache := map[int64]*dayCounters{}
+	counterAt := func(day int64) (*dayCounters, error) {
 		if c, ok := cache[day]; ok {
 			return c, nil
 		}
-		c := &counters{}
+		c := &dayCounters{}
 		if _, err := s.db.Get(ctx, PathSpendRepo(day, slug), &c.repo); err != nil {
 			return nil, err
 		}
@@ -511,7 +556,112 @@ func (s *Session) plan(ctx context.Context) (upd map[string]any, took pending, m
 			more = more || n != u
 		}
 	}
+	if len(p.byTier) > 0 {
+		if err := getLedger(); err != nil {
+			return nil, took, false, err
+		}
+	}
+	if err := s.planByTier(ctx, p, ledger, leased, today, maxRes, maxErr, counterAt, upd, &took, &more); err != nil {
+		return nil, took, false, err
+	}
 	return upd, took, more, nil
+}
+
+// dayCounters are one day's repository and project counters, which every
+// usage write reads together.
+type dayCounters struct{ repo, global Counters }
+
+// planByTier adds the by-tier split of the run's settled money to the update
+// (C1.16, D140): the same quantity `spent` is, on the run's lifetime ledger,
+// the run's share of each day it holds a lease on, and the repository's and
+// the project's day counters. It is written only by a run whose calls
+// carried a tier -- a cascade run -- and every other run calls it with
+// nothing pending and leaves all four leaves alone.
+//
+// Each leaf is validated on its own (C1.3's rules): increase-only, whole
+// micro-dollars, and, on the two leaves under the run's own nodes, inside
+// that node's reservation -- the lifetime one against the run's whole
+// reservation, the day one against that day's. The two shared counters
+// bound one write by limits.maxReserveMicros. So the amount one tier moves
+// in a round is the smallest of those rooms: the four leaves of a round
+// move together and none can be refused for the others' sake. A tier with
+// no room keeps its amount pending and the round says more, and the split
+// is never tied to the total it splits: nothing decides anything on it
+// (admissions, switches and kill switches read spent and notional), so
+// b + c above spent is a latitude this code does not create and does not
+// have to repair.
+func (s *Session) planByTier(ctx context.Context, p pending, ledger RunLedger, leased map[int64]bool, today int64, maxRes Micros, maxErr error, counterAt func(int64) (*dayCounters, error), upd map[string]any, took *pending, more *bool) error {
+	if len(p.byTier) == 0 {
+		return nil
+	}
+	if maxErr != nil {
+		return maxErr
+	}
+	slug, run := s.cfg.Slug, s.cfg.Run
+	// The days this run may split onto: today always, and yesterday only
+	// while it holds a lease there (the same rule the totals settle by).
+	days := []int64{today}
+	if leased[today-1] {
+		days = append(days, today-1)
+	}
+	shares := make(map[int64]RunLedger, len(days))
+	for _, day := range days {
+		var dr RunLedger
+		if _, err := s.db.Get(ctx, PathSpendRun(day, slug, run), &dr); err != nil {
+			return err
+		}
+		shares[day] = dr
+	}
+	for _, tier := range []string{TierB, TierC} {
+		want := p.byTier[tier]
+		if want <= 0 {
+			continue
+		}
+		cur := ledger.ByTier[tier].Spent
+		// The run's own lifetime ledger needs no bound of its own: every
+		// lease raises the run's reservation and the day's by the same
+		// amount, so the run's room is the sum of the days' and a day's room
+		// is never the larger of the two. What bounds the split there is
+		// this loop.
+		n := min(want, maxRes)
+		for _, day := range days {
+			if n <= 0 {
+				break
+			}
+			dr := shares[day]
+			n = min(n, dr.Reserved-dr.Released-dr.ByTier[tier].Spent)
+		}
+		if n <= 0 {
+			// Nothing to move onto this round: the run's own reservation is
+			// what the split waits for, and a lease that raises it (or the
+			// day turning) unblocks it. The money itself is unaffected.
+			*more = true
+			continue
+		}
+		upd[PathRunByTier(slug, run, tier)+"/spent"] = add(cur, n)
+		left := n
+		for _, day := range days {
+			if left <= 0 {
+				break
+			}
+			dr := shares[day]
+			c, err := counterAt(day)
+			if err != nil {
+				return err
+			}
+			take := min(left, dr.Reserved-dr.Released-dr.ByTier[tier].Spent)
+			if take <= 0 {
+				continue
+			}
+			upd[PathSpendRunByTier(day, slug, run, tier)+"/spent"] = add(dr.ByTier[tier].Spent, take)
+			upd[PathSpendRepoByTier(day, slug, tier)+"/spent"] = add(c.repo.ByTier[tier].Spent, take)
+			upd[PathSpendGlobalByTier(day, tier)+"/spent"] = add(c.global.ByTier[tier].Spent, take)
+			left -= take
+		}
+		took.byTier[tier] = n
+		*more = *more || n < want
+	}
+	return nil
 }
 
 // commit takes what an update carried off the pending figures.
@@ -526,6 +676,11 @@ func (s *Session) commit(took pending) {
 	for m, v := range took.byModel {
 		if p.byModel[m] -= v; p.byModel[m] <= 0 {
 			delete(p.byModel, m)
+		}
+	}
+	for tier, v := range took.byTier {
+		if p.byTier[tier] -= v; p.byTier[tier] <= 0 {
+			delete(p.byTier, tier)
 		}
 	}
 	for m, u := range took.nby {
