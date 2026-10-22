@@ -46,7 +46,7 @@ npm install --prefix /tmp/fugaro-pw playwright@1.49.1
 PLAYWRIGHT_PREFIX=/tmp/fugaro-pw node docs/website/redesign/capture-screenshots.mjs docs/website/redesign/current
 ```
 
-It writes 22 JPEGs (eleven routes at 1280 × 900 and 390 × 844) into `current/` and the
+It writes 24 JPEGs (twelve routes at 1280 × 900 and 390 × 844) into `current/` and the
 measurements to `/tmp/website-screenshots.json` (a second argument changes that path). The
 "after" set is the same command with `docs/website/redesign/after` as the argument.
 

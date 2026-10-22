@@ -4526,7 +4526,7 @@ grep -o '@media (width<=[0-9.]*rem)' website/dist/index.html | head -1
 # and `site.js` ask the same query, and `website/test/nav-hover.mjs` holds the two together).
 grep -o '@media (hover:hover) and (pointer:fine)' website/dist/index.html | head -1
 # The groups and links the menu shows, read out of the layout rather than typed: the names
-# steps 3 and 5 look for, and the ten links step 3 has to reach. Two group labels since the
+# steps 3 and 5 look for, and the eleven links step 3 has to reach. Two group labels since the
 # owner's feedback of 2026-10-21 dropped the Reference group.
 sed -n '/^const NAV_GROUPS/,/^]/p' website/src/layouts/Base.astro | grep -o "label: '[^']*'"
 # The one-row header's height, out of the stylesheet and the markup rather than typed: the
@@ -4600,10 +4600,10 @@ grep -n 'width="47"' website/src/layouts/Base.astro
 
 3. **Every link in the two groups is reachable.** Tab to each group's label, open it, and
    reach each link inside it by keyboard alone, and follow one. The groups are **Product**
-   (How it works, Getting started, Caps and costs, Console, Mobile) and **Project** (Docs,
-   Security, FAQ, Community, Changelog) — ten links between them, the same nine as before the
-   Reference group was dropped plus the phone app's page (the zoom-diagrams plan, Part 3) —
-   and **Privacy is not among them** — it is a footer link
+   (How it works, Why GCP, Getting started, Caps and costs, Console, Mobile) and **Project**
+   (Docs, Security, FAQ, Community, Changelog) — eleven links between them, the nine the
+   Reference group's drop left plus the phone app's page (the zoom-diagrams plan, Part 3) and
+   the Why GCP page (its Part 2) — and **Privacy is not among them** — it is a footer link
    (D182). **FACT:** the two group names as rendered, the links under each, and that Privacy
    is in the footer rather than the menu.
 
@@ -4623,19 +4623,19 @@ grep -n 'width="47"' website/src/layouts/Base.astro
    none at any width now — the labels are the menu at every width, and what changes at the
    48 rem the method block reads is only where a group's list is drawn (across the header on a
    phone, a dropdown under its own label from there up). Read the groups: **they are dropdowns
-   at this width too** — two `<summary>` controls, each with its own links behind it (five
+   at this width too** — two `<summary>` controls, each with its own links behind it (six
    under *Product*, five under *Project*) and
    closed until the pointer arrives at it (step 6) or the focus lands on it (step 7) (D182's
    "top-level sections with dropdowns", the same two levels as the phone's menu, which is
-   what makes this a two-level menu rather than a row of ten links). **FACT:** the header's
-   height, the two group names, that no `Menu` control is on the page, and that the ten
+   what makes this a two-level menu rather than a row of eleven links). **FACT:** the header's
+   height, the two group names, that no `Menu` control is on the page, and that the eleven
    links are not printed in the row before anything is opened.
 
 6. **On a hovering pointer, the submenu opens when the pointer arrives (the owner's brief of
    2026-10-18, item 1 — the brief's acceptance line, and the reason `website/test/nav-hover.mjs`
    exists).** Still at 1280 × 900, with a mouse or a trackpad — a device that answers the
    `(hover: hover) and (pointer: fine)` query the method block reads out of the artifact.
-   Move the pointer onto **Product** and **do not click**: its five links appear under the
+   Move the pointer onto **Product** and **do not click**: its six links appear under the
    header's row immediately, and the header's height does not change (step 5's number again).
    Move the pointer **into the list**, onto one of its links: the submenu is still open —
    the pointer has not left the group, so nothing closes under it. Move the pointer **out of
@@ -4763,7 +4763,7 @@ dismissed it, which is what a handback that cannot tell the browser's close from
 looks like. Or, on the keyboard side of step 7, **a device that answers the hover query no
 whose menu the keyboard cannot enter** — a group whose submenu opens only when a hovering
 pointer arrives at it, which leaves the links inside it unreachable by Tab. The wide viewport's
-grouping of the ten links behind two summaries is *not* a
+grouping of the eleven links behind two summaries is *not* a
 failure: the dropdowns are D182's decision, and the whole menu is two groups since the owner's
 feedback of 2026-10-21. The **structural** half of each of those is already
 refused by `website/test/base-styles.mjs` — `navLayoutFailures` holds the header to one row
@@ -6432,8 +6432,9 @@ grep -o 'href="/mobile/"' website/dist/index.html
    the captures land, this half is **not run**, and this row stays **NOT RUN**.
 
 7. **The menu gains one item and stays two groups.** Open the menu on any page: **Product** holds
-   *How it works*, *Getting started*, *Caps and costs*, *Console* and **Mobile** — five, with the
-   phone app's page last — and **Project** holds its five as before. There is **no third group**.
+   *How it works*, *Why GCP*, *Getting started*, *Caps and costs*, *Console* and **Mobile** — six,
+   with the phone app's page last — and **Project** holds its five as before. There is **no third
+   group**.
    Follow the Mobile item: it lands on `/mobile/`. **FACT:** both groups' items and their order,
    and the page the Mobile item opens. A renamed group, a moved item or a third group is the
    defect; the two groups' contents are held by `website/test/base-styles.mjs`, and what this step
