@@ -1,13 +1,20 @@
 #!/bin/bash
-# Mutation-proves the voice screen's guards (mobile plan, Task P3.5).
+# Mutation-proves the voice screen's guards (mobile plan, Tasks P3.5 and P6.12).
 #
 # Almost every rule this task has is of the "does not do it" kind -- nothing is
 # spoken over the user, nothing is accepted while offline, nothing is dropped
-# to make room, another consumer's lease is not taken over -- and that is the
+# to make room, another consumer's lease is not taken over, and (P6.12) an
+# action whose read-back nobody heard cannot be confirmed -- and that is the
 # kind of rule a test can pass by accident. Each mutation below disables exactly
-# ONE guard, in `interrupt.js`, `screen.js`, `speaker.js`, `index.js` or the
-# README table, and every one of them must make its own suite fail. A guard
-# whose mutation survives is a guard no test defends.
+# ONE guard, in `interrupt.js`, `screen.js`, `speaker.js`, `index.js`,
+# `dialogue.js` or the README table, and every one of them must make its own
+# suite fail. A guard whose mutation survives is a guard no test defends.
+#
+# P6.12's guard is the one the plan is security-sensitive for, and it is
+# mutation-proved **once**, deliberately: the owner's ruling of 2026-10-22 asks
+# for reasonable effort on a security-sensitive task and no gold-plating, so the
+# headline fail-closed rule is proved and the rest of the dialogue is defended by
+# its own tests (which the positive control runs).
 #
 #   mobile/src/voice/mutation-proof.sh
 #
@@ -99,6 +106,7 @@ require_clean() { # file
   fi
 }
 require_clean "$F"
+require_clean mobile/src/voice/dialogue.js
 require_clean mobile/src/voice/interrupt.js
 require_clean mobile/src/voice/speaker.js
 require_clean mobile/src/voice/index.js
@@ -425,6 +433,19 @@ run "the README loses no rule row" \
 | nothing is read from the environment | \`process.env\` | a screen configured by an environment variable is a screen no test can build the same way twice |" \
   "| nothing is read from the environment | \`process.env\` | a screen configured by an environment variable is a screen no test can build the same way twice |" \
   mobile/README.md src/voice/index.test.js
+
+# 11. P6.12's headline guard (dialogue.js): the read-back nobody heard.
+#     The plan's fail-closed rule, and the one mutation this task asks for. A
+#     read-back that did not play to the end must be dropped before `propose`
+#     answers: leaving it pending makes the fixed phrase a confirmation of
+#     something the speaker was never told, which is what D169 is against.
+#     Inverting the condition keeps the unspoken read-back confirmable and
+#     breaks every read-back that WAS spoken, so the dialogue's suite goes red
+#     in both directions.
+run "an unheard read-back is dropped, and cannot be confirmed later" \
+  "    if (heard === false) {" \
+  "    if (heard === true) {" \
+  mobile/src/voice/dialogue.js src/voice/dialogue.test.js
 
 echo
 echo "guards proved: $killed killed, $survivors survived, $unapplied not applied"

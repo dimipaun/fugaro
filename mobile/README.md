@@ -172,7 +172,7 @@ fences, are `src/demo/`'s; the words the owner pastes into the Play form are
 | `src/feed/` | The feed reader: the four granted families and the gate every read passes (`paths.js`), the wire node shapes (`nodes.js`), the contract's document rules (`document.js`) and the two figures the phone recomputes (`recompute.js`), the screen's rules (`view.js`) and the reader itself (`reader.js`). `index.js` is the one door; `fixtures/nodes.js` is the synthetic recording the tests read. |
 | `src/jobs/` | The job list (P3.3): the field table (`fields.js`), the project's row (`row.js`), the heartbeat line (`heartbeat.js`), the list and its wiring (`list.js`), what the screen says (`lines.js`) and the scope scan (`scope.test.js`). `index.js` is the one door; the section below is the rule sheet. |
 | `src/audio/` | The voice ports and their fakes (P3.4): the capture path (`audio-in.js`), transcription (`stt.js`), speech output (`tts.js`), the transcript-to-message rule (`message.js`) and the pipeline that wires them (`pipeline.js`). **No engine, no device, no SDK**: `index.js` is the one door, and its test scans the directory for exactly that. |
-| `src/voice/` | The voice screen (P3.5): the interrupt switch and the pure decision it gates (`interrupt.js`), the screen itself — the queue, P1.4's offline refusal, P1.2's lease and D122's microphone state (`screen.js`) — and the adapter that puts P3.4's pipeline behind P3.6's speaker port (`speaker.js`). **No engine, no device, no database**: `index.js` is the one door, and its test scans the directory for exactly that. |
+| `src/voice/` | The voice screen (P3.5) and the spoken confirmation (P6.12): the interrupt switch and the pure decision it gates (`interrupt.js`), the screen itself — the queue, P1.4's offline refusal, P1.2's lease and D122's microphone state (`screen.js`) — the adapter that puts P3.4's pipeline behind P3.6's speaker port (`speaker.js`), and the dialogue that routes a transcript, speaks a read-back and waits (`dialogue.js`). **No engine, no device, no database**: `index.js` is the one door, and its test scans the directory for exactly that. |
 | `src/boundary.test.js` | The scan that says **which files may write a credential** (below). |
 | `src/dependencies.test.js` | The scan that says **which packages the app is made of**: `expo`, `react` and `react-native` are declared, every bare import under `index.js` and `src/` is declared, and `package-lock.json` is the lockfile `npm ci` installs. It is what makes `eas build` able to find an SDK. |
 | `src/skeleton/` | The trivial module and test that proved the runner runs (P3.1's red step). |
@@ -1377,9 +1377,12 @@ sentence the plan writes for this task and nothing else, and says so in
 table is the thing to compose with, deliberately and with its own tests. The
 same is true of P6.10, which widens the offline refusal later.
 
-**P6.12's seam is left and none of it is implemented.** The spoken confirmation
-builds on this task later: the seam is `accept` (the one door a message goes
-through) and the pipeline's events, and nothing here reads a message back.
+**P6.12's seam is `accept` and the pipeline's events, and it is taken.**
+P3.5 left the screen with one door for a message and no speech of its own; P6.12
+(below) passes the screen an optional `utterance` delegate, so a final
+transcript is routed instead of accepted, and the words the router calls agent
+text go back through `accept` -- which is why the offline refusal still stands
+over the voice path. Absent the delegate the screen is what P3.5 shipped.
 
 **The scan, and what it keeps true.** `src/voice/index.test.js` pins the
 module's files **at every depth** (the walk is recursive and the recursion has
@@ -1429,8 +1432,8 @@ dropped by name now, and the two reporters (TAP's `not ok N - name` and the spec
 reporter's `✖ name`) yield the same list. And the table itself had gone stale:
 two rows named two of the three tests their mutation really reddens, because the
 third test was added to the suite after those rows were written. The whole table
-was regenerated from the script's output, and all 42 rows now agree with it
-name for name -- which is the comparison a reader can repeat, so it is worth
+was regenerated from the script's output, and all 43 rows now agree with it
+name for name (the 43rd is P6.12's, added with the dialogue below) -- which is the comparison a reader can repeat, so it is worth
 repeating after any change to this suite. That script runs this module's own
 suite (`node --test 'src/voice/*.test.js'`, from `mobile/`) and not the app's
 whole one, because the mutations are all here and a failure in a neighbouring
@@ -1440,7 +1443,7 @@ node** rather than assuming one (this repository's base image keeps node off
 the pristine suite must pass first, with a test count, because `node --test`
 exits 0 over a glob that matched nothing, and then a mutation that *must* be
 caught is planted before any real one is trusted. `npm test` --
-`node --test "src/**/*.test.js"`, the app's whole suite, **430 tests, all
+`node --test "src/**/*.test.js"`, the app's whole suite, **665 tests, all
 passing** -- is what the pull request reports as the module's verification.
 
 **The column names the tests that went red; it does not count them**, for the
@@ -1499,6 +1502,81 @@ the two apart -- so it is written down here rather than claimed as a kill.
 | `the README's tokens are in the scan's order` | `the README's rule table and the scan are the same list` |
 | `the README names every token the scan carries` | `the README's rule table and the scan are the same list` |
 | `the README loses no rule row` | `the README's rule table and the scan are the same list` |
+| `an unheard read-back is dropped, and cannot be confirmed later` (P6.12) | `an unheard read-back cannot be confirmed, and nothing is sent on an unconfirmed transcript` and `the plan, sentence one: a destructive command speaks the read-back from the resolved target and waits` |
+
+### The spoken confirmation (P6.12)
+
+`src/voice/dialogue.js` is the speech P6.1's router, P6.2's machine and P6.5's
+prompt queue are wired into, and it is the spoken half of the path
+`src/text/input.js` (P6.9) built for a keyboard. `createVoiceDialogue({ pipeline,
+send, now, newId, router?, confirm? })` — `send` is the sink for **agent text**,
+and the app wires it to the screen's own `accept`, so the offline refusal and the
+app's one write path still stand over the voice path.
+
+**The routing.** One final transcript goes through `routeUtterance`: agent text
+is the client's, an app command is this module's, and a wake-word utterance that
+matched no command is answered with P6.1's own sentence and **never forwarded**
+(D164's fail-closed half). The four app commands this screen does not own —
+switch-project, talk-to-agent, where-am-i and list — answer `elsewhere` rather
+than being re-implemented here: they are P6.8's and P3.3's.
+
+**A destructive command is a resolved target, never a parse.** P6.1's grammar
+holds no destructive row at all, deliberately, and nothing in the merged tree
+resolves a verb and a target from an utterance — `Fugaro, cancel run 42` is *not
+understood*, and a test asserts exactly that. So `propose({ text, verb, target,
+actionId })` takes the command the app has already resolved — the run id it
+looked up, or the repository, PR and head it read — and does the half that is
+the phone's: run it through the machine and **speak** P6.2's read-back, built
+from the resolved target and nothing else. A target guessed from the speaker's
+own words would be the paraphrase D47's Rule forbids, so
+`Fugaro, cancel the docs refactor` against `run-42` is read back as `run-42`.
+
+**An unheard read-back is dropped, and that is this task's headline rule.** The
+read-back is the whole of D47's Rule: the speaker confirms what they *heard*.
+So the speech is awaited, and a read-back that did not play to the end — the
+output port refused it, or the user barged in mid-sentence — is **aborted in the
+machine before `propose` answers**, with the honest code
+`read-back-not-spoken`. Leaving it pending is the failure D169 exists to
+prevent: a question the speaker was never told, still answerable by saying the
+phrase. `src/voice/mutation-proof.sh` proves this one by inverting the condition.
+
+**A confirmation is one utterance, later, and about a target that still holds.**
+The phrase must be its own utterance (the machine refuses the utterance that
+issued the command, and one carrying a command *and* the phrase); the phrase is
+P6.2's answer rather than a grammar here, so "confirm it", "conform" and a bare
+"yes" confirm nothing — with the wake word they are `not-understood`, and
+without it P6.1 forwards them to the agent as text (D164); and one confirmation
+authorises one action, so a replay is refused by the machine's ledger. The
+timeout is P6.2's, measured on D117's injected clock, and it **names itself**:
+`confirmation-expired` with the action dropped, not `no-pending-action`.
+
+**A merge is re-read at confirmation time, and the read-back says so.** D168's
+amendment is the reason — a prompt can be answered days later, and "approve the
+merge" answered days later approves whatever the PR then holds. So a caller may
+pass the target **as it is now** when the phrase arrives: the head it has just
+re-read. A head that moved is `different-target`, nothing is authorised, and the
+dialogue proposes the command again against the fresh target so the sentence
+spoken next names the head that is there now. The speaker hears the current head
+and confirms again; nothing is ever merged against a head they did not hear.
+
+**A queued prompt is not spoken over the user.** `pause({ queues, active, digest,
+presence, caps, switch })` composes P6.5: nothing is spoken while the assistant
+is speaking, while a turn is open, or while a read-back is outstanding — a
+question is not read over the user *or* over the question they still have to
+answer. At a real pause one sentence is spoken: the interrupt reason's (P6.5's
+policy, D160's wider table read through D127's switch) or P6.5's own count
+("One question waiting"), and the active installation's due prompts are marked
+heard in the queue handed back to the caller.
+
+**What a confirmed action does not do, stated rather than left to be found.**
+The machine's record is **returned, not written**: `delivered: false` with
+`no-action-write`. The client this app ships has one send — `send(text)` — which
+writes `{ id, sender, text, at, mac }` and cannot carry an action, and sending a
+destructive command as its own text is exactly what D169 forbids. So nothing is
+written rather than the wrong thing; carrying the record is P6.7's (the
+consumer) and P6.10's (the offline gate), and P6.9's typed path makes the same
+call in the same words. **Nothing is sent on an unconfirmed transcript**: every
+test that ends without a confirmation asserts the `send` spy was never called.
 
 ## What is not verified here
 
@@ -1610,9 +1688,11 @@ the two apart -- so it is written down here rather than claimed as a kill.
   pipeline, so "ack only after it has spoken" now runs over the real audio
   ports. What is still not exercised: **a real engine** (the first store build
   is voiceless, and the pipeline is driven by P3.4's fakes), **P6.12's spoken
-  confirmation** (the seam is left, and nothing of it is implemented) and
-  **P6.5's wider interrupt table**, which the screen deliberately does not
-  compose with -- `src/voice/interrupt.js` and the P3.5 section above say so.
+  confirmation as a device feature** (the logic is below and is tested over the
+  fakes; what a real engine hears and how a real voice sounds is check 85/86)
+  and **P6.5's wider interrupt table**, which the screen deliberately does not
+  compose with -- `src/voice/interrupt.js` and the P3.5 section above say so
+  (P6.12's dialogue composes with it, in the pause below).
   The pipeline takes the message's `sender`, `newId` and `now` as injected
   values precisely because P3.6 owns them (D117's server-anchored clock, the
   account's identity), and **redaction, the MAC and the write are P3.6's**:
