@@ -403,9 +403,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// applied to it would refuse calls the gateway forwards.
 		refusal, err := s.requestRefusal(shared, cl.body)
 		if err != nil {
-			// A body the gateway cannot read at all: its own path answers this
-			// as a 400 of the same kind, so it is the same refusal here.
-			refusal = err.Error()
+			// The project's own prices could not be read: a state the caller
+			// cannot fix, and never a refusal of what it sent.
+			s.refuse(w, StatusUnavailable, ErrorStateUnavailable, "the project's model prices could not be read")
+			return
 		}
 		if refusal != "" {
 			// The gateway's own sentence, and the one thing this service's

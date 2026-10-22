@@ -49,16 +49,21 @@ const requestPinWhere = "the project's model allow-list"
 // Anthropic upstream, where a call it accepts goes whatever its model is called
 // (internal/credsvc's forward). A caller that has no route has no routed call.
 //
-// A body the gateway cannot read at all is returned as an error rather than a
-// refusal — the same split the gateway's own path makes, where parseRequest's
-// error and check's violation are both a 400 but only the violation is a
-// violation — and the caller answers both the same way.
+// A body the gateway cannot read at all is a refusal too — the gateway's own
+// path answers parseRequest's error and check's violation alike, as a 400 — so
+// it comes back as the refusal's sentence. An error is the service's own state
+// and not the caller's: the project's prices could not be read, which the
+// caller cannot fix and which is answered as the unavailability it is.
 func (s *Server) requestRefusal(shared *projectpolicy.Policy, body []byte) (string, error) {
 	table, err := requestPriceTable(shared, s.now())
 	if err != nil {
 		return "", err
 	}
-	return gateway.RequestRefusal(body, "", requestPin(shared), table, nil)
+	refusal, err := gateway.RequestRefusal(body, "", requestPin(shared), table, nil)
+	if err != nil {
+		return err.Error(), nil
+	}
+	return refusal, nil
 }
 
 // requestPin is the model rule this service holds a call to: the models the
