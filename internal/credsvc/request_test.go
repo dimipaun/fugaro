@@ -178,15 +178,36 @@ func TestServiceForwardsARequestTheGatewayAccepts(t *testing.T) {
 // to these rules either (its own forwardFree) — so a check applied to it would
 // refuse calls the gateway forwards. This is the regression guard for where
 // the check is called.
+//
+// Both projects are exercised, because the no-allow-list refusal is a rule of
+// the same check and belongs on the same path: with a project that publishes
+// none, a refusal written outside the Messages branch — beside the policy read,
+// say — would refuse a count the gateway forwards, and this test is what
+// reddens for it. (The mint is above the policy read altogether, so the model
+// rule cannot reach it whatever the branch does.)
 func TestServiceAppliesTheCheckOnlyToMessages(t *testing.T) {
-	s := allowedPolicy(t, testModel)
-	resp, body := s.callPath(t, CountTokensPath,
-		`{"model":"`+testModel+`","messages":[{"role":"user","content":"hi"}]}`)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("the token count is answered %d, want 200: %s", resp.StatusCode, body)
-	}
-	if n := s.up.Count(); n != 1 {
-		t.Errorf("the upstream saw %d requests, want 1", n)
+	for _, tc := range []struct {
+		name  string
+		build func(*svc, *Config)
+	}{
+		{name: "a project that publishes an allow-list", build: func(s *svc, _ *Config) {
+			s.policy.shared = decodeTestPolicy(t, testPolicyDocAllowed(testModel))
+		}},
+		{name: "a project that publishes none", build: func(s *svc, _ *Config) {
+			s.policy.shared = decodeTestPolicy(t, testPolicyDocNoAllowList())
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newSvcWith(t, tc.build)
+			resp, body := s.callPath(t, CountTokensPath,
+				`{"model":"`+testModel+`","messages":[{"role":"user","content":"hi"}]}`)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("the token count is answered %d, want 200: %s", resp.StatusCode, body)
+			}
+			if n := s.up.Count(); n != 1 {
+				t.Errorf("the upstream saw %d requests, want 1", n)
+			}
+		})
 	}
 }
 

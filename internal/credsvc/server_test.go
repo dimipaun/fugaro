@@ -75,7 +75,9 @@ func testSlug(t *testing.T, repo string) string {
 // requires. A project that publishes none is refused fail-closed (the owner's
 // ruling of 2026-10-22, request.go), so a fixture whose calls are forwarded is
 // a fixture whose policy publishes a list — and testPolicyDocNoAllowList is the
-// document that publishes none, for the tests about the refusal itself.
+// one written for the tests about the refusal itself. (Other fixtures' own
+// policy documents publish none too — sharedJobsPolicyDoc, say — but those are
+// documents of another node, written for tests that never serve a call.)
 var testBudgetDoc = `{"mode": "enforce", "per_run_usd": 5, "allowed_models": ["` + testModel + `"]}`
 
 // testPolicyDoc is the project's published policy as an operator writes it:
