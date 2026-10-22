@@ -12,12 +12,12 @@ import (
 // when the installation turns the service off.
 const credentialsRunbook = "docs/credentials-service/runbook.md"
 
-// TestCredentialsRunbookNamesEveryOwnerStep: the outage runbook exists and
+// TestDocsCredentialsRunbookNamesEveryOwnerStep: the outage runbook exists and
 // names, as a real command, every step the task requires. Each pin is a
 // command the code already has — a runbook that names a command Fugaro does
 // not have is worse than no runbook, because the operator reaches for it while
 // something is already wrong.
-func TestCredentialsRunbookNamesEveryOwnerStep(t *testing.T) {
+func TestDocsCredentialsRunbookNamesEveryOwnerStep(t *testing.T) {
 	flat := flattenDoc(readDoc(t, credentialsRunbook))
 	for _, want := range []string{
 		// The stop flag: the one command that stops the service issuing.
@@ -67,11 +67,11 @@ func TestCredentialsRunbookNamesEveryOwnerStep(t *testing.T) {
 	}
 }
 
-// TestCredentialsRunbookIsOwnerRunOnly: every step is the owner's, and the
+// TestDocsCredentialsRunbookIsOwnerRunOnly: every step is the owner's, and the
 // runbook says so once, plainly. A step an agent might take — a credential
 // set, a mark cleared, a project switched off — is exactly the class of action
 // that must not be reachable from a run.
-func TestCredentialsRunbookIsOwnerRunOnly(t *testing.T) {
+func TestDocsCredentialsRunbookIsOwnerRunOnly(t *testing.T) {
 	flat := flattenDoc(readDoc(t, credentialsRunbook))
 	for _, want := range []string{
 		"owner runs every step",
@@ -95,13 +95,13 @@ func TestCredentialsRunbookIsOwnerRunOnly(t *testing.T) {
 	}
 }
 
-// TestCredentialsRunbookOrdersTheOptOut: the opt-out is ordered, and the order
+// TestDocsCredentialsRunbookOrdersTheOptOut: the opt-out is ordered, and the order
 // is the part that is easy to get wrong. Every repository root is re-applied
 // *before* the two installation steps (re-review N2): the per-repository roots
 // are what read the service's address, so removing the service first leaves
 // them pointing at a host that is gone. This checks the order the runbook
 // writes, not merely that it writes both.
-func TestCredentialsRunbookOrdersTheOptOut(t *testing.T) {
+func TestDocsCredentialsRunbookOrdersTheOptOut(t *testing.T) {
 	flat := flattenDoc(readDoc(t, credentialsRunbook))
 	repo := strings.Index(flat, "re-apply every repository root")
 	stateRm := strings.Index(flat, "terraform state rm 'module.installation.google_secret_manager_secret.credentials_bundle[0]'")
@@ -113,13 +113,13 @@ func TestCredentialsRunbookOrdersTheOptOut(t *testing.T) {
 	}
 }
 
-// TestCredentialsRunbookSaysWhatARotationDoesInFlight: rotating the bundle is
+// TestDocsCredentialsRunbookSaysWhatARotationDoesInFlight: rotating the bundle is
 // the one operator step that touches runs already going, and the honest answer
 // is bounded rather than empty. A rotation is read at the next `latest` read,
 // so a call in flight keeps the credential it was given, a run that has not
 // called yet gets the new one, and a rotation that removes a credential a run
 // is mid-way through is what the wait-or-switch path answers.
-func TestCredentialsRunbookSaysWhatARotationDoesInFlight(t *testing.T) {
+func TestDocsCredentialsRunbookSaysWhatARotationDoesInFlight(t *testing.T) {
 	flat := flattenDoc(readDoc(t, credentialsRunbook))
 	for _, want := range []string{
 		"a run in flight",
