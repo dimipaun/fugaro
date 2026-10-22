@@ -89,8 +89,67 @@ func TestDocsGitProvidersStateWhatReachesTheAgentExactly(t *testing.T) {
 	}
 }
 
-// cenMintRequestStruct reads credsvc.MintRequest's own struct body out of
-// internal/credsvc/github.go, so that the fields the document claims are absent
+// TestSecurityMdStatesTheAppKeyIsTheServicesWhenTheServiceIsOn is the headline
+// security claim of this task's documents: once an installation opts into the
+// credentials service, the App's key is the service's — the run's installation
+// token is minted by the service for the run's own repository and permission
+// set, and the job holds no key to sign with — and the job's own accessor and
+// mount leave in the release that also stops the runner reading them, which has
+// NOT landed on this tree. SECURITY.md has to state both halves exactly: a
+// document that claimed the key was out of the job today would be false, and one
+// that left the App's key as "the agent can read it from /proc, always" would
+// hide what the opt-in changes.
+//
+// Mutations (verified, run and restored): the "that release has not landed on
+// this tree" caveat deleted from the new section → FAIL, because
+// config.ServiceHeldSecretNames is still empty in internal/config/providers.go
+// and the document would claim a drop the code does not make; the caveat put
+// back the other way (the list filled with GitHubAppKeySecret while the section
+// still says the job mounts the key) → FAIL in the other direction; the
+// "no code path in the job mints a token or reads the App key once the service
+// is on" clause deleted → FAIL, because that is the property the opt-in gives
+// today and the sentence the residual in "Known limits" points at.
+func TestSecurityMdStatesTheAppKeyIsTheServicesWhenTheServiceIsOn(t *testing.T) {
+	sec := readDoc(t, "SECURITY.md")
+
+	for _, want := range []string{
+		"### The GitHub App's key, when the credentials service holds it",
+		"**Signing is the service's, not the job's.**",
+		"`fugaro creds set github-app-key`",
+		"A run's installation token is **minted by the service**",
+		"A mint call carries the App's ID and nothing else — there is no repository field to fill in.",
+		"**calling job's account is bound to**",
+		"(see \"The GitHub App's key, when the credentials service holds it\" above)",
+		"no code path in the job mints a token or reads the App key once the service is on",
+	} {
+		if !strings.Contains(sec, want) {
+			t.Errorf("SECURITY.md does not say %q: with the credentials service on the App's key is the service's and the run's token is minted by it (D145), and this document is where a reader is told what that reaches", want)
+		}
+	}
+
+	// The permission set the document names is the code's, so a widening of
+	// either the mint or the in-job mint is a failing test here.
+	apptoken := readDoc(t, "internal/gitprov/github/apptoken.go")
+	if !strings.Contains(apptoken, "func RunTokenPermissions(") || !strings.Contains(sec, "`github.RunTokenPermissions`") {
+		t.Errorf("SECURITY.md tells a reader the minted token's reach is unchanged because it signs with `github.RunTokenPermissions`, and internal/gitprov/github/apptoken.go no longer spells that set out (or the document no longer cites it)")
+	}
+
+	// The caveat, held to the code: while the held-secrets list is empty the
+	// job still mounts the key, and the document has to say so; the day the
+	// list names it, the same sentence is the one that has to go.
+	const caveat = "that release has not landed on this tree"
+	if heldSecretsListNamesTheAppKey(t) {
+		if strings.Contains(sec, caveat) || strings.Contains(sec, "still mounts `FUGARO_GITHUB_APP_PRIVATE_KEY`") {
+			t.Errorf("internal/config/providers.go's ServiceHeldSecretNames names the App key — the job has given it up — and SECURITY.md still says the job keeps its accessor and its mount: the release landed and this document did not")
+		}
+	} else {
+		if !strings.Contains(sec, caveat) || !strings.Contains(sec, "still mounts `FUGARO_GITHUB_APP_PRIVATE_KEY`") {
+			t.Errorf("internal/config/providers.go's ServiceHeldSecretNames is still empty — the job keeps its accessor and its mount — and SECURITY.md does not say so plainly: this is the one claim in the document a reader would take as done today")
+		}
+	}
+}
+
+// cenMintRequestStruct reads credsvc.MintRequest's own struct body out of// internal/credsvc/github.go, so that the fields the document claims are absent
 // are read from the type rather than from the prose beside it.
 func cenMintRequestStruct(t *testing.T, src string) string {
 	t.Helper()
