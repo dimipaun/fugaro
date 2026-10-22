@@ -242,14 +242,18 @@ func Start(ctx context.Context, o Options) (*Server, error) {
 		// Tier A (oauth.go): the read timeout a subscription call is held to.
 		s.client = oauthUpstreamClient(s.client)
 	}
-	// A service upstream (C1.15, service.go) keeps the client as it is. The
-	// client's timeout is the right shape for it -- none: the call is
-	// cancelled by the client that asked for it, by the stage's deadline and
-	// by Close -- and the service may take a cold start's worth of seconds
-	// to answer, so a bound here would be the one thing that cut a working
-	// call. One that never answers is cut by the run's own deadline, and a
-	// service that is not reachable at all fails the connection instead
-	// (D143's halt).
+	if o.Upstream.Kind == KindService {
+		// C1.15 (service.go): the wait for the service's response headers is
+		// bounded, and nothing else is. The client's own timeout stays as it
+		// is -- none: the call is cancelled by the client that asked for it,
+		// by the stage's deadline and by Close, and the service may stream a
+		// model answer for minutes -- and a service that is not reachable at
+		// all fails the connection instead (D143's halt). What is left
+		// unbounded without this is a connection that never answers and
+		// never fails either, which would hang the call until the stage's
+		// deadline instead of halting the run.
+		s.client = serviceUpstreamClient(s.client)
+	}
 	s.base, s.cancelBase = context.WithCancel(context.WithoutCancel(ctx))
 	s.hctx, s.hstop = context.WithCancel(s.base)
 	s.gctx, s.gstop = context.WithCancel(context.WithoutCancel(ctx))

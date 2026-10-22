@@ -374,32 +374,49 @@ func keyFrom(h http.Header) string {
 
 const redacted = "[redacted]"
 
-// redactWriter replaces every occurrence of key in what is written through
-// it, also when a chunk boundary splits one. It holds back only a tail that
-// could still become the key, so a stream is delayed by nothing else.
+// redactWriter replaces every occurrence of every key in what is written
+// through it, also when a chunk boundary splits one. It holds back only a
+// tail that could still become one of the keys, so a stream is delayed by
+// nothing else.
+//
+// It takes more than one key because a service call carries two credentials
+// of this run -- the job's ID token in the Authorization header and the run's
+// own identity beside it (C1.15, HeaderRunIdentity) -- and a body the service
+// echoes back may carry either. An empty key is dropped rather than kept: an
+// empty needle would match everywhere.
 type redactWriter struct {
 	w    io.Writer
-	key  []byte
+	keys [][]byte
 	hold []byte
 }
 
-func newRedactWriter(w io.Writer, key string) *redactWriter {
-	return &redactWriter{w: w, key: []byte(key)}
+func newRedactWriter(w io.Writer, keys ...string) *redactWriter {
+	r := &redactWriter{w: w}
+	for _, k := range keys {
+		if k != "" {
+			r.keys = append(r.keys, []byte(k))
+		}
+	}
+	return r
 }
 
 func (r *redactWriter) Write(p []byte) (int, error) {
-	if len(r.key) == 0 {
+	if len(r.keys) == 0 {
 		return r.w.Write(p)
 	}
 	buf := append(r.hold, p...)
 	r.hold = nil
-	buf = bytes.ReplaceAll(buf, r.key, []byte(redacted))
-	// Keep the longest suffix that is a proper prefix of the key.
+	for _, k := range r.keys {
+		buf = bytes.ReplaceAll(buf, k, []byte(redacted))
+	}
+	// Keep the longest suffix that is a proper prefix of any key.
 	keep := 0
-	for n := min(len(r.key)-1, len(buf)); n > 0; n-- {
-		if bytes.HasSuffix(buf, r.key[:n]) {
-			keep = n
-			break
+	for _, k := range r.keys {
+		for n := min(len(k)-1, len(buf)); n > keep; n-- {
+			if bytes.HasSuffix(buf, k[:n]) {
+				keep = n
+				break
+			}
 		}
 	}
 	r.hold = append([]byte(nil), buf[len(buf)-keep:]...)

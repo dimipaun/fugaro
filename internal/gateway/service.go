@@ -262,7 +262,7 @@ func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) 
 	}
 	sv := s.o.Upstream.Service
 	if sv == nil || sv.IDToken == nil || sv.RunIDToken == nil {
-		return nil, errors.New("the credentials service's identity isn't available")
+		return nil, fmt.Errorf("%w: the credentials service's identity isn't available", errServiceUnidentified)
 	}
 	run := sv.RunIDToken()
 	if run == "" {
@@ -270,14 +270,14 @@ func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) 
 		// identity is not a call this gateway makes (D143): the run's
 		// identity is what the service verifies the run with, and there is
 		// no second way to be admitted.
-		return nil, errors.New("the run's identity token isn't available")
+		return nil, fmt.Errorf("%w: the run's identity token isn't available", errServiceUnidentified)
 	}
 	id, err := sv.IDToken(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("the job's identity token isn't available: %w", err)
+		return nil, fmt.Errorf("%w: the job's identity token isn't available: %v", errServiceUnidentified, err)
 	}
 	if id == "" {
-		return nil, errors.New("the job's identity token isn't available")
+		return nil, fmt.Errorf("%w: the job's identity token isn't available", errServiceUnidentified)
 	}
 	h := forwardHeaders(in)
 	s.scrubToken(h)
@@ -300,6 +300,49 @@ func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) 
 // is, and in both places so a Route built in code past validation cannot
 // reach a provider through a service run either.
 var errServiceOnRoute = errors.New("a provider route is never reached through the credentials service: a route is a provider's own endpoint and is called with the job's own key, which a cascade run does not have (D143)")
+
+// errServiceUnidentified is every way a service call fails before it is sent
+// for want of an identity: the run's own token, or the job's Google ID token,
+// which only the metadata server mints. They are one error because the run's
+// reaction to all of them is one -- there is no credential of the job's to
+// fall back to (D143), so a call that cannot present an identity is a call
+// that will never be admitted, and the run halts budget_unavailable-style
+// rather than being answered 502 once per call until its deadline.
+//
+// Nothing is ever sent without both tokens: serviceUpstream attaches them and
+// returns this error before any request exists, so a caller can only see it
+// with nothing on the wire.
+var errServiceUnidentified = errors.New("this job cannot present its identity to the credentials service")
+
+// serviceResponseHeaderTimeout bounds how long a service call waits for the
+// service's response headers: a connection that never answers at all is one
+// this run cannot be served by, and without a bound it would hang until the
+// stage's own deadline instead of halting (D143). It covers the wait for the
+// headers only, never the body: the service streams a model answer, and the
+// gateway never buffers a stream. The bound is generous on purpose -- the
+// service may be cold-starting, and it may retry the same request on another
+// credential before its first byte (C1.11) -- so it is a backstop for a
+// connection that is gone, not a per-call limit. A var, like endStageWait and
+// oauthResponseHeaderTimeout, so a test can shorten it.
+var serviceResponseHeaderTimeout = 10 * time.Minute
+
+// serviceUpstreamClient is the client a service call is made with: the
+// gateway's own, with the response-header bound above. It states the bound
+// here rather than inheriting it from the order Start happens to build its
+// client in, exactly as oauthUpstreamClient does.
+func serviceUpstreamClient(c *http.Client) *http.Client {
+	out := *c
+	tr := c.Transport
+	if tr == nil {
+		tr = http.DefaultTransport
+	}
+	if t, ok := tr.(*http.Transport); ok {
+		nt := t.Clone()
+		nt.ResponseHeaderTimeout = serviceResponseHeaderTimeout
+		out.Transport = nt
+	}
+	return &out
+}
 
 // validTier reports whether tier is one of the three of the contract.
 func validTier(t string) bool { return t == TierA || t == TierB || t == TierC }
@@ -576,6 +619,19 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 	}
 	e, ok, err := readServiceRefusal(resp.StatusCode, head)
 	if !ok {
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			// A 401/403 that is not this contract's refusal is the
+			// platform's own layer answering: Cloud Run IAM refusing this
+			// job's invoker grant, or a proxy in front of the service. The
+			// contract's own 403 (unverified_job_identity) is JSON and was
+			// read above, so what is left here is a caller the service never
+			// admitted. It is not relayed -- the body is the platform's, and
+			// it names the project and the caller -- and it is not a model
+			// error the service passed on: every call this run makes will be
+			// refused the same way, so the run halts budget_unavailable-style
+			// (D143) rather than being answered 401 once per call.
+			return s.haltService(w, stateDetailUnadmitted), true
+		}
 		return resp.StatusCode, false // a model error the service relayed
 	}
 	if err != nil {
@@ -622,6 +678,14 @@ const (
 	// stateDetailUnreadable is an answer this gateway could not read as the
 	// service's own, or could not account a call by.
 	stateDetailUnreadable = "the credentials service answered with something this gateway cannot read"
+	// stateDetailUnadmitted is the service's own front door refusing this
+	// job: an answer that is neither a model answer nor the contract's typed
+	// refusal, on the two statuses the platform's IAM layer uses.
+	stateDetailUnadmitted = "the credentials service refused this job's call (check the job's invoker grant on the service)"
+	// stateDetailUnidentified is a call this job could not present its
+	// identity on: the run's own token, or the Google ID token the metadata
+	// server mints. Nothing was sent.
+	stateDetailUnidentified = "this job could not present its identity to the credentials service (the metadata server or the run's own identity was not available)"
 )
 
 // refusalDetail is the detail for a typed refusal the run cannot be served

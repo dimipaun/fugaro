@@ -17,6 +17,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
@@ -116,6 +117,13 @@ func (r *run) startGateway(ctx context.Context) error {
 		return err
 	}
 	o.Upstream = up
+	// The service's answer reaches the run here (C1.15): the typed
+	// `exhausted_until` is what ends the stage in flight and starts the wait
+	// (C1.17, D138). The same answers carry the tier, the credential's name
+	// and the switch, which C1.16's ledger and C1.19's record consume; this
+	// is the one hand-off C1.15 owns, and an answer that is not the exhausted
+	// one is left alone rather than guessed at here.
+	o.OnServiceAnswer = r.serviceAnswer
 	routes, err := r.gatewayRoutes()
 	if err != nil {
 		return errors.New(r.redact(err.Error()))
@@ -261,6 +269,34 @@ func (r *run) serviceUpstream() (gateway.Upstream, error) {
 // execName is what a local invocation is called, for the sentences that have
 // to name it.
 const execName = "fugaro exec"
+
+// serviceAnswer is where the credentials service's answer reaches the run
+// (C1.15's hand-off to the runner, C1.17's reaction to it). The gateway calls
+// it from its request path, once per answer, from the calls of every stage
+// that is in flight, so it takes no lock of its own beyond noteExhausted's
+// and does nothing a caller could block on.
+//
+// Only the exhausted answer is acted on. It is the one answer that is a
+// decision about the stage in flight: the stage ends -- it did not fail --
+// and the runner waits for the reset and resumes it (C1.17, D138). The tier a
+// call settled by, the credential's name and the switch are C1.16's ledger
+// and C1.19's record to consume; reading them here as well would be a second
+// reading of one contract, and this release has one reader per field.
+//
+// The typed answer is turned back into the contract's own type
+// (credsvc.ExhaustedUntil) rather than a runner type of its own: the wire
+// contract is the only spelling of it, and noteExhausted's caller in a test
+// hands it the same shape.
+func (r *run) serviceAnswer(a gateway.ServiceAnswer) {
+	if a.Exhausted == nil {
+		return
+	}
+	tried := make([]credsvc.Tried, 0, len(a.Exhausted.Tried))
+	for _, tr := range a.Exhausted.Tried {
+		tried = append(tried, credsvc.Tried{Name: tr.Name, Tier: tr.Tier, Reason: tr.Reason})
+	}
+	r.noteExhausted(credsvc.ExhaustedUntil{ResetAt: a.Exhausted.ResetAt, Tried: tried})
+}
 
 // metadataIDToken mints the job service account's Google ID token for
 // audience from the metadata server: the credential Cloud Run IAM admits for

@@ -1948,6 +1948,13 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 		if !errors.As(err, &ex) {
 			return res, ok, err
 		}
+		// The attempt that the exhausted answer ended spent what it spent,
+		// and it is a whole agent process: its tokens go on the run's total
+		// here, before the wait, because the caller's own countTokens only
+		// ever sees the last attempt of this stage (countTokens, halt.go).
+		// Without this a run could spend maxCredentialResumes attempts a
+		// stage and have the ceiling count one.
+		r.countTokens(res)
 		if resumes++; resumes > maxCredentialResumes {
 			h := runstore.Halt{Reason: runstore.HaltNoCredential, Scope: "run", At: r.d.Now().UTC(),
 				Detail: fmt.Sprintf("the credential service answered that no credential was usable %d times while stage %s ran, the last until %s; the run stopped rather than resume the stage again (see 'fugaro accounts ls' for the accounts' states)",

@@ -632,6 +632,17 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 
 	up, sent, err := s.upstreamRequest(ctx, r, rt, body)
 	if err != nil {
+		if s.o.Upstream.Kind == KindService && errors.Is(err, errServiceUnidentified) {
+			// C1.15 (service.go), D143: a service call this job cannot
+			// present its own identity on is a run the service cannot serve
+			// at all. The metadata server is the only place the job's ID
+			// token comes from and the run's own token is the only identity
+			// the service verifies it by, so this is a halt -- like an
+			// unreachable service -- rather than one 502 per call until the
+			// stage's deadline. Nothing was sent: nothing to charge.
+			s.haltService(w, stateDetailUnidentified)
+			return zeroOutcome(p.model, false)
+		}
 		writeError(w, http.StatusBadGateway, "api_error", "fugaro: "+err.Error())
 		return zeroOutcome(p.model, false)
 	}
@@ -681,6 +692,18 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		// service relayed) is not touched: it goes on to the pump below.
 		if st, done := s.serviceAnswer(w, resp, true); done {
 			*status = st
+			// A 2xx this gateway could not account by is a model answer the
+			// service served and the run must still pay for: it settles at
+			// its reservation, exactly as an unparsed 2xx does, rather than
+			// handing the run a whole answer for nothing. Every other answer
+			// `done` covers is a refusal -- the service's own, or a job its
+			// front door would not admit -- and no model generated anything
+			// for it.
+			if resp.StatusCode/100 == 2 {
+				reserved.unparsed = true
+				s.logUsageUnparsed(p.model, rt.provider, "no_tier", nil)
+				return reserved
+			}
 			return zeroOutcome(p.model, true)
 		}
 	}
@@ -711,17 +734,20 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		// credential is the one in the request, read at request time.
 		key := keyFrom(up.Header)
 		redactHeaders(w.Header(), key)
-		rw = newRedactWriter(w, key)
-		out = rw
 		if s.o.Upstream.Kind == KindService {
 			// The run's own identity travels on the service call as well
 			// (HeaderRunIdentity), and it is a Firebase token for this run:
-			// it is dropped from an answer that echoes it, exactly as the
-			// bearer credential is. Its body is not scanned for it -- the
-			// service's own answers are never relayed (serviceAnswer) and
-			// the model never receives this header.
-			redactHeaders(w.Header(), up.Header.Get(HeaderRunIdentity))
+			// it is dropped from an answer that echoes it -- headers and
+			// body both -- exactly as the bearer credential is. The model
+			// never receives the header, so the only body that can carry it
+			// is one the service itself wrote.
+			run := up.Header.Get(HeaderRunIdentity)
+			redactHeaders(w.Header(), run)
+			rw = newRedactWriter(w, key, run)
+		} else {
+			rw = newRedactWriter(w, key)
 		}
+		out = rw
 	}
 	w.WriteHeader(resp.StatusCode)
 	rc := http.NewResponseController(w)
@@ -1179,6 +1205,13 @@ func (s *Server) forwardFree(w http.ResponseWriter, r *http.Request, rt route) {
 	defer stopHalt()
 	up, _, err := s.upstreamRequest(ctx, r, rt, body)
 	if err != nil {
+		if s.o.Upstream.Kind == KindService && errors.Is(err, errServiceUnidentified) {
+			// C1.15 (service.go), D143: as a Messages call's, a count this
+			// job cannot present its identity on halts the run rather than
+			// being answered 502 per call. Nothing was sent.
+			s.haltService(w, stateDetailUnidentified)
+			return
+		}
 		writeError(w, http.StatusBadGateway, "api_error", "fugaro: "+err.Error())
 		return
 	}
@@ -1219,13 +1252,17 @@ func (s *Server) forwardFree(w http.ResponseWriter, r *http.Request, rt route) {
 		// count_tokens call would hand the token to the agent.
 		key := keyFrom(up.Header)
 		redactHeaders(w.Header(), key)
-		rw = newRedactWriter(w, key)
-		out = rw
 		if s.o.Upstream.Kind == KindService {
 			// The run's identity is on this call too (HeaderRunIdentity),
-			// and is dropped from an answer that echoes it, as in forward.
-			redactHeaders(w.Header(), up.Header.Get(HeaderRunIdentity))
+			// and is dropped from an answer that echoes it -- headers and
+			// body both, as in forward.
+			run := up.Header.Get(HeaderRunIdentity)
+			redactHeaders(w.Header(), run)
+			rw = newRedactWriter(w, key, run)
+		} else {
+			rw = newRedactWriter(w, key)
 		}
+		out = rw
 	}
 	w.WriteHeader(resp.StatusCode)
 	rc := http.NewResponseController(w)
