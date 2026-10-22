@@ -79,6 +79,23 @@ func TestWizardCollectsEveryAnswerBeforeTheFirstApply(t *testing.T) {
 	}
 }
 
+// leftAt is where the run stopped, read from the stage: the interface's own
+// Left() — which is what the plan names — with Check's own Left held to it. A
+// stage whose two answers disagree is a stage the loop and a reader of the
+// Status would read differently.
+func leftAt(t *testing.T, s *wizardStage, st initflow.Status) initflow.Left {
+	t.Helper()
+	lf := s.Left()
+	if st.Left == nil {
+		return lf
+	}
+	if st.Left.Kind != lf.Kind || st.Left.Text != lf.Text || st.Left.Stage != lf.Stage {
+		t.Errorf("Check's Left (%s, %s: %s) and the stage's own Left() (%s, %s: %s) are two answers to one question",
+			st.Left.Kind, st.Left.Stage, st.Left.Text, lf.Kind, lf.Stage, lf.Text)
+	}
+	return lf
+}
+
 // askedByPrefix is whether the phase asked a question whose printed label
 // begins with the table's: the name question's label carries the suggestion's
 // provenance on the end of it.
@@ -185,10 +202,7 @@ func TestWizardNeedsYouNamesTheQuestionAndAKind(t *testing.T) {
 		if st.State != initflow.NeedsYou {
 			t.Fatalf("state %q, want needs-you: the run has no answers and no way to ask:\n%s", st.State, out)
 		}
-		lf := ws.Left()
-		if st.Left != nil {
-			lf = *st.Left
-		}
+		lf := leftAt(t, ws, st)
 		if lf.Kind != initflow.LeftCommand {
 			t.Errorf("kind %q, want %q: this run's answer is a flag, not a prompt", lf.Kind, initflow.LeftCommand)
 		}
@@ -214,10 +228,7 @@ func TestWizardNeedsYouNamesTheQuestionAndAKind(t *testing.T) {
 		if st.State != initflow.NeedsYou {
 			t.Fatalf("state %q, want needs-you: the input ended at the first question:\n%s", st.State, out)
 		}
-		lf := ws.Left()
-		if st.Left != nil {
-			lf = *st.Left
-		}
+		lf := leftAt(t, ws, st)
 		if lf.Kind != initflow.LeftPrompt {
 			t.Errorf("kind %q, want %q: the run stopped at a prompt, and a prompt is where the answer is", lf.Kind, initflow.LeftPrompt)
 		}
@@ -313,10 +324,7 @@ func TestWizardResumesAtTheUnansweredQuestion(t *testing.T) {
 			if st.State != initflow.NeedsYou {
 				t.Fatalf("state %q, want needs-you:\n%s", st.State, out)
 			}
-			lf := ws.Left()
-			if st.Left != nil {
-				lf = *st.Left
-			}
+			lf := leftAt(t, ws, st)
 			if lf.Kind != initflow.LeftPrompt {
 				t.Errorf("kind %q, want %q", lf.Kind, initflow.LeftPrompt)
 			}
