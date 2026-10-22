@@ -19,19 +19,33 @@ var pipeIntoPythonHeredocRE = regexp.MustCompile(`\|\s*python3?\s+(-\s+)?<<`)
 // is what reads the three results on a real installation. It is owner-run and
 // NOT RUN, and the point of this test is that the three claims the check is a
 // statement about are read out of the code rather than trusted to the prose,
-// and that the two things which are NOT true on this tree are stated in the
-// check itself:
+// and that the things which are NOT true on this tree are stated in the check
+// itself:
 //
 //   - C2.2's release has not landed: internal/config/providers.go's
 //     ServiceHeldSecretNames is still empty, so the job keeps its accessor and
 //     its container keeps the mount. A check that claimed the drop had happened
 //     would be false, and one that stayed silent about it would let a reader
 //     take the drop as done.
+//   - The keyless path is switched on by the job's environment naming the
+//     service, not by the opt-in: internal/gitprov/providers/providers.go opens
+//     the keyless provider only when FUGARO_CREDENTIALS_SERVICE_URL is set, and
+//     nothing on this tree puts that name on a job (no field of internal/infra,
+//     no module of deploy/terraform/gcp), so an opted-in runner still reads the
+//     App key and mints in the job today. A check that read "the mint is the
+//     service's" as the state of this tree would be false, and this is the check
+//     the owner runs after that release.
 //   - The service cannot be configured from its own deployment: the
 //     installation module puts three names on its container and
 //     credentialsServiceConfig refuses by name, so no mint can be made at all
 //     on this tree. The check has to say so, and it has to keep saying so for
 //     exactly as long as internal/cli/credentials_serve.go still refuses.
+//
+// One more thing is held to the code rather than to the prose: step 4's pass
+// condition. The pairing refusal is made in ServeHTTP, before the mint handler
+// is reached, and internal/credsvc/server.go's refuse writes the answer and no
+// audit line — so the check must expect NO audit line for it. It first expected
+// one ("always audited"), which a correct release would have failed.
 //
 // Mutations (verified, run and restored): "**No step of it has been run, and
 // nothing here is a claim that it works.**" deleted → FAIL (a check whose steps
@@ -48,7 +62,10 @@ var pipeIntoPythonHeredocRE = regexp.MustCompile(`\|\s*python3?\s+(-\s+)?<<`)
 // pairing refusal as the reason a run identity for X cannot mint for Y, and
 // that clause is the mechanism); the `# 0` read-back on the Restore's scratch
 // line deleted → FAIL (the check's final assertion is that nothing survives
-// it).
+// it); the known-limit bullet on the URL gate deleted → FAIL (the check would
+// leave a reader taking the keyless path as the state of this tree); step 4's
+// "**no audit line** for it" put back to "always audited" → FAIL (the check
+// would fail a correct release).
 func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	check := check96Section(t)
 
@@ -84,6 +101,16 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 		// stdin, so the `printf … | python3 - <<'PY'` this step first used handed python the
 		// script and an empty stdin, and the step printed none of its facts.
 		"python3 - \"$W/job.json\" <<'PY'",
+		// The known limit of this release, which the check has to carry: the keyless path is
+		// switched on by the job's environment naming the service, and nothing on this tree
+		// puts that name there, so an opted-in runner still reads the key and mints in-job.
+		"the expected answer today is `false`",
+		"**What to expect today is therefore `FUGARO_CREDENTIALS_SERVICE_URL` absent from the job's environment and the key still read in-job**",
+		// And the corrected audit expectation of step 4: the pairing refusal is made before
+		// the mint is reached, so it is not audited, and a check that expected a line there
+		// would fail a correct release.
+		"**a refusal that never reaches the mint is not audited**",
+		"**no audit line** for it: the refusal is made before the mint is reached",
 		// And the Restore, whose final assertion is that nothing survives it.
 		"**Restore.**",
 		"the read-back count (**`0`**",
@@ -117,6 +144,28 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	if !strings.Contains(server, "the run identity is not a run of the calling job's repository") {
 		t.Errorf("internal/credsvc/server.go no longer answers `the run identity is not a run of the calling job's repository`: Check 96 records that sentence as the refusal's own body")
 	}
+	// Step 4's audit expectation, held to the code on the other side: the refusal
+	// is answered by `refuse`, which writes the wire error and no audit line, so
+	// the check must expect no line for it. If `refuse` ever grows an audit call,
+	// the check's expectation is the thing that has to change with it.
+	if !strings.Contains(server, "func (s *Server) refuse(w http.ResponseWriter") {
+		t.Errorf("internal/credsvc/server.go no longer has `refuse`: Check 96's step 4 is written on its behaviour — it answers the pairing refusal and writes no audit line")
+	}
+	if body := check96FuncBody(t, server, "func (s *Server) refuse(w http.ResponseWriter"); strings.Contains(body, "Audit.Write") || strings.Contains(body, "auditMint") {
+		t.Errorf("internal/credsvc/server.go's `refuse` now writes an audit line (%q): Check 96's step 4 expects NO audit line for the pairing refusal — an admission refusal is not a mint's act — so the check and the code have moved apart", strings.TrimSpace(body))
+	}
+
+	// The second thing that is not true on this tree, held to the code as well:
+	// the keyless provider is opened only when the job's environment names the
+	// service, and the check has to carry that limit rather than read the mint as
+	// the service's on this tree.
+	providers := readDoc(t, "internal/gitprov/providers/providers.go")
+	if !strings.Contains(providers, "if vars[EnvCredentialsServiceURL] != \"\"") {
+		t.Errorf("internal/gitprov/providers/providers.go no longer gates the keyless github provider on `EnvCredentialsServiceURL`: Check 96 states that gate as the reason an opted-in runner still reads the App key and mints in the job on this tree, and that is the switch it names")
+	}
+	if !strings.Contains(check, "**What to expect today is therefore `FUGARO_CREDENTIALS_SERVICE_URL` absent from the job's environment and the key still read in-job**") {
+		t.Errorf("Check 96 does not state what to expect today about the URL gate: the keyless path needs FUGARO_CREDENTIALS_SERVICE_URL and nothing on this tree sets it, so the check the owner runs must say the variable is expected absent and the key still read in-job")
+	}
 
 	// The first thing that is not true on this tree, held to the code: while the
 	// held-secrets list is empty the job keeps the key, and the check has to say
@@ -144,6 +193,22 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	} else if strings.Contains(check, blocker) {
 		t.Errorf("internal/cli/credentials_serve.go no longer refuses to configure the credentials service — the service can be configured from its deployment — and Check 96 still calls that the blocker: the gap was closed and this check did not notice")
 	}
+}
+
+// check96FuncBody returns one function's body out of a source file the test
+// already read: from the signature to the next top-level `func `, so a call
+// added below it does not leak into what the test reads.
+func check96FuncBody(t *testing.T, src, sig string) string {
+	t.Helper()
+	i := strings.Index(src, sig)
+	if i < 0 {
+		t.Fatalf("%s not found: this test's marker has moved", sig)
+	}
+	body := src[i:]
+	if j := strings.Index(body[1:], "\nfunc "); j >= 0 {
+		body = body[:j+1]
+	}
+	return body
 }
 
 // check96Section returns the register's `## Check 96` section, from its heading
