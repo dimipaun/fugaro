@@ -373,13 +373,14 @@ func TestCredsSetRefusesUnknownKeyAndOversizeDoc(t *testing.T) {
 	f.seed(t, []byte(config.ClaudeOAuthToken+": "+credsValue(t, "existing")+"\n"))
 	value := credsValue(t, "ours")
 
+	// The App key WAS refused here "until C2.1", and this list no longer
+	// holds it: C2.1 landed and credsvc.CredentialKey answers KindGitHubApp
+	// for it, so it is a bundle credential like any other and
+	// TestCredsSetAcceptsTheAppKeyAsABundleEntry is where that is asserted.
+	// What stays refused is a name no bundle key can be, whatever it looks
+	// like.
 	for _, name := range []string{
 		"not-a-credential",
-		// A reserved Secret Manager name that is not a bundle credential: the
-		// App key arrives with C2.1, and until then a name the loader does not
-		// know is refused rather than written into a document that would then
-		// fail closed for the whole service.
-		config.GitHubAppKeySecret,
 		// The namespace is reserved but the suffix is not a name any policy
 		// can admit: a key no account can be named.
 		config.ClaudeOAuthTokenPrefix + strings.Repeat("a", config.MaxClaudeAccountNameLen+1),
@@ -443,6 +444,36 @@ func TestCredsSetRefusesUnknownKeyAndOversizeDoc(t *testing.T) {
 	if got := f.value(t); got != doc.String() {
 		t.Errorf("the document changed: %q", got)
 	}
+}
+
+// The App key is a bundle credential, and this is the half the refusal test
+// above used to get wrong: C2.1 made credsvc.CredentialKey answer
+// KindGitHubApp for github-app-key (the service signs its installation-token
+// mints with it), so `creds set github-app-key` writes it like any other
+// entry — one version, the other entries' bytes kept, the document still one
+// the service's loader accepts, and no byte of the value printed.
+func TestCredsSetAcceptsTheAppKeyAsABundleEntry(t *testing.T) {
+	f := credsFixtureFor(t)
+	existing := credsValue(t, "existing")
+	key := credsValue(t, "appkey")
+	f.seed(t, []byte(config.ClaudeOAuthToken+": "+existing+"\n"))
+
+	out, errOut, err := executeStdin(t, key+"\n", "creds", "set", config.GitHubAppKeySecret)
+	if err != nil {
+		t.Fatalf("creds set %s = %v (stderr %q)", config.GitHubAppKeySecret, err, errOut)
+	}
+	b, err := credsvc.ParseBundle(f.Latest(f.id))
+	if err != nil {
+		t.Fatalf("the service's loader refuses the document this command wrote: %v", err)
+	}
+	e, ok := b.AppKey()
+	if !ok || e.Value() != key {
+		t.Errorf("the bundle's App key entry is %v, want the value just set", ok)
+	}
+	if e, ok := b.Lookup(config.DefaultClaudeAccount); !ok || e.Value() != existing {
+		t.Errorf("the default account's entry is %v, want the bytes it already had", ok)
+	}
+	assertNoValue(t, out+errOut, key, existing)
 }
 
 // A value in argv is not read, and neither is one in the environment: the
