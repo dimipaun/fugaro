@@ -322,7 +322,7 @@ const censusRoot = "../.."
 // plugin/readme_test.go and website/data/install.yaml, W2.4 had taken off
 // already, renaming the same pair for its own reasons. Seventeen of the thirty
 // are the pages and skills a person reads -- README.md, CONTRIBUTING.md,
-// SECURITY.md, the thirteen live pages under docs/ (backends, base-image,
+// SECURITY.md, the twelve live pages under docs/ (backends, base-image,
 // base-image-migration, checkout, dogfooding, gcp-setup, git-providers,
 // multi-model, project-claude-accounts, project-layer, recipes, release) plus
 // docs/releases/README.md, the releases *index* (the dated records beside it
