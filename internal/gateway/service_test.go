@@ -430,6 +430,10 @@ func TestNoInJobFallback(t *testing.T) {
 	})
 
 	t.Run("a run whose identity cannot be presented is not replaced", func(t *testing.T) {
+		// The metadata server that mints the job's ID token is gone, so no
+		// call can be admitted: the run halts budget_unavailable-style
+		// (D143) rather than being answered 502 once per call until its
+		// deadline, and nothing of the job's own is reached for.
 		h, f := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
 			return serviceOK(TierA, "repo-a")
 		}, func(o *Options) {
@@ -438,8 +442,11 @@ func TestNoInJobFallback(t *testing.T) {
 			}
 		})
 		resp, body := h.post(msg(sonnet, 1000))
-		if resp.StatusCode != http.StatusBadGateway {
-			t.Fatalf("a call with no job identity: %d %s", resp.StatusCode, body)
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("a call with no job identity: %d %s, want the halt's 403", resp.StatusCode, body)
+		}
+		if halt := haltOf(t, h); halt.Reason != ReasonBudgetUnavailable || halt.Scope != "run" {
+			t.Errorf("the halt is %+v", halt)
 		}
 		if f.Count() != 0 {
 			t.Errorf("the service was called %d times without the job's identity", f.Count())
@@ -447,7 +454,9 @@ func TestNoInJobFallback(t *testing.T) {
 		if strings.Contains(body, testKey) || strings.Contains(body, "sk-ant") {
 			t.Errorf("the refusal carries something key-shaped: %s", body)
 		}
-		noHalt(t, h)
+		if l := h.gw.Ledger(); l.Used != 0 || l.Reserved != 0 {
+			t.Errorf("a call that was never sent was charged: %+v", l)
+		}
 	})
 
 	t.Run("a run whose own identity is gone is not sent under the job's", func(t *testing.T) {
@@ -457,13 +466,15 @@ func TestNoInJobFallback(t *testing.T) {
 			o.Upstream.Service.RunIDToken = func() string { return "" }
 		})
 		resp, body := h.post(msg(sonnet, 1000))
-		if resp.StatusCode != http.StatusBadGateway {
-			t.Fatalf("a call with no run identity: %d %s", resp.StatusCode, body)
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("a call with no run identity: %d %s, want the halt's 403", resp.StatusCode, body)
+		}
+		if halt := haltOf(t, h); halt.Reason != ReasonBudgetUnavailable || halt.Scope != "run" {
+			t.Errorf("the halt is %+v", halt)
 		}
 		if f.Count() != 0 {
 			t.Errorf("the service was called %d times with no run identity", f.Count())
 		}
-		noHalt(t, h)
 	})
 
 	t.Run("an unreachable service is not replaced", func(t *testing.T) {
@@ -723,8 +734,10 @@ func TestServiceAnswerIsScrubbedOfTheCallersIdentities(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			h, _ := newServiceStub(t, func(r *http.Request, _ []byte) anthropicfake.Reply {
 				// The service echoes what it was sent, which is what a hop
-				// that renders its own request into an error does.
-				echo := "echoed " + r.Header.Get("Authorization")
+				// that renders its own request into an error does -- both
+				// identities included: the ID token it was called with and
+				// the run's own.
+				echo := "echoed " + r.Header.Get("Authorization") + " and " + r.Header.Get(HeaderRunIdentity)
 				return anthropicfake.Reply{Status: http.StatusBadRequest,
 					Header: http.Header{
 						"X-Echoed":        []string{r.Header.Get("Authorization")},
@@ -749,5 +762,171 @@ func TestServiceAnswerIsScrubbedOfTheCallersIdentities(t *testing.T) {
 				t.Errorf("the echoed credential wasn't what was removed: %s", body)
 			}
 		})
+	}
+}
+
+// TestServiceFrontDoorRefusalHalts: a 401/403 that is not this contract's own
+// refusal is the platform's layer answering -- Cloud Run IAM refusing this
+// job's invoker grant, or a proxy in front of the service. Every call this run
+// makes would be refused the same way, so it halts budget_unavailable-style
+// (D143) rather than being answered once per call, and the platform's own body
+// -- which names the project and the caller -- is never relayed to the agent.
+func TestServiceFrontDoorRefusalHalts(t *testing.T) {
+	const platform = "<html><title>403 Forbidden</title><body>the caller does not have permission on project aurora-fp</body></html>"
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			h, _ := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+				return anthropicfake.Reply{Status: status,
+					Header: http.Header{"Content-Type": []string{"text/html"}}, Body: platform}
+			}, nil)
+			resp, body := h.post(msg(sonnet, 1000))
+			if resp.StatusCode != http.StatusForbidden {
+				t.Fatalf("%d: %d %s, want the halt's 403", status, resp.StatusCode, body)
+			}
+			halt := haltOf(t, h)
+			if halt.Reason != ReasonBudgetUnavailable || halt.Scope != "run" {
+				t.Errorf("the halt is %+v", halt)
+			}
+			if strings.Contains(body, "aurora-fp") || strings.Contains(body, "Forbidden") {
+				t.Errorf("the platform's own answer was relayed to the agent: %s", body)
+			}
+			assertNoSecret(t, "the agent's answer", body, secrets(h, t))
+		})
+	}
+
+	// The other statuses are untouched: a model error the service relayed is
+	// still the agent's to see, and 404 is not a front door refusing a caller.
+	h, _ := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+		return anthropicfake.Reply{Status: http.StatusNotFound, Body: `{"type":"error","error":{"type":"not_found_error","message":"model not found"}}`}
+	}, nil)
+	resp, body := h.post(msg(sonnet, 1000))
+	if resp.StatusCode != http.StatusNotFound || !strings.Contains(body, "model not found") {
+		t.Fatalf("a relayed 404: %d %s", resp.StatusCode, body)
+	}
+	noHalt(t, h)
+}
+
+// TestServiceUnreadableAnswerSettlesAtItsReservation: a 2xx this gateway
+// cannot account by -- no tier, or a tier the contract would not write -- is a
+// model answer the service served, so the run pays for it. It settles at the
+// reservation, exactly as an unparsed 2xx does; settling at zero would hand
+// the run a whole answer for nothing (mutation M10).
+func TestServiceUnreadableAnswerSettlesAtItsReservation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		hdr  http.Header
+	}{
+		{"no tier at all", nil},
+		{"a tier the contract would not write", http.Header{HeaderTier: []string{"D"}, HeaderCredential: []string{"repo-a"}}},
+		{"a credential name that is not one", http.Header{HeaderTier: []string{TierB}, HeaderCredential: []string{"repo\nb"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _ := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+				r := anthropicfake.MessageOK(sonnet, smallUsage)
+				r.Header = tc.hdr
+				return r
+			}, nil)
+			body := msg(sonnet, 1000)
+			resp, b := h.post(body)
+			if resp.StatusCode != http.StatusForbidden {
+				t.Fatalf("%s: %d %s, want the halt's 403", tc.name, resp.StatusCode, b)
+			}
+			if halt := haltOf(t, h); halt.Reason != ReasonBudgetUnavailable {
+				t.Errorf("the halt is %+v", halt)
+			}
+			want := worst(t, sonnet, body, 1000, "")
+			if got := h.gw.EndStage().Used; got != want {
+				t.Errorf("the run was charged %d for an answer the service served, want the reservation %d", got, want)
+			}
+		})
+	}
+}
+
+// TestServiceRefusalLongerThanTheContractHalts: a body that claims to be the
+// service's own refusal and is longer than any refusal this contract can write
+// is refused as one, never relayed and never read as one. The padding is
+// whitespace, so the strict reader below would accept the body if the size
+// bound were gone -- which is what makes this the test of that bound
+// (mutation M15).
+func TestServiceRefusalLongerThanTheContractHalts(t *testing.T) {
+	refusal := `{"error":"state_unavailable","message":"the service cannot read its state"}`
+	h, _ := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+		return anthropicfake.Reply{Status: http.StatusServiceUnavailable,
+			Header: http.Header{"Content-Type": []string{"application/json"}},
+			Body:   refusal + strings.Repeat(" ", maxServiceRefusalBytes)}
+	}, nil)
+	resp, body := h.post(msg(sonnet, 1000))
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("an over-long refusal: %d %s, want the halt's 403", resp.StatusCode, body)
+	}
+	halt := haltOf(t, h)
+	if halt.Detail != stateDetailUnreadable {
+		t.Errorf("the halt's detail is %q; an over-long body is one this gateway cannot read, not one it read as state_unavailable", halt.Detail)
+	}
+	if strings.Contains(body, "state_unavailable") {
+		t.Errorf("the over-long refusal was relayed: %.120s", body)
+	}
+}
+
+// TestServiceUnreachableAfterTheRequestIsSentIsCharged: the service reads the
+// whole request and then closes the connection without answering. The call
+// reached the upstream, so the service may have been generating and the run is
+// charged the whole reservation -- zero is for a call nothing reached, which
+// is the branch above it (mutation M16).
+func TestServiceUnreachableAfterTheRequestIsSentIsCharged(t *testing.T) {
+	h, f := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+		return anthropicfake.Reply{DropBeforeHeaders: true}
+	}, nil)
+	body := msg(sonnet, 1000)
+	resp, b := h.post(body)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("a service that answered nothing: %d %s, want the halt's 403", resp.StatusCode, b)
+	}
+	if halt := haltOf(t, h); halt.Reason != ReasonBudgetUnavailable || halt.Detail != stateDetailUnreachable {
+		t.Errorf("the halt is %+v", halt)
+	}
+	if f.Count() != 1 {
+		t.Fatalf("the service was called %d times", f.Count())
+	}
+	if got, want := h.gw.EndStage().Used, worst(t, sonnet, body, 1000, ""); got != want {
+		t.Errorf("the run was charged %d for a call that reached the service, want the reservation %d", got, want)
+	}
+}
+
+// TestServiceClientBoundsTheWaitForHeaders: a connection that never answers
+// and never fails either would hang the call until the stage's deadline
+// instead of halting (D143). The bound covers the wait for the service's
+// response headers and nothing else: the body is a stream the run may be
+// waiting on for minutes.
+func TestServiceClientBoundsTheWaitForHeaders(t *testing.T) {
+	// Start's own wiring, not only the helper: the bound is a fact about the
+	// client a service call is made with.
+	cl := serviceUpstreamClient(upstreamClient(nil))
+	tr, ok := cl.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("the service client's transport is %T", cl.Transport)
+	}
+	if tr.ResponseHeaderTimeout != serviceResponseHeaderTimeout || serviceResponseHeaderTimeout <= 0 {
+		t.Fatalf("the service client's response-header bound is %s (default %s)", tr.ResponseHeaderTimeout, serviceResponseHeaderTimeout)
+	}
+
+	old := serviceResponseHeaderTimeout
+	serviceResponseHeaderTimeout = 100 * time.Millisecond
+	defer func() { serviceResponseHeaderTimeout = old }()
+	h, f := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+		return anthropicfake.Reply{Hold: true} // reads the request and answers nothing
+	}, nil)
+	resp, b := h.post(msg(sonnet, 1000))
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("a service that never answered: %d %s, want the halt's 403", resp.StatusCode, b)
+	}
+	if halt := haltOf(t, h); halt.Detail != stateDetailUnreachable {
+		t.Errorf("the halt is %+v", halt)
+	}
+	// The call was cut, not left running: the fake sees its request end.
+	select {
+	case <-f.Ended(0):
+	case <-time.After(2 * time.Second):
+		t.Error("the held call was not cut by the bound")
 	}
 }
