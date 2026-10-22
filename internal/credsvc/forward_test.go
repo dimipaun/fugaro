@@ -16,12 +16,14 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 )
 
@@ -736,5 +738,75 @@ func TestServiceServesBothAnthropicPaths(t *testing.T) {
 				t.Errorf("the upstream was called at %q, want %q", got, path)
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Where a call goes
+// ---------------------------------------------------------------------------
+
+// recordingTransport is a RoundTripper that records the URL each request was
+// BUILT with and then refuses it. The service's transport is the one thing
+// that still sees the destination as the service wrote it: the fixture's
+// hostRewriter, which every other test uses, rewrites the host to the fake's
+// before the request leaves, so a test that read the URL off the fake could
+// not tell api.anthropic.com from anywhere else.
+type recordingTransport struct {
+	mu   sync.Mutex
+	urls []string
+}
+
+func (r *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	r.mu.Lock()
+	r.urls = append(r.urls, req.URL.String())
+	r.mu.Unlock()
+	return nil, errors.New("recordingTransport: no request leaves this test")
+}
+
+func (r *recordingTransport) seen() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.urls...)
+}
+
+// TestServiceSendsTierAOnlyToAnthropicsOwnEndpoint: D133 at the service's own
+// boundary. The service has no routes and no Vertex upstream — the two paths
+// it forwards on are C1.8's helpers, and a tier-A credential is Anthropic's
+// OAuth token, which may only ever go to Anthropic's own endpoint. The URL the
+// service builds is therefore part of the rule and not an implementation
+// detail: it is checked here on the request the service actually wrote, before
+// the test's transport rewrites the host.
+//
+// The destination rule itself runs inside the helper (gateway.OAuthHeaders'
+// destination check, which is a check and not a comment), and a tier-A call
+// whose destination is not Anthropic's is refused rather than sent — which is
+// what makes this test's subject the built URL and not the helper.
+//
+// Mutation (run, restore): build the tier-A destination from anything but
+// Anthropic's own base. The test is red either way it can go — the helper
+// refuses the foreign destination, so the transport sees no request at all,
+// and a base the helper accepted but that was not Anthropic's would be caught
+// by the URL assertion.
+func TestServiceSendsTierAOnlyToAnthropicsOwnEndpoint(t *testing.T) {
+	rec := &recordingTransport{}
+	s := newSvcWith(t, func(_ *svc, c *Config) {
+		c.Client = &http.Client{Transport: rec}
+	})
+	resp, _ := s.call(t, callBody("destination"))
+	if resp.StatusCode == http.StatusOK {
+		t.Fatal("the answer is 200: no request may leave a recording transport")
+	}
+	urls := rec.seen()
+	if len(urls) != 1 {
+		t.Fatalf("the service built %d requests, want 1: %v", len(urls), urls)
+	}
+	want := gateway.AnthropicBase(gateway.Upstream{}) + MessagesPath
+	if urls[0] != want {
+		t.Errorf("the tier-A call was built for %q, want %q: an OAuth token goes to Anthropic's own endpoint or nowhere", urls[0], want)
+	}
+	// The query is this call's own and the base is Anthropic's, so the
+	// destination the rule is checked against is the one the request carries.
+	if !strings.HasPrefix(urls[0], "https://api.anthropic.com/") {
+		t.Errorf("the tier-A destination %q is not Anthropic's own endpoint", urls[0])
 	}
 }
