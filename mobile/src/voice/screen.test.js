@@ -134,6 +134,7 @@ async function harness(options = {}) {
     holder: PHONE,
     ...(options.switch === undefined ? {} : { switch: options.switch }),
     ...(options.queueCap === undefined ? {} : { queueCap: options.queueCap }),
+    ...(options.utterance === undefined ? {} : { utterance: options.utterance }),
   });
   return {
     audioIn,
@@ -616,7 +617,44 @@ test('the screen is built from a pipeline, a client, a clock and a holder, and s
   assert.throws(() => createVoiceScreen({ ...deps, now: 'now' }), TypeError);
   assert.throws(() => createVoiceScreen({ ...deps, holder: '' }), TypeError);
   assert.throws(() => createVoiceScreen({ ...deps, switch: 'sometimes' }), TypeError);
+  assert.throws(() => createVoiceScreen({ ...deps, utterance: 'confirm' }), TypeError);
   assert.throws(() => createVoiceScreen(), TypeError);
+});
+
+test('a final transcript goes to the spoken dialogue when the app wires one in (P6.12)', async () => {
+  // P6.12's seam: the dialogue decides whether the words are a message, an app
+  // command or a confirmation. The screen's `accept` is what the dialogue's own
+  // `send` is wired to, so the message path -- and its offline refusal -- is
+  // unchanged; what changes is that a final is no longer *always* a message.
+  const heard = [];
+  const wired = await harness({
+    utterance: async (text) => {
+      heard.push(text);
+      return { ok: true };
+    },
+  });
+
+  await wired.screen.start();
+  wired.audioIn.speechStart();
+  wired.audioIn.speechEnd();
+  wired.stt.final('Fugaro, confirm');
+  await settle();
+
+  assert.deepEqual(heard, ['Fugaro, confirm'], 'the final went to the dialogue');
+  assert.deepEqual(wired.pathsWritten().filter((path) => path.includes('/inbox/')), [],
+    'and nothing was written: a confirmation is not a message');
+
+  // The same turn without a dialogue is what P3.5 shipped: every final is a
+  // message, written by the client.
+  const plain = await harness();
+  await plain.screen.start();
+  plain.audioIn.speechStart();
+  plain.audioIn.speechEnd();
+  plain.stt.final('Fugaro, confirm');
+  await settle();
+
+  assert.deepEqual(plain.pathsWritten().filter((path) => path.includes('/inbox/')),
+    [`mailbox/${UID}/inbox/m-1`], 'without a dialogue the words are a message');
 });
 
 test('the screen shows what it is doing, in one frozen snapshot', async () => {
