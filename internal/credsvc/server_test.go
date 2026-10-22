@@ -83,13 +83,22 @@ func testPolicyDoc() string { return testPolicyDocWith("auto") }
 // out: `fallback: auto` spends the project's key, `oauth-only` does not, and
 // the two are the whole of D152's difference.
 func testPolicyDocWith(fallback string) string {
+	return testPolicyDocAccounts(fallback, `"default": {"allow_repos": ["`+testRepo+`", "`+testOtherRepo+`"]},
+			"`+testAccount+`": {"allow_repos": ["`+testRepo+`", "`+testOtherRepo+`"]}`)
+}
+
+// testPolicyDocAccounts is the same document with the shared node's accounts
+// block written out, for the tests that need an account offered to one
+// repository and not to another: the block is one leg of O4's admission, and a
+// repository's own node naming an account the shared node does not offer it is
+// exactly the case the intersection exists for.
+func testPolicyDocAccounts(fallback, accounts string) string {
 	return `{
 		"version": 3,
 		"budget": {"mode": "enforce", "per_run_usd": 5},
 		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
 		"accounts": {
-			"default": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]},
-			"` + testAccount + `": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]}
+			` + accounts + `
 		},
 		"credentials": {"fallback": "` + fallback + `"}
 	}`
@@ -497,13 +506,22 @@ func (s *svc) credsRun() creds.Run { return creds.Run{Slug: s.slug, ID: s.run} }
 // reports.
 func (s *svc) post(t *testing.T, path, body string, mutate ...func(*http.Request)) *http.Response {
 	t.Helper()
+	return s.postTokens(t, path, body, s.runToken(), s.jobToken(), s.job, mutate...)
+}
+
+// postTokens is post with the two identities and the reported job name given
+// rather than minted, for the calls that must present one the service refuses:
+// a run token of another repository, a job token of an account the
+// authenticator does not admit, or none at all.
+func (s *svc) postTokens(t *testing.T, path, body, runTok, jobTok, job string, mutate ...func(*http.Request)) *http.Response {
+	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, s.http.URL+path, strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("building the call: %v", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+s.jobToken())
-	req.Header.Set(HeaderRunIdentity, s.runToken())
-	req.Header.Set(HeaderRunJob, s.job)
+	req.Header.Set("Authorization", "Bearer "+jobTok)
+	req.Header.Set(HeaderRunIdentity, runTok)
+	req.Header.Set(HeaderRunJob, job)
 	req.Header.Set("Anthropic-Version", "2023-06-01")
 	req.Header.Set("Content-Type", "application/json")
 	for _, m := range mutate {
@@ -514,6 +532,30 @@ func (s *svc) post(t *testing.T, path, body string, mutate ...func(*http.Request
 		t.Fatalf("the call failed: %v", err)
 	}
 	return resp
+}
+
+// postRaw sends a request the service is expected to refuse before it reads
+// anything of the contract's: any method, any path, and no headers at all
+// unless the test adds them.
+func (s *svc) postRaw(t *testing.T, method, path string, mutate ...func(*http.Request)) (*http.Response, []byte) {
+	t.Helper()
+	req, err := http.NewRequest(method, s.http.URL+path, strings.NewReader("{}"))
+	if err != nil {
+		t.Fatalf("building the call: %v", err)
+	}
+	for _, m := range mutate {
+		m(req)
+	}
+	resp, err := s.http.Client().Do(req)
+	if err != nil {
+		t.Fatalf("the call failed: %v", err)
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading the answer: %v", err)
+	}
+	return resp, b
 }
 
 // call is post with the answer read whole.
