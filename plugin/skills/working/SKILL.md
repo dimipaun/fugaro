@@ -64,6 +64,10 @@ On a pull request that was retargeted, check the base its runs recorded before l
 - **Cost.** `fugaro diagnose` shows it, and its JSON has `row.cost.route_by`, which splits the spend by route (a provider model's route, for example), and `row.cost.reported_usd`, what a provider claimed, kept beside the priced figure and never replacing it. Subscription (`oauth`) spend is notional, never billed.
 - **Statuses and halts** are in `reference/status.md` and `reference/diagnose.md`. A halt is a budget cap or a kill switch working as intended.
 
+## Look at a run when it passes half its cap
+
+Do not wait for the daily look. Whoever launched a run keeps watching the COST column of `fugaro runs ls`, and the moment a running run has spent HALF of its per-run cap (`fugaro budget show` names the cap) it stops being left alone: read `fugaro logs RUN` (or `fugaro diagnose RUN`) and ask whether the run is doing the task or looping. A loop looks like the same full check or test command run again and again, edits to files the task never named (tests and docs around a few lines of text), a review stage that rereads the whole branch, or a task that was written as a plan when it is a small edit. Then choose: let it finish, cancel it (`fugaro cancel RUN`, what it pushed stays), or finish the change by hand. A change of a few lines of text or copy is faster and far cheaper by hand than as a run.
+
 ## Inspect the expensive runs daily
 
 Once a day, list the last 24 hours of runs (`fugaro runs ls --since 24h`) and read the dearest 10-20% of them by the COST column — one or two rows in twenty. The reading is read-only, and it is where the next run gets cheaper.
