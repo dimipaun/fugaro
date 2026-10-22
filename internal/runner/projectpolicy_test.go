@@ -121,7 +121,7 @@ func TestRunnerWithoutTheMarkerTreatsADeniedReadAsLegacy(t *testing.T) {
 // Carried review item (a): the same denial with the marker deployed is genuine,
 // and the run does not start. The marker is written by the deploy that grants
 // the read, so a denial means the rules were changed out from under a published
-// policy (an older CLI's init --firebase redeploys rules that predate the
+// policy (an older CLI's init --firebase-project redeploys rules that predate the
 // marker). Falling back to the environment ceiling here would run outside the
 // policy the owner published.
 func TestRunnerHaltsOnADeniedReadWhenTheMarkerExists(t *testing.T) {
@@ -131,7 +131,7 @@ func TestRunnerHaltsOnADeniedReadWhenTheMarkerExists(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a denied read of a published policy must stop the run: rec = %+v", rec)
 	}
-	for _, want := range []string{projectpolicy.PathShared(), projectpolicy.PathRulesMarker(), "fugaro update --firebase"} {
+	for _, want := range []string{projectpolicy.PathShared(), projectpolicy.PathRulesMarker(), "fugaro update --firebase-project"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %q: %v", want, err)
 		}

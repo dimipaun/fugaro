@@ -432,6 +432,28 @@ function declaredFor(css, klass, property) {
   return found
 }
 
+/**
+ * The inline-start padding a class's rules leave in force, as the value the cascade leaves:
+ * `padding`, `padding-left` and `padding-inline-start` are one answer written three ways, so
+ * they are read in the stylesheet's own order and the last one wins. That order is the whole
+ * point of reading them together — the built `.run-also` declares `padding: 0` and then the
+ * logical longhand that gives the list its room back, and a reading that stopped at the
+ * shorthand would see no room at all. `null` when nothing declares one, which is the browser's
+ * own `0`; a value this check cannot turn into pixels is left for the caller to refuse.
+ */
+function inlineStartPadding(css, klass) {
+  let found = null
+  for (const rule of cssRules(css)) {
+    if (!new RegExp(`\\.${klass}(?![\\w-])`).test(rule.selector ?? '')) continue
+    for (const [property, value] of cssDeclarations(rule.body ?? '')) {
+      const parts = value.trim().split(/\s+/)
+      if (property === 'padding') found = parts.length === 1 ? parts[0] : parts[1]
+      else if (property === 'padding-left' || property === 'padding-inline-start') found = parts[0]
+    }
+  }
+  return found
+}
+
 /** Every declaration of the diagram's classes, as `{ selector, conditions, property, value }`. */
 function diagramDeclarations(css) {
   const out = []
@@ -687,21 +709,29 @@ export function runDiagramFailures(html, css, docs = sources()) {
   // `display` that takes the marker away.
   //
   // `base.css` gives every marker on the site its colour (`:where(li)::marker`), so the marker's
-  // tone is the site's and not this page's, and its place is the row's own padding — neither is a
-  // declaration to read here.
+  // tone is the site's and not this page's, and it is not a declaration to read here. Its place
+  // is a declaration, and the room that place needs is read below.
   const POSITION_WORDS = new Set(['inside', 'outside'])
   let markerType = null
+  let markerPosition = null
   const markerReadings = []
   for (const rule of cssRules(css)) {
     if (!new RegExp(`\\.run-also(?![\\w-])`).test(rule.selector ?? '')) continue
     for (const [property, value] of cssDeclarations(rule.body ?? '')) {
-      if (property !== 'list-style' && property !== 'list-style-type') continue
+      if (property !== 'list-style' && property !== 'list-style-type' && property !== 'list-style-position') continue
       markerReadings.push(`${property}: ${value}`)
       if (property === 'list-style-type') {
         markerType = value.trim()
         continue
       }
-      const about = value.trim().split(/\s+/).filter((word) => !POSITION_WORDS.has(word.toLowerCase()) && !/^url\(/i.test(word))
+      const words = value.trim().split(/\s+/)
+      if (property === 'list-style-position') {
+        markerPosition = words[0]
+        continue
+      }
+      const place = words.find((word) => POSITION_WORDS.has(word.toLowerCase()))
+      if (place) markerPosition = place.toLowerCase()
+      const about = words.filter((word) => !POSITION_WORDS.has(word.toLowerCase()) && !/^url\(/i.test(word))
       markerType = about.includes('none') ? 'none' : (about[0] ?? 'disc')
     }
   }
@@ -717,6 +747,43 @@ export function runDiagramFailures(html, css, docs = sources()) {
     out.push(`the list of the facts beside the picture is \`display: ${listDisplay.value.trim()}\`, and the items of that list carry a bullet point each (the owner's feedback of 2026-10-21): a flex or grid container lays its children out as its own boxes, and a child that is not laid out as a list item is a child the browser draws no marker for, which is the run-on paragraph the owner read whatever the list's own \`list-style\` says`)
   } else if (itemDisplay !== undefined && itemDisplay.value.trim() !== 'list-item') {
     out.push(`the rows of the list beside the picture are \`display: ${itemDisplay.value.trim()}\`, and the items of that list carry a bullet point each (the owner's feedback of 2026-10-21): a marker is generated for a list item, so a row laid out as a block, a flex row or a grid cell is a row the browser draws no marker for — the board draws these rows as rows, and the marker is what a reader sees`)
+  }
+
+  // A marker the stylesheet names is not yet a marker a reader sees, and that is the whole of the
+  // owner's second reading of this section (their feedback of 2026-10-22: "can we add a bullet
+  // point in front of each point in this section?" — asked of a page whose list already declared
+  // `list-style: disc`, with every gate above passing).
+  //
+  // An outside marker is drawn **in the list's own inline padding**, not in the row's: the
+  // browser's stylesheet gives every list 40 px of it for exactly that reason, and a list whose
+  // own inset is `0` has its markers drawn left of its own padding box — outside the box this
+  // panel's `overflow: hidden` clips at, which is the clip its rounded corners need. What the
+  // owner read settles the question the declarations above cannot answer: the rows of this list
+  // hold 32 px of start padding each and the markers were still not there to read.
+  //
+  // So the room is read where it is drawn — the list's own inline-start padding, with `--space-md`
+  // (the inset `base.css` gives every list on the site) as the floor, because a bullet needs the
+  // room a bullet needs and a page that holds less than the site's own inset for its markers is a
+  // page whose markers sit under its own text. `list-style-position: inside` is the one shape that
+  // needs none of this: a marker drawn inside the row's content box is one the clip cannot reach,
+  // so that list is let through.
+  if ((markerPosition ?? 'outside') !== 'inside') {
+    const room = inlineStartPadding(css, 'run-also')
+    const px = room === null ? 0 : lengthInPx(room, css)
+    const listInset = lengthInPx('var(--space-md)', css)
+    const clips = ['overflow', 'overflow-x', 'overflow-y']
+      .map((property) => declaredFor(css, 'run-also', property))
+      .filter((declaration) => declaration !== undefined)
+      .map((declaration) => declaration.value.trim())
+      .filter((value) => value !== 'visible')
+    const clipping = clips.length === 0
+      ? 'and a marker drawn outside the list is a marker drawn outside the panel it belongs to'
+      : `where the panel's \`overflow: ${clips.join(' ')}\` takes it away`
+    if (Number.isNaN(px)) {
+      out.push(`the list of the facts beside the picture declares \`padding-inline-start: ${room}\`, which this check cannot turn into pixels, and the room a list holds for its markers is the room this reading is about (the owner's feedback of 2026-10-22): a length nothing here can measure is a room nothing has checked, so it is refused rather than read as enough`)
+    } else if (px < listInset) {
+      out.push(`the list of the facts beside the picture holds ${px} px of inline-start padding for the markers of its items (${room === null ? 'nothing declared, which is the browser\'s own 0' : `\`${room}\``}), and the owner's feedback of 2026-10-22 asks for a bullet point in front of each of them: a marker drawn outside its item is drawn in the list's own inline padding, so a list holding less than the site's own inset for it draws its bullets outside its padding box, ${clipping} — the rows were left as the run-on paragraph the owner read`)
+    }
   }
 
   // The drawings scale to the column and never scroll sideways.
@@ -1917,6 +1984,31 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
       declare('run-also', 'display:flex'),
       /the list of the facts beside the picture is `display: flex`/,
     ],
+    // And the marker named, on a list that holds no room for it: the defect the owner read twice
+    // (their feedback of 2026-10-22) — every gate above passes over it, because the list does
+    // declare a marker and its rows are still list items. This is the page as it was built before
+    // this fix, and the room is taken back the way the built stylesheet writes it: the logical
+    // longhand added after the `padding: 0` that is already there.
+    [
+      'a list of facts with no room for its bullets',
+      declare('run-also', 'padding-inline-start:0'),
+      /holds 0 px of inline-start padding for the markers of its items/,
+    ],
+    // The same defect in the other direction: room held, and not the room a bullet needs. The
+    // floor is the site's own list inset, so a list that holds less than the site's lists do is
+    // refused rather than measured against a number this check invented.
+    [
+      'a list of facts holding less room than the site\'s own lists',
+      declare('run-also', 'padding-inline-start:0.25rem'),
+      /holds 4 px of inline-start padding for the markers of its items/,
+    ],
+    // And a room nothing can measure: a length this check cannot turn into pixels is a room no
+    // check has read, which is refused rather than read as enough.
+    [
+      'a list of facts whose room cannot be measured',
+      declare('run-also', 'padding-inline-start:1em'),
+      /cannot turn into pixels/,
+    ],
     // A ceiling under the phone's own column: the drawing is scaled down rather than up, and
     // the phone's label size is taken in that box.
     [
@@ -1971,6 +2063,16 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
       `${what}: the refusal did not fire, and this is what it said instead:\n${lines.join('\n')}`,
     )
   }
+
+  // The one shape a list needs no room of its own for: a marker drawn *inside* the row's content
+  // box is a marker the panel's clip cannot reach, so a list that takes that shape is let through
+  // — a reading that refused it would be a reading refusing a shape the page is free to take, and
+  // the room below is read because an outside marker is drawn outside its item.
+  assert.deepEqual(
+    verdict(page, declare('run-also', 'list-style-position:inside')).filter((line) => /inline-start padding|cannot turn into pixels/.test(line)),
+    [],
+    'a list whose marker is drawn inside its items holds no inline-start padding for one, and this reading refuses it anyway: the room is read because an outside marker is drawn outside the row, and a marker drawn inside the row is one the panel\'s clip cannot reach',
+  )
 
   // And the repository's own half: a stage name no document carries is refused as a stage of
   // the run, wherever the drawing got it from.

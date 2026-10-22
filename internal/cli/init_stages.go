@@ -13,7 +13,7 @@ import (
 )
 
 // The converge (internal/initflow) over the engines the converge already
-// has. The stages here only call them: what init, update --firebase and the
+// has. The stages here only call them: what init, update --firebase-project and the
 // rest do, their flags, confirmations and messages, are the engines' own.
 // Stages that have no engine yet (project, services, images, the history
 // job's second pass, secrets, plugin wiring, repository) are registered
@@ -148,7 +148,7 @@ func initStages(e *initEngine) []initflow.Stage {
 	return stages
 }
 
-// converge runs the converge's default and --firebase modes through the
+// converge runs the converge's default and --firebase-project modes through the
 // loop and maps its result to what init returns.
 func (e *initEngine) converge(ctx context.Context) error {
 	e.announceAlreadySetUp()
@@ -334,7 +334,7 @@ func (s *engineStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 }
 
 // newInstallationStage is stage 3: init's installation engine. With
-// --firebase the installation is the Firebase engine's first apply, so the
+// --firebase-project the installation is the Firebase engine's first apply, so the
 // stage is skipped.
 func newInstallationStage(e *initEngine) *engineStage {
 	return &engineStage{e: e, name: initflow.Installation, did: func() string { return e.adopted },
@@ -365,7 +365,7 @@ func newInstallationStage(e *initEngine) *engineStage {
 	}
 }
 
-// newFirebaseStage is stage 4: update --firebase's engine, which is two
+// newFirebaseStage is stage 4: update --firebase-project's engine, which is two
 // confirmed applies (the installation's history account, the Firebase root)
 // and the database steps. The installation again, for the history job, is
 // the installation-2 stage, after the images stage has mirrored the image.
@@ -373,7 +373,7 @@ func newFirebaseStage(e *initEngine) *engineStage {
 	return &engineStage{e: e, name: initflow.Firebase,
 		skip: func() string {
 			if e.r.o.firebase == "" {
-				return "no --firebase given"
+				return "no --firebase-project given"
 			}
 			return ""
 		},
@@ -381,7 +381,7 @@ func newFirebaseStage(e *initEngine) *engineStage {
 			if err := e.setup(ctx); err != nil {
 				return err
 			}
-			if e.old == nil { // a first run with --firebase: the same default, unless the installation exists
+			if e.old == nil { // a first run with --firebase-project: the same default, unless the installation exists
 				if ok, err := e.r.installationExists(ctx, e.c, e.spec); err != nil {
 					return err
 				} else if !ok {
@@ -392,19 +392,19 @@ func newFirebaseStage(e *initEngine) *engineStage {
 			}
 			return e.r.initFirebase(ctx, e.c, e.t, e.wd, e.bin, e.lc, e.spec, e.path, e.old)
 		},
-		left: promptLeft(initflow.Firebase, "type the project's name at each apply", e.r.o.doorName(), "--firebase", "<firebase-project-id>"),
+		left: promptLeft(initflow.Firebase, "type the project's name at each apply", e.r.o.doorName(), "--firebase-project", "<firebase-project-id>"),
 	}
 }
 
 // newInstallation2Stage is stage 6: the installation root once more, which
 // deploys the history job with the Firebase outputs now that the images
-// stage has put its image in the registry. Only --firebase has a history
+// stage has put its image in the registry. Only --firebase-project has a history
 // job to deploy.
 func newInstallation2Stage(e *initEngine) *engineStage {
 	return &engineStage{e: e, name: initflow.Installation2, isolate: true,
 		skip: func() string {
 			if e.r.o.firebase == "" {
-				return "no --firebase given: nothing to deploy the history job with"
+				return "no --firebase-project given: nothing to deploy the history job with"
 			}
 			return ""
 		},
@@ -414,6 +414,6 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 			}
 			return e.r.firebaseHistory(ctx, e.c, e.t, e.wd, e.lc, e.spec)
 		},
-		left: promptLeft(initflow.Installation2, "type the project's name to apply the history job", e.r.o.doorName(), "--firebase", "<firebase-project-id>"),
+		left: promptLeft(initflow.Installation2, "type the project's name to apply the history job", e.r.o.doorName(), "--firebase-project", "<firebase-project-id>"),
 	}
 }

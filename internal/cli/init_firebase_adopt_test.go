@@ -128,7 +128,7 @@ func (r *fbRig) runAdoptIn(t *testing.T, stdin string, args ...string) (string, 
 	t.Helper()
 	r.historyImage()
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, stdin, append([]string{"setup", "--firebase", r.fp}, args...)...)
+	out, _, err := executeStdin(t, stdin, append([]string{"setup", "--firebase-project", r.fp}, args...)...)
 	return out, err
 }
 

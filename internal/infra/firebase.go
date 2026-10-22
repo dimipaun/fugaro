@@ -447,7 +447,7 @@ func DecodeFirebaseOutputs(raw map[string]json.RawMessage) (FirebaseOutputs, err
 // https://<fp>-default-rtdb.<region>.firebasedatabase.app, the signer exactly
 // fugaro-token-signer@<fp>.iam.gserviceaccount.com (the account the Firebase
 // module creates), and firebase_project fp itself. fp is the project the user
-// named (--firebase) or, when "", the one the outputs name, which then has to
+// named (--firebase-project) or, when "", the one the outputs name, which then has to
 // be what the database and signer say too. They come from a state bucket, so
 // a foreign but well-formed triple must not be taken as ours. loopbackOK is
 // for the fakes' loopback database.

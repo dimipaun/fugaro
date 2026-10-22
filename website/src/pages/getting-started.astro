@@ -27,7 +27,7 @@
  *      sentence of the band's own precedes its first command: `website/test/fold.mjs` holds
  *      that ordering, and Check 70b is the owner's measurement of the fold itself (D187).
  *   2. **`#setup`: what a real installation needs, in order.** The install command gets the
- *      CLI onto the machine; it does not create a project, a GitHub App or a secret. The three
+ *      CLI onto the machine; it does not create a project, repository access or a secret. The three
  *      steps below are `docs/gcp-setup.md`'s preconditions and its short path, in the order
  *      that document puts them, one line each, and each names the document that carries the
  *      detail rather than repeating it. No secret value is named, and no step is invented.
@@ -76,7 +76,7 @@
  * Three things this page is written to say, and not to say:
  *
  *   - **The plugin path is a first-class path**, in `#details` rather than in a box: `fugaro
- *     init`, `/fugaro:setup` and `fugaro upgrade --local` are rendered with their own note,
+ *     setup`, `/fugaro:setup` and `fugaro upgrade --local` are rendered with their own note,
  *     and the setup steps above them are where a reader meets the first two as steps
  *     (finding 22).
  *   - **The cosign verification is the archive's own facts, and it is a path in `#details`**
@@ -437,7 +437,7 @@ const doc = (path: string, fragment: string): string =>
   </section>
 
   {/* What the command does not do. A reader who runs `brew install` has a binary and no
-      installation: the credentials, the App and the secrets are theirs to make, and
+      installation: the credentials, the repository access and the secrets are theirs to make, and
       `docs/gcp-setup.md` is the runbook that walks them through it. The three steps below are
       that runbook's own preconditions and short path in its own order, one line each, and
       every one of them links to the document that carries it — the page states what to do
@@ -463,10 +463,12 @@ const doc = (path: string, fragment: string): string =>
       <li class="card gs-step">
         <span class="gs-step-number" aria-hidden="true">01</span>
         <div class="gs-step-body">
-          <h3 class="gs-step-name">gcloud, Terraform and a GitHub App</h3>
+          <h3 class="gs-step-name">gcloud, Terraform and repository access</h3>
           <p class="gs-step-line">
             gcloud credentials with a quota project, Terraform 1.9+, and{' '}
-            <a href={doc('docs/git-providers.md', 'github')}>a GitHub App with four repository permissions</a>.
+            <a href={doc('docs/git-providers.md', 'credentials')}>repository access</a>: a GitHub
+            App with four repository permissions on GitHub, or a repository access token on
+            Bitbucket.
           </p>
         </div>
         <a class="gs-step-link" href={doc('docs/gcp-setup.md', 'preconditions')}>Preconditions</a>

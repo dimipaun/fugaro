@@ -567,17 +567,6 @@ func TestExistingProjectBannersSayExisting(t *testing.T) {
 	r.nothingDone(t, "no typed confirmation")
 }
 
-func TestCreateWithOtherFirebaseRefused(t *testing.T) {
-	r := newProjectRig(t)
-	_, _, err := r.run(t, true, newProj+"\n", "--create-project", "--firebase", "other-fp-1234")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "other-fp-1234") {
-		t.Errorf("err = %v", err)
-	}
-	if n := len(r.crm.Requests()); n != 0 {
-		t.Errorf("%d calls", n)
-	}
-}
-
 // A create that times out says what to wait for, and a taken ID's text
 // first asks whether an earlier run created it.
 func TestCreatedButNotReadableSaysWait(t *testing.T) {
@@ -730,5 +719,52 @@ func TestTheDeclinedProjectPromptNamesTheDoorTheReaderIsAt(t *testing.T) {
 		if !strings.Contains(ny.Left.Text, "rerun "+selfCommand()+" "+door+" in your own terminal window") {
 			t.Errorf("%s: the refusal does not name the door the reader is at: %q", door, ny.Left.Text)
 		}
+	}
+}
+
+// TestFirebaseProjectPairingRuleIsUnchanged: a project this run creates is its
+// own Firebase project, and --firebase-project is the one way to say it is
+// another one — which is refused, naming both ids, before anything is created
+// (D7, F4). It is the case that was TestCreateWithOtherFirebaseRefused, ported
+// onto the new name rather than kept beside it: the rule is the one --firebase
+// had, and the port is the point, because a rename that quietly dropped the
+// pairing rule would leave the creation building a budget backend in a project
+// it does not create.
+func TestFirebaseProjectPairingRuleIsUnchanged(t *testing.T) {
+	r := newProjectRig(t)
+	_, _, err := r.run(t, true, newProj+"\n", "--create-project", "--firebase-project", "other-fp-1234")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "other-fp-1234") {
+		t.Errorf("err = %v", err)
+	}
+	if n := len(r.crm.Requests()); n != 0 {
+		t.Errorf("%d calls", n)
+	}
+	// The other half of the same rule, on the flags alone: naming the project
+	// this run creates is what the default says, and is not refused.
+	o := &initOptions{door: setupDoor.name, createProject: true, cloud: cloudOptions{gcpProject: newProj}, firebase: newProj}
+	if err := o.check(); err != nil {
+		t.Errorf("--create-project --firebase-project %s (the project it creates) was refused: %v", newProj, err)
+	}
+}
+
+// TestFirebaseProjectIsRefusedWithoutCreateProject pins where the pairing
+// refusal lives, from both sides of it: it is checkCreateProject's, so it fires
+// for a run that creates the project and is not reached by a run that creates
+// nothing — where a Firebase project other than the installation's own is the
+// ordinary two-project layout (init_firebase.go's head comment) and must stay
+// accepted. A rule hoisted out of the creating branch would keep the first half
+// green and break the second, which is what the pair is here for.
+func TestFirebaseProjectIsRefusedWithoutCreateProject(t *testing.T) {
+	// A creation whose Firebase project is another one: refused, naming the
+	// flag and the project.
+	with := &initOptions{door: setupDoor.name, createProject: true, cloud: cloudOptions{gcpProject: newProj}, firebase: fpID}
+	err := with.check()
+	if err == nil || !strings.Contains(err.Error(), fpID) || !strings.Contains(err.Error(), "--firebase-project") {
+		t.Errorf("--create-project with --firebase-project %s: err = %v, want a refusal naming the flag and the project", fpID, err)
+	}
+	// The same flags with no creation: the pair of projects is the adopt path.
+	without := &initOptions{door: setupDoor.name, cloud: cloudOptions{gcpProject: newProj}, firebase: fpID}
+	if err := without.check(); err != nil {
+		t.Errorf("--firebase-project %s with no --create-project: %v, want nil (the two-project layout)", fpID, err)
 	}
 }

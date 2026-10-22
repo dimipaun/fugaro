@@ -586,7 +586,7 @@ green with no behaviour change at all.
 - **Verification.** `GOFLAGS=-p=2 go test ./internal/budget ./internal/watch -count=1 -timeout 20m`
 - **Depends on.** T1.2.
 - **Reviewer.** senior (in-loop). **The rules deploy is the owner's**
-  (`fugaro init --firebase <firebase-project-id>`): a container cannot deploy
+  (`fugaro init --firebase-project <firebase-project-id>`): a container cannot deploy
   them, and §9's last check is the one that observes it.
 - **Commit.** `watch: a live run's mode, and the registry child it needs`
 
@@ -1166,7 +1166,7 @@ a claim rather than a fact.
 | 6 | a project whose two repositories differ only in their own `rigor.default` | a published project layer and two repositories |
 | 7 | a run started with `--ref` at a branch whose `rigor:` disagrees with the base branch's | the answer D25 is waiting for: which revision the mode came from |
 | 8 | a run whose diff matches two areas, and a run whose second round reaches a new one | a real diff in both areas, and a live multi-round agent |
-| 9 | `fugaro watch` on a live run after `fugaro init --firebase` redeploys the rules | a deployed database, and the old-rules path F40 records |
+| 9 | `fugaro watch` on a live run after `fugaro init --firebase-project` redeploys the rules | a deployed database, and the old-rules path F40 records |
 | 10 | the pull request that fixes a filed item — the flip and the regenerated index in one commit (D31) | a real pull request, read as a diff by a person |
 | 11 | two branches filing items on the same day, merged in either order (D26, D28: a rename, and one command to reconcile the index) | two real branches and the provider's own conflict |
 

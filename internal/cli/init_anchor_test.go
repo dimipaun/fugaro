@@ -490,7 +490,7 @@ func TestInitAnchorConfirmation(t *testing.T) {
 func TestInitAnchorExcludesTheOtherModes(t *testing.T) {
 	newAnchorModeRig(t, anchorModeYAML(), true)
 	for _, other := range [][]string{{"--plan-only"}, {"--print-vars"}, {"--config-only"}, {"--forget"}, {"--publish-config"}, {"--repo"},
-		{"--firebase", "fugaro-fb-1234"}, {"--base", "go"}, {"--image-source", "ghcr.io/acme"}, {"--runs-bucket", "x-runs"},
+		{"--firebase-project", "fugaro-fb-1234"}, {"--base", "go"}, {"--image-source", "ghcr.io/acme"}, {"--runs-bucket", "x-runs"},
 		{"--onboard-repo", "acme/app"}, {"--github-app-id", "123"}, {"--budget", "5", "--budget-currency", "USD", "--billing-account", "0123AB-4567CD-89EF01"}} {
 		// --forget is the update door's flag (W1.2): setup refuses it before
 		// the run's own mode checks, so the row that pairs it with --anchor

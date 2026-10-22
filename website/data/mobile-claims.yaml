@@ -1,0 +1,56 @@
+# website/data/mobile-claims.yaml — what the phone app does, and what it does not do yet
+# (docs/website/zoom-diagrams/implementation-plan.md, Part 3; D239–D242).
+#
+# **One row per claim, and every row carries its state.** The page that renders this file is a
+# "coming soon" page, and the site's own rule is that it holds back what the product cannot
+# back (`website/README.md`, "Everything the site would say that the product cannot back
+# today is held back") — which is why a preview page is allowed at all only under D240's three
+# conditions, and this file is the second of them: **every bullet is marked shipped or
+# planned**, so nothing on the page is a false present tense.
+#
+#   - `text` is the claim, in the page's own words, and it is the whole of what the row says.
+#     It is rendered verbatim, so a claim that is wrong is a claim to fix here rather than a
+#     sentence to rewrite in the page.
+#   - `state` is `shipped` or `planned` and nothing else, and the page renders the two into
+#     two separate lists with their own headings — a reader sees which is which without
+#     reading every line, and `website/test/mobile.mjs` holds each row to the list its state
+#     names.
+#
+# **The split is the owner's, bullet by bullet** (D241, answered 2026-10-21), and it is the
+# tree that decides it:
+#
+#   - **shipped** — status and spend. The job list is built (mobile plan task P3.3) and reads
+#     both straight out of the Realtime Database (`mobile/src/jobs/list.js`,
+#     `mobile/src/feed/nodes.js`), which is the one family the phone's read grant covers for
+#     this (`mobile/src/feed/paths.js`).
+#   - **planned** — the roster, switching by name, the wake word, QR pairing and the three
+#     roles. The roster is refused to the phone outright: `mobile/src/feed/paths.js` denies
+#     `agents/**`, and the heartbeat carries a count rather than a list
+#     (`mobile/src/jobs/heartbeat.js`). Switching, the wake word, pairing and the roles are
+#     mobile plan Phase 6, approved and unbuilt — `fugaro pair` does not exist, and the roles
+#     are a field on a device node nothing mints yet (`docs/mobile-auth/` is plan-only).
+#
+# **The voice rows are on-device only** (D242): the wake word's own row says where the
+# listening and the recognition happen, and it names no speech service — the local/remote
+# evaluation switch is design only and not built, and a marketing page is the worst place to
+# preview a switch the owner has not adopted (`docs/mobile/design/voice-evaluation-switch.md`,
+# the reconciliation's ZF28).
+#
+# **No row carries a date, and none may.** D240's first condition is that no release date is
+# promised: the phone app's schedule is the owner's, and a date on this page is a claim the
+# repository cannot back. `website/test/mobile.mjs` refuses a four-digit year and every month
+# name in the page's own text.
+version: 1
+claims:
+  - state: shipped
+    text: "Status and spend for every run, read straight from your own Firebase project."
+  - state: planned
+    text: "The agent roster: which agent is on which run, live."
+  - state: planned
+    text: "Switching projects and agents by name, spoken or typed."
+  - state: planned
+    text: "A wake word: say \"Fugaro\" and the app answers it, and everything else goes to the agent you are talking to. The listening and the recognition happen on the phone."
+  - state: planned
+    text: "Pairing with a QR scan instead of a typed project id."
+  - state: planned
+    text: "Three roles — viewer, operator and admin — so a phone can hold less than the whole installation."

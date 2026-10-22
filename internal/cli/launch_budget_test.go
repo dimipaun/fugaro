@@ -455,7 +455,7 @@ func TestLaunchRefusesADeniedPolicyRead(t *testing.T) {
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want a refusal (the policy node is published and cannot be read)", err)
 	}
-	for _, want := range []string{projectpolicy.PathShared(), projectpolicy.PathRulesMarker(), "update --firebase"} {
+	for _, want := range []string{projectpolicy.PathShared(), projectpolicy.PathRulesMarker(), "update --firebase-project"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %q: %v", want, err)
 		}

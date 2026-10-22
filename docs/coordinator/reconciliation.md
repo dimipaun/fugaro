@@ -116,8 +116,8 @@ Cloud Run's own. A timeout exists as a job's *task* timeout
 request timeout. A concurrency setting has no precedent anywhere. → **Q1**.
 
 **#3 — "Part of project init's existing Terraform" is the right shape with the wrong noun, and the plan gate is an allowlist that a new service breaks. — Wrong (the noun) / Rule (the gate).**
-`fugaro init` applies the **installation** root (`internal/cli/init.go:1573 installRoot`,
-`:1667 t.Plan`, `:1701 t.Apply`). There is a Terraform module called `project`
+`fugaro init` applies the **installation** root (`internal/cli/init.go:1633 installRoot`,
+`:1727 t.Plan`, `:1761 t.Apply`). There is a Terraform module called `project`
 (`deploy/terraform/gcp/modules/project/`) — but it is the *shared project jobs* module: it
 creates one Cloud Run job and one job service account per (profile, provider, account)
 (`modules/project/job.tf:10`, `modules/project/sa.tf:5`) and nothing else. It creates no
@@ -540,8 +540,8 @@ operation and a new ruling. → **Q8**.
 `docs/design/desktop-console.md` §5.1 rule 7 — *"Job-written text is text"* — and the code
 follows it: `console/src/renderer/app.ts` writes through `element.textContent`
 (`:124,138,159,174`), never `innerHTML`; the sanitizers are
-`console/src/shared/sanitize.ts` (`sanitizeText:2208`, `sanitizeRefusal:2445`,
-`safeUrl:2477`); navigation and window-open are denied
+`console/src/shared/sanitize.ts` (`sanitizeText:2251`, `sanitizeRefusal:2488`,
+`safeUrl:2520`); navigation and window-open are denied
 (`console/src/main/window.ts:231 denyNavigation`, `:242 denyWindowOpen`), and there is
 exactly one validated `shell.openExternal`.
 A coordinator answering *"what's holding up the payments release?"* produces free text that

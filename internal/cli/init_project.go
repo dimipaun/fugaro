@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/billing"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -45,7 +46,7 @@ func (o *initOptions) checkCreateProject() error {
 	if !o.createProject {
 		switch {
 		case o.managed:
-			return userErr("--managed goes with --create-project: it is what a project this run creates is, and only a creation can be one — an existing project is made managed by the owner's own command instead (never by update --firebase, which adds Firebase to a project someone else made). To create a managed project: fugaro setup --create-project --gcp-project <id> --managed --budget <amount> --budget-currency <code> --billing-account <id>; to flag one that already exists: fugaro managed flag <id> --budget <amount> --budget-currency <code>, before a person, who types its ID")
+			return userErr("--managed goes with --create-project: it is what a project this run creates is, and only a creation can be one — an existing project is made managed by the owner's own command instead (never by update --firebase-project, which adds Firebase to a project someone else made). To create a managed project: fugaro setup --create-project --gcp-project <id> --managed --budget <amount> --budget-currency <code> --billing-account <id>; to flag one that already exists: fugaro managed flag <id> --budget <amount> --budget-currency <code>, before a person, who types its ID")
 		case o.linkBilling != "":
 			return userErr("--link-billing goes with --create-project (both flags, explicitly: fugaro setup links billing only to a project it was asked to create or adopt). To link billing yourself: gcloud billing projects link <project> --billing-account=<account>")
 		case o.parent != "" || o.displayName != "":
@@ -78,8 +79,13 @@ func (o *initOptions) checkCreateProject() error {
 	case o.cloud.gcpProject == "":
 		return userErr("--create-project needs --gcp-project <id>: the ID to create (fugaro setup never uses the gcloud default project)")
 	}
-	if o.firebase != "" && o.firebase != o.cloud.gcpProject {
-		return userErr("--create-project creates --gcp-project %s, and --firebase %s is another project: fugaro setup creates only one, and only the project that holds the installation; create %s yourself, or pass --firebase %s", o.cloud.gcpProject, o.firebase, o.firebase, o.cloud.gcpProject)
+	// The pairing rule, read through the default (firebaseProject, D7): a
+	// project this run creates is its own Firebase project, which is the
+	// default path, and the only way it is another one is --firebase-project
+	// saying so — refused, because fugaro setup creates one project and only
+	// the project that holds the installation.
+	if fp := o.firebaseProject(); fp != o.cloud.gcpProject {
+		return userErr("--create-project creates --gcp-project %s, and --firebase-project %s is another project: fugaro setup creates only one, and only the project that holds the installation; create %s yourself, or pass --firebase-project %s", o.cloud.gcpProject, fp, fp, o.cloud.gcpProject)
 	}
 	if err := infra.ValidateNewProjectID(o.cloud.gcpProject); err != nil {
 		return userErr("--gcp-project: %v", err)
@@ -154,10 +160,11 @@ func (s *projectStage) clients(ctx context.Context) error {
 }
 
 // guided is the one line that links billing: nothing is guessed about the
-// account, and no account is read.
-func (s *projectStage) guided() string {
-	return "gcloud billing projects link " + quoteWord(s.id) + " --billing-account=BILLING_ACCOUNT_ID"
-}
+// account, and no account is read. It is billing.Guided's own words (W4.2),
+// which is also what the wizard's billing question (billing_prompt.go, W4.3)
+// prints when it has no account to offer: one line printed in two places is
+// one line, and a rewording of it cannot leave the two disagreeing.
+func (s *projectStage) guided() string { return billing.Guided(s.id) }
 
 func billingHelp() string {
 	return "find the account's ID with gcloud billing accounts list, or in https://console.cloud.google.com/billing; then run the command, or rerun " + selfCommand() + " setup with --create-project --link-billing BILLING_ACCOUNT_ID to type its confirmation here"
@@ -320,10 +327,20 @@ func (s *projectStage) Left() initflow.Left {
 // stdin, none of --non-interactive and --json (a run no person watches),
 // and no coding agent's session. --yes is not consulted: it confirms
 // nothing here, and a person at a terminal who also passed it still types.
-func (s *projectStage) canType() bool {
-	o, cmd := s.o(), s.e.r.cmd
-	return !o.nonInteractive && !o.asJSON && !agentEnv(os.Getenv) && stdinIsTerminal(cmd.InOrStdin())
+//
+// It is one predicate in one place, asked of the run, because two things ask
+// it: this stage's typed confirmations, and the wizard's billing question
+// (billing_prompt.go, W4.3), whose whole reason to exist is bounded by it —
+// listing the operator's billing accounts is a reversal internal/billing's
+// package doc limits to exactly these four conditions, and two copies of them
+// would be two places to widen by accident.
+func (r *initRun) canType() bool {
+	o := r.o
+	return !o.nonInteractive && !o.asJSON && !agentEnv(os.Getenv) && stdinIsTerminal(r.cmd.InOrStdin())
 }
+
+// canType is this stage's typed confirmation, asked of the run it is in.
+func (s *projectStage) canType() bool { return s.e.r.canType() }
 
 // typed shows banner and the prompt, and reports whether the line typed is
 // exactly want.
