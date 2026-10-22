@@ -336,6 +336,88 @@ func TestARequestShapeRefusalIsAudited(t *testing.T) {
 	}
 }
 
+// failFirstHandler records every audit line but the first, whose write it
+// fails. It is the one way to observe what an issuance's failed line is
+// answered with: the refusal that follows the failure is audited through the
+// same auditor, so a handler that failed only once lets the REFUSAL's line be
+// read — and a test that finds no line has found a refusal that was answered
+// without one.
+type failFirstHandler struct {
+	inner  slog.Handler
+	failed *bool
+}
+
+func (h *failFirstHandler) Enabled(ctx context.Context, l slog.Level) bool {
+	return h.inner.Enabled(ctx, l)
+}
+
+func (h *failFirstHandler) Handle(ctx context.Context, r slog.Record) error {
+	if !*h.failed {
+		*h.failed = true
+		return errors.New("the log refused the line it was handed")
+	}
+	return h.inner.Handle(ctx, r)
+}
+
+func (h *failFirstHandler) WithAttrs(a []slog.Attr) slog.Handler {
+	return &failFirstHandler{inner: h.inner.WithAttrs(a), failed: h.failed}
+}
+
+func (h *failFirstHandler) WithGroup(name string) slog.Handler {
+	return &failFirstHandler{inner: h.inner.WithGroup(name), failed: h.failed}
+}
+
+// TestTheRefusalOfAnUnauditedIssuanceIsAudited: a call refused because its
+// issuance's line could not be written is a call refused after admission like
+// any other, so the refusal is audited too — through the same auditor, which is
+// why the handler below fails one line and records the next. What the line
+// names is the credential that answered (its name and its tier: it was chosen
+// and it was spent, and the refusal is what withheld its effect) and the
+// refusal's own class.
+//
+// A refusal that left no line would be a call this service answered with a
+// refusal no operator can see, which is the one thing this log exists to make
+// impossible.
+func TestTheRefusalOfAnUnauditedIssuanceIsAudited(t *testing.T) {
+	failed := false
+	auditLog := &logBuf{}
+	s := newSvcWith(t, func(s *svc, cfg *Config) {
+		cfg.AuditLog = &failFirstHandler{inner: slog.NewJSONHandler(auditLog, nil), failed: &failed}
+	})
+	s.up.Script = []anthropicfake.Reply{anthropicfake.MessageOK(testModel, testUsage)}
+
+	resp, body := s.call(t, callBody("unaudited-then-refused"))
+	if resp.StatusCode != StatusUnavailable {
+		t.Fatalf("the answer is %d, want %d: an answer that cannot be audited must not be given", resp.StatusCode, StatusUnavailable)
+	}
+	if e := refusal(t, resp.StatusCode, body); e.Error != ErrorStateUnavailable {
+		t.Errorf("the refusal is %q, want %q", e.Error, ErrorStateUnavailable)
+	}
+	if n := s.up.Count(); n != 1 {
+		t.Errorf("the upstream saw %d requests, want 1: the credential was spent before its line could be written", n)
+	}
+	lines := forwardLines(t, auditLog)
+	if len(lines) != 1 {
+		t.Fatalf("the refused call wrote %d audit lines, want exactly 1 (the refusal's): %v", len(lines), lines)
+	}
+	line := lines[0]
+	checkAuditShape(t, line)
+	for field, want := range map[string]any{
+		"run":        s.run,
+		"repository": s.slug,
+		"job":        s.job,
+		"caller":     testJobSA,
+		"credential": testAccount,
+		"tier":       TierA,
+		"purpose":    PurposeForward,
+		"status":     ErrorStateUnavailable,
+	} {
+		if got := line[field]; got != want {
+			t.Errorf("the refusal's audit line %s = %v, want %q", field, got, want)
+		}
+	}
+}
+
 // TestACallIsRefusedWhenItCannotBeAudited is C1.13's fail-closed rule on the
 // answer path (D143): an issuance this service cannot audit is not made. The
 // upstream answered — the call is out of this service's hands by then — so what

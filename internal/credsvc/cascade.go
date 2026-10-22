@@ -467,9 +467,17 @@ func (s *Server) answer(ctx context.Context, w http.ResponseWriter, id Identity,
 	// The issuance's own line (C1.13), written here and not after the answer:
 	// an issuance this service cannot audit is not made, and the credential is
 	// spent by now — what is withheld is the answer.
+	//
+	// The refusal that follows is refused through refuseCall like every other
+	// refusal on this path, so the refusal itself is audited too: the act that
+	// could not be recorded is the issuance, and a failure to write one line is
+	// no reason to leave the line the operator DOES need — the call that got no
+	// answer — unwritten. (The handler below may fail this second line as well;
+	// then the refusal is on the service's log twice, which is where an
+	// operator looks for an audit log that is not recording.)
 	if err := s.auditCall(ctx, id, PurposeForward, c.Name, wireTier(c.Tier), StatusOK); err != nil {
 		s.log.Error("credsvc: the issuance's audit line was not written", "error", err)
-		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, answerUnaudited)
+		s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable, answerUnaudited)
 		return
 	}
 	for k, vs := range hdr {
