@@ -431,6 +431,20 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 		// The launch-side allow-list check is the service's, not the
 		// launcher's.
 		"the launcher makes no account allow-list check of its own",
+		// The service ships DORMANT on this release: the opt-in deploys it,
+		// but nothing gives a job its address, so no run can call it and the
+		// opt-in must not be taken until the release that wires it. Without
+		// this the section's mechanism sentences — the calls going
+		// job → gateway → service → upstream, and the service attaching the
+		// credential — read as facts about this release (independent review
+		// of C1.22, M1).
+		"the service ships DORMANT in 0.10.0",
+		"nothing wires it end to end on this release",
+		"no job is ever given the service's address",
+		"FUGARO_CREDENTIALS_SERVICE_URL",
+		"fails at bootstrap",
+		"no pull request is opened",
+		"Opt in only in the release that wires it (0.10.1)",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("the `### The credentials service` section does not state the known limit %q: a limit that is not stated is read as a guarantee", want)

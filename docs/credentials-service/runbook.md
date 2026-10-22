@@ -4,6 +4,8 @@
 
 What the service *is* — the trust model, the one bundle secret, the invariant, the accepted limits — is [SECURITY.md's "The credentials service"](../../SECURITY.md#the-credentials-service). This file is what you do when something is wrong.
 
+**On this release the service ships dormant: nothing reaches it.** The opt-in deploys it, but **no job is ever given its address** — the `FUGARO_CREDENTIALS_SERVICE_URL` the runner reads is set by no Terraform module and by no `internal/infra` code path — so no run can call it and no credential is ever issued from it. A `cascade` run does not halt for want of it either: `serviceUpstream` (`internal/runner/gateway.go`) refuses the run while it is still bootstrapping, so it **fails** (`infra_error`) and **opens no pull request**. **Do not opt in before the release that wires it (0.10.1)**: today the opt-in's one working effect is to take every per-repository job's model credentials away, and nothing hands them back. Every step below is the shape of the outage for the release that does wire it — and §1 is still the first thing to read, because it is also how you see that the opt-in was taken.
+
 ## 1. Is the service on at all?
 
 ```bash

@@ -95,6 +95,39 @@ func TestDocsCredentialsRunbookIsOwnerRunOnly(t *testing.T) {
 	}
 }
 
+// TestDocsCredentialsRunbookSaysTheServiceShipsDormant: this release's service
+// is deployed by the opt-in and reachable by nobody — no job is ever given its
+// address, so a `cascade` run fails at bootstrap rather than being served — and
+// the runbook says so before any of its steps, because every step in it is
+// advice an operator would otherwise act on for a service nothing can call.
+//
+// The independent review of C1.22 (M1) found this missing: the file described
+// the outage of a service that is wired, and a reader would have taken the
+// steps as usable on 0.10.0. The claim is read out of the whole document (the
+// paragraph sits in the file's header, above §1, so an operator who opens the
+// runbook anywhere at all reads it) and it is the counterpart of SECURITY.md's
+// dormant bullet, which TestSecurityMdNamesTheCredentialsServicesKnownLimits
+// holds.
+//
+// Mutation (run, restored): the paragraph deleted fails this on every pin.
+func TestDocsCredentialsRunbookSaysTheServiceShipsDormant(t *testing.T) {
+	flat := flattenDoc(readDoc(t, credentialsRunbook))
+	for _, want := range []string{
+		"the service ships dormant",
+		"no job is ever given its address",
+		"FUGARO_CREDENTIALS_SERVICE_URL",
+		"serviceUpstream",
+		"fails",
+		"infra_error",
+		"opens no pull request",
+		"Do not opt in before the release that wires it (0.10.1)",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("%s does not say %q: an operator would run its steps against a service nothing can call", credentialsRunbook, want)
+		}
+	}
+}
+
 // TestDocsCredentialsRunbookPointsStepOneAtSomethingThatAnswers: §1 is what an
 // operator runs to find out whether the service is on at all, and the code
 // review of this change found it pointing at `fugaro doctor` — which has no
