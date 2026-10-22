@@ -1692,6 +1692,51 @@ test('the connection is asked before the key is, and before anything is written'
   assert.deepEqual(h.connection.asked().slice(-1), [false], 'the connection was what was asked');
 });
 
+test('a connection that goes while the key is being read is caught at the write', async () => {
+  // **The review's M1, as a test.** The gate at the top of `send` is what keeps
+  // the id, the key and the tag from happening at all -- and it is not the last
+  // word, because the key read between the two is a Keychain on a device: a
+  // prompt the owner may take seconds to answer, over which the connection can
+  // go. A write handed to the SDK after that is a write the SDK HOLDS and sends
+  // on reconnect, which is the one thing D167 rules out (G21). So the gate is
+  // asked again immediately before the write, and this test takes the connection
+  // away inside the key's own callback -- the moment no other test can reach.
+  const inner = new SecretStore(new MemorySecureStore());
+  let goOff = null;
+  const keys = Object.freeze({
+    put: (...args) => inner.put(...args),
+    use: async (accountId, item, fn) => {
+      const answer = await inner.use(accountId, item, fn);
+      // The connection goes while the Keychain is up: the `await` above is that
+      // prompt, and the client has already minted an id and made a tag.
+      if (goOff !== null) goOff.setOnline(false);
+      return answer;
+    },
+  });
+  const h = await harness({ keys, newId: () => 'm-1' });
+  // Armed only now: the harness's own observing poll is fixture setup and reads
+  // the key too.
+  goOff = h.connection;
+
+  const refused = await h.client.send('run 42 finished');
+  assert.deepEqual(refused, {
+    ok: false,
+    code: GATE_CODES.NO_CONNECTION,
+    field: 'connection',
+    message: OFFLINE_SPEECH[GATE_CODES.NO_CONNECTION],
+    told: true,
+  });
+  assert.deepEqual(h.store.writes(), [], 'the write never reached the SDK, and never will');
+  // The id was minted and then NOT recorded as used: a send that died between
+  // the tag and the write leaves the id free rather than burning it, and the
+  // same id goes out on the next attempt. (Were it burned, this second send
+  // would be refused as `id-conflict` and the utterance would be lost.)
+  goOff = null;
+  h.connection.setOnline(true);
+  assert.deepEqual(await h.client.send('run 42 finished'), { ok: true, id: 'm-1', at: T0 });
+  assert.deepEqual(h.store.writes().map((entry) => entry.path), [h.paths.inboxMessage('m-1')]);
+});
+
 test('a speak that failed does not change the refusal, and says so', async () => {
   // The refusal's CODE is what a screen switches on, and it must not depend on
   // whether the owner happened to be listening. `told` reports that separately.

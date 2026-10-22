@@ -239,7 +239,8 @@ client.pending();  // [] -- nothing was queued
 
 * **Nothing is written, and the owner is told.** `send`, `flush` and `poll` ask
   the connection gate **before** any read, write, key read or speak, so nothing
-  reaches the SDK and nothing reaches its queue. **A `message` is present
+  reaches the SDK and nothing reaches its queue -- and `send` asks it once more
+  at the write, for the reason the M1 note gives below the three rules. **A `message` is present
   exactly when the GATE refused and nowhere else, and that is the shape a screen
   may rely on.** A gated `send` -- and only that -- answers
   `{ ok: false, code: <a `GATE_CODES` code>, field, message, told }`: the
@@ -267,7 +268,11 @@ client.pending();  // [] -- nothing was queued
   bug this paragraph exists to prevent.
 * **`send` asks the presence gate too**, over the **last poll's heartbeat,
   re-judged at the moment the owner speaks** -- not the verdict the poll
-  computed. A consumer that was live five minutes ago and has gone quiet since
+  computed. **It is asked twice, the second time at the write** (the review's
+  M1): the first ask keeps the id, the key and the tag from happening at all,
+  and the second one catches a connection that went while the Keychain was up.
+  An unobserved consumer (`null`) is a refusal with its own code -- see the M2
+  note below. A consumer that was live five minutes ago and has gone quiet since
   is `stale` now, and the sentence is refused. `flush` and `poll` deliberately
   do **not** ask it: presence is what a poll *observes*, and refusing to look
   until the observation is good is a circle. Re-delivering a record already in
@@ -292,27 +297,36 @@ a destructive command means confirming it again.
 
 ## The limits of the gate, named
 
-**A phone that has never polled has observed nothing, and the gate lets it
-send.** D167's two conditions are "no connection" and "the consumer stale or
-offline"; `presence === null` is neither of them -- it is the absence of an
-observation, and inventing a refusal from it would leave a freshly paired phone
-unable to say its first sentence. The gate is a gate on what the phone has
-**seen**. The residual risk is bounded by things that already exist and not by
-this module's judgement: the consumer's own replay window (P1.1, six hours for a
-command, D173) refuses a record that arrives late, and D118's 72-hour mailbox
-retention bounds what is stored at all. A phone that has polled once and seen
-its consumer go quiet is refused from then on, which is the case the plan's
-wording is about.
+**No observation is not a licence to send, and this is the review's M2.** D167's
+two conditions are "no connection" and "the consumer stale or offline", and
+`presence === null` -- no poll has looked yet -- is neither of them. **The gate
+fails closed on it anyway, with its own code** (`consumer-unobserved`, and its
+own sentence: "I have not heard from the orchestrator yet"), because a gate that
+sends on "probably fine" is the gate G21 is about and D167 is SECURITY-SENSITIVE
+precisely so that the doubtful case is the refusing one. The cost is named and
+is the whole of it: a phone must have completed **one poll** before it can
+speak, which is the state it is in within one heartbeat interval of pairing --
+and `poll` is a read, so it asks for no permission the phone does not already
+have. The unobserved refusal is `send`'s alone, like the presence half it
+belongs to: `flush` and `poll` ask the connection half only
+(`evaluateConnection`), because presence is what a poll *makes*.
 
 **What the gate cannot do, and does not claim to do.** It is an observation of
-the connection and of the heartbeat, not a lock. A connection that drops between
-the gate and the write is a write the SDK will hold -- there is no port method
-that could see that, and the plan's own wording is "pending writes are cancelled
-**or never issued**": this module takes the second half, by never issuing. The
+the connection and of the heartbeat, not a lock. The gap between the gate and
+the write is therefore closed as far as a port can close it: the gate is asked
+**twice**, once at the top of `send` (so that an offline phone mints no id, reads
+no key and makes no tag) and **again immediately before the write** (the review's
+M1), because the key read in between is a Keychain on a device and a connection
+can go while it is up. A connection that drops between the second ask and the
+write is still a write the SDK will hold -- there is no port method that could
+see that, and the plan's own wording is "pending writes are cancelled **or never
+issued**": this module takes the second half, by never issuing. The
 alternative -- a `cancelPending()` on the database port, and the client calling
 it before every write -- would widen P3.6's two-method port to guard against a
 race it cannot detect anyway, and `store.js` keeps the SDK's cancel on the double
-(`cancelPending`, tested) precisely to show what is NOT being relied on.
+(`cancelPending`, tested) precisely to show what is NOT being relied on. An
+unobserved phone that has not polled is refused by the same pair of asks: the
+second one is not a second chance for a state the first one refused.
 
 **The unsent list grows, and nothing retires an entry.** `unsent` is an
 append-only array in the client's closure: one entry per gated utterance, for
@@ -490,7 +504,11 @@ than a claim.
 | the double's constructor is no more generous than the gate (in `connection.js`) | `the constructor is no more generous than the gate` |
 | a connection that is not `true` is offline (in `gate.js`) | `no connection refuses whatever the consumer looks like` |
 | a live consumer must be a VERIFIED one (in `gate.js`) | `a presence that is not evidence of a live consumer refuses` |
-| an unobserved consumer is not a refusal (in `gate.js`) | `a connected phone with nothing observed may send` |
+| an unobserved consumer IS a refusal (the review's M2, in `gate.js`) | `a connected phone that has observed nothing refuses, and says which nothing it is` -- and, at the client, `before anything has been observed the phone refuses, and then sends once it has looked` |
+| the connection half can be asked on its own (what `flush` and `poll` ask) | `the connection half can be asked on its own: it is what flush and poll ask` |
+| the gate is asked at all before the key and the id, and nothing is written | `the connection is asked before the key is, and before anything is written` |
+| the gate is asked AGAIN at the write (the review's M1): a connection that goes while the Keychain is up is caught | `a connection that goes while the key is being read is caught at the write` |
+| a client with no connection port is built, and refuses to send (the review's BLOCKER) | `a client built without a connection refuses to send, and says why (the review's BLOCKER)` |
 | a clock that disagrees is its own reason, not offline's (in `gate.js`) | `a live, verified consumer may be sent to, and nothing else may` |
 | the store's SDK holds a write made with no connection (in `store.js`) | `a write made with no connection is held, not refused, and not stored` -- and, run against `client.test.js`, `the client never relies on the SDK's offline queue: nothing is ever issued` |
 

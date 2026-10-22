@@ -338,7 +338,7 @@ run "the store is written in one file only (the scan)" \
 export function createRoot({ React, store, View, Text }) {" \
   mobile/src/app/root.js src/mailbox/write-path.test.js
 
-# 10. The offline gate (P6.10; D167, G21). Fourteen guards in client.js, four in
+# 10. The offline gate (P6.10; D167, G21). Sixteen guards in client.js, four in
 #     gate.js, one in connection.js and one in the store's SDK model -- and the store's is proved
 #     twice, once against its own suite and once against the client's, because
 #     "the SDK queue would have noticed" is the control the client's claim rests
@@ -375,16 +375,14 @@ run "an action whose write failed is not kept for a retry" \
   "    if (!isAction) outbound.set(id, { record, landed: false });" \
   "    outbound.set(id, { record, landed: false });"
 run "flush writes nothing with no connection" \
-  "    const verdict = evaluateGate({ online: connection.isOnline() });
-    if (!verdict.ok) return refuse(verdict.code, verdict.field);
-    return Object.freeze({ ok: true, ...(await flushMutating(nowMs)) });" \
-  "    const verdict = evaluateGate({ online: connection.isOnline() });
-    if (false) return refuse(verdict.code, verdict.field);
-    return Object.freeze({ ok: true, ...(await flushMutating(nowMs)) });"
+  "    const verdict = evaluateConnection(connection.isOnline());
+    if (!verdict.ok) return refuse(verdict.code, verdict.field);" \
+  "    const verdict = evaluateConnection(connection.isOnline());
+    if (false) return refuse(verdict.code, verdict.field);"
 run "poll does nothing at all with no connection" \
-  "    const online = evaluateGate({ online: connection.isOnline() });
+  "    const online = evaluateConnection(connection.isOnline());
     if (!online.ok) return refuse(online.code, online.field);" \
-  "    const online = evaluateGate({ online: connection.isOnline() });
+  "    const online = evaluateConnection(connection.isOnline());
     if (false) return refuse(online.code, online.field);"
 run "a send refusal the gate did not make carries no sentence either" \
   "    if (text.length > TEXT_MAX) return refuse(CLIENT_CODES.TOO_LONG, 'text');" \
@@ -407,10 +405,20 @@ run "a live consumer must be a VERIFIED one (gate.js)" \
   "  if (presence.state === STATE.LIVE && presence.verified === true) return Object.freeze({ ok: true });" \
   "  if (presence.state === STATE.LIVE) return Object.freeze({ ok: true });" \
   mobile/src/mailbox/gate.js src/mailbox/gate.test.js
-run "an unobserved consumer is not a refusal (gate.js)" \
+run "an unobserved consumer IS a refusal, not a licence (gate.js; the review's M2)" \
+  "  if (presence === null || presence === undefined) {
+    return refuse(GATE_CODES.CONSUMER_UNOBSERVED, 'presence');
+  }" \
   "  if (presence === null || presence === undefined) return Object.freeze({ ok: true });" \
-  "  if (presence === 'never') return Object.freeze({ ok: true });" \
   mobile/src/mailbox/gate.js src/mailbox/gate.test.js
+run "the gate is asked AGAIN at the write, so a connection that goes while the Keychain is up is caught (client.js; the review's M1)" \
+  "    if (!still.ok) {
+      return gateRefusal(still, { text: body.text, at, keepText: !isAction });" \
+  "    if (false) {
+      return gateRefusal(still, { text: body.text, at, keepText: !isAction });"
+run "a client with no connection port is built and REFUSES to send (client.js; the review's BLOCKER)" \
+  "  const { keys, store, connection = UNWIRED_CONNECTION, speaker, now, newId, secrets } = options;" \
+  "  const { keys, store, connection = { isOnline: () => true }, speaker, now, newId, secrets } = options;"
 run "a clock that disagrees is its own reason, not offline's (gate.js)" \
   "    case STATE.CLOCK_DIFFERS:
       return refuse(GATE_CODES.CONSUMER_CLOCK_DIFFERS, 'presence');" \
