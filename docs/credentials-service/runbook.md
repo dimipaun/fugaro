@@ -60,6 +60,8 @@ fugaro creds ls
    | `nothing was read: the newest version of the bundle container <id> is DISABLED` | The document is there and Secret Manager will not serve it. Not "no credential", and this command will not guess at it (a write on top of a document it could not read would drop every credential in it). | Enable the version again (`gcloud secrets versions enable <version> --secret=<id>`), or set a credential once it is enabled. |
    | `the bundle in <id> is not a document the credentials service accepts: <class>` | The loader refused the document — the same loader the service reads it with, so the service is refusing the same document. | Fix the document with `fugaro creds set NAME`; the class names what is wrong. (The sentence begins `nothing was written` here too: one message serves both commands.) |
    | `this identity may not read the bundle container <id> in project <gcp-project>` | The read is the owner's own project IAM — `secretmanager.versions.get`, and Project Owner or Editor carries it. | Run it as an operator; nothing was read. |
+
+   Two failures the table does not cover, because neither is about the bundle: the command is refused outright in a coding agent's session (the header), and any answer of the project's API that the command does not recognise comes back as the server's own text, bounded to one printable field — a read that failed for a reason of its own, not a bundle state.
 4. **The rules marker.** `creds_rules_denied` is a *deployed rules* problem, not a service problem: see §5.
 
 ## 4. A run halted for a missing credential
