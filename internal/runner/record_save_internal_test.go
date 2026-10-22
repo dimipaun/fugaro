@@ -10,6 +10,7 @@ import (
 
 	"gocloud.dev/blob/memblob"
 
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -52,6 +53,15 @@ func TestRecordCredentialSaveIsRaceFree(t *testing.T) {
 			default:
 			}
 			r.recordCredential(fmt.Sprintf("repo-shared-%d", i))
+			// The switch C1.16 logs with the answer is the record's second
+			// cross-goroutine append, and it races the same way. It is taken
+			// only for the first few hundred turns: this loop is bounded by the
+			// saves below, not by a count, and an appending writer left to run
+			// through them all would grow the record the saves encode without
+			// end.
+			if i < 200 {
+				r.recordSwitch(`{"from":"repo-shared-b","to":"repo-shared-a","reason":"exhausted"}`, gateway.SwitchCost{USD: 0.01})
+			}
 		}
 	}()
 	for i := 0; i < 100; i++ {

@@ -315,6 +315,12 @@ func (r *run) serviceAnswer(a gateway.ServiceAnswer) {
 	if a.Credential != "" {
 		r.recordCredential(a.Credential)
 	}
+	if a.Switch != "" {
+		// The switch the answer carries (C1.16, D140): the run's log of what
+		// the cascade moved and why, with the cache-miss estimate the gateway
+		// computed for that move.
+		r.recordSwitch(a.Switch, a.SwitchCost)
+	}
 	if a.Exhausted == nil {
 		return
 	}
@@ -430,6 +436,7 @@ func (r *run) endGatewayStage(stage string) ([]string, int64) {
 	rep := r.gw.EndStage()
 	r.mu.Lock()
 	r.gwUsed += rep.Used
+	r.gwNotional += rep.Notional
 	r.lastStage = &rep
 	for m, v := range rep.ByModel {
 		r.modelBy[m] += v
@@ -462,10 +469,37 @@ func (r *run) lastWaited() int {
 	return r.lastStage.Waited
 }
 
+// recordGatewayStageCost is the run's own account of a gateway stage that has
+// just ended: the gateway's settled figure is the run's model cost and Claude
+// Code's own is only a cross-check against it (runner.go calls this where the
+// stage's agent returned), and a halt the gateway raised after the stage's
+// watcher looked is recorded now.
+//
+// The figure is the money and the notional part together, which is what
+// record.CostUSD and cost.model_usd mean (C1.16, P12): the run's whole model
+// spend, of which cost.ModelNotionalUSD says how much was the subscription's.
+// The billed side is cost.TotalUSD, which withNotional keeps money-only --
+// a cascade run's tier-A dollars are in the model figure and in no total and
+// against no cap (D140).
+func (r *run) recordGatewayStageCost(stage string, claudeUSD float64, stopped bool) {
+	r.drainHalt()
+	r.crossCheckCost(stage, claudeUSD, stopped)
+	r.mu.Lock()
+	r.rec.CostUSD = (r.gwUsed + r.gwNotional).USD()
+	r.mu.Unlock()
+}
+
 // crossCheckCost warns when Claude Code's own figure for a stage and the
 // gateway's differ by more than 5%. A stage that was stopped (by a halt or
 // a cancel or its deadline) never got to report its cost, so its figure
 // says nothing and nothing is compared.
+//
+// The gateway's side is its whole model figure -- the money and the notional
+// part together -- because that is what Claude Code's own total_cost_usd
+// counts: it prices every call the stage made, whatever credential paid for
+// it, and a cascade stage's tier-A calls are in it (C1.16, F25). Comparing the
+// billed part alone against it would read every cascade stage as a 100%
+// disagreement and bury the cross-check's real finding.
 func (r *run) crossCheckCost(stage string, claude float64, stopped bool) {
 	r.mu.Lock()
 	rep := r.lastStage
@@ -473,7 +507,7 @@ func (r *run) crossCheckCost(stage string, claude float64, stopped bool) {
 	if rep == nil || stopped {
 		return
 	}
-	gw := rep.Used.USD()
+	gw := (rep.Used + rep.Notional).USD()
 	if larger := max(claude, gw); larger > 0 && abs(claude-gw) > 0.05*larger {
 		r.d.Log.Warn("cost cross-check", "stage", stage, "claude_code_usd", claude, "gateway_usd", gw)
 	}
@@ -551,9 +585,13 @@ func (r *run) closeGateway() {
 	}
 	led := gw.Ledger()
 	r.mu.Lock()
-	r.gwUsed = led.Used
+	// The ledger's settled totals are the run's, and they are the ones
+	// r.gwUsed and r.gwNotional keep: the money its calls paid and the
+	// subscription part of them (C1.16, D140). The stages' own reports are
+	// what the splits (model_by, route_by) are built from.
+	r.gwUsed, r.gwNotional = led.Used, led.Notional
 	r.mu.Unlock()
-	r.rec.CostUSD = led.Used.USD()
+	r.rec.CostUSD = (led.Used + led.Notional).USD()
 	r.updateCost()
 	r.warnReportedGap()
 }

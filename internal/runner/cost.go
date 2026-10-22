@@ -42,10 +42,23 @@ func (r *run) stageTiming(name string, started time.Time, claudeUSD float64) run
 	r.mu.Unlock()
 	if !gateway {
 		st.ModelUSD = claudeUSD
+		// Without a gateway the figure is Claude Code's own, and a
+		// subscription run's every dollar of it is notional (C1.16, P12):
+		// that is the same statement cost.ModelNotionalUSD makes for the
+		// run, and a stage's own split is the only place a mixed run's
+		// notional dollars can be told from its money.
+		if runstore.ModelBasis(r.cfg.Agent.Auth) == runstore.BasisSubscription {
+			st.ModelNotionalUSD = claudeUSD
+		}
 		return st
 	}
 	if rep != nil {
-		st.ModelUSD = rep.Used.USD()
+		// The stage's whole model figure and the notional part of it, as
+		// the gateway settled them (C1.16, D140): Used is the money its
+		// calls paid and Notional the tier-A calls, and the two are
+		// disjoint.
+		st.ModelUSD = (rep.Used + rep.Notional).USD()
+		st.ModelNotionalUSD = rep.Notional.USD()
 	}
 	return st
 }
@@ -67,18 +80,37 @@ func (r *run) updateCost() {
 	r.mu.Lock()
 	gateway := r.gw != nil
 	c.UsageUnparsed = r.unparsed
+	var notional float64
 	if gateway {
+		// The splits are of the run's whole model figure, notional dollars
+		// included: the gateway reports a model's amount whatever paid for
+		// the call, so model_by adds up to model_usd -- with the late
+		// "unattributed" residual -- only when the total it is measured
+		// against is the same Used + Notional the stages carry.
+		model := r.gwUsed + r.gwNotional
 		c.Unreconciled = r.unreconciled.USD()
-		c.ModelBy = modelByUSD(r.modelBy, r.gwUsed)
+		c.ModelBy = modelByUSD(r.modelBy, model)
 		c.ReportedUSD = r.reported.USD()
-		c.RouteBy = routeByUSD(r.routeBy, r.modelBy, r.gwUsed, r.routed)
+		c.RouteBy = routeByUSD(r.routeBy, r.modelBy, model, r.routed)
+		notional = r.gwNotional.USD()
 		// The catalog only prices the routes' models, so its staleness is a
 		// fact about what this run charged: a table that holds a stale row for
 		// a model the run never called, or priced by hand, over-counted
 		// nothing (design §7, P7).
 		c.CatalogStale = catalogStale(r.spend.Prices, chargedModels(r.modelBy))
+	} else if basis == runstore.BasisSubscription {
+		// No gateway and a subscription: Claude Code's own figure is the
+		// run's model spend and all of it is notional (C1.16, P12).
+		notional = c.ModelUSD
 	}
 	r.mu.Unlock()
+	// The notional part is what tells the run's money from what its
+	// subscription paid (C1.16, D140). It is applied through WithNotional so
+	// cost.total_usd -- billed dollars -- cannot drift from it: a mixed run's
+	// model_basis is api-list for the whole run while its tier-A dollars are
+	// in no total, which is why a reader splits on model_notional_usd and
+	// never on the basis (P12).
+	c = c.WithNotional(notional)
 	c.ModelSource = "claude-code"
 	if gateway {
 		c.ModelSource = "gateway"
