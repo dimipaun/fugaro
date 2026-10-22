@@ -461,6 +461,12 @@ func (l *logBuf) String() string {
 	return l.b.String()
 }
 
+func (l *logBuf) Len() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Len()
+}
+
 // hostRewriter sends every upstream request to a test server, whatever host
 // the service built the URL for. It is what lets the tier-A destination check
 // (D133) run on the real destination — the service builds

@@ -434,6 +434,24 @@ func firstDue(cands []creds.Credential, marks map[string]creds.Mark, now time.Ti
 	return out, found
 }
 
+// probeCallContext is the context a probe's upstream call runs on, and
+// probeRecordContext the one its audit line and its mark run on: both detached
+// from the caller — a run that hangs up mid-probe must not be the reason a
+// credential's question goes unanswered — and each bounded by its own budget.
+//
+// They are two functions rather than two inline calls so that the bound each
+// phase is given is a thing a test can read off the context it gets back,
+// instead of a constant it can only add up: a recording that took the call's
+// budget would leave the whole of the work at probeLeaseTTL, i.e. exactly the
+// point at which another instance may probe alongside this one.
+func probeCallContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), probeBudget)
+}
+
+func probeRecordContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), probeRecordBudget)
+}
+
 // probeOne makes the probe on one credential, audits it and records what it
 // means, answering whether the call should select again.
 //
@@ -487,14 +505,15 @@ func (s *Server) probeOne(ctx context.Context, sel *creds.Selector, id Identity,
 	// credential keeps a wait nobody asked for, twice, if the client's own
 	// abandonment is counted as the credential failing.
 	//
-	// Two phases, one bound: the call, then the recording. The recording gets
-	// the budget afresh rather than inheriting whatever the call left, because a
-	// probe that used its whole budget must still be able to write the answer it
-	// took five minutes to get.
-	sendCtx, sendDone := context.WithTimeout(context.WithoutCancel(ctx), probeBudget)
-	ans, err := s.send(sendCtx, probe, e)
-	sendDone()
-	recordCtx, recordDone := context.WithTimeout(context.WithoutCancel(ctx), probeBudget)
+	// Two phases, two budgets: the call, then the recording. The recording gets
+	// its own budget afresh rather than inheriting whatever the call left, because
+	// a probe that used its whole budget must still be able to write the answer it
+	// took five minutes to get. Neither budget is the other's, and neither is
+	// taken from the caller: both are probeCallContext/probeRecordContext.
+	callCtx, callDone := probeCallContext(ctx)
+	ans, err := s.send(callCtx, probe, e)
+	callDone()
+	recordCtx, recordDone := probeRecordContext(ctx)
 	defer recordDone()
 	reset := time.Time{}
 	var outcome probeOutcome

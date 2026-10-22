@@ -153,9 +153,12 @@ func (silentHandler) WithGroup(string) slog.Handler             { return silentH
 //
 // The clock is the fixture's frozen one, so every instant a probe writes is a
 // value a test can name.
-func probeSvc(t *testing.T, mutate func(*svc, *Config)) (*svc, *bytes.Buffer) {
+func probeSvc(t *testing.T, mutate func(*svc, *Config)) (*svc, *logBuf) {
 	t.Helper()
-	auditLog := &bytes.Buffer{}
+	// logBuf, not a bare bytes.Buffer: the handler writes the audit line from the
+	// server's goroutine while a test (waitFor, in the disconnect test) reads it
+	// from its own, and the service's own lines already go to one of these.
+	auditLog := &logBuf{}
 	s := newSvcWith(t, func(sv *svc, cfg *Config) {
 		// D142's two controls written off, so what the tests below measure is
 		// the probe's own effect on the mark and not the window it opens.
@@ -258,7 +261,7 @@ func wait(t *testing.T, resp *http.Response, body []byte) time.Time {
 
 // probeLine is the one audit line a probe writes, and whether there is exactly
 // one.
-func probeLine(t *testing.T, buf *bytes.Buffer) (map[string]any, bool) {
+func probeLine(t *testing.T, buf *logBuf) (map[string]any, bool) {
 	t.Helper()
 	if buf.Len() == 0 {
 		return nil, false
@@ -639,10 +642,54 @@ func TestWaitWhenAProbeIsOwedAndNotMade(t *testing.T) {
 // credential, and it is a bound rather than a lock, so a probe that is still
 // running when its claim lapses is a probe another instance may start beside
 // it. The call and the recording together must therefore end inside the claim.
+//
+// It reads the bounds off the contexts the probe itself would run on rather
+// than adding the two constants up: a sum is green whatever budget the
+// recording is actually given, which is exactly the way this can go wrong (the
+// recording given the call's five minutes puts the whole of the work back at
+// the claim's ten).
 func TestTheProbesOwnWorkIsBoundedUnderItsClaim(t *testing.T) {
+	// slack is how much of a budget may have run between building the context
+	// and reading its deadline. It is far below the gap between the two budgets,
+	// so the measurements below still tell them apart.
+	const slack = 30 * time.Second
+	parent, cancel := context.WithCancel(context.Background())
+	callCtx, callDone := probeCallContext(parent)
+	defer callDone()
+	recordCtx, recordDone := probeRecordContext(parent)
+	defer recordDone()
+
+	// Neither is the caller's: the client hanging up is not the probe's answer.
+	cancel()
+	if err := callCtx.Err(); err != nil {
+		t.Errorf("the probe's call runs on the caller's context: %v", err)
+	}
+	if err := recordCtx.Err(); err != nil {
+		t.Errorf("the probe's recording runs on the caller's context: %v", err)
+	}
+
+	// Each phase is bounded by its own budget, and nothing else's.
+	if got := remaining(t, callCtx); got > probeBudget || got <= probeBudget-slack {
+		t.Errorf("the probe's call is bounded by %s, want %s", got, probeBudget)
+	}
+	if got := remaining(t, recordCtx); got > probeRecordBudget || got <= probeRecordBudget-slack {
+		t.Errorf("the probe's recording is bounded by %s, want %s of its own, not the call's %s", got, probeRecordBudget, probeBudget)
+	}
+
+	// And the two together end inside the claim.
 	if got := probeBudget + probeRecordBudget; got >= probeLeaseTTL {
 		t.Errorf("a probe's own work may run for %s, want under the %s its claim stands for: past that, two instances probe the same credential together", got, probeLeaseTTL)
 	}
+}
+
+// remaining is how long a context has left before its own deadline.
+func remaining(t *testing.T, ctx context.Context) time.Duration {
+	t.Helper()
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("the context has no deadline of its own")
+	}
+	return time.Until(deadline)
 }
 
 // TestProbeClaimDoesNotBlockTheNextProbe is the release, as an installation
