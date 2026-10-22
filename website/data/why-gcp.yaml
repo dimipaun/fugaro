@@ -38,7 +38,13 @@
 #     behind the backend seam, which is the part that makes it GCP-bound whatever runs a job
 #     (ZF20; `docs/backends.md:11`).
 #   - "so there is no extra setup" is false (ZF18): the same-project services come with the
-#     project, and `fugaro init` is what provisions them.
+#     project, and `fugaro setup` is what provisions them. The command is written under the
+#     name the site's own live files use (`website/data/install.yaml`,
+#     `website/src/pages/getting-started.astro`): the setup-wizard rename
+#     (`docs/setup-wizard/implementation-plan.md`) is taking the retired name out of the tree,
+#     so this file does not write it -- a live file that names it is one the census in
+#     `internal/cli/docs_live_init_census_test.go` holds until W2.6, and a new one has no
+#     business joining that list.
 #   - "Fugaro gets its own isolated, Fugaro-managed project" is not true in the present tense
 #     (ZF17): managed projects are gated off. What is true is the narrow sentence ZF16 states
 #     -- a managed project is a new project that holds only Fugaro's resources.
@@ -72,7 +78,7 @@ points:
   - id: gcp-project
     text: >-
       A Firebase project is a Google Cloud project. The runs bucket, the custom roles, the
-      job accounts and the images a run uses are resources of it, and fugaro init is what
+      job accounts and the images a run uses are resources of it, and fugaro setup is what
       provisions them.
     source: docs/gcp-setup.md
     date: 2026-10-22
