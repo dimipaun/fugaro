@@ -234,13 +234,13 @@ type Server struct {
 	lastCacheRead  int64
 	lastModel      string
 	lastCacheKnown bool
-	halt        *Halt
-	haltMsg     string
-	wouldHalted bool           // observe: enforce would have halted by now
-	granted     pricing.Micros // lease: the sum of what the lease granted, less what was released
-	flight      *topUp         // lease: the top-up in flight, if any
-	stage       *stageState
-	onLedger    func(Ledger, pricing.Micros) // tests: called after every ledger change
+	halt           *Halt
+	haltMsg        string
+	wouldHalted    bool           // observe: enforce would have halted by now
+	granted        pricing.Micros // lease: the sum of what the lease granted, less what was released
+	flight         *topUp         // lease: the top-up in flight, if any
+	stage          *stageState
+	onLedger       func(Ledger, pricing.Micros) // tests: called after every ledger change
 }
 
 // stageState is a running stage; its calls hold it until they settle.
