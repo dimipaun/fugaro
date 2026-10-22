@@ -1,8 +1,12 @@
 package cli
 
 import (
+	"bufio"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
 // hostileRepoRig is a rig and a checkout of a third-party repository whose
@@ -226,4 +230,168 @@ func TestInitRepoRefusesCatalogSwitches(t *testing.T) {
 	// Unset: the same command gets past this gate to its own next refusal.
 	_, err, _, _ = init(t, "")
 	pastGate(t, err)
+}
+
+// gateRig is the start of a converge: the engine, the checkout the gate asks
+// about, and the question gateEarly asks it, with a terminal this test's and
+// stdout collected. The local config lists acme/sandbox (bitbucket) and
+// nothing else, so an origin of a github.com repository is the unlisted case
+// the gate exists for. Nothing here reaches a cloud: gateEarly asks before the
+// first stage plans.
+func gateRig(t *testing.T, door, origin, yaml, stdin string, o *initOptions) (*initEngine, *strings.Builder) {
+	t.Helper()
+	r := newInitRig(t)
+	r.stateBucket()
+	dir := repoCheckout(t, origin, yaml)
+	t.Chdir(dir)
+	fakeTerminal(t)
+	if o == nil {
+		o = &initOptions{}
+	}
+	o.door = door
+	out := &strings.Builder{}
+	run := &initRun{o: o, w: out, in: bufio.NewReader(strings.NewReader(stdin)), cmd: NewRootCmd()}
+	e := &initEngine{r: run, lc: &localcfg.Config{Name: "aurora", Repos: map[string]localcfg.Repo{
+		"acme/sandbox": {Provider: "bitbucket", Workflows: []string{"web"}},
+	}}}
+	e.repo = newRepositoryStage(e)
+	e.gateEarly(t.Context())
+	return e, out
+}
+
+// gateCheckoutYAML is the fugaro.yaml a checkout the gate asks about carries,
+// for the project these tests name.
+func gateCheckoutYAML() string { return checkoutYAML("github", "api-key", "aurora", "") }
+
+const gateRepo = "acme/hostile"
+
+func gateOrigin() string { return "https://github.com/" + gateRepo + ".git" }
+
+// TestSetupAsksToOnboardTheCheckoutsRepository is Task W3.4's red step: in a
+// checkout whose repository the project's local config does not list yet,
+// `fugaro setup` asks the wizard's first-repository question — "onboard
+// <owner/name>?" — at the start of the converge, before any stage plans, and
+// Enter takes yes (D5, answered 2026-10-20 as recommended).
+//
+// The question is the wizard's and it authorizes nothing: it is asked in
+// front of the gate, not instead of it. An answer of yes goes on to the same
+// typed owner/name confirmation an unlisted repository always needed, and an
+// answer of no onboards nothing, leaves nothing for the user to do, and says
+// how to enrol the repository later.
+func TestSetupAsksToOnboardTheCheckoutsRepository(t *testing.T) {
+	// Yes, the answer Enter takes: the question is asked first, the typed
+	// owner/name behind it is unchanged, and the repository is opted in.
+	e, out := gateRig(t, setupDoor.name, gateOrigin(), gateCheckoutYAML(), "\n"+gateRepo+"\n", nil)
+	asked := "Onboard " + gateRepo
+	if !strings.Contains(out.String(), asked) {
+		t.Errorf("setup did not ask whether to onboard the checkout's repository:\n%s", out)
+	}
+	if !strings.Contains(out.String(), "["+onboardAnswerYes+"]") {
+		t.Errorf("the question does not offer %s as the answer Enter takes:\n%s", onboardAnswerYes, out)
+	}
+	if strings.Index(out.String(), asked) > strings.Index(out.String(), "Type "+gateRepo+" to onboard it") {
+		t.Errorf("the question came after the typed confirmation it is asked in front of:\n%s", out)
+	}
+	if !e.authorized[gateRepo] {
+		t.Errorf("the answer %s and the owner/name typed did not opt the repository in:\n%s", onboardAnswerYes, out)
+	}
+
+	// No: nothing is onboarded, the typed confirmation is not asked at all,
+	// and the stage is skipped rather than left for the user — they answered.
+	e, out = gateRig(t, setupDoor.name, gateOrigin(), gateCheckoutYAML(), onboardAnswerNo+"\n", nil)
+	if !strings.Contains(out.String(), asked) {
+		t.Errorf("setup did not ask whether to onboard the checkout's repository:\n%s", out)
+	}
+	if strings.Contains(out.String(), "Type "+gateRepo+" to onboard it") {
+		t.Errorf("the answer %s still reached the typed confirmation:\n%s", onboardAnswerNo, out)
+	}
+	if e.authorized[gateRepo] {
+		t.Errorf("the answer %s opted the repository in:\n%s", onboardAnswerNo, out)
+	}
+	st, err := e.repo.Check(t.Context())
+	if err != nil {
+		t.Fatalf("the stage's check failed: %v", err)
+	}
+	if st.State != initflow.Skipped {
+		t.Errorf("state %q, want %q: the answer was not to onboard it, so there is nothing left for the user\n%s", st.State, initflow.Skipped, out)
+	}
+	if !strings.Contains(st.Detail, gateRepo) {
+		t.Errorf("the skip does not name the repository it is about: %q", st.Detail)
+	}
+	if !strings.Contains(st.Detail, "--repo") {
+		t.Errorf("the skip does not say how to onboard the repository later: %q", st.Detail)
+	}
+}
+
+// TestSetupOutsideACheckoutSaysHowToEnrol: outside a checkout there is no
+// repository to ask about, so the question is skipped and the run says in one
+// line how to enrol one later, naming `fugaro setup` (W3.4, D5).
+func TestSetupOutsideACheckoutSaysHowToEnrol(t *testing.T) {
+	old := selfCommand
+	selfCommand = func() string { return "fugaro" }
+	t.Cleanup(func() { selfCommand = old })
+	firstRunEnv(t) // outside any checkout
+	fakeTerminal(t)
+	out := &strings.Builder{}
+	run := &initRun{o: &initOptions{door: setupDoor.name}, w: out, in: bufio.NewReader(strings.NewReader("")), cmd: NewRootCmd()}
+	e := &initEngine{r: run, lc: &localcfg.Config{Name: "aurora"}}
+	e.repo = newRepositoryStage(e)
+	e.gateEarly(t.Context())
+	line := strings.TrimSpace(out.String())
+	if line == "" {
+		t.Fatal("a run outside a checkout says nothing about the repository it cannot onboard")
+	}
+	if strings.Contains(line, "\n") {
+		t.Errorf("the run printed more than one line about it:\n%s", out)
+	}
+	if !strings.Contains(line, "fugaro setup") || !strings.Contains(line, "--repo") {
+		t.Errorf("the line does not say how to enrol a repository later, naming fugaro setup:\n%s", out)
+	}
+}
+
+// TestSetupStillTypesAnUnlistedRepositoryUnderYes is today's row, on purpose
+// (W3.4): onboarding a repository the run was not told about is Typed before
+// 2026-10-20 and stays so until W5.1 lands, which flips the call site. The
+// wizard's question does not stand in for it, and --yes does not cover it.
+func TestSetupStillTypesAnUnlistedRepositoryUnderYes(t *testing.T) {
+	r, dir := hostileRepoRig(t, "https://github.com/acme/hostile.git")
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--github-app-id", "42", "--yes", dir)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err %v:\n%s%s", ExitCode(err), err, out, errOut)
+	}
+	noCloudTouched(t, r, "an unlisted repository under --yes")
+	all := out + errOut + err.Error()
+	if !strings.Contains(all, "Type acme/hostile to onboard it") && !strings.Contains(all, "acme/hostile") {
+		t.Errorf("the refusal does not name the repository whose owner/name is typed:\n%s", all)
+	}
+	if !strings.Contains(all, "--onboard-repo") {
+		t.Errorf("the refusal does not name the one-line opt-in:\n%s", all)
+	}
+}
+
+// TestSetupOnboardingIsASeparateAnswerFromTheProjectQuestion: the wizard asks
+// two questions about two different things, and neither answers the other. The
+// project's is the wizard's own (setup.go's askProjectAnswer, asked with the
+// other first-run inputs); this one is the gate's, asked at the start of the
+// converge about the checkout's repository (W3.4, D5). A run whose answer here
+// is no still carries the project answers it was given.
+func TestSetupOnboardingIsASeparateAnswerFromTheProjectQuestion(t *testing.T) {
+	e, out := gateRig(t, setupDoor.name, gateOrigin(), gateCheckoutYAML(), onboardAnswerNo+"\n",
+		&initOptions{createProject: true, name: "aurora", cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}})
+	if strings.Contains(out.String(), setupAskProject) {
+		t.Errorf("the gate asked the project's question, which is the wizard's own:\n%s", out)
+	}
+	if !e.r.o.createProject || e.r.o.name != "aurora" || e.r.o.cloud.gcpProject != "proj-1234" {
+		t.Errorf("the answer about the repository changed the project's answers: create %v name %q project %q",
+			e.r.o.createProject, e.r.o.name, e.r.o.cloud.gcpProject)
+	}
+	// The reverse: the wizard's own question flow never asks this one. Its
+	// rows are the first-run inputs, and a repository is not one of them — the
+	// question needs a checkout, and the answer is asked where the checkout is
+	// read.
+	for _, q := range setupQuestions {
+		if strings.Contains(strings.ToLower(q.label), "nboard") || strings.Contains(q.flag, "onboard") {
+			t.Errorf("%s is the wizard's own table row, and onboarding the checkout's repository is the gate's question", q.label)
+		}
+	}
 }
