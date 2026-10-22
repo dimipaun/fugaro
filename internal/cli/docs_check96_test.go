@@ -1,14 +1,30 @@
 package cli
 
 import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 )
 
-// pipeIntoPythonHeredocRE matches a pipe into `python3 -` followed by a heredoc
-// opener: the one shape whose stdin the heredoc wins.
-var pipeIntoPythonHeredocRE = regexp.MustCompile(`\|\s*python3?\s+(-\s+)?<<`)
+// pipeIntoPythonHeredocRE matches a pipe into `python3` on a line that opens a
+// heredoc further along it: the one shape whose stdin the heredoc wins.
+//
+// The first form of this regex required `<<` immediately after `python3` or
+// `python3 -`, which is only one member of the family: the shape that got past
+// it was `printf '%s' "$ANSWER" | python3 - "$CHK96_SANDBOX_REPO" <<'PY'` — a
+// heredoc with an argv argument in front of it — which reads exactly as dead as
+// `… | python3 - <<'PY'` and passed the guard with the defect in the register.
+// A pipe into python on a line that opens a heredoc anywhere after it is the
+// rule, so a document cannot slip past by putting a word between the two.
+//
+// (The `|` is part of the pattern and not of the prose: a comment that names the
+// shape without the pipe — “a pipe into `python3 - <<'PY'`” — is exactly what the
+// fixed form's explanation says, and it must not be flagged as the defect.)
+var pipeIntoPythonHeredocRE = regexp.MustCompile(`\|\s*python3?\s[^\n]*<<`)
 
 // Check 96 — GitHub tokens through the service (Task C2.4, D145, F34) — as the
 // register writes it.
@@ -258,9 +274,205 @@ func check96Section(t *testing.T) string {
 //
 // Mutation (run and restored): Check 96's step 1 put back to
 // `printf '%s' "$JOB_JSON" | python3 - <<'PY'` → FAIL.
+// Mutation (run and restored): Check 96's step 3 put back to
+// `printf '%s' "$ANSWER" | python3 - "$CHK96_SANDBOX_REPO" <<'PY'` — the argv
+// form the first regex missed → FAIL, which is the widening this test's regex
+// was extended for.
 func TestDocsChecklistHasNoPipeIntoPythonHeredoc(t *testing.T) {
 	register := readDoc(t, "docs/gcp-live-checklist.md")
 	if m := pipeIntoPythonHeredocRE.FindString(register); m != "" {
 		t.Errorf("docs/gcp-live-checklist.md pipes a document into a python heredoc (%q): bash gives the heredoc stdin, so the script reads EOF instead of the document and the step prints none of its facts. Pass the document as a file or an argv argument (the form the register's other heredocs use), or use `python3 -c`.", m)
+	}
+}
+
+// shellHeredocOpenerRE matches a `<<`/`<<'PY'` heredoc opener and captures the
+// delimiter, the way bash reads it: `<<`, an optional `-`, optional blanks, and
+// the word, quoted or not.
+var shellHeredocOpenerRE = regexp.MustCompile(`<<-?\s*(?:'([A-Za-z_][A-Za-z0-9_]*)'|([A-Za-z_][A-Za-z0-9_]*))`)
+
+// apostropheInWordRE matches an apostrophe inside a word — a letter, an
+// apostrophe and a letter — which outside a heredoc can only be an English
+// apostrophe and never shell quoting: the closing quote of a single-quoted
+// program is followed by a blank, a bracket, a semicolon or the end of the line,
+// and an opening one is preceded by a blank, `=`, `(` or `-c`.
+var apostropheInWordRE = regexp.MustCompile(`[A-Za-z]'[A-Za-z]`)
+
+// TestDocsCheck96ShellBlocksRunAndCloseTheirHeredocs is the guard the review of
+// Check 96 asked for, over the register's own reading of the section.
+//
+// The register's shell is an *artifact that runs*: internal/cli/
+// docs_artifact_runs_test.go's bashBlocks, which several tests here run a
+// section's blocks through, keeps each block's lines with their indentation, so
+// what a step looks like in the file is what bash is handed. Three defects of
+// exactly that kind were found in Check 96 by hand and are held here:
+//
+//   - steps 1, 3 and 4 opened `<<'PY'` and closed it with an indented `   PY`.
+//     `bash -n` does NOT fail on that — bash only ends a heredoc at a delimiter
+//     at column 0, warns “here-document … delimited by end-of-file”, and exits
+//     0 — and every command after the opener is consumed as heredoc input and
+//     never runs. In step 1 that includes the `gcloud secrets get-iam-policy`
+//     read the step's FACT is entirely about, and in step 4 the audit read.
+//   - the same blocks' bodies carried the step's own list indentation, so the
+//     first python statement was indented and python died with “IndentationError:
+//     unexpected indent” even once the delimiter was at column 0. That is why
+//     the rule below is about the delimiter AND the body's first line.
+//   - step 5's read-back carried an apostrophe inside a single-quoted
+//     `python3 -c '…'` program (“the check's two run ids”). The quote closes
+//     early, the words after it become python's argv, python exits on its own
+//     SyntaxError — and, because the mangled words were consumed as arguments,
+//     the `ls -A "$W"; rm -rf "$W"` and the `# 0` read-back that follow it never
+//     ran and the block ended quietly. `bash -n` does catch this one where bash
+//     is installed, and the apostrophe-in-a-word rule below states the shape
+//     itself, for the machines with no bash on PATH.
+//
+// The rules are scoped to Check 96 rather than stated over the register: the
+// indented-delimiter shape pre-exists in merged Check 92 (Task C1.5's, at
+// docs/gcp-live-checklist.md's Check 92 section), which is another work's check
+// and not this one's to edit, and a register-wide rule would fail on it. The
+// pipe rule above is register-wide because that shape is invisible and reads as
+// working; this one is a class the register has not been swept for.
+//
+// Mutations (run and restored): step 1's `PY` delimiter indented again → FAIL;
+// step 1's first body line re-indented → FAIL; step 5's apostrophe put back into
+// the `python3 -c` program → FAIL.
+func TestDocsCheck96ShellBlocksRunAndCloseTheirHeredocs(t *testing.T) {
+	section := check96Section(t)
+	blocks := bashBlocks(section)
+	if len(blocks) < 6 {
+		t.Fatalf("Check 96 has %d ```bash blocks; the section is the register's shell and it does not have fewer than six", len(blocks))
+	}
+
+	for i, block := range blocks {
+		// 1. Every heredoc a block opens is closed by a delimiter at column 0, and
+		//    its body starts at column 0. The scan walks the block line by line and
+		//    steps over a heredoc's body once it has been read, so a `<<` written
+		//    inside one body is not read as another opener; a comment is skipped
+		//    for the same reason — a comment cannot open a heredoc, and this
+		//    section explains the shape it bans in one.
+		for ln := 0; ln < len(block); ln++ {
+			line := block[ln]
+			if strings.HasPrefix(strings.TrimSpace(line), "#") {
+				continue
+			}
+			m := shellHeredocOpenerRE.FindStringSubmatch(line)
+			if m == nil {
+				continue
+			}
+			delim := m[1]
+			if delim == "" {
+				delim = m[2]
+			}
+			// The terminator is the first line that would end the heredoc if it
+			// stood at column 0 — not the next line that happens to be at column
+			// 0 with that word on it, which is how a block with two heredocs
+			// would hide the first one's indented delimiter behind the second
+			// one's.
+			end := -1
+			indented := ""
+			for j := ln + 1; j < len(block); j++ {
+				if strings.TrimSpace(block[j]) != delim {
+					continue
+				}
+				if block[j] != delim {
+					indented = block[j]
+					break
+				}
+				end = j
+				break
+			}
+			if indented != "" {
+				t.Errorf("Check 96's bash block %d opens a `<<%s` heredoc on its line %d and closes it with %q — an indented delimiter: bash ends a heredoc only at a delimiter at column 0, so it reads on to the end of the block and every command after the opener is swallowed as heredoc input and never runs (and `bash -n` exits 0 on it)", i+1, delim, ln+1, indented)
+				continue
+			}
+			if end < 0 {
+				t.Errorf("Check 96's bash block %d opens a `<<%s` heredoc on its line %d which no line closes: every command after the opener is swallowed as heredoc input and never runs", i+1, delim, ln+1)
+				continue
+			}
+			for j := ln + 1; j < end; j++ {
+				if strings.TrimSpace(block[j]) == "" {
+					continue
+				}
+				if block[j] != strings.TrimLeft(block[j], " \t") {
+					t.Errorf("Check 96's bash block %d opens a `<<%s` heredoc on its line %d whose body starts indented (%q): the body is handed to the interpreter verbatim, so a list indentation carried into it is a syntax error (`IndentationError: unexpected indent` for python) and the step does nothing", i+1, delim, ln+1, block[j])
+				}
+				break
+			}
+			ln = end
+		}
+
+		// 2. No apostrophe inside a word outside a heredoc body. In shell this is
+		//    the defect step 5 carried: `python3 -c '… the check's two run ids …'`
+		//    closes the program's quote at the apostrophe, re-splits the rest of
+		//    the line into python's argv, and python exits on its own SyntaxError —
+		//    after which nothing on the line or below it runs, so the step's own
+		//    restore and its `# 0` read-back were never reached. `bash -n` catches
+		//    that one (rule 3), but only where bash is installed; this rule names
+		//    the shape itself, in the section's own words. Heredoc bodies are
+		//    exempt: an apostrophe inside a python string there is harmless, and
+		//    this check's own prose prints some.
+		body := make([]bool, len(block))
+		for ln := 0; ln < len(block); ln++ {
+			line := block[ln]
+			if strings.HasPrefix(strings.TrimSpace(line), "#") {
+				continue
+			}
+			m := shellHeredocOpenerRE.FindStringSubmatch(line)
+			if m == nil {
+				continue
+			}
+			delim := m[1]
+			if delim == "" {
+				delim = m[2]
+			}
+			for j := ln + 1; j < len(block) && block[j] != delim; j++ {
+				body[j] = true
+			}
+		}
+		// The rule reads only the inside of a `python3 -c '…'` program: the
+		// program may run over several lines (this section's FPROJ does), so the
+		// scan carries “still inside the program” across lines — a marker opens
+		// it, and each line's quote parity closes it again — and a program's own
+		// `#` comments are left alone, where an apostrophe is python's business
+		// and not bash's.
+		inProgram := false
+		for ln, line := range block {
+			if body[ln] {
+				inProgram = false
+				continue
+			}
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			if !inProgram && !strings.Contains(line, "python3 -c '") {
+				continue
+			}
+			if m := apostropheInWordRE.FindString(line); m != "" {
+				t.Errorf("Check 96's bash block %d line %d carries an apostrophe inside a word (%q) inside a `python3 -c '…'` program: that quote ends the program, the words after it become python's argv, python exits on a SyntaxError, and the commands after the line — a step's own restore among them — never run. Keep apostrophes out of the program, or pass values in as argv", i+1, ln+1, trimmed)
+			}
+			// A program is open after this line when the line's quotes do not
+			// pair up. The quotes before the marker are a balanced pair in
+			// every program this section writes (`printf '%s' …`), so counting
+			// the whole line is counting the program.
+			inProgram = strings.Count(line, "'")%2 == 1
+		}
+
+		// 3. And the block parses as bash. This does not catch an unterminated
+		//    heredoc (bash -n exits 0 on one), which is what rule 1 is for; it
+		//    catches the quoting class.
+		bash, err := exec.LookPath("bash")
+		if err != nil {
+			continue
+		}
+		f := filepath.Join(t.TempDir(), fmt.Sprintf("check96-%d.sh", i))
+		if err := os.WriteFile(f, []byte(strings.Join(block, "\n")+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := exec.Command(bash, "-n", f).CombinedOutput(); err != nil {
+			t.Errorf("Check 96's bash block %d does not parse as bash (%v): %s", i+1, err, out)
+		}
+	}
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Log("bash is not on PATH: the parse half of this test did not run")
 	}
 }
