@@ -459,6 +459,35 @@ func TestPickerNeverRunsUnderYes(t *testing.T) {
 	}
 }
 
+// TestPickerNeverRunsUnderPrintVars: --print-vars makes stdout the Terraform
+// variables and nothing else, so the account list must not be able to reach it.
+// It is the one condition of the seven asksBilling names that canType() does
+// not already cover — a person's terminal with --print-vars still passes all
+// four of those (it is not --non-interactive, not --json, not an agent's
+// session, and stdin is a terminal) — which is why the question names the flag
+// itself beside --yes.
+func TestPickerNeverRunsUnderPrintVars(t *testing.T) {
+	f := gcpfake.NewBilling(t)
+	acct := pickerAccountID(t, "one")
+	f.AddAccountNamed(acct, "the operator's own account", true)
+
+	// Every other input comes from the flags, so the run is past the questions
+	// that would refuse it: the only thing between this run and the account
+	// list is the condition under test.
+	r, out := pickerRun(t, true, "", &initOptions{printVars: true, createProject: true, name: "aurora",
+		cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}})
+	pickerSources(t, f)
+	if err := r.gatherInputs(t.Context()); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if out.Len() != 0 {
+		t.Errorf("--print-vars makes stdout the variables alone, and the wizard wrote a question into it:\n%s", out)
+	}
+	if r.o.linkBilling != "" || billingListCalls(f) != 0 {
+		t.Errorf("the picker ran under --print-vars: linkBilling %q, %d list call(s)\n%s", r.o.linkBilling, billingListCalls(f), out)
+	}
+}
+
 // TestPickerNoSourceSaysSoAndRecordsNothing: the API refused and gcloud is not
 // on PATH (W4.2's fallback), so there is nothing to offer. The question says
 // that in one line and records nothing; the run falls back to today's text,
