@@ -216,12 +216,18 @@ func unsent(cands []creds.Credential, sent map[string]bool) []creds.Credential {
 // for an installation token.
 //
 // status is the wire's own vocabulary: StatusOK for an issuance, and one of
-// the contract's error types for a refusal. The credential and the tier are
-// passed together or not at all — an issuance and a refusal that names the
-// credential it would have used both carry them, a refusal taken before one
-// was chosen carries neither (the auditor refuses a line that names one
-// without the other: a reader that guessed the missing half would be reading
-// an answer this service did not give).
+// the contract's error types for a refusal. For a model call — every purpose
+// but a mint's — the credential and the tier are passed together or not at
+// all: an issuance and a refusal that names the credential it would have used
+// both carry them, a refusal taken before one was chosen carries neither, and
+// the auditor refuses a line that names one without the other (a reader that
+// guessed the missing half would be reading an answer this service did not
+// give). A mint is the one purpose that rule does not hold for, and the
+// auditor says so itself: the App key is not a model credential of the cascade
+// and has no tier, so a mint carries the credential's name and an EMPTY tier,
+// and the auditor refuses a tier on a mint instead of requiring one — which is
+// what makes the refusals above the mint's branch (server.go) able to name the
+// App key and no tier.
 func (s *Server) auditCall(ctx context.Context, id Identity, purpose, credential, tier, status string) error {
 	return s.audit.Write(ctx, id.Audit(AuditEvent{
 		Credential: credential,

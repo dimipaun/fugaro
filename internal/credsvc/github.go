@@ -285,9 +285,17 @@ func (s *Server) mint(ctx context.Context, w http.ResponseWriter, r *http.Reques
 	// what "not made" means here is that it reaches nobody: no answer carries
 	// it, no log line and no error does either, and the run halts on
 	// state_unavailable like any other refusal of this endpoint.
+	//
+	// The refusal is answered through refuseMint and not written here, because
+	// it IS a refusal of this endpoint after admission: the act that could not
+	// be recorded is the issuance, and a failure to write one line is no reason
+	// to leave the line an operator does need — the mint that handed out no
+	// token — unwritten. (refuseMint may fail its own line as well; then the
+	// failure is on the service's log twice, which is where an operator looks
+	// for an audit log that is not recording.)
 	if err := s.auditMint(ctx, id, StatusOK); err != nil {
 		s.log.Error("credsvc: the mint's audit line was not written", "error", err)
-		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, ErrMintUnaudited.Error())
+		s.refuseMint(ctx, w, id, ErrMintUnaudited.Error())
 		return
 	}
 	writeMintAnswer(w, MintResponse{Token: token, ExpiresAt: expires, Repository: ja.Repo})

@@ -764,6 +764,61 @@ func TestEveryMintLineNamesTheAppKey(t *testing.T) {
 	}
 }
 
+// TestTheRefusalOfAnUnauditedMintIsAudited: the mint twin of the answer path's
+// test of the same name. A mint whose issuance line could not be written is
+// refused — the token reaches nobody (D143) — and that refusal is a refusal of
+// this endpoint after admission like any other, so it is recorded through
+// refuseMint: one line, purpose mint, the App key's name, the refusal's class
+// state_unavailable.
+//
+// The handler fails the FIRST line it is handed and records the rest, which is
+// the only way to see it: a handler that fails every write leaves the refusal
+// nothing to be written with either, and that half is
+// TestMintRefusesWhenItCannotBeAudited's.
+func TestTheRefusalOfAnUnauditedMintIsAudited(t *testing.T) {
+	failed := false
+	mintLog := &logBuf{}
+	s, gh := mintSvc(t, func(_ *svc, cfg *Config) {
+		cfg.AuditLog = &failFirstHandler{inner: slog.NewJSONHandler(mintLog, nil), failed: &failed}
+	})
+	resp, body := s.mintCall(t, mintBody(testAppID))
+	if resp.StatusCode != StatusUnavailable {
+		t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+	}
+	got := refusal(t, resp.StatusCode, body)
+	if got.Error != ErrorStateUnavailable || !strings.Contains(got.Message, ErrMintUnaudited.Error()) {
+		t.Errorf("the refusal is %+v, want state_unavailable and the unaudited class", got)
+	}
+	if n := gh.count(); n != 2 {
+		t.Errorf("GitHub saw %d requests, want the lookup and the mint: the token was minted and then withheld", n)
+	}
+	// The token reaches nothing the run or an operator can read, and the
+	// refusal the run got is the refusal this endpoint always answers.
+	if strings.Contains(string(body), gh.token) || strings.Contains(s.logs.String(), gh.token) {
+		t.Fatal("the token was handed out by a mint that could not be audited")
+	}
+	lines := parseAuditLines(t, mintLog.String())
+	if len(lines) != 1 {
+		t.Fatalf("the refused mint wrote %d audit lines, want exactly 1 (the refusal's): %v", len(lines), lines)
+	}
+	line := lines[0]
+	checkAuditShape(t, line)
+	for field, want := range map[string]any{
+		"purpose":    PurposeMint,
+		"credential": config.GitHubAppKeySecret,
+		"status":     ErrorStateUnavailable,
+		"run":        s.run,
+		"repository": s.slug,
+		"job":        s.job,
+		"caller":     testJobSA,
+		"tier":       "",
+	} {
+		if got := line[field]; got != want {
+			t.Errorf("the refusal's audit line %s = %v, want %q", field, got, want)
+		}
+	}
+}
+
 // levelOffHandler is a handler that records nothing: Enabled is false for every
 // level, which is the half of "cannot be audited" a level-filtered log is
 // (C1.13's line(): slog's own LogAttrs would drop such a record silently).
