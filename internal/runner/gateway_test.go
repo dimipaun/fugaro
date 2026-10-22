@@ -206,6 +206,10 @@ func TestNoCapHaltAtBootstrap(t *testing.T) {
 // and the process exits 0: nothing was locked, pushed or opened, and no model
 // call was made.
 //
+// It is a job run, because a cascade run is: `fugaro exec` never cascades
+// (D149), and a local one is refused in bootstrap before it reaches admission
+// at all.
+//
 // Hand mutation this fails on: building Admit's Gateway flag from api-key and
 // vertex alone — the predicate C1.19 left behind here, which reads a cascade
 // run as the unleased run an oauth run is and returns no halt at all.
@@ -215,6 +219,14 @@ func TestCascadeEnforceWithoutCapsHaltsNoCap(t *testing.T) {
 		t.Fatal("the fixture's agent.auth line moved: this test is not switching it to cascade")
 	}
 	g := newGW(t, cfg, "enforce", "")
+	// A cascade run is a job run — `fugaro exec` never cascades (D149) — so
+	// the harness is the cloud here, as TestTestKnobIgnoredInCloud's is: the
+	// platform's own execution of this repository's job, and the project the
+	// job names.
+	g.deps.Local = false
+	g.deps.Project = "aurora"
+	g.deps.Execution = cloudRunExecution(gcp.JobName(repoSlug, gcp.WorkflowVariant("app", "")))
+	g.deps.Env = append(g.deps.Env, "CLOUD_RUN_EXECUTION=exec-1")
 	b := publishPolicy(t, g, fmt.Sprintf(`{"version":%d,"allow_repos":["*"],"routing":{"claude":{"via":"cascade"}}}`, projectpolicy.RulesVersion))
 	// Nothing to lease against, anywhere: the run may not begin.
 	b.db.Set(budget.PathCapsRepo(repoSlug), nil)
