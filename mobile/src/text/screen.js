@@ -275,7 +275,9 @@ export function createTextScreen({ React, View, Text, TextInput }) {
       if (one === null || typeof one !== 'object') return;
       if (typeof one.text !== 'string' || one.text === '') return;
       children.push(
-        el(Text, { key: `unsent:${typeof one.id === 'string' ? one.id : index}`, type: SCREEN.UNSENT }, one.text),
+        // `unsent()`'s entries carry no id (there is no record; nothing was
+        // written), so the key is the position the client holds them in.
+        el(Text, { key: `unsent:${index}`, type: SCREEN.UNSENT }, one.text),
       );
     });
 
