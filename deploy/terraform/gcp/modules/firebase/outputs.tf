@@ -1,5 +1,5 @@
 output "rtdb_url" {
-  description = "The default Realtime Database's URL. fugaro init copies it to the config and the history job."
+  description = "The default Realtime Database's URL. fugaro update copies it to the config and the history job."
   value       = google_firebase_database_instance.this.database_url
 }
 

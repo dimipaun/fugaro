@@ -193,7 +193,7 @@ func newConfigListCmd() *cobra.Command {
 			"is known about its published shared config, and the checkouts of its\n" +
 			"repositories this machine remembers.\n\n" +
 			"The checkouts are remembered by the commands that run in one and are\n" +
-			"not reads the desktop console spawns (fugaro init --repo, fugaro run,\n" +
+			"not reads the desktop console spawns (fugaro update --repo, fugaro run,\n" +
 			"fugaro validate, fugaro backends and the rest of them), in a machine-local\n" +
 			"state file beside the project configs. The commands the console's spawn\n" +
 			"allow-list covers never record: fugaro doctor and fugaro accounts ls\n" +
@@ -432,7 +432,7 @@ func printConfigList(w io.Writer, doc configListDoc, asJSON bool) error {
 		return enc.Encode(doc)
 	}
 	if len(doc.Installations) == 0 {
-		fmt.Fprintln(w, "no Fugaro installations on this machine; run `fugaro init` to set one up")
+		fmt.Fprintln(w, "no Fugaro installations on this machine; run `fugaro setup` to set one up")
 	}
 	for _, n := range doc.Warnings {
 		fmt.Fprintln(w, "warning: "+pluginwire.Printable(n))

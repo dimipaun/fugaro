@@ -224,7 +224,7 @@ func TestRefreshNamesTheDirectory(t *testing.T) {
 	if err := runImageRefresh(cmd, refreshOptions{dir: r.dir, yes: true}); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if !strings.Contains(out.String(), "next: run fugaro init --anchor in the checkout "+r.root+" to add") || strings.Contains(out.String(), "in this checkout to add") {
+	if !strings.Contains(out.String(), "next: run fugaro update --anchor in the checkout "+r.root+" to add") || strings.Contains(out.String(), "in this checkout to add") {
 		t.Errorf("anchor note, dir:\n%s", out)
 	}
 	fakeSteps(t, "base", userErr("declined"))

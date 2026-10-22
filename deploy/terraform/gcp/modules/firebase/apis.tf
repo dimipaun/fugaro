@@ -2,7 +2,7 @@
 # Nothing here ever disables an API: other things in the project may depend
 # on it. iamcredentials is enabled here because the signer, whose signJwt
 # call it serves, lives in the FP. firestore and firebaserules serve the spend history (M9d); the
-# Firestore database itself is not Terraform (init --firebase ensures it).
+# Firestore database itself is not Terraform (fugaro update ensures it).
 locals {
   apis = toset([
     "firebase.googleapis.com",
@@ -20,7 +20,7 @@ locals {
 }
 
 # In a same-project layout (the FP is the installation's own GCP project) the
-# installation root enables iam and cloudresourcemanager, so fugaro init lists
+# installation root enables iam and cloudresourcemanager, so fugaro update lists
 # them in skip_apis and exactly one state owns each API. Otherwise it is empty.
 resource "google_project_service" "this" {
   for_each = var.manage_apis ? setsubtract(local.apis, var.skip_apis) : toset([])

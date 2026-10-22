@@ -36,13 +36,13 @@ const (
 // refuse the cascade's children: the redeploy that fixes it, named with the
 // release that writes them (C1.17). It holds no credential and no value from
 // any answer — a credential *name* is all a cascade run ever writes.
-const credsRulesDeniedDetail = "the database's rules refused this run's credential state: they predate the credentials cascade's fields, and the write is not retried. Re-run 'fugaro init --firebase <firebase-project-id>' with this release to deploy the rules that carry them"
+const credsRulesDeniedDetail = "the database's rules refused this run's credential state: they predate the credentials cascade's fields, and the write is not retried. Re-run 'fugaro update --firebase-project <firebase-project-id>' with this release to deploy the rules that carry them"
 
 // byTierDeniedDetail is the same refusal for the by-tier counters (C1.16):
 // the same fix, named for the write that was refused. The split is not
 // retried and the run's totals are unaffected -- what it loses is the tier a
 // settled call was paid by.
-const byTierDeniedDetail = "the database's rules refused this run's by-tier spend counters: they predate the credentials cascade's fields, and the split is not retried. Re-run 'fugaro init --firebase <firebase-project-id>' with this release to deploy the rules that carry them"
+const byTierDeniedDetail = "the database's rules refused this run's by-tier spend counters: they predate the credentials cascade's fields, and the split is not retried. Re-run 'fugaro update --firebase-project <firebase-project-id>' with this release to deploy the rules that carry them"
 
 // Halt is a cause to stop the run that the session found by itself: a kill
 // switch, the grace running out, a revoked identity. Detail is shown to
@@ -515,7 +515,7 @@ func (s *Session) Admit(ctx context.Context, o AdmitOptions) (*Halt, error) {
 	// every auth, oauth included.
 	if _, ok := sn.Caps.MaxReserve(); !ok {
 		return &Halt{Reason: ReasonNoCap, Scope: ScopeGlobal,
-			Detail: "limits.maxReserveMicros is not set in the budget database, so nothing can be leased or reported (an operator runs fugaro init --firebase again)"}, nil
+			Detail: "limits.maxReserveMicros is not set in the budget database, so nothing can be leased or reported (an operator runs fugaro update --firebase-project again)"}, nil
 	}
 	if !o.Gateway {
 		return nil, nil

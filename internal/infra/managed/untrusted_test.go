@@ -276,7 +276,7 @@ func TestTheFlagsWriteErrorIsBounded(t *testing.T) {
 // WriteMarker's does. Their errors carry text that is not this program's — the
 // project name out of a configuration and the words of a Resource Manager
 // answer about a request that failed — and the caller prints them: `fugaro
-// init` puts the warning in its output and in res.Warnings on exactly the
+// update` puts the warning in its output and in res.Warnings on exactly the
 // branch where the label write failed, and `fugaro managed flag` prints its
 // own. So both are bounded like every sibling writer, and the bound is on the
 // message alone.

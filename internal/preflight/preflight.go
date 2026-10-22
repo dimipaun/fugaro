@@ -1,4 +1,4 @@
-// Package preflight holds the read-only readiness checks fugaro init and
+// Package preflight holds the read-only readiness checks fugaro update and
 // fugaro doctor share (design doc m11-setup-and-skills.md §3.1 stage 0):
 // the environment, Terraform, Docker, and, given the Google API clients
 // the caller already holds, Cloud Billing and the project's IAM policy.
@@ -34,7 +34,7 @@ type Check struct {
 var projectEnvVars = []string{"GOOGLE_PROJECT", "GOOGLE_CLOUD_PROJECT", "CLOUDSDK_CORE_PROJECT"}
 
 // impersonateEnv, when set, makes every Google client impersonate another
-// identity; fugaro init and doctor must act as the caller's own
+// identity; fugaro update and doctor must act as the caller's own
 // credentials only.
 const impersonateEnv = "GOOGLE_IMPERSONATE_SERVICE_ACCOUNT"
 

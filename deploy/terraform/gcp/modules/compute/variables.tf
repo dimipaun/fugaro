@@ -1,4 +1,4 @@
-# Every name and member arrives from fugaro init's terraform.tfvars.json.
+# Every name and member arrives from fugaro update's terraform.tfvars.json.
 # The validation blocks check shapes only; nothing here derives a name. The
 # module is the Batch backend's installation-level provisioning (design
 # docs/design/compute-backend.md §3.2, §3.7, §8.1 task 6): the two APIs, the
@@ -37,7 +37,7 @@ variable "region" {
 # fails the apply outright, which is the one failure mode that leaves the
 # thing the job exists for undone.
 #
-# The caller resolves it, because Terraform cannot: fugaro init reads the
+# The caller resolves it, because Terraform cannot: fugaro update reads the
 # installation's scheduler_region when it names one and
 # internal/backend/gcp's SchedulerRegion otherwise -- the same choice the
 # history job and the daily image check already make
@@ -126,7 +126,7 @@ variable "project_number" {
 }
 
 variable "manage_apis" {
-  description = "Whether this root enables the two APIs. Off, the project is left to be managed elsewhere (init --skip-apis)."
+  description = "Whether this root enables the two APIs. Off, the project's APIs are left to whoever else manages them (the Firebase root's `skip_apis`, set when the Firebase project is the installation's own; no CLI flag sets this false today)."
   type        = bool
   default     = true
 }

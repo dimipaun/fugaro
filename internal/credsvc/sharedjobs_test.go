@@ -13,7 +13,7 @@ package credsvc_test
 // gate failing open on the one thing it exists for.
 //
 // So this test does not check the derivation against itself: it builds ONE
-// installation twice, from the local config `fugaro init` deploys from and from
+// installation twice, from the local config `fugaro update` deploys from and from
 // the policy node `fugaro project policy publish` publishes, and requires the
 // two answers to be the same set of email addresses. It is why the file is in
 // the external test package: `internal/infra` imports `internal/runner`, which
@@ -53,7 +53,7 @@ const sharedJobsProfile = `{"provider": "github", "cpu": 2, "memory": "8Gi", "ti
 		"claude_accounts": ["acme-personal", "acme-shared"],
 		"secrets": ["github-app-key"]}`
 
-// sharedJobsLocalConfig is the installation `fugaro init` deploys from: the M4
+// sharedJobsLocalConfig is the installation `fugaro update` deploys from: the M4
 // config the deployer's own tests use, with the one repository a shared job is
 // built for, the M5 fields an installation adds, and the profiles block.
 func sharedJobsLocalConfig() string {
@@ -100,7 +100,7 @@ func sharedJobsPolicyDoc() string {
 
 // deployedSharedJobAccounts is the set of service account emails
 // `internal/infra/projectjobs.go` deploys for the fixture, read off the job
-// specs `fugaro init` hands to Terraform.
+// specs `fugaro update` hands to Terraform.
 func deployedSharedJobAccounts(t *testing.T) []string {
 	t.Helper()
 	lc, err := localcfg.Parse([]byte(sharedJobsLocalConfig()))

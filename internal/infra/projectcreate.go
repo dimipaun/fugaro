@@ -17,11 +17,27 @@ package infra
 // calls use the one in the user's Application Default Credentials (or
 // GOOGLE_CLOUD_QUOTA_PROJECT), which the confirmation states.
 //
-// Deliberate deviations from the design text: init does not list the
+// Deliberate deviations from the design text: this stage does not list the
 // caller's billing accounts (billingAccounts.list) even to guide, because
 // that reveals every account the user can reach and the account is theirs to
 // name; it prints the gcloud line with a placeholder, and the user names the
-// account. Adopting an existing project is "readable", not "ours or empty":
+// account.
+//
+// That rule is no longer the whole tree's (W4.5, the owner's answer to D6).
+// The setup wizard's billing question does list the operator's open accounts,
+// by number, so they can pick one instead of looking its ID up — through
+// internal/billing, whose package doc writes the reversal and all of its
+// bounds down. The conditions under which the list is asked for are those and
+// no others: a real terminal, not --non-interactive, not --json, not a coding
+// agent's session (internal/cli's canType(), asked once, in that one call
+// site), open accounts only, an ID and a display name only, no cache, no
+// file, no log. Everywhere else — here, in this stage, and in every other
+// command — the rule stands as it is written above. What never happens
+// anywhere, the picker included, is printing the account a project is already
+// linked to: this file reads that link for its presence and never for its
+// name (ProjectInfo carries no account field), and no run prints one.
+//
+// Adopting an existing project is "readable", not "ours or empty":
 // there is no cheap, read-only emptiness or Fugaro-mark check at this stage
 // (the marks live in the runs bucket, the database and Firestore, which an
 // installation that does not exist yet has not made), so every change to a
@@ -40,7 +56,12 @@ package infra
 //     projects refuses; the error is surfaced verbatim);
 //   - whether a project ID is reusable or reserved after a failed create,
 //     and the full list of restricted words in an ID (ValidateNewProjectID
-//     refuses only the ones the documentation names).
+//     refuses only the ones the documentation names);
+//   - the picker's permissions (W4.5): whether the roles an operator setting
+//     Fugaro up holds grant billing.accounts.list, and what the API answers
+//     when they do not. internal/billing surfaces that as its typed
+//     ErrNoPermission, and internal/gcpfake answers the documented
+//     PERMISSION_DENIED rather than an observed one.
 
 import (
 	"context"
@@ -408,7 +429,7 @@ func CreateProject(ctx context.Context, pc *ProjectClients, s CreateSpec) error 
 	for i := 0; !op.Done; i++ {
 		if i >= Wait.Tries {
 			return &ProjectError{Kind: ProjectOther, Err: fmt.Errorf("creating project %s: the operation %s is not done yet", s.ID, op.Name),
-				Fix: "rerun fugaro init --create-project to continue once it is: it adopts the project when it exists"}
+				Fix: "rerun fugaro setup to continue once it is: it adopts the project when it exists"}
 		}
 		if err := sleep(ctx); err != nil {
 			return err
@@ -458,7 +479,7 @@ func WaitReadable(ctx context.Context, pc *ProjectClients, id string) error {
 			return classify(err, "reading project "+id)
 		case i >= Wait.Tries:
 			return &ProjectError{Kind: ProjectOther, Err: fmt.Errorf("project %s was created but cannot be read yet: %w", id, err),
-				Fix: "rerun fugaro init --create-project in a few minutes: it adopts the project once it can be read"}
+				Fix: "rerun fugaro setup in a few minutes: it adopts the project once it can be read"}
 		}
 		if err := sleep(ctx); err != nil {
 			return err
@@ -478,7 +499,7 @@ func AddFirebase(ctx context.Context, pc *ProjectClients, id string) error {
 	for i := 0; !op.Done; i++ {
 		if i >= Wait.Tries {
 			return &ProjectError{Kind: ProjectOther, Err: fmt.Errorf("adding Firebase to project %s: the operation %s is not done yet", id, op.Name),
-				Fix: "rerun fugaro init --create-project to continue once it is"}
+				Fix: "rerun fugaro setup to continue once it is"}
 		}
 		if err := sleep(ctx); err != nil {
 			return err
@@ -519,7 +540,7 @@ func LinkBilling(ctx context.Context, pc *ProjectClients, id, account string, ex
 		case err != nil:
 			return &ProjectError{Kind: ProjectLinkGuard, Err: fmt.Errorf("not linking billing to project %s: its billing cannot be read right before the link: %w", id, err)}
 		case bi.BillingEnabled || bi.BillingAccountName != "":
-			return &ProjectError{Kind: ProjectLinkGuard, Err: fmt.Errorf("not linking billing to project %s: it is now linked to a billing account, and init never replaces a link", id)}
+			return &ProjectError{Kind: ProjectLinkGuard, Err: fmt.Errorf("not linking billing to project %s: it is now linked to a billing account, and fugaro never replaces a link", id)}
 		}
 	}
 	_, err := pc.Billing.Projects.UpdateBillingInfo("projects/"+id, &billing.ProjectBillingInfo{BillingAccountName: "billingAccounts/" + account}).Context(ctx).Do()

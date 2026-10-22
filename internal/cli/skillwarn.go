@@ -20,7 +20,16 @@ var skillWarned atomic.Bool
 
 // skillWarnCommands are the commands that carry the staleness line (design
 // 4.5): the regular ones, never a machine-readable stream.
-var skillWarnCommands = map[string]bool{"run": true, "ls": true, "validate": true, "init": true, "doctor": true}
+//
+// The entry W1.2 left here was `init`, and since W1.2 that name is the hidden
+// tombstone: it exits 1 before the line means anything, and the two commands a
+// reader actually runs -- `fugaro setup` on a first run and `fugaro update`
+// after a CLI upgrade -- carried the line neither. The staleness line is about
+// the plugin pinned in the checkout the command is about to read, which is
+// exactly what both of them do, so both are named here (task W2.1).
+var skillWarnCommands = map[string]bool{
+	"run": true, "ls": true, "validate": true, "setup": true, "update": true, "doctor": true,
+}
 
 // warnStaleSkills prints at most one stderr line per process when the plugin
 // pinned in the checkout's .claude/settings.json is older or newer than this

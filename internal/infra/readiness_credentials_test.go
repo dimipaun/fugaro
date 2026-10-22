@@ -19,7 +19,7 @@ var (
 )
 
 // credentialsService is the opt-in the tests here turn on: what an
-// installation's outputs carry once fugaro init's credentials stage has run
+// installation's outputs carry once fugaro update's credentials stage has run
 // (internal/infra.CredentialsService, D146).
 func credentialsService() *CredentialsService {
 	return &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}

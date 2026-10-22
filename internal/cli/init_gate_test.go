@@ -31,16 +31,31 @@ func neverRun(t *testing.T) func(context.Context) error {
 }
 
 // A freshly cloned third-party repository whose fugaro.yaml names this
-// project is not onboarded, nor wired, on --yes or --non-interactive: both
-// stages are needs-you with the one-line opt-in, nothing is written, and the
-// engine (every cloud call) is never reached.
+// project is not onboarded, nor wired, in the modes that give no confirmation
+// at all — --non-interactive without --yes, --json, and a pipe — whatever the
+// answer waiting on stdin: both stages are needs-you with the one-line opt-in,
+// nothing is written, and the engine (every cloud call) is never reached.
+//
+// --yes is not one of these modes any more: D12's answer of 2026-10-20 makes
+// onboarding an unlisted repository an ordinary covered row in BOTH front
+// doors, so --yes onboards it with no typed question
+// (TestSetupOnboardsUnderYesWithoutATypedConfirmation, and update's own
+// TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne for the door that
+// never enrols). A coding agent's session gives nothing either, and is pinned
+// by the refusal matrix (setup_refusals_test.go).
 func TestHostileCloneNeedsOwnConfirmation(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	yaml := checkoutYAML("github", "oauth", "aurora", "")
 	dir := repoCheckout(t, githubOrigin, yaml)
 	t.Chdir(dir)
-	for _, o := range []*initOptions{{yes: true}, {yes: true, nonInteractive: true, githubAppID: "12345"}} {
-		e, _ := stageEngine(t, "acme/app\n", o) // an answer waiting on stdin is not read
+	for _, c := range []struct {
+		name string
+		o    *initOptions
+	}{
+		{"--non-interactive", &initOptions{nonInteractive: true, githubAppID: "12345"}},
+		{"--json", &initOptions{asJSON: true, githubAppID: "12345"}},
+	} {
+		e, _ := stageEngine(t, "acme/app\n", c.o) // an answer waiting on stdin is not read
 		unknownRepo(e)
 		fakeTerminal(t)
 		rs := newRepositoryStage(e)
@@ -49,11 +64,24 @@ func TestHostileCloneNeedsOwnConfirmation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if stateOf(res, "plugin") != initflow.NeedsYou || stateOf(res, "repository") != initflow.Blocked || len(res.Left) != 1 {
-			t.Fatalf("%+v: stages %+v left %v", o, res.Stages, res.Left)
+		if stateOf(res, "plugin") != initflow.NeedsYou {
+			t.Fatalf("%s: the plugin stage is %+v, want needs-you: a repository nobody opted in is not wired", c.name, res.Stages)
 		}
-		if l := res.Left[0].Text; !strings.HasSuffix(l, "init --onboard-repo acme/app") || strings.Contains(l, "\n") || strings.Contains(l, "&&") {
-			t.Errorf("the opt-in line: %q", l)
+		// The repository stage's own state is the loop's: needs-you where it
+		// is asked (the plan-only run), blocked behind the plugin where the
+		// run stops at the first stage that needs the user.
+		switch stateOf(res, "repository") {
+		case initflow.NeedsYou, initflow.Blocked:
+		default:
+			t.Fatalf("%s: the repository stage is %+v, want needs-you or blocked", c.name, res.Stages)
+		}
+		if len(res.Left) == 0 {
+			t.Fatalf("%s: nothing was left for the user: %+v", c.name, res)
+		}
+		for _, lf := range res.Left {
+			if lf.Kind != initflow.LeftCommand || !strings.HasSuffix(lf.Text, "setup --onboard-repo acme/app") || strings.Contains(lf.Text, "\n") || strings.Contains(lf.Text, "&&") {
+				t.Errorf("%s: the opt-in line: %q", c.name, lf.Text)
+			}
 		}
 		if !strings.Contains(res.Stages[0].Detail, "repository stage was not reached") {
 			t.Errorf("detail %q", res.Stages[0].Detail)
@@ -63,7 +91,7 @@ func TestHostileCloneNeedsOwnConfirmation(t *testing.T) {
 		}
 	}
 	// The repository stage alone says the same.
-	e, _ := stageEngine(t, "", &initOptions{yes: true})
+	e, _ := stageEngine(t, "", &initOptions{asJSON: true})
 	unknownRepo(e)
 	rs := newRepositoryStage(e)
 	rs.engineStage.run = neverRun(t)
@@ -123,8 +151,8 @@ func TestOnboardRepoFlag(t *testing.T) {
 			}
 		}
 	}
-	// Its form is checked where it is given (init --repo takes it too).
-	for _, args := range [][]string{{"init", "--onboard-repo", "nope"}, {"init", "--onboard-repo", "a/b", "--config-only"}} {
+	// Its form is checked where it is given (update --repo takes it too).
+	for _, args := range [][]string{{"setup", "--onboard-repo", "nope"}, {"setup", "--onboard-repo", "a/b", "--config-only"}} {
 		if _, _, err := execute(t, args...); ExitCode(err) != ExitUserError || err == nil {
 			t.Errorf("%v: %v", args, err)
 		}
@@ -522,11 +550,14 @@ func TestUnknownRepoQuestionComesBeforeAnyPlan(t *testing.T) {
 }
 
 // An installation-only flag run inside a checkout of a repository the project
-// does not list yet gets one note before the guard's prompt: init in a
-// checkout also onboards its repository. Nothing else prints it, and the
-// guard itself is unchanged.
+// does not list yet gets one note, immediately before the guard's prompt: the
+// converge in a checkout also onboards its repository, unless the question
+// about it is answered no (W3.4). The note is the wizard's question's own
+// introduction, so it is printed exactly where that question is asked — a run
+// of the update door, which asks none, prints nothing — and nothing else
+// prints it; the guard itself is unchanged.
 func TestInstallationFlagNoteInUnonboardedCheckout(t *testing.T) {
-	const note = "this checkout's repository is not onboarded; init in a checkout also onboards its repository. To set up only the installation, run fugaro init from outside the checkout."
+	const note = "this checkout's repository is not onboarded; the converge in a checkout also onboards its repository, unless the question about it is answered no. To set up only the installation, run fugaro setup from outside the checkout."
 	releaseBuild(t, "0.2.0")
 	checkout := func(t *testing.T) {
 		t.Chdir(repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", "")))
@@ -537,16 +568,17 @@ func TestInstallationFlagNoteInUnonboardedCheckout(t *testing.T) {
 		outside bool
 		want    int
 	}{
-		"--base, unknown repo":       {o: &initOptions{baseKinds: []string{"base"}}, want: 1},
-		"--budget, unknown repo":     {o: &initOptions{budget: 5}, want: 1},
-		"two flags, still once":      {o: &initOptions{baseKinds: []string{"base"}, budget: 5}, want: 1},
-		"no installation flag":       {o: &initOptions{}, want: 0},
-		"--yes: no prompt":           {o: &initOptions{baseKinds: []string{"base"}, yes: true}, want: 0},
-		"--non-interactive":          {o: &initOptions{baseKinds: []string{"base"}, nonInteractive: true}, want: 0},
-		"--json: no prompt":          {o: &initOptions{baseKinds: []string{"base"}, asJSON: true}, want: 0},
-		"--onboard-repo given":       {o: &initOptions{baseKinds: []string{"base"}, onboardRepo: "acme/app"}, want: 0},
-		"--base, repository listed":  {o: &initOptions{baseKinds: []string{"base"}}, known: true, want: 0},
-		"--base, outside a checkout": {o: &initOptions{baseKinds: []string{"base"}}, outside: true, want: 0},
+		"--base, unknown repo":       {o: &initOptions{door: setupDoor.name, baseKinds: []string{"base"}}, want: 1},
+		"--budget, unknown repo":     {o: &initOptions{door: setupDoor.name, budget: 5}, want: 1},
+		"two flags, still once":      {o: &initOptions{door: setupDoor.name, baseKinds: []string{"base"}, budget: 5}, want: 1},
+		"no installation flag":       {o: &initOptions{door: setupDoor.name}, want: 0},
+		"--yes: no prompt":           {o: &initOptions{door: setupDoor.name, baseKinds: []string{"base"}, yes: true}, want: 0},
+		"--non-interactive":          {o: &initOptions{door: setupDoor.name, baseKinds: []string{"base"}, nonInteractive: true}, want: 0},
+		"--json: no prompt":          {o: &initOptions{door: setupDoor.name, baseKinds: []string{"base"}, asJSON: true}, want: 0},
+		"--onboard-repo given":       {o: &initOptions{door: setupDoor.name, baseKinds: []string{"base"}, onboardRepo: "acme/app"}, want: 0},
+		"--base, repository listed":  {o: &initOptions{door: setupDoor.name, baseKinds: []string{"base"}}, known: true, want: 0},
+		"--base, outside a checkout": {o: &initOptions{door: setupDoor.name, baseKinds: []string{"base"}}, outside: true, want: 0},
+		"--base, the update door":    {o: &initOptions{door: updateDoor.name, baseKinds: []string{"base"}}, want: 0},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if tc.outside {
@@ -555,7 +587,11 @@ func TestInstallationFlagNoteInUnonboardedCheckout(t *testing.T) {
 				checkout(t)
 			}
 			fakeTerminal(t)
-			e, out := stageEngine(t, "no\n", tc.o)
+			// The question is answered yes, so the note's own claim — it
+			// comes before the guard's prompt — is the thing under test; the
+			// owner/name the guard asks for is not typed (the input ends
+			// there), which is a decline either way.
+			e, out := stageEngine(t, onboardAnswerYes+"\n", tc.o)
 			if !tc.known {
 				unknownRepo(e)
 			}

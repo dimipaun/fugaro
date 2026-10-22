@@ -15,7 +15,7 @@ import (
 
 // Repo, Slug and Workflow are the launch spec every conformance run uses.
 // Factory must return a backend for which a job under Slug and Workflow
-// can already launch (as fugaro init would have created it).
+// can already launch (as fugaro update would have created it).
 const (
 	Repo     = "acme/app"
 	Slug     = "acme-app"

@@ -85,7 +85,7 @@ func TestLsWithNoLocalConfigAndNoGCPProjectAsksForTheLine(t *testing.T) {
 	if ExitCode(err) != ExitUserError || err == nil {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
-	for _, want := range []string{"add `gcp_project: <id>` next to `project:` in fugaro.yaml", "run fugaro init --anchor in the checkout"} {
+	for _, want := range []string{"add `gcp_project: <id>` next to `project:` in fugaro.yaml", "run fugaro update --anchor in the checkout"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error lacks %q: %v", want, err)
 		}
@@ -124,7 +124,7 @@ func TestAnnounceRefusesAGCPProjectOverrideOfTheSharedConfig(t *testing.T) {
 
 // Review focus: a command that would write the local config, running against a
 // shared selection, refuses and creates nothing. The only writers are
-// fugaro init's; loadRepoConfig (init --repo) is the one that selects an
+// fugaro setup's; loadRepoConfig (update --repo) is the one that selects an
 // existing config and writes it back.
 func TestWritersRefuseAgainstASharedSelection(t *testing.T) {
 	f := sharedEnd2End(t)
@@ -134,7 +134,7 @@ func TestWritersRefuseAgainstASharedSelection(t *testing.T) {
 	o := &initOptions{}
 	o.cloud.sharedOK = true // not reachable from a flag: selectProject alone sets it
 	_, path, _, err := loadRepoConfig(context.Background(), o, dir)
-	if err == nil || !strings.Contains(err.Error(), "the shared one published by an operator, so it can't be changed here; run fugaro init to create your own local config") {
+	if err == nil || !strings.Contains(err.Error(), "the shared one published by an operator, so it can't be changed here; run fugaro setup to create your own local config") {
 		t.Fatalf("path %q, err %v", path, err)
 	}
 	if ExitCode(err) != ExitUserError {
@@ -163,7 +163,7 @@ func TestRefuseSharedWrite(t *testing.T) {
 	}
 }
 
-// fugaro init keeps working on a machine whose only config is the shared
+// fugaro setup keeps working on a machine whose only config is the shared
 // one: it selects creating (no fetch, no shared hook) and gets its own path.
 func TestInitSelectionNeverUsesTheSharedConfig(t *testing.T) {
 	f := sharedEnd2End(t)

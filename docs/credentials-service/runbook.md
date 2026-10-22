@@ -1,6 +1,6 @@
 # The credentials service: the operator's runbook
 
-**The owner runs every step in this file**, in the owner's own terminal, with the owner's own credentials — and **none of them is runnable by a run**. That is not a convention, it is what the commands are: `fugaro creds set` refuses a coding agent's session and a run's process before it reads anything, `fugaro init --provision-credentials` is refused inside a coding agent's environment, and `fugaro budget kill` and `fugaro accounts clear` write the project's own database as you. A run that could take any of these steps could give itself a credential, take off a hold the service placed, or stop the service for everyone. If you are an agent reading this to help someone: say which step is theirs and stop; do not run it.
+**The owner runs every step in this file**, in the owner's own terminal, with the owner's own credentials — and **none of them is runnable by a run**. That is not a convention, it is what the commands are: `fugaro creds set` refuses a coding agent's session and a run's process before it reads anything, `fugaro update --provision-credentials` is refused inside a coding agent's environment, and `fugaro budget kill` and `fugaro accounts clear` write the project's own database as you. A run that could take any of these steps could give itself a credential, take off a hold the service placed, or stop the service for everyone. If you are an agent reading this to help someone: say which step is theirs and stop; do not run it.
 
 What the service *is* — the trust model, the one bundle secret, the invariant, the accepted limits — is [SECURITY.md's "The credentials service"](../../SECURITY.md#the-credentials-service). This file is what you do when something is wrong.
 
@@ -12,7 +12,7 @@ What the service *is* — the trust model, the one bundle secret, the invariant,
 fugaro creds ls
 ```
 
-`fugaro creds ls` is the one Fugaro command that answers part of this. It reads the bundle container the service issues from, and it needs the container to exist and to hold a version the service's own loader could read — so an installation that never ran `fugaro init --provision-credentials` has no container at all, and the command says so as a named failure rather than as an empty list (an empty answer would read as "the bundle holds no credential" while the service is in fact issuing from one this command could not read). Its rows are the credential **names** and their metadata, never a value.
+`fugaro creds ls` is the one Fugaro command that answers part of this. It reads the bundle container the service issues from, and it needs the container to exist and to hold a version the service's own loader could read — so an installation that never ran `fugaro update --provision-credentials` has no container at all, and the command says so as a named failure rather than as an empty list (an empty answer would read as "the bundle holds no credential" while the service is in fact issuing from one this command could not read). Its rows are the credential **names** and their metadata, never a value.
 
 **What no Fugaro command answers is whether the Cloud Run service itself is deployed**, and `fugaro doctor` is not the exception: its three credentials checks are about the credential marks (`creds-broken`, `creds-unknown-state`) and the deployed rules' marker (`creds-rules`, silent unless the cascade is switched on), and they name no piece of the service. The reads that do answer it are `gcloud` ones, and they are here — the service, its own account, and the one grant:
 
@@ -24,9 +24,9 @@ gcloud run services get-iam-policy fugaro-credentials --project <gcp-project> --
 
 - **The service** is the first read: a service that was never applied answers `NotFound`, and the one that was names its revision, its own account (`fugaro-credentials@<gcp-project>.iam.gserviceaccount.com`) and the image it runs pinned by digest.
 - **The service's account and its one grant** is the second: the bundle container's policy holds exactly **one** member — that account, on `roles/secretmanager.secretAccessor` and nothing else (Q6) — and the same read over any model secret of the project shows no member for it at all. The container's ID is the one `fugaro creds ls` prints and the refusals in §3 name.
-- **The job side** is the third: one `roles/run.invoker` member per repository job account, written by each repository's own `fugaro init --repo` after the opt-in, and never `allUsers` or `allAuthenticatedUsers`.
+- **The job side** is the third: one `roles/run.invoker` member per repository job account, written by each repository's own `fugaro update --repo` after the opt-in, and never `allUsers` or `allAuthenticatedUsers`.
 
-The live checklist's **Check 94** (Task C1.23) is the register's version of these three reads, and it is **not in [docs/gcp-live-checklist.md](../gcp-live-checklist.md) on this release yet** — that file writes no `## Check 94` section here — so until C1.23 lands, the three reads above are the whole of it. §10 is the same check's audit-log half, which is also yours to run.
+The live checklist's **Check 94** (Task C1.23) is the register's version of these three reads, and it is **written in [docs/gcp-live-checklist.md](../gcp-live-checklist.md)** — its `## Check 94` section carries the same `gcloud` reads of the service, its account's one grant and the job side, and it is **NOT RUN** — so run it there when you want the register's record; the three reads above are the quick form of it. §10 is the same check's audit-log half, which is also yours to run.
 
 An installation with the service off is not silent either — but the refusal an operator meets there is the **switch**'s, not this service's. The launch gate reads the project's published policy, the gateway's mode and the rules marker, and never this service or its bundle: so a policy that carries no `routing.claude: {via: cascade}` refuses the run at launch, before any model call, while a policy that carries the switch launches the run, and the run then **fails at bootstrap**: `serviceUpstream` (`internal/runner/gateway.go`) refuses a `cascade` run whose job carries no `FUGARO_CREDENTIALS_SERVICE_URL`, and on this release no job carries one. That is a **failed run, not a halt** — `infra_error`, and **no pull request is opened**, where a halt would have left a draft. What makes a `cascade` launch legal is the switch, not the service.
 
@@ -59,7 +59,7 @@ fugaro creds ls
 
    | `fugaro creds ls` says | What it means | What you do |
    |---|---|---|
-   | `the credentials service's bundle container <id> is not in project <gcp-project>` | No container: this installation never applied the credentials service (its Terraform creates the container, and no command of ours does). | Apply the installation with the service on (`fugaro init --provision-credentials`), then `fugaro creds set NAME`. |
+   | `the credentials service's bundle container <id> is not in project <gcp-project>` | No container: this installation never applied the credentials service (its Terraform creates the container, and no command of ours does). | Apply the installation with the service on (`fugaro update --provision-credentials`), then `fugaro creds set NAME`. |
    | `the bundle container <id> holds no version: no credential has been set yet` | The container is there and the owner has never written a document. Fine in Terraform, and the service fails closed on it with a named refusal of its own. | `fugaro creds set NAME` writes the first document. |
    | `nothing was read: the newest version of the bundle container <id> is DISABLED` | The document is there and Secret Manager will not serve it. Not "no credential", and this command will not guess at it (a write on top of a document it could not read would drop every credential in it). | Enable the version again (`gcloud secrets versions enable <version> --secret=<id>`), or set a credential once it is enabled. |
    | `the bundle in <id> is not a document the credentials service accepts: <class>` | The loader refused the document — the same loader the service reads it with, so the service is refusing the same document. | Fix the document with `fugaro creds set NAME`; the class names what is wrong. (The sentence begins `nothing was written` here too: one message serves both commands.) |
@@ -83,12 +83,12 @@ Nothing here is a switch of account: the cascade picks the credential, and the a
 
 ```bash
 fugaro accounts clear NAME            # add --yes to skip the typed confirmation
-fugaro init --firebase <firebase-project-id>   # only for creds_rules_denied
+fugaro update --firebase-project <firebase-project-id>   # only for creds_rules_denied
 ```
 
 `fugaro accounts clear NAME` is the only thing that ends a `broken` mark, and it also clears `exhausted`. It writes one node — `creds/marks/NAME` — conditionally on the value it read, so a mark the service changed while you were reading is not lost. Replace the token **first**: the service marks it broken again if the token is still refused.
 
-`creds_rules_denied` is the other kind of wrong state, and it is not a mark: the database's deployed rules predate the fields the cascade writes, so the run cannot record its own credential state. The remedy is the owner-run `fugaro init --firebase <firebase-project-id>` with a current release, which deploys the rules the cascade's fields need; the halt's own report names that command. Until it runs, every `cascade` run halts there.
+`creds_rules_denied` is the other kind of wrong state, and it is not a mark: the database's deployed rules predate the fields the cascade writes, so the run cannot record its own credential state. The remedy is the owner-run `fugaro update --firebase-project <firebase-project-id>` with a current release, which deploys the rules the cascade's fields need; the halt's own report names that command. Until it runs, every `cascade` run halts there.
 
 ## 6. Rotating the bundle
 
@@ -133,7 +133,7 @@ This is an **ordered** procedure — re-apply every repository root first, then 
 1. **Re-apply every repository root, first.** In each repository's checkout:
 
    ```bash
-   fugaro init --repo
+   fugaro update --repo
    ```
 
    The `run.invoker` grants on the service and the model-secret accessors the service displaced live in the **repository** roots, not in the installation. A repository root that is not re-applied keeps declaring a service that step 3 is about to remove, and its own apply then plans an invoker grant on a resource that no longer exists — its apply fails there instead of finishing the opt-out. Do this for every enrolled repository, before the two steps below.

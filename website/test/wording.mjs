@@ -40,14 +40,18 @@
 // (`FILES_THAT_KEEP_IT` and the case that reads it) rather than left to the gate's own
 // sweep to miss.
 //
-// **The second rule: the claim the chat's caption may not make.** The hero's chat is an
+// **The second rule: the claim a figure's caption may not make.** The hero's chat was an
 // illustration, and its caption said "every line is the repository's own words, from the
-// skills the agent reads" — which is false about two of the things the figure prints (the
+// skills the agent reads" — which is false about two of the things the figure printed (the
 // request is item 3's own example, and the three `Pull request n of 3` labels are the
-// illustration's own). The caption now says what the picture is and where the agent's
-// behaviour comes from, and `RETIRED_CLAIMS` below refuses the phrases the false sentence was
-// made of — in the same three places, and with its own refusal case, because a caption that
-// is only fixed once is a caption that comes back the next time somebody rewrites the figure.
+// illustration's own). The caption was rewritten to say what the picture is and where the
+// agent's behaviour comes from, and `RETIRED_CLAIMS` below refuses the phrases the false
+// sentence was made of — in the same three places, and with its own refusal case, because a
+// caption that is only fixed once is a caption that comes back the next time somebody
+// rewrites a figure. The figure itself left the site with `AgentChat.astro` when the owner's
+// approved draft of 2026-10-19 ("Home, draft 2 (slider)") folded the chat into the slider's
+// first panel; the rule stays, because the claim is one any figure could make again — the
+// screenshot of a run and the flow's captions are the two a rewording would reach for.
 //
 // A gate whose refusals have never been seen to fire is a gate nobody knows the shape of, so
 // each part below has a case that plants the word — or the claim — where its rule looks and
@@ -108,18 +112,18 @@ export const SKILLS_THAT_CARRY_IT = ['parallelism', 'routing', 'working']
 export const FILES_THAT_KEEP_IT = ['content/cli-reference.md']
 
 /**
- * The claim the hero's chat caption may not make again, in the two halves a rewording would
- * come back through. It said "every line is the repository's own words, from the skills the
- * agent reads", and it is false about two of the things the figure prints: the request is
- * item 3's own example (a line of the changes spec, not of a skill), and the three
- * `Pull request n of 3` labels are the illustration's own — a run that has not happened has
- * no pull request numbers to quote. The figure is an illustration, the caption says so, and
- * the only lines in it a document vouches for are the ones the agent speaks.
+ * The claim a figure's caption may not make again, in the two halves a rewording would come
+ * back through. The hero's chat caption said "every line is the repository's own words, from
+ * the skills the agent reads", and it was false about two of the things the figure printed:
+ * the request is item 3's own example (a line of the changes spec, not of a skill), and the
+ * three `Pull request n of 3` labels are the illustration's own — a run that has not happened
+ * has no pull request numbers to quote. The figure is an illustration, the caption said so,
+ * and the only lines in it a document vouches for are the ones the agent speaks.
  *
  * The two patterns are the claim's own phrases rather than the whole sentence, because the
  * sentence can be reworded and the claim cannot: "the repository's own words" is also true of
  * the flow's captions and the run's steps, which are quotations of README.md, so the phrase
- * is refused only in the shape that claims it of *every line* — the chat's own sentence.
+ * is refused only in the shape that claims it of *every line* — the caption's own sentence.
  */
 export const RETIRED_CLAIMS = [
   {
@@ -137,7 +141,66 @@ export const RETIRED_CLAIMS = [
  * says the same thing about the same defect.
  */
 const CLAIM_WHY =
-  'the chat is an illustration: its request is item 3\'s own example and its three results are labels for work a run would report, so only the lines the agent speaks are its skills\' words and the caption may not vouch for the rest (changes spec 2026-10-18, item 3; Global Constraint 6)'
+  'the figure is an illustration: its request is item 3\'s own example and its three results are labels for work a run would report, so only the lines the agent speaks are its skills\' words and the caption may not vouch for the rest (changes spec 2026-10-18, item 3; Global Constraint 6)'
+
+/**
+ * **The third rule: the sentence the Why GCP page answers with, and the phrases it may not
+ * answer with instead** (the owner's decision D249 on the brief of 2026-10-21; the plan's Part
+ * 2 step 5).
+ *
+ * The brief's own suggested framing — "no other cloud offers this as one integrated,
+ * **disposable** project" — is made of a word the repository rejects: a managed project "is
+ * **not disposable** in the way the spec means" (`docs/design/managed-projects.md:18`, and
+ * `:211` lists what would be lost), so the sentence the page carries is the same sentence with
+ * that word taken out (D248, ZF22). And the sentence the brief tells the page *not* to write —
+ * "no real alternative" — is the other half: it is a claim about every other cloud, which is a
+ * claim this repository has no sourced, dated fact for (ZF58, and `website/README.md`: "no
+ * competitor comparison without a source and a date"), and the tree's own position reads the
+ * other way — a second cloud is out of scope for 1.0 and wanted from contributors, which is
+ * what `README.md`'s "Other clouds: help wanted" says (ZF21).
+ *
+ * So the rule has two halves and both are about what a page *says*: the phrases below are
+ * refused wherever a built page carries them — its text, its title, its description, the same
+ * three places the retired word is refused in — and the sentence below has to be on the page
+ * the brief asked for, because a page whose framing row stopped rendering is a page whose
+ * answer to the brief is missing. The exemption is the retired word's and the word ceiling's
+ * (`DOCUMENT_PAGES`, D188): those three pages render a document of this repository rather
+ * than the site's own copy, and a quotation of a document is not a page's own claim.
+ *
+ * The first three entries are the owner's list, and the fourth is D248's word: `disposable` is
+ * refused for that decision's reason rather than as a word in general — a container that does
+ * not survive the run is what this product is, and the site says so, but what a page may not
+ * say is that a **project** is disposable, because that is the claim `docs/design/` refuses.
+ * So the pattern takes the word in the two orders a page would predicate it of the project in
+ * ("a disposable project", "a project is disposable") and leaves every other sentence alone.
+ * Each pattern is written so that the entries do not overlap: "no real alternative" is refused
+ * as itself, and "no alternative" is refused with the one word a rewrite would put between
+ * them, so a page that says either is named once.
+ */
+export const BANNED_FRAMING = [
+  { phrase: 'no real alternative', pattern: /\bno real alternative\b/i },
+  { phrase: 'no alternative', pattern: /\bno (?:other |serious |viable |genuine |true )?alternative\b/i },
+  { phrase: 'the only cloud', pattern: /\bthe only cloud\b/i },
+  { phrase: 'disposable', pattern: /\bdisposable\s+(?:projects?|sandbox(?:es)?)\b|\b(?:projects?|sandbox(?:es)?)\s+(?:is|are|as|being)\s+disposable\b/i },
+]
+
+/**
+ * The page the brief's framing is answered on, and the sentence it is answered with — the
+ * brief's own sentence with "disposable" out of it, which the reconciliation says is the
+ * supportable form (ZF22). The row it renders is `website/data/why-gcp.yaml`'s `framing` row,
+ * and this is the pin that holds the page to it.
+ */
+export const REQUIRED_FRAMING = {
+  url: '/why-gcp/',
+  sentence: 'No other cloud offers this as one integrated project.',
+}
+
+/**
+ * Why the phrasing is refused, as the sentence a failure ends with. One copy, so the whole
+ * gate says the same thing about the same defect.
+ */
+const FRAMING_WHY =
+  "the page's answer to the cloud question is that no other cloud offers this as one integrated project: a page that says there is no alternative is making a claim about every other cloud, which this repository has no sourced, dated fact for, and the repository's own position is that a second cloud is wanted rather than refused (D248, D249, ZF21, ZF22, ZF58)"
 
 /**
  * The head's text that a reader meets outside the page: the `<title>`, the description and
@@ -206,6 +269,34 @@ export function wordingFailures(dist) {
   return out
 }
 
+/**
+ * Every way a built page breaks D249's framing rule, as the lines a failure lists: the phrases
+ * a page may not carry, on every page, and the sentence the brief's page has to.
+ *
+ * The page's text and its head are read the way the retired word's rule reads them (its text,
+ * its `<title>`, its description and its cards), and the exemption is the same one — D188's
+ * three document-rendering pages, which are quotations rather than the site's own copy.
+ */
+export function framingFailures(dist) {
+  const out = []
+  for (const page of builtPages(dist)) {
+    if (DOCUMENT_PAGES.has(page.url)) continue
+    const text = [textOf(parse(page.html)), headText(page.html)].join(' ').replace(/\s+/g, ' ')
+    for (const { pattern } of BANNED_FRAMING) {
+      const found = pattern.exec(text)
+      if (!found) continue
+      out.push(`${page.rel} carries ${JSON.stringify(found[0])} in ${JSON.stringify(around(text, found.index))}: ${FRAMING_WHY}.`)
+    }
+    if (page.url !== REQUIRED_FRAMING.url) continue
+    if (!text.includes(REQUIRED_FRAMING.sentence)) {
+      out.push(
+        `${page.rel} does not carry ${JSON.stringify(REQUIRED_FRAMING.sentence)}, which is the brief's own framing sentence with the word the repository rejects taken out of it: the page renders it from website/data/why-gcp.yaml's \`framing\` row, so a page without it is a page whose framing stopped rendering (D249, ZF22).`,
+      )
+    }
+  }
+  return out
+}
+
 /** Every way the site's own sources carry the retired word or a retired claim, as failure lines. */
 export function sourceWordingFailures(files) {
   const out = []
@@ -248,7 +339,76 @@ function siteSources() {
   return files
 }
 
-test("no built page outside D188's three carries the retired word 'worker' or the chat's retired claim", () => {
+test('the framing D249 asks for is on the Why GCP page, and the phrases it may not be made of are refused', (t) => {
+  // The artifact first, so the plants below are the only thing that can fail the gate: the
+  // page the brief asked for carries the sentence, and no page of the site carries a phrase
+  // that claims something about every other cloud.
+  const shipped = framingFailures(DIST)
+  assert.deepEqual(shipped, [], `the built site carries framing this gate refuses:\n  ${shipped.join('\n  ')}`)
+
+  // One page per phrase, each in a place the rule looks, and the sentence's own page passing:
+  // a gate that read nothing would pass all of these.
+  const files = {
+    'why-gcp/index.html': shell(`<h1>Why GCP</h1><p>${REQUIRED_FRAMING.sentence}</p>`),
+    'faq/index.html': shell('<h1>FAQ</h1><p>There is no real alternative to one project.</p>'),
+    'console/index.html': shell('<h1>Console</h1><p>It is the only cloud that offers this.</p>', '<meta name="description" content="a disposable project">'),
+    'docs/index.html': shell('<h1>Reference</h1><p>There is no alternative to a disposable project.</p>'),
+    // The other side of the fourth pattern: a run's container is what this product is, and a
+    // page that says so is not refused. A gate that took the word wherever it stood would fail
+    // here, which is what keeps the pattern on the project rather than on the word.
+    'community/index.html': shell('<h1>Community</h1><p>Every run gets a disposable container of its own.</p>'),
+  }
+  const failures = framingFailures(distOf(t, files))
+  assert.equal(failures.length, 3, failures.join('\n'))
+  assert.ok(
+    !failures.some((line) => line.startsWith('community/index.html ')),
+    `the gate refused a page that says a container is disposable, which is what the product is:\n${failures.join('\n')}`,
+  )
+  for (const rel of ['faq/index.html', 'console/index.html']) {
+    assert.ok(
+      failures.some((line) => line.startsWith(`${rel} `)),
+      `${rel} carries a banned phrase and the gate did not name it:\n${failures.join('\n')}`,
+    )
+  }
+  assert.ok(
+    failures.some((line) => line.startsWith('console/index.html ') && line.includes('"disposable project"')),
+    `a description that calls a project disposable was not refused:\n${failures.join('\n')}`,
+  )
+  assert.ok(
+    !failures.some((line) => line.startsWith('docs/index.html ')),
+    `the gate refused D188's document page, which renders a document rather than the site's own copy:\n${failures.join('\n')}`,
+  )
+})
+
+test('the Why GCP page without the framing sentence, or with the brief’s own version of it, is refused', (t) => {
+  // The sentence is the page's whole answer to the brief's "Suggested framing", so its absence
+  // is the defect this half exists for — a page that dropped the row, or rendered the section
+  // without it, is a page that answers nothing.
+  const dropped = framingFailures(
+    distOf(t, { 'why-gcp/index.html': shell('<h1>Why GCP</h1><p>One project, and here is what it holds.</p>') }),
+  )
+  assert.ok(
+    dropped.some((line) => line.startsWith('why-gcp/index.html ') && /does not carry/.test(line)),
+    `the page without the framing sentence was not refused:\n${dropped.join('\n')}`,
+  )
+
+  // The near miss: the brief's own sentence, which a check that only looked for "one integrated
+  // project" would pass. It carries the word the repository rejects, and it is not the sentence
+  // the page answers with — so both halves of the rule name it.
+  const brief = framingFailures(
+    distOf(t, { 'why-gcp/index.html': shell('<h1>Why GCP</h1><p>No other cloud offers this as one integrated, disposable project.</p>') }),
+  )
+  assert.ok(
+    brief.some((line) => line.includes('"disposable project"')),
+    `the brief's own framing sentence was not refused for its word:\n${brief.join('\n')}`,
+  )
+  assert.ok(
+    brief.some((line) => /does not carry/.test(line)),
+    `the brief's own framing sentence passed as the sentence the page has to carry:\n${brief.join('\n')}`,
+  )
+})
+
+test("no built page outside D188's three carries the retired word 'worker' or the retired claim", () => {
   const failures = wordingFailures(DIST)
   assert.deepEqual(failures, [], `the built site carries wording this gate refuses:\n  ${failures.join('\n  ')}`)
 })
@@ -365,7 +525,7 @@ test('the word is refused in README.md and in the site’s own sources', () => {
   assert.ok(failures[0].startsWith('data/faq.yaml '), failures.join('\n'))
 })
 
-test('the chat’s retired claim is refused where the caption is written, and in the sources', (t) => {
+test('the retired claim is refused where a caption is written, and in the sources', (t) => {
   // The caption as it shipped, on a built page: the sentence claimed every line of the figure
   // was a quotation, and two of them are not. A wording that comes back anywhere a reader
   // reads it — a component's caption, a data file's answer — fails here with the file named.
@@ -380,15 +540,21 @@ test('the chat’s retired claim is refused where the caption is written, and in
   }
 
   // The same sentence in the site's own sources, which is where a caption is written: a
-  // component that puts the claim back in fails before the next build, not after it.
+  // component that puts the claim back in fails before the next build, not after it. The
+  // components named here are the site's other captions. `AgentChat.astro`, whose caption this
+  // rule was written for, left the site with the owner's approved draft of 2026-10-19, and
+  // `ArchitectureDiagram.astro` — whose true sentence about the flow's own captions stood here
+  // as the second file, the one the gate must *not* refuse — left it with the owner's ruling of
+  // 2026-10-20. The run's picture is what carries the repository's words now, and its build-time
+  // guard is where the same claim would be written.
   const sources = {
-    'src/components/AgentChat.astro': `<figcaption>${shipped}</figcaption>\n`,
-    'src/components/ArchitectureDiagram.astro': '<p>every caption in the flow is the repository\'s own words</p>\n',
+    'src/components/ScreenshotSlider.astro': `<figcaption>${shipped}</figcaption>\n`,
+    'src/components/RunDiagram.astro': "<p>every word of the picture is the repository's own words</p>\n",
   }
   const inSources = sourceWordingFailures(sources)
   assert.equal(inSources.length, RETIRED_CLAIMS.length, `the claim in a component was not refused:\n${inSources.join('\n')}`)
   assert.ok(
-    inSources.every((line) => line.startsWith('src/components/AgentChat.astro ')),
-    `the gate refused a true sentence about the flow's captions, which are quotations of README.md:\n${inSources.join('\n')}`,
+    inSources.every((line) => line.startsWith('src/components/ScreenshotSlider.astro ')),
+    `the gate refused a true sentence about the run's labels, which are quotations of the repository's documents:\n${inSources.join('\n')}`,
   )
 })

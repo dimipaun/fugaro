@@ -675,4 +675,61 @@ test.describe('the console with nothing to read', () => {
     expect(screen.buttons).toBe(0)
     expect(screen.anchors).toBe(0)
   })
+
+  test('keeps these screens’ marks under forced colors (design section 6.4)', async () => {
+    // The degraded and unavailable screens' half of the forced-colors smoke (section
+    // 4.4, in the half section 6.4 gives this task), and the screens where it matters
+    // most: these two state almost everything in words -- `n/a` for a cap that cannot be
+    // read, `polling`, the install command, the searched count -- so a system that takes
+    // the palette away must take nothing else. The chrome's half is `entry.spec.ts`'s; a
+    // smoke, not a golden.
+    await mount(drawDegraded(theDegradedFrame(), [theNotice()], null, 'light'))
+    await page.emulateMedia({ forcedColors: 'active', colorScheme: 'light' })
+    expect(await page.evaluate(() => matchMedia('(forced-colors: active)').matches)).toBe(true)
+
+    const forcedDegraded = await page.evaluate(() => {
+      const scope: ParentNode = document.getElementById('console-mount') ?? document.createDocumentFragment()
+      const row = scope.querySelector('li.degraded-run')
+      const computed = row === null ? null : getComputedStyle(row)
+      const number = scope.querySelector('.degraded-num')
+      return {
+        rowVisibility: computed?.visibility ?? null,
+        rowWidth: computed?.borderBottomWidth ?? null,
+        rowColour: computed?.borderBottomColor ?? null,
+        tabular: number === null ? null : getComputedStyle(number).fontVariantNumeric,
+      }
+    })
+    const degraded = await drawn(page)
+    expect(degraded.caps, 'the unreadable cap lost its mark').toBe('n/a')
+    expect(degraded.mode).toBe('polling')
+    expect(forcedDegraded.rowVisibility).toBe('visible')
+    expect(forcedDegraded.rowWidth, 'the run row’s boundary collapsed under forced colors').not.toBe('0px')
+    expect(forcedDegraded.rowColour).not.toBe('rgba(0, 0, 0, 0)')
+    // The fifth number hook, under a palette that is not the theme's: `degraded-num` is
+    // the class Task 6.4 added to this screen's `numberCell`, and tabular figures are not
+    // a colour, so they are still set.
+    expect(forcedDegraded.tabular, 'the numbers lost their tabular figures').toContain('tabular-nums')
+
+    // And the absent-binary screen, which is the same rules on a screen with no
+    // dashboard at all: its one figure keeps the hook and its install command keeps a
+    // boundary the system draws.
+    const state = await anAbsentState(scratch)
+    await mount(drawUnavailable(state, 'light'))
+    const forcedUnavailable = await page.evaluate(() => {
+      const scope: ParentNode = document.getElementById('console-mount') ?? document.createDocumentFragment()
+      const command = scope.querySelector('code.unavailable-install-command')
+      const computed = command === null ? null : getComputedStyle(command)
+      const number = scope.querySelector('.degraded-num')
+      return {
+        commandWidth: computed?.borderBottomWidth ?? null,
+        commandColour: computed?.borderBottomColor ?? null,
+        tabular: number === null ? null : getComputedStyle(number).fontVariantNumeric,
+      }
+    })
+    expect(forcedUnavailable.commandWidth, 'the install command lost its boundary').not.toBe('0px')
+    expect(forcedUnavailable.commandColour).not.toBe('rgba(0, 0, 0, 0)')
+    expect(forcedUnavailable.tabular, 'the searched count lost its tabular figures').toContain('tabular-nums')
+
+    await page.emulateMedia({ forcedColors: 'none' })
+  })
 })

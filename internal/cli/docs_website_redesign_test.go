@@ -174,15 +174,16 @@ func TestWebsiteChecklistHasCheck70bSection(t *testing.T) {
 		"website/test/meta.mjs",
 		// The ordering gate the position rests on.
 		"website/test/fold.mjs",
-		// The homepage's own blocks, in the order the page renders them, and the command the
-		// page's first `pre` belongs to.
+		// The homepage's own blocks, in the order the page renders them, the slider's tabs and
+		// panels, and the command the page's first `pre` belongs to.
 		"website/src/pages/index.astro",
-		"AgentChat.astro",
-		"ArchitectureDiagram.astro",
+		"HomeSlider.astro",
 		"HomeInstall.astro",
-		"HOME_PATHS",
+		"HOME_PATH",
 		"home-install-command",
-		"chat-watch",
+		"home-panel-",
+		"watch-block",
+		"watch-command",
 		// The banner that is over the first screen on a first visit.
 		"ConsentBanner.astro",
 		"position: fixed",
@@ -444,12 +445,19 @@ func TestWebsiteChecklistHighestWrittenClaimsReadAtTheCommitBeforeTheMerge(t *te
 
 // TestWebsiteChecklistCheck70bReadsTheScriptsOwnSelectors pins the check's measurements to the
 // script's own. The three keys the section reads -- `h1Bottom`, `leadBottom` and
-// `firstCommandBottom` -- are defined in docs/website/redesign/capture-screenshots.mjs through
-// one selector each, and the section says its two numbers are read "the way the script reads
-// them", so it has to read them through those selectors. The trap this guards is a look-alike:
-// the script measures the document's first `h1`, and `main h1` is a different element that
-// happens to be the same one on today's pages -- a check written against `main h1` would pass
-// while measuring an element the script does not.
+// `firstCommandBottom` -- are defined in docs/website/redesign/capture-screenshots.mjs, and the
+// section says its numbers are read "the way the script reads them", so it has to read them
+// through the script's own selectors. The trap this guards is a look-alike: the script measures
+// the document's first `h1`, and `main h1` is a different element that happens to be the same
+// one on today's pages -- a check written against `main h1` would pass while measuring an
+// element the script does not.
+//
+// The command's key is the one that is not a plain `q(...)`: the homepage's slider keeps two of
+// its three panels hidden, and the page's first `pre` in document order is the `fugaro watch`
+// block inside one of them, so the script reads the first `pre` under `main` that has a
+// rectangle of its own -- and `document.querySelector('main pre')`, which is what it read while
+// every page's first `pre` was visible, is that key's look-alike: on today's homepage it is a
+// hidden box, and a reading taken from it is 0.
 func TestWebsiteChecklistCheck70bReadsTheScriptsOwnSelectors(t *testing.T) {
 	const scriptPath = "docs/website/redesign/capture-screenshots.mjs"
 	const path = "docs/gcp-live-checklist.md"
@@ -457,16 +465,17 @@ func TestWebsiteChecklistCheck70bReadsTheScriptsOwnSelectors(t *testing.T) {
 	doc := readDoc(t, path)
 	flat := strings.Join(strings.Fields(docSection(t, path, doc, checklist70bHeading)), " ")
 
-	for _, m := range []struct{ key, sel string }{
-		{"h1Bottom", "'h1'"},                 // the script's `const h1 = q('h1')`
-		{"leadBottom", "'main p'"},           // q('main p')
-		{"firstCommandBottom", "'main pre'"}, // q('main pre')
+	for _, m := range []struct{ key, inScript, inSection string }{
+		{"h1Bottom", "q('h1')", "document.querySelector('h1')"},           // the script's `const h1 = q('h1')`
+		{"leadBottom", "q('main p')", "document.querySelector('main p')"}, // q('main p')
+		// The first `pre` under `main` that has a box, which is not the first one in the HTML.
+		{"firstCommandBottom", "document.querySelectorAll('main pre')", "document.querySelectorAll('main pre')"},
 	} {
-		if !strings.Contains(script, "q("+m.sel+")") {
-			t.Errorf("%s no longer measures %s with q(%s): the check's Method reads the script's keys out of it, so the key and the selector move together", scriptPath, m.key, m.sel)
+		if !strings.Contains(script, m.inScript) {
+			t.Errorf("%s no longer measures %s with %s: the check's Method reads the script's keys out of it, so the key and the selector move together", scriptPath, m.key, m.inScript)
 		}
-		if !strings.Contains(flat, "document.querySelector("+m.sel+")") {
-			t.Errorf("%s's section does not read %s with document.querySelector(%s), the script's own selector: the check reads its numbers \"the way the script reads them\"", path, m.key, m.sel)
+		if !strings.Contains(flat, m.inSection) {
+			t.Errorf("%s's section does not read %s with %s, the script's own selector: the check reads its numbers \"the way the script reads them\"", path, m.key, m.inSection)
 		}
 	}
 
@@ -491,12 +500,14 @@ func TestWebsiteChecklistCheck70bNamesWhatTheTreeHas(t *testing.T) {
 	flat := strings.Join(strings.Fields(docSection(t, path, doc, checklist70bHeading)), " ")
 
 	for _, m := range []struct{ name, file string }{
-		{"HOME_PATHS", "website/src/components/HomeInstall.astro"},
+		{"HOME_PATH", "website/src/components/HomeInstall.astro"},
 		{"home-install-command", "website/src/components/HomeInstall.astro"},
-		{"chat-watch", "website/src/components/AgentChat.astro"},
-		{"chat-watch-command", "website/src/components/AgentChat.astro"},
+		{"watch-block", "website/src/components/HomeSlider.astro"},
+		{"watch-command", "website/src/components/HomeSlider.astro"},
+		{"watch-shot", "website/src/components/HomeSlider.astro"},
+		{"home-panel-", "website/src/components/HomeSlider.astro"},
 		{"HomeInstall", "website/src/pages/index.astro"},
-		{"ArchitectureDiagram", "website/src/pages/index.astro"},
+		{"HomeSlider", "website/src/pages/index.astro"},
 		{"DOCUMENT_PAGES", "website/test/lib/exempt.mjs"},
 		{"flex-direction: row-reverse", "website/src/styles/base.css"},
 	} {
@@ -508,11 +519,20 @@ func TestWebsiteChecklistCheck70bNamesWhatTheTreeHas(t *testing.T) {
 		}
 	}
 
-	// The hero's old names, refused: #623 moved the homepage's install paths out of the hero
-	// and into their own section, so a step that reads them there reads a page that is gone.
-	for _, stale := range []string{"HERO_PATHS", "hero-install-command"} {
+	// The names of pages that are gone, refused: #623 moved the homepage's install paths out
+	// of the hero into their own section, and the draft of 2026-10-19 folded the chat and the
+	// diagram out of the page and the two install cards into one command — so a step that reads
+	// the homepage out of any of them reads a page that is not there.
+	for _, stale := range []string{
+		"HERO_PATHS",
+		"hero-install-command",
+		"AgentChat.astro",
+		"chat-watch",
+		"ArchitectureDiagram.astro",
+		"HOME_PATHS",
+	} {
 		if strings.Contains(flat, stale) {
-			t.Errorf("%s's section names %q, which no file in the tree carries: the homepage's install paths are HomeInstall.astro's HOME_PATHS and .home-install-command since #623", path, stale)
+			t.Errorf("%s's section names %q, which no file in the tree carries: the homepage is the hero, the slider and the install block since the draft of 2026-10-19, and its command is HomeInstall.astro's HOME_PATH and .home-install-command", path, stale)
 		}
 	}
 }
@@ -744,8 +764,8 @@ func TestWebsiteChecklistCheck70bMethodReadsExist(t *testing.T) {
 		"website/test/lib/exempt.mjs",
 		"website/test/meta.mjs",
 		"website/src/pages/index.astro",
+		"website/src/components/HomeSlider.astro",
 		"website/src/components/HomeInstall.astro",
-		"website/src/components/AgentChat.astro",
 		"website/src/components/Hero.astro",
 		"website/src/components/ConsentBanner.astro",
 		"website/test/home.mjs",

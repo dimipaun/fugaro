@@ -103,11 +103,11 @@ steps, stopping that checkout at the first step that fails:
           the region's compute price override and the GitHub App ID;
           multi-model.md) with what the local config would write now: a
           version upgrade never refreshes that copy, so a mismatch prints a
-          note naming the fields and the one command that does, fugaro init
+          note naming the fields and the one command that does, fugaro update
           --repo . (never run here: its Terraform confirmations stay
           yours). --check makes no cloud call, so it cannot tell and says
           so instead. It checks each workflow's default-account job;
-          named-account jobs are updated by the same fugaro init --repo .
+          named-account jobs are updated by the same fugaro update --repo .
 
 It never upgrades fugaro itself: brew upgrade dimipaun/tap/fugaro && fugaro
 upgrade is the whole sequence.
@@ -296,7 +296,7 @@ func upgradeCheckout(ctx context.Context, cmd *cobra.Command, o upgradeOptions, 
 	}
 	seen[key] = loc.Root
 	if !fugaroCheckout(loc) {
-		return refuse(stepFailed, "not a Fugaro checkout: it has no fugaro.yaml and its .claude/settings.json does not wire the Fugaro plugin (set it up with fugaro init and /fugaro:setup first)")
+		return refuse(stepFailed, "not a Fugaro checkout: it has no fugaro.yaml and its .claude/settings.json does not wire the Fugaro plugin (set it up with fugaro setup and /fugaro:setup first)")
 	}
 	u := &upgradeCtx{cmd: cmd, w: w, o: o, loc: loc, agent: agent}
 	for i, s := range upgradeSteps {

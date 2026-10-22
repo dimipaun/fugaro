@@ -1,5 +1,5 @@
 output "project_name" {
-  description = "The Fugaro project's name. fugaro init --repo copies it to each repository's jobs as FUGARO_PROJECT."
+  description = "The Fugaro project's name. fugaro update copies it to each repository's jobs as FUGARO_PROJECT."
   value       = var.fugaro_project
 }
 
@@ -67,12 +67,12 @@ output "log_view" {
 }
 
 output "registry_cleanup_dry_run" {
-  description = "Whether registry cleanup only logs what it would delete. fugaro init --repo copies it to each repository's registry."
+  description = "Whether registry cleanup only logs what it would delete. fugaro update copies it to each repository's registry."
   value       = var.registry_cleanup.dry_run
 }
 
 output "history_service_account" {
-  description = "The history job's account email, or null without enable_budget. fugaro init --firebase passes it to the Firebase root, which grants it its roles on the FP."
+  description = "The history job's account email, or null without enable_budget. fugaro update passes it to the Firebase root, which grants it its roles on the FP."
   value       = var.enable_budget ? google_service_account.history[0].email : null
 }
 

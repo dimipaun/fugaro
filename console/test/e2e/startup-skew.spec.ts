@@ -20,9 +20,11 @@
 // **The premise, stated because it decides what can run here.** There is no
 // `FUGARO_BIN` and this task does not add one, so the stub is chosen the only
 // way the resolution allows: `PATH` (and `HOME`, so `~/.local/bin` is covered)
-// point at it. `binDirectories` searches `/opt/homebrew/bin`, `/usr/local/bin`
-// and `~/.local/bin` **before** every `PATH` entry, so on a machine that has a
-// real `fugaro` in one of those the stub never wins and the app reads the
+// point at it. `binDirectories` searches the platform's well-known directories
+// (`/opt/homebrew/bin`, `/usr/local/bin` and `~/.local/bin` on macOS;
+// `/usr/local/bin`, `/usr/bin` and `~/.local/bin` on Linux) **before** every
+// `PATH` entry, so on a machine that has a real `fugaro` in one of those the
+// stub never wins and the app reads the
 // machine's binary instead. `test/support/cliStub.ts`'s `resolveConsoleBinary`
 // asks the app's own question with the app's own arguments, so this file knows
 // which of the two it is in and asserts the document that binary calls for.

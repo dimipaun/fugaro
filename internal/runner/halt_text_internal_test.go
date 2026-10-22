@@ -37,7 +37,7 @@ func TestHaltedReportNamesCauseAndRemedy(t *testing.T) {
 		{"no credential", runstore.Halt{Reason: runstore.HaltNoCredential, Scope: "run", Detail: "the earliest reset is 2026-10-02T11:00:00Z, and this job must be finished by 2026-10-02T10:30:00Z"},
 			true, []string{"no credential became usable before the job's own timeout", "fugaro accounts ls", "`credentials`", "start the run again"}},
 		{"creds rules denied", runstore.Halt{Reason: runstore.HaltCredsRulesDenied, Scope: "run", Detail: "the database's rules refuse the cascade's fields"},
-			true, []string{"the database's rules refused this run's credential state", "fugaro init --firebase", "start the run again"}},
+			true, []string{"the database's rules refused this run's credential state", "fugaro update --firebase-project", "start the run again"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -5,10 +5,10 @@
     "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
-     "completion": "0.000000891",
+     "completion": "0.0000000112",
      "discount": 0,
-     "input_cache_read": "0.0000000054",
-     "prompt": "0.00000001584"
+     "input_cache_read": "0.0000000016",
+     "prompt": "0.0000000352"
     },
     "tag": "open-inference/fp4"
    },
@@ -16,10 +16,10 @@
     "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
-     "completion": "0.0000006",
+     "completion": "0.000000014",
      "discount": 0,
-     "input_cache_read": "0.000000008",
-     "prompt": "0.0000000176"
+     "input_cache_read": "0.000000016",
+     "prompt": "0.000000044"
     },
     "tag": "relace"
    },
@@ -29,8 +29,8 @@
     "pricing": {
      "completion": "0.0000006",
      "discount": 0,
-     "input_cache_read": "0.000000009",
-     "prompt": "0.000000022"
+     "input_cache_read": "0.000000007",
+     "prompt": "0.000000055"
     },
     "tag": "morph/fp8"
    },
@@ -49,10 +49,21 @@
     "context_length": 1048576,
     "max_completion_tokens": 384000,
     "pricing": {
-     "completion": "0.0000003",
+     "completion": "0.00000015",
      "discount": 0,
-     "input_cache_read": "0.000000006",
-     "prompt": "0.00000009"
+     "input_cache_read": "0.000000006735",
+     "prompt": "0.000000101"
+    },
+    "tag": "sail-research/fp4/us"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 384000,
+    "pricing": {
+     "completion": "0.00000015",
+     "discount": 0,
+     "input_cache_read": "0.000000006735",
+     "prompt": "0.000000101"
     },
     "tag": "sail-research/fp4"
    },
@@ -60,34 +71,34 @@
     "context_length": 1040000,
     "max_completion_tokens": 393216,
     "pricing": {
-     "completion": "0.00000066",
+     "completion": "0.000000715",
      "discount": 0,
-     "input_cache_read": "0.00000001",
-     "prompt": "0.0000001"
+     "input_cache_read": "0.000000008",
+     "prompt": "0.000000103"
     },
     "tag": "inference-net/fp8"
    },
    {
     "context_length": 1048576,
-    "max_completion_tokens": 943718,
+    "max_completion_tokens": 131072,
     "pricing": {
-     "completion": "0.0000009",
-     "discount": 0,
-     "input_cache_read": "0.00000003",
-     "prompt": "0.0000001"
+     "completion": "0.000000336",
+     "discount": 0.3,
+     "input_cache_read": "0.00000000336",
+     "prompt": "0.000000112"
     },
-    "tag": "cloudflare"
+    "tag": "deepinfra/fp8/flex"
    },
    {
     "context_length": 1048576,
-    "max_completion_tokens": 943718,
+    "max_completion_tokens": 393216,
     "pricing": {
-     "completion": "0.00000099",
+     "completion": "0.00000054",
      "discount": 0,
-     "input_cache_read": "0.00000006",
-     "prompt": "0.00000011"
+     "input_cache_read": "0.0000000135",
+     "prompt": "0.000000135"
     },
-    "tag": "wafer"
+    "tag": "atlas-cloud/fp8"
    },
    {
     "context_length": 1048576,
@@ -113,141 +124,11 @@
    },
    {
     "context_length": 1048576,
-    "max_completion_tokens": 393216,
-    "pricing": {
-     "completion": "0.0000005988",
-     "discount": 0.501,
-     "input_cache_read": "0.000000002994",
-     "prompt": "0.0000001497"
-    },
-    "tag": "baidu/fp8"
-   },
-   {
-    "context_length": 1000000,
-    "max_completion_tokens": 393216,
-    "pricing": {
-     "completion": "0.0000006",
-     "discount": 0,
-     "input_cache_read": "0.000000015",
-     "overrides": [
-      {
-       "completion": "0.0000012",
-       "input_cache_read": "0.00000003",
-       "prompt": "0.0000003",
-       "utc_end": 1400,
-       "utc_start": 0
-      },
-      {
-       "completion": "0.0000006",
-       "input_cache_read": "0.000000015",
-       "prompt": "0.00000015",
-       "utc_end": 0,
-       "utc_start": 1400
-      }
-     ],
-     "prompt": "0.00000015"
-    },
-    "tag": "alibaba"
-   },
-   {
-    "context_length": 1048576,
-    "max_completion_tokens": 393216,
-    "pricing": {
-     "completion": "0.0000006",
-     "discount": 0,
-     "input_cache_read": "0.000000003",
-     "overrides": [
-      {
-       "completion": "0.0000006",
-       "input_cache_read": "0.000000003",
-       "prompt": "0.00000015",
-       "utc_days": [
-        "saturday",
-        "sunday"
-       ]
-      },
-      {
-       "completion": "0.0000006",
-       "input_cache_read": "0.000000003",
-       "prompt": "0.00000015",
-       "utc_days": [
-        "monday",
-        "tuesday",
-        "wednesday",
-        "thursday",
-        "friday"
-       ],
-       "utc_end": 100,
-       "utc_start": 0
-      },
-      {
-       "completion": "0.0000012",
-       "input_cache_read": "0.000000006",
-       "prompt": "0.0000003",
-       "utc_days": [
-        "monday",
-        "tuesday",
-        "wednesday",
-        "thursday",
-        "friday"
-       ],
-       "utc_end": 400,
-       "utc_start": 100
-      },
-      {
-       "completion": "0.0000006",
-       "input_cache_read": "0.000000003",
-       "prompt": "0.00000015",
-       "utc_days": [
-        "monday",
-        "tuesday",
-        "wednesday",
-        "thursday",
-        "friday"
-       ],
-       "utc_end": 600,
-       "utc_start": 400
-      },
-      {
-       "completion": "0.0000012",
-       "input_cache_read": "0.000000006",
-       "prompt": "0.0000003",
-       "utc_days": [
-        "monday",
-        "tuesday",
-        "wednesday",
-        "thursday",
-        "friday"
-       ],
-       "utc_end": 1000,
-       "utc_start": 600
-      },
-      {
-       "completion": "0.0000006",
-       "input_cache_read": "0.000000003",
-       "prompt": "0.00000015",
-       "utc_days": [
-        "monday",
-        "tuesday",
-        "wednesday",
-        "thursday",
-        "friday"
-       ],
-       "utc_end": 0,
-       "utc_start": 1000
-      }
-     ],
-     "prompt": "0.00000015"
-    },
-    "tag": "deepseek"
-   },
-   {
-    "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
      "completion": "0.00000065",
      "discount": 0,
-     "input_cache_read": "0.000000006",
+     "input_cache_read": "0.000000002",
      "prompt": "0.00000015"
     },
     "tag": "coreweave/fp8"
@@ -256,12 +137,12 @@
     "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
-     "completion": "0.00000066",
+     "completion": "0.00000065",
      "discount": 0,
      "input_cache_read": "0.000000006",
-     "prompt": "0.000000165"
+     "prompt": "0.00000016"
     },
-    "tag": "digitalocean"
+    "tag": "wafer/mxfp4"
    },
    {
     "context_length": 1048575,
@@ -278,23 +159,23 @@
     "context_length": 1048576,
     "max_completion_tokens": 393216,
     "pricing": {
-     "completion": "0.000000768",
-     "discount": 0,
-     "input_cache_read": "0.00000000384",
-     "prompt": "0.000000192"
-    },
-    "tag": "atlas-cloud/fp8"
-   },
-   {
-    "context_length": 1048576,
-    "max_completion_tokens": 393216,
-    "pricing": {
      "completion": "0.00000078",
      "discount": 0.35,
      "input_cache_read": "0.0000000039",
      "prompt": "0.000000195"
     },
     "tag": "novita/fp8"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 131072,
+    "pricing": {
+     "completion": "0.00000063",
+     "discount": 0.3,
+     "input_cache_read": "0.0000000063",
+     "prompt": "0.00000021"
+    },
+    "tag": "deepinfra/fp8/priority"
    },
    {
     "context_length": 1048576,
@@ -311,23 +192,34 @@
     "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
-     "completion": "0.0000011",
+     "completion": "0.0000009",
      "discount": 0,
-     "input_cache_read": "0.000000005",
-     "prompt": "0.00000027"
+     "input_cache_read": "0.000000006",
+     "prompt": "0.000000225"
     },
-    "tag": "ionstream"
+    "tag": "digitalocean"
    },
    {
     "context_length": 1048576,
-    "max_completion_tokens": 393216,
+    "max_completion_tokens": 943718,
     "pricing": {
-     "completion": "0.00000115",
+     "completion": "0.00000117",
      "discount": 0,
-     "input_cache_read": "0.000000009",
-     "prompt": "0.00000027"
+     "input_cache_read": "0.0000000058",
+     "prompt": "0.00000026"
     },
     "tag": "makora/fp8"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.00000075",
+     "discount": 0,
+     "input_cache_read": "0.000000006",
+     "prompt": "0.00000027"
+    },
+    "tag": "ionstream"
    },
    {
     "context_length": 1048576,
@@ -339,6 +231,16 @@
      "prompt": "0.00000029"
     },
     "tag": "crusoe/fp8"
+   },
+   {
+    "context_length": 1048000,
+    "max_completion_tokens": 943200,
+    "pricing": {
+     "completion": "0.0000012",
+     "discount": 0,
+     "prompt": "0.0000003"
+    },
+    "tag": "nebius/fp8"
    },
    {
     "context_length": 1048576,
@@ -353,6 +255,17 @@
    },
    {
     "context_length": 1048576,
+    "max_completion_tokens": 393216,
+    "pricing": {
+     "completion": "0.0000012",
+     "discount": 0,
+     "input_cache_read": "0.000000006",
+     "prompt": "0.0000003"
+    },
+    "tag": "baidu/fp8"
+   },
+   {
+    "context_length": 1048576,
     "max_completion_tokens": 262144,
     "pricing": {
      "completion": "0.0000012",
@@ -360,7 +273,7 @@
      "input_cache_read": "0.000000007",
      "prompt": "0.0000003"
     },
-    "tag": "baseten/fp8/us"
+    "tag": "baseten/us"
    },
    {
     "context_length": 1048576,
@@ -404,7 +317,7 @@
      "input_cache_read": "0.000000007",
      "prompt": "0.0000003"
     },
-    "tag": "baseten/fp8"
+    "tag": "baseten"
    },
    {
     "context_length": 1048576,
@@ -438,6 +351,17 @@
      "prompt": "0.0000003"
     },
     "tag": "venice/fp8"
+   },
+   {
+    "context_length": 1000000,
+    "max_completion_tokens": 393216,
+    "pricing": {
+     "completion": "0.00000132",
+     "discount": 0,
+     "input_cache_read": "0.000000033",
+     "prompt": "0.00000033"
+    },
+    "tag": "alibaba"
    },
    {
     "context_length": 1048576,

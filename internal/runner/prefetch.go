@@ -94,8 +94,11 @@ func (r *run) prefetchObjects(ctx context.Context) {
 	if !r.cloneJob() || (r.follow == nil && !r.review) {
 		return
 	}
-	base := "origin/" + r.cfg.Git.BaseBranch
-	for _, head := range r.diffHeads() {
+	// Each range's own base, not the configuration's (diffbase.go): the
+	// reviewer is handed `git diff origin/<the run's base>...HEAD`, so that
+	// is the side the prefetch has to bring in.
+	for _, rng := range r.diffRanges() {
+		base, head := "origin/"+rng.base, rng.head
 		for _, what := range []string{prefetchDiff, prefetchCommits, prefetchBaseDiff} {
 			err := fetchWithin(ctx, func(ctx context.Context) error {
 				return prefetchFetch(r.repo, ctx, what, base, head)
@@ -106,20 +109,4 @@ func (r *run) prefetchObjects(ctx context.Context) {
 			}
 		}
 	}
-}
-
-// diffHeads is what the agent's reads are run against the base: the
-// checked-out HEAD for a first run and a follow-up, and, for a review run,
-// each reviewed head — resolved in checkReviewPRs and not checked out
-// until the stage starts, so the objects are brought in by SHA before
-// there is a worktree over them.
-func (r *run) diffHeads() []string {
-	if !r.review {
-		return []string{"HEAD"}
-	}
-	heads := make([]string, 0, len(r.reviewHeads))
-	for _, h := range r.reviewHeads {
-		heads = append(heads, h.SHA)
-	}
-	return heads
 }

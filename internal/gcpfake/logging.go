@@ -18,7 +18,7 @@ import (
 )
 
 // Logging is a stateful fake of Cloud Logging's entries.list, of a log
-// bucket's get (for fugaro init's discovery) and of a project log sink's get
+// bucket's get (for fugaro update's discovery) and of a project log sink's get
 // (`fugaro doctor` reads the installation's sink for the Batch arm of its
 // filter). entries.list takes the two
 // filter shapes Fugaro sends -- a Cloud Run job execution's entries, and a

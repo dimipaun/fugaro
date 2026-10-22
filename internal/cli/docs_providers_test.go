@@ -230,7 +230,7 @@ func TestReadmeOpenRouterSetup(t *testing.T) {
 		"--repo <owner>/<repo>",                    // the other way to scope the key
 		"coder: deepseek/deepseek-v4.1-flash",      // the pin in fugaro.yaml
 		"fugaro validate",
-		"fugaro init --repo",
+		"fugaro update --repo",
 		"fugaro doctor",
 		"fugaro budget preview",
 		"budget.per_day_usd", // the repository's own day cap

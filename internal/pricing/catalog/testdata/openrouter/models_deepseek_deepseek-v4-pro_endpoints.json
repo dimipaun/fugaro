@@ -2,28 +2,6 @@
  "data": {
   "endpoints": [
    {
-    "context_length": 1024000,
-    "max_completion_tokens": 384000,
-    "pricing": {
-     "completion": "0.00000070296",
-     "discount": 0.798,
-     "input_cache_read": "0.00000002929",
-     "prompt": "0.00000035148"
-    },
-    "tag": "streamlake/fp8"
-   },
-   {
-    "context_length": 1048576,
-    "max_completion_tokens": 393216,
-    "pricing": {
-     "completion": "0.00000070642",
-     "discount": 0.791,
-     "input_cache_read": "0.00000002926",
-     "prompt": "0.00000035321"
-    },
-    "tag": "baidu/fp8"
-   },
-   {
     "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
@@ -33,6 +11,28 @@
      "prompt": "0.00000045"
     },
     "tag": "parasail/fp8"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 393216,
+    "pricing": {
+     "completion": "0.0000015",
+     "discount": 0,
+     "input_cache_read": "0.00000025",
+     "prompt": "0.0000009"
+    },
+    "tag": "relace/fp4"
+   },
+   {
+    "context_length": 1024000,
+    "max_completion_tokens": 384000,
+    "pricing": {
+     "completion": "0.00000191052",
+     "discount": 0.451,
+     "input_cache_read": "0.000000079605",
+     "prompt": "0.00000095526"
+    },
+    "tag": "streamlake/fp8"
    },
    {
     "context_length": 1048576,
@@ -60,7 +60,7 @@
     "context_length": 1048576,
     "max_completion_tokens": 393216,
     "pricing": {
-     "completion": "0.0000105",
+     "completion": "0.0000021",
      "discount": 0.3,
      "input_cache_read": "0.00000021",
      "prompt": "0.00000105"
@@ -154,6 +154,17 @@
      "prompt": "0.00000168"
     },
     "tag": "atlas-cloud/fp4"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 393216,
+    "pricing": {
+     "completion": "0.00000338",
+     "discount": 0,
+     "input_cache_read": "0.00000014",
+     "prompt": "0.00000169"
+    },
+    "tag": "baidu/fp8"
    },
    {
     "context_length": 1048576,

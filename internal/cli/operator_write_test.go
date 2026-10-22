@@ -28,7 +28,7 @@ func TestOperatorWriteErr(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d", ExitCode(err))
 	}
-	for _, want := range []string{"fugaro/recipes/review.yaml", "gs://fugaro-runs-acme", "operator role", "since 0.7.0", "write only runs/, and since 0.9.0 tokens/", "fugaro init --operator"} {
+	for _, want := range []string{"fugaro/recipes/review.yaml", "gs://fugaro-runs-acme", "operator role", "since 0.7.0", "write only runs/, and since 0.9.0 tokens/", "fugaro update --operator"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("refusal lacks %q: %v", want, err)
 		}
@@ -89,7 +89,7 @@ func TestPublishReplaceAsLauncherIsRefusedWithTheOperatorText(t *testing.T) {
 // A forbidden check.json write is named for the build service account's
 // Terraform grant, not the launcher/operator role: the job runs as that
 // account, never as a launcher asking to publish something, so
-// operatorWriteErr's "ask an operator ... fugaro init --operator" text
+// operatorWriteErr's "ask an operator ... fugaro update --operator" text
 // would send an on-call engineer looking in the wrong place. The refusal is
 // a remote failure (exit 2): nobody running the job can fix a broken
 // Terraform grant themselves.
@@ -102,7 +102,7 @@ func TestWriteStateForbiddenNamesTheBuildAccountsGrant(t *testing.T) {
 	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "Terraform IAM condition") || !strings.Contains(err.Error(), "build service account") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
-	if strings.Contains(err.Error(), "operator role") || strings.Contains(err.Error(), "fugaro init --operator") {
+	if strings.Contains(err.Error(), "operator role") || strings.Contains(err.Error(), "fugaro update --operator") {
 		t.Errorf("error points at the operator role, not the build account's Terraform grant: %v", err)
 	}
 }

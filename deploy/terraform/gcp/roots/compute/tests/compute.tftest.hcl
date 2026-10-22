@@ -1,5 +1,5 @@
 # Plans the compute root against a mock provider: no credentials, no network
-# beyond the provider download. The names are the ones fugaro init writes into
+# beyond the provider download. The names are the ones fugaro update writes into
 # terraform.tfvars.json (internal/infra/compute.go), and the base pin is the
 # shape 57a measured on 2026-10-15 (a pinned Artifact Registry path through the
 # installation's remote repository).
@@ -22,7 +22,7 @@ variables {
   region         = "us-east5"
   # Not the region above, and deliberately: Cloud Scheduler does not serve
   # us-east5, so this is what internal/backend/gcp's SchedulerRegion answers for
-  # it and what fugaro init writes into the tfvars. Keeping the two different
+  # it and what fugaro update writes into the tfvars. Keeping the two different
   # here is the point of the runs that assert them: a Scheduler job created in
   # the installation's region fails the apply, and a test whose region matched
   # would never see it.

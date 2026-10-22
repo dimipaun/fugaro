@@ -24,11 +24,14 @@
 // light set deferred), so `palette.css` declares one value set and there is no second one
 // to compare against. What replaces that case is the exact-set case below, which is the
 // same "a token cannot arrive on one side only" guarantee against the design's table, plus
-// the case under it that a light set cannot arrive silently at all. The other two cases
-// section 6.3 defers -- the `--border`-is-decorative scan of `base.css` and `screens.css`
-// (Task 6.4) and the window-background comparison against the main process's window module
-// (Task 6.5) -- are not here, because neither file exists yet and this file is in their
-// Files lists for the commit that creates them.
+// the case under it that a light set cannot arrive silently at all. **And the two cases
+// section 6.3 defers to a task that writes what they read are both here now**: the
+// `--border`-is-decorative scan arrived with **Task 6.4**, which created `screens.css` (the
+// second of the two stylesheets it reads; `base.css` is Task 6.3's), and the
+// **window-background comparison** against the main process's window module arrived with
+// **Task 6.5**, which is the task that gave `consoleWindowOptions` its `backgroundColor`
+// literal -- the case reads that literal out of the options the window is built with, so
+// before 6.5 there was nothing for it to compare against.
 //
 // The arithmetic is the WCAG 2.1 relative-luminance definition, written out the way
 // website/test/a11y.mjs writes it rather than imported from it: that file is a
@@ -46,9 +49,16 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
+import { consoleWindowOptions } from '../../src/main/window'
+
 const THEME = fileURLToPath(new URL('../../src/renderer/theme', import.meta.url))
 const PALETTE_FILE = 'palette.css'
 const TOKENS_FILE = 'tokens.css'
+
+/** LINE_SHEETS are the two stylesheets that draw rules: `tokens.css` and `palette.css` are
+ * values and declare no border at all, so the `--border`-is-decorative scan reads these two
+ * (design §6.3 names them, and they are the files Tasks 6.3 and 6.4 wrote). */
+const LINE_SHEETS: readonly string[] = Object.freeze(['base.css', 'screens.css'])
 
 /** readTheme reads one file of the theme directory, failing by name rather than with an
  * ENOENT from somewhere further along. */
@@ -65,8 +75,8 @@ function readTheme(name: string): string {
 
 /** readThemeDirectory reads every stylesheet of a directory as a Map of file name to text,
  * in name order. The "a light theme cannot arrive silently" case below walks this rather
- * than the two files this task writes: the directory is the theme, and Tasks 6.3 and 6.4
- * add two more files to it.
+ * than the files one task writes: the directory is the theme, and the tasks after this one
+ * add their own files to it.
  *
  * **The directory is a parameter, and the positive controls hand it a temporary one.** The
  * controls have to plant a file for the walk to find, and planting it in the real
@@ -196,6 +206,146 @@ function declarations(css: string): Map<string, string> {
     out.set(name ?? '', (value ?? '').trim())
   }
   return out
+}
+
+// ---- the `--border`-is-decorative scan ------------------------------------------------
+
+/** RULE is one CSS rule's selector and body, on text whose comments are stripped. A rule
+ * inside an `@media` block is what it matches: the at-rule's own wrapper has a `{` before
+ * any `}` and so is not a match, which is exactly the behaviour wanted -- the scan is about
+ * the declarations, and every declaration in this file is inside some rule. */
+const RULE = /([^{}]+)\{([^{}]*)\}/g
+
+/** CONTROL_SELECTOR is a selector that names something the operator activates: an anchor,
+ * a button, a field, or one of the installation picker's control ids
+ * (`installations.html` styles its controls by id rather than by class, design section
+ * 2.2). A **box** drawn on one of these is the control's extent, and the token that draws
+ * an extent is `--border-strong`. The box is load-bearing: the rail's rows are buttons and
+ * the design draws the `--border` hairline *between* them (`border-bottom` on
+ * `button.console-rail-row`), which is a separator rather than an extent -- a one-sided
+ * border is a rule, and only an all-sides one is a box. */
+const CONTROL_SELECTOR =
+  /(?:^|[\s,>+~])(?:a|button|input|select|textarea)(?![\w-])|#picker-(?:add-submit|pick-[a-z]+|project)/
+
+/** BorderUse is one declaration that reads `--border`: where it is, and what it draws. */
+interface BorderUse {
+  readonly selector: string
+  readonly property: string
+  readonly value: string
+}
+
+/** borderUses is every declaration in a stylesheet whose value is `var(--border)` exactly
+ * -- not `--border-width` and not `--border-strong`, which are different tokens with
+ * different roles. */
+function borderUses(css: string, name: string): readonly BorderUse[] {
+  const out: BorderUse[] = []
+  for (const [, selector, body] of stripComments(css).matchAll(RULE)) {
+    for (const declaration of (body ?? '').split(';')) {
+      const colon = declaration.indexOf(':')
+      if (colon === -1) continue
+      const property = declaration.slice(0, colon).trim().toLowerCase()
+      const value = declaration.slice(colon + 1).trim()
+      if (!/var\(--border\)/.test(value)) continue
+      if (property === '') throw new Error(`${name}: a declaration with no property reads --border`)
+      out.push({ selector: selector ?? '', property, value })
+    }
+  }
+  return out
+}
+
+/** borderOffences is every place a stylesheet uses `--border` where the design says it may
+ * not (section 3.4's row: "not admissible as a control boundary -- 1 px hairlines only").
+ * Three clauses, and each is a different way for a decorative token to start carrying a
+ * meaning: an `outline`, which is a boundary wherever it is drawn; a width other than
+ * `--rule-width`, which is a hairline's; and a box (`border` or `border-color`) on a
+ * control, whose extent the design gives to `--border-strong`. */
+function borderOffences(files: ReadonlyMap<string, string>): string[] {
+  const offences: string[] = []
+  for (const [name, css] of files) {
+    for (const { selector, property, value } of borderUses(css, name)) {
+      const where = `${name}: ${selector.trim()} { ${property}: ${value} }`
+      if (property.startsWith('outline')) {
+        offences.push(`${where} -- an outline is a boundary, and --border is decoration`)
+      } else if (!value.includes('var(--rule-width)')) {
+        offences.push(`${where} -- --border is a 1 px hairline and its width is --rule-width`)
+      } else if ((property === 'border' || property === 'border-color') && CONTROL_SELECTOR.test(selector)) {
+        offences.push(`${where} -- a box on a control, whose extent is --border-strong`)
+      }
+    }
+  }
+  return offences
+}
+
+// ---- where `--ok` may be painted -------------------------------------------------------
+
+/** OK_SELECTORS are the only selectors a rule may paint `--ok` on, and the list is the
+ * design's licence rather than the code's usage: section 3.5 rule 4 gives the tone
+ * **exactly two** readings -- "measured and inside the cap" and the rail's `running` row
+ * (section 3.2's role cell says the same two) -- and forbids it decoratively (section 6.1
+ * rule 3), so an entry here is a reading the design names and nothing else.
+ *
+ * **The two entries are those two readings, and the file's own history is why the
+ * distinction is written down.** The list once held a third, a Projects panel the CLI could
+ * `read`; the rule that painted it `--ok` was transcribed into this list rather than
+ * derived from the design, so the case whose whole purpose is to keep `--ok` to its
+ * licensed readings accepted a reading the design licenses nowhere -- a "read" panel is not
+ * "measured and inside the cap" and is not the rail's `running` row. The panel's rule draws
+ * `--accent` now (a rule is structure, which is what that token's role cell gives it), and
+ * a reading added to rule 4 means amending the design in the same edit and adding its
+ * selector here. */
+const OK_SELECTORS: readonly string[] = Object.freeze([
+  "div.live-bar[data-state='measured']",
+  "span.console-rail-state[data-state='running']",
+])
+
+/** okSelectors is every selector of every rule whose body paints `--ok`, in name order. A
+ * rule whose body uses the token for a `border-color` is a painted `--ok` too: the
+ * sparkline's measured bar is a rule rather than a text colour. */
+function okSelectors(css: string): readonly string[] {
+  const out: string[] = []
+  for (const [, selector, body] of stripComments(css).matchAll(RULE)) {
+    if (!/var\(--ok\)/.test(body ?? '')) continue
+    for (const one of (selector ?? '').split(',')) out.push(one.trim())
+  }
+  return out.filter((one) => one !== '').sort()
+}
+
+// ---- where `--accent-ink` may be painted ------------------------------------------------
+
+/** INK_PROPERTIES are the declarations a rule may read `--accent-ink` in, and the list is
+ * the design's role cell rather than a preference: section 3.2 gives the token one job --
+ * "the accent **as text** -- links, an accent heading" -- while the cell above it gives the
+ * **rules** to `--accent` ("structure: rules, the focus ring, a filled control, the cap bar
+ * below its threshold"), and section 4.1 draws the rail's selected row's 3 px left border in
+ * that token. So a border, an outline or a fill painted `--accent-ink` is the text tone used
+ * for structure: the same misreading that put `--ok` on a stage and a panel. */
+const INK_PROPERTIES: readonly string[] = Object.freeze(['color'])
+
+/** accentInkOffences is every declaration that reads `--accent-ink` for something other than
+ * text, as `screens.css: li.live-run-queued { border-left: 3px solid var(--accent-ink) }`. It
+ * is the mirror of `okSelectors`: that one asks *where* a state tone is painted and holds a
+ * list of selectors, while this one asks *what* an ink tone is painted as and reads every
+ * declaration of both files, so a border added later is caught without anyone remembering to
+ * name it here. */
+function accentInkOffences(files: ReadonlyMap<string, string>): string[] {
+  const offences: string[] = []
+  for (const [name, css] of files) {
+    for (const [, selector, body] of stripComments(css).matchAll(RULE)) {
+      for (const declaration of (body ?? '').split(';')) {
+        const colon = declaration.indexOf(':')
+        if (colon === -1) continue
+        const property = declaration.slice(0, colon).trim().toLowerCase()
+        const value = declaration.slice(colon + 1).trim()
+        if (!/var\(--accent-ink\)/.test(value)) continue
+        if (INK_PROPERTIES.includes(property)) continue
+        offences.push(
+          `${name}: ${(selector ?? '').trim()} { ${property}: ${value} } -- --accent-ink is ` +
+            `the accent as text (design section 3.2), and structure is --accent's`,
+        )
+      }
+    }
+  }
+  return offences
 }
 
 // ---- colour arithmetic ---------------------------------------------------------------
@@ -458,6 +608,102 @@ describe("the console's theme tokens", () => {
     }
   })
 
+  it('uses --border only as a hairline, on no control and in no outline', () => {
+    // The design's §6.3 case, and the reason it is this task's: it reads `base.css` and
+    // `screens.css` rather than `palette.css`, and both of those exist as of Task 6.4.
+    // Section 3.4 prints `--border`'s ratios below 3:1 and unbolded -- "not admissible as
+    // a control boundary, 1 px hairlines only" -- so the token's whole licence is a rule
+    // between rows, and the three clauses below are the three ways a hairline stops being
+    // one: it is drawn as an outline, it is drawn thicker than `--rule-width`, or it is
+    // drawn around something the operator activates, whose extent is `--border-strong`.
+    const sheets = new Map(LINE_SHEETS.map((name): [string, string] => [name, readTheme(name)]))
+    const uses = [...sheets].flatMap(([name, css]) => borderUses(css, name))
+    expect(
+      uses.length,
+      `${LINE_SHEETS.join(' and ')} draw no --border hairline at all, so this case is vacuous`,
+    ).toBeGreaterThan(10)
+    const offences = borderOffences(sheets)
+    expect(offences, `--border used where the design does not allow it: ${offences.join('; ')}`).toEqual([])
+
+    // And the three refusals are real, planted: a scan that refused nothing would pass the
+    // case above, and one that refused everything would pass it too. Four offences, three
+    // of them for the three clauses and the fourth a second reading of the width clause; a
+    // decorative hairline on a row is not one of them, and neither is a hairline between a
+    // control and its neighbour -- the shape the rail's own rows are drawn in.
+    const planted = [
+      'li.row { border-bottom: var(--rule-width) solid var(--border); }',
+      'button.rail-row { border-bottom: var(--rule-width) solid var(--border); }',
+      'button.go { border: var(--rule-width) solid var(--border); }',
+      '#picker-project { border: var(--border-width) solid var(--border); }',
+      '.panel { border: var(--border-width) solid var(--border); }',
+      '.panel:focus-visible { outline: 2px solid var(--border); }',
+    ].join('\n')
+    const plantedOffences = borderOffences(new Map([['planted.css', planted]]))
+    expect(plantedOffences.map((one) => one.split(' -- ')[1])).toEqual([
+      'a box on a control, whose extent is --border-strong',
+      '--border is a 1 px hairline and its width is --rule-width',
+      '--border is a 1 px hairline and its width is --rule-width',
+      'an outline is a boundary, and --border is decoration',
+    ])
+    expect(borderOffences(new Map([['clean.css', 'li.row { border-bottom: var(--rule-width) solid var(--border); }']]))).toEqual([])
+  })
+
+  it('paints --ok on the readings section 3.5 rule 4 licenses, and nowhere else', () => {
+    // The regression this keeps out is a colour that *looks* like a state and is not one:
+    // `span.run-stage-passed { color: var(--ok) }` painted a stage green, and that class
+    // holds **both** of the stage's words -- `passed` and `failed`, in one class with no
+    // attribute (design section 2.6) -- so the rule read a failed stage green. `--ok` is
+    // reserved for measured-and-inside-cap and the rail's running (section 3.5 rule 4,
+    // "never decoratively" per section 6.1 rule 3); a stage is neither reading, and no
+    // tone can be right for a class that carries two states.
+    const painted = [...LINE_SHEETS].flatMap((name) => okSelectors(readTheme(name)))
+    expect(painted, 'the scan read no --ok use at all, so this case is vacuous').not.toEqual([])
+    expect(painted.sort(), 'a rule paints --ok where section 3.5 rule 4 does not license it').toEqual(
+      [...OK_SELECTORS].sort(),
+    )
+
+    // And the clause is real: a planted state rule that is not one of the two readings is
+    // refused, which is what the case above would have said about the stage rule -- and
+    // about the Projects panel that held a third entry here, which is the reading the
+    // design licenses nowhere.
+    const planted = okSelectors('span.run-stage-passed { color: var(--ok); }')
+    expect(planted).toEqual(['span.run-stage-passed'])
+    expect(
+      planted.filter((one) => !OK_SELECTORS.includes(one)),
+      'a planted --ok use the licence list accepted',
+    ).toEqual(['span.run-stage-passed'])
+    expect(
+      okSelectors("section.projects-panel[data-state='read'] { border-left: 3px solid var(--ok); }").filter(
+        (one) => !OK_SELECTORS.includes(one),
+      ),
+      "a read Projects panel painted --ok passed the licence list; the design's two readings are the cap bar and the rail's running row",
+    ).toEqual(["section.projects-panel[data-state='read']"])
+  })
+
+  it('paints --accent-ink as text, and draws no rule or fill with it', () => {
+    // The regression this keeps out is the mirror of the one above: `--accent-ink` is the
+    // accent **as text** (design section 3.2's role cell) and `--accent` is the accent as
+    // **structure**, so a rule that paints a border, an outline or a fill with the ink token
+    // has used the text tone for structure. `li.live-run-queued`'s left border did exactly
+    // that; the token it wants is `--accent`, which is what section 4.1 draws the rail's
+    // selected row's own left border in.
+    const files = new Map(LINE_SHEETS.map((name) => [name, readTheme(name)]))
+    const inkUses = [...files.values()].flatMap((css) => stripComments(css).match(/var\(--accent-ink\)/g) ?? [])
+    expect(inkUses.length, 'the scan read no --accent-ink use at all, so this case is vacuous').toBeGreaterThan(0)
+    expect(accentInkOffences(files), 'a rule draws something that is not text with --accent-ink').toEqual([])
+
+    // And the clause is real: the planted border is refused, and the same border in
+    // `--accent` is not -- so the case is about the token and not about borders.
+    expect(
+      accentInkOffences(new Map([['planted.css', "li.live-run-queued { border-left: 3px solid var(--accent-ink); }"]])),
+    ).toEqual([
+      'planted.css: li.live-run-queued { border-left: 3px solid var(--accent-ink) } -- --accent-ink is the accent as text (design section 3.2), and structure is --accent\'s',
+    ])
+    expect(
+      accentInkOffences(new Map([['planted.css', 'li.live-run-queued { border-left: 3px solid var(--accent); }']])),
+    ).toEqual([])
+  })
+
   it('separates the five state colours by hue, so no two fills rely on lightness', () => {
     // Section 3.4's rule: any two of the five state colours are at least 50° apart in hue,
     // **or** at least 3:1 apart in luminance -- the fallback for a future pair the amber-to-
@@ -576,6 +822,120 @@ describe("the console's theme tokens", () => {
       expect(lightThemeOffences(readThemeDirectory(directory)), 'the control file was left behind').toEqual([])
       expect(commentOffences(readThemeDirectory(directory)), 'the control file was left behind').toEqual([])
     })
+  })
+
+  it('paints the window the ground the stylesheet paints, so the first frame is not a flash', () => {
+    // Task 6.5, and the case design section 6.3 deferred to it: "the literal arrives in
+    // `src/main/window.ts` here, so this is the first task at which there is anything to
+    // compare it against". `backgroundColor` is what the platform paints in the frame
+    // between the window being created and the document's first paint, so a value that
+    // drifted from `--ground` is a white (or stale) flash on every launch -- a defect no
+    // screenshot of a *painted* window can see, which is why it is checked here.
+    //
+    // The literal is read **out of the options the window is built with**, not out of the
+    // exported constant: a `backgroundColor` dropped from `consoleWindowOptions` fails this
+    // case as surely as one that drifted, and the constant is an implementation detail of
+    // how it is spelled.
+    //
+    // **One literal, one direction** -- the ruled scope. One value set ships (the owner's Q1
+    // ruling of 2026-10-19, design section 3.6), so there is one `--ground` for the window to
+    // paint; the two-set design's second literal and its `nativeTheme` read are the record of
+    // option (a), not a pair of assertions this case owes.
+    const ground = palette.get('ground')
+    expect(ground, 'palette.css declares no --ground: the window has nothing to be equal to').toBeDefined()
+    const painted = consoleWindowOptions().backgroundColor
+    expect(
+      painted,
+      `the window paints ${JSON.stringify(painted)} behind the document and --ground is ${JSON.stringify(ground)}`,
+    ).toBe(ground)
+    // The comparison is the literal and not the colour: `#0a0e16` is the same colour in
+    // lower case, and the equality above is what a reader comparing the two files by eye
+    // cannot do.
+    expect(ground).toBe('#0A0E16')
+  })
+
+  it('keeps the focus ring one :focus-visible rule, drawn from the tokens', () => {
+    // The focus ring is one of the requirements Task 6.5's brief names and the rule itself
+    // is Task 6.3's (`base.css`); what this case holds is that it stays the single rule
+    // design section 4.3 writes, because the mutation it guards is one character away and
+    // changes who can see it at all: `:focus` draws a ring on a mouse click, which is the
+    // thing the rule is written as `:focus-visible` to avoid.
+    //
+    // Three claims, and the third is the one a rewrite would lose first: the ring's width
+    // and offset come from the two tokens (`tokens.css`), and its colour is `--accent` --
+    // the token section 3.4 measures against the ground for exactly this role, 7.16:1.
+    const css = stripComments(readTheme('base.css'))
+    const focusRules = [...css.matchAll(RULE)]
+      .map(([, selector, body]) => ({ selector: (selector ?? '').trim(), body: body ?? '' }))
+      .filter(({ selector }) => selector.includes(':focus'))
+    expect(
+      focusRules.map(({ selector }) => selector),
+      'base.css does not draw exactly one focus rule',
+    ).toEqual([':focus-visible'])
+    const ring = focusRules[0]?.body ?? ''
+    expect(ring, 'the focus ring is not the design section 4.3 rule').toContain(
+      'outline: var(--focus-ring-width) solid var(--accent)',
+    )
+    expect(ring, 'the focus ring does not read the offset token').toContain(
+      'outline-offset: var(--focus-ring-offset)',
+    )
+
+    // And no file of the theme selects `:focus` alone, however it is spelled -- the scan is
+    // over the directory rather than over `base.css`, so a later layer cannot add the second
+    // rule this case exists to refuse.
+    const bare: string[] = []
+    for (const [name, text] of readThemeDirectory(THEME)) {
+      for (const _ of stripComments(text).matchAll(/:focus(?!-visible)/g)) bare.push(name)
+    }
+    expect(bare, 'a theme file selects :focus rather than :focus-visible').toEqual([])
+
+    // The probe: the scan above is only worth what it finds, so the two spellings are read
+    // off a snippet that carries them.
+    expect([...':focus-visible'.matchAll(/:focus(?!-visible)/g)]).toHaveLength(0)
+    expect([...'a:focus { outline: 0 }'.matchAll(/:focus(?!-visible)/g)]).toHaveLength(1)
+  })
+
+  it('keeps the collapsed rail’s text in the accessibility tree, so the collapse removes no fact', () => {
+    // The other half of the names Task 6.5's brief names, and the half a stylesheet can
+    // lose silently: design section 4.1's collapsed rail is "icons only" to the eye and
+    // **name-preserving** to a reader -- a row drops its name, its project, its state word
+    // and its spend from *sight*, and "the row's accessible name is then the whole of what
+    // it draws ... so the word section 3.5 requires is still announced and the collapse
+    // removes no fact". That holds only while the hiding is a **clip**: `display: none`
+    // and `visibility: hidden` take the text out of the accessibility tree as well as off
+    // the screen, and a collapsed rail that used either would announce a row with no name
+    // and no state at all -- the word that exists so the tone is never the only carrier,
+    // gone with it.
+    const rules = [...stripComments(readTheme('base.css')).matchAll(RULE)].map(([, selector, body]) => ({
+      selector: (selector ?? '').trim(),
+      body: body ?? '',
+    }))
+    const collapsed = rules.filter(({ selector }) => selector.includes("[data-collapsed='true']"))
+    expect(collapsed.length, 'the collapsed rail draws no rule at all').toBeGreaterThan(0)
+
+    // The three fields the collapse hides from sight are hidden by the one clip technique,
+    // which is a rule over all three of them.
+    const hidden = collapsed.filter(({ body }) => body.includes('clip-path: inset(50%)'))
+    expect(
+      hidden.map(({ selector }) => selector).join('\n'),
+      'the collapsed rail hides the row’s name, project or spend some other way',
+    ).toContain('span.console-rail-name')
+    expect(hidden.map(({ selector }) => selector).join('\n')).toContain('span.console-rail-project')
+    expect(hidden.map(({ selector }) => selector).join('\n')).toContain('span.console-rail-spend')
+
+    // And the state span is *narrowed* to its glyph rather than removed, which is what
+    // leaves the word in the name the row is announced by.
+    const state = collapsed.find(({ selector }) => selector.includes('span.console-rail-state'))?.body ?? ''
+    expect(state, 'the collapsed rail clips the state span to its glyph').toContain('overflow: hidden')
+
+    // No rule of the collapsed rail removes text from the tree, however it is spelled.
+    const REMOVES = /display:\s*none|visibility:\s*hidden|content-visibility:\s*hidden/
+    const removed = collapsed.filter(({ body }) => REMOVES.test(body)).map(({ selector }) => selector)
+    expect(removed, 'a collapsed rule takes text out of the accessibility tree').toEqual([])
+
+    // The probe: the scan is only worth what it finds.
+    expect(REMOVES.test('span.console-rail-name { display: none }')).toBe(true)
+    expect(REMOVES.test('span.console-rail-name { clip-path: inset(50%) }')).toBe(false)
   })
 
   it('refuses a pair below AA, with the line the red step recorded', () => {

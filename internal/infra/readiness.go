@@ -161,7 +161,7 @@ func dropModelMounts(ws *WorkflowSpec) {
 //     covers has a build record, so no unattended build starts for an
 //     image nobody has built on purpose.
 //
-// planOnly is fugaro init --repo's --plan-only, and it exempts the refusals
+// planOnly is fugaro update's --plan-only, and it exempts the refusals
 // that exist to stop a *change* rather than to describe a state: this function
 // returns one, for an existing job this apply would deploy without the backend
 // a published policy is read through (D11). A plan is read-only, so it may be
@@ -327,7 +327,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 				dropMount(ws, logical)
 				if ws.Env[BudgetModeEnv] != localcfg.BudgetEnforce {
 					missing = append(missing, Missing{Workflow: name, Kind: MissingNote, Reason: fmt.Sprintf(
-						"%s has no version: the job deploys without it, and a run that calls Anthropic is refused until a key is stored (%s, then rerun fugaro init --repo)", logical, fix)})
+						"%s has no version: the job deploys without it, and a run that calls Anthropic is refused until a key is stored (%s, then rerun fugaro update)", logical, fix)})
 				}
 				continue
 			}
@@ -364,7 +364,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 		if !carriesFirebase(ws) {
 			if ex.PolicyExists {
 				reasons = append(reasons, gate{MissingFirebase, fmt.Sprintf(
-					"the project has published a policy (%s), which only a job carrying %s and %s can read: set the project's Firebase backend (fugaro init --firebase <firebase-project-id>), then run fugaro init --repo for %s",
+					"the project has published a policy (%s), which only a job carrying %s and %s can read: set the project's Firebase backend (fugaro update --firebase-project <firebase-project-id>), then run fugaro update for %s",
 					projectpolicy.PathShared(), RTDBURLEnv, FirebaseAPIKeyEnv, spec.Name)})
 			} else if ex.JobsFirebase[name] {
 				// The job has the backend today and this apply would take it
@@ -388,11 +388,11 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 				// this deploy" for the very apply that is taking the backend
 				// away from the jobs.
 				missing = append(missing, Missing{Workflow: name, Kind: MissingNote, Reason: fmt.Sprintf(
-					"workflow %s's job carries %s and %s today and this init --repo would remove them: the local config names no budget.rtdb_url (or no budget.firebase_api_key), so the job is deployed without the backend and every run of this repository stops reading the project's policy. Restore it with 'fugaro init --firebase <firebase-project-id>' (which writes budget.rtdb_url and budget.firebase_api_key), then run fugaro init --repo again",
+					"workflow %s's job carries %s and %s today and this fugaro update would remove them: the local config names no budget.rtdb_url (or no budget.firebase_api_key), so the job is deployed without the backend and every run of this repository stops reading the project's policy. Restore it with 'fugaro update --firebase-project <firebase-project-id>' (which writes budget.rtdb_url and budget.firebase_api_key), then run fugaro update again",
 					name, RTDBURLEnv, FirebaseAPIKeyEnv)})
 			} else if ws.Env[BudgetModeEnv] != "" {
 				missing = append(missing, Missing{Workflow: name, Kind: MissingNote, Reason: fmt.Sprintf(
-					"this job's budget is on (%s=%s) but it does not carry both %s and %s, so a run of it could not read a project policy: configure the project's Firebase backend (fugaro init --firebase <firebase-project-id>, then fugaro init --repo). Which of the two the local config is missing decides what happens next, and the gate above is exact about it: a config that names budget.rtdb_url sees a published policy, so the day the project publishes one this job stops being deployable until it can read it; a config that names no database address sees none, whatever the project has published — that same config is what the gate reads the node through — so nothing refuses this deploy and the job goes out unable to read a policy that may well exist. That gap is the owner's, accepted on purpose. A launch is held to what the launcher's own config can see and no stricter rule: it refuses a policy it can see and cannot honour, never a budget mode on its own",
+					"this job's budget is on (%s=%s) but it does not carry both %s and %s, so a run of it could not read a project policy: configure the project's Firebase backend (fugaro update --firebase-project <firebase-project-id>, then fugaro update). Which of the two the local config is missing decides what happens next, and the gate above is exact about it: a config that names budget.rtdb_url sees a published policy, so the day the project publishes one this job stops being deployable until it can read it; a config that names no database address sees none, whatever the project has published — that same config is what the gate reads the node through — so nothing refuses this deploy and the job goes out unable to read a policy that may well exist. That gap is the owner's, accepted on purpose. A launch is held to what the launcher's own config can see and no stricter rule: it refuses a policy it can see and cannot honour, never a budget mode on its own",
 					BudgetModeEnv, ws.Env[BudgetModeEnv], RTDBURLEnv, FirebaseAPIKeyEnv)})
 			}
 		}
@@ -406,7 +406,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 		// the published policy away from every run of the repository, and
 		// the operator learns at the next launch instead of here.
 		if !planOnly && exists && ex.PolicyExists && !carriesFirebase(ws) {
-			return RepoSpec{}, nil, userErr("the project has published a policy (%s), and this init --repo would deploy workflow %s's job without %s or %s in its environment: the job exists already, so it stays deployed and the policy it is bound by would stop being readable by every run of %s. Set the project's Firebase backend (fugaro init --firebase <firebase-project-id>) and run fugaro init --repo again",
+			return RepoSpec{}, nil, userErr("the project has published a policy (%s), and this fugaro update would deploy workflow %s's job without %s or %s in its environment: the job exists already, so it stays deployed and the policy it is bound by would stop being readable by every run of %s. Set the project's Firebase backend (fugaro update --firebase-project <firebase-project-id>) and run fugaro update again",
 				projectpolicy.PathShared(), name, RTDBURLEnv, FirebaseAPIKeyEnv, spec.Name)
 		}
 		// P7a: an existing job must never carry a secret_env entry with no
@@ -427,7 +427,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 			// job is ready as soon as the local config names one.
 			built = ws.Image != ""
 			if !built {
-				reasons = append(reasons, gate{MissingImage, fmt.Sprintf("the local config has no base_images.%s, which workflow %s's checkout: clone job runs: fugaro init --base %s", config.BaseKind, ws.Name, config.BaseKind)})
+				reasons = append(reasons, gate{MissingImage, fmt.Sprintf("the local config has no base_images.%s, which workflow %s's checkout: clone job runs: fugaro update --base %s", config.BaseKind, ws.Name, config.BaseKind)})
 			}
 		} else {
 			b, err := hasLatest(ctx, c, tg, spec, ws.Image)
@@ -458,9 +458,9 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 					fix := fmt.Sprintf("build it (fugaro image build --repo %s --workflow %s)", spec.Name, ws.Name)
 					if ws.Checkout == config.CheckoutClone {
 						what = fmt.Sprintf("the local config has no base_images.%s", config.BaseKind)
-						fix = fmt.Sprintf("set it (fugaro init --base %s)", config.BaseKind)
+						fix = fmt.Sprintf("set it (fugaro update --base %s)", config.BaseKind)
 					}
-					return RepoSpec{}, nil, userErr("Cloud Run job %s exists but has no container image, and %s; %s or fix the job, then run fugaro init --repo again",
+					return RepoSpec{}, nil, userErr("Cloud Run job %s exists but has no container image, and %s; %s or fix the job, then run fugaro update again",
 						ws.Job, what, fix)
 				}
 				ws.Image = current

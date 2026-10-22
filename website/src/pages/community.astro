@@ -27,6 +27,18 @@
  *     is the stale copy this exists to not repeat, and the workflow file is the source that
  *     cannot be stale about itself (website/test/faq-community.mjs mutates the file and holds
  *     the page to the change).
+ *
+ * **The bold redesign of 2026-10-21 (part P1's look, `base.css` §2c) is a change of styling
+ * and layout and of nothing else.** The page has no board of its own, so it is set in the look
+ * the boards did fix, the one the home page ships: the headline is the display scale's largest
+ * step with the accent's gradient on it, the section headlines are the display scale's middle
+ * step, the community surfaces — the three documents, the licence and the two issue templates
+ * — are cards in a grid rather than bullets, the CI description and the licence sit on a
+ * panel, and the bands are spaced one step of the scale apart. **Every word and every fact is
+ * the page's own, unchanged**, including everything the content pipeline and the readers above
+ * produce: the redesign reflowed the list entries the em dash used to separate inline (the
+ * layout separates them now, `website/test/faq-community.mjs` holds the words to it), and it
+ * touched no generated text at all — this page renders none.
  */
 import Base from '../layouts/Base.astro'
 import { loadSite, REPO_ROOT } from '../content.ts'
@@ -217,42 +229,61 @@ const pullRequestsSentence = ci.pullRequest
   title="Community"
   description="Where Fugaro's repository, contributing guide, code of conduct, issue templates and licence are — linked, not restated."
 >
-  <h1>Community</h1>
+  {/* The page's head: the bold redesign's opening band. The headline is the page's own title
+      set at the display scale's largest step with the accent's gradient on it (`base.css`
+      §2c — the treatment every page's title gets), and the line under it is the page's own
+      lede, one step up the type scale and in the quieter tone. */}
+  <div class="community-head">
+    <h1 class="community-title display-xl"><span class="gradient-text">Community</span></h1>
+    <p class="lede">
+      Fugaro is a small open-source project, and everything a contributor needs is in the
+      repository.
+    </p>
+  </div>
 
-  <p class="lede">
-    Fugaro is a small open-source project, and everything a contributor needs is in the
-    repository.
-  </p>
-
-  <section id="repository">
-    <h2>The repository</h2>
-    <p>
+  <section id="repository" class="community-section">
+    <h2 class="community-heading display-lg">The repository</h2>
+    <p class="community-repository">
       <a href={facts.repository} rel="noopener">{facts.repository}</a>
     </p>
-    <ul class="documents">
+
+    {/* The documents as cards, in the grid every community surface is drawn in: the label is
+        the card's own heading and the note is what the link is for. The em dash the inline
+        list used to separate the two is gone with the inline layout — the card's own edge
+        separates them now, and no word moved. */}
+    <ul class="community-grid documents">
       {DOCUMENTS.map((document) => (
-        <li>
-          <a href={sourceHref(document.file)} rel="noopener">{document.label}</a>
-          {' — '}{document.note}
+        <li class="card community-card">
+          <h3 class="community-card-title">
+            <a href={sourceHref(document.file)} rel="noopener">{document.label}</a>
+          </h3>
+          <p class="community-card-note">{document.note}</p>
         </li>
       ))}
-      <li>
-        <a href={sourceHref('LICENSE')} rel="noopener">Licence</a>{' — '}the {licence} licence,
-        stated here because it is a fact about the source rather than a claim about anyone
+      <li class="card community-card">
+        <h3 class="community-card-title">
+          <a href={sourceHref('LICENSE')} rel="noopener">Licence</a>
+        </h3>
+        <p class="community-card-note">
+          the {licence} licence, stated here because it is a fact about the source rather than
+          a claim about anyone
+        </p>
       </li>
     </ul>
   </section>
 
-  <section id="issues">
-    <h2>Issues</h2>
-    <p>
+  <section id="issues" class="community-section">
+    <h2 class="community-heading display-lg">Issues</h2>
+    <p class="community-line">
       Bugs, questions and proposals go in the repository's issues:
     </p>
-    <ul class="templates">
+    <ul class="community-grid templates">
       {templates.map((template) => (
-        <li>
-          <a href={sourceHref(template.file)} rel="noopener">{template.name}</a>
-          {template.description !== '' && <>{' — '}{template.description}</>}
+        <li class="card community-card">
+          <h3 class="community-card-title">
+            <a href={sourceHref(template.file)} rel="noopener">{template.name}</a>
+          </h3>
+          {template.description !== '' && <p class="community-card-note">{template.description}</p>}
         </li>
       ))}
     </ul>
@@ -263,56 +294,145 @@ const pullRequestsSentence = ci.pullRequest
       whole section to the workflow file rather than to a sentence somebody remembered. */}
   <section
     id="ci"
+    class="community-section"
     data-push-branches={ci.branches.join(' ')}
     data-on-demand={String(ci.dispatch)}
     data-on-pull-requests={String(ci.pullRequest)}
   >
-    <h2>Continuous integration</h2>
-    <p id="ci-triggers">{triggersSentence}</p>
-    <p id="ci-pull-requests">{pullRequestsSentence}</p>
-    <p class="note">
-      That is what <a href={sourceHref(CI_FILE)} rel="noopener">{CI_FILE}</a> does today, read
-      from the workflow itself. Where a change has to pass before it merges is a question for
-      the repository's own branch protection, which the contributing guide covers.
-    </p>
+    <h2 class="community-heading display-lg">Continuous integration</h2>
+    <div class="card community-panel">
+      <p id="ci-triggers">{triggersSentence}</p>
+      <p id="ci-pull-requests">{pullRequestsSentence}</p>
+      <p class="note">
+        That is what <a href={sourceHref(CI_FILE)} rel="noopener">{CI_FILE}</a> does today, read
+        from the workflow itself. Where a change has to pass before it merges is a question for
+        the repository's own branch protection, which the contributing guide covers.
+      </p>
+    </div>
   </section>
 
-  <section id="licence">
-    <h2>Licence</h2>
-    <p>
-      Fugaro is released under the {licence} licence:{' '}
-      {/* The space after the link is explicit (`{' '}`): Astro drops the whitespace between a
-          closing tag and the text on the next line, and the built page would read
-          "LICENSEis the whole of it". website/test/faq-community.mjs refuses a link that runs
-          into the word after it, on both pages. */}
-      <a href={sourceHref('LICENSE')} rel="noopener">LICENSE</a>{' '}is the whole of it, and it
-      is the only text that governs what you may do with the code.
-    </p>
+  <section id="licence" class="community-section">
+    <h2 class="community-heading display-lg">Licence</h2>
+    <div class="card community-panel">
+      <p>
+        Fugaro is released under the {licence} licence:{' '}
+        {/* The space after the link is explicit (`{' '}`): Astro drops the whitespace between a
+            closing tag and the text on the next line, and the built page would read
+            "LICENSEis the whole of it". website/test/faq-community.mjs refuses a link that runs
+            into the word after it, on both pages. */}
+        <a href={sourceHref('LICENSE')} rel="noopener">LICENSE</a>{' '}is the whole of it, and it
+        is the only text that governs what you may do with the code.
+      </p>
+    </div>
   </section>
 </Base>
 
 <style>
-  /* The page's own layout, in the site's tokens (W1.2, D104): no colour is named here. */
+  /* The page's own layout, in the site's tokens (W1.2, D104): no colour is named here, and
+     nothing here is a shape the site already has. The bold redesign's vocabulary — the display
+     scale, the gradient accent, the card and the panel — is `base.css` §2c, written once for
+     every page (redesign P1); what is this page's own is the room between its bands and the
+     grids its entries are laid in. */
+
+  /* The head: the opening band, with the room above it the boards give the top of a page. */
+  .community-head {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    padding-block: var(--space-2xl) var(--space-xl);
+  }
+
+  /* The headline is `base.css`'s `.display-xl` — the display scale's largest step, with the
+     leading and the tracking that go with it — and the span inside it is `.gradient-text`. */
+  .community-title {
+    margin: 0;
+  }
+
+  /* The line under the headline: one step up the type scale and in the quieter tone, which is
+     the slim intro the redesign opens a page with. */
   .lede {
+    margin: 0;
+    max-width: var(--measure);
+    color: var(--text-muted);
+    font-size: var(--font-size-xl);
+    line-height: var(--leading-snug);
+  }
+
+  /* A band of the page and the room it gives the next: one step of the scale, so the four
+     bands are evenly spaced rather than each carrying a number of its own. */
+  .community-section {
+    margin-block: var(--space-3xl);
+  }
+
+  .community-heading {
+    margin: 0 0 var(--space-md);
+  }
+
+  /* A section's own sentence, before the entries it introduces. */
+  .community-line {
+    margin: 0 0 var(--space-lg);
     max-width: var(--measure);
     color: var(--text-muted);
     font-size: var(--font-size-lg);
     line-height: var(--leading-snug);
   }
 
-  section {
+  .community-repository {
+    margin: 0 0 var(--space-lg);
+    font-size: var(--font-size-lg);
+    font-weight: var(--weight-semibold);
+  }
+
+  /* The community surfaces, as a grid of cards. The grid is this page's own; the card is
+     `base.css`'s `.card` — the padding, the hairline, the radius and the surface tone, written
+     once for the site — and `max-width: none` is the one thing the grid asks of the element
+     defaults, which keep prose to the measure. */
+  .community-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+    gap: var(--space-md);
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  /* What is the card's own is the stack its contents are laid in, and the type of its two
+     lines: the label is the loudest thing in the card and the note is the quieter one. */
+  .community-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+  }
+
+  .community-card-title {
+    margin: 0;
+    font-family: var(--font-sans);
+    font-size: var(--font-size-xl);
+    font-weight: var(--weight-black);
+    letter-spacing: var(--tracking-tight);
+    line-height: var(--leading-snug);
+  }
+
+  .community-card-note {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-base);
+    line-height: var(--leading-normal);
+  }
+
+  /* The panel: the card again, holding prose rather than a grid of entries — the CI
+     description and the licence. The paragraphs inside it are laid apart by the gap, so they
+     carry no margin of their own. */
+  .community-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
     max-width: var(--measure);
-    margin-block: var(--space-lg);
   }
 
-  .documents,
-  .templates {
-    padding-inline-start: var(--space-md);
-  }
-
-  .documents li,
-  .templates li {
-    margin-block: var(--space-2xs);
+  .community-panel p {
+    margin: 0;
   }
 
   .note {

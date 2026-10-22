@@ -1,0 +1,733 @@
+---
+/**
+ * website/src/components/HomeSlider.astro — the homepage's slider (the owner's approved draft
+ * "Home, draft 2 (slider)", 2026-10-19; the owner's feedback of 2026-10-21, item 3, which
+ * turned the strip of tabs into a slider).
+ *
+ * **One block, three slides, three dots, two step controls and a clock.** The draft put the
+ * whole of what the page has to show into one block with three tabs, and the owner's reading of
+ * the live site asked for that strip to behave like a slider: it advances by itself every few
+ * seconds, stops while a reader is in it or has asked their system for less motion, steps back
+ * and forward, and shows both where the reader is and how many slides there are. The three
+ * panels are the same three, in the same order, with the same headings.
+ *
+ * **The script is an enhancement and nothing is built at runtime.** Every panel is in the HTML
+ * a reader receives, the dots are fragment links to the panels' own ids, and the stylesheet's
+ * `:target` rules are what shows the one a reader chose — so a reader whose browser runs no
+ * script (or whose script never arrives) still has all three slides and a way to open each of
+ * them. What the script adds is the clock, the two step controls and the mark on the current
+ * dot; the two controls are emitted `hidden` and revealed by it, the way the copy control is
+ * (D183's "no broken control": a reader without the script is shown no control that does
+ * nothing). `website/test/slider.mjs` reads both states — the no-script one out of the markup
+ * and the stylesheet, and the script's own out of the file the site ships and out of a run of
+ * it against the built page.
+ *
+ * **Dots rather than radio inputs, and the site's own privacy page is the reason.** A radio
+ * group is the other way to write this pattern and it reads well to a screen reader: the group
+ * is announced as three choices and the arrow keys move between them. What it costs is a form
+ * control on a page — three of them — and this site states, in `privacy.astro` and in the gate
+ * that holds the page to the artifact (`test/consent.mjs`), that it has **no form and asks a
+ * reader for nothing**. That claim is about collection, and a radio that switches a panel
+ * collects nothing — but it is a form control, and the sentence and the gate are the owner's,
+ * not this component's to spend. So every control here is a link or a button:
+ * `href="#home-panel-…"` for the dots, which every browser has understood since HTML 2, no
+ * form, no name, nothing submitted.
+ *
+ * **No ARIA tab roles, on purpose.** `role="tab"` and `role="tabpanel"` describe a widget whose
+ * selection is scripted: the roles promise a relationship (`aria-selected`, `aria-controls`,
+ * the panel that follows the selected tab) that only JavaScript can keep, and the panels here
+ * are reachable with the script off. The markup says what it is instead — three links, each
+ * pointing at the panel it opens, each named for its slide and its place in the three — and the
+ * one state the script does write is `aria-current="true"` on the dot whose slide is showing,
+ * which is a plain statement about a link rather than a promise about a widget.
+ *
+ * **The three panels.** *Easy to use* is the reader's three steps, numbered, one inline SVG
+ * each: tell your agent, Fugaro runs it in your cloud, you get a draft pull request — the
+ * draft's own three lines, each with the repository's sentence about it under it, held to
+ * README.md at build time the way the flow's captions are held to theirs (Global Constraint
+ * 6). *Why Fugaro?* is `Benefits.astro` unchanged: the README's four reasons, with their icons,
+ * in the order the README argues them. *See it* is the console and then the real `fugaro watch`
+ * capture — the owner's own screenshot of the screen running on their installation — with the
+ * one command the reader is asked for under it.
+ *
+ * **The "See it" panel is a slider of its own, and it is `ScreenshotSlider.astro`** (the brief
+ * of 2026-10-21: "replace the single Fugaro Watch screenshot with a slider"; D246, D251, D252).
+ * The panel used to hold one `<img>` — the owner's `fugaro watch` capture — and it now holds the
+ * console page's component, rendering `website/data/home-screens.yaml`: the console's own three
+ * screenshots first, because the brief asks the desktop console to lead and take the most space,
+ * and the watch capture last as the "for the terminal crowd" slide. That component was the
+ * console page's alone until this round; the three facts about the page it is rendered on — its
+ * heading, its `data-slot` and its slide-id prefix — are props now, and the homepage passes its
+ * own. **What the panel keeps is the slot**: `div[data-slot="watch-screenshot"]` is still the
+ * element after the panel's heading, it is still the one the design record points at, and the
+ * slider renders inside it.
+ *
+ * **Two sliders, one script, and they are told apart by what they hold.** This component's
+ * block is a deck of three panels; the slider inside the third panel is a scroll container of
+ * four slides.
+ * Both are `[data-slider]`, both carry the same interior hooks (`[data-slider-track]`,
+ * `[data-slider-slide]`, `[data-slider-dot]`, the two step controls, the count), and both are
+ * driven by the one file — the console's driver moves the track and reads its position back, and
+ * the homepage's driver moves panels by name. `site.js`'s `own()` is what keeps each driver on
+ * its own block's elements, and `website/test/slider.mjs` reads the block's three panels and
+ * three dots with the same rule, so the case and the script cannot count differently.
+ *
+ * **Why the panel is the block and the section inside it is not.** The benefits panel renders
+ * `Benefits.astro`'s section, which carries its own gutter and its own room below (that is the
+ * round-6 fix, and it is right when a page renders the section as a block of its own). Inside a
+ * panel the panel is the block: the two gutters would stack, and the section is 32 px narrower
+ * than the other two panels' text. So the section is rendered with `inPanel`, which is the
+ * section's own rule standing its gutter down — declared in `Benefits.astro`, where the element
+ * is rendered, rather than reached into from here with a `:global` selector.
+ */
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { REPO_ROOT, loadHomeScreens } from '../content.ts'
+import { copyControlHTML } from '../lib/copy-control.mjs'
+import Benefits from './Benefits.astro'
+import ScreenshotSlider from './ScreenshotSlider.astro'
+
+/**
+ * The slides the "See it" panel shows, read from `website/data/home-screens.yaml` through the
+ * content pipeline: the console's own three screenshots and then the `fugaro watch` capture,
+ * with each row's `alt`, caption and own pixel size (D246, D251, D252). Read here rather than
+ * handed in as a prop, because the panel is the only caller and the file is the panel's — the
+ * way this component already reads the README.md sections its steps quote.
+ */
+const HOME_SCREENS = loadHomeScreens().screens
+
+/**
+ * A string with its markdown markers and its whitespace removed: how a caption and the section
+ * it claims to come from are compared. The same reading `ArchitectureDiagram.astro` uses, so
+ * the build and `website/test/home.mjs` resolve a quotation the same way.
+ */
+function comparable(document: string): string {
+  return document.replace(/[`*]/g, '').replace(/\s+/g, '')
+}
+
+/**
+ * One `## <heading>` section of a document of this repository, up to the next `## `. A section
+ * rather than the whole file: two of the three steps quote README.md, and held to the file
+ * alone they could be shuffled among the steps with each still a quotation. A heading the
+ * document does not carry is a defect in this file rather than in the document, so it fails
+ * here, naming itself.
+ */
+function section(document: string, heading: string): string {
+  const text = readFileSync(path.join(REPO_ROOT, document), 'utf8')
+  const at = [...text.matchAll(/^## (.+)$/gm)].find((match) => match[1].replace(/`/g, '') === heading)
+  if (!at || at.index === undefined) {
+    throw new Error(
+      `website/src/components/HomeSlider.astro: ${document} carries no "## ${heading}" section, and a step's line is quoted from it (the owner's approved draft of 2026-10-19; Global Constraint 6). Either the section was renamed or the step's line moved.`,
+    )
+  }
+  const rest = text.slice(at.index)
+  const next = rest.indexOf('\n## ', 1)
+  return next === -1 ? rest : rest.slice(0, next)
+}
+
+/** The sections a step's line may be quoted from, by the name the step cites. */
+const SOURCES: { [name: string]: string } = {
+  'README.md#Getting started': section('README.md', 'Getting started'),
+  'README.md#Why Fugaro': section('README.md', 'Why Fugaro'),
+}
+
+/**
+ * The three steps, in the draft's order, each with the section its line is a line of. The
+ * names are the draft's own three ("you tell your agent, Fugaro runs it in your cloud, you get
+ * a draft pull request"); the lines are the repository's sentences about them, shortened to
+ * what fits under a name.
+ */
+const STEPS = [
+  {
+    id: 'agent',
+    name: 'Tell your agent',
+    source: 'README.md#Getting started',
+    // README.md's own sentence about where a task goes in: the reader's agent, through the
+    // plugin's skill, rather than a command they type.
+    line: "the plugin's working skill launches, watches and diagnoses runs",
+    icon: 'bubble',
+  },
+  {
+    id: 'cloud',
+    name: 'Fugaro runs it in your cloud',
+    source: 'README.md#Why Fugaro',
+    // The first of the README's four reasons, and the sentence in it about where the work
+    // happens: the reader's own project, in a container that is thrown away.
+    line: 'It runs in a throwaway container in your own cloud project',
+    icon: 'cloud',
+  },
+  {
+    id: 'pull-request',
+    name: 'You get a draft pull request',
+    source: 'README.md#Why Fugaro',
+    // The same reason's sentence about what comes back, draft state included: the reader does
+    // not get a log to read, they get a pull request to review.
+    line: 'Every run that pushed ends in a pull request, a draft one if it failed',
+    icon: 'pull-request',
+  },
+]
+
+/**
+ * The three steps' drawings, by name: inline SVG, `currentColor`, the accent from the rule
+ * below. A map rather than a branch in the template, for the reason `Benefits.astro`'s glyphs
+ * are a map: a name whose entry holds no shape renders an empty `<svg>` that nothing can see,
+ * and the guard at the foot of the frontmatter refuses one.
+ */
+const GLYPHS: { [name: string]: string } = {
+  // A message: what the reader says to their agent.
+  bubble: '<path d="M4 5h16v11H9l-5 4V5Z"/>',
+  // A cloud: where the run happens.
+  cloud: '<path d="M7 18h9a4 4 0 0 0 .6-7.95A5.5 5.5 0 0 0 6 11.2 3.5 3.5 0 0 0 7 18Z"/>',
+  // A pull request: two commits and the branch between them.
+  'pull-request':
+    '<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5v7"/><path d="M18 15.5V11a3 3 0 0 0-3-3h-4"/><path d="m13 6-2 2 2 2"/>',
+}
+
+/**
+ * The slides, in the order a reader meets them: the draft's three, and the label each one
+ * carries. Each one's `id` is the panel it shows (`#home-panel-<id>`) and the fragment its dot
+ * links to, and the name the script writes on the root when it is the slide on screen — so the
+ * dot, the link, the panel and the script's state are one name rather than four that have to
+ * agree. The label is the panel's own heading and the name its dot is announced with.
+ */
+const SLIDES = [
+  { id: 'easy', label: 'Easy to use' },
+  { id: 'benefits', label: 'Why Fugaro?' },
+  { id: 'see', label: 'See it' },
+]
+
+/**
+ * The one command the reader is asked for, and the skill's own line about what the screen
+ * shows. Both are the site's existing pair — the README prints the command, the `working` skill
+ * writes the note — and both are held to those files below rather than typed here.
+ */
+const WATCH = 'fugaro watch'
+const WATCH_TAIL = 'is the live screen of spend, repositories and running agents.'
+const WATCH_NOTE = `\`${WATCH}\` ${WATCH_TAIL}`
+
+// Hold every step's line to the section it cites, in that section's order, here, so a
+// paraphrase — or a line that moved to the step above — stops the build naming the file rather
+// than reaching a reader as the repository's own words. Two of the three cite README.md's
+// `## Why Fugaro`, and `cursor` walks forward through the section, so they can only be quoted
+// in the order the section writes them.
+{
+  const cursors: { [name: string]: number } = {}
+  for (const [index, step] of STEPS.entries()) {
+    const document = comparable(SOURCES[step.source] ?? '')
+    const line = comparable(step.line)
+    const from = cursors[step.source] ?? 0
+    const at = document.indexOf(line, from)
+    if (at === -1) {
+      throw new Error(
+        `website/src/components/HomeSlider.astro: step ${index + 1}'s line ${JSON.stringify(step.line)} is not a line of ${step.source} at or after the step before it, and every line under a step is the repository's own words in the order its document writes them (the owner's approved draft of 2026-10-19; Global Constraint 6).`,
+      )
+    }
+    cursors[step.source] = at + line.length
+  }
+}
+
+// Every step carries a glyph, and a glyph holds a shape: an entry with nothing in it draws an
+// empty `<svg>`, which is a step with no icon at all.
+for (const step of STEPS) {
+  if (!GLYPHS[step.icon]) {
+    throw new Error(
+      `website/src/components/HomeSlider.astro: step ${JSON.stringify(step.name)} is drawn with ${JSON.stringify(step.icon)}, which is no glyph this component draws (${Object.keys(GLYPHS).join(', ')}): the draft asks each step for an icon, and a glyph the step names and the component has no drawing for is a step rendered with an empty <svg>.`,
+    )
+  }
+}
+
+// The command and the note, held to the files that write them: `fugaro watch` is a command the
+// documentation prints (Global Constraint 9), and the sentence under it is the skill's rather
+// than one written for the page (Global Constraint 6).
+if (!readFileSync(path.join(REPO_ROOT, 'README.md'), 'utf8').includes(WATCH)) {
+  throw new Error(
+    `website/src/components/HomeSlider.astro: README.md does not print ${JSON.stringify(WATCH)}, and the block offers a command the documentation carries. Either the README stopped documenting it or the block is showing one that does not exist (Global Constraint 9).`,
+  )
+}
+if (
+  !comparable(readFileSync(path.join(REPO_ROOT, 'plugin/skills/working/SKILL.md'), 'utf8')).includes(
+    comparable(WATCH_NOTE),
+  )
+) {
+  throw new Error(
+    `website/src/components/HomeSlider.astro: the note ${JSON.stringify(WATCH_NOTE)} is not a line of plugin/skills/working/SKILL.md, and the page quotes the skill rather than describing what the screen does (Global Constraint 6).`,
+  )
+}
+---
+
+<section class="home-slider" data-slot="home-slider" data-slider aria-label="What Fugaro is and does">
+  {/* The block's own heading, and the line the board of 2026-10-20 draws over the control:
+      what a reader gets out of the three panels under it. It is the site's own sentence
+      rather than a document's — it names what the block shows, and no document of this
+      repository says it — so it is listed with the page's other new lines in the pull
+      request for the owner to veto. */}
+  <h2 class="slider-title">Say it. Get pull requests.</h2>
+
+  {/* The controls: one step back, one dot per slide, one step on. The dots are the three links
+      the tabs used to be — each one a fragment link to the panel it shows, which is the whole
+      of the switching with no script — and they are the control that says where the reader is,
+      so they carry the slide's own name and its place in the three. The two buttons are the
+      script's: they are emitted `hidden` and revealed by it, because a step control that steps
+      nowhere is the broken control D183 keeps off the site. The whole row is a list of
+      controls and not a list of prose, and it wraps rather than scrolling on a phone. */}
+  <div class="slider-controls">
+    <button type="button" class="slider-step" data-slider-prev aria-label="Previous slide" hidden>
+      <svg
+        class="slider-arrow"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <path d="m15 5-7 7 7 7" />
+      </svg>
+    </button>
+
+    <ul class="slider-dots">
+      {
+        SLIDES.map((slide, index) => (
+          <li class="slider-dot-item">
+            {/* The dot's own mark is the anchor's pseudo-element, so the anchor is the target a
+                reader taps and the mark is the small circle drawn inside it. The name is the
+                slide and the reader's place in the three, which is what a dot shows and what a
+                screen reader cannot see. */}
+            <a
+              class="slider-dot"
+              href={`#home-panel-${slide.id}`}
+              data-slider-dot={slide.id}
+              aria-label={`Slide ${index + 1} of ${SLIDES.length}: ${slide.label}`}
+            />
+          </li>
+        ))
+      }
+    </ul>
+
+    <button type="button" class="slider-step" data-slider-next aria-label="Next slide" hidden>
+      <svg
+        class="slider-arrow"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <path d="m9 5 7 7-7 7" />
+      </svg>
+    </button>
+  </div>
+
+  <div class="panels">
+    <div class="panel panel-easy" id="home-panel-easy" data-slider-slide="easy">
+      <h2 class="panel-title">Easy to use</h2>
+      <ol class="easy-steps">
+        {
+          STEPS.map((step, index) => (
+            <li class="easy-step" data-step={step.id} data-source={step.source}>
+              {/* The step's place in the list, as a number: the `<ol>` carries the order, so
+                  this is decoration and a screen reader reads the list instead. */}
+              <span class="step-number" aria-hidden="true">
+                {index + 1}
+              </span>
+              <svg
+                class="step-icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <Fragment set:html={GLYPHS[step.icon]} />
+              </svg>
+              <h3 class="step-name">{step.name}</h3>
+              <p class="step-line">{step.line}</p>
+            </li>
+          ))
+        }
+      </ol>
+    </div>
+
+    <div class="panel panel-benefits" id="home-panel-benefits" data-slider-slide="benefits">
+      {/* `Benefits.astro` renders its own heading and its own section; inside a panel the panel
+          is the block, so the section stands its gutter down (see the header). */}
+      <Benefits inPanel />
+    </div>
+
+    <div class="panel panel-see" id="home-panel-see" data-slider-slide="see">
+      <h2 class="panel-title">See it</h2>
+
+      {/* The slot the owner's capture goes into. `data-slot` is the hook
+          `website/test/home.mjs` reads; it is deliberately not a class, so it is not something
+          the stylesheet draws. The image is served from this site (no third-party host), its
+          `alt` is the gist of the transcription that ships beside it
+          (`public/images/fugaro-watch.txt`), and the declared dimensions are the capture's
+          logical size — 2918 x 882 px taken at 2x — so the browser reserves the right box and
+          nothing under the picture moves when the file lands. `loading="lazy"`: the panel is
+          the third slide and the picture is not on the first screen. */}
+      <div class="watch-shot" data-slot="watch-screenshot">
+        <ScreenshotSlider
+          screens={HOME_SCREENS}
+          heading="Screenshots"
+          slot="home-screens"
+          idPrefix="home-screen"
+          label="Screenshots of Fugaro. Scroll sideways to see the rest."
+        />
+      </div>
+
+      <div class="watch-block command-block" data-copy>
+        <Fragment set:html={copyControlHTML('Copy the command')} />
+        <pre class="watch-command"><code>{WATCH}</code></pre>
+      </div>
+
+      {/* The skill's own line about the screen, with the command in the site's code style
+          rather than in markdown backticks (the two parts are held to the skill above). */}
+      <p class="watch-note">
+        <code>{WATCH}</code> {WATCH_TAIL}
+      </p>
+    </div>
+  </div>
+</section>
+
+<style>
+  /* Tokens only (W1.2): this component names the palette, the spacing scale, the type scale and
+     the radii, and defines none of them.
+
+     **The block's own gutter and its room below are declared here**, like the page's other
+     top-level blocks: the hero pads below itself and the install section after this one opens
+     with no top padding, so the gap between two blocks is the block above's own bottom padding
+     and nothing pads one gap twice (`website/test/base-styles.mjs`'s `homeRhythmFailures`).
+     The panels are inside this block and carry no gutter of their own. */
+  .home-slider {
+    position: relative;
+    max-width: var(--page-max);
+    margin: 0 auto;
+    padding: 0 var(--space-md) var(--space-3xl);
+  }
+
+  /* The block's heading, at the display scale's middle step: the board draws the line over the
+     control at the same weight and tracking as the page's other section headings, one step
+     under the hero's own. It carries the room below it that separates it from the control. */
+  .slider-title {
+    margin: 0 0 var(--space-md);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: clamp(var(--font-size-2xl), 4.4vw, var(--font-size-4xl));
+    font-weight: var(--weight-black);
+    letter-spacing: var(--tracking-display);
+    line-height: var(--leading-tight);
+    text-wrap: balance;
+  }
+
+  /* The row the controls stand in: one step back, the three dots, one step on, with the row
+     wrapping rather than scrolling on a phone. `website/test/slider.mjs` reads the wrap and the
+     44 px target every control in it keeps. */
+  .slider-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2xs);
+    margin: 0 0 var(--space-md);
+  }
+
+  /* The two step controls. They are drawn by the script and `hidden` until it runs, so this
+     rule declares the box the arrow is centred in and the rule below is what keeps the markup's
+     `hidden` in force against it — an author `display` wins over the user agent's `[hidden]`
+     rule, and without that pair a reader whose browser runs no script would be shown two
+     buttons that step nowhere. It is the pair `ConsentBanner.astro` keeps its own banner with,
+     and the reason `base.css`'s `.copy-button` declares no `display` at all. */
+  .slider-step {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-pill);
+    background: var(--panel);
+    color: var(--text-muted);
+  }
+
+  .slider-step[hidden] {
+    display: none;
+  }
+
+  .slider-arrow {
+    width: var(--space-sm);
+    height: var(--space-sm);
+  }
+
+  /* The dots: a list with its markers off, because it is a row of three controls and not a
+     list of prose. */
+  .slider-dots {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2xs);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .slider-dot-item {
+    display: flex;
+  }
+
+  /* A dot is a target a reader taps, so it is at least 44 px of box with the mark drawn inside
+     it: the board draws a 12 px circle, and a 12 px target is not one a finger can hit (the
+     owner's brief of 2026-10-19 measures every control against 44 px). It is written as a
+     minimum rather than a size, because that is the declaration the site's one reading of the
+     brief looks for — `website/test/lib/controls.mjs` — and because the box may grow. The same
+     shape, and the same rule, as the console page's screenshot slider. */
+  .slider-dot {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  /* The mark itself, drawn by the anchor's own pseudo-element so that the target above is
+     invisible and what a reader sees is the small circle. */
+  .slider-dot::before {
+    content: '';
+    display: block;
+    width: var(--space-xs);
+    height: var(--space-xs);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-pill);
+    background: var(--surface);
+  }
+
+  /* **The dot of the slide a reader is looking at**, and the two ways it is decided. Without
+     the script it is the fragment's: the panel the address names, or the first one while it
+     names none — the same pair of rules that shows the panel, read on the dot instead. With the
+     script it is the script's own word, `aria-current="true"` on the dot whose slide is
+     showing, which is also what a screen reader reads out.
+
+     The first four selectors stand down the moment the script writes `data-active` on the root,
+     and that is not a tidy-up: a reader who arrived on `#home-panel-see` and then let the block
+     advance would otherwise see two dots marked — the fragment's, which does not move, and the
+     script's, which does.
+
+     **They are in an `@supports selector(:has(*))` rule of their own, and the script's own
+     selector is not.** All four of them ask for `:has()`, and a selector list is not forgiving:
+     beside `.slider-dot[aria-current='true']` a browser too old to answer `:has()` would drop the
+     rule and take the script's mark down with it, which is the dot a reader who lets the block
+     advance follows. The same reason, and the same fix, as the first panel's rule below;
+     `website/test/slider.mjs` reads the built stylesheet for both. */
+  @supports selector(:has(*)) {
+    .home-slider:not([data-active]):not(:has(.panel:target)) .slider-dot[href='#home-panel-easy']::before,
+    .home-slider:not([data-active]):has(#home-panel-easy:target) .slider-dot[href='#home-panel-easy']::before,
+    .home-slider:not([data-active]):has(#home-panel-benefits:target) .slider-dot[href='#home-panel-benefits']::before,
+    .home-slider:not([data-active]):has(#home-panel-see:target) .slider-dot[href='#home-panel-see']::before {
+      border-color: var(--accent);
+      background: var(--accent);
+    }
+  }
+
+  .slider-dot[aria-current='true']::before {
+    border-color: var(--accent);
+    background: var(--accent);
+  }
+
+  /* **The slides, and the whole of the switching.** Every panel is in the HTML a reader
+     receives; the stylesheet shows one and takes the other two out of the layout.
+
+     `display` is the one property these rules decide, at every width and never inside a query
+     (`website/test/base-styles.mjs` refuses a `display` on a panel inside a media query, because
+     the viewport is not what chooses a slide), and the block is read in both of its states:
+     the script's, keyed on the root's `data-active`, and the fragment's, keyed on `:target` and
+     standing down while `data-active` is there.
+
+     The focus ring is not declared here: `base.css`'s `:focus-visible` rule draws the site's
+     ring on every control, and a link and a button are both controls, so a dot or a step the
+     keyboard is on carries the ring the rest of the site carries. It is the accent at the
+     token's width and offset, which is visible against the page and against the control's own
+     ground — and a rule here that removed it would be the one thing `a11y.mjs` refuses. */
+  .panel {
+    display: none;
+  }
+
+  /* The script's state: one rule per slide, so the name the script writes on the root and the
+     panel it shows are one name rather than two that have to agree.
+
+     The no-script `:target` rule is in this list rather than beside the `:has()` rule below it,
+     and that placement is load-bearing: a selector list is not forgiving, so one selector a
+     browser cannot read takes the whole rule down with it. Neither of the four names `:has()`, so
+     a browser too old to answer `:has()` still shows the panel a dot opens — and it still shows
+     the panel the script's own name points at, which a list carrying the `:has()` selector would
+     have taken down with it. */
+  .home-slider[data-active='easy'] #home-panel-easy,
+  .home-slider[data-active='benefits'] #home-panel-benefits,
+  .home-slider[data-active='see'] #home-panel-see,
+  .home-slider:not([data-active]) .panel:target {
+    display: block;
+  }
+
+  /* The no-script state's other half: the first panel, while the fragment names none — a reader
+     who has clicked nothing is reading the first thing the block has to say. It stands down while
+     the script is driving.
+
+     **It is inside `@supports selector(:has(*))` rather than beside the rule above, and that
+     nesting is load-bearing.** It is the one selector in the block that asks for `:has()`, and a
+     selector list is not forgiving: one selector a browser cannot read takes the whole rule down
+     with it. Written as a sibling of the rule above it is not safe either, because the build
+     merges adjacent rules that carry the same declaration — `display: block` is what both rules
+     say, and the built stylesheet put all five selectors back into one rule when this was tried,
+     which is the defect again with a smaller diff. An at-rule cannot be merged into its sibling,
+     so a browser too old to answer `:has()` drops this rule and nothing else: what such a reader
+     loses is the panel shown before they touch a dot, and never the panel every dot opens, and
+     never the panel the script's own name points at. `website/test/slider.mjs` reads the built
+     stylesheet for exactly that: no rule may carry a `:has()` selector beside one that has none. */
+  @supports selector(:has(*)) {
+    .home-slider:not([data-active]):not(:has(.panel:target)) #home-panel-easy {
+      display: block;
+    }
+  }
+
+  /* The panel's own box: the panel tone, the hairline border and the larger radius, with the
+     room the board gives a panel around its content. It is on every panel rather than on the
+     visible one, so moving on changes the contents and not the box.
+
+     It is a rule of its own, and it names `.panel` and nothing else about the block, for two
+     reasons the readings in `website/test/` make concrete. A selector that named the block
+     would be read by `base-styles.mjs`'s `homeRhythmFailures` as the block's own padding, and
+     the slider would read as a block that opens with its own 48 px over it on top of the room
+     the hero leaves below it. And a selector naming a targeted panel would be read by
+     `slider.mjs` as a second rule showing a panel. */
+  .panel {
+    box-sizing: border-box;
+    min-height: 24rem;
+    padding: var(--space-xl) var(--space-lg);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-xl);
+    background: var(--panel);
+  }
+
+  /* The panels' own label. Each panel carries the label of the slide it is, so a reader who
+     arrives on a panel — by the dots, by the script's clock, by a screen reader or in the HTML —
+     reads what they are looking at; it is set at the display scale's middle step, so the panel
+     opens with a heading rather than with a line of body type. */
+  .panel-title {
+    margin: 0 0 var(--space-md);
+    font-family: var(--font-sans);
+    font-size: clamp(var(--font-size-xl), 3vw, var(--font-size-3xl));
+    font-weight: var(--weight-black);
+    letter-spacing: var(--tracking-display);
+    line-height: var(--leading-tight);
+    color: var(--text);
+  }
+
+  /* The three steps: one column, each step a row of number, glyph, name and line. The measure
+     is the site's, because a step's line is prose. */
+  .easy-steps {
+    display: grid;
+    gap: var(--space-md);
+    margin: 0;
+    padding: 0;
+    max-width: var(--measure);
+    list-style: none;
+  }
+
+  /* The step is a card on the panel it is drawn in, since the bold redesign: the surface tone
+     one step above the panel, the hairline border and the larger radius the boards give a card.
+     Its grid, its padding and its border width are what `website/test/base-styles.mjs`'s
+     `sliderLayoutFailures` reads to work out whether the longest step name fits a phone, so the
+     restyle is the tones and the radius and nothing else. */
+  .easy-step {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    column-gap: var(--space-sm);
+    row-gap: var(--space-3xs);
+    align-items: center;
+    padding: var(--space-sm);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+  }
+
+  /* The number and the glyph are the row's first two cells and the name and the line are the
+     third: the two marks stay in their own columns whatever the text does, which is what keeps
+     the three names starting at one edge down the list. */
+  .step-number {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    color: var(--accent-on-dark);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-lg);
+    font-weight: var(--weight-semibold);
+  }
+
+  .step-icon {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    width: 28px;
+    height: 28px;
+    color: var(--accent-on-dark);
+  }
+
+  .step-name {
+    grid-column: 3;
+    margin: 0;
+    font-family: var(--font-sans);
+    font-size: var(--font-size-base);
+    font-weight: var(--weight-semibold);
+    color: var(--text);
+  }
+
+  .step-line {
+    grid-column: 3;
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    line-height: var(--leading-normal);
+  }
+
+  /* The slides' slot, and nothing of its own: the slider inside it is `ScreenshotSlider.astro`,
+     which draws its own frame, its own track, its own dots and its own captions (the owner's
+     feedback of 2026-10-21, D246). The slot takes no space while it is empty — the rule the
+     asset's own task left behind, kept so a slot that lost its slides again is not a blank
+     rectangle — and it is the hook `website/test/home.mjs` reads the rows of. The rule that
+     drew the single `<img>` this slot used to hold is gone with the `<img>`: a picture drawn by
+     a rule nothing renders is a rule that says the panel shows something it does not. */
+  .watch-shot:empty {
+    display: none;
+  }
+
+  /* The command bar, and the one bar around it: `base.css`'s `.command-block` lays the command
+     at the left and its control at the right, and this rule is the bar's own look — the ground
+     the board draws a terminal on, the hairline border and the radius the site's other command
+     bars carry. */
+  .watch-block {
+    padding: var(--space-2xs) var(--space-sm);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--ground);
+  }
+
+  .watch-command {
+    margin: 0;
+    color: var(--accent-on-dark);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+  }
+
+  .watch-note {
+    margin: var(--space-xs) 0 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    line-height: var(--leading-normal);
+  }
+</style>

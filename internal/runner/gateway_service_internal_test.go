@@ -98,7 +98,7 @@ func svcSessionOn(t *testing.T, db *gcpfake.RTDB, heartbeat ...time.Duration) *b
 	if len(heartbeat) > 0 {
 		every = heartbeat[0]
 	}
-	// The installation's own limits, as `fugaro init --firebase` writes them:
+	// The installation's own limits, as `fugaro update --firebase-project` writes them:
 	// without limits.maxReserveMicros the lease refuses everything, and the
 	// run's gateway would halt on its first call for a reason that is about
 	// the fixture and not about the cascade.

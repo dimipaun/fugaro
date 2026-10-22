@@ -223,7 +223,7 @@ func TestAppIDAskedOnceAndStored(t *testing.T) {
 	s.engineStage.run = func(context.Context) error { t.Error("the engine ran without the App ID"); return nil }
 	_, err := s.Apply(t.Context(), initflow.Env{})
 	var ny *initflow.NeedsYouError
-	if !errors.As(err, &ny) || !strings.Contains(ny.Left.Text, "init --github-app-id <id>") || strings.Contains(out.String(), "GitHub App ID") {
+	if !errors.As(err, &ny) || !strings.Contains(ny.Left.Text, "setup --github-app-id <id>") || strings.Contains(out.String(), "GitHub App ID") {
 		t.Errorf("err %v\n%s", err, out.String())
 	}
 	if m := s.Missing(); len(m) != 1 || !strings.Contains(m[0], "--github-app-id") {
@@ -263,7 +263,7 @@ func TestAppIDAskedOnceAndStored(t *testing.T) {
 	}
 }
 
-// init --repo is the engine unchanged: its flag checks, its --print-vars
+// update --repo is the engine unchanged: its flag checks, its --print-vars
 // output (the variables alone on stdout, no result), and the embedded run's
 // refusal of an installation of another project, with the same words.
 func TestInitRepoUnchanged(t *testing.T) {
@@ -279,7 +279,7 @@ func TestInitRepoUnchanged(t *testing.T) {
 	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), checkoutYAML("github", "api-key", "aurora", ""))
 	testutil.Git(t, root, "remote", "add", "origin", "https://github.com/acme/webapp.git")
 	t.Chdir(t.TempDir())
-	out, errOut, err := execute(t, "init", "--repo", "--print-vars", "--project", "aurora", "--github-app-id", "42", root)
+	out, errOut, err := execute(t, "setup", "--repo", "--print-vars", "--project", "aurora", "--github-app-id", "42", root)
 	if err != nil || !strings.HasPrefix(strings.TrimSpace(out), "{") || strings.Contains(out, `"stages"`) || strings.Contains(out, "left_for_you") || !strings.Contains(errOut, "ungated") {
 		t.Fatalf("print-vars: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
 	}
@@ -293,10 +293,10 @@ func TestInitRepoUnchanged(t *testing.T) {
 	// The installation's flags are still refused for --repo, and the
 	// repository's still refused without it.
 	for _, tc := range [][]string{
-		{"init", "--repo", "--firebase", "fb-proj-1234", root},
-		{"init", "--repo", "--launcher", "user:a@b.c", root},
-		{"init", "--no-build"},
-		{"init", "--allow-job-delete"},
+		{"setup", "--repo", "--firebase-project", "fb-proj-1234", root},
+		{"setup", "--repo", "--launcher", "user:a@b.c", root},
+		{"setup", "--no-build"},
+		{"setup", "--allow-job-delete"},
 	} {
 		if _, _, err := execute(t, tc...); ExitCode(err) != ExitUserError || err == nil {
 			t.Errorf("%v: exit %d, err %v", tc, ExitCode(err), err)
@@ -306,11 +306,11 @@ func TestInitRepoUnchanged(t *testing.T) {
 	// with the modes that never reach the repository; a bad value is refused
 	// where it is given.
 	for _, tc := range [][]string{
-		{"init", "--github-app-id", "42", "--print-vars", "--project", "aurora"},
-		{"init", "--github-app-id", "42", "--config-only"},
-		{"init", "--github-app-id", "42", "--forget"},
-		{"init", "--github-app-id", "forty-two", "--plan-only"},
-		{"init", "--repo", "--github-app-id", "4 2", root},
+		{"setup", "--github-app-id", "42", "--print-vars", "--project", "aurora"},
+		{"setup", "--github-app-id", "42", "--config-only"},
+		{"update", "--github-app-id", "42", "--forget"},
+		{"setup", "--github-app-id", "forty-two", "--plan-only"},
+		{"setup", "--repo", "--github-app-id", "4 2", root},
 	} {
 		if _, _, err := execute(t, tc...); ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "github-app-id") {
 			t.Errorf("%v: exit %d, err %v", tc, ExitCode(err), err)
@@ -318,7 +318,7 @@ func TestInitRepoUnchanged(t *testing.T) {
 	}
 }
 
-// The repository stage runs the same engine as init --repo: against the
+// The repository stage runs the same engine as update --repo: against the
 // rig, an installation of another project is refused with the engine's words,
 // as the stage's failure, in the converge's result and with the engine's exit
 // code.
@@ -513,7 +513,7 @@ func TestRepoEngineBuildsOnAProjectWideGitCredential(t *testing.T) {
 	// repository's own copy). The bare claude-oauth-token is the other name of
 	// agent.auth: oauth's mounts that is not project-scope-eligible
 	// (person-owned), so it is seeded as the repository's own copy, which is
-	// what init --repo's prompt stores for it.
+	// what update --repo's prompt stores for it.
 	projectID := gcp.ProjectSecretID(initProjectName, "bitbucket-token")
 	r.sm.Seed(projectID, projectLabels(initProjectName, "bitbucket-token"), []byte("tok"))
 	slug := mustSlug("bitbucket", "acme/sandbox")
@@ -723,7 +723,7 @@ func TestRepoEngineBuildsKeylessProviderOnly(t *testing.T) {
 	}
 }
 
-// rigEngine is an engine over the rig's local config, as fugaro init builds
+// rigEngine is an engine over the rig's local config, as the converge builds
 // it: no new config to write (old is the file's content).
 func rigEngine(t *testing.T, r *initRig, o *initOptions) *initEngine {
 	t.Helper()
@@ -754,7 +754,7 @@ func TestNonInteractiveNamesAppIDFromTheStage(t *testing.T) {
 	r.stateBucket()
 	root := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", ""))
 	t.Chdir(root)
-	_, _, err := executeStdin(t, "", "init", "--non-interactive", "--yes", "--onboard-repo", "acme/app")
+	_, _, err := executeStdin(t, "", "setup", "--non-interactive", "--yes", "--onboard-repo", "acme/app")
 	if err == nil || !strings.Contains(err.Error(), "--non-interactive: missing") || !strings.Contains(err.Error(), "--github-app-id") {
 		t.Fatalf("%v", err)
 	}

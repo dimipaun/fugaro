@@ -499,7 +499,7 @@ func TestBundleRefusalNamesTheClassAndNeverTheKey(t *testing.T) {
 }
 
 // TestBundleSecretIDIsTheInstallationsContainer: the name the loader derives
-// and the name `fugaro init`'s stage fills into
+// and the name `fugaro update`'s stage fills into
 // `credentials_service.bundle_secret` are the same string. The stage
 // (internal/infra's Credentials) writes gcp.ProjectSecretID of the literal
 // "creds-bundle" — internal/infra's own test pins that side — and this pins

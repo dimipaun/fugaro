@@ -86,7 +86,7 @@ type LaunchSpec struct {
 	// value here is readable in the job's definition and in every listing of it,
 	// so a value that is a secret goes in SecretEnv instead — the budget marker
 	// of a launch that minted is one (a fact about this launch, not about the
-	// job's deploy-time environment, so it cannot come from init --repo either
+	// job's deploy-time environment, so it cannot come from fugaro update either
 	// way; internal/runner's BudgetTokenEnv, plan R2-8(a)). No launcher sets an
 	// entry here today.
 	Env []string

@@ -2,10 +2,10 @@ package localcfg
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -38,13 +38,9 @@ func cachePath(getenv func(string) string, kind, name string) (string, error) {
 	if !config.ProjectNameRE.MatchString(name) {
 		return "", fmt.Errorf("%q is not a project name", name)
 	}
-	dir := getenv("XDG_CACHE_HOME")
-	if dir == "" {
-		home := getenv("HOME")
-		if home == "" {
-			return "", errors.New("neither XDG_CACHE_HOME nor HOME is set, so the " + kind + " cache can't be written")
-		}
-		dir = filepath.Join(home, ".cache")
+	dir, err := UserDir(getenv, runtime.GOOS, DirCache)
+	if err != nil {
+		return "", fmt.Errorf("%w, so the %s cache can't be written", err, kind)
 	}
 	return filepath.Join(dir, "fugaro", kind, name+".json"), nil
 }

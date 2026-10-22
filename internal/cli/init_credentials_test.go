@@ -38,7 +38,7 @@ func credentialsStageRig(t *testing.T) *imagesRig {
 	r.src.publish("dimipaun/fugaro-credentials", "1.2.3")
 	r.src.tags["dimipaun/fugaro-credentials:1.2.3-pinned"] = r.src.tags["dimipaun/fugaro-credentials:1.2.3"]
 	// The database the stage reads the marker from: a project config with a
-	// budget backend is what init --firebase writes. Its firebase_project is
+	// budget backend is what update --firebase-project writes. Its firebase_project is
 	// the one the credentials service's own environment carries
 	// (FUGARO_FIREBASE_PROJECT) and its rtdb_url the one FUGARO_RTDB_URL
 	// carries: infra.Credentials takes both from here, because the service
@@ -74,7 +74,7 @@ func TestInitCredentialsStageRefusedInAgent(t *testing.T) {
 	// the refusal below can only be this stage's.
 	r.setPlanAt(t, "installation")
 	t.Setenv("CLAUDECODE", "1")
-	out, errOut, err := executeStdin(t, "", "init", "--yes", "--provision-credentials")
+	out, errOut, err := executeStdin(t, "", "setup", "--yes", "--provision-credentials")
 	if err == nil {
 		t.Fatalf("a coding agent's session applied the credentials service:\n%s%s", out, errOut)
 	}
@@ -144,7 +144,7 @@ func TestInitCredentialsStageNotCoveredByYes(t *testing.T) {
 	// --yes, no terminal: left for the owner.
 	r := credentialsStageRig(t)
 	r.setPlanAt(t, "installation")
-	out, errOut, err := executeStdin(t, "", "init", "--yes", "--provision-credentials")
+	out, errOut, err := executeStdin(t, "", "setup", "--yes", "--provision-credentials")
 	s := out + errOut
 	if err == nil || !strings.Contains(err.Error(), "left for you") {
 		t.Fatalf("err = %v, want the step left for the owner\n%s", err, s)
@@ -166,7 +166,7 @@ func TestInitCredentialsStageNotCoveredByYes(t *testing.T) {
 	r2 := credentialsStageRig(t)
 	r2.setPlanAt(t, "installation")
 	fakeTerminal(t)
-	out, errOut, err = executeStdin(t, "", "init", "--yes", "--provision-credentials")
+	out, errOut, err = executeStdin(t, "", "setup", "--yes", "--provision-credentials")
 	s = out + errOut
 	if err == nil {
 		t.Fatalf("--yes stood in for the typed confirmation:\n%s", s)
@@ -194,7 +194,7 @@ func TestInitCredentialsStageNotCoveredByYes(t *testing.T) {
 	r3.setPlanAt(t, "installation")
 	typedThroughYes(t)
 	fakeTerminal(t)
-	out, errOut, err = executeStdin(t, initProjectName+"\n", "init", "--plan-only", "--provision-credentials")
+	out, errOut, err = executeStdin(t, initProjectName+"\n", "setup", "--plan-only", "--provision-credentials")
 	s = out + errOut
 	if r3.resolveCalls == 0 {
 		t.Errorf("the plan-only run never planned the credentials stage:\n%s (err %v)", s, err)
@@ -229,12 +229,12 @@ func TestInitCredentialsStageRefusedWithoutCredsMarker(t *testing.T) {
 			credentialsOutputs(t, r)
 			typedThroughYes(t)
 			fakeTerminal(t)
-			out, errOut, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-credentials")
+			out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials")
 			s := out + errOut
 			if err == nil {
 				t.Fatalf("the stage ran without the credentials rules marker:\n%s", s)
 			}
-			for _, want := range []string{rules.PathCredsRulesMarker(), "fugaro init --firebase", credsServiceSince} {
+			for _, want := range []string{rules.PathCredsRulesMarker(), "fugaro update --firebase-project", credsServiceSince} {
 				if !strings.Contains(s, want) {
 					t.Errorf("the refusal lacks %q:\n%s", want, s)
 				}
@@ -261,7 +261,7 @@ func TestInitCredentialsStageRefusedWithoutCredsMarker(t *testing.T) {
 	credentialsOutputs(t, r)
 	typedThroughYes(t)
 	fakeTerminal(t)
-	if out, errOut, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-credentials"); err != nil {
+	if out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials"); err != nil {
 		t.Fatalf("a newer marker was refused: %v\n%s%s", err, out, errOut)
 	}
 	if r.resolveCalls == 0 {
@@ -287,7 +287,7 @@ func TestInitCredentialsStageFillsTheDigest(t *testing.T) {
 	credentialsOutputs(t, r)
 	typedThroughYes(t)
 	fakeTerminal(t)
-	out, errOut, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-credentials")
+	out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
@@ -333,7 +333,7 @@ func TestInitCredentialsStageFillsTheDigest(t *testing.T) {
 	dev.db.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion)
 	typedThroughYes(t)
 	fakeTerminal(t)
-	out, errOut, err = executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-credentials")
+	out, errOut, err = executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials")
 	if err == nil {
 		t.Fatalf("a development build turned the credentials service on:\n%s%s", out, errOut)
 	}
@@ -409,9 +409,9 @@ func TestUpgradeNoteNamesTheStage(t *testing.T) {
 		"note: the deployed job's environment matches the local project config",
 		"agent.auth: cascade",
 		"must mount no model credential at all",
-		"fugaro init --provision-credentials",
-		"fugaro init --firebase",
-		"fugaro init --repo .",
+		"fugaro update --provision-credentials",
+		"fugaro update --firebase-project",
+		"fugaro update --repo .",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the note lacks %q:\n%s", want, out)
@@ -437,7 +437,7 @@ func TestUpgradeNoteCredentialsClauseIsSilentWithoutCascade(t *testing.T) {
 	}
 	cfg := &config.Config{}
 	cfg.Agent.Auth = config.AuthCascade
-	if got := jobConfigCopyCredentialsNote(cfg); !strings.Contains(got, "fugaro init --provision-credentials") {
+	if got := jobConfigCopyCredentialsNote(cfg); !strings.Contains(got, "fugaro update --provision-credentials") {
 		t.Errorf("the clause does not name the stage for %s: %q", config.AuthCascade, got)
 	}
 }
@@ -482,7 +482,7 @@ func TestInitCredentialsStageRefusedWhenTheMarkerCannotBeRead(t *testing.T) {
 	credentialsOutputs(t, r)
 	typedThroughYes(t)
 	fakeTerminal(t)
-	out, errOut, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-credentials")
+	out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials")
 	s := out + errOut
 	if err == nil {
 		t.Fatalf("the stage carried on when the credentials rules marker could not be read:\n%s", s)
@@ -526,7 +526,7 @@ func TestInitCredentialsStageRefusedWhenTheOutputsCarryNoService(t *testing.T) {
 	r.save(t)
 	typedThroughYes(t)
 	fakeTerminal(t)
-	out, errOut, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-credentials")
+	out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials")
 	s := out + errOut
 	if err == nil {
 		t.Fatalf("the stage reported a service the installation's outputs do not carry:\n%s", s)
@@ -568,7 +568,7 @@ func TestInitCredentialsStageKeepsTheKeyWhenTheApplyFailsPartWay(t *testing.T) {
 	r.save(t)
 	typedThroughYes(t)
 	fakeTerminal(t)
-	out, errOut, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-credentials")
+	out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials")
 	s := out + errOut
 	if err == nil {
 		t.Fatalf("the stage reported success when its apply failed:\n%s", s)
@@ -620,7 +620,7 @@ func TestInitCredentialsStageFailsWhenItCannotPutTheKeyBack(t *testing.T) {
 		return c.Agent == ""
 	}
 	t.Cleanup(func() { canConfirmTyped = old })
-	out, errOut, err := executeStdin(t, "", "init", "--yes", "--provision-credentials")
+	out, errOut, err := executeStdin(t, "", "setup", "--yes", "--provision-credentials")
 	s := out + errOut
 	if !done {
 		t.Fatalf("the stage never wrote the opt-in into the workdir's tfvars, so no put-back was driven:\n%s", s)
@@ -628,7 +628,7 @@ func TestInitCredentialsStageFailsWhenItCannotPutTheKeyBack(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a run that could not take the opt-in back out reported success:\n%s", s)
 	}
-	if !strings.Contains(err.Error(), "before the next fugaro init") {
+	if !strings.Contains(err.Error(), "before the next fugaro update") {
 		t.Errorf("the run's own error is not the failed put-back: %v\n%s", err, s)
 	}
 	if applies := r.ran(t, "apply"); len(applies) != 1 {
@@ -657,7 +657,7 @@ func TestProvisionCredentialsAndBatchAreIndependentApplies(t *testing.T) {
 	// The --repo path refuses it as the single flag does (checkRepo).
 	ro := &initOptions{provisionCredentials: true, repo: true}
 	if err := ro.checkRepo(); err == nil || !strings.Contains(err.Error(), "--provision-credentials") {
-		t.Errorf("fugaro init --repo --provision-credentials: err = %v, want a refusal naming the flag", err)
+		t.Errorf("fugaro update --repo --provision-credentials: err = %v, want a refusal naming the flag", err)
 	}
 }
 
@@ -694,7 +694,7 @@ func TestCredentialsStageTextsSayWhatTheOptInDoes(t *testing.T) {
 	r := credentialsStageRig(t)
 	r.setPlanAt(t, "installation")
 	fakeTerminal(t)
-	out, errOut, err := executeStdin(t, "", "init", "--yes", "--provision-credentials")
+	out, errOut, err := executeStdin(t, "", "setup", "--yes", "--provision-credentials")
 	s := out + errOut
 	if err == nil {
 		t.Fatalf("--yes stood in for the typed confirmation:\n%s", s)
@@ -727,13 +727,13 @@ func TestCredentialsStageTextsSayWhatTheOptInDoes(t *testing.T) {
 
 	// The flag's help, which is what an owner reads BEFORE they run it.
 	cmd := NewRootCmd()
-	initCmd, _, ferr := cmd.Find([]string{"init"})
+	initCmd, _, ferr := cmd.Find([]string{"setup"})
 	if ferr != nil {
 		t.Fatal(ferr)
 	}
 	f := initCmd.Flags().Lookup("provision-credentials")
 	if f == nil {
-		t.Fatal("fugaro init has no --provision-credentials flag")
+		t.Fatal("fugaro setup has no --provision-credentials flag")
 	}
 	for _, want := range []string{
 		"the REPOSITORY jobs' model credentials move to",
@@ -755,7 +755,7 @@ func TestCredentialsStageTextsSayWhatTheOptInDoes(t *testing.T) {
 }
 
 // THE ROOT CAUSE of C1.20's second review round (finding F3): an ordinary
-// `fugaro init` after the opt-in must keep the credentials_service key.
+// `fugaro update` after the opt-in must keep the credentials_service key.
 //
 // The tfvars are rewritten from the spec on every run, and the spec never
 // carries the key — so the key is carried forward from the workdir's PREVIOUS
@@ -779,7 +779,7 @@ func TestOrdinaryInitAfterTheOptInKeepsTheCredentialsService(t *testing.T) {
 	credentialsOutputs(t, r)
 	typedThroughYes(t)
 	fakeTerminal(t)
-	if out, errOut, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-credentials"); err != nil {
+	if out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials"); err != nil {
 		t.Fatalf("the opt-in run failed: %v\n%s%s", err, out, errOut)
 	}
 	want, err := json.Marshal(r.tfvars(t)["credentials_service"])
@@ -789,13 +789,13 @@ func TestOrdinaryInitAfterTheOptInKeepsTheCredentialsService(t *testing.T) {
 
 	// The ordinary run: no --provision-credentials, so the credentials stage
 	// is not even registered, and nothing but the carry can keep the key.
-	out, errOut, err := executeStdin(t, "", "init", "--yes")
+	out, errOut, err := executeStdin(t, "", "setup", "--yes")
 	if err != nil {
 		t.Fatalf("the ordinary run after the opt-in failed: %v\n%s%s", err, out, errOut)
 	}
 	got, err := json.Marshal(r.tfvars(t)["credentials_service"])
 	if err != nil || string(got) == "null" {
-		t.Fatalf("an ordinary fugaro init dropped the opt-in: the next plan is the service's destruction, which the bundle container's prevent_destroy refuses\n%s%s", out, errOut)
+		t.Fatalf("an ordinary fugaro update dropped the opt-in: the next plan is the service's destruction, which the bundle container's prevent_destroy refuses\n%s%s", out, errOut)
 	}
 	if string(got) != string(want) {
 		t.Errorf("credentials_service = %s, want it carried forward exactly as %s", got, want)
@@ -817,10 +817,10 @@ func TestPrintVarsCarriesTheOptedInKey(t *testing.T) {
 	credentialsOutputs(t, r)
 	typedThroughYes(t)
 	fakeTerminal(t)
-	if out, errOut, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-credentials"); err != nil {
+	if out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials"); err != nil {
 		t.Fatalf("the opt-in run failed: %v\n%s%s", err, out, errOut)
 	}
-	out, errOut, err := executeStdin(t, "", "init", "--print-vars")
+	out, errOut, err := executeStdin(t, "", "setup", "--print-vars")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
@@ -868,7 +868,7 @@ func credentialsBatchRig(t *testing.T) *imagesRig {
 // started.
 //
 // What losing it costs, and why this is not a cosmetic loss: the next
-// fugaro init carries nothing forward, plans the service, its account, its
+// fugaro update carries nothing forward, plans the service, its account, its
 // grant and its bundle secret away, and the bundle container's
 // prevent_destroy refuses that plan — at the INSTALLATION stage, before any
 // later stage runs, so the --provision-credentials run that would put the key
@@ -889,7 +889,7 @@ func TestCredentialsAndBatchInOneRunKeepTheOptIn(t *testing.T) {
 	credentialsOutputs(t, r)
 	typedThroughYes(t)
 	fakeTerminal(t)
-	out, errOut, err := executeStdin(t, initProjectName+"\n"+initProjectName+"\n", "init", "--yes", "--provision-credentials", "--provision-batch")
+	out, errOut, err := executeStdin(t, initProjectName+"\n"+initProjectName+"\n", "setup", "--yes", "--provision-credentials", "--provision-batch")
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("the run naming both applies failed: %v\n%s", err, s)
@@ -898,7 +898,7 @@ func TestCredentialsAndBatchInOneRunKeepTheOptIn(t *testing.T) {
 		t.Fatalf("applies = %v, want the installation's and the compute root's at least: the run did not reach the Batch provisioning\n%s", applies, s)
 	}
 	if _, ok := r.tfvars(t)["credentials_service"]; !ok {
-		t.Errorf("the run's later compute stage rewrote the installation's tfvars and dropped the opt-in: the next fugaro init plans the service's destruction, which the bundle container's prevent_destroy refuses at the installation stage, before the credentials stage can put the key back:\n%s", s)
+		t.Errorf("the run's later compute stage rewrote the installation's tfvars and dropped the opt-in: the next fugaro update plans the service's destruction, which the bundle container's prevent_destroy refuses at the installation stage, before the credentials stage can put the key back:\n%s", s)
 	}
 }
 
@@ -929,7 +929,7 @@ func TestInitCredentialsStageKeepsTheKeyWhenThePlanFindsNothing(t *testing.T) {
 	r.save(t)
 	typedThroughYes(t)
 	fakeTerminal(t)
-	out, errOut, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-credentials")
+	out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials")
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("a run whose plan found nothing to do failed: %v\n%s", err, s)
@@ -963,7 +963,7 @@ func TestInitCredentialsStageTakesTheKeyBackWhenTheNoChangeRunVerifiesNothing(t 
 	r.save(t)
 	typedThroughYes(t)
 	fakeTerminal(t)
-	out, errOut, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-credentials")
+	out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials")
 	s := out + errOut
 	if err == nil {
 		t.Fatalf("a run whose outputs carry no credentials service reported success:\n%s", s)

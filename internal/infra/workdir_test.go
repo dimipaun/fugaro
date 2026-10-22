@@ -31,7 +31,7 @@ func TestInstallationWorkdirPath(t *testing.T) {
 	}
 }
 
-// init --repo reads the installation's outputs in a workdir of its own,
+// fugaro update reads the installation's outputs in a workdir of its own,
 // inside the installation's: preparing either leaves the other's tree.
 func TestInstallationOutputsWorkdir(t *testing.T) {
 	getenv := env(map[string]string{"XDG_STATE_HOME": t.TempDir()})

@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -51,15 +50,27 @@ func compareExistingMinimalFile(w io.Writer, path, text string) (stop bool, err 
 
 // writeMinimalFugaroYAML creates path with text, refusing to replace
 // anything already there or to follow a symlink into writing somewhere
-// else (O_EXCL|O_NOFOLLOW): a plain os.ReadFile-then-os.WriteFile leaves a
-// window, between the existence check and the write, where another
-// process (or a symlink an attacker's checkout planted at this path)
-// could change what the write actually touches. ErrExist here means
-// something appeared in that window. A var so a test can make the race
-// happen deterministically, by writing path itself just before calling
-// through to the real implementation.
+// else (O_EXCL, and O_NOFOLLOW where the platform has it —
+// openfile_other.go says what that half loses): a plain
+// os.ReadFile-then-os.WriteFile leaves a window, between the existence check
+// and the write, where another process (or a symlink an attacker's checkout
+// planted at this path) could change what the write actually touches.
+// ErrExist here means something appeared in that window. A var so a test can
+// make the race happen deterministically, by writing path itself just before
+// calling through to the real implementation.
+//
+// The Lstat is the platform-independent half of that refusal, and it is what
+// covers the case where there is no O_NOFOLLOW: a symlink already at path is
+// refused here on every platform, where the flag is what refuses one that
+// appeared a moment later (openfile_other.go says what that half loses). It is
+// a separate call from the create and therefore racy in that same window, so
+// it does not replace the flag — it is the part of the refusal that survives
+// where the flag does not exist.
 var writeMinimalFugaroYAML = func(path, text string) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o644)
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a symlink; refusing to write through it", path)
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|oNoFollow, 0o644)
 	if err != nil {
 		return err
 	}

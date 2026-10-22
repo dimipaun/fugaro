@@ -310,7 +310,7 @@ func (s *credentialsStage) plan(ctx context.Context) (*tf.Plan, error) {
 // against the service makes, and a database that refuses them would halt
 // each run mid-flight instead of at its start. The gate is the same one a
 // cascade launch makes (C1.19), read from the same marker, with the same
-// remedy: the owner's own `fugaro init --firebase`.
+// remedy: the owner's own `fugaro update --firebase-project`.
 func (s *credentialsStage) requireCredsRules(ctx context.Context) error {
 	lc, db, err := budgetDBFor(ctx, s.e.lc)
 	if err != nil {
@@ -333,14 +333,14 @@ func (s *credentialsStage) requireCredsRules(ctx context.Context) error {
 		return dbErr(lc, fmt.Errorf("reading the credentials rules marker at %s: %w", rules.PathCredsRulesMarker(), err), false)
 	}
 	if !found {
-		return userErr("the installation's database carries no credentials rules marker at %s, so its rules predate the credentials service: the service's runs write the registry entry's credential and waiting_until and are denied /creds, and rules without them would halt every run in the middle; re-run 'fugaro init --firebase <firebase-project-id>' with fugaro >= %s, then run this stage", rules.PathCredsRulesMarker(), credsServiceSince)
+		return userErr("the installation's database carries no credentials rules marker at %s, so its rules predate the credentials service: the service's runs write the registry entry's credential and waiting_until and are denied /creds, and rules without them would halt every run in the middle; re-run 'fugaro update --firebase-project <firebase-project-id>' with fugaro >= %s, then run this stage", rules.PathCredsRulesMarker(), credsServiceSince)
 	}
 	var gen int
 	if err := json.Unmarshal(raw, &gen); err != nil {
-		return userErr("the credentials rules marker at %s is %s, which is not a generation number: fix it with 'fugaro init --firebase <firebase-project-id>'", rules.PathCredsRulesMarker(), oneLine(string(raw)))
+		return userErr("the credentials rules marker at %s is %s, which is not a generation number: fix it with 'fugaro update --firebase-project <firebase-project-id>'", rules.PathCredsRulesMarker(), oneLine(string(raw)))
 	}
 	if gen < rules.CredsRulesVersion {
-		return userErr("the installation's rules are generation %d at %s and this fugaro carries generation %d: they predate the credentials service, so a run against it would be halted mid-flight; re-run 'fugaro init --firebase <firebase-project-id>' with fugaro >= %s, then run this stage", gen, rules.PathCredsRulesMarker(), rules.CredsRulesVersion, credsServiceSince)
+		return userErr("the installation's rules are generation %d at %s and this fugaro carries generation %d: they predate the credentials service, so a run against it would be halted mid-flight; re-run 'fugaro update --firebase-project <firebase-project-id>' with fugaro >= %s, then run this stage", gen, rules.PathCredsRulesMarker(), rules.CredsRulesVersion, credsServiceSince)
 	}
 	return nil
 }
@@ -554,7 +554,7 @@ func (s *credentialsStage) putBack(out initflow.Outcome, err error) (initflow.Ou
 // undoing the ONE key it wrote. Every path that does not apply calls it, and
 // that is not tidiness: the key IS the opt-in — it is what the next apply of
 // the installation root reads — so leaving it behind would let the next
-// ordinary `fugaro init` (which carries the key forward,
+// ordinary `fugaro update` (which carries the key forward,
 // infra.CarriedCredentialsService) turn the service on with none of this
 // stage's confirmation. A --plan-only run, an owner who declines, a run with
 // no terminal to ask at: all of them must leave the installation exactly as
@@ -570,7 +570,7 @@ func (s *credentialsStage) restore() error {
 	before, path := s.before, s.path
 	s.before = nil
 	if err := os.WriteFile(path, before, 0o600); err != nil {
-		return userErr("putting %s back after a run that applied nothing: %v (remove credentials_service from it by hand before the next fugaro init)", path, err)
+		return userErr("putting %s back after a run that applied nothing: %v (remove credentials_service from it by hand before the next fugaro update)", path, err)
 	}
 	return nil
 }

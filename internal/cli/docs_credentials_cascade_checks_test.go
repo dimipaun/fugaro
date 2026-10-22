@@ -125,13 +125,13 @@ func TestCheck94KeepsItsPromises(t *testing.T) {
 	sec := registerSection(t, doc, check94Heading)
 
 	for _, want := range []string{
-		"fugaro init --provision-credentials", // the owner-run init stage this check reads
-		"fugaro init --repo",                  // the repository root that loses the mounts
-		"gcp.CredsBundleSecretID",             // the one container, by the name the code gives it
-		"roles/secretmanager.secretAccessor",  // the one grant on the one container (Q6)
-		"roles/run.invoker",                   // what every workflow job gains instead of the key
-		"secretmanager.googleapis.com",        // the service the DATA_READ config is about
-		"gcloud projects get-iam-policy",      // the config read back BEFORE the log is read
+		"fugaro update --provision-credentials", // the owner-run init stage this check reads
+		"fugaro update --repo",                  // the repository root that loses the mounts
+		"gcp.CredsBundleSecretID",               // the one container, by the name the code gives it
+		"roles/secretmanager.secretAccessor",    // the one grant on the one container (Q6)
+		"roles/run.invoker",                     // what every workflow job gains instead of the key
+		"secretmanager.googleapis.com",          // the service the DATA_READ config is about
+		"gcloud projects get-iam-policy",        // the config read back BEFORE the log is read
 		"gcloud projects set-iam-policy",
 		"AccessSecretVersion",        // the entry the log is looked for
 		"fugaro budget kill --all",   // the stop flag the check raises

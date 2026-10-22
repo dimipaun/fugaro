@@ -32,7 +32,7 @@ func TestDocsCredentialsRunbookNamesEveryOwnerStep(t *testing.T) {
 		// C1.21's clearing of a wrong mark.
 		"fugaro accounts clear",
 		// The opt-in, named so an operator can tell whether it is on at all.
-		"fugaro init --provision-credentials",
+		"fugaro update --provision-credentials",
 		// The two halt reasons an operator sees from this service.
 		"no_credential",
 		"creds_rules_denied",
@@ -163,8 +163,8 @@ func TestDocsCredentialsRunbookPointsStepOneAtSomethingThatAnswers(t *testing.T)
 		// TestDocsCredentialsRunbookPointsAtACheckThatIsNotWrittenYet): a
 		// runbook may not answer a question with a check nobody can open, so
 		// the three gcloud reads are in the section itself and the check is
-		// named as the register's version of them, with the fact that it is
-		// not there yet (code review of C1.22).
+		// named as the register's version of them, now that it is written
+		// (code review of C1.22; Task C1.23 wrote it).
 		"What no Fugaro command answers is whether the Cloud Run service itself is deployed",
 		"gcloud run services describe fugaro-credentials",
 		"gcloud secrets get-iam-policy <bundle-container>",
@@ -172,15 +172,8 @@ func TestDocsCredentialsRunbookPointsStepOneAtSomethingThatAnswers(t *testing.T)
 		"roles/secretmanager.secretAccessor",
 		"roles/run.invoker",
 		"Check 94",
-		"on this release yet",
-		// ...and the shape of the claim, held to the checklist itself by
-		// TestDocsCredentialsRunbookPointsAtACheckThatIsNotWrittenYet below.
-		// The section first said "that file's checks stop at 91 here", which
-		// was already wrong when the review read it — the review base writes
-		// Check 92 (Task C1.5) — and no guard caught it, because the pin was
-		// the phrase around the number rather than the number (code review of
-		// C1.22).
-		"writes no `## Check 94` section here",
+		// Check 94 is written now (Task C1.23), and §1 points at it.
+		"its `## Check 94` section carries the same `gcloud` reads",
 		// What a launch actually refuses on, which §1 stated the wrong way
 		// round: the gate reads the switch, not the service (code review of
 		// C1.22, and the same correction in docs/multi-model.md).
@@ -226,28 +219,23 @@ func TestDocsCredentialsRunbookPointsStepOneAtSomethingThatAnswers(t *testing.T)
 }
 
 // TestDocsCredentialsRunbookPointsAtACheckThatIsNotWrittenYet: §1 names Check 94
-// (Task C1.23) as the register's version of its three `gcloud` reads and says
-// the check is not in docs/gcp-live-checklist.md yet. That claim is the whole
-// reason the reads are written out in the runbook rather than left behind a
-// pointer — so it is checked against the checklist itself, and not against a
-// number a later task would have to remember to edit.
-//
-// The section first answered the question with "that file's checks stop at 91
-// here", which was stale the moment the review read it: origin/integration-0.9.6
-// writes a `## Check 92` section (Task C1.5), and the phrase the guard pinned
-// ("on this release yet") said nothing about the number, so nothing caught it
-// (code review of C1.22). Reading the checklist makes the claim self-checking:
-// the day C1.23 lands Check 94 this test fails on purpose, and the failure is
-// the reminder to point §1 at the section instead of saying it is not there.
+// (Task C1.23) as the register's version of its three `gcloud` reads. It used
+// to say the check was not in docs/gcp-live-checklist.md yet, and this guard
+// was written to fail the day C1.23 landed the section: it has landed, so §1
+// now points at it, and the guard holds the pointer against the checklist in
+// both directions -- the section exists, and §1 no longer calls it missing.
+// (The name is kept so the history of the guard reads as one test.)
 func TestDocsCredentialsRunbookPointsAtACheckThatIsNotWrittenYet(t *testing.T) {
 	const checklist = "docs/gcp-live-checklist.md"
-	const claim = "on this release yet"
 	section := flattenDoc(docSection(t, credentialsRunbook, readDoc(t, credentialsRunbook), "## 1. Is the service on at all?"))
-	if !strings.Contains(section, claim) {
-		t.Fatalf("%s §1 no longer says %q about Check 94: this guard holds that claim against the checklist, so re-read the pin rather than dropping it", credentialsRunbook, claim)
+	if !strings.Contains(flattenDoc(readDoc(t, checklist)), "## Check 94") {
+		t.Fatalf("%s writes no `## Check 94` section, and %s §1 points at it", checklist, credentialsRunbook)
 	}
-	if flat := flattenDoc(readDoc(t, checklist)); strings.Contains(flat, "## Check 94") {
-		t.Errorf("%s writes a `## Check 94` section, so the check %s §1 calls missing has landed: point the section at it (and at its `gcloud` reads) rather than saying it is not there yet", checklist, credentialsRunbook)
+	if strings.Contains(section, "on this release yet") {
+		t.Errorf("%s §1 still says Check 94 is not written on this release yet, and %s writes it", credentialsRunbook, checklist)
+	}
+	if !strings.Contains(section, "**Check 94**") || !strings.Contains(section, "**written in") {
+		t.Errorf("%s §1 does not point at the written Check 94", credentialsRunbook)
 	}
 }
 
@@ -274,7 +262,7 @@ func TestDocsCredentialsRunbookOrdersTheOptOut(t *testing.T) {
 	section := flattenDoc(docSection(t, credentialsRunbook, doc, "## 9. Turning the service off"))
 	// The step's own heading, and the command it runs.
 	const step = "Re-apply every repository root, first."
-	const cmd = "fugaro init --repo"
+	const cmd = "fugaro update --repo"
 	const stateRmCmd = "terraform state rm 'module.installation.google_secret_manager_secret.credentials_bundle[0]'"
 	repo, stateRm := strings.Index(section, step), strings.Index(section, stateRmCmd)
 	if repo < 0 {

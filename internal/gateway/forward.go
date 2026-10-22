@@ -539,8 +539,14 @@ func checkRequest(p parsed, m pricing.Model, pin RequestPin, prices *pricing.Tab
 	if pin.MaxOutputTokens > 0 && sameModel(p.model, pin.Model, prices, routes) && p.maxTokens > pin.MaxOutputTokens {
 		return fmt.Sprintf("max_tokens %d for model %s is above the stage's limit %d", p.maxTokens, logValue(p.model), pin.MaxOutputTokens)
 	}
+	// The missing field is named, not the model: an override-priced model is
+	// priced — its input, output and cache rates are the owner's — and what
+	// it lacks is an image rate. Saying "images aren't priced for model X"
+	// sent an owner whose model_prices row is right there looking for a typo
+	// in it (run 20261021-002046-31cc). p.images is the request's own count,
+	// so a text-only call on the same model is never refused.
 	if p.images > 0 && m.ImageTokens <= 0 {
-		return fmt.Sprintf("images aren't priced for model %s", logValue(p.model))
+		return fmt.Sprintf("model %s is priced without an image rate (the price table's image_tokens, a per-image token ceiling): an image block can't be reserved without one. model_prices sets token rates only", logValue(p.model))
 	}
 	return ""
 }

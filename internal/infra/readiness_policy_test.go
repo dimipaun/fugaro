@@ -116,7 +116,8 @@ func TestReadinessRefusesAnApplyThatWouldStrandAnExistingJobsPolicy(t *testing.T
 	}
 	readyJob(t, f, spec)
 	// The jobs carry what this config no longer names: an installation that
-	// ran init --firebase, met again by a config without budget.rtdb_url.
+	// ran fugaro update --firebase-project, met again by a config without
+	// budget.rtdb_url.
 	for _, ws := range spec.Workflows {
 		f.run.SetJob(ws.Job, ws.Labels, ws.Image)
 		f.run.SetJobEnv(ws.Job, map[string]string{
@@ -133,7 +134,7 @@ func TestReadinessRefusesAnApplyThatWouldStrandAnExistingJobsPolicy(t *testing.T
 		t.Errorf("err = %v (%T), want a user error: the operator's own config is what lost the backend", err, err)
 	}
 	first := slices.Sorted(maps.Keys(spec.Workflows))[0]
-	for _, want := range []string{first, RTDBURLEnv, FirebaseAPIKeyEnv, projectpolicy.PathShared(), "fugaro init --firebase", "fugaro init --repo"} {
+	for _, want := range []string{first, RTDBURLEnv, FirebaseAPIKeyEnv, projectpolicy.PathShared(), "fugaro update --firebase-project", "fugaro update"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
@@ -217,7 +218,7 @@ func TestReadinessBlocksAJobThatCannotReadAPublishedPolicy(t *testing.T) {
 	if gate == "" {
 		t.Fatalf("missing = %v, want a Firebase gate for each workflow", missing)
 	}
-	for _, want := range []string{RTDBURLEnv, FirebaseAPIKeyEnv, projectpolicy.PathShared(), "fugaro init --repo"} {
+	for _, want := range []string{RTDBURLEnv, FirebaseAPIKeyEnv, projectpolicy.PathShared(), "fugaro update"} {
 		if !strings.Contains(gate, want) {
 			t.Errorf("the gate does not say %q: %s", want, gate)
 		}
@@ -244,8 +245,8 @@ func TestReadinessWarnsWhenAnApplyWouldRemoveTheJobFirebaseBackend(t *testing.T)
 	}
 	readyJob(t, f, spec)
 	// The deployed jobs carry what this config no longer names: the markup
-	// of an installation that ran init --firebase, met again by a config
-	// that has lost its budget.rtdb_url.
+	// of an installation that ran fugaro update --firebase-project, met again by
+	// a config that has lost its budget.rtdb_url.
 	for _, ws := range spec.Workflows {
 		f.run.SetJob(ws.Job, ws.Labels, ws.Image)
 		f.run.SetJobEnv(ws.Job, map[string]string{
@@ -267,7 +268,7 @@ func TestReadinessWarnsWhenAnApplyWouldRemoveTheJobFirebaseBackend(t *testing.T)
 		if !slices.ContainsFunc(notes, func(r string) bool {
 			return strings.Contains(r, name) && strings.Contains(r, RTDBURLEnv) &&
 				strings.Contains(r, FirebaseAPIKeyEnv) && strings.Contains(r, "budget.rtdb_url") &&
-				strings.Contains(r, "fugaro init --firebase") && strings.Contains(r, "init --repo")
+				strings.Contains(r, "fugaro update --firebase-project") && strings.Contains(r, "fugaro update")
 		}) {
 			t.Errorf("no note tells workflow %s's owner that this apply removes the backend: %v", name, notes)
 		}

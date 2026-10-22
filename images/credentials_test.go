@@ -64,7 +64,7 @@ func TestCredentialsImageIsMinimal(t *testing.T) {
 // pinned by digest, the way images/base/Dockerfile pins Debian. A tag is a
 // name the registry may repoint between two builds of the same commit, and a
 // rebuild from the same commit could then produce different bytes than the
-// image whose digest the release signed and `fugaro init` pinned into the
+// image whose digest the release signed and `fugaro update` pinned into the
 // service's Terraform variable. This is the test that keeps a tag from coming
 // back: it names both bases, so it also fails if a FROM is dropped or its
 // repository is swapped.

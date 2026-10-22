@@ -30,7 +30,7 @@ import (
 // created no project must write no marker, whatever else it did; the mutation
 // this exists to catch is dropping that check and marking the project the run
 // installs into (r.res.Created = r.gcpProject in markCreated), which in
-// production would mark every installation an ordinary `fugaro init` touches
+// production would mark every installation an ordinary converge touches
 // — fugaro's own, belong, the owner's — as managed, and turn the
 // confirmations off for them (design D73: adding Firebase to a project is
 // never what makes it managed).
@@ -45,18 +45,18 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 		r := newInitRig(t)
 		r.markedRuns(t, initProjectName, initProject)
 		fakeTerminal(t)
-		if _, _, err := executeStdin(t, initProjectName+"\n", "init"); err != nil {
+		if _, _, err := executeStdin(t, initProjectName+"\n", "setup"); err != nil {
 			t.Fatal(err)
 		}
 		noMarker(t, r.gcs, initRunsBucket)
 	})
 
-	// (b) init --firebase: Firebase is added to a project that already
+	// (b) update --firebase-project: Firebase is added to a project that already
 	// exists, which this run did not create.
-	t.Run("init --firebase on an existing project", func(t *testing.T) {
+	t.Run("update --firebase-project on an existing project", func(t *testing.T) {
 		r := newFBRig(t)
 		r.markedRuns(t, initProjectName, initProject)
-		if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
+		if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
 			t.Fatal(err)
 		}
 		noMarker(t, r.gcs, initRunsBucket)
@@ -237,9 +237,9 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 	// Firebase: the stage adds Firebase where the project is, and creates
 	// nothing. This is where D73's "adding Firebase is never what makes a
 	// project managed" is decided — the AddFirebase branch of the same stage
-	// that creates — so it is pinned here and not only through init
-	// --firebase (b), a different stage. The bucket is the project's own,
-	// seeded and numbered as (c) seeds it, so a mutation that marks the
+	// that creates — so it is pinned here and not only through fugaro update
+	// --firebase-project (b), a different stage. The bucket is the project's
+	// own, seeded and numbered as (c) seeds it, so a mutation that marks the
 	// project on adding Firebase really writes.
 	t.Run("--create-project adding Firebase to an existing project", func(t *testing.T) {
 		r := newProjectRig(t)
@@ -273,11 +273,11 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 		noMarker(t, r.gcs, bucket)
 	})
 
-	// (c'') --create-project with --firebase set to the same project: the
+	// (c'') --create-project with --firebase-project set to the same project: the
 	// one-project layout the docs tell the owner to run ("One project or
 	// two: either is supported", docs/gcp-setup.md, and the live checklist's
 	// init step), where the Firebase backend lives in the project the run
-	// creates. It is a different path to the same fact: with --firebase the
+	// creates. It is a different path to the same fact: with --firebase-project the
 	// installation is the Firebase engine's first apply and the installation
 	// stage is skipped (init_stages.go, newInstallationStage), so the
 	// outputs markCreated reads — the runs bucket among them — are set by
@@ -285,14 +285,15 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 	// the fact still lands, once.
 	//
 	// Against a *different* Firebase project the flag is refused before
-	// anything is called (TestCreateWithOtherFirebaseRefused); this is the
+	// anything is called (TestFirebaseProjectPairingRuleIsUnchanged); this is
+	// the
 	// accepted combination, and until this case existed no test ran it.
 	t.Run("--create-project with Firebase on the created project", func(t *testing.T) {
 		r := newCreatedFBRig(t)
 		bucket := "fugaro-runs-" + newProj
 		out, _, err := r.run(t, true, newProj+"\n"+billingAcc+"\n"+names(1)+"us-east5\n"+names(1),
 			"--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New",
-			"--firebase", newProj, "--budget-mode", "observe")
+			"--firebase-project", newProj, "--budget-mode", "observe")
 		if err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
@@ -379,8 +380,8 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 
 // createdFBRig is the rig of the one-project layout: the create rig (the
 // project, its billing and Firebase Management) with the Firebase engine's
-// own fakes on top, for `fugaro init --create-project --gcp-project P
-// --firebase P`. The Firebase project is the one this run creates, so its
+// own fakes on top, for `fugaro setup --create-project --gcp-project P
+// --firebase-project P`. The Firebase project is the one this run creates, so its
 // database, its admins and its billing exist as the run itself leaves them,
 // not as a rig seeds them.
 type createdFBRig struct {
@@ -621,7 +622,7 @@ func managedRefusal(t *testing.T, err error, address string, advice bool) {
 	}
 }
 
-// Task 3.2 at the call site: in a managed project `fugaro init`'s guard
+// Task 3.2 at the call site: in a managed project the converge's guard
 // refusal ends with the managed sentence — no flag, no DeleteHints line, the
 // owner as the one who decides — and in any project that is not managed it is
 // today's, byte for byte, hints and all. Only the text differs: what is
@@ -634,7 +635,7 @@ func TestManagedInitRefusalNamesNoFlag(t *testing.T) {
 	r := newInitRig(t)
 	r.managedRuns(t, initProjectName, initProject)
 	r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
-	out, _, err := executeStdin(t, "", "init", "--yes")
+	out, _, err := executeStdin(t, "", "setup", "--yes")
 	managedRefusal(t, err, address, true)
 	if len(r.ran(t, "apply")) != 0 {
 		t.Fatalf("a plan the guard refused was applied\n%s", out)
@@ -644,7 +645,7 @@ func TestManagedInitRefusalNamesNoFlag(t *testing.T) {
 	r2 := newInitRig(t)
 	r2.stateBucket()
 	r2.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
-	out2, _, err := executeStdin(t, "", "init", "--yes")
+	out2, _, err := executeStdin(t, "", "setup", "--yes")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out2)
 	}
@@ -668,7 +669,7 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 	const a = "user:a@example.com"
 	address := `module.installation.google_storage_bucket_iam_member.state["` + a + `"]`
 
-	// (c) An address on the owner's list does not permit an init --yes
+	// (c) An address on the owner's list does not permit a fugaro setup --yes
 	// delete, and the entry here is the strongest one there is: it names this
 	// plan's own address and the identity this plan's own before view carries
 	// (identityOf reads it back through the plan, so the two cannot drift).
@@ -683,7 +684,7 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 	// this row says anything — an object whose before view identified nothing,
 	// or a version-1 object a reader takes for no entries at all, would be
 	// refused whatever init did with the list — and what it says is the
-	// SCOPING: fugaro init's guard is the address half over fugaro's own roots
+	// SCOPING: fugaro setup's guard is the address half over fugaro's own roots
 	// (tf.Guard with the command line's own --allow-delete, D72/D74), and the
 	// owner's entries are read by a managed apply of the project's
 	// agent-authored root alone.
@@ -716,7 +717,7 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 	}
 	r.allowDeleteList(t, initProject, entry)
 	r.setPlan(t, ch)
-	_, _, err := executeStdin(t, "", "init", "--yes")
+	_, _, err := executeStdin(t, "", "setup", "--yes")
 	managedRefusal(t, err, bucket, true)
 	if len(r.ran(t, "apply")) != 0 {
 		t.Fatal("the owner's delete list approved a delete in fugaro's own root")
@@ -732,7 +733,7 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 			r.stateBucket()
 		}
 		r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
-		out, _, err := executeStdin(t, "", "init", "--yes", "--allow-delete", address)
+		out, _, err := executeStdin(t, "", "setup", "--yes", "--allow-delete", address)
 		if err != nil || len(r.ran(t, "apply")) != 1 {
 			t.Errorf("%s: --allow-delete for the plan's delete: err %v, %d applies\n%s", name, err, len(r.ran(t, "apply")), out)
 		}
@@ -747,7 +748,7 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 		t.Fatal(err)
 	}
 	reads := stubManagedFact(t, false, errors.New("must not be read"))
-	out, _, err := executeStdin(t, "", "init", "--yes", "--allow-delete", address)
+	out, _, err := executeStdin(t, "", "setup", "--yes", "--allow-delete", address)
 	if err != nil || len(r.ran(t, "apply")) != 1 {
 		t.Fatalf("a plan with no delete: err %v, %d applies\n%s", err, len(r.ran(t, "apply")), out)
 	}
@@ -802,7 +803,7 @@ func TestManagedInitRefusalOfWhatNoApprovalClearsHasNoAdvice(t *testing.T) {
 			r.setPlan(t, ch)
 			// Listed on the command line, so the moved object's refusal is
 			// the moved one rather than an unlisted delete's.
-			_, _, err := executeStdin(t, "", "init", "--yes", "--allow-delete", addr)
+			_, _, err := executeStdin(t, "", "setup", "--yes", "--allow-delete", addr)
 			managedRefusal(t, err, addr, false)
 			if len(r.ran(t, "apply")) != 0 {
 				t.Fatal("a plan the guard refused was applied")
@@ -822,7 +823,7 @@ func TestManagedInitFactReadErrorFailsClosed(t *testing.T) {
 	r.stateBucket()
 	r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
 	reads := stubManagedFact(t, false, errors.New("the storage API answered 400"))
-	_, _, err := executeStdin(t, "", "init", "--yes")
+	_, _, err := executeStdin(t, "", "setup", "--yes")
 	managedRefusal(t, err, address, false)
 	if !strings.Contains(err.Error(), "could not be read") || !strings.Contains(err.Error(), "the storage API answered 400") {
 		t.Errorf("the refusal does not say the read failed:\n%s", err)
@@ -912,7 +913,7 @@ func TestManagedInitRefusalAtEveryCallSite(t *testing.T) {
 		r.script["plan@installation"] = map[string]any{"exit": 0}
 		r.script["show@installation"] = map[string]any{"stdout": `{"format_version":"1.2","resource_changes":[]}`}
 		r.save(t)
-		_, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
+		_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
 		managedRefusal(t, err, addr, true)
 		if len(r.applies(t)) != 0 {
 			t.Errorf("applied: %v", r.applies(t))
@@ -922,7 +923,7 @@ func TestManagedInitRefusalAtEveryCallSite(t *testing.T) {
 		stubManagedFact(t, true, nil)
 		outside := "module.repo.google_storage_bucket_iam_member.job"
 		r := newRetireRig(t, retireOpts{protection: true, outside: outside})
-		_, _, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+		_, _, err := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
 		managedRefusal(t, err, outside, true)
 		if applies := r.applies(t); len(applies) != 0 {
 			t.Errorf("the refused plan was applied: %v", applies)
@@ -936,7 +937,7 @@ func TestManagedInitRefusalAtEveryCallSite(t *testing.T) {
 		r := newInitRig(t)
 		r.stateBucket()
 		r.setPlan(t, append(forgetPlan(), change("module.installation.google_service_account.scheduler", "delete"))...)
-		_, _, err := executeStdin(t, "", "init", "--forget", "--yes")
+		_, _, err := executeStdin(t, "", "update", "--forget", "--yes")
 		managedRefusal(t, err, "module.installation.google_service_account.scheduler", true)
 		if len(r.ran(t, "apply"))+len(r.ran(t, "state rm")) != 0 {
 			t.Fatalf("calls = %q", r.calls(t))
@@ -959,7 +960,7 @@ func TestManagedInitRefusalBoundsUntrustedText(t *testing.T) {
 				r := newInitRig(t)
 				r.stateBucket()
 				r.setPlan(t, change(v, "delete"))
-				_, _, err := executeStdin(t, "", "init", "--yes")
+				_, _, err := executeStdin(t, "", "setup", "--yes")
 				if ExitCode(err) != ExitUserError {
 					t.Fatalf("exit %d, err %v", ExitCode(err), err)
 				}

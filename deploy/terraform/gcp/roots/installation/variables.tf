@@ -135,7 +135,7 @@ variable "managed_deployer_scoped" {
   # The managed deployer's seven scoped roles and their seven conditioned
   # bindings — the 0.10.0 redesign of the fence. Before 0.10.0 this flag created
   # one scoped role under one condition, and that condition could not be
-  # expressed as a GCP IAM condition at all. Off by default, and fugaro init
+  # expressed as a GCP IAM condition at all. Off by default, and fugaro update
   # never sets it: the gate has never been flipped. An installation that does
   # not name it plans exactly as before, minus those fourteen resources. The
   # module's own variable (../../modules/installation/variables.tf) says why
@@ -174,7 +174,7 @@ variable "credentials_service" {
     }))
     url = optional(string)
   })
-  # The credentials service (D146, D147), OFF by default: fugaro init's
+  # The credentials service (D146, D147), OFF by default: fugaro update's
   # credentials stage (C1.20) is the only writer, and only when the owner runs
   # it. Absent, the module creates nothing and every job keeps its
   # model-secret accessors. bundle_secret is the one container the service
@@ -204,7 +204,7 @@ variable "project_secrets" {
 }
 
 variable "project_jobs" {
-  description = "The shared project jobs (design project-centric §4.1), by Cloud Run job name: one entry per (profile, provider, account), each the module's own object type. fugaro init writes it from the local config's profiles; empty for an installation that names none, which creates no project job at all."
+  description = "The shared project jobs (design project-centric §4.1), by Cloud Run job name: one entry per (profile, provider, account), each the module's own object type. fugaro update writes it from the local config's profiles; empty for an installation that names none, which creates no project job at all."
   type = map(object({
     profile  = string
     provider = string

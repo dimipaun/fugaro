@@ -510,7 +510,7 @@ profiles:
 // may select it, and the runner only requires a selected profile to be
 // defined — so an installation whose local config names one must deploy, and
 // the profile simply gets no job. Refusing the installation whole, as this
-// function used to, made `fugaro init` fail on a document `fugaro project
+// function used to, made `fugaro update` fail on a document `fugaro project
 // policy publish` accepts.
 //
 // Mutation (verified, run and restored): put the refusal back (return nil,

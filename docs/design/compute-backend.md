@@ -1062,12 +1062,16 @@ reading the family would fail the very apply this module exists to complete,
 because the family has no image until the scheduled build has run once. Reading
 the label back takes a Compute client `internal/infra.Clients` does not carry
 (`init_compute.go`'s `Verify` says the same of the preload image), and the
-configuration field it would be written into is `batch.socket_gid` (§8.1 task
-8's, `internal/localcfg/localcfg.go`) — which **is** in this tree, and which
-nothing writes yet, because nothing reads the label. So the read-back is Check
-57b's and `doctor`'s, and `Options.Docker.SocketGID` stays unset until then —
-which is the state Task 7's refusal already covers (a Docker run with no
-recorded gid is refused before the create). A recorded gid that no longer matches the image is a mount
+configuration field it would be written into **does** exist — `batch.socket_gid`,
+the `batch:` block's own key (`Options.Docker.SocketGID`,
+`internal/localcfg/localcfg.go`, §8.1 Task 7) — but
+**nothing writes it from the module's output**: only the preload label's *name*
+travels through `infra.ComputeOutputs`, never the gid the label records, because
+the image is built out of band and no resource the root holds carries that
+value. So the read-back is Check 57b's and `doctor`'s, and
+`Options.Docker.SocketGID` stays unset until then — which is the state Task 7's
+refusal already covers (a Docker run with no recorded gid is refused before the
+create). A recorded gid that no longer matches the image is a mount
 the container comes up unable to open, which is 57b-1's FACT to catch; 57a-6's
 own reading (412, on the image it used) is a measurement of that image and never
 a default this code may carry.
@@ -2666,7 +2670,7 @@ the selected config's own `gcp_project` (`internal/cli/cloud.go:54`), so the
 pair pins the command to this installation and refuses a foreign checkout with
 `this checkout belongs to project <x>; --project says fugaro`
 (`internal/localcfg/select.go:163`). `fugaro version` is the one exception: it
-takes no flags (`internal/cli/root.go:82-88`).
+takes no flags (`internal/cli/root.go`'s `newVersionCmd`).
 
 **Paste the block into a file, not straight into an interactive zsh.** As in
 Check 43: an interactive zsh does not honour `#` comments without

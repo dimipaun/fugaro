@@ -103,7 +103,7 @@ func knownEnvName(t *testing.T, name string) bool {
 // the installation sets the module's `managed_deployer_scoped`", which is a
 // fence wider than the one in the tree. There is a ninth binding with no
 // condition on it -- `roles/storage.objectAdmin` at the BUCKET level on D77's
-// managed state bucket, written by `fugaro init`'s D77 step for every project
+// managed state bucket, written by `fugaro update`'s D77 step for every project
 // the creating run creates, gated on neither `--managed` nor
 // `managed_deployer_scoped` (internal/managed/statebucket.go; the design's §3
 // F4a) -- and a security document that counts one unconditioned role and stops
@@ -359,7 +359,7 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"One secret, one grant, one leak",
 		"a read of the bundle is every credential the service holds at once",
 		// Off by default, opt-in, and the flag that opts in.
-		"fugaro init --provision-credentials",
+		"fugaro update --provision-credentials",
 		"with it off",
 		// The job holds nothing — and the one job that is not reached, named
 		// rather than left to be assumed, because a shared project job keeps

@@ -50,3 +50,20 @@ func TestEmbeddedTableSane(t *testing.T) {
 		}
 	}
 }
+
+// Anthropic's pricing page (footnote 2) bills cache hits on Claude Opus 5.5
+// and Claude Sonnet 5.5 at 0.05x the base input price: $0.20 and $0.10 per
+// MTok. CacheRead is that multiplier.
+func TestEmbeddedCacheReadFigures(t *testing.T) {
+	tb := Embedded()
+	for id, want := range map[string]Micros{
+		"claude-opus-5-5":   200_000,
+		"claude-sonnet-5-5": 100_000,
+		"claude-sonnet-5":   200_000,
+	} {
+		r := tb.Models[id].Rates
+		if got := r.Cost(Usage{CacheRead: 1_000_000}); got != want {
+			t.Errorf("%s: 1M cache-read tokens cost %d micro-dollars, want %d", id, got, want)
+		}
+	}
+}

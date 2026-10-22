@@ -166,7 +166,7 @@ jobs:
   # in the Cloud Run service the installation module creates. Built and checked
   # on every run and published, signed and pinned on a release tag by
   # publish-credentials below -- the same chain publish-base gives the base,
-  # and for the same reason: `fugaro init`'s credentials stage resolves
+  # and for the same reason: `fugaro update`'s credentials stage resolves
   # `fugaro-credentials:<version>-pinned` and verifies its signature before it
   # writes the digest into the service's Terraform variable
   # (internal/cli/init_credentials.go), so an unsigned tag-only publish would
@@ -478,7 +478,7 @@ jobs:
   # unsigned by publish above, which holds no id-token.
   #
   # Why this image is signed at all, when history's is not: something
-  # verifies it. `fugaro init`'s credentials stage resolves
+  # verifies it. `fugaro update`'s credentials stage resolves
   # `fugaro-credentials:<version>-pinned`, verifies the cosign signature and
   # writes the digest it names into the service's Terraform variable, which
   # the module refuses a tag for at plan time (internal/cli/init_credentials.go,

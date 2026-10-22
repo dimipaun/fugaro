@@ -21,6 +21,7 @@
 :root {
   /* The violet structure: the ground the page sits on and the surface a card sits on. */
   --ground: #0B0B12;
+  --panel: #101018;
   --surface: #14141F;
 
   /* Body text, and the quieter tone beside it. */
@@ -36,6 +37,10 @@
 
   /* A separator that is meant to be seen and not to shout. */
   --border: #2A2A3D;
+
+  /* The success tone, the same green in every palette: "this finished" is a status rather
+   * than a brand colour, so it does not move with the accent the owner chooses. */
+  --ok: #4CC38A;
 
   /* The one orange in this palette: warnings and cost. It is the electric tone rather than
    * a softer one because its job is to be noticed — a cap, a range, a figure that is an

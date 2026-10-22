@@ -128,6 +128,7 @@ npm run test:e2e                               # playwright, test/e2e/*.spec.ts;
 npm run test:e2e -- security                   # just the window's spec
 npm run typecheck                              # tsc --noEmit over src/, test/, tools/ and the root config files
 npm run record-fixture -- --help               # the recorder; OWNER-RUN, see "Recorded, redacted fixtures"
+npm run screenshots                            # the website's pictures; OWNER-RUN on a Mac with a display, see "The console's screenshots for the website"
 ```
 
 `npm ci` — never `npm install` — is the install step in this file, in the plan's
@@ -465,10 +466,15 @@ import is erased, which is why the preload can still be typed against
 
 `NEVER_REACHABLE` names what the console must never reach, read off the code
 rather than off a paragraph — every `where` columns names the `internal/cli`
-file and line each entry was grepped from on 2026-10-16. It carries every
+file and line each entry was grepped from on 2026-10-16 (the three converge rows
+were re-read on 2026-10-21, after task W1.2 of
+`docs/setup-wizard/implementation-plan.md` split the old first-run `init` into
+`fugaro setup` and `fugaro update`). It carries every
 command the CLI has that writes (including `verify`, which runs a workflow's own
 build/test/lint commands in the checkout, and `image build`/`gate`/`record`/
-`refresh`), the `secrets` commands, `init`, `upgrade` and the hidden `exec`, the
+`refresh`), the `secrets` commands, the converge — `setup`, which creates the
+project and the installation, and `update`, which applies Terraform over one —
+the retired `init` tombstone, `upgrade` and the hidden `exec`, the
 hidden `budget history` job, `image git-credential` (it prints a credential),
 the project-centric phase 1 commands that write or publish (which do not exist
 on this tree yet, and are listed anyway so that the day one appears the
@@ -558,9 +564,9 @@ field this task reads out of a document is `day`, which the rollover needs.
 |---|---|
 | 1 — argv is an array, `shell: false`, never built from a job-written field | `argvFor` is the only place an argv is built. It walks the row's *declared* arguments, refuses an undeclared key by name, and passes every value through a conservative character whitelist, so a value that arrived from a document cannot become a command word. Every emitted element is its own array entry, every emitted flag is asserted against `SPAWN_FLAGS`, and the spawner is always called with the literal `shell: false`. The schema's kinds and the table's kinds are related by exactly one mapping, `SPAWN_KIND_FOR`, and `assertSpawnSurface` refuses a row whose kind disagrees with the operation's schema — so a validated value that argv cannot spell is a table-load failure rather than a refusal a user reads |
 | 3 — `--project` on every command that takes it | `SPAWN_COMMANDS` carries `takesProject` per row: the nine commands of `addCloudFlags` (`internal/cli/cloud.go:51`) plus a tenth row (the console has two operations over `logs`, `--json` and `--url`, and neither may be the one that forgets). The handshake's argv is exactly `["version"]`, because `newVersionCmd` is `cobra.NoArgs` with no flags. `--config <path>` follows `--project` whenever the installation declares one |
-| 4 — the binary is resolved explicitly | the operator's configured path, then `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `/usr/bin`, and only then every entry of the app's own `PATH`; the resolved path and version are what the header draws. **A candidate that exists but whose version cannot be read is refused rather than skipped** — falling through to the next `fugaro` on the machine would silently change which installation the numbers came from |
+| 4 — the binary is resolved explicitly | the operator's configured path, then the **platform's own well-known prefixes**, and only then the absolute entries of the app's own `PATH`; the resolved path and version are what the header draws. **The prefixes are a constant per platform, chosen by `process.platform` in one place** (`PLATFORM_LOCATIONS`, read through `locationsFor`) and never read out of the environment: macOS gets `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `/usr/bin`, and Linux gets `/usr/local/bin`, `/usr/bin`, `~/.local/bin`, `/home/linuxbrew/.linuxbrew/bin`, `~/.linuxbrew/bin` — including the per-user Homebrew prefix neither list may take from the other. **A candidate that exists but whose version cannot be read is refused rather than skipped** — falling through to the next `fugaro` on the machine would silently change which installation the numbers came from |
 | 5 — the child's environment is built, not inherited | exactly `PATH`, `HOME`, `TMPDIR`, `LANG`, `LC_ALL`, the five `XDG_*` variables and the chosen installation's `FUGARO_PROJECT`. A hostile `GOOGLE_APPLICATION_CREDENTIALS`, `AWS_*`, `SSH_AUTH_SOCK` or ambient `FUGARO_PROJECT` in the app's environment cannot reach the child |
-| 5 — the child's `PATH` is a list, not one directory | the resolved binary's own directory first, then `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin` — because the CLI looks up external tools itself (`exec.LookPath`, `internal/cli/doctor.go:147`), and `terraform` and `cosign` do not sit beside the `fugaro` binary even under Homebrew. The app's inherited `PATH` still never reaches the child, and a tool outside that list is reported as *not on the `PATH` the console gives the CLI* rather than as "not installed" |
+| 5 — the child's `PATH` is a list, not one directory | the resolved binary's own directory first, then the platform's tool prefixes — macOS's `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`; Linux's `/usr/local/bin`, `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`, `/home/linuxbrew/.linuxbrew/bin`, again from the one `PLATFORM_LOCATIONS` table — because the CLI looks up external tools itself (`exec.LookPath`, `internal/cli/doctor.go:147`), and `terraform` and `cosign` do not sit beside the `fugaro` binary even under Homebrew. The app's inherited `PATH` still never reaches the child, and a tool outside that list is reported as *not on the `PATH` the console gives the CLI* rather than as "not installed" |
 | 5 — the working directory is set explicitly | the installation's checkout when it has one, otherwise a private `0700` directory the app owns under the system temporary directory, checked with `lstat` (not a link, owned by this uid, mode `0700`) rather than trusted to `mkdir`. Never `/`, which is nobody's checkout. `doctor` is called with `--dir <that directory>` and **never `--strict`**: outside a checkout its `plugin-pin` check is a warning that `--strict` turns into a failure about the checkout rather than about the environment on screen |
 | 7 — the app never reads the operator's config | the config's *path* is a string on the installation, passed to the child as `--config`; the CLI is the reader. The add-an-installation check is a **spawn** for the same reason: one allow-listed `doctor --json` with the checkout as the child's working directory, and a checkout that belongs to another project is refused with the CLI's own `this checkout belongs to project %s; --project says %s` — and **not stored**, because storing it would leave every screen refused later with nothing on screen explaining why |
 | 10 — the spawn log (D20) | `src/main/spawnlog.ts`, documented below |
@@ -1957,9 +1963,25 @@ the six a fact rather than an intention:
   binary: the pinned `@electron/fuses` refuses that itself, both calls rejecting
   with "Could not find sentinel in the provided Electron binary", which
   `fuses.test.ts` asserts rather than assumes.)
-- **It refuses a platform that is not darwin** instead of skipping. A build on
-  any other platform would produce no `Contents/MacOS` bundle to flip, and a
-  silently skipped hook is the one outcome that ships the fuses unset.
+- **It refuses a platform this build is not packaged for** instead of skipping.
+  A build on Windows would produce no bundle to flip — no `Contents/MacOS` on
+  macOS, no bare executable in the pack directory on Linux — and a silently
+  skipped hook is the one outcome that ships the fuses unset. So `fuseTarget`
+  resolves the binary **per platform in one place**, from
+  `electronPlatformName`: darwin's
+  `<appOutDir>/<productName>.app/Contents/MacOS/<productName>`, and Linux's
+  `<appOutDir>/<executableName>` (the name `build.linux.executableName` sets,
+  or the sanitized product name lowercased when it sets none), and it
+  **refuses anything that is not darwin or linux**, naming the platform and the
+  two it packages. `SUPPORTED_PLATFORMS` is the one list both this hook and
+  `src/main/spawn.ts`'s location table are keyed on, so "which platforms does
+  this build support" has one answer. **The fuse set does not vary by
+  platform**: the same six flips, byte for byte, on both executables — including
+  `EnableEmbeddedAsarIntegrityValidation`, which Electron enforces on macOS and
+  ignores on Linux, because a per-platform fuse table would be a second policy
+  to keep in step. The one macOS-shaped word in the hook is the
+  `resetAdHocDarwinSignature` option, documented below as deliberately unset
+  for both platforms.
 - **It refuses a wire it has not accounted for.** After the flips, the hook
   compares the wire's length with the fuses `fuses.ts` decides about (six
   flipped, two left alone, one beyond the pin: nine) and stops the build if they
@@ -2157,7 +2179,7 @@ The two facts this rests on were **run, not assumed**, after `npm run build`:
 
 ```sh
 $ node -e "console.log(Object.keys(require('./dist/main/fuses.js')).join(','))"
-FLIPPED_FUSES,LEFT_ALONE_FUSES,afterPack,fuseConfig,macExecutable
+FLIPPED_FUSES,LEFT_ALONE_FUSES,BEYOND_PIN_FUSES,ACCOUNTED_FUSE_COUNT,SUPPORTED_PLATFORMS,fuseConfig,macExecutable,linuxExecutable,fuseTarget,afterPack
 $ node -e "console.log(JSON.stringify(require('./dist/main/fuses.js').fuseConfig()))"
 {"0":false,"2":false,"3":false,"4":true,"5":true,"7":false,"version":"1"}
 ```
@@ -2168,6 +2190,9 @@ uses), the six flips arrive at their documented indices with nothing else set,
 and calling the hook for a darwin context reaches the real `flipFuses` rather
 than a stub: it failed inside the Electron framework lookup for a path that has
 no bundle, which is what a real flip attempt against a non-bundle path does.
+**`fuseTarget` and the two platform functions are exported for the same reason
+the table is**: the resolution is the rule, and a test that could not call it
+with an injected platform could only assert one platform's answer.
 
 ### The packer is a pinned devDependency, and nothing it installs runs
 
@@ -2251,9 +2276,12 @@ identity Gatekeeper and the notary record keep.
 - **Automatic updates.** `build.publish` is `null`, the script passes
   `--publish never`, there is no feed, and `electron-updater` is not a
   dependency: Task 4.4 is the auto-update task and brings all of that with it.
-- **An icon.** There is no `build/icon.icns`, so the bundle carries Electron's
-  default icon. It is a packaging wart, not a security property, and it needs an
-  asset file that no task has produced.
+- **An icon** — *filled in on 2026-10-19, by the icon task at the end of this
+  document.* This bullet used to read that there is no `build/icon.icns`, so the
+  bundle carries Electron's default icon, and that it is a packaging wart rather
+  than a security property needing an asset file no task had produced. The asset
+  file now exists: `build.mac.icon` names `console/build/icon.png`, the
+  website's own mark, and a packaged bundle carries it.
 - **Any signed build.** No bundle has been signed or notarised here; one
   unsigned universal pack was run (above). The signed build is Check 59a's job,
   and design §12 item 4 stays open until it has run.
@@ -2272,7 +2300,9 @@ nobody should trust:
 | `EnableNodeCliInspectArguments` given the index of the fuse above it (a copy-paste) | four named tests, including "knows every fuse this build names, at the index this build names it at" and "accounts for every fuse this pin knows" |
 | a value the plist parser does not understand (`<integer>`, a nested dict, a root array) | the parser fixtures: each throws rather than reporting an empty set |
 | a wire with `RunAsNode` left enabled, or with a fuse "removed" rather than set | the two `afterPack` verification tests, whose failure messages name the fuse and the binary |
-| `electronPlatformName: 'linux'` handed to the hook | "refuses a platform that is not darwin…", and `flipFuses` is never called |
+| `electronPlatformName: 'win32'` handed to the hook | "refuses a platform this build does not package, rather than shipping an unflipped binary", naming the platform and the two it packages, and `flipFuses` is never called |
+| `macExecutable` returned for a linux context, or the linux branch made to read `productName` instead of `executableName` | "names the Linux executable electron-builder produced, by its executableName", "falls back to the packager's sanitized name when no executableName is configured" and "refuses a Linux context that names no binary, rather than guessing a path to flip" |
+| `SUPPORTED_PLATFORMS` cut back to `['darwin']`, or `PLATFORM_LOCATIONS`'s `linux` row deleted from `src/main/spawn.ts` | that half's own list test: "refuses a platform this build does not package…" in `fuses.test.ts`, and the location-table test in `spawn.test.ts` — each module asserts the platform list it is keyed on, so neither can lose a platform unnoticed |
 | any entry added to `build.files`, or `asar` turned off, or `afterPack` repointed, or `productName` renamed | the packaging-configuration tests in `fuses.test.ts`, one named test each |
 | `asarUnpack: ["**/*"]`, `extraResources`, `extraFiles` or a `mas` block added to `build`; `extraResources` added to `build.mac` | "has exactly the build keys this task decided…" / "has exactly the mac keys this task decided" |
 | `publish` deleted (absent rather than `null`) | "publishes nowhere: publish is null, not merely absent" and the exact-keys test |
@@ -2695,19 +2725,21 @@ a scratch copy of the staged file and turned the named test red:
 
 ## The theme's tokens, and the palette they are painted in (Task 6.1)
 
-`src/renderer/theme/` holds the console's styling, in the four files the plan's File
-Structure tree promised and the design's section 3.1 lays out. Two of them exist today and
-two do not, and that is the phase's own order rather than an omission:
+`src/renderer/theme/` holds the console's styling, in the files the plan's File Structure
+tree promised and the design's section 3.1 lays out — the directory's whole contents, which
+is what `THEME_STYLESHEETS` names. Every one of them exists as of Task 6.4, and the column
+below names the task that wrote each — which is also the phase's order, and the order the
+bundler concatenates them in:
 
 | File | Holds | Written by |
 |---|---|---|
 | `src/renderer/theme/tokens.css` | the **vocabulary**: spacing, radii, type sizes, leading, weights, the two row heights, the focus ring's width and offset, and the two motion values. **No colour.** | Task 6.1 (this section) |
 | `src/renderer/theme/palette.css` | the **value set**: every colour token the console paints, each written once. **No size, no spacing, no motion.** | Task 6.1 (this section) |
-| `src/renderer/theme/base.css` | the reset, the document, the three bands, the nav, focus, the responsive layers and the chrome's forced-colors block | Task 6.3 (not yet) |
-| `src/renderer/theme/screens.css` | the per-screen rules, in the order the design's section 2 lists the screens | Task 6.4 (not yet) |
+| `src/renderer/theme/base.css` | the reset, the document, the three bands, the nav, focus, the responsive layers and the chrome's forced-colors block | Task 6.3 (the section at the foot of this file) |
+| `src/renderer/theme/screens.css` | the per-screen rules, in the order the design's section 2 lists the screens | Task 6.4 (the section at the foot of this file) |
 
-**As of Task 6.2 these two files are read, served and linked, and the paragraph that follows
-is the record of the stage before that.** Each is named by `THEME_STYLESHEETS` in
+**As of Task 6.2 the theme's stylesheets are read, served and linked, and the paragraph
+that follows is the record of the stage before that.** Each is named by `THEME_STYLESHEETS` in
 `tools/bundle-renderer/index.ts`, the bundler's stylesheet step concatenates them (in list
 order) into `dist/bundle/console.css`, `/console.css` is one of the entries `SERVED_FILES`
 names — the list `test/unit/bundle.test.ts` holds the served root to, not a filter the
@@ -2721,7 +2753,7 @@ the reason it was rewritten rather than left standing.
 > these two files yet … They are inert until Task 6.2 lands the bundler's stylesheet step,
 > the `/console.css` entry in `SERVED_FILES`, the three `<link>` elements and the unit tests
 > that pin them: a merge of this file pair alone changes nothing on screen. When 6.2 lands,
-> the four files become **one** served artifact, `dist/bundle/console.css`, concatenated in
+> the files become **one** served artifact, `dist/bundle/console.css`, concatenated in
 > the design's order (vocabulary, values, then the rules that read them) — and the
 > packaged-file list in this README and in `package.json`'s `build.files` has to name it,
 > which `test/unit/build-files.test.ts` holds (`bundlerOutputs` gains it in that task's
@@ -2754,25 +2786,30 @@ The red step is kept as a case: a deliberately failing fixture, `#646464` on `#1
 must print `--text-muted on --surface is 3.1:1, needs 4.5:1` — one decimal, because that is
 the line `a11y.mjs`'s own committed fixture prints.
 
-**Three** of the cases the design's section 6.3 assigns to `theme-tokens.test.ts` are not in
-the file, and two different reasons put them elsewhere:
+**The design's section 6.3 names three cases beyond Task 6.1's palette cases, and all three
+are accounted for**: the **two that read a file other than `palette.css` are both in the file
+now** — each arrived in the task that writes what it reads — and the third is *replaced*
+rather than deferred:
 
 - the **"vocabulary complete and identical in both sets"** case is *replaced*: under the
   owner's dark-only ruling there is one value set, so it would compare a set with itself.
   What catches what it was written for is here instead — the vocabulary is declared
   **exactly** (every token of the design's section 3.1 table is present, and no name
   outside it), no colour is spelled in `tokens.css`, and no step is spelled in
-  `palette.css`;
-- the **`--border`-is-decorative scan** of `base.css` and `screens.css` is Task 6.4's: both
-  files are created later, by Tasks 6.3 and 6.4, so the case lands in the task that writes
-  what it reads;
-- the **window-background comparison** against `consoleWindowOptions` is Task 6.5's:
-  `backgroundColor` is a key that task adds to `src/main/window.ts`, and under the ruling it
-  is one literal, `#0A0E16`, checked against the one `--ground`.
+  `palette.css`. It is the one of the three that is still not in the file, and its reason is
+  the ruling rather than a later task;
+- the **`--border`-is-decorative scan** of `base.css` and `screens.css` was Task 6.4's,
+  because both files are created later than Task 6.1 — the case landed in the task that
+  writes what it reads, and it is in the file since Task 6.4;
+- the **window-background comparison** against `consoleWindowOptions` was Task 6.5's, for
+  the same reason: `backgroundColor` is a key that task added to `src/main/window.ts`, and
+  the case reads the literal out of the options the window is built with — under the ruling
+  one literal, `#0A0E16`, checked against the one `--ground`. It is in the file since
+  Task 6.5.
 
 ## The wiring: the stylesheet is bundled, served and linked (Task 6.2)
 
-Task 6.1 wrote the theme's two stylesheets and nothing read them. This task makes them a
+Task 6.1 wrote the theme's tokens and palette and nothing read them. This task makes them a
 file the console **serves** and every document **links**, and it is the SECURITY-SENSITIVE
 one of the phase, because the thing it touches is the served root and the policy that
 governs it. What it does, in four pieces:
@@ -2786,8 +2823,8 @@ governs it. What it does, in four pieces:
 
 ### One file, in cascade order, and the list is the directory's whole contents
 
-The theme is four source files under `src/renderer/theme/` and the served root is a flat
-allow-list, so the four are emitted as **one** file. `THEME_STYLESHEETS` is the list, and
+The theme is a set of source files under `src/renderer/theme/` and the served root is a flat
+allow-list, so they are emitted as **one** file. `THEME_STYLESHEETS` is the list, and
 it is **the directory's whole contents**, which is what makes both of its refusals hold:
 
 - a `.css` file in the theme directory that is **not** on the list is a `BundleRefusal`,
@@ -2796,13 +2833,14 @@ it is **the directory's whole contents**, which is what makes both of its refusa
   rather than silently dropping a layer of the cascade — and, equally, so the list cannot
   run ahead of the files it names.
 
-**That second refusal is why the list has two entries here and four later.** A task that
-landed all four names before Tasks 6.3 and 6.4 create `base.css` and `screens.css` would
-turn `npm run build` red the moment it merged. So `base.css` is appended by Task 6.3 and
-`screens.css` by Task 6.4, each in the commit that creates the file, and every
-intermediate state is a real build of the files that exist.
-`test/unit/bundle.test.ts` reads the list rather than four hard-coded names, so its case is
-true here with two files in it and stays true when the other two are appended.
+**That second refusal is why the list is introduced with the files the directory already
+holds, and each later task appends its own.** A task that named a file before the file exists
+would turn `npm run build` red the moment it merged, so `THEME_STYLESHEETS` names the files
+Task 6.1 wrote — Task 6.2 introduces the list, and the bundler step with it — and each later
+task appends the file it creates in the commit that creates it: every intermediate state is a
+real build of the files that exist. `test/unit/bundle.test.ts` reads the list rather than
+hard-coded names, so its case is true of the directory as it stands and stays true as each
+task appends its file.
 
 The step also refuses four things in any theme file, and the first is what makes the
 other three hold: a **backslash**, an **`@import`**, a **quoted string that names a URL**
@@ -2993,7 +3031,7 @@ bounded by the newline. Widening the body to `[\s\S]` was tried, observed and re
 buys `image-set("\nhttps://…" 1x)` — a `<bad-string-token>` the tokenizer drops before any
 URL is resolved — and pays for it with `image-set('http://cdn.example/x.png' 1x)` and
 `-webkit-image-set('//cdn.example/a"b.png' 2x)`, which both stop being refused the moment an
-*unbalanced* quote precedes them in the same file. Both theme files hold an apostrophe in
+*unbalanced* quote precedes them in the same file. The theme files hold an apostrophe in
 their prose, so those two cases failed on the widened body and passed on the narrow one. The
 `url()` scan, whose quoted body is not bounded by the newline, refuses the LF spelling;
 `bundle.test.ts`'s probe asserts both halves so the asymmetry is a decision rather than an
@@ -3029,5 +3067,991 @@ This task re-records nothing, and no frame is compared or written by it: the gol
 are among the ones the skip covers, and the eight baselines are Task 6.6's single recording
 act.
 
-The `--border`-is-decorative scan is Task 6.4's and the window-background comparison is Task
-6.5's, both for the reasons Task 6.1's section above gives.
+The `--border`-is-decorative scan was Task 6.4's and the window-background comparison was
+Task 6.5's, both for the reasons Task 6.1's section above gives, and both are in
+`theme-tokens.test.ts` now.
+
+## The layout, and the installation rail (Task 6.3)
+
+Task 6.1 wrote the vocabulary and Task 6.2 made the stylesheet a file the console serves and
+every document links; nothing painted yet. This task is `base.css`, the layer that paints
+first: the reset, the document as a two-column grid, the rules for the
+chrome, the focus ring, the responsive layers, and the chrome's `@media (forced-colors:
+active)` block. It is also the task that **draws the installation rail** — the canvas's one
+structural addition, which the owner approved on 2026-10-19.
+
+| Where | What changed |
+|---|---|
+| `src/renderer/theme/base.css` | **new**: the reset, the grid, the chrome, focus, responsive, forced colors — 567 lines, no colour literal of its own |
+| `src/renderer/entry.ts` | **the rail's elements**: twelve exported class hooks, `drawRail`, and the three places the dashboard tells it something (`setState`, `setSpend`) |
+| `tools/bundle-renderer/index.ts` | `THEME_STYLESHEETS` gains `'base.css'`, in the commit that creates the file |
+| `test/unit/theme-selectors.test.ts` | **new**: the §2-inventory selector scan over `base.css` |
+| `test/e2e/entry.spec.ts` | the forced-colors smoke's chrome half, the rail's rows, and the body-children assertion the rail moves |
+| `docs/design/console-styling.md` | §2.1's tables gain `data-collapsed` and `data-state`, and the banner row's order — hooks this task's rules select, added in the PR that wanted them |
+| this file | the section you are reading |
+
+### The document is a two-column grid, and the banner's row can be empty
+
+`body` is `grid-template-columns: auto minmax(0, 1fr)` and `grid-template-rows: auto auto auto
+minmax(0, 1fr)`. The five places are: row 1 spanning both columns for `section.console-skew`,
+row 2 for the rail (column 1) and the installation line (column 2), row 3 for the nav, row 4
+for the panel — the one row that takes what is left, and the one region that scrolls
+(`overflow-y: auto`, with `min-height: 0` so a dense screen does not push the window open).
+
+The banner is drawn only when the mode is not `ok`, so the trick is the **empty row**: an
+`auto` row with no items sizes to nothing, and the four rows below keep their places whether
+the banner is there or not. In **refused** mode the banner is the body's only child and takes
+the whole window, which is `:only-child { grid-row: 1 / -1 }` — a structural pseudo-class,
+not a hook invented for the occasion. The rail spans `2 / -1`, so it is full height under the
+banner and full height without it.
+
+**The rail's 216 px and 56 px are two literals and not tokens.** Like `CONSOLE_WINDOW_SIZE`'s
+1180 x 780 they are facts about this window rather than values a screen reads, so no §3.1
+table gains a row for them. The first column is `auto` and the rail carries its own width, so
+the collapsed state is one rule on the rail rather than a second grid definition.
+
+### Narrow windows: what a layer drops, and what it keeps announcing
+
+Design §4.2's layers are written in `em` against the root size, so an operator who has raised
+their default text size gets the narrow layout at the same measure of text rather than at the
+same pixel width. This file carries the **chrome's** share of them — the nav wraps and the
+installation line drops to project · mode at 48.75em, and the chrome's padding tightens at
+35em; the tables' and the panels' share is `screens.css`'s and lands with Task 6.4.
+
+**The one cell this task's layer takes out of the layout is the binary path, and it is taken
+out of the layout only.** It is clipped to a 1 px box exactly as the rail's collapse clips its
+spans (design §4.1) — never `display: none`, which would take it out of the accessibility tree
+as well as out of sight. §4.2's rule for a dropped column ("a dropped column is one whose value
+is repeated in a `title`") is read here as the same rule for a dropped line: a value this
+console drops from sight is not a value it stops announcing. The first cut of this rule said
+`display: none` and justified it with a `title` the entry does not write, which a review of the
+branch caught: the path was dropped with nothing left to reach it, and the comment was the only
+thing claiming otherwise.
+
+### The rail: twelve hooks on thirteen elements, and the entry draws them
+
+`aside.console-rail` holds a head (`console-rail-head`, with the `console-rail-title` and the
+`console-rail-collapse` control), the list (`console-rail-list`, with `id="console-rail-list"`
+for the collapse control's `aria-controls`), the foot row (`div.console-rail-add` and the
+`button.console-rail-add` inside it — **one class, two elements**, which is why the count is
+twelve hooks on thirteen elements) and the hint (`p.console-rail-hint`). A row is a
+`button.console-rail-row` carrying `span.console-rail-name`, `span.console-rail-project`,
+`span.console-rail-state` and `span.console-rail-spend`.
+
+**The elements are drawn by `entry.ts` because the rules that select them are this task's.**
+That is §2's licence rule read the other way: a hook nothing emits is not a hook, and a rule
+written against a class a screen declares cannot be reviewed against a class nobody draws.
+The same rule is why §2.1's tables gained `data-collapsed` and `data-state` **in this PR**:
+the collapse rule selects the first and the state's tone selects the second, and a rule that
+wants a hook adds it to the inventory first.
+
+The row's state is the rail's own mark and not a field of any read: the rail knows whether
+the console is reading this installation now, so it opens at `running` and goes `silent` when
+the Live read was refused or the feed has gone quiet. The span carries the **glyph and the
+word** (`● running`, `▲ silent`, `○ idle`) plus `data-state`, so the tone is a second channel
+and never the only one (design §3.5) — which is also the whole of what §4.4's rule 1 asks for
+when the system takes the colours away.
+
+**The selected row's rule is here before the attribute is.**
+`button.console-rail-row[aria-selected='true']` draws the raised surface and the 3 px
+`--accent` left border, and the row reserves that border at the selected width
+(`border-left: 3px solid transparent`) so selecting a row moves no text. The attribute itself
+— with `role="tablist"`, `role="tab"` and the keys — was Task 6.5's, which is the design's
+split: the border is this task's and the mark that turns it on arrived with the tablist
+behaviour.
+
+The collapse control is this task's, so its behaviour is too: it flips the rail's
+`data-collapsed` — the one attribute the 216 px and 56 px rules are selected by — and keeps
+`aria-expanded`, its own `aria-label` and its glyph in step with what it drew. The collapse is
+**name-preserving**: `clip-path: inset(50%)` and a 1 px box rather than `display: none`, so
+the row's accessible name is still the whole of what it draws and the state span keeps its
+glyph visible while its word is clipped away. Nothing the collapsed rail removes from sight
+is a fact it stops announcing.
+
+### What the rail reads: nothing
+
+`installation.current` is the only installation read this document has, it takes no argument
+and names no id, and its answer is the installation the operator chose — so the rail draws
+**one row per installation the dashboard can read, which is one row**, and a console with
+nothing chosen or a store that could not be read draws **no row** rather than an invented
+one. A row per *stored* installation would need a bounded list read on the dashboard's
+bridge, which the design withholds (§4.1, §11) and this task adds no operation for.
+
+So the rail makes **no read of its own**, and that is a test rather than a promise: the
+entry spec's spawn-log case holds a healthy console to exactly two spawns (`version`,
+`watch --json --project P`), and a read at mount would be a third. The two figures the row
+carries come from reads the console was already making:
+
+- the **state** from the Live feed (`rail.setState`), which is the same read the panel draws;
+- the **spend** from the console's own `budget.show` reads — the Spend and Projects paths —
+  through `rail.setSpend`, so the rail shows `n/a` with the caps panel's own sentence
+  (`no budget show document was read`) until one of those screens has been opened.
+
+`setSpend` clears the span's `title` before it writes the reading. The rail is the one
+drawing in this file that is **updated in place** rather than redrawn, and `putReading` writes
+a `title` only for a reading with no value — so without that line the `n/a`'s reason would
+sit under a figure that is now measured. It is a mutation in the table below.
+
+### `+ Add installation` is drawn and not wired, and that is the honest state
+
+The foot row is the design's control and it is drawn where the design draws it, with the label
+the design gives it. The click is the one thing this task cannot add: `+ Add installation`
+opens the add-installation flow, which is the **picker window**, and the dashboard cannot open
+it. The picker is reached from the application menu's `Installations…` item (ruling C9), the
+dashboard's bridge has fourteen operations and none of them opens a window
+(`denyWindowOpen`), and both the design (§11: no Phase-6 task owns the preload or the IPC
+allow-list) and this task's Files keep it that way. So the control is drawn with no handler
+rather than with one that does nothing, and `drawRail`'s docstring says so at the place a
+reader would look. **The console stays read only, and the CSP is unchanged**: no directive is
+added, no `style` attribute is written anywhere, and `screen-literals.test.ts` refuses a
+`.style` write under `src/renderer/` as it did before this task.
+
+### The tests
+
+- `test/unit/theme-selectors.test.ts` is the **§2-inventory selector scan**, and it reads the
+  inventory **out of the design document** rather than keeping a second copy of §2's tables
+  here: every backticked token of every table row in `docs/design/console-styling.md`'s §2 is
+  a hook, every `.name` and `[name` in `base.css` (comments stripped, so the file's own long
+  header is not read as a selector) is checked against it, and two further cases pin the rail
+  at **twelve hooks and no thirteenth** and pin `SCANNED` against `THEME_STYLESHEETS` so a
+  later task cannot add a stylesheet and leave it unscanned.
+- `test/unit/entry-wiring.test.ts`'s rail cases: one row for the readable installation (name,
+  project, `● running`, `data-state`, the `n/a` spend with its reason, and
+  `calls.map(name) === ['subscribeLive']` — no read of the rail's own); **no row** for
+  `{ok: false}`, for `{chosen: false}` and for an unreadable shape, with the rail itself still
+  drawn; the collapse control's `aria-controls`, `aria-expanded` and label in both states; and
+  the two ways the rail goes `silent` (a refused Live read, a stale feed).
+- `test/unit/bundle.test.ts`'s body-children case now reads the rail first, and the planted
+  stray stylesheet is `screens.css` — the file that is still unlisted, since `base.css` is
+  listed now.
+- `test/e2e/entry.spec.ts` gains the **forced-colors smoke's chrome half** and the rail's
+  rows. **Neither could be run in this container**: Electron does not start here
+  (`libglib-2.0.so.0: cannot open shared object file`), so every e2e case in the file fails at
+  launch, this task's included. They are written and typechecked, their expected values are
+  the ones the unit cases above already pin, and they are listed in the pull request as
+  unverified. The smoke is a **smoke and not a golden**: forced-colors rendering is the
+  platform's, and what is asserted is what §4.4 promises — the current view still marked, the
+  chrome's boundary still a boundary (a width that is not `0px`, a colour that is not
+  transparent), and the rail's rows read with them, word and glyph together. The screens' half
+  is Task 6.4's, in each screen's own spec.
+
+### The mutations this task is proved against
+
+Each was planted for real, run, and removed; the failure is the red step.
+
+| Mutation | What fails |
+|---|---|
+| `readable` ignores `chosen` (a row drawn for an unreadable installation) | `entry-wiring.test.ts`, the no-row case — 1 failed |
+| the state span draws the word without its glyph | `entry-wiring.test.ts`, 3 cases |
+| `setSpend` returns without writing (the rail never fills its spend) | `entry-wiring.test.ts`, the spend case — 1 failed |
+| the feed's staleness never reaches the rail | `entry-wiring.test.ts`, the stale-feed case — 1 failed |
+| the collapse control stops announcing (`aria-expanded`/label left alone) | `entry-wiring.test.ts`, the collapse case — 1 failed |
+| the stale `title` is left on the spend span | `entry-wiring.test.ts`, the spend case — 1 failed |
+| `.console-rail-badge` added to `base.css` | `theme-selectors.test.ts`, the unknown-class case — 2 failed |
+| `[data-badge]` selected in `base.css` | `theme-selectors.test.ts`, the unknown-attribute case — 1 failed |
+| a thirteenth `console-rail-*` hook in `base.css` | `theme-selectors.test.ts`, the twelve-and-no-thirteenth case — 2 failed |
+| `span.console-rail-project` dropped from §2.1's table | `theme-selectors.test.ts`, 2 cases |
+| `console-skew` dropped from §2.1's table | `theme-selectors.test.ts`, the unknown-class case — 1 failed |
+| every `data-collapsed` in §2 renamed | `theme-selectors.test.ts`, 2 cases |
+| `base.css` left unlisted in `THEME_STYLESHEETS` | `npm run build`, with `… holds base.css, which THEME_STYLESHEETS does not list` — observed while this task was being written |
+| the stray-`.css` case still planting `base.css` | `bundle.test.ts`, on the planted file — it is listed now, so the case was moved to `screens.css` |
+| the newline-append case destructuring exactly two names | `bundle.test.ts`, on `screens.css` — the case is generic over the list now |
+
+### What this task does not own
+
+`screens.css` is Task 6.4's, and the rows' and badges' `@media (forced-colors: active)` block
+with it — each stylesheet carries the block for the rules it writes. The `--border`-is-
+decorative scan was 6.4's, the rows' `role`/`aria-selected`, the keys and the
+window-background comparison were 6.5's — all three are in the tree since it — and the
+eight golden frames are 6.6's, which is owner-run. **The goldens are held, not unchanged**: this task's layout is exactly the kind of
+change 6.6 exists to record once, at the end, rather than mid-phase.
+
+## The screens (Task 6.4)
+
+Task 6.3 drew the layout and the rail, and nothing had yet styled a screen: the four screens,
+the degraded and unavailable screens, the refusal document and the picker were drawing into a
+document whose reset, grid and chrome were painted and whose contents were not. This task is
+the last layer, `src/renderer/theme/screens.css`, plus the **one code change the
+whole styling work makes** — the fifth number hook.
+
+| Where | What changed |
+|---|---|
+| `src/renderer/theme/screens.css` | **new**: the per-screen rules, in the design's §2 order, ending with the rows' and badges' forced-colors block |
+| `src/renderer/screens/degraded.ts` | `numberCell` prepends `degraded-num`, which is the class §2.10 says this task adds |
+| `tools/bundle-renderer/index.ts` | `THEME_STYLESHEETS` gains `'screens.css'`, in the commit that creates the file — the list is now the theme directory's whole contents and stays still |
+| `test/unit/theme-selectors.test.ts` | the scan covers `screens.css`, and reads §2 **whole** rather than its tables; two more cases check every element-qualified selector against the tags the console draws, and every attribute-qualified one against the attributes it sets |
+| `test/unit/theme-tokens.test.ts` | the `--border`-is-decorative scan of `base.css` and `screens.css`, and the case that pins `--ok` to the readings §3.5 rule 4 licenses |
+| `test/unit/degraded.test.ts` | every figure the degraded and unavailable screens draw carries `degraded-num`, and no cell that draws a document string does |
+| `test/unit/bundle.test.ts` | the planted-tree case's unlisted file moves out of the theme directory, because after this task there is no unlisted file in it |
+| `test/e2e/{live,spend,projects,run,degraded}.spec.ts` | the forced-colors smoke's per-screen half |
+| this file | the section you are reading |
+
+### The five number hooks, and the one that did not exist
+
+Design §2.10 is the licence for the only code change here: Live, Spend, Projects and Run each
+have a `numberCell` that prepends `live-num`, `spend-num`, `projects-number` or `run-number`,
+and the degraded screen's prepended **nothing** — so its feed age, its counts and its money
+were the only figures in the console with no tabular-figures and no right-align hook. It
+prepends `degraded-num` now, `screens.css` carries one rule for all five, and two cases in
+`degraded.test.ts` fail if the prepend is removed (one of them reads `span`s only, because
+§2.7 gives the `ol` region and the count span the same class).
+
+### The selector scan reads §2 whole, and expands its shorthand
+
+`theme-selectors.test.ts` was narrowed to §2's **tables** in Task 6.3, which is where every
+hook of the four screens and of the chrome is listed. §2.7 and §2.8 have **no tables at all**
+and name the degraded, unavailable and refusal hooks in their prose, and §2.4's `data-*` list
+is a prose line under its table — so a scan left as it was would refuse `section.degraded`,
+`div.unavailable-body` and `[data-panel]` while claiming the design does not name hooks it
+names two paragraphs further down. The reading is widened, not loosened: `HOOK` keeps only
+tokens shaped like a hook, and `NOT_A_LICENCE` keeps out the two attributes §2 names **in
+order to refuse them** (`data-hidden`, `data-skew`).
+
+§2.7 also abbreviates: `(degraded-run-id, -repo, -status, …, -total)` and `degraded-since` +
+`-word`/`-at`/`-age`. Two conventions in one paragraph — the suffix replaces the last segment
+in the first and is appended in the second — so the scan expands **both** readings. A licence
+that names a hook too many is harmless; one that names a hook too few refuses a rule the
+design asked for.
+
+**`section.run` is deliberately not in `screens.css`.** §2.6's table starts at `run-header`
+and names no class for the Run screen's root, so a rule spelled `section.run` would select a
+hook §2 does not name — and the licence is the licence. Nothing is lost: the reset gives a
+`section` its own block box and `base.css` sets the document's colour.
+
+### The tags the rules name, and the eleven that named the wrong one
+
+§2's licence is about hooks and says nothing about the element in front of one, and §2.8 is
+where the design warns what that costs: "**The tags are the code's and they matter** … a rule
+spelled `pre.unavailable-install-command` styles nothing at all". A rule with the right class
+and the wrong tag passes the selector scan, because the class *is* a hook §2 names — and then
+matches nothing.
+
+Eleven rules here were written that way, and the tag scan is what found them. It reads the
+`tag.class` pairs out of the code that draws them — the four emitter helpers (`make`, `cell`,
+`textCell`, `numberCell`) with their spread class lists, the raw `factory.create` +
+`setAttribute('class', …)` shape of `entry.ts` (a literal, a module constant such as
+`RAIL_ROW_CLASS`, or the class a local helper was handed at its call sites), and the two roots
+`degraded.ts` picks with a conditional class — and refuses a selector whose pair is not among
+them. `src/shared/version.ts`'s skew section is read too, because `base.css` selects it.
+
+What the eleven were: `p.run-halt-detail` (a `span`), `p.unavailable-searched` (a `div`, as
+§2.8 spells it), `span.projects-enrolled-repo`/`-seen-repo` and `span.run-log-tail-line`
+(`li`s), `span.run-report-path`/`span.run-comments-path` (the containers are `p`s — the
+`-value` hooks their rules meant already have their own mono rule), `span.run-id` (an `h1`),
+and `span.run-ledger-model`/`-compute`/`-total` (the labels are `p`s, in both the ledger rule
+and the forced-colors list). Each kept its rule's intent: the tail line moved beside
+`run-log-message`, its cousin in the log list, and the two diagnosis containers moved to the
+prose rule.
+
+### The attributes that were on another element, and a tone that could not be right
+
+The tag scan has a sibling, and the review that found the eleven tags is why it exists: a rule
+may name a class the code draws **and** an attribute §2 lists, and still select nothing,
+because the attribute is on a **different element**. The new case reads which attributes the
+code sets on which elements — walking each file in source order, because a screen reuses
+`element` in every function it has — and refuses a compound selector whose class does not
+carry the attribute it qualifies the class with. It found four rules:
+
+- `span.spend-partial[data-partial='true']` — §2.4 puts `data-partial` (and `data-hollow`) on
+  `li.spend-point`, `li.spend-row` and `div.spend-totals`; the marker span inside them holds
+  the text `(partial)` and no attribute, so a partial day never got the `--warn` tone the
+  rule intended. The tone is on the three elements that know it now.
+- `span.spend-persons-state[data-state='off']` — the knob writes `on`/`off` as the span's
+  **text** and `data-enabled` on the `div.spend-persons` (§2.4's "person view withheld"), so
+  the span had no rule at all. It carries the type now and the parent's rule carries the tone.
+- `div.projects-kill-row[data-killed='true']`, in the rule and in its forced-colors entry —
+  the attribute is the **banner's** (§2.5's `data-*` line and §3.5's states table: "the
+  attribute is on the banner, and on Live's repository block itself"), so the row's own mark
+  was never drawn. The row is selected by `div.projects-kill-row:has(div.projects-kill)`,
+  which is the one selector that can see the banner inside.
+- `button.console-rail-row[aria-selected='true']` is the **fourth**, and it is deliberate:
+  `base.css`'s header records Task 6.3 writing the design's own rule (§4.1) before the
+  attribute §2.1 handed to Task 6.5. **Task 6.5 arrived and emptied the list**: the tablist
+  behaviour writes `aria-selected`, so the case reads the write off the code like any other
+  compound selector's, and `AHEAD_OF_THE_CODE` is an empty list rather than a one-entry one.
+  An entry there would be a rule ahead of its attribute, which is this design's own split,
+  and a second one would be a rule nothing emits.
+
+**And one tone.** `span.run-stage-passed` was painted `--ok` for both of the stage's words:
+the class holds `passed` **or** `failed` with no attribute (§2.6), so the rule read a failed
+stage green — and `--ok` is reserved for measured-and-inside-cap and the rail's running
+(§3.5 rule 4). No tone can be right for a class that carries two states, so the stage's name,
+word and deadline are labels; the failure's alarm is the diagnosis panel's `run-failed-word`,
+the element that knows which it is. A new case in `theme-tokens.test.ts` pins `--ok` to its
+two licensed readings (a `measured` sparkline bar, the rail's `running` row), which is what
+that mistake would have to get past.
+
+**That case held a third entry, and the follow-up to this task removed it.** The list of
+licensed selectors carried `section.projects-panel[data-state='read']` — the rule that painted
+a read Projects panel's left border `--ok` — so the case whose whole purpose is to keep `--ok`
+to the readings §3.5 rule 4 names accepted a reading the design licenses nowhere: a read panel
+is not "measured and inside the cap" and is not the rail's `running` row, and §6.1 rule 3
+forbids the tone decoratively. The list had been transcribed from the stylesheet rather than
+read off the design, which is exactly how a guard stops guarding. Both ends moved: the panel's
+rule draws `--accent` (a rule is **structure**, which is §3.2's role cell for that token, and
+§4.1 draws the rail's selected row's own 3 px left border in it), and the entry left the list —
+so the list and the stylesheet still hold each other in both directions, and a reading added
+to §3.5 rule 4 means amending the design in the same edit and adding its selector here.
+
+**The ink token has the mirror case, added with the same follow-up.** `--accent-ink` is the
+accent **as text** (§3.2's role cell: "links, an accent heading") and `--accent` is the accent
+as structure, so a rule that paints a border, an outline or a fill with the ink token has used
+the text tone for structure — which `li.live-run-queued`'s left border did, and which is why
+it draws `--accent` now. The case reads every declaration of `base.css` and `screens.css`
+rather than a list of selectors, so a border added later is caught without anyone remembering
+to name it, and it is proved against a planted `--accent-ink` border that is refused and the
+same border in `--accent` that is not.
+
+### The `--border`-is-decorative scan, and the clause that had to be a box
+
+Design §6.3 places this case in this task because it reads `base.css` and `screens.css`, and
+both exist now. Three clauses: `--border` in an `outline`; `--border` at any width other than
+`--rule-width` (§3.4: "1 px hairlines only"); and `--border` drawing a **box** on a control,
+whose extent is `--border-strong`.
+
+The third clause is a box and not any border, and the rail is why: its rows are
+`button.console-rail-row` and the design draws the hairline **between** them with
+`border-bottom` on that button. Read as "no border on a control", the scan would refuse the
+rail Task 6.3 drew and the design specifies. A one-sided border is a rule; only an all-sides
+one is an extent.
+
+### Two figures the canvas draws that a stylesheet cannot compute
+
+The cap bar's fill (`data-fill`, `"12.5%"` or `"n/a"`) and a sparkline bar's height
+(`data-height`) are **strings in a `data-*` attribute**: CSS cannot read one as a length, and
+the console writes no inline style (`style-src 'self'`, and `screen-literals.test.ts` refuses
+a `.style` write anywhere under `src/renderer/`). So the cap is drawn as its percentage with a
+state-coloured rule beneath it — the number and the tone, which is the two channels §3.5 rule
+3 requires of exactly that reading — and the burn window is drawn as a row of ticks whose tone
+says measured or gap, with the rate in each bar's `title`. Neither figure is dropped and
+neither is invented; what is lost is the *length* of a bar, which is a drawing the code does
+not publish as a number a stylesheet could use.
+
+### Narrow windows: what the screens' layer does, and the rule that outranks it
+
+§4.2's first row would have the widest tables drop their least load-bearing columns. **This
+file wraps instead, and says why**: a dropped column is allowed only when its value is
+repeated in a `title`, and the cells a Log, Jobs or `spend-rows` table would drop — tokens in
+and out, a job's model and compute — carry a value with no `title` behind it, because
+`putReading` writes one only for a reading with no number. Hiding them would be the console
+lying about spend, which §6.1 rule 1 forbids more strongly than any layout does. What the
+layer does do is §4.2's own: the three-column figure groups become two at 48.75em and stack at
+35em, and the burn window narrows at 62.5em.
+
+### What this task does not own
+
+The eight golden frames are Task 6.6's, which is owner-run and records once at the end of the
+phase; the computed-background assertion belongs with that recording, for the reason Task 6.3
+gives. The rail's `role`/`aria-selected`, the keys and the window background were Task 6.5's,
+and all three are in the tree since it.
+
+**The five forced-colors cases are written but not run in the container this task was
+implemented in**: Playwright's Electron launch needs a display and a GTK/NSS/glib stack the
+image does not have. `npm run test:unit` is green there and `tsc --noEmit` typechecks the
+specs; the e2e suite is the one verification this branch could not complete, and the pull
+request says so.
+
+## The window's ground, and the keyboard (Task 6.5)
+
+Task 6.4 was the last stylesheet, so this task paints nothing: it is the two things the
+design's section 4.1 asks of the **code** — the colour the window paints *before* the
+document does, and the keyboard the canvas's two tablists and the rail's shortcut keys need.
+It is also the task the owner's Q1 ruling of 2026-10-19 lands in, which is why what it adds
+is smaller than the task it was written as: **one** value set ships, dark, so `CONSOLE_THEME`
+stays the literal `'dark'`, no `matchMedia` read and no `nativeTheme` query comes with it, and
+the window paints **one** background literal against the one `--ground`.
+
+| Where | What changed |
+|---|---|
+| `src/main/window.ts` | **new**: `CONSOLE_WINDOW_BACKGROUND` (`#0A0E16`) and the `backgroundColor` key in `consoleWindowOptions` |
+| `src/renderer/entry.ts` | **the keyboard**: the view navigation and the rail's list as tablists (`role`, `aria-selected`, a roving `tabindex`, each on its own axis, Home and End, Enter on the rail, the focus following the move), `isMacPlatform`, and the rail's shortcut keys on the document |
+| `src/renderer/theme/base.css` | the header's account of the selected row's rule, which now selects an attribute the code writes |
+| `test/unit/theme-tokens.test.ts` | three cases: the window background against `consoleWindowOptions`, the focus ring's one `:focus-visible` rule, and the collapsed rail's names |
+| `test/unit/entry-wiring.test.ts`, `test/support/fakeDom.ts` | the keyboard's cases, and the fake's `press`/`focus` and its two key fields |
+| `test/unit/theme-selectors.test.ts` | `drawnAttributes` reads a tablist's write made in a loop over a container the drawing filled — which is what retires `AHEAD_OF_THE_CODE`'s one entry |
+| `test/unit/window.test.ts` | the options list gains the one ground literal |
+| `docs/coordinator/reconciliation.md` | the two `window.ts` citations follow the line they name |
+| this file | the section you are reading |
+
+### The window paints the ground before the document draws, and the duplicate is a case
+
+`backgroundColor` is what the platform fills the window with in the frame between the window
+existing and the stylesheet's first paint, so a console without it flashes the platform's
+default white on every launch — a defect no screenshot of a **painted** window can see, which
+is why the guard is the only place it can be. The value is `--ground`, and it is written out
+in `src/main/window.ts` **as a literal rather than read from the stylesheet**: the main
+process has no way to resolve a custom property, so the equality is held by a test instead of
+by the compiler — `theme-tokens.test.ts` reads the literal **out of the options the window is
+built with** (not out of the exported constant, so a `backgroundColor` dropped from
+`consoleWindowOptions` fails the same case as one that drifted) and fails by name when the
+two differ. One literal and one direction, because one set ships: the two-set design's second
+literal and its `nativeTheme` read are the record of the question the ruling answered.
+
+### The keyboard: two tablists, and the shortcut keys are the document's
+
+The design's section 4.3 gives the WAI-ARIA tablist pattern to the view navigation **and** to
+the rail's list (section 4.1), and they are two tablists with two axes: the navigation is a
+row of buttons driven with Left and Right, the rail's list is a column of rows driven with
+Arrow Up and Arrow Down, and Home and End are on both. The arrows move the focus **and** the
+roving `tabindex` together, and the rail's Enter selects the row — the pattern's
+manual-activation form, since what a selection means on this rail is its own mark rather than
+a read the document could make. `tabStop` is one function both tablists write through,
+because the rail's list holds one row today: a rail whose write stopped roving would still
+draw exactly one tab stop, so the rule is held where a case can drive it rather than where it
+would be unobservable.
+
+The rail's **shortcut keys** are the document's and not the row's, which is what section 4.3
+means by "without walking the tab order at all": the key reaches a row from wherever the
+operator is standing. The design grants **Command-1 to Command-3** on macOS and
+**Control-1 to Control-3** elsewhere — the first three rows the rail draws, which is the
+hint's own sentence — so the mapping answers `null` above the third (and the key is then
+neither selected nor prevented: the window keeps it), answers `null` for the modifier the
+platform does not use, and reads the **physical** key (`event.code`): on AZERTY the unshifted
+`1` key produces `&`, and a mapping that read the character the layout produces would do
+nothing to the very keystroke the hint asks that operator for. `Numpad1` is a different
+physical key and is not a second spelling of `Digit1` — the design grants the number row and
+names no keypad key.
+
+### The mutations this task is proved against
+
+Each was planted in the shipped code, run, and removed; the failure is the red step. The first
+three are Task 6.5's own and the last three were planted by the follow-up of 2026-10-20, which
+is the PR that moved the mapping onto the physical key and bounded it to three rows.
+
+| Mutation | What fails |
+|---|---|
+| `CONSOLE_WINDOW_BACKGROUND` drifted from `--ground` (`#FFFFFF`) | `theme-tokens.test.ts`, the window-background case, and `window.test.ts`'s options case — 2 failed |
+| `backgroundColor` dropped from `consoleWindowOptions` | the same two cases — 2 failed |
+| `tabStop` answers `'0'` for both states | `entry-wiring.test.ts`, 3 cases — the navigation's two and the rule's own |
+| `shortcutRow` reads `event.key` again, so the layout decides | `entry-wiring.test.ts`, the physical-key case and the rail's wiring case — 2 failed |
+| the three-row bound dropped, so `Digit4` to `Digit9` select again | `entry-wiring.test.ts`, 3 cases — the three-row case, the physical-key case and the rail's wiring case |
+| `Numpad` admitted as a second spelling of the number row | `entry-wiring.test.ts`, the physical-key case and the rail's wiring case — 2 failed |
+
+### What this task does not own
+
+The eight golden frames are Task 6.6's, which is owner-run and records once at the end of the
+phase — **and this task moved the picture once**: `base.css` has drawn the selected rail row's
+raised surface and 3 px `--accent` border since Task 6.3, and the `aria-selected` that turns
+them on is written here, so a frame taken now differs from the same frame taken before it. The
+reason the goldens wait is still Task 6.6's own. The theme switch this task was named for is
+**not** deferred work: the owner's Q1 ruling removed it, and a later task that wants it needs
+a light set to switch to and a new ruling to ship it (plan Task 6.5's record, design section
+3.6). No token, no rule and no served file is this
+task's: `THEME_STYLESHEETS`, `SERVED_FILES` and the CSP are exactly what Task 6.4 left, and
+`ElementLike` needed no widening — `role`, `aria-*` and `tabindex` are attributes, and
+`event.code` is a read of an event rather than a write to the DOM.
+
+**The e2e suite was not run in the container this task was implemented in** (Playwright's
+Electron launch needs a display and a GTK/NSS/glib stack the image does not have);
+`npm run test:unit` and `tsc --noEmit` are the two verifications that ran, and the pull
+request says so.
+
+## The application icon: the website's mark (the owner's brief of 2026-10-19)
+
+The console's icon is the **website's own mark**, not a second drawing of it, and there is
+one file on disk rather than two to keep in step: `console/build/icon.png` is
+byte-for-byte `brand/app-icon-1024.png`, the opaque app-icon master that
+`scripts/gen-brand-icons.py` writes from `brand/fugaro-logo.png` — the file
+`brand/README.md` and `website/README.md` both name as the source of truth for every icon
+the site serves. The website's own home-screen icon,
+`website/public/android-chrome-512x512.png`, is the same composition — the artwork cropped
+to its alpha bounding box, centred at 80 % extent on the opaque ground the generator paints
+(`--ground` of the palette in force when it last ran) — at half the size, so the console and
+a visitor's browser tab are showing the same picture.
+
+### 1024, and the artwork's real size
+
+**The 1024 is the size the packager needs, and since 2026-10-20 it is also a size the
+source holds.** The owner replaced `brand/fugaro-logo.png` with a 2048 x 2048 canvas
+carrying the same picture at twice the real pixels, and the mark grew with the canvas: the
+alpha bounding box of the file (alpha > 8, the generator's own `ALPHA_THRESHOLD`) is
+**1089 x 738 pixels**, with the rest transparent margin. `scripts/gen-brand-icons.py` crops
+to that box and then scales it per output, so the generator's own
+`fit(art, 1024, 0.80, ground)` — factor **0.7522**, artwork **819 x 555** — *down*scales it
+now, and the site's `android-chrome-512x512.png` (factor 0.3761, artwork 410 x 278) is the
+same artwork downscaled further. `brand/app-icon-1024.png` is therefore a
+native-resolution rendering of the mark rather than an interpolation of a smaller one, and
+the console's icon inherits exactly that.
+
+**This section used to ask for that change, and the figures above are the answer to it.**
+Until 2026-10-20 the source was a 1024 x 1024 canvas whose mark was only **548 x 371 px**,
+so the same call scaled it *up* by 1.4949 and this file was an ~1.5x interpolation; the
+section ended by naming what would fix it — "artwork that holds it: a
+`brand/fugaro-logo.png` whose visible mark is about 1024 px across" — and the owner supplied
+exactly that. An earlier revision of this section also said the master was "a genuine 1024
+render" and that "nothing here is an upscale": that was wrong for the file it described
+(the mark was 548 px across) and it is true of the one in the tree now (1089 px across, so
+the 819 px the master draws is a reduction). Both readings are the measurement above rather
+than a claim read off a filename.
+
+The **file choice stands**, for two reasons that never depended on the artwork's size:
+
+- **the packager wants 1024.** electron-builder converts the PNG to the bundle's `.icns`
+  and refuses anything under 512 for that format; the `.icns` carries every slot from 1024
+  down to 16, and each one below 512 is a downscale of this file. Converting the site's 512
+  instead would leave the 1024 slot filled by a second resampler's guess at the file the
+  generator already wrote;
+- **one source of truth.** The site's 512 and this 1024 come from one artwork, one ground
+  and one generator call; resampling the 512 up here would be a *second* derivation of the
+  mark in the console's tree, which is the thing this task exists to avoid.
+
+**A source change is still the only thing that moves this**, and it is a one-liner when it
+happens: replace `brand/fugaro-logo.png`, then
+`python3 -I scripts/gen-brand-icons.py && cp brand/app-icon-1024.png console/build/icon.png`,
+which is the whole change — `website/test/brand.mjs` and `test/unit/icon.test.ts` are what
+check it. Nothing here smooths the 512 up and calls it a 1024.
+
+`test/unit/icon.test.ts` asserts the size, the opacity (colour type 2 — a `.icns` with holes
+in it shows the desktop through the mark) and the bytes; the PR records the same figures.
+
+### Where the packager takes it, and where a running console does
+
+- **The bundle.** `build.mac.icon` in `console/package.json` names
+  `build/icon.png` — the string `CONSOLE_ICON_RELATIVE_PATH` writes once, in
+  `src/main/icon.ts` — and electron-builder converts the 1024 PNG to the bundle's `.icns`
+  on the macOS release runner (`docs/pending-workflows/console-release.yml` runs
+  `npm run package` on `macos-15`). **No `.icns` is committed**: it is a derived binary
+  only the packing step needs, and committing one would be a second copy of the artwork to
+  regenerate by hand. The icon is deliberately *not* in `build.files`: it goes into the
+  bundle as the application's icon, not into the asar as an asset, and `fuses.test.ts`'s
+  exact-list test still holds every pattern there to `.js`, `.html` or `.css`.
+- **The dock, while unpackaged.** `npm run build && npx electron .` — what a developer
+  does, and what `test/e2e/` launches — has no bundle, so the dock would show Electron's
+  own icon. `installDevDockIcon` (`src/main/icon.ts`) gives the process the console's icon
+  through `app.dock.setIcon`, and `src/main/index.ts` calls it as the first thing `main()`
+  does, before any window exists. It answers `false` — and touches nothing — in three
+  cases, each a real one rather than a defensive check: not macOS (`app.dock` is
+  `undefined`), already packaged (the bundle carries the icon), and no dock handed in.
+- **`BrowserWindow`'s `icon` option is not used, and that is deliberate.** macOS ignores
+  it: a window's chrome and the dock take the *application's* icon, which on macOS is the
+  bundle's. A key that does nothing on the only platform this console runs on would be
+  worse than absent, and pointing it at a file the packaged app does not carry is exactly
+  the broken pointer the `<link>` rule in this document refuses. The dev-time dock icon is
+  macOS's own door for the same job.
+
+### Refresh, when the mark changes
+
+The copy is a copy, so a regenerated brand master — the generator paints the ground colour
+the palette in force gives it, so re-running it after a palette change rewrites every icon,
+and the committed ones' ground is in any case older than `tokens.css`'s current `--ground` —
+leaves the console's icon stale **until the equality test says so**:
+
+```sh
+python3 -I scripts/gen-brand-icons.py && cp brand/app-icon-1024.png console/build/icon.png
+```
+
+That is the whole sync. It is a byte copy rather than a build step on purpose: electron's
+packing runs on a macOS runner that has no Pillow, `build/icon.png` is a committed file the
+dev-time dock reads from the checkout, and a derivation script would be a second
+implementation of the generator's own decision to keep in step.
+
+### The tests, and the mutations each one was run against
+
+`test/unit/icon.test.ts` (9 tests), and every one of them was seen red against a planted
+change before it was committed:
+
+| Claim | Mutation it was run against |
+|---|---|
+| the bytes are the master's | a 1024 x 1024 RGB PNG of the ground colour alone planted as `build/icon.png` — "is the app-icon master, byte for byte" red |
+| the picture is the site's | the same planted file: "is the picture the website serves…" red, naming block 421 at 218.06 against a tolerance of 8. The site's *maskable* icon, a different composition of the same mark, measures 218.87 the same way; the site's 512 measures **3.96**, which is what the tolerance is set from (see the test) |
+| it is a 1024, opaque PNG | the site's 512 icon planted in its place — the size assertion red ("expected 512 to be 1024"); that file is opaque too, so the colour-type half of the test is what the `logo.png` in `public/` would fail |
+| the packaging config names it | `build.mac.icon` pointed at `build/icon.icns` — "is the icon the packaging config names…" red |
+| the dock icon is set on macOS, unpackaged | `deps.packaged` dropped from `installDevDockIcon`'s guard — "does nothing once packaged" red; `deps.platform` dropped — "does nothing off macOS" red |
+| the entry point wires it | `packaged: app.isPackaged` in `src/main/index.ts` replaced with `packaged: true` — "is the icon the entry point actually installs" red |
+
+The last row is a source scan, the same shape as `startup.test.ts`'s: `src/main/index.ts`
+imports Electron's *runtime* and cannot be imported under vitest, so "the entry point
+installs it" is read off the file's text.
+
+### What this task does not own
+
+Nothing under `.github/workflows/` — the release workflow is staged in
+`docs/pending-workflows/` and is the owner's to copy in, so the PNG-to-`.icns` conversion
+is asserted as *what that file's `npm run package` will do*, not as something this branch
+ran. Apple's icon shape: macOS draws its own rounded-rect mask over a full-bleed icon, and
+the mark is not redrawn, recoloured or inset to anticipate it — that would be editing the
+website's artwork. And any signed or notarised build: unchanged from Task 4.1's record
+above.
+
+## The console's screenshots for the website (the owner's run, fixture data only)
+
+The website's Console page carries pictures of the real application (owner ruling of
+2026-10-20), and they are taken from **fixture data** by one command the owner runs:
+
+```sh
+./scripts/console-screenshots.sh        # from the repository root
+npm run screenshots                     # the same run, from console/ (it builds the console first)
+```
+
+The script installs the console's pinned toolchain (`npm ci`) and then runs the same
+`screenshots` script the second command names, which **builds the console first** (`npm run
+build`) and then runs `tools/screenshots/capture.ts`. The build is inside the script rather
+than in its caller because what the run launches is the **built** app
+(`package.json`'s `main`, `dist/main/index.js`) and `dist/` is git-ignored and untracked: a
+`screenshots` script that did not build would launch a file that is not there on a fresh
+checkout, or one from a branch ago on the machine of whoever runs it next (review of
+2026-10-20, high finding). It **needs a display**: Electron opens a real window, so this
+is a run on a Mac with a desktop session and never a run in CI — the script's own header says
+so, and with no display the launch fails and the command exits non-zero. It refuses to start
+on any Node but the exact one `package.json`'s `engines.node` pins (`.npmrc` sets
+`engine-strict=true`, so `npm ci` is the check) with a one-line error rather than a stack
+trace — and the version it wants is *read from that file* and compared exactly, because a
+major-only guard lets Node 22.11 through to precisely the `npm ci` EBADENGINE failure the
+guard exists to prevent, with a message that said the version was fine.
+
+### What it launches, and the checks that keep it fake
+
+The console under the camera is the **built** application, launched through the e2e suite's
+own Playwright/Electron path (`test/support/launch.ts`'s `launchConsole`, with the ETXTBSY
+retry) so its real startup handshake, resolver, `watch` supervisor and screens all run. What
+it is *not* is a console pointed at an installation. The fake CLI is the unit suite's own
+`test/unit/stub.ts`, installed into this run's scratch tree from the documents in
+`test/fixtures/screenshots/`, and it **refuses** (exit 2) any command the run did not prepare
+— so a screen whose read was not prepared is a picture of a refusal rather than of an empty
+document. It makes **one launch and takes four pictures from it**, and three rules are checked
+before the window exists, in `tools/screenshots/isolation.ts`:
+
+1. **the binary, asked the way the launch asks it.** Every launch seeds the console's own
+   store with one installation *chosen*, naming the fake's absolute path — and before the
+   window opens, `assertLaunchIsFixture` reads that store back with the console's own reader
+   (`readInstallationFile`) and resolves the chosen row with the console's own **one-path**
+   resolution (`resolveInstalledBinary`), refusing the launch unless the path is the fixture's
+   exactly, naming the path it resolved. A store that chooses *no* installation is refused
+   too, because the handshake of a console with nothing chosen walks
+   `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin` and `/usr/bin` — the directories where
+   the operator's own `fugaro` lives. It deliberately does **not** ask the machine's resolver
+   what it would find: that walk probes the winner by *executing* it, so the question itself
+   would run the operator's real CLI and then refuse the run — a check that both touched the
+   thing it exists to avoid and made the run impossible on the one machine it is for (review of
+   2026-10-20, high finding). The picker picture is opened from the console's own
+   `Installations…` menu item for the same reason: the second launch this run used to make —
+   a console with nothing chosen — was that walk;
+2. **the paths.** `PATH`, `HOME`, `XDG_CONFIG_HOME` and `TMPDIR` are written into one fresh
+   scratch tree, and the window is given a fresh `--user-data-dir` under it; a launch whose
+   environment or profile names anything else — or that names the operator's real `HOME` or
+   `XDG_CONFIG_HOME` — is refused, naming the key and the path. Nothing here reads
+   `~/.config`, and the seeded `installations.json` is written into the fresh profile.
+   `TMPDIR` is redirected rather than carried because the console builds the private working
+   directory its children run in as `$TMPDIR/fugaro-console-<uid>/cwd`: an ambient one is a
+   directory this run would write to and never remove;
+3. **the rest of the environment.** The child's environment is built from an allow-list of
+   eight window-drawing keys, not a denylist: `FUGARO_CONFIG`, `GOOGLE_APPLICATION_CREDENTIALS`
+   and `SSH_AUTH_SOCK` cannot reach the app or the CLI it spawns, and the run's own log ends
+   with the fake child's account of every spawn. **The only `fugaro` any child of this run
+   executes is the fake** — the binary check above is one path, and the probe it makes is that
+   fake's own `version`.
+
+### What comes back: four pictures, a manifest, and the check on the bytes
+
+The captures land in `console/screenshots/` — **git-ignored, never committed**: a picture of a
+window is an artefact of a machine and a day, and the website's owner copies the one they want
+into `website/` deliberately. Each is 1280x800 CSS pixels at device scale factor 2 (2560x1600
+pixels), dark theme, the platform's title bar excluded (a `page.screenshot` reads the window's
+web contents). The four captures — three screens of one window and the picker's own window,
+all from the **same launch** — are:
+
+| File | Screen |
+|---|---|
+| `console-live.png` | the Live screen: three runs (one in review with its verification passed, one in review and near its deadline, one queued), two repositories, and the day's spend at 34.85% of a $120 cap |
+| `console-run.png` | the run detail the Live screen's first row names: stages, verification, findings, the log tail |
+| `console-spend.png` | the Spend screen: thirty days of daily spend, the totals and the caps |
+| `console-installations.png` | the picker, opened from the console's own `Installations…` menu item: three installations, each naming the fake, with `acme-platform` the chosen one |
+| `console-first-run.png` | **not taken.** The no-installation onboarding page is #751, which is not on `main`, so there is no such screen in this console; the manifest carries the omission and the reason rather than a silence |
+
+The fifth row is the omission, and it is a row because that is where the four are: the manifest
+carries it as a fact (`omissions[]`), and a reader who expected the owner's fifth picture finds
+the reason beside the pictures that exist rather than after two paragraphs about alt text.
+
+**One picture carries a machine-specific path, and that is a decision.** The picker's rows draw
+each installation's stored binary path, and the path in these rows is the fake the run installed
+in its own scratch tree — `/var/folders/…/fugaro-console-screenshots-XXXXXX/bin/fugaro` on macOS,
+a different path on every run, and a directory that is gone when the run finishes. The
+alternative was to hide it, and hiding it was rejected: the console draws the stored path
+verbatim (`rowText`/`viewOf`), so a picture with a path-shaped hole in it would be a picture of
+something the console does not draw, and the point of this capture is that a real store is being
+drawn. What the path does *not* name: no home directory, no checkout, no real `fugaro`, and no
+project or repository that exists — the projects are invented. The alt text that travels with
+the picture therefore describes the path rather than quoting it (asserted in
+`test/unit/screenshots.test.ts`). **If the owner would rather not publish a path at all,
+`console-installations.png` is the one to leave out of `website/`**: it is the only capture whose
+subject is a path, and the other three carry none.
+
+Every alt text says only what its screen **draws**: the Live screen draws `runs`, `repos` and
+`total`, and the frame's `finished[]` list is decoded and drawn nowhere — an earlier version of
+that sentence counted it ("five runs … one that opened pull request acme/platform-core#412 and
+one that failed"), which was a fact about the fixture and in no picture, shipping to the
+website inside `MANIFEST.json` (review of 2026-10-20, medium finding). `test/unit/screenshots.test.ts`
+now asserts the *absences* as well as the figures.
+
+**And every figure in every alt text is read out of the screen's own model**, built from the same
+fixture the capture is taken of: the run detail's "build, test and lint verification" is the kinds
+of `buildRunModel(...).stages`, its "three findings" is that model's finding count, the spend
+picture's "thirty days" is `buildSpendModel(...).rows.length`, and the Live picture's round, stage,
+verification word, deadline flag and queued row are the last frame's own (review of 2026-10-20,
+medium finding — two of the four sentences were asserted by nothing). The run both pictures are of
+is held to one story as well: the Live row's `stage` and `verify` are the ones `diagnose.json`
+tells, because the run-detail capture is reached by clicking that row and the two screens draw the
+same run's words (review of 2026-10-20, medium finding). The picker's status line is *read out of*
+`src/renderer/installations.ts` rather than written into the test, so the sentence the alt quotes is
+the renderer's and not a copy of it (review of 2026-10-20, low finding).
+
+`tools/screenshots/png.ts` reads the PNG bytes itself and refuses a capture that is blank (the
+standard deviation of its pixel luminance, sampled, must be above `BLANK_STDDEV_FLOOR`) or is
+not exactly the size the manifest declares. It reads PNGs rather than adding an image library
+because every specifier in `package.json` is an exact pin (`test/unit/pinning.test.ts`), and
+reading its own bytes is forty lines of `node:zlib`. `tools/screenshots/manifest.ts` writes
+`screenshots/MANIFEST.json`: one entry per picture with its pixel size, its sha256 and a
+one-sentence alt text drafted from the fixture, plus what was omitted. And
+`tools/screenshots/failure.ts` is the run's failure path: the one sentence a failed run ends
+with, and the handler that prints it for the rejections `main()` never awaits — Playwright
+reports a failed launch on promises nobody holds, and Node 22's default
+`--unhandled-rejections=throw` would otherwise end the process on a playwright-core stack
+before the run's own words were printed (review of 2026-10-20, high finding).
+
+### The tests, and the mutations each one was run against
+
+`test/unit/screenshots.test.ts` holds everything the run decides **without a window** — 63
+tests, and every rule below was seen red against a planted change before it was committed:
+
+| Claim | Mutation it was run against |
+|---|---|
+| the launch's store is the only thing the handshake may read | `assertLaunchIsFixture`'s `assertFixtureBinary` call dropped — "refuses a store that names another binary" red |
+| a store that chooses no installation is refused | the `active === null` refusal removed — red, and it is the rule that keeps the machine's `fugaro` out of the walk |
+| the check runs its probe nowhere real | the probe's working directory changed from `isolation.userData` to `/tmp` — the child's own `cwd` in the fake's report red (it is taken from the `Isolation`, so no caller can point it elsewhere) |
+| the resolver must find the fixture binary | `assertFixtureBinary`'s equality check replaced by `return` — "the same path is not a refusal" and the store cases both red |
+| a path outside the scratch tree is refused | `assertIsolated`'s `inside.some(...)` check disabled — red, naming the planted `HOME` |
+| the operator's own `HOME` is refused **even inside** a scratch tree | the `forbidden` entry not set — red |
+| `TMPDIR` is redirected, not carried | `env['TMPDIR'] = isolation.tmp` removed — "drops an ambient key that is empty" / the allow-list case red, and `assertIsolated`'s `TMPDIR` check disabled — the refusal case red |
+| an empty ambient value is an absent one | `&& value !== ''` dropped from the allow-list loop — red |
+| no credential-shaped key reaches the child | `launchEnvironment`'s allow-list loop replaced by `Object.keys(ambient)` — the `GOOGLE_APPLICATION_CREDENTIALS`/`FUGARO_CONFIG`/`SSH_AUTH_SOCK`/`AWS_PROFILE` case red |
+| the alt text describes the screen, not the frame | `#412` restored to `LIVE_SCREEN.alt` — the absence assertions red; the picker's "none of them chosen" restored — red too |
+| every document the dashboard draws names one project | `diagnose.json`'s `project` key removed — the agreement test red (it was the key the fixture was missing) |
+| the fixtures are documents the console reads | the five fixtures driven through the console's **own** readers: `decodeSnapshot` for the feed's frames, `buildSpendModel` for `report`/`budget show`, `buildRunModel` for `diagnose` + `logs`. `max_reserve_usd` read from `global` instead of the top level — red |
+| the log window has no refused line | the fixture read as a bare list rather than through `parseLogEntries` — the `refused` assertion red |
+| a seed row must be sixteen hex characters | the id pattern loosened to `/^.*$/` — red |
+| two seed rows may not share an id | the duplicate check disabled — red |
+| the feed fixture must hold frames | the non-empty check disabled — red |
+| a missing fixture document is named | the wrapper's sentence replaced by the raw `ENOENT` — red |
+| the fake refuses an unknown command | `default.code` 2 → 0 — red |
+| the fake prints the version the console was built against | the version line replaced by `0.1.0` — red |
+| a manifest may not list one file twice | the duplicate check disabled — red |
+| a capture's name carries no path | `FILE_RE` loosened to `/^.*\.png$/` — red |
+| a size is a positive whole number | the `<= 0` half of the check dropped — red |
+| an entry carries an alt sentence | the empty-alt check disabled — red |
+| the manifest's key order is canonical | `screens` serialized before `window` — red |
+| a blank rectangle is refused | the `spread < BLANK_STDDEV_FLOOR` gate disabled — red |
+| a capture of the wrong size is refused | (driven directly: the test plants a 64x64 file against a 128x128 expectation) |
+| a Sub-filtered scanline is reversed | `case 1: value = raw + left` → `value = raw` — red |
+| an RGB file's channels are read apart | the green and blue bytes read from the red byte — red, two tests |
+| the entry point handles the rejection nobody awaits | `installFailureHandler(process)` not installed — red; the event name changed to `uncaughtException` — red; `String(reason)` instead of the `Error`'s message — red |
+| a run that printed a failure line does not report success | `target.exitCode = 1` dropped from the handler — red; `exitCodeFor` returning the work's own code — red |
+| the documented `screenshots` script builds the app it launches | `npm run build &&` removed from the script — red; the build moved after the capture — red; the README's sentence about it withdrawn — red |
+| the picture table is one table | the omission row moved back after the prose — red; the row dropped — red |
+| the shell script's header says what it reaches | the old "nothing here talks to GitHub, the cloud, or the network" restored — red; the registry read left unnamed — red |
+| the frames carry the e2e suite's ten keys | a key added to a frame — red; a key added to the recording the claim names — red |
+| the capture size is a number, not its own definition | the device scale factor set to 1 — red; the window set to 1440x800 — red |
+| the selectors are the renderers' own class names | `drawnBy` naming the wrong renderer — red; a selector renamed — red; a renderer renaming its class — red; the picker's list losing its id — red |
+| the picker's alt describes its path rather than quoting one | a path put into the sentence — red; the description removed — red |
+| the two pictures of one run tell one story | the feed's first row put back to `implement`/`pending` while `diagnose.json` says `review` with every verify record passed — the cross-file test red; the alt's "in review with its verification passed" changed — red |
+| every alt figure is the fixture's | `RUN_SCREEN`'s "three findings" → "four findings" — red; "build, test and lint" → "build and test" — red; `SPEND_SCREEN`'s "thirty days" → "thirty-one days" — red; the Live alt's round, deadline flag and queued row each changed — red |
+| the picker's sentence is the renderer's own | the alt's quoted sentence changed to `(reduced)` — red; `viewOf`'s own template reworded in `src/renderer/installations.ts` — red (the alt still quotes the old one) |
+| this file's index names its sections | the allow-list's `// 2.` banner removed — red, naming the header item with no banner |
+| the picture table says what the fixture holds, not what it used to | the Live row's "one in review with its verification passed" put back to "one implementing" — "describes each picture with the fixture's own words" red (the table test compared row names only, so the drift was unchecked; review of 2026-10-21, medium finding) |
+| the build's `include` list is the run's own import graph | `test/support/cliStub.ts` — the *e2e specs'* fake, which nothing the run reaches imports — put back into `tsconfig.screenshots.json`'s `include` — "compiles exactly the files the run reaches" red, naming the entry (review of 2026-10-21, low finding) |
+
+The blank check is driven by a PNG **encoder** written in the test file (`node:zlib`'s
+`deflateSync`, a CRC per chunk, filters 0 and 1 really applied), because the only way to drive
+a check that reads pixels is with a picture whose pixels are known, and an image library is a
+dependency the console is not allowed to gain.
+
+### What this run cannot prove from here
+
+**The Electron launch itself.** No test in this repository opens the console's window — there
+is no display in CI, and the container this was written in has none either — so "the window
+comes up, the screen draws, the capture is not blank" is exercised by the owner's own run of
+`./scripts/console-screenshots.sh`, which is also the only thing that can produce the pictures.
+The first run is the check: a screen that does not draw fails its `waitForSelector` with the
+selector it waited for, a blank capture fails on its own numbers, and the fake's spawn report
+prints which commands the console actually asked for. The menu click that opens the picker is
+in the same category: `test/e2e/installations.spec.ts` drives that same click, but only a run
+with a display exercises it against the built app and the frozen menu this run installs.
+
+## The Linux build, unsigned (the owner's ruling of 2026-10-20)
+
+**The owner ruled: *"yes, Linux for 0.10.0, unsigned"*.** Windows stays out. The
+ruling is recorded where the answer is — the design's **D10** cell carries it as
+a dated amendment after the 2026-10-15 acceptance it changes — and in its own
+section, [design §7.6](../../docs/design/desktop-console.md), with the four
+places that had read "later" amended in the same commit (§4.1 item 5, §4.2,
+§7.5's owner-run row, §9.4's runner bullet and staged-file table). The plan's
+Task 5.1 carries a dated note too, because two phrases of its own text are
+withdrawn by the ruling: "two **signed** deliverables", and Linux "via the
+distro channels this repo would have to choose".
+
+**One sentence is the whole of the security story here, and it is the one a
+reader must not have to infer: an AppImage is not code-signed.** Nothing on
+Linux signs, notarises or staples anything. There is no Linux key, no
+certificate, no owner-run signing step and no secret in any Linux job, because
+there is nothing to sign *with* — and the release's own words, the design's and
+this file's say unsigned rather than leaving it to be deduced.
+
+### What ships, and the configuration that produces it
+
+| | |
+|---|---|
+| Targets | `AppImage` and `deb`, **x64**, pinned in `build.linux.target` rather than passed on a command line |
+| Artifact names | `Fugaro.Console-<version>-linux-x64.AppImage` and `…-linux-x64.deb` — `build.linux.artifactName` is `Fugaro.Console-${version}-linux-${arch}.${ext}`, so the name comes from the tag's X.Y.Z and never from a file name typed into a workflow |
+| Icon | `console/build/icon.png` — **the same file `build.mac.icon` names**, so the two platforms cannot show different marks |
+| Desktop entry | `executableName: fugaro-console`, `category: "Development;Monitor"`, a `synopsis` and a `description`; the deb's `maintainer` is required rather than decorative — this `package.json` has no `author` with an email, so without it the deb leg fails at pack time |
+| Command | `npm run package:linux` — `electron-builder --linux --publish never`, the pinned local packer, never `npx`, and never publishing |
+
+**The bundle is exactly as strict on Linux as on macOS, and that is the point of
+putting the Linux keys beside the macOS ones rather than in a second file.**
+`asar` stays `true`, `build.files` is the same allow-list `build-files.test.ts`
+holds (the compiled main process, the preload, the shared and source modules,
+the renderer bundle and its two documents — and *not* `dist/main/fuses.js`,
+which is a build-time hook and not shipped code), `publish` stays `null`, and
+`npmRebuild` stays `false`. **`electronDownload.checksums` grew the Linux
+archive**: `electron-v44.7.2-linux-x64.zip` joins the two darwin zips, so every
+Electron archive this build downloads is verified against a hash in this
+repository — a platform whose download was unverified would be the one place the
+pinning story did not hold.
+
+### The same six fuses, on the Linux executable
+
+**`src/main/fuses.ts` resolves the binary per platform in one place.**
+`fuseTarget` reads `electronPlatformName` and returns either darwin's
+`<appOutDir>/<productName>.app/Contents/MacOS/<productName>` or Linux's
+`<appOutDir>/<executableName>` — `linuxExecutable` falls back to the packer's
+own `sanitizedName.toLowerCase()`, the name `LinuxPackager` uses when
+`executableName` is unset, and **refuses a context that names no binary at all**
+rather than guessing a path to flip. Anything that is not `darwin` or `linux` is
+**refused, naming the platform and the two this build packages**: a hook that
+skipped would ship the fuses unset, which is the one outcome it exists to
+prevent. `SUPPORTED_PLATFORMS` is that list, and it is the same list
+`src/main/spawn.ts`'s location table is keyed on.
+
+**The fuse set does not vary by platform.** The same six flips are written into
+the Linux executable, with byte-for-byte the same `fuseConfig()`, and the wire
+is read back on Linux too — a `RunAsNode` that came back enabled stops the build
+before the packer turns `linux-unpacked` into an AppImage or a deb.
+`EnableEmbeddedAsarIntegrityValidation` is enforced by Electron on macOS and
+ignored on Linux; it is set on Linux anyway, because a per-platform fuse table
+would be a second policy to keep in step with the first.
+
+### Resolution on Linux: two lists, chosen by the platform, never the inherited `PATH`
+
+`src/main/spawn.ts` has one table — `PLATFORM_LOCATIONS`, read through
+`locationsFor` — and it is the only place the platform is consulted:
+
+- **Rule 4's prefixes**, in order: macOS `/opt/homebrew/bin`, `/usr/local/bin`,
+  `~/.local/bin`, `/usr/bin`; **Linux** `/usr/local/bin`, `/usr/bin`,
+  `~/.local/bin`, `/home/linuxbrew/.linuxbrew/bin`, `~/.linuxbrew/bin`.
+  **Neither list is read out of the environment** and neither may take the
+  other's Homebrew prefix: `/opt/homebrew/bin` is the macOS prefix and
+  `/home/linuxbrew/.linuxbrew/bin` is Linux's, and a directory that does not
+  exist on the machine is not a place to look for a binary. The app's own
+  `PATH` remains what design rule 4 says it is — the **last** candidates, after
+  every well-known prefix, and only their absolute entries (a relative or empty
+  entry resolves against the app's own working directory, which is nothing the
+  operator chose).
+- **Rule 5's child `PATH`**, rebuilt from the resolved binary's own directory
+  and the platform's tool directories: for Linux `/usr/local/bin`, `/usr/bin`,
+  `/bin`, `/usr/sbin`, `/sbin`, `/home/linuxbrew/.linuxbrew/bin`. `~/.linuxbrew/bin`
+  is deliberately **not** in that list: nothing expands a tilde inside a `PATH`,
+  and the per-user case is covered by the resolved binary's own directory, which
+  always comes first. The app's inherited `PATH` never reaches the child on
+  either platform.
+- **A developer platform that is neither** (running the sources on Windows, which
+  this build does not package) falls back to the POSIX list rather than to the
+  environment: the fallback cannot find a binary that is not on the machine, and
+  the one thing it must not do is reach for the app's `PATH`.
+
+### The owner's commands, and what they do not need
+
+```sh
+cd console
+npm ci --ignore-scripts                      # exact pins, registry host, from the lockfile
+node node_modules/electron/install.js        # the distribution, verified against the pinned checksums
+npm run build && npm run package:linux       # AppImage and deb into release/, unsigned
+sha256sum release/*.AppImage release/*.deb   # what a reader checks against console-sha256sums.txt
+```
+
+**There is no signing step in that list and no secret in it** — no `CSC_LINK`, no
+keychain, no `--sign`, no environment. The macOS section below is the one with
+the owner-only pipeline, and none of it applies here.
+
+### CI: staged for the owner, and outside the release gate
+
+Two files, both staged under `docs/pending-workflows/` because no Fugaro run may
+create or edit anything under `.github/workflows/`:
+
+- **`console-linux.yml`** — one job, `console-linux`, on `ubuntu-latest`:
+  `contents: read`, **no environment and no secret**, the pinned toolchain,
+  Electron's own download verified against the three checksums `package.json`
+  pins, `npm run build`, `npm run package:linux`, an assertion that exactly one
+  `.AppImage` and one `.deb` came out, and `upload-artifact`. It runs on every
+  pull request and every push to `main`, with no path filter.
+- **`console-release-linux.yml`** — **the staged `console-release.yml` with the
+  Linux legs added**, so it supersedes that file and is copied over both the
+  staged copy and the workflow. Its third job, `linux`, holds no secret either;
+  it packs on the pinned `ubuntu-24.04` and then verifies **what ships** — the
+  SHA-256 of both artifacts, the `.deb` through `dpkg-deb`, the AppImage through
+  its own runtime's `--appimage-extract`, and the fuse wire read back with
+  `@electron/fuses` out of the executable *inside each artifact*, which is the
+  one claim the pack-time hook cannot make about the packaged result. `publish`
+  now merges both legs into **one** `console-sha256sums.txt`, re-checks it in the
+  directory that ships, signs that file keyless with cosign into
+  `console-sha256sums.txt.sigstore.json` (this workflow's own OIDC identity — not
+  a key of the owner's) and attaches everything to `console-vX.Y.Z`.
+
+**Neither file is in `scripts/release-gate.sh`'s required-check list, and that is
+a decision rather than an omission.** The gate's list is derived from
+`console-tests.yml`'s job set and asserted by `TestReleaseGateRequiresTheConsoleCheck`,
+which refuses a workflow with more than one job — so adding the Linux build to
+the gate is not a packaging change at all, it is a change to which checks gate a
+release tag, and that is the owner's call. `docs/pending-workflows/README.md`'s
+`## console-linux.yml` section carries the three edits it would take, and the
+copy-in commands for both files.
+
+### The website says nothing about Linux yet, and that is deliberate
+
+`website/content/downloads.json` may carry an optional per-platform block, and
+the reader that validates it (`website/src/lib/console-downloads.mjs`) holds it
+to the file's own assets: the block names the ids of the downloads it links, and
+every id must resolve to an entry of the file's `downloads` list — which is
+itself held to the release's published names and its sums file. So **a download
+link can only exist for an asset the data file names**, and **the block renders
+only when it is there** (`Downloads.astro` draws nothing for it otherwise: no
+heading, no sentence, no link, not even a word saying which platform is
+missing). The shipped file carries **no** Linux block, so both pages still say
+macOS only, exactly as they did before this ruling — the entry lands when a
+release actually carries a Linux asset, and not before.
+
+### What was verified here, and what was not
+
+- **Verified in this container**: the fuse hook's per-platform resolution, the
+  refusal of a platform this build does not package, the same-six-fuses claim,
+  the Linux wire read-back, the Linux executable-name fallback and its refusal
+  of a nameless context (`test/unit/fuses.test.ts`); both location lists and the
+  child's `PATH` on both platforms (`test/unit/spawn.test.ts`); the packaging
+  configuration — the two targets, x64, the artifact name, the icon, the
+  desktop-entry fields, the absence of any signature setting, and the Linux key
+  set (`test/unit/fuses.test.ts`); the two staged workflows' shape, their
+  pins and their secret-lessness (`internal/cli/docs_desktop_console_test.go`).
+  Every new guard was mutation-proven.
+- **Not verified here, and not verifiable in this container**: no
+  `electron-builder` run at all — this task's own rule is that the packaging is
+  unit-tested as a configuration rather than executed, and a real Linux pack
+  needs a Linux runner with a display-less AppImage toolchain. So **nothing in
+  this repository has yet produced an AppImage or a `.deb`**; the first one is
+  the staged `console-linux.yml` job's, and the first that ships is the tag's.
+
+### What is not here
+
+**No Linux auto-update** (design §7.3 is Squirrel.Mac and an `electron-updater`
+feed; the AppImage has no such feed here), **no arm64 Linux build** until one can
+be built and verified on a runner that has it, **no Flatpak, snap or rpm**, **no
+Linux Homebrew cask**, **no Windows build**, and **no signature of any kind**.
+Each is a later decision and not an oversight: this ruling is the smallest thing
+that makes "Linux is supported" true.

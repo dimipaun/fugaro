@@ -1,16 +1,17 @@
-// Package initflow is the converge loop behind fugaro init (design doc
-// m11-setup-and-skills.md §3.1): an ordered list of stages, each with a
-// read-only check and plan, a confirmed apply and a verify; a loop that
-// applies the first stage that is not done, stops at the first stage that
-// needs the user or fails, and runs nothing after it; and the plan view and
-// the JSON result that report where the run stands.
+// Package initflow is the converge loop behind the installation commands
+// (design doc m11-setup-and-skills.md §3.1): an ordered list of stages, each
+// with a read-only check and plan, a confirmed apply and a verify; a loop
+// that applies the first stage that is not done, stops at the first stage
+// that needs the user or fails, and runs nothing after it; and the plan view
+// and the JSON result that report where the run stands.
 //
 // The package knows nothing about Google, Terraform or the CLI: the stages
-// that exist (and the fakes the tests use) plug in through Stage. What a
-// stage must never be able to do is enforced here, not in the stage: --yes
-// does not reach a stage that creates a project, links billing or takes a
-// secret, no stage runs before the ones ahead of it are done, and a run
-// that cannot prompt never prompts.
+// that exist (and the fakes the tests use) plug in through Stage. It does not
+// know which command called it either — the lines it prints name the caller's
+// Options.Program, never a verb of its own. What a stage must never be able to
+// do is enforced here, not in the stage: --yes does not reach a stage that
+// creates a project, links billing or takes a secret, no stage runs before
+// the ones ahead of it are done, and a run that cannot prompt never prompts.
 package initflow
 
 import (
@@ -107,9 +108,16 @@ var order = []slot{
 // what goes with them (the state bucket, the Viewer-read removal, the
 // Firestore marks and rules, the image copies that add tags, the local
 // config). Everything else is never covered by it: the project's creation and
-// billing, a secret, the plugin wiring (its own y/N), and within a covered
-// stage the Firestore database's location, a Cloud Build, replacing a
-// registry tag and onboarding an unlisted repository, which stay Typed.
+// billing, a secret, and the plugin wiring (its own y/N).
+//
+// The map answers for WHOLE STAGES, and that is the whole of what it says. A
+// step finer than its stage — the Firestore database's location inside
+// Firebase, a billable image build inside Images, replacing a registry tag and
+// onboarding an unlisted repository inside Repository — is not a row here and
+// cannot be one: whether such a step is covered is the confirmation of the
+// caller that takes it, decided where the step is taken, which is also the
+// only place that knows which front door is running and so which steps that
+// door owns.
 var runCovered = map[string]bool{
 	Installation: true, Firebase: true, Images: true, Installation2: true, Repository: true,
 }
@@ -352,17 +360,26 @@ func AgentProceeded(marker string) string {
 }
 
 // ConfirmClass is who may confirm a step.
+//
+// The zero value is Typed, the strictest class, and that is deliberate: a
+// caller that names no class — a field nobody set, a class left out of a
+// table, a zero value passed on — refuses a confirmation rather than giving
+// one. Every mistake in this file falls in the refusing direction (Managed's
+// zero value is "not managed", and Covers and Removes are methods rather than
+// fields so no caller can assert coverage), and the zero value of the class a
+// step is confirmed under is the last place a mistake could fall the other
+// way.
 type ConfirmClass int
 
 const (
-	// YesOrTyped steps take --yes, or the typed confirmation at a terminal:
-	// the Terraform applies, the plugin wiring, a known repository.
-	YesOrTyped ConfirmClass = iota
 	// Typed steps are money or permanent: a new project, billing, a secret, a
 	// Firestore location, a billable image build, replacing a registry tag. A
 	// person types the confirmation at a real terminal; --yes,
 	// --non-interactive, --json, a pipe and a coding agent never give it.
-	Typed
+	Typed ConfirmClass = iota
+	// YesOrTyped steps take --yes, or the typed confirmation at a terminal:
+	// the Terraform applies, the plugin wiring, a known repository.
+	YesOrTyped
 )
 
 // Conditions are what a run says about who is there.

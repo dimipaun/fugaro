@@ -1302,6 +1302,46 @@ function applyTracked(state: Traced, rule: TrackedRule, nested: boolean, covered
   return { text: parts.join(''), origin }
 }
 
+/**
+ * scanWork counts the work every reading costs, in characters scanned: each
+ * `traceCredentials` call adds the length of the reading it runs the tracked
+ * rules over, so the total is the quantity `MAX_AMBIGUOUS_SCAN` bounds --
+ * readings times characters. `splitScanWork` is the part of that total the
+ * split readings cost (`traceSplits`), which `MAX_SPLIT_SCAN` bounds through
+ * the budget it sets: they are where a pathological input could cost more than
+ * linear work, one reading per combination of split places per run, so they
+ * are counted apart from the rest. Both are what `split-secrets.test.ts`
+ * asserts against instead of a wall clock: a wall clock measures the machine
+ * (a loaded runner turned a 45 ms pass into the 435 ms that failed the 0.9.6
+ * and 0.9.7 release gates), where these count the work the code chose to do,
+ * the same on every machine and every run.
+ *
+ * Nothing reads them at runtime -- the renderer loads this module and never
+ * calls these -- and the one write per reading cannot change what any layer
+ * draws.
+ */
+let scanWork = 0
+let splitScanWork = 0
+
+/** resetScanWork zeroes the counters (`scanWork`, `splitScanWork`), so a test
+ * measures one call's own work. */
+export function resetScanWork(): void {
+  scanWork = 0
+  splitScanWork = 0
+}
+
+/** scanWorkDone is the characters every reading has scanned since the last
+ * `resetScanWork` (see `scanWork`). */
+export function scanWorkDone(): number {
+  return scanWork
+}
+
+/** splitScanWorkDone is the characters the split readings have scanned since
+ * the last `resetScanWork`, a part of `scanWorkDone` (see `splitScanWork`). */
+export function splitScanWorkDone(): number {
+  return splitScanWork
+}
+
 /** traceCredentials runs every tracked rule over one reading, in order. */
 function traceCredentials(
   reading: Traced,
@@ -1309,6 +1349,7 @@ function traceCredentials(
   covered: Uint8Array,
   rules: readonly TrackedRule[] = TRACKED_RULES,
 ): Traced {
+  scanWork += reading.text.length
   let state = reading
   for (const rule of rules) state = applyTracked(state, rule, nested, covered)
   return state
@@ -1448,7 +1489,9 @@ function traceSplits(
     }
     parts.push(prepared.slice(from))
     for (let index = from; index < prepared.length; index += 1) origin[out++] = index
-    traceCredentials({ text: parts.join(''), origin }, false, covered, rules)
+    const text = parts.join('')
+    splitScanWork += text.length
+    traceCredentials({ text, origin }, false, covered, rules)
   }
 }
 

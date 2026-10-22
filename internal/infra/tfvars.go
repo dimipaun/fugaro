@@ -69,7 +69,7 @@ type InstallOptions struct {
 	NoLogIsolation bool
 	// BudgetBackend gives the installation the history account and, once
 	// the Firebase root's outputs are known and its image exists, the
-	// history job and its sweep Scheduler job. It is set by --firebase and
+	// history job and its sweep Scheduler job. It is set by --firebase-project and
 	// by a project config that records a Firebase project.
 	BudgetBackend bool
 	// ManagedDeployerScoped opts the installation in to the managed
@@ -123,7 +123,7 @@ type InstallationSpec struct {
 	EnableBudget bool         `json:"enable_budget,omitempty"`
 	History      *HistorySpec `json:"history,omitempty"`
 	// ProjectSecrets are the installation module's project-wide secret
-	// containers (logical name -> gcp.ProjectSecretID), which fugaro init
+	// containers (logical name -> gcp.ProjectSecretID), which fugaro update
 	// creates or adopts; their values are never set by Terraform (design
 	// docs/design/project-secrets.md §4). Installation() fills it from the
 	// local config's eligibility; DiscoverInstallation then unions in every
@@ -177,7 +177,7 @@ type CredentialsServiceSpec struct {
 	// FirebaseProject and RTDBURL are the installation's Firebase project —
 	// the one a run's identity is verified against — and the Realtime
 	// Database it reads (C1.14's FUGARO_FIREBASE_PROJECT and FUGARO_RTDB_URL).
-	// Both are the local config's own budget block, written by `fugaro init
+	// Both are the local config's own budget block, written by `fugaro update
 	// --firebase` from the Firebase root's outputs, so the service and every
 	// run's launcher name the same database.
 	FirebaseProject string `json:"firebase_project"`
@@ -258,7 +258,7 @@ var credsImageRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/@:-]*@sha256:[0-
 // the plan refuses for its image.
 //
 // The Firebase facts come from the local config's budget block, which `fugaro
-// init --firebase` wrote from the Firebase root's outputs: the service reads
+// update --firebase-project` wrote from the Firebase root's outputs: the service reads
 // the installation's own database, so an installation whose config names none
 // cannot be configured at all — the stage's marker gate (requireCredsRules)
 // reads that same database, and a service with no database in its environment
@@ -270,10 +270,10 @@ func Credentials(lc *localcfg.Config, image string) (CredentialsServiceSpec, err
 	}
 	b := lc.Budget
 	if b == nil || b.FirebaseProject == "" || b.RTDBURL == "" {
-		return CredentialsServiceSpec{}, userErr("the credentials service reads the installation's Firebase database, and project %s's config names no Firebase project and database (budget.firebase_project and budget.rtdb_url): run 'fugaro init --firebase <firebase-project-id>' first, which writes both from the Firebase root's outputs", lc.Name)
+		return CredentialsServiceSpec{}, userErr("the credentials service reads the installation's Firebase database, and project %s's config names no Firebase project and database (budget.firebase_project and budget.rtdb_url): run 'fugaro update --firebase-project <firebase-project-id>' first, which writes both from the Firebase root's outputs", lc.Name)
 	}
 	if err := rtdb.ValidateURL(b.RTDBURL, true); err != nil {
-		return CredentialsServiceSpec{}, userErr("budget.rtdb_url is not a Firebase Realtime Database URL: it must be https://<database>.firebaseio.com or https://<database>.<region>.firebasedatabase.app, with no credentials, path, query or fragment (a loopback address, which is the emulator, is admitted here). Run 'fugaro init --firebase <firebase-project-id>' to write it from the Firebase root's outputs")
+		return CredentialsServiceSpec{}, userErr("budget.rtdb_url is not a Firebase Realtime Database URL: it must be https://<database>.firebaseio.com or https://<database>.<region>.firebasedatabase.app, with no credentials, path, query or fragment (a loopback address, which is the emulator, is admitted here). Run 'fugaro update --firebase-project <firebase-project-id>' to write it from the Firebase root's outputs")
 	}
 	jobs, err := CredentialsJobAccounts(lc)
 	if err != nil {
@@ -433,7 +433,7 @@ func SetCredentialsService(vars []byte, svc CredentialsServiceSpec) ([]byte, err
 // run of init rewrites the tfvars from its spec — which never sets the key.
 // Carried forward exactly as it was, present or absent, an installation that
 // has opted in keeps the service across an ordinary run's rewrite; without
-// that, the next plain `fugaro init` would plan the service, its account and
+// that, the next plain `fugaro update` would plan the service, its account and
 // its grant away (a plan the bundle container's prevent_destroy refuses,
 // so the run fails rather than applies anything). An installation that never
 // opted in carries no key and is unchanged, and the runbook's opt-out — the

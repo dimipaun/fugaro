@@ -46,7 +46,7 @@ func TestEnsureCreatesOnceAfterConfirmation(t *testing.T) {
 	r := newFBRig(t)
 	fakeTerminal(t)
 	// The installation and Firebase applies are confirmed; the database step is not.
-	out, _, err := executeStdin(t, names(2), "init", "--firebase", fpID)
+	out, _, err := executeStdin(t, names(2), "setup", "--firebase-project", fpID)
 	if err == nil {
 		t.Fatalf("not confirmed, yet init succeeded:\n%s", out)
 	}
@@ -60,7 +60,7 @@ func TestEnsureCreatesOnceAfterConfirmation(t *testing.T) {
 	}
 	// Confirmed.
 	r2 := newFBRig(t)
-	if out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
+	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if n := r2.dbCreates(); n != 1 {
@@ -83,7 +83,7 @@ func TestEnsureCreatesOnceAfterConfirmation(t *testing.T) {
 func TestEnsureAdoptsExisting(t *testing.T) {
 	r := newFBRig(t)
 	r.fs.SetDatabase("us-east5")
-	if out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
+	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if n := r.dbCreates(); n != 0 {
@@ -98,7 +98,7 @@ func TestEnsureAdoptsExisting(t *testing.T) {
 func TestEnsureRefusesOtherLocation(t *testing.T) {
 	r := newFBRig(t)
 	r.fs.SetDatabase("europe-west1")
-	out, stderr, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
+	out, stderr, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error()+stderr, "europe-west1") {
 		t.Fatalf("err = %v, stderr = %s\n%s", err, stderr, out)
 	}
@@ -117,7 +117,7 @@ func TestEnsureRefusesOtherLocation(t *testing.T) {
 func TestEnsureNeedsConfirm(t *testing.T) {
 	r := newFBRig(t)
 	fakeTerminal(t)
-	if _, _, err := executeStdin(t, names(2)+"nope\n", "init", "--firebase", fpID); err == nil {
+	if _, _, err := executeStdin(t, names(2)+"nope\n", "setup", "--firebase-project", fpID); err == nil {
 		t.Fatal("a wrong confirmation was accepted")
 	}
 	if r.fsWrites() != 0 {
@@ -127,7 +127,7 @@ func TestEnsureNeedsConfirm(t *testing.T) {
 
 func TestPlanOnlyShowsEnsure(t *testing.T) {
 	r := newFBRig(t)
-	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--plan-only")
+	out, _, err := executeStdin(t, "", "setup", "--firebase-project", fpID, "--plan-only")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -141,7 +141,7 @@ func TestPlanOnlyShowsEnsure(t *testing.T) {
 
 func TestRulesDenyAll(t *testing.T) {
 	r := newFBRig(t)
-	if out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
+	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	src, ok := r.rules.Source()
@@ -153,7 +153,7 @@ func TestRulesDenyAll(t *testing.T) {
 func TestRulesSameApartFromFormattingAdopted(t *testing.T) {
 	r := newFBRig(t)
 	r.rules.SeedRelease(denyAllReformatted)
-	if out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
+	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if r.rules.Writes() != 0 {
@@ -165,7 +165,7 @@ func TestRulesMismatchRefused(t *testing.T) {
 	r := newFBRig(t)
 	loose := "rules_version = '2';\nservice cloud.firestore { match /databases/{d}/documents { match /{x=**} { allow read: if true; } } }"
 	r.rules.SeedRelease(loose)
-	out, stderr, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
+	out, stderr, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error()+stderr, "not deny-all") {
 		t.Fatalf("err = %v\n%s", err, out)
 	}
@@ -180,7 +180,7 @@ func TestRulesMismatchRefused(t *testing.T) {
 func TestRulesReadBackFlaky(t *testing.T) {
 	r := newFBRig(t)
 	r.rules.FlakeAfterWrite(2) // eventually consistent: two reads miss it
-	if out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
+	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
 		t.Fatalf("a slow read-back failed the step: %v\n%s", err, out)
 	}
 	if _, ok := r.fs.Value("meta", "installation"); !ok {
@@ -189,7 +189,7 @@ func TestRulesReadBackFlaky(t *testing.T) {
 	// Never read back: the step fails; the mark was written first, so a rerun finds it.
 	r2 := newFBRig(t)
 	r2.rules.FlakeAfterWrite(1000)
-	out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
 	if err == nil || !strings.Contains(err.Error(), "did not read back") {
 		t.Fatalf("err = %v\n%s", err, out)
 	}
@@ -211,7 +211,7 @@ func TestMarkOfOtherProjectRefused(t *testing.T) {
 			m := ownMark()
 			edit(m)
 			r.fs.Set("meta", "installation", m)
-			out, stderr, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
+			out, stderr, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
 			if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error()+stderr, "mark that is not ours") {
 				t.Fatalf("err = %v\n%s", err, out)
 			}
@@ -227,14 +227,14 @@ func TestMarkOfOtherProjectRefused(t *testing.T) {
 
 func TestRerunIsNoOp(t *testing.T) {
 	r := newFBRig(t)
-	if out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
+	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	writes, rs := r.fsWrites(), r.rules.Rulesets()
 	r.script["plan"] = map[string]any{"exit": 0}
 	r.save(t)
 	fakeTerminal(t) // a confirmation would fail
-	out, _, err := executeStdin(t, "", "init", "--firebase", fpID)
+	out, _, err := executeStdin(t, "", "setup", "--firebase-project", fpID)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -252,7 +252,7 @@ func TestNoAuthNeedsFirestoreEndpoints(t *testing.T) {
 		t.Run(key, func(t *testing.T) {
 			r := newFBRig(t)
 			r.dropEndpoint(t, key)
-			out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
+			out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
 			if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "no_auth is set but the firestore and firebase_rules endpoints are not") {
 				t.Fatalf("err = %v\n%s", err, out)
 			}
@@ -267,7 +267,7 @@ func TestUnmarkedDatabaseWithOtherCollectionRefused(t *testing.T) {
 	r := newFBRig(t)
 	r.fs.SetDatabase("us-east5")
 	r.fs.Set("app_users", "u1", map[string]any{"name": "x"})
-	out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "app_users") || !strings.Contains(err.Error(), "no Fugaro mark") {
 		t.Fatalf("err = %v\n%s", err, out)
 	}
@@ -282,7 +282,7 @@ func TestUnmarkedDatabaseWithOtherCollectionRefused(t *testing.T) {
 func TestUnmarkedEmptyDatabaseAdopted(t *testing.T) {
 	r := newFBRig(t)
 	r.fs.SetDatabase("us-east5")
-	out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -302,7 +302,7 @@ func TestUnmarkedEmptyDatabaseAdopted(t *testing.T) {
 func TestHalfFailedRerunCompletes(t *testing.T) {
 	r := newFBRig(t)
 	r.rules.FailWrites(1)
-	out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
 	if err == nil {
 		t.Fatalf("a failed rules write passed:\n%s", out)
 	}
@@ -312,7 +312,7 @@ func TestHalfFailedRerunCompletes(t *testing.T) {
 	if _, ok := r.rules.Source(); ok {
 		t.Error("rules exist after a failed write")
 	}
-	if out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
+	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
 		t.Fatalf("rerun: %v\n%s", err, out)
 	}
 	if r.dbCreates() != 1 {
@@ -329,7 +329,7 @@ func TestLocationConfirmationRequiredToCreate(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r := newFBRig(t)
 			fakeTerminal(t)
-			out, _, err := executeStdin(t, names(3)+loc, "init", "--firebase", fpID)
+			out, _, err := executeStdin(t, names(3)+loc, "setup", "--firebase-project", fpID)
 			if err == nil || !strings.Contains(err.Error()+out, "us-east5") {
 				t.Fatalf("err = %v\n%s", err, out)
 			}
@@ -343,7 +343,7 @@ func TestLocationConfirmationRequiredToCreate(t *testing.T) {
 	}
 	r := newFBRig(t)
 	fakeTerminal(t)
-	if out, _, err := executeStdin(t, names(3)+"us-east5\n", "init", "--firebase", fpID); err != nil && !strings.Contains(err.Error(), "confirm") {
+	if out, _, err := executeStdin(t, names(3)+"us-east5\n", "setup", "--firebase-project", fpID); err != nil && !strings.Contains(err.Error(), "confirm") {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if r.dbCreates() != 1 {
@@ -355,7 +355,7 @@ func TestAdoptNeedsNoLocationConfirmation(t *testing.T) {
 	r := newFBRig(t)
 	r.fs.SetDatabase("us-east5")
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, names(4), "init", "--firebase", fpID)
+	out, _, err := executeStdin(t, names(4), "setup", "--firebase-project", fpID)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -373,7 +373,7 @@ func TestDefaultReleaseAppearsAfterCreation(t *testing.T) {
 	r := newFBRig(t)
 	loose := "rules_version = '2';\nservice cloud.firestore { match /databases/{d}/documents { match /{x=**} { allow read, write: if request.time < timestamp.date(2030, 1, 1); } } }"
 	r.rules.SeedAfterReads(2, loose)
-	out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "not deny-all") || !strings.Contains(err.Error(), "deploy deny-all yourself") {
 		t.Fatalf("err = %v\n%s", err, out)
 	}
@@ -385,7 +385,7 @@ func TestDefaultReleaseAppearsAfterCreation(t *testing.T) {
 	}
 	// Rerun: refused in Plan, before anything is applied.
 	before := len(r.applies(t))
-	if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); ExitCode(err) != ExitUserError || err == nil {
+	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); ExitCode(err) != ExitUserError || err == nil {
 		t.Fatalf("rerun err = %v", err)
 	}
 	if len(r.applies(t)) != before || r.dbCreates() != 1 {
@@ -393,7 +393,7 @@ func TestDefaultReleaseAppearsAfterCreation(t *testing.T) {
 	}
 	// The user deploys deny-all; the rerun completes.
 	r.rules.SeedRelease(infra.FirestoreRules)
-	if out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
+	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
 		t.Fatalf("after the fix: %v\n%s", err, out)
 	}
 }
@@ -402,7 +402,7 @@ func TestEnsureRefusesNonNativeDatabase(t *testing.T) {
 	r := newFBRig(t)
 	r.fs.SetDatabase("us-east5")
 	r.fs.SetDatabaseType("DATASTORE_MODE")
-	out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "DATASTORE_MODE") {
 		t.Fatalf("err = %v\n%s", err, out)
 	}
@@ -414,7 +414,7 @@ func TestEnsureRefusesNonNativeDatabase(t *testing.T) {
 func TestCreateRaceAdoptsOnlyAcceptable(t *testing.T) {
 	r := newFBRig(t)
 	r.fs.RaceCreate("us-east5")
-	if out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
+	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if _, ok := r.fs.Value("meta", "installation"); !ok {
@@ -422,7 +422,7 @@ func TestCreateRaceAdoptsOnlyAcceptable(t *testing.T) {
 	}
 	r2 := newFBRig(t)
 	r2.fs.RaceCreate("europe-west1")
-	out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "europe-west1") {
 		t.Fatalf("err = %v\n%s", err, out)
 	}
@@ -437,12 +437,12 @@ func TestCreateRaceAdoptsOnlyAcceptable(t *testing.T) {
 func TestUnreadableBeforeAPIEnabled(t *testing.T) {
 	r := newFBRig(t)
 	r.fs.Refuse(403, "PERMISSION_DENIED", "SERVICE_DISABLED", "Cloud Firestore API has not been used in project")
-	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--plan-only")
+	out, _, err := executeStdin(t, "", "setup", "--firebase-project", fpID, "--plan-only")
 	if err != nil || !strings.Contains(out, "cannot be read yet") {
 		t.Fatalf("plan-only: %v\n%s", err, out)
 	}
 	// A real run tolerates it in discovery, then needs it after the apply.
-	out, _, err = executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
+	out, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
 	if err == nil || !strings.Contains(err.Error(), "cannot read the Firestore state") {
 		t.Fatalf("err = %v\n%s", err, out)
 	}
@@ -457,7 +457,7 @@ func TestMarkVersionNewerAccepted(t *testing.T) {
 	m := ownMark()
 	m["version"] = int64(2)
 	r.fs.Set("meta", "installation", m)
-	out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
 	if err != nil || !strings.Contains(out, "newer than this fugaro knows") {
 		t.Fatalf("err = %v\n%s", err, out)
 	}
@@ -465,7 +465,7 @@ func TestMarkVersionNewerAccepted(t *testing.T) {
 	r2 := newFBRig(t)
 	r2.fs.SetDatabase("us-east5")
 	r2.fs.Set("meta", "installation", m)
-	if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); ExitCode(err) != ExitUserError || err == nil {
+	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); ExitCode(err) != ExitUserError || err == nil {
 		t.Fatalf("version 0 accepted: %v", err)
 	}
 }
@@ -477,7 +477,7 @@ func TestReadBackAfterCreateRetriesAPIPropagation(t *testing.T) {
 	r := newFBRig(t)
 	r.fs.RemoveDatabase()
 	r.fs.DisabledReadsAfterCreate(3)
-	if out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
+	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
 		t.Fatalf("a read-back that needed a retry failed the run: %v\n%s", err, out)
 	}
 	if n := r.dbCreates(); n != 1 {

@@ -11,3 +11,15 @@ playwright-report/
 # The bundler's build output (`tsconfig.bundle-renderer.json`, Task 3.4a): the
 # compiled tool `npm run build` runs after `tsc` to write `dist/bundle/`.
 .bundle-renderer/
+# The screenshot tool's build output (`tsconfig.screenshots.json`, owner ruling
+# 2026-10-20): the compiled tool `npm run screenshots` runs.
+.screenshots/
+# What that tool leaves: the PNGs the website's Console page is illustrated from,
+# and their manifest. Never committed -- a picture of the console is an artefact
+# of a machine and a day, and the website owner copies the one they want into
+# `website/` deliberately. `console/screenshots/MANIFEST.json` is the part a
+# later reader wants, and it is written beside them for exactly that reason.
+# Anchored (`/screenshots/`): the fixtures the tool *reads* are
+# `test/fixtures/screenshots/`, which is committed, and an unanchored pattern
+# would have ignored them too.
+/screenshots/

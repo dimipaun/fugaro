@@ -61,7 +61,7 @@ const (
 	// HaltCredsRulesDenied is a cascade run whose write was refused by the
 	// deployed rules: the `credential` or `waiting_until` child of its own
 	// registry entry, or a by-tier counter (C1.3). It is the known gap of a
-	// rules downgrade — an older Fugaro running `fugaro init --firebase`
+	// rules downgrade — an older Fugaro running `fugaro update --firebase-project`
 	// redeployed a document without the cascade's children — so the message
 	// names the redeploy and the write is never retried (C1.17): silently
 	// dropping it would hide the run's credential from the dashboard, and
