@@ -147,11 +147,15 @@ type StageReport struct {
 	// against no cap (C1.16, D140). It is disjoint from Used, and the
 	// stage's whole model figure is their sum.
 	Notional pricing.Micros
-	// ByTier is the settled money by credential tier, keys "b" and "c"
-	// (C1.16, D140): the per-call split the by-tier counters are written
-	// from, and the closed set the database rules allow. A tier-A call is
-	// Notional and is in no key here, and a call that did not go through
-	// the service is in none either: it is real money but no tier.
+	// ByTier is the settled money by credential tier (C1.16, D140): the
+	// per-call split the by-tier counters are written from. Its keys are the
+	// tiers as the service spells them -- TierB and TierC, "B" and "C", what
+	// charge.tier carries off the answer -- and not the database rules' own
+	// spelling, which is lower case (`b`, `c`): internal/budget maps the one
+	// to the other as it writes the leaves, so a reader of this report sees
+	// the spelling the service sent. A tier-A call is Notional and is in no
+	// key here, and a call that did not go through the service is in none
+	// either: it is real money but no tier.
 	ByTier        map[string]pricing.Micros
 	ByModel       map[string]pricing.Micros // by serving model
 	ByRoute       map[string]pricing.Micros // by provider route (Claude calls have none)
