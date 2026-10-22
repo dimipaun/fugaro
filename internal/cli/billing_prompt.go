@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/billing"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
@@ -94,6 +95,39 @@ const billingConsole = "https://console.cloud.google.com/billing"
 // per run below; the two sources themselves never read it.
 var billingSources billing.Options
 
+// billingProjectNumber is the number of the project this run is setting up, the
+// way Google's own answers name a project (projects/<number>) and the way the
+// quota project in a SERVICE_DISABLED answer is named. D3's first case turns on
+// whether that quota project is this one, and an ID and a number are not the
+// same string, so the two cannot be compared without it.
+//
+// It is read here, and not through the run's own clients, because the wizard's
+// questions all run before it builds one (gatherInputs): the read is the same
+// read-only lookup the installation-name question makes (installationName,
+// init_inputs.go), through the same helpers. It reports false where the number
+// cannot be read — a project this run is *creating* does not exist yet, and
+// friction log #4 is exactly that: a project a run created could not be its own
+// quota project — and the caller then refuses rather than offering to turn an
+// API on in a project it cannot name. Tests replace it.
+var billingProjectNumber = func(ctx context.Context, gcpProject, region string) (uint64, bool) {
+	if gcpProject == "" || region == "" {
+		return 0, false
+	}
+	lc, err := newProjectConfig("pending", gcpProject, region)
+	if err != nil {
+		return 0, false
+	}
+	c, err := newInitClients(ctx, lc)
+	if err != nil {
+		return 0, false
+	}
+	num, err := infra.ProjectNumber(ctx, c, gcpProject)
+	if err != nil {
+		return 0, false
+	}
+	return num, true
+}
+
 // asksBilling is the whole of the question's condition: the run can ask and be
 // answered (a terminal, and none of the flags a script uses), the operator's
 // billing accounts may be listed (canType: the four conditions of Global
@@ -142,14 +176,18 @@ func (r *initRun) askBilling(ctx context.Context) error {
 		accounts, source, err = r.billingAPIOff(ctx, opts, err)
 	}
 	if err != nil {
-		// Neither source answered, and nothing was offered or enabled. Nothing
-		// is recorded, and the one line below is all this says about it: the
-		// refusal itself is not printed — it is the API's own words about a list
-		// this run did not need, and it can name a project, a permission or an
-		// account — and the project stage prints the guided line for an account
-		// it does not know. Without the line, a run that could not read the list
-		// is indistinguishable from a run with no picker at all, and Check 111
-		// records which source answered: neither.
+		// Neither source answered. Nothing is recorded, and the one line below is
+		// all this says about it: the refusal itself is not printed — it is the
+		// API's own words about a list this run did not need, and it can name a
+		// project, a permission or an account — and the project stage prints the
+		// guided line for an account it does not know. Without the line, a run
+		// that could not read the list is indistinguishable from a run with no
+		// picker at all, and Check 111 records which source answered: neither.
+		//
+		// What this does not say is that nothing was enabled: the offer above runs
+		// one, and where the list could not be read even after it, the enable's
+		// own line ("enabled ...," or billingEnableLeft's) has said what happened
+		// to it. The line below is about the list alone.
 		fmt.Fprintf(r.w, "Billing accounts could not be listed (neither the Cloud Billing API nor %s answered).\n", billing.GcloudBin)
 		return nil
 	}
@@ -225,15 +263,21 @@ func (r *initRun) billingAPIOff(ctx context.Context, opts billing.Options, err e
 		return nil, billing.SourceNone, err
 	}
 	quota, project := pluginwire.Printable(off.QuotaProject), pluginwire.Printable(opts.Project)
-	if off.QuotaProject != opts.Project {
-		// D3's second case: the API is off on the credentials' own quota
-		// project, and that is not the project this run is setting up. The run
-		// refuses — it names the exact line to run there, and who to ask, and
-		// enables nothing anywhere. Turning an API on in a project none of the
-		// run's answers named is precisely the surprise F8's refusals exist to
-		// prevent, and this run has no idea what else that project holds.
-		fmt.Fprintf(r.w, "The Cloud Billing API (%s) is disabled on %s, the quota project of your credentials, which is not the project this run is setting up (%s). This run enables nothing there: ask an owner of %s to run:\n  %s\n",
-			billingAPIService, quota, project, quota, off.EnableCommand)
+	// Google names the project it is refusing in a SERVICE_DISABLED answer by
+	// *number* (internal/billing reads it out of the consumer as it is, and
+	// gcpfake's own default is projects/123456789012), and the project this run
+	// is setting up is an *ID*: comparing the two strings directly answers "not
+	// this project" every time, which is what makes the offer below unreachable
+	// and the refusal's claim false. The project's number is read and the two are
+	// compared as numbers, the way internal/infra compares the consumer of the
+	// same answer with the project it asked about (target.consumes) — the ID
+	// spelling passes too, as it does there. num is 0 and known is false where
+	// the number cannot be read, and that is a refusal: a project this run is
+	// creating does not exist yet, and an API turned on in a project the run
+	// cannot name is the surprise F8's refusals exist to prevent.
+	num, known := billingProjectNumber(ctx, opts.Project, r.o.cloud.region)
+	if off.QuotaProject != opts.Project && !(known && off.QuotaProject == strconv.FormatUint(num, 10)) {
+		r.refuseBillingAPI(off, quota, project, known)
 		return nil, billing.SourceNone, err
 	}
 	// D3's first case: the API is off on the project this run is setting up, so
@@ -266,6 +310,29 @@ func (r *initRun) billingAPIOff(ctx context.Context, opts billing.Options, err e
 	// readable, and the second answer is the run's own (an account list that
 	// arrives here is a list the question was answered with).
 	return billing.ListWithFallback(ctx, opts)
+}
+
+// refuseBillingAPI is D3's second case: the API is off on the credentials' quota
+// project, and this run enables nothing anywhere. It names what it read — the
+// quota project, the exact line to run there and who to ask — and turning an API
+// on in a project none of the run's answers named is precisely the surprise F8's
+// refusals exist to prevent: this run has no idea what else that project holds.
+//
+// known says whether the project this run is setting up could be read at all.
+// Where it could not (a project the run is creating does not exist yet, and the
+// number of a project that does not exist cannot be read), the run prints the
+// second wording rather than the first: it has not established that the two
+// projects differ, and a refusal that says so would be the same false statement
+// the number comparison above exists to stop making. The line to run and who to
+// ask are in both.
+func (r *initRun) refuseBillingAPI(off *billing.ErrDisabled, quota, project string, known bool) {
+	if known {
+		fmt.Fprintf(r.w, "The Cloud Billing API (%s) is disabled on %s, the quota project of your credentials, which is not the project this run is setting up (%s). This run enables nothing there: ask an owner of %s to run:\n  %s\n",
+			billingAPIService, quota, project, quota, off.EnableCommand)
+		return
+	}
+	fmt.Fprintf(r.w, "The Cloud Billing API (%s) is disabled on %s, the quota project of your credentials. This run could not read the number of the project it is setting up (%s), so it cannot tell whether %s is that project: it enables nothing there. Ask an owner of %s to run:\n  %s\n",
+		billingAPIService, quota, project, quota, quota, off.EnableCommand)
 }
 
 // billingEnableLeft is the line the offer leaves behind when it was not taken,
