@@ -166,13 +166,6 @@ type Config struct {
 	Policy PolicyReader
 	// State is the cascade's shared state under creds/.
 	State creds.Store
-	// Audit is C1.13's auditor: the one writer of the service's audit lines,
-	// and the seam the service's own redaction is armed at (WithAuditScrub).
-	// Every act of this service that touches a credential is recorded through
-	// it — a mint (C2.1) writes its line here — and an act that cannot be
-	// audited is not made (D143), so NewServer refuses a service without one
-	// rather than building one whose mints could only refuse.
-	Audit *Auditor
 	// Kills reads the operator's two stop switches.
 	Kills KillReader
 	// DB is the one database write the service makes outside the cascade: the
@@ -186,11 +179,14 @@ type Config struct {
 	// probing a credential, which lapses on its own and is never deleted.
 	// *rtdb.Client is one.
 	Probes ProbeLeases
-	// AuditLog is where the service's audited acts are written (C1.13): the
-	// probe today (C1.12), and every act the service audits as the rest of this
-	// build wires one. The service builds its auditor from it, armed with the
-	// bundle loader's own redaction (NewProbeAuditor), so a credential's value
-	// cannot reach a line: the arming is not a caller's to forget.
+	// AuditLog is where the service's audited acts are written (C1.13): every
+	// line this service writes, the mint's (C2.1) and the probe's (C1.12)
+	// included. There is one writer and one handler — Server.audit is the ONLY
+	// auditor this service holds — so no act of it has a log of its own and an
+	// operator reads one stream. The service builds its auditor from this
+	// handler, armed with the bundle loader's own redaction (NewProbeAuditor),
+	// so a credential's value cannot reach a line: the arming is not a caller's
+	// to forget.
 	//
 	// It is a handler and not a logger, deliberately — see NewAuditor: a logger
 	// carries whatever it was built with, and an attr or a group on an audit
@@ -309,13 +305,6 @@ func NewServer(cfg Config) (*Server, error) {
 	if cfg.Kills == nil {
 		return nil, errors.New("credsvc: the service cannot read the stop switches")
 	}
-	if cfg.Audit == nil {
-		// C1.13: an issuance that cannot be audited is not made. A service with
-		// no auditor is a service whose every mint would refuse, so it is
-		// refused here — where an operator sees it at startup — rather than
-		// discovered as a run that halts.
-		return nil, errors.New("credsvc: the service has no auditor, so an issuance it made could not be audited")
-	}
 	if cfg.DB == nil {
 		return nil, errors.New("credsvc: the service cannot remove an ended run's placement")
 	}
@@ -331,7 +320,10 @@ func NewServer(cfg Config) (*Server, error) {
 		// The same refusal for the same reason one step further along: a probe
 		// this service could not audit must not be made (D143), and one that
 		// cannot be audited at all is one that cannot be made at all — which is
-		// again a credential that never comes back.
+		// again a credential that never comes back. It is also the whole of the
+		// service's audit: the auditor built from this handler is the one the
+		// answer path and the mint write through, so a service without it is a
+		// service whose every issuance and every mint would refuse.
 		return nil, errors.New("credsvc: the service has no audit handler, so it cannot record a probe and a backed-off credential could never come back")
 	}
 	if len(cfg.JobAccounts) == 0 {
@@ -390,6 +382,33 @@ func NewServer(cfg Config) (*Server, error) {
 // mint's whole admission is the two identities, the binding and the switch
 // (C2.1, D145), and the policy, the cascade and the shape of a model call are
 // none of its business.
+//
+// What this path answers is recorded (C1.13), one line per call: the issuance
+// the cascade's answer is (cascade.go's answer), and every refusal from the
+// binding on — the pairing of the two identities, the stop switches, the
+// policy, the request's own reading, the bundle, the admissions and the
+// cascade's own refusals. The refusals BEFORE that are not: a route this
+// service does not serve, a request the contract cannot read and an identity it
+// will not verify are answered before there is a run, a repository or a job this
+// service could name, and the audit line's "who" is the identity Verify returned
+// (Identity.Audit) and nothing a caller typed — which is also why the binding
+// refusal, the first one that has a whole identity to name, is the first one
+// recorded.
+//
+// The refusals with no line are the ones above that point, and only those: no
+// refusal this service answers once it has an identity in hand goes
+// unrecorded, the request-shape refusals included — they are answered before
+// the bundle is read, which is why their line names no credential, but they are
+// answered with the identity in hand and the status they carry is the
+// contract's own word for them (wire.go's request_refused, audit.go's
+// validErrorType). So there is no refusal on this path this log cannot say.
+//
+// A line carries the purpose and the credential of the ROUTE the call asked
+// for and not the branch it was answered in, which is why the refusals above
+// the mint's branch (the binding and the stop switches) read both off the URL:
+// a stopped service mints nothing and proxies nothing, and which of the two was
+// asked for is the one thing those refusals know — including that a mint's
+// credential is the App key, the only one that endpoint has.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	if r.Method != http.MethodPost || (r.URL.Path != MessagesPath && r.URL.Path != CountTokensPath && r.URL.Path != MintPath) {
@@ -412,6 +431,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.refuseIdentity(ctx, w, err)
 		return
 	}
+	// The purpose the call asks for and the credential a line for it names, and
+	// what every refusal below is recorded as (C1.13): the route decides both,
+	// and they are read here because every refusal that follows — the binding,
+	// the stop switches and an unreadable switch — is answered before the route
+	// is branched on. A refusal of a mint recorded as "forward" would be the
+	// audit telling an operator that a model call was refused when the run asked
+	// for an installation token, and a mint's line names the App key by the rule
+	// the mint itself keeps (auditMint): the credential the endpoint issues from
+	// is the endpoint's own name for it, not a value read out of the bundle.
+	purpose, credential := PurposeForward, ""
+	if r.URL.Path == MintPath {
+		purpose, credential = PurposeMint, config.GitHubAppKeySecret
+	}
 	ja, bound := s.jobs[id.JobAccount]
 	if !bound || ja.Slug != id.Slug {
 		// Review finding N1: the two identities a call carries are verified
@@ -419,8 +451,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// admission question and it is asked here. A run identity is honoured
 		// only by the job whose repository it belongs to, which is what stops
 		// an admitted job account from presenting a run token of another
-		// repository.
-		s.refuse(w, StatusUnverified, ErrorUnverifiedRunIdentity,
+		// repository. The refusal is recorded like the ones below it: the
+		// identity Verify returned is whole, so the line names the run, the
+		// repository the run belongs to, the job and the account — and the
+		// route's credential and no other, which for a model call is none (the
+		// bundle has not been read) and for a mint is the App key's name.
+		s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnverified, ErrorUnverifiedRunIdentity,
 			"the run identity is not a run of the calling job's repository")
 		return
 	}
@@ -428,7 +464,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// An unreadable switch is not an off switch (budget's own rule), so
 		// the call is refused rather than served.
-		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, "the operator's stop switches could not be read")
+		s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnavailable, ErrorStateUnavailable, "the operator's stop switches could not be read")
 		return
 	}
 	if on {
@@ -437,7 +473,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// issues no credential at all and answers a refusal the run halts on.
 		// It is read before the bundle, so a stopped service reads no
 		// credential at all.
-		s.refuse(w, StatusUnavailable, ErrorStateUnavailable,
+		s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnavailable, ErrorStateUnavailable,
 			"the credentials service is stopped by the "+which+" kill switch")
 		return
 	}
@@ -459,12 +495,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// before the one document that holds every credential is read at all.
 	shared, found, err := s.cfg.Policy.Shared(ctx)
 	if err != nil || !found {
-		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, "the project's policy could not be read")
+		s.refuseCall(ctx, w, id, PurposeForward, "", "", StatusUnavailable, ErrorStateUnavailable, "the project's policy could not be read")
 		return
 	}
 	cl, err := readCall(r, []string{req.RunIDToken, req.JobIDToken})
 	if err != nil {
-		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, err.Error())
+		s.refuseCall(ctx, w, id, PurposeForward, "", "", StatusUnavailable, ErrorStateUnavailable, err.Error())
 		return
 	}
 	if r.URL.Path == MessagesPath {
@@ -483,14 +519,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// out and no credential value is anywhere in it, because none was
 		// touched.
 		if noAllowList := requestNoAllowListRefusal(shared); noAllowList != "" {
-			s.refuse(w, StatusRequestRefused, ErrorRequestRefused, requestRefused+noAllowList)
+			s.refuseCall(ctx, w, id, PurposeForward, "", "", StatusRequestRefused, ErrorRequestRefused, requestRefused+noAllowList)
 			return
 		}
 		refusal, err := s.requestRefusal(shared, cl.body)
 		if err != nil {
 			// The project's own prices could not be read: a state the caller
 			// cannot fix, and never a refusal of what it sent.
-			s.refuse(w, StatusUnavailable, ErrorStateUnavailable, "the project's model prices could not be read")
+			s.refuseCall(ctx, w, id, PurposeForward, "", "", StatusUnavailable, ErrorStateUnavailable, "the project's model prices could not be read")
 			return
 		}
 		if refusal != "" {
@@ -500,7 +536,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// tool type or field it objects to — that is what makes it
 			// actionable — but no credential value is anywhere in it: none was
 			// touched.
-			s.refuse(w, StatusRequestRefused, ErrorRequestRefused, requestRefused+refusal)
+			s.refuseCall(ctx, w, id, PurposeForward, "", "", StatusRequestRefused, ErrorRequestRefused, requestRefused+refusal)
 			return
 		}
 	}
@@ -510,12 +546,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// carrying a value, a key or another package's text (BundleRefusal):
 		// the loader's own error carries the key it is about for the operator,
 		// and the run reading this refusal is not the operator.
-		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, BundleRefusal(err))
+		s.refuseCall(ctx, w, id, PurposeForward, "", "", StatusUnavailable, ErrorStateUnavailable, BundleRefusal(err))
 		return
 	}
 	cands, notAdmitted, err := s.candidates(ctx, id.Slug, ja.Repo, b)
 	if err != nil {
-		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, "the repository's admissions could not be read")
+		s.refuseCall(ctx, w, id, PurposeForward, "", "", StatusUnavailable, ErrorStateUnavailable, "the repository's admissions could not be read")
 		return
 	}
 	sel := &creds.Selector{Store: s.cfg.State, Settings: settingsOf(shared), Now: s.now}

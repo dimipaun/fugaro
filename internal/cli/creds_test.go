@@ -3,8 +3,14 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"maps"
@@ -17,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/gitprov/github"
 )
 
 // This file is C1.25's tests: `fugaro creds set` and `fugaro creds ls`, the
@@ -373,13 +380,14 @@ func TestCredsSetRefusesUnknownKeyAndOversizeDoc(t *testing.T) {
 	f.seed(t, []byte(config.ClaudeOAuthToken+": "+credsValue(t, "existing")+"\n"))
 	value := credsValue(t, "ours")
 
+	// The App key WAS refused here "until C2.1", and this list no longer
+	// holds it: C2.1 landed and credsvc.CredentialKey answers KindGitHubApp
+	// for it, so it is a bundle credential like any other and
+	// TestCredsSetAcceptsTheAppKeyAsABundleEntry is where that is asserted.
+	// What stays refused is a name no bundle key can be, whatever it looks
+	// like.
 	for _, name := range []string{
 		"not-a-credential",
-		// A reserved Secret Manager name that is not a bundle credential: the
-		// App key arrives with C2.1, and until then a name the loader does not
-		// know is refused rather than written into a document that would then
-		// fail closed for the whole service.
-		config.GitHubAppKeySecret,
 		// The namespace is reserved but the suffix is not a name any policy
 		// can admit: a key no account can be named.
 		config.ClaudeOAuthTokenPrefix + strings.Repeat("a", config.MaxClaudeAccountNameLen+1),
@@ -443,6 +451,224 @@ func TestCredsSetRefusesUnknownKeyAndOversizeDoc(t *testing.T) {
 	if got := f.value(t); got != doc.String() {
 		t.Errorf("the document changed: %q", got)
 	}
+}
+
+// The App key is a bundle credential, and it is the ONE entry whose value is
+// not one line: C2.1 made credsvc.CredentialKey answer KindGitHubApp for
+// github-app-key (the service signs its installation-token mints with it), and
+// the mint parses that entry with github.ParsePrivateKey — a PEM, many lines.
+// So `creds set github-app-key` takes the value the way the mint can use it:
+// a real multi-line key, piped in on stdin, written as any other entry (one
+// version, the other entries' bytes kept, the document still one the service's
+// loader accepts) and parsed back out by the mint's own parser. Nothing of it
+// is printed.
+//
+// The value is a throwaway RSA key generated here, never a key of anyone's
+// (Convention 2: no secret-shaped literal).
+func TestCredsSetAcceptsTheAppKeyAsABundleEntry(t *testing.T) {
+	f := credsFixtureFor(t)
+	existing := credsValue(t, "existing")
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	f.seed(t, []byte(config.ClaudeOAuthToken+": "+existing+"\n"))
+
+	// stdin, byte for byte as a key file arrives: the PEM and the one newline
+	// the file ends with, which the command drops and says it dropped.
+	out, errOut, err := executeStdin(t, string(value), "creds", "set", config.GitHubAppKeySecret)
+	if err != nil {
+		t.Fatalf("creds set %s = %v (stderr %q)", config.GitHubAppKeySecret, err, errOut)
+	}
+	if !strings.Contains(errOut, "dropped the value's trailing newline") {
+		t.Errorf("the dropped trailing newline was not said: %q", errOut)
+	}
+	if n := f.writes(); n != 1 {
+		t.Fatalf("%d version(s) written, want 1", n)
+	}
+	doc := f.Latest(f.id)
+	b, err := credsvc.ParseBundle(doc)
+	if err != nil {
+		t.Fatalf("the service's loader refuses the document this command wrote: %v", err)
+	}
+	e, ok := b.AppKey()
+	if !ok {
+		t.Fatal("the document holds no App key entry")
+	}
+	// Stored as the key that came in, minus the one trailing newline: the
+	// document is the loader's, and the loader's value is what the mint reads.
+	if want := strings.TrimSuffix(string(value), "\n"); e.Value() != want {
+		t.Errorf("the stored App key is not the key that was piped in (%d bytes stored, %d piped)", len(e.Value()), len(want))
+	}
+	// And the mint can use it: the service's own parser, on the value the
+	// document holds, gives back the key this test generated. This is the
+	// assertion the whole test is for — a value this command accepts is one
+	// the mint signs with, and the two cannot drift because the parser is the
+	// same function (internal/credsvc/github.go's appKey).
+	got, err := github.ParsePrivateKey([]byte(e.Value()))
+	if err != nil {
+		t.Fatalf("the mint's own parser refuses the App key this command stored: %v", err)
+	}
+	if !got.Equal(key) {
+		t.Error("the mint's parser read a different key than the one piped in")
+	}
+	// The document is one block scalar holding the whole key, not a one-line
+	// value with the PEM's first line in it: every line of the body is there.
+	for _, line := range strings.Split(strings.TrimSuffix(string(value), "\n"), "\n") {
+		if !strings.Contains(string(doc), line) {
+			t.Errorf("the document does not hold the key's line %q", line)
+		}
+	}
+	if e, ok := b.Lookup(config.DefaultClaudeAccount); !ok || e.Value() != existing {
+		t.Errorf("the default account's entry is %v, want the bytes it already had", ok)
+	}
+	// Nothing of the value is printed. The scan is over the key's whole lines
+	// rather than over every 3-byte window the way assertNoValue scans a
+	// fixture value: a base64 body draws from an alphabet with lower-case
+	// letters in it, so a three-byte window of it collides with ordinary
+	// prose and a match would prove nothing. A whole base64 line of a
+	// 2048-bit key is 64 bytes and cannot collide, and the PEM's own two
+	// markers are fixed text a leak of this value would carry.
+	for _, line := range strings.Split(strings.TrimSuffix(string(value), "\n"), "\n") {
+		if strings.Contains(out+errOut, line) {
+			t.Fatalf("a line of the App key was printed: %q", out+errOut)
+		}
+	}
+	if strings.Contains(out+errOut, "PRIVATE KEY") {
+		t.Fatalf("the value's shape was printed: %q", out+errOut)
+	}
+}
+
+// The App key's shape is enforced in both directions: a value that is not a
+// PEM is refused for that name (the rule before this change accepted a single
+// line and left the mint to refuse it later, so the operator learned about it
+// from the service and not from the command), and a multi-line value is still
+// refused for every OTHER name — the one exception is the App key and nothing
+// else. Every refusal names the class and repeats no byte of the value.
+func TestCredsSetRefusesTheWrongShapeForTheKind(t *testing.T) {
+	// secret is the part of the value that must not reach any answer: a
+	// fixture value (whose alphabet is upper-case on purpose, so assertNoValue
+	// can scan it in 3-byte windows) or one whole base64 line of a PEM's body.
+	// The keys are generated once, here, so that the value a case sends and
+	// the line it looks for are the same key's.
+	ec, first, second := ecKeyPEM(t), appKeyPEM(t), appKeyPEM(t)
+	cases := []struct {
+		name   string
+		entry  string
+		value  string
+		secret string
+		want   string
+	}{
+		{
+			// A single line is not a PEM block at all: refused before the
+			// write, by this command, rather than by the mint after it.
+			name:   "a single-line value for the App key",
+			entry:  config.GitHubAppKeySecret,
+			value:  credsValue(t, "oneline"),
+			secret: credsValue(t, "oneline"),
+			want:   "must be exactly one PEM block",
+		},
+		{
+			name:  "an EC key for the App key",
+			entry: config.GitHubAppKeySecret, value: ec, secret: pemBody(t, ec),
+			want: "not a private key the credentials service can use",
+		},
+		{
+			name:  "a PEM with a line of text before it",
+			entry: config.GitHubAppKeySecret, value: "the key I downloaded:\n" + first, secret: pemBody(t, first),
+			want: "must be exactly one PEM block",
+		},
+		{
+			name:  "a PEM with a second block after it",
+			entry: config.GitHubAppKeySecret, value: first + second, secret: pemBody(t, second),
+			want: "must be exactly one PEM block",
+		},
+		{
+			// pem.Decode is what pairs the two marker lines: an END line that
+			// does not repeat its BEGIN line's type is not a block at all, so
+			// the value is refused by the shape rule and not by the parser.
+			name:   "a PEM whose END line does not match its BEGIN line",
+			entry:  config.GitHubAppKeySecret,
+			value:  strings.Replace(first, "-----END RSA PRIVATE KEY-----", "-----END PRIVATE KEY-----", 1),
+			secret: pemBody(t, first),
+			want:   "must be exactly one PEM block",
+		},
+		{
+			name:   "a multi-line value for a model credential",
+			entry:  config.ClaudeOAuthToken,
+			value:  credsValue(t, "first") + "\n" + credsValue(t, "second"),
+			secret: credsValue(t, "first"),
+			want:   "spans several lines",
+		},
+		{
+			name:   "a multi-line value for a named account",
+			entry:  config.ClaudeOAuthTokenPrefix + "alice",
+			value:  credsValue(t, "first") + "\n" + credsValue(t, "second"),
+			secret: credsValue(t, "second"),
+			want:   "spans several lines",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := credsFixtureFor(t)
+			existing := credsValue(t, "existing")
+			f.seed(t, []byte(config.ClaudeOAuthToken+": "+existing+"\n"))
+			out, errOut, err := executeStdin(t, tc.value+"\n", "creds", "set", tc.entry)
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("creds set %s = %v, want a user error", tc.entry, err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal is %q, want it to say %q", err, tc.want)
+			}
+			// The App key comes in on stdin, and every refusal of it says so:
+			// the hidden prompt reads one line and cannot take a paste.
+			if tc.entry == config.GitHubAppKeySecret && !strings.Contains(err.Error(), "< PATH-TO-THE-KEY-FILE") {
+				t.Errorf("the refusal does not say the App key comes in on stdin: %q", err)
+			}
+			// The refusal is about the value's shape and never about its
+			// content, and the class it names is the same one the service's
+			// mint would refuse with.
+			if n := f.writes(); n != 0 {
+				t.Fatalf("%d version(s) written for a refused value", n)
+			}
+			if got := f.value(t); got != config.ClaudeOAuthToken+": "+existing+"\n" {
+				t.Errorf("the document changed: %q", got)
+			}
+			assertNoValue(t, out+errOut+err.Error(), tc.secret)
+		})
+	}
+}
+
+// pemBody is one whole base64 line of a PEM's body: the part of a key that is
+// unique to it, and long enough that finding it in an answer is a leak and not
+// a coincidence of the alphabet.
+func pemBody(t *testing.T, text string) string {
+	t.Helper()
+	for _, line := range strings.Split(text, "\n") {
+		if line != "" && !strings.HasPrefix(line, "-----") {
+			return line
+		}
+	}
+	t.Fatalf("the PEM holds no body line")
+	return ""
+}
+
+// ecKeyPEM is a real EC private key in a PEM, the shape that is one PEM block
+// of base64 and still not the App's key: the mint parses with
+// github.ParsePrivateKey, which is RSA only, so this is refused by the same
+// code that would refuse it at the service.
+func ecKeyPEM(t *testing.T) string {
+	t.Helper()
+	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
 }
 
 // A value in argv is not read, and neither is one in the environment: the

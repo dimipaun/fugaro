@@ -49,6 +49,13 @@ import (
 // ladder is how validate came to report a halt no run makes — the gateway-off
 // one, and then via: auto under a Vertex credential — and a resolution no run
 // takes.
+//
+// A `cascade` run is judged here for two more things, both of them facts about
+// the credentials service rather than about routing, and both refused in
+// bootstrap before anything is opened: the switch the operator publishes (O2)
+// and the model allow-list that service holds every call it carries to (the
+// owner's ruling of 2026-10-22, C1.11). A local run is answered first and
+// separately (D149).
 func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
 	auth := ""
 	if r.cfg != nil {
@@ -78,6 +85,24 @@ func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
 		}
 		if via != config.RouteCascade {
 			return fmt.Errorf("agent.auth is %s and this project's policy does not turn the cascade on: set routing.claude: {via: %s} in the project policy (%s) and publish it (fugaro project policy publish) — a repository asks for the cascade, and only the operator can set it there (O2)", config.AuthCascade, config.RouteCascade, projectpolicy.PathShared())
+		}
+		// The allow-list the credentials service holds this run's calls to (the
+		// owner's ruling of 2026-10-22): the service carries every call of a
+		// cascade run and refuses a project that publishes no
+		// budget.allowed_models (C1.11), so a run of such a project could make
+		// no call at all. It is refused here, in bootstrap, rather than left to
+		// halt on its first forwarded call — and judged on the *node's* list,
+		// which is the only one the service can read: the job environment's
+		// ceiling and the repository's file never reach it (H1). `fugaro
+		// validate` refuses the same file (cascadeProblems), the launch refuses
+		// it before a job starts at all (cascadeLaunchRefusal), and this is the
+		// run's own side of it, for a job that started some other way.
+		//
+		// Reaching here means the switch is on, so the node was found: the arm
+		// above refuses every state without it, including the node that is not
+		// there.
+		if len(pp.Budget.AllowedModels) == 0 {
+			return fmt.Errorf("agent.auth is %s and this project's policy (%s) publishes no budget.allowed_models: the credentials service, which carries every call of a cascade run, refuses a project that publishes none, so this run could make no call — add the allow-list to the project policy and publish it (fugaro project policy publish)", config.AuthCascade, projectpolicy.PathShared())
 		}
 	}
 	if !found || pp == nil || pp.Routing == nil || pp.Routing.Claude == nil {

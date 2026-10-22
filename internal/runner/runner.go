@@ -32,6 +32,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/github"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/logtail"
 	"github.com/dimipaun/fugaro/internal/policy"
@@ -756,11 +758,106 @@ func (r *run) openProvider(ctx context.Context, kind, from string) error {
 	if err != nil {
 		return fmt.Errorf("opening the %s provider: %w", kind, err)
 	}
+	// With the installation's credentials service on, the App's key is the
+	// service's and the provider was opened without one
+	// (providers.FromEnv): this is where the run hands it the service the
+	// installation opted into, so its installation tokens are minted there
+	// and nowhere else (C2.2, D145). The install must happen before the
+	// first GitAuth below, and it is not optional -- a provider that took
+	// ServiceHeldKey refuses every token until one is installed, so a run
+	// that skipped this would stop rather than mint in-job.
+	src, err := r.serviceTokens()
+	if err != nil {
+		return err
+	}
+	if src != nil {
+		if s, ok := p.(gitprov.ServiceTokenSetter); ok {
+			s.UseServiceTokens(src)
+		}
+	}
 	r.provider, r.providerKind, r.providerFrom = p, kind, from
 	if err := r.refreshGitAuth(ctx, bootstrapAuthMinValid); err != nil {
 		return fmt.Errorf("getting git credentials from the %s provider: %w", kind, err)
 	}
 	return nil
+}
+
+// serviceTokens returns the installation's credentials service as the source
+// of this run's installation tokens, or nil when the installation has not
+// opted into one (providers.EnvCredentialsServiceURL unset): with the
+// service off the App's key is the job's own and its provider mints tokens
+// itself, as it always did.
+//
+// A LOCAL run whose environment names a service is refused rather than
+// served, in the words serviceUpstream refuses the same situation in (D149):
+// `fugaro exec` runs on the developer's own credentials and never through
+// the credentials service, and a local run has no run identity for a mint to
+// be verified by, so the only thing the service could do here is refuse the
+// run later, further from the reason.
+//
+// The two identities a mint is verified by are the run's own Firebase ID
+// token (runIDToken) and the job's Google ID token for the service's URL
+// (metadataIDToken), and the job name is what the run reports it is in. The
+// App's ID is the job's own environment value: a number, not a credential.
+//
+// It is built per provider, so each provider has the cache ServiceTokens
+// documents -- one mint per hour per provider, not one per API call.
+func (r *run) serviceTokens() (*github.ServiceTokens, error) {
+	url := envLookup(r.d.Env, providers.EnvCredentialsServiceURL)
+	if url == "" {
+		return nil, nil
+	}
+	if r.d.Local {
+		return nil, fmt.Errorf("this is a local run (%s) and its environment names a credentials service in %s: %s runs on the developer's own credentials and never through the credentials service (D149), and a local run has no run identity for a mint to be verified by. Unset %s to use the credentials this environment holds, or run this as a job", execName, providers.EnvCredentialsServiceURL, execName, providers.EnvCredentialsServiceURL)
+	}
+	// The job name is a claim the service holds to its own rule and decides
+	// nothing from (C1.10), and a run that cannot name its job is a refusal
+	// there rather than a call that named something else: a jobName failure
+	// is reported as no job at all, which the service refuses.
+	job, err := r.jobName()
+	if err != nil {
+		job = ""
+	}
+	return &github.ServiceTokens{
+		URL:   url,
+		AppID: envLookup(r.d.Env, providers.EnvGitHubAppID),
+		IDToken: func(ctx context.Context) (string, error) {
+			return metadataIDToken(ctx, r.d.Env, url)
+		},
+		RunIDToken: r.runIDToken,
+		Job:        job,
+		Now:        r.d.Now,
+	}, nil
+}
+
+// runIDToken is the run's own Firebase ID token: the identity the budget
+// backend admitted the run by, which is what the credentials service
+// verifies a mint with (C1.10). It is the session's token as the run has it
+// now, and never a copy taken once -- the session refreshes it under the run.
+//
+// The session that admitted the run is the budget session (r.sess), and it
+// does not exist yet when the run's first git credential is fetched: the
+// clone comes before the budget opens, and the policy read is what exchanges
+// the launcher's custom token first (exchangeIdentity), so that read's
+// session is the run's identity until the budget session takes over. Both
+// are the same identity -- the claim check of the second exchange is the
+// first's own -- so which one answers is a question of what exists, not of
+// which the service trusts.
+//
+// An empty answer is not a fallback: a run with neither session cannot be
+// verified by the service, and ServiceTokens refuses rather than calling
+// under the job's identity alone.
+func (r *run) runIDToken() string {
+	r.mu.Lock()
+	sess, tok := r.sess, r.ident.tok
+	r.mu.Unlock()
+	if sess != nil {
+		return sess.IDToken()()
+	}
+	if tok != nil {
+		return tok.Token()
+	}
+	return ""
 }
 
 // refreshGitAuth gets git credentials valid for at least minValid and puts

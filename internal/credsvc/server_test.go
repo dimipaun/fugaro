@@ -574,18 +574,12 @@ func newSvcWith(t *testing.T, mutate func(*svc, *Config)) *svc {
 		logs:   &logBuf{},
 		audit:  &logBuf{},
 	}
-	auditor, err := NewAuditor(slog.NewJSONHandler(s.audit, nil),
-		WithAuditScrub(s.fixtureScrub()))
-	if err != nil {
-		t.Fatalf("NewAuditor: %v", err)
-	}
 	cfg := Config{
 		Auth:    f.auth,
 		Bundles: &BundleLoader{Source: s.src, Now: func() time.Time { return f.now }},
 		Policy:  s.policy,
 		State:   s.state,
 		Kills:   s.kills,
-		Audit:   auditor,
 		JobAccounts: []JobAccount{
 			{Email: testJobSA, Slug: f.slug, Repo: testRepo},
 			{Email: testOtherSA, Slug: testSlug(t, testOtherRepoPath), Repo: testOtherRepo},
@@ -597,9 +591,14 @@ func newSvcWith(t *testing.T, mutate func(*svc, *Config)) *svc {
 		Probes: s.probes,
 		// The audit lines are written as the JSON objects they are (C1.13), so
 		// a test that reads one reads it the way an operator's tooling does.
-		// They go to the same buffer as the service's own lines: the probe's
-		// tests take a buffer of their own where they need to read them apart.
-		AuditLog: slog.NewJSONHandler(s.logs, nil),
+		// They go to the fixture's own audit buffer and NOT to the service's
+		// log: the auditor the service builds — for its probe, its answer path
+		// and its mint alike, because the service has one auditor and this is
+		// the handler it is built on — writes to this handler, and a test that
+		// asserts what the service's own logger holds must not be reading audit
+		// lines in it. A test that wants the two apart takes a buffer of its
+		// own (probeSvc, auditSvc).
+		AuditLog: slog.NewJSONHandler(s.audit, nil),
 	}
 	if mutate != nil {
 		mutate(s, &cfg)
@@ -617,36 +616,6 @@ func newSvcWith(t *testing.T, mutate func(*svc, *Config)) *svc {
 // credsRun is the run this fixture's calls are made for, as creds names it:
 // the slug the run token carries and the run id it carries.
 func (s *svc) credsRun() creds.Run { return creds.Run{Slug: s.slug, ID: s.run} }
-
-// fixtureScrub is the service's own redaction as C1.11's loader arms the real
-// one: it removes the values the fixture's own bundle documents hold, so a
-// value that reached an audit line would be replaced rather than written, and
-// a test that finds one has found a leak the redaction did not catch.
-//
-// It reads the documents through the source at call time rather than at
-// fixture time, so the tests that swap the bundle — the App key's own tests,
-// which hand it a document holding a private key — are scrubbed for what they
-// swapped in. The documents are parsed with the loader itself (ParseBundle), so
-// the values are the ones the service would hold and not a second reading of
-// the same text; a document the loader refuses contributes nothing, which is
-// right, because a value in a document the service will not read is a value it
-// never holds.
-func (s *svc) fixtureScrub() func(string) string {
-	return func(in string) string {
-		for _, doc := range s.src.docs {
-			b, err := ParseBundle(doc)
-			if err != nil {
-				continue
-			}
-			for _, e := range b.Entries() {
-				if v := e.Value(); v != "" {
-					in = strings.ReplaceAll(in, v, "[redacted]")
-				}
-			}
-		}
-		return in
-	}
-}
 
 // post sends one call to the service as the fixture's run: a job token in
 // Authorization, the run identity in its own header, and the job name the run

@@ -418,6 +418,34 @@ func TestMintForOwnRepositoryOnly(t *testing.T) {
 		if n := gh.count(); n != 0 {
 			t.Errorf("GitHub saw %d requests for a run of another repository, want none", n)
 		}
+		// And the refusal is recorded (C1.13): the binding is asked after the
+		// identity is verified, so the whole identity is known when the call is
+		// refused — the run, the repository the RUN belongs to, the job and the
+		// account — and the line is the mint the run asked for, because that is
+		// the route it called. A mint's line always names the App key, which is
+		// the credential a mint issues from and the only one this endpoint has
+		// (auditMint), whether or not the bundle was read: the name is the
+		// endpoint's, not a value read out of anything.
+		lines := mintAuditLines(t, s)
+		if len(lines) != 1 {
+			t.Fatalf("the refused mint wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+		}
+		line := lines[0]
+		checkAuditShape(t, line)
+		for field, want := range map[string]any{
+			"purpose":    PurposeMint,
+			"credential": config.GitHubAppKeySecret,
+			"status":     ErrorUnverifiedRunIdentity,
+			"run":        s.run,
+			"repository": otherSlug,
+			"job":        s.job,
+			"caller":     testJobSA,
+			"tier":       "",
+		} {
+			if got := line[field]; got != want {
+				t.Errorf("the refused mint's audit line %s = %v, want %q", field, got, want)
+			}
+		}
 	})
 
 	t.Run("the repository is the binding's, not the caller's", func(t *testing.T) {
@@ -626,11 +654,11 @@ func TestMintRefusesWhenItCannotBeAudited(t *testing.T) {
 		{name: "a log that does not record the level", handler: &levelOffHandler{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			auditor, err := NewAuditor(tc.handler, armed())
-			if err != nil {
-				t.Fatalf("NewAuditor: %v", err)
-			}
-			s, gh := mintSvc(t, func(_ *svc, cfg *Config) { cfg.Audit = auditor })
+			// The handler is handed to the SERVICE and not to an auditor built
+			// here: the mint writes through the auditor the service builds for
+			// every line it writes (NewServer's NewProbeAuditor), so a handler
+			// the service cannot write through is one the mint cannot either.
+			s, gh := mintSvc(t, func(_ *svc, cfg *Config) { cfg.AuditLog = tc.handler })
 			resp, body := s.mintCall(t, mintBody(testAppID))
 			if resp.StatusCode != StatusUnavailable {
 				t.Fatalf("the answer is %d, want %d: a token this service could not audit is handed to nobody", resp.StatusCode, StatusUnavailable)
@@ -658,11 +686,9 @@ func TestMintRefusesWhenItCannotBeAudited(t *testing.T) {
 	// The other half: a refused mint is still refused, and the audit failure is
 	// on the service's log rather than in the run's answer.
 	t.Run("a refusal is still refused", func(t *testing.T) {
-		auditor, err := NewAuditor(&recordHandler{err: errors.New("the log is not recording")}, armed())
-		if err != nil {
-			t.Fatalf("NewAuditor: %v", err)
-		}
-		s, gh := mintSvc(t, func(_ *svc, cfg *Config) { cfg.Audit = auditor })
+		s, gh := mintSvc(t, func(_ *svc, cfg *Config) {
+			cfg.AuditLog = &recordHandler{err: errors.New("the log is not recording")}
+		})
 		resp, body := s.mintCall(t, mintBody("not-a-number"))
 		if resp.StatusCode != StatusUnavailable {
 			t.Fatalf("the answer is %d, want %d", resp.StatusCode, StatusUnavailable)
@@ -674,6 +700,123 @@ func TestMintRefusesWhenItCannotBeAudited(t *testing.T) {
 			t.Errorf("GitHub saw %d requests for a body this service cannot read, want none", n)
 		}
 	})
+}
+
+// TestEveryMintLineNamesTheAppKey is the naming rule of a mint's line, and it
+// is one rule and not a rule per stage: EVERY line this endpoint writes names
+// the App key (auditMint). The name is this endpoint's own — the credential an
+// installation token is issued from — and not something read out of the bundle,
+// so it is the same whether the refusal was taken before the bundle was read or
+// after it, and it is never empty. Which credential answered is what an operator
+// audits a mint by, and a line that named none would be a mint they cannot
+// account for.
+//
+// The stages below are the two sides of the bundle read (a body this endpoint
+// cannot read, the operator's stop switch; then a bundle with no App key in it),
+// and the binding refusal and the issuance are pinned beside the calls they
+// belong to (TestMintForOwnRepositoryOnly, TestMintIsStoppedByTheKillSwitch,
+// TestMintAudited).
+func TestEveryMintLineNamesTheAppKey(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*svc, *Config)
+		body   string
+	}{
+		{
+			name: "a body this endpoint cannot read, before the bundle",
+			body: mintBody("not-a-number"),
+		},
+		{
+			name:   "the operator's stop switch, before the bundle",
+			mutate: func(s *svc, _ *Config) { s.kills.repos[s.slug] = true },
+			body:   mintBody(testAppID),
+		},
+		{
+			name: "a bundle with no App key, after the bundle",
+			mutate: func(s *svc, _ *Config) {
+				s.src.docs = [][]byte{testBundleDoc(t)}
+			},
+			body: mintBody(testAppID),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := mintSvc(t, tc.mutate)
+			resp, body := s.mintCall(t, tc.body)
+			if resp.StatusCode != StatusUnavailable {
+				t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+			}
+			lines := mintAuditLines(t, s)
+			if len(lines) != 1 {
+				t.Fatalf("the refused mint wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+			}
+			line := lines[0]
+			checkAuditShape(t, line)
+			if got := line["credential"]; got != config.GitHubAppKeySecret {
+				t.Errorf("the mint's audit line names credential %v, want the App key's name %q", got, config.GitHubAppKeySecret)
+			}
+			if got := line["tier"]; got != "" {
+				t.Errorf("the mint's audit line carries tier %v, and the App key has none", got)
+			}
+			if got := line["purpose"]; got != PurposeMint {
+				t.Errorf("the mint's audit line carries purpose %v, want %q", got, PurposeMint)
+			}
+		})
+	}
+}
+
+// TestTheRefusalOfAnUnauditedMintIsAudited: the mint twin of the answer path's
+// test of the same name. A mint whose issuance line could not be written is
+// refused — the token reaches nobody (D143) — and that refusal is a refusal of
+// this endpoint after admission like any other, so it is recorded through
+// refuseMint: one line, purpose mint, the App key's name, the refusal's class
+// state_unavailable.
+//
+// The handler fails the FIRST line it is handed and records the rest, which is
+// the only way to see it: a handler that fails every write leaves the refusal
+// nothing to be written with either, and that half is
+// TestMintRefusesWhenItCannotBeAudited's.
+func TestTheRefusalOfAnUnauditedMintIsAudited(t *testing.T) {
+	failed := false
+	mintLog := &logBuf{}
+	s, gh := mintSvc(t, func(_ *svc, cfg *Config) {
+		cfg.AuditLog = &failFirstHandler{inner: slog.NewJSONHandler(mintLog, nil), failed: &failed}
+	})
+	resp, body := s.mintCall(t, mintBody(testAppID))
+	if resp.StatusCode != StatusUnavailable {
+		t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+	}
+	got := refusal(t, resp.StatusCode, body)
+	if got.Error != ErrorStateUnavailable || !strings.Contains(got.Message, ErrMintUnaudited.Error()) {
+		t.Errorf("the refusal is %+v, want state_unavailable and the unaudited class", got)
+	}
+	if n := gh.count(); n != 2 {
+		t.Errorf("GitHub saw %d requests, want the lookup and the mint: the token was minted and then withheld", n)
+	}
+	// The token reaches nothing the run or an operator can read, and the
+	// refusal the run got is the refusal this endpoint always answers.
+	if strings.Contains(string(body), gh.token) || strings.Contains(s.logs.String(), gh.token) {
+		t.Fatal("the token was handed out by a mint that could not be audited")
+	}
+	lines := parseAuditLines(t, mintLog.String())
+	if len(lines) != 1 {
+		t.Fatalf("the refused mint wrote %d audit lines, want exactly 1 (the refusal's): %v", len(lines), lines)
+	}
+	line := lines[0]
+	checkAuditShape(t, line)
+	for field, want := range map[string]any{
+		"purpose":    PurposeMint,
+		"credential": config.GitHubAppKeySecret,
+		"status":     ErrorStateUnavailable,
+		"run":        s.run,
+		"repository": s.slug,
+		"job":        s.job,
+		"caller":     testJobSA,
+		"tier":       "",
+	} {
+		if got := line[field]; got != want {
+			t.Errorf("the refusal's audit line %s = %v, want %q", field, got, want)
+		}
+	}
 }
 
 // levelOffHandler is a handler that records nothing: Enabled is false for every
@@ -912,7 +1055,17 @@ func TestMintRelaysNoGitHubTextAndHaltsTheRun(t *testing.T) {
 // installation token included. The run halts on the refusal, as it does for a
 // model call.
 func TestMintIsStoppedByTheKillSwitch(t *testing.T) {
-	s, gh := mintSvc(t, func(s *svc, _ *Config) { s.kills.global = true })
+	// The audit lines go to a buffer of their own, which is the handler the
+	// SERVICE is configured with (AuditLog): the mint has no sink of its own
+	// (auditMint), so a line for this call that the service's one auditor did
+	// not write would be a line this test does not find — and the fixture's
+	// default buffer, which nothing is writing through any more, must stay
+	// empty for this call.
+	mintLog := &logBuf{}
+	s, gh := mintSvc(t, func(s *svc, cfg *Config) {
+		s.kills.global = true
+		cfg.AuditLog = slog.NewJSONHandler(mintLog, nil)
+	})
 	resp, body := s.mintCall(t, mintBody(testAppID))
 	if resp.StatusCode != StatusUnavailable {
 		t.Fatalf("the answer is %d, want %d", resp.StatusCode, StatusUnavailable)
@@ -922,6 +1075,39 @@ func TestMintIsStoppedByTheKillSwitch(t *testing.T) {
 	}
 	if n := gh.count(); n != 0 {
 		t.Errorf("GitHub saw %d requests with the kill switch on, want none", n)
+	}
+	// And the refusal is recorded as what the run asked for: one line, purpose
+	// "mint". The stop switches are read before the route is branched on
+	// (server.go), so a purpose taken from the branch would be "forward" here
+	// and the audit would tell an operator that a model call was refused when
+	// the run asked for an installation token.
+	lines := auditLines(t, mintLog)
+	if len(lines) != 1 {
+		t.Fatalf("the stopped mint wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+	}
+	if other := s.audit.String(); other != "" {
+		t.Errorf("the call wrote to a second audit sink, want none: the mint has one writer: %s", other)
+	}
+	line := lines[0]
+	checkAuditShape(t, line)
+	for field, want := range map[string]any{
+		"purpose":    PurposeMint,
+		"status":     ErrorStateUnavailable,
+		"run":        s.run,
+		"repository": s.slug,
+		"job":        s.job,
+		"caller":     testJobSA,
+		// A mint's line always names the App key — the credential this
+		// endpoint issues from and the only one it has (auditMint) — whether
+		// the refusal was taken before the bundle was read (this one) or after
+		// it: the name is the endpoint's own and not something read out of a
+		// bundle or a document.
+		"credential": config.GitHubAppKeySecret,
+		"tier":       "",
+	} {
+		if got := line[field]; got != want {
+			t.Errorf("the stopped mint's audit line %s = %v, want %q", field, got, want)
+		}
 	}
 }
 
@@ -1000,5 +1186,69 @@ func TestTheAppKeyIsNeverACascadeCandidate(t *testing.T) {
 		fakeCred(t, "default"), fakeCred(t, testAccount), fakeCred(t, "paid"),
 	}, got) {
 		t.Errorf("the upstream was called with a credential that is not one of the bundle's model credentials: %q", got)
+	}
+}
+
+// TestTheServiceTokenContractIsTheMints pins the runner's half of the mint to
+// this service's own spelling.
+//
+// The run's mint (internal/gitprov/github's ServiceTokens) is written in a
+// package that cannot import this one -- this one imports it, for
+// MintInstallationToken and RunTokenPermissions -- so the path, the two
+// identity headers and the JSON fields are spelled there a second time. This
+// test is what holds the two spellings together: a change to either side that
+// the other did not follow fails here, which is the only place both are
+// visible.
+func TestTheServiceTokenContractIsTheMints(t *testing.T) {
+	if github.ServiceTokenPath != MintPath {
+		t.Errorf("the run asks for a mint at %q, this service serves %q", github.ServiceTokenPath, MintPath)
+	}
+	if github.ServiceHeaderRunIdentity != HeaderRunIdentity {
+		t.Errorf("the run presents its identity in %q, this service reads %q", github.ServiceHeaderRunIdentity, HeaderRunIdentity)
+	}
+	if github.ServiceHeaderRunJob != HeaderRunJob {
+		t.Errorf("the run reports its job in %q, this service reads %q", github.ServiceHeaderRunJob, HeaderRunJob)
+	}
+	// The body: the runner's request (internal/runner's git_service_internal_test.go
+	// holds the bytes it sends) is this service's own request type, verbatim.
+	body, err := json.Marshal(MintRequest{AppID: "1234"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(body), `{"app_id":"1234"}`; got != want {
+		t.Errorf("a mint's body is %s, want %s -- and the run sends exactly this", got, want)
+	}
+	// The answer: the fields the runner reads (token, expires_at) are the
+	// fields this service writes, spelled the same way. What is read is the
+	// SERVICE's answer, from a real mint call, and not a MintResponse this
+	// test marshalled: a struct built here would carry whatever the test put
+	// in it, so an assertion over it could never fail and would be looking at
+	// nothing. The bundle this call signs with holds the App key, so the bytes
+	// below are the ones a leak would be in.
+	s, _ := mintSvc(t, nil)
+	resp, ans := s.mintCall(t, mintBody("1234"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("a mint was answered %d: %s", resp.StatusCode, ans)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(ans, &fields); err != nil {
+		t.Fatalf("a mint's answer is not one JSON object: %v", err)
+	}
+	for _, name := range []string{"token", "expires_at"} {
+		if fields[name] == nil {
+			t.Errorf("a mint's answer carries no %q, so a run reading one reads nothing: %s", name, ans)
+		}
+	}
+	// The answer is an object of those fields and no credential of its own:
+	// the App key that signed the mint is nowhere in the bytes the service
+	// wrote. The scan is over the whole answer BODY as it came off the wire
+	// and not over the fields above, so a leak into a field this contract does
+	// not enumerate -- a header's value, an extra key, text after the JSON --
+	// is found too. It is for the key's PEM CORE and not the whole PEM,
+	// because the body is JSON and a multi-line value's newlines are escaped
+	// (the trap pemCore's own comment describes; a whole-PEM comparison would
+	// pass without looking at anything).
+	if strings.Contains(string(ans), pemCore(t)) {
+		t.Errorf("a mint's answer carries the App key")
 	}
 }

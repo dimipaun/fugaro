@@ -1881,10 +1881,18 @@ run "credentials_service_on" {
       "anthropic-api-key"  = "fugaro-project-aurora-anthropic-api-key-8c2d5f6a1e9b3074"
     }
     credentials_service = {
-      account_id    = "fugaro-credentials"
-      service       = "fugaro-credentials"
-      image         = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
-      bundle_secret = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
+      url = "https://fugaro-credentials-123456789012.us-east5.run.app"
     }
   }
 
@@ -1970,15 +1978,51 @@ run "credentials_service_on" {
     google_cloud_run_v2_service.credentials[0].template[0].timeout == "3600s")
     error_message = "the service runs as its own account, on the image the variable carries, with the longest timeout Cloud Run allows for a streaming proxy"
   }
+  # The environment is the seven names C1.14's `fugaro credentials serve`
+  # reads and internal/infra/tf's credentialsServiceEnv allows, and it is held
+  # as an exact map: an eighth entry, a missing one, a name the process does
+  # not read, or a value that is not the installation's own fails here. What
+  # the service does with a value (a database URL that is not the Firebase
+  # project's, an audience that is not a URL, a job table that binds nothing)
+  # is refused by the process itself, by name, and is C1.14's tests.
   assert {
     condition = tomap({
       for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.name => e.value
       }) == tomap({
-      FUGARO_PROJECT     = "aurora"
-      FUGARO_GCP_PROJECT = "proj-1234"
-      FUGARO_REGION      = "us-east5"
+      FUGARO_PROJECT                 = "aurora"
+      FUGARO_GCP_PROJECT             = "proj-1234"
+      FUGARO_REGION                  = "us-east5"
+      FUGARO_RTDB_URL                = "https://aurora-fp-default-rtdb.firebaseio.com"
+      FUGARO_FIREBASE_PROJECT        = "aurora-fp"
+      FUGARO_CREDENTIALS_SERVICE_URL = "https://fugaro-credentials-123456789012.us-east5.run.app"
+      FUGARO_JOB_ACCOUNTS            = "[{\"provider\":\"github\",\"repo\":\"acme/webapp\",\"workflow\":\"web\"}]"
     })
-    error_message = "the container's environment is its identity and nothing else: no secret ID, no credential value, and no fourth entry"
+    error_message = "the container's environment is the seven names the service reads and nothing else: no secret ID, no credential value, and no eighth entry"
+  }
+  # The service's own URL is the audience its callers' ID tokens are minted
+  # for, and it is the one entry the module cannot fill on the apply that
+  # CREATES the service: Cloud Run assigns it, and no expression inside this
+  # resource can read its own uri (Terraform refuses a self-referential
+  # block), so the variable carries it and the module's output reads it back
+  # for the apply that follows in the same init stage. Unset, the name carries
+  # the module's unassigned placeholder instead (an .invalid host, which no ID
+  # token is ever minted for) so the first revision starts and admits nobody;
+  # the run below this one is the unset case.
+  # The job table is the one name whose value is a document, and it is the
+  # module's own jsonencode of the triples: the service derives the job
+  # accounts from them (credsvc.JobAccountsFor) rather than reading emails,
+  # because the account's name and the repository's slug are both hashes of
+  # these three fields.
+  assert {
+    condition = jsondecode([
+      for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.value
+      if e.name == "FUGARO_JOB_ACCOUNTS"
+      ][0]) == [{
+      provider = "github"
+      repo     = "acme/webapp"
+      workflow = "web"
+    }]
+    error_message = "the job table must be the variable's triples as JSON, which is what the service decodes (all three fields present, no others)"
   }
   assert {
     condition = (length(google_cloud_run_v2_service.credentials[0].template[0].containers) == 1 &&
@@ -2019,6 +2063,55 @@ run "credentials_service_on" {
   }
 }
 
+# The first apply of an installation that has just opted in: the tfvars carry
+# no credentials_service.url yet, because the URL does not exist until this
+# apply creates the service (and Terraform refuses a resource that reads its
+# own uri). The audience must still be a name the service takes, and a value
+# no caller's ID token can carry — the placeholder is under the reserved
+# .invalid TLD, so the first revision starts, is healthy, and admits nobody
+# until the init stage reads the real URL back from this module's output and
+# applies again. An empty value here would be the deadlock the local's comment
+# describes; a run.app-shaped guess would be a service that trusts a token
+# minted for someone else's.
+run "credentials_service_first_apply_has_no_audience_yet" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
+    }
+  }
+
+  assert {
+    condition = tomap({
+      for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.name => e.value
+    })["FUGARO_CREDENTIALS_SERVICE_URL"] == "https://credentials-service-url-unassigned.invalid"
+    error_message = "with no credentials_service.url the audience is the module's unassigned placeholder, so the first revision starts without admitting a caller rather than failing the apply that would have produced the URL"
+  }
+  assert {
+    condition     = !strcontains(tomap({ for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.name => e.value })["FUGARO_CREDENTIALS_SERVICE_URL"], "run.app")
+    error_message = "the placeholder must not look like a Cloud Run URL: a run.app-shaped audience would be a guess at another service's name"
+  }
+  assert {
+    condition     = length(google_cloud_run_v2_service.credentials[0].template[0].containers[0].env) == 7
+    error_message = "the unset case sets the same seven names, the audience among them: a name the module drops is a service the process refuses by a different message"
+  }
+}
+
 # The image is pinned by digest, and a tag is refused at plan time (C1.18,
 # independent security review M1). Why this is a security rule and not a
 # preference: the service runs as the account that reads every credential in
@@ -2037,10 +2130,17 @@ run "credentials_service_image_must_be_a_digest" {
 
   variables {
     credentials_service = {
-      account_id    = "fugaro-credentials"
-      service       = "fugaro-credentials"
-      image         = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials:latest"
-      bundle_secret = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials:latest"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
     }
   }
 
@@ -2059,10 +2159,175 @@ run "credentials_service_image_must_be_a_whole_digest" {
 
   variables {
     credentials_service = {
-      account_id    = "fugaro-credentials"
-      service       = "fugaro-credentials"
-      image         = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e"
-      bundle_secret = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
+# The four facts the process is configured with, held to their shape at plan
+# time (modules/installation/variables.tf, the second validation). A stale or
+# hand-edited terraform.tfvars.json is what that block exists to stop - the
+# service reads every one of these from its environment and refuses to serve
+# without them, so an installation that planned a bad one would halt every run
+# that reached it (D143) while the plan reported success.
+#
+# The five runs below are the other half of the variable's two image runs
+# above: each states one bad value and requires the plan to refuse it, so the
+# guard cannot be weakened or deleted without a red test. The Go layer refuses
+# the same shapes as they are derived (TestCredentialsRefusesWithoutTheFirebaseFacts),
+# but that is the layer this file's inputs never pass through: a tfvars that
+# was edited by hand, or written by an older fugaro, reaches Terraform without
+# it.
+
+# An empty job table is a service that binds no run to a repository: it admits
+# nobody, which an operator would read as healthy while every run halted.
+run "credentials_service_job_table_must_not_be_empty" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts     = []
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
+# A row with a field missing: the account's name is derived from the workflow
+# and the repository's slug from the provider and the repository, so an empty
+# field is a job whose account cannot be derived at all.
+run "credentials_service_job_row_needs_all_three_fields" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = ""
+      }]
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
+# The Firebase project is a project ID, not a display name and not the Fugaro
+# project: it is the aud and iss a run's identity is verified against, and a
+# revision configured with the wrong one refuses every caller.
+run "credentials_service_firebase_project_must_be_a_project_id" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "Aurora Firebase"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
+# A database URL with a path is not the database: the readers are built on the
+# URL itself, and a path silently reads the wrong tree (history.tf's own rule,
+# restated here rather than trusted to whoever wrote the tfvars).
+run "credentials_service_rtdb_url_must_be_a_whole_url" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com/runs"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
+# The audience, once the stage knows it: a non-empty URL that is not the
+# https://<host> form Cloud Run serves on admits no ID token at all, so it is
+# refused here rather than left to the revision that would silently admit
+# nobody. (An ABSENT url is the other case and is admitted: the first apply
+# writes credentials.tf's unassigned placeholder, run above.)
+run "credentials_service_url_must_be_an_https_host" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
+      url = "http://fugaro-credentials.us-east5.run.app"
     }
   }
 

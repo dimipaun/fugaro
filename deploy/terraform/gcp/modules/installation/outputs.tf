@@ -82,10 +82,11 @@ output "history_job" {
 }
 
 output "credentials_service" {
-  description = "The credentials service's Cloud Run service name and region, or null while the installation has not opted in (D147). A repository root grants each job account roles/run.invoker on it from these, and drops the job's model-secret accessors with it."
+  description = "The credentials service's Cloud Run service name and region, or null while the installation has not opted in (D147). A repository root grants each job account roles/run.invoker on it from these, and drops the job's model-secret accessors with it. url is the service's own URL as Cloud Run assigned it (the resource's uri), which is the audience a caller's Google ID token is minted for: it is what C1.20's stage writes back into var.credentials_service.url, because nothing inside the service resource can read its own uri (credentials.tf)."
   value = var.credentials_service == null ? null : {
     name   = google_cloud_run_v2_service.credentials[0].name
     region = var.region
+    url    = google_cloud_run_v2_service.credentials[0].uri
   }
 }
 

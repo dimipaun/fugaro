@@ -38,8 +38,12 @@ func credentialsStageRig(t *testing.T) *imagesRig {
 	r.src.publish("dimipaun/fugaro-credentials", "1.2.3")
 	r.src.tags["dimipaun/fugaro-credentials:1.2.3-pinned"] = r.src.tags["dimipaun/fugaro-credentials:1.2.3"]
 	// The database the stage reads the marker from: a project config with a
-	// budget backend is what init --firebase writes.
-	r.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, rtdb_url: "+r.db.URL+" }\n")
+	// budget backend is what init --firebase writes. Its firebase_project is
+	// the one the credentials service's own environment carries
+	// (FUGARO_FIREBASE_PROJECT) and its rtdb_url the one FUGARO_RTDB_URL
+	// carries: infra.Credentials takes both from here, because the service
+	// reads the installation's own database and has no default.
+	r.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, firebase_project: "+fpID+", rtdb_url: "+r.db.URL+" }\n")
 	r.db.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion)
 	return r
 }
@@ -104,13 +108,25 @@ func TestInitCredentialsStageRefusedInAgent(t *testing.T) {
 // is in (deploy/terraform/gcp/roots/installation/outputs.tf): the stage
 // reads it back, and the repository roots read the same object from the
 // installation's outputs.
+//
+// The URL is part of it, and it is what the stage's SECOND apply is for
+// (fillAudience): the apply that creates the service cannot know it — Cloud
+// Run assigns it, and Terraform refuses a resource that reads its own uri —
+// so the revision carries the module's unassigned placeholder until this
+// value comes back and the stage applies it.
 func credentialsOutputs(t *testing.T, r *imagesRig) {
 	t.Helper()
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
-		"credentials_service": map[string]any{"name": infra.CredentialsServiceName, "region": "us-east5"},
+		"credentials_service": map[string]any{"name": infra.CredentialsServiceName, "region": "us-east5", "url": credentialsServiceURL},
 	})}
 	r.save(t)
 }
+
+// credentialsServiceURL is the URL the module's output carries in these
+// tests: the shape Cloud Run assigns (the service's name, the project
+// number, the region), which is the audience its callers' ID tokens are
+// minted for.
+const credentialsServiceURL = "https://fugaro-credentials-123456789012.us-east5.run.app"
 
 // --yes never covers the stage. It is registered noYes in initflow's order,
 // so with --yes and no terminal the loop does not even enter the stage: it
@@ -289,10 +305,18 @@ func TestInitCredentialsStageFillsTheDigest(t *testing.T) {
 	if svc["account_id"] != infra.CredentialsAccountID || svc["service"] != infra.CredentialsServiceName {
 		t.Errorf("credentials_service = %v, want the account and service names", svc)
 	}
-	if applies := r.ran(t, "apply"); len(applies) != 2 {
-		// The installation stage's own apply, and this stage's over the same
-		// root with credentials_service now in the tfvars.
-		t.Errorf("applies = %v, want the installation root twice (the installation stage's and this one's)", applies)
+	if applies := r.ran(t, "apply"); len(applies) != 3 {
+		// The installation stage's own apply; this stage's over the same root
+		// with credentials_service now in the tfvars; and the third, which
+		// puts the service's own URL on the revision. The third is
+		// fillAudience's and it is unavoidable: Cloud Run assigns the URL, so
+		// the apply that CREATES the service cannot know the audience its
+		// callers' ID tokens are minted for.
+		t.Errorf("applies = %v, want the installation root three times (the installation stage's, this stage's, and the audience's)", applies)
+	}
+	if svc["url"] != credentialsServiceURL {
+		t.Errorf("credentials_service.url = %v, want %s (the URL the installation's outputs carry): the audience is the service's own URL, never a value this stage composes — a revision whose audience is not its own URL admits no caller",
+			svc["url"], credentialsServiceURL)
 	}
 	if r.arCalls == 0 {
 		t.Error("the digest was written without being read back through the remote repository")
@@ -893,8 +917,15 @@ func TestInitCredentialsStageKeepsTheKeyWhenThePlanFindsNothing(t *testing.T) {
 	r := credentialsStageRig(t)
 	credentialsOutputs(t, r)
 	// The installation root's plan finds nothing to do, which is this branch:
-	// terraform's detailed exit code 0, not 2.
-	r.script["plan@installation"] = map[string]any{"exit": 0}
+	// terraform's detailed exit code 0, not 2. Three plans run in that root
+	// and the fake consumes a scripted list in order: the installation
+	// stage's (nothing to do), this stage's (nothing to do — the empty-plan
+	// branch), and the audience's (fillAudience, which DOES have work: the
+	// tfvars this fixture starts from carry no URL, so this run writes the
+	// output's URL and applies it).
+	r.script["plan@installation"] = []any{
+		map[string]any{"exit": 0}, map[string]any{"exit": 0}, map[string]any{"exit": 2},
+	}
 	r.save(t)
 	typedThroughYes(t)
 	fakeTerminal(t)
@@ -908,6 +939,9 @@ func TestInitCredentialsStageKeepsTheKeyWhenThePlanFindsNothing(t *testing.T) {
 	}
 	if _, ok := r.tfvars(t)["credentials_service"]; !ok {
 		t.Errorf("the stage reported \"No changes\" and took the opt-in out of the tfvars: the installation's state holds the service, so the next plan is that service's destruction, which the bundle container's prevent_destroy refuses:\n%s", s)
+	}
+	if svc, _ := r.tfvars(t)["credentials_service"].(map[string]any); svc["url"] != credentialsServiceURL {
+		t.Errorf("the empty-plan run left the audience unset (%v): a service whose plan finds nothing to do is the one that already exists, and the placeholder the module writes without a URL admits no caller", svc["url"])
 	}
 }
 

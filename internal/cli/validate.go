@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 )
 
@@ -393,7 +394,12 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 // cascadeProblems are the rules a `agent.auth: cascade` workflow is held to
 // here, beyond the file's own (config.Validate's auth list, whose
 // followup.allow_public refusal is the file's own business): the gateway its
-// calls are made by, and O2 — the project policy's switch.
+// calls are made by, O2 — the project policy's switch — and the model
+// allow-list the credentials service holds every call it carries to (the
+// owner's ruling of 2026-10-22). The last two are facts about the *published
+// policy node* rather than about the file, and each is judged on every surface
+// the cascade is judged on: here, at the launch (cascadeLaunchRefusal) and in
+// the run's own bootstrap (runner's applyRouting).
 //
 // The mode the gateway rule is judged over is the run's effective one: the
 // ceiling this file's project config builds, the published policy node's mode
@@ -496,6 +502,23 @@ func cascadeProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 		refuse("this project has published no policy")
 	case p.Routing == nil || p.Routing.Claude == nil || p.Routing.Claude.ViaValue() != config.RouteCascade:
 		refuse("this project's published policy does not turn the cascade on")
+	case len(p.Budget.AllowedModels) == 0:
+		// The allow-list the credentials service holds every call it carries to
+		// (the owner's ruling of 2026-10-22, C1.11): the service refuses a
+		// project that publishes none, so no run of this file could make a
+		// call — and the node is the only list the service can read, which is
+		// why this is judged on it and not on the file's own budget block or
+		// the installation's ceiling. It is a case of its own in this switch,
+		// after the switch's: a policy that does not turn the cascade on is
+		// answered with the setting to write, which is the first thing its
+		// author has to fix. The launch refuses the same file before a job
+		// starts (cascadeLaunchRefusal) and the run refuses it in bootstrap
+		// (runner's applyRouting); every other cascade rule is judged on all
+		// three surfaces, and this is the one that tells the author before they
+		// push.
+		problems = append(problems, config.Problem{Path: "agent.auth", Message: fmt.Sprintf(
+			"is refused: this project's published policy (%s) publishes no budget.allowed_models, and the credentials service, which carries every call a cascade run makes, refuses a project that publishes none — so no run of this file could make a call. Add budget.allowed_models to the project policy and publish it (fugaro project policy publish)",
+			projectpolicy.PathShared())})
 	}
 	return problems
 }

@@ -49,13 +49,18 @@ package credsvc
 //
 // How the key gets into the bundle is C1.25's half, which the plan's C2.1 file
 // list names (internal/cli/creds.go, the same key through `fugaro creds set`).
-// That file is NOT on this branch — no `creds` command exists here yet — so on
-// this branch the App key has no writer, and an installation whose bundle holds
-// none gets exactly the named refusal below (ErrMintNoAppKey) and never a
-// fallback. What C2.1 owes C1.25 is here and is the shared code that writer
-// reuses: CredentialKey answers the App key's kind, the schema admits the key,
-// and the mint reads it by kind. Nothing else is needed from this side, and a
-// second writer would be the thing to avoid.
+// That writer is on this branch and takes the key the way this file reads it:
+// `fugaro creds set github-app-key` is the ONE entry whose value is not one
+// line, so it accepts exactly one PEM block and parses it with the parser
+// below (github.ParsePrivateKey, the same function appKey calls) — a key the
+// command stores is a key this mint signs with, and the two answers cannot
+// drift. An installation whose bundle holds no key gets exactly the named
+// refusal below (ErrMintNoAppKey) and never a fallback, which is also what a
+// bundle written before this command knew the key's shape holds. What C2.1 owes
+// C1.25 is here and is the shared code that writer reuses: CredentialKey
+// answers the App key's kind, the schema admits the key, and the mint reads it
+// by kind. Nothing else is needed from this side, and a second writer would be
+// the thing to avoid.
 
 import (
 	"context"
@@ -285,9 +290,17 @@ func (s *Server) mint(ctx context.Context, w http.ResponseWriter, r *http.Reques
 	// what "not made" means here is that it reaches nobody: no answer carries
 	// it, no log line and no error does either, and the run halts on
 	// state_unavailable like any other refusal of this endpoint.
+	//
+	// The refusal is answered through refuseMint and not written here, because
+	// it IS a refusal of this endpoint after admission: the act that could not
+	// be recorded is the issuance, and a failure to write one line is no reason
+	// to leave the line an operator does need — the mint that handed out no
+	// token — unwritten. (refuseMint may fail its own line as well; then the
+	// failure is on the service's log twice, which is where an operator looks
+	// for an audit log that is not recording.)
 	if err := s.auditMint(ctx, id, StatusOK); err != nil {
 		s.log.Error("credsvc: the mint's audit line was not written", "error", err)
-		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, ErrMintUnaudited.Error())
+		s.refuseMint(ctx, w, id, ErrMintUnaudited.Error())
 		return
 	}
 	writeMintAnswer(w, MintResponse{Token: token, ExpiresAt: expires, Repository: ja.Repo})
@@ -330,16 +343,24 @@ func (s *Server) refuseMint(ctx context.Context, w http.ResponseWriter, id Ident
 // the error type the wire contract and this file already share — so the status
 // is a word the runner's halt message and the operator's line read alike.
 //
+// The writer is the service's one auditor (Server.audit) and not a second one
+// taken from the configuration: there is one audit log, the service builds the
+// writer from the handler it was configured with (NewServer's NewProbeAuditor),
+// and that writer is armed with the bundle loader's own redaction — so a mint's
+// lines are redacted by the same code and the same values as every other line
+// this service writes, and no caller of this package can hand the mint a writer
+// the arming was forgotten on.
+//
 // Nothing in the event can carry a value: the App key's value and the minted
 // token have no field to be written into, the credential field is the name,
-// and the auditor's own redaction (armed by whoever built it, WithAuditScrub)
-// runs over every field before any rule looks at one.
+// and the auditor's own redaction (armed by the service, WithAuditScrub) runs
+// over every field before any rule looks at one.
 //
 // A returned error means the act was not recorded and the caller must not go
 // on with it — the mint's answer is a refusal in that case, and a refusal's
 // answer is the refusal it already had.
 func (s *Server) auditMint(ctx context.Context, id Identity, status string) error {
-	return s.cfg.Audit.Write(ctx, id.Audit(AuditEvent{
+	return s.audit.Write(ctx, id.Audit(AuditEvent{
 		Credential: config.GitHubAppKeySecret,
 		Purpose:    PurposeMint,
 		Status:     status,
