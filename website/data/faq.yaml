@@ -34,7 +34,8 @@
 # ("Do I need to be on GCP?", the plan's Part 2 step 3), and they are deliberately the ones the
 # repository can answer: what Fugaro is, where the code runs, whether a reader has to be on
 # GCP, what a run costs and what stops it, what a failed run leaves behind, what a run can
-# never change, and what the security model does not promise. The four spec sentences the product cannot back today --
+# never change, and what the security model does not promise. The four spec sentences the
+# product cannot back today --
 # console downloads (D95), Windows/WSL (D94), the "~2 h" duration claim and the ballpark
 # ranges (D96, D97) -- are not here, and no answer mentions a duration, a platform the
 # build does not produce or a download that does not exist (F50, D102).

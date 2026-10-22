@@ -168,17 +168,20 @@ const CLAIM_WHY =
  * than the site's own copy, and a quotation of a document is not a page's own claim.
  *
  * The first three entries are the owner's list, and the fourth is D248's word: `disposable` is
- * refused for that decision's reason rather than as a word in general — the site may say a
- * container is thrown away, and what it may not say is that a project is. Each pattern is
- * written so that the entries do not overlap: "no real alternative" is refused as itself, and
- * "no alternative" is refused with the one word a rewrite would put between them, so a page
- * that says either is named once.
+ * refused for that decision's reason rather than as a word in general — a container that does
+ * not survive the run is what this product is, and the site says so, but what a page may not
+ * say is that a **project** is disposable, because that is the claim `docs/design/` refuses.
+ * So the pattern takes the word in the two orders a page would predicate it of the project in
+ * ("a disposable project", "a project is disposable") and leaves every other sentence alone.
+ * Each pattern is written so that the entries do not overlap: "no real alternative" is refused
+ * as itself, and "no alternative" is refused with the one word a rewrite would put between
+ * them, so a page that says either is named once.
  */
 export const BANNED_FRAMING = [
   { phrase: 'no real alternative', pattern: /\bno real alternative\b/i },
   { phrase: 'no alternative', pattern: /\bno (?:other |serious |viable |genuine |true )?alternative\b/i },
   { phrase: 'the only cloud', pattern: /\bthe only cloud\b/i },
-  { phrase: 'disposable', pattern: /\bdisposable\b/i },
+  { phrase: 'disposable', pattern: /\bdisposable\s+(?:projects?|sandbox(?:es)?)\b|\b(?:projects?|sandbox(?:es)?)\s+(?:is|are|as|being)\s+disposable\b/i },
 ]
 
 /**
@@ -350,9 +353,17 @@ test('the framing D249 asks for is on the Why GCP page, and the phrases it may n
     'faq/index.html': shell('<h1>FAQ</h1><p>There is no real alternative to one project.</p>'),
     'console/index.html': shell('<h1>Console</h1><p>It is the only cloud that offers this.</p>', '<meta name="description" content="a disposable project">'),
     'docs/index.html': shell('<h1>Reference</h1><p>There is no alternative to a disposable project.</p>'),
+    // The other side of the fourth pattern: a run's container is what this product is, and a
+    // page that says so is not refused. A gate that took the word wherever it stood would fail
+    // here, which is what keeps the pattern on the project rather than on the word.
+    'community/index.html': shell('<h1>Community</h1><p>Every run gets a disposable container of its own.</p>'),
   }
   const failures = framingFailures(distOf(t, files))
   assert.equal(failures.length, 3, failures.join('\n'))
+  assert.ok(
+    !failures.some((line) => line.startsWith('community/index.html ')),
+    `the gate refused a page that says a container is disposable, which is what the product is:\n${failures.join('\n')}`,
+  )
   for (const rel of ['faq/index.html', 'console/index.html']) {
     assert.ok(
       failures.some((line) => line.startsWith(`${rel} `)),
@@ -360,7 +371,7 @@ test('the framing D249 asks for is on the Why GCP page, and the phrases it may n
     )
   }
   assert.ok(
-    failures.some((line) => line.startsWith('console/index.html ') && line.includes('"disposable"')),
+    failures.some((line) => line.startsWith('console/index.html ') && line.includes('"disposable project"')),
     `a description that calls a project disposable was not refused:\n${failures.join('\n')}`,
   )
   assert.ok(
@@ -388,7 +399,7 @@ test('the Why GCP page without the framing sentence, or with the brief’s own v
     distOf(t, { 'why-gcp/index.html': shell('<h1>Why GCP</h1><p>No other cloud offers this as one integrated, disposable project.</p>') }),
   )
   assert.ok(
-    brief.some((line) => line.includes('"disposable"')),
+    brief.some((line) => line.includes('"disposable project"')),
     `the brief's own framing sentence was not refused for its word:\n${brief.join('\n')}`,
   )
   assert.ok(

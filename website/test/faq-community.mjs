@@ -836,6 +836,7 @@ test('the FAQ answers the cloud question, and both answers about the cloud reach
 
   const where = entries.find((entry) => entry.id === 'where-it-runs')
   const gcp = entries.find((entry) => entry.id === 'do-i-need-gcp')
+  assert.ok(where, 'website/data/faq.yaml carries no `where-it-runs` entry, which is the answer the brief asks to hand the argument over')
   assert.ok(gcp, 'website/data/faq.yaml carries no `do-i-need-gcp` entry: the brief asks the FAQ the cloud question and the page answers it')
   assert.equal(gcp.question, 'Do I need to be on GCP?', 'the seventh entry is not the brief’s question')
   assert.equal(gcp.more_href, '/why-gcp/', 'the seventh entry does not reach the Why GCP page, which is the page the brief asks it to reach')
@@ -1006,7 +1007,9 @@ test('the Why GCP reader refuses a row the file cannot support, naming it', (t) 
     {
       what: 'a fifth point',
       edit: (text) => text.replace('\nclosing:', "\n  - id: one-more-point\n    text: >-\n      A fifth point the brief does not make.\n    source: docs/backends.md\n    date: 2026-10-22\n\nclosing:"),
-      wanted: /points|fifth|4/,
+      // The reader's own message counts the rows it read, so the case can only pass on it: a
+      // loose pattern would match some other failure's output and hold nothing.
+      wanted: /carries 5 points, and the page renders the brief's four/,
     },
   ]
 
