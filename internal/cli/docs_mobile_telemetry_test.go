@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -274,15 +275,28 @@ func TestTelemetryPlanGateIsPassedAndTheTwoDocumentsAgree(t *testing.T) {
 }
 
 // TestTelemetryPlanNeverCommitsTheNativeConfigFiles: the two files that name
-// the Firebase project are never in the tree, and the plan says how a build
-// gets them instead. This is the one claim in the plan that is about a file
-// that must NOT exist, so it is checked by walking for it rather than by
+// the Firebase project are never *committed*, and the plan says how a build
+// gets them instead. This is the one claim in the plan that is about a file the
+// repository must not hold, so it is checked against git rather than by
 // searching the plan for the sentence - the sentence is the plan's, and the
-// absence is the tree's.
+// committed set is the tree's.
 //
-// Mutation (run and restored): create an empty `mobile/google-services.json`
-// -> fails on the walk. Creating it under `node_modules` does not, and that is
-// deliberate: a build's own copy is not the tree's.
+// The rule is the plan's own (§4.3, part 2): P7.1's JS test "fails if the file
+// is tracked by git, and fails if it is not ignored". This test holds the
+// tracked half, because that is the half this repository can hold today: the
+// ignore half is P7.1's to add (`mobile/.gitignore` carries no entry for either
+// path yet, and the plan says so). Reading mere *existence* instead - which
+// this test did first - is stricter than the rule and false-fails the workflow
+// the plan mandates: D260 and P7.1's `npx expo prebuild` writes a local
+// `mobile/android/app/google-services.json` from the EAS file secret, and a
+// developer running the development build has one on disk. A local copy is not
+// a commit, and the plan's rule is about commits.
+//
+// Mutation (run and restored): `git add -f mobile/google-services.json` on an
+// empty file -> fails on the listing, and the walk over the working tree that
+// this test used to do would NOT have distinguished that from the legitimate
+// untracked copy. `node_modules` is not special-cased any more, because the
+// listing is git's and a vendored copy is not tracked either.
 func TestTelemetryPlanNeverCommitsTheNativeConfigFiles(t *testing.T) {
 	plan := readDoc(t, telemetryPlan)
 	for _, want := range []string{
@@ -295,27 +309,61 @@ func TestTelemetryPlanNeverCommitsTheNativeConfigFiles(t *testing.T) {
 	}
 
 	names := []string{"google-services.json", "GoogleService-Info.plist"}
-	found := map[string]string{}
-	err := filepath.WalkDir("../..", func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			if entry.Name() == ".git" || entry.Name() == "node_modules" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if slices.Contains(names, entry.Name()) {
-			found[entry.Name()] = strings.TrimPrefix(filepath.ToSlash(path), "../../")
-		}
-		return nil
-	})
+	out, err := exec.Command("git", "-C", "../..", "ls-files", "-z").Output()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("git ls-files: %v; this test reads the committed set, so it cannot run without it", err)
 	}
-	for name, path := range found {
-		t.Errorf("%s is in the tree at %s: the plan requires both native config files to be delivered as EAS file secrets and never committed, because they name the Firebase project", name, path)
+	tracked := strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
+	if len(tracked) < 100 {
+		t.Fatalf("git ls-files listed %d files; the repository has thousands, so the listing is not the tree and this test would pass on anything", len(tracked))
+	}
+	for _, path := range tracked {
+		if slices.Contains(names, filepath.Base(path)) {
+			t.Errorf("%s is committed at %s: the plan requires both native config files to be delivered as EAS file secrets and never committed, because they name the Firebase project", filepath.Base(path), path)
+		}
+	}
+}
+
+// TestTelemetryPlanLinksResolve: every relative link in the documents this
+// change edits resolves from the document's own directory. This repository's
+// convention is to resolve the target on disk rather than to look for the
+// path as a substring - docs_mobile_push_test.go does exactly this for the
+// P5.2 entry, and for exactly this reason: a link whose text is right and
+// whose target is wrong reads as correct and is not.
+//
+// It is here because this change got five of them wrong, in the four documents
+// below and in no others: `docs/mobile/README.md` and
+// `docs/mobile/implementation-plan.md` pointed at `../voice-session/`, which
+// lands on the nonexistent `docs/voice-session/` (the file is at
+// `docs/mobile/voice-session/`), the plan pointed at `voice-session/` from
+// `docs/plans/`, and `docs/mobile/design/voice-evaluation-switch.md` pointed at
+// `../plans/`, which lands on `docs/mobile/plans/`. The substring checks above
+// cannot see any of that, because the link's *text* is the right path in all
+// five.
+//
+// Mutation (run and restored): point one of the plan's links back at
+// `voice-session/reconciliation.md` -> fails with "does not resolve from
+// docs/plans/", which is the failure the five real links would have raised.
+func TestTelemetryPlanLinksResolve(t *testing.T) {
+	for _, doc := range []struct{ path, dir string }{
+		{telemetryPlan, "docs/plans"},
+		{telemetryMobileReadme, "docs/mobile"},
+		{telemetryImplPlan, "docs/mobile"},
+		{"docs/mobile/design/voice-evaluation-switch.md", "docs/mobile/design"},
+	} {
+		targets := markdownLinkTargets(readDoc(t, doc.path))
+		if len(targets) == 0 {
+			t.Errorf("%s carries no markdown link at all; the documents this change edits cite each other", doc.path)
+			continue
+		}
+		for _, target := range targets {
+			if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") || strings.HasPrefix(target, "#") {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join("../../", doc.dir, target)); err != nil {
+				t.Errorf("%s links %q, which does not resolve from %s/: a reader who follows it lands on nothing", doc.path, target, doc.dir)
+			}
+		}
 	}
 }
 
@@ -350,5 +398,49 @@ func TestTelemetryPlanNamesTheFlagsItDependsOn(t *testing.T) {
 	}
 	if _, err := os.Stat("../../mobile/src/telemetry"); err == nil {
 		t.Errorf("mobile/src/telemetry exists: the plan's telemetry module is P7.2's and P7.3's, and neither is built")
+	}
+}
+
+// TestTelemetryPlanRecordsTheSecretItemsDebtAsStillOpen: the plan says D259's
+// accepted four-item answer is **recorded and not implementable**, because
+// `SECRET_ITEMS` is an exhaustive allow-list of D111's two items that no task of
+// Phase 7 widens (§4.4, §11). That is a claim about the tree, and it is the kind
+// that goes quietly wrong: the day someone widens the list, the plan's own
+// paragraph becomes false, and the two documents it points at
+// (`secret.test.js`'s "knows the list and nothing else" and
+// `website/test/privacy.mjs`'s `idToken,macKey` assertion) would be the only
+// places that noticed.
+//
+// So the debt is pinned from both ends: the fence is still shut, and the plan
+// still says who owes opening it. **When the widening lands, this test fails and
+// the plan's §4.4 and §11 must be rewritten in the same change** - which is the
+// point, because that change is the one that also has to move the privacy page's
+// paragraph. Nothing here asserts the app's behaviour: the two files are read as
+// text, and the plan is read for the two sentences that state the debt.
+func TestTelemetryPlanRecordsTheSecretItemsDebtAsStillOpen(t *testing.T) {
+	secret := readDoc(t, "mobile/src/accounts/secret.js")
+	if !strings.Contains(secret, "Object.freeze(['idToken', 'macKey'])") {
+		t.Errorf("mobile/src/accounts/secret.js no longer freezes SECRET_ITEMS to ['idToken', 'macKey']: the plan's §4.4 and §11 say the four-item list is not implementable until that list is widened, and no Phase 7 task owns widening it - if the widening has landed, both sections are now wrong and must be rewritten with it")
+	}
+	store := readDoc(t, "mobile/src/accounts/secure-store.js")
+	if !strings.Contains(store, "UNKNOWN_ITEM") {
+		t.Errorf("mobile/src/accounts/secure-store.js no longer refuses an unknown secret item: the plan's §4.4 names that refusal as half of the fence the four-item answer is blocked on")
+	}
+	privacy := readDoc(t, "website/test/privacy.mjs")
+	if !strings.Contains(privacy, "'idToken,macKey'") {
+		t.Errorf("website/test/privacy.mjs no longer asserts SECRET_ITEMS is exactly idToken,macKey: the plan's §4.4 names that assertion as the third place the two-item list is written down, and as the one the widening owes a change to alongside the page")
+	}
+
+	// The plan's paragraphs are wrapped, so both sides are flattened: the claim
+	// is about the sentence, not about where the line broke.
+	plan := flattenDoc(readDoc(t, telemetryPlan))
+	for _, want := range []string{
+		"**So the four-item list is not implementable until `SECRET_ITEMS` is widened**",
+		"**That widening is not a Phase 7 task, and this plan does not pretend it is.**",
+		"**This is the one thing in this plan that is recorded and not implementable**",
+	} {
+		if !strings.Contains(plan, flattenDoc(want)) {
+			t.Errorf("%s does not say %q: D259's accepted answer widens D111 to four items and the fence that blocks it must be named where the widening is recorded", telemetryPlan, want)
+		}
 	}
 }

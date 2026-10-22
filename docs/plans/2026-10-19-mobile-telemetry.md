@@ -139,7 +139,7 @@ documents that took numbers:
 | **D180–D192** | the website redesign (the redesign's own reconciliation says *"Decisions are numbered `D180` onward"*) | proposed |
 | **D193–D197** | the coordinator ([coordinator/reconciliation.md](../coordinator/reconciliation.md) §6) | **answered 2026-10-21** — D196 against its recommendation |
 | **D198–D200** | — | **unwritten**: three numbers, and no document has written a decision in them. **This plan takes none of them**, because it needs eight contiguous numbers and the next one up is spoken for |
-| **D201–D220** | the voice-session work ([voice-session/reconciliation.md](../voice-session/reconciliation.md)) | written; **all twenty open** |
+| **D201–D220** | the voice-session work ([voice-session/reconciliation.md](../mobile/voice-session/reconciliation.md)) | written; **all twenty open** |
 | **D221–D236** | the mobile-auth work ([mobile-auth/reconciliation.md](../mobile-auth/reconciliation.md)) | written |
 | **D237–D252** | the website zoom-diagrams work ([../website/zoom-diagrams/reconciliation.md](../website/zoom-diagrams/reconciliation.md)) | written; **all sixteen answered 2026-10-21**, and **D252 is the highest number written anywhere in `docs/`** |
 | **D253–D260** | **this plan** | **taken by this document, and no decision number is taken twice** |
@@ -202,15 +202,20 @@ documents rather than remembered:
   and a `## Check` section in [gcp-live-checklist.md](../gcp-live-checklist.md), each is
   owner-run, and **none has been run**. **This plan takes none of them** — and the draft on
   **PR #693** did, which is half of why it is replaced rather than merged.
-- **114–118 are numbered by the voice-session work** ([voice-session/reconciliation.md](../voice-session/reconciliation.md),
+- **114–118 are numbered by the voice-session work** ([voice-session/reconciliation.md](../mobile/voice-session/reconciliation.md),
   its **D219**, written and open — no answer of the owner's settles it) **and not written**: the
   register carries no `## Check 114` … `## Check 118` section. 113 overlaps the zoom-diagrams
   plan's written section, which is the older claim and stands, so the voice-session block is
   **114–118** and **this plan takes none of it** either.
-- **119 is proposed by the console-on-Windows work** ([../console-windows/README.md](../console-windows/README.md),
-  its D12(a): *"proposed as **Check 119** and **claimed by nobody**"*) and written by nobody. A
-  proposal is not a reservation — but it is a claim, and taking a proposed number is how two
-  works end up writing the same check.
+- **119 is held by two works, and one of them takes it.** [../rigor-modes/implementation-plan.md](../rigor-modes/implementation-plan.md)
+  **takes** it — *"the next free number is **119**, and this plan takes it"*, its **T8.1** writes
+  the check and its T8.2 runs it — which is a taken claim and not a proposal. The
+  console-on-Windows work ([../console-windows/README.md](../console-windows/README.md)) **proposes**
+  the same number and claims nothing (its D12(a): *"proposed as **Check 119** and **claimed by
+  nobody**"*). Both are claims and neither is written: the register carries no `## Check 119`
+  section. A proposal is not a reservation — but it is a claim, and taking a proposed number is
+  how two works end up writing the same check. **This plan takes neither**, and the stronger
+  claim is named here because reading only the weaker one would understate what 119 is held by.
 
 **So the first free number is 120**, and it is 120 **before and after #667 merges**: 105–109 stay
 reserved, 110 stays claimed, 111–113 stay written and 114–119 stay claimed, so the block does not
@@ -477,6 +482,29 @@ value is written into this repository by that**: this section names the two valu
 and never a value, and nothing here is a secret-shaped literal. **And no task is approved by
 it**: D259's acceptance is a ruling, not a green light — the gate was passed separately, on
 2026-10-22 — and the app still wires **no** Firebase SDK, because P7.1 is unbuilt.
+
+**The second fence, and it is the one D259's acceptance has to open.** `SECRET_SHAPES` is not
+the only list D111's item count is written into. **`SECRET_ITEMS`** — `mobile/src/accounts/secret.js`,
+`Object.freeze(['idToken', 'macKey'])`, whose own comment reads *"The two items of D111, and the
+whole list"* — is an **exhaustive allow-list**, and `isSecretItem` refuses any other name:
+`secure-store.js` refuses the write, the read and the delete of an item not on it
+(`SECURE_STORE_CODES.UNKNOWN_ITEM`), `store.js` refuses the same, `secret.test.js` asserts
+*"isSecretItem knows the list and nothing else"*, and **`website/test/privacy.mjs` fails unless
+the list is exactly `idToken,macKey`**, because the live privacy page describes the phone as
+holding D111's two. **So the four-item list is not implementable until `SECRET_ITEMS` is
+widened**, and the widening is a change to four files rather than a sentence.
+
+**That widening is not a Phase 7 task, and this plan does not pretend it is.** Every task of
+P7.1–P7.5 builds a build, a sentence, a redaction rule or a check; **none writes a
+secure-storage item**, so none of them touches `SECRET_ITEMS`. It is owed by the **first task
+that stores the two new items** — the pairing path, which is where §4.4's second row says they
+arrive — and it is written into §11's open items so that the debt is visible between the
+ruling of 2026-10-19 and the code that would need it, rather than discovered by an implementer
+whose write is refused by a fence no document in this plan named. **What is owed is stated
+precisely**: widen `SECRET_ITEMS`, extend `secret.test.js`'s "knows the list and nothing else"
+case, and change `website/test/privacy.mjs`'s assertion *and the page's own paragraph* together
+— the page and the list are one claim, and moving the list without the page is the failure that
+test exists to catch. **No task of this plan is that change, and no approval covers it.**
 
 ---
 
@@ -1102,6 +1130,15 @@ none** (§13): the owner decides whether one is wanted when the first task lands
   all stay in platform secure storage, and none of them is ever in a settings entry, a fixture,
   a log line or this repository (§4.4); the consent boolean is deliberately **not** one of them
   (§6).
+- **One debt D259's acceptance leaves open, stated here so it is not discovered as a refusal.**
+  `SECRET_ITEMS` — `mobile/src/accounts/secret.js`'s exhaustive allow-list of D111's two items —
+  is **not widened by this plan and by no task of it** (§4.4), because no task of P7.1–P7.5
+  writes a secure-storage item. Until the first task that stores the two new items widens it,
+  **the store refuses them by name**, and `website/test/privacy.mjs`'s assertion that the list
+  is exactly `idToken,macKey` stands. **This is the one thing in this plan that is recorded and
+  not implementable**, and it is recorded rather than left out because an implementer who writes
+  item (3) or (4) and is refused deserves to find the fence named in the document that told them
+  to write it.
 - **No `belong` anywhere.** No fixture, no project, no read.
 - **No change to any existing mobile task's ordering.** Phase 3, Phase 6 and Phase 7 are
   independent, and the voiceless MVP is unaffected (D258).
@@ -1123,8 +1160,9 @@ agent runs any step of any of them.** They are **written by P7.5 and run by the 
 
 **120, 121 and 122 are owner-run, and this plan takes nothing else. 105–109 are reserved and not
 free; 110 is claimed by the orchestrator design; 111, 112 and 113 are written in the register;
-114–118 are the voice-session work's and 119 is proposed by the console-on-Windows work — none of
-those is taken either, and 123 onward is left free.**
+114–118 are the voice-session work's, and 119 is **taken** by the rigor-modes plan (its T8.1) and
+**proposed** by the console-on-Windows work (its D12(a)) — none of those is taken by this plan
+either, and 123 onward is left free.**
 
 ---
 
@@ -1137,7 +1175,7 @@ those is taken either, and 123 onward is left free.**
 | Path | What it is |
 |---|---|
 | `docs/plans/2026-10-19-mobile-telemetry.md` | **This document — the plan, and the only deliverable of the work the brief asks for.** |
-| `internal/cli/docs_mobile_telemetry_test.go` | The pin: this document's own claims — the D-block it takes (D253–D260) and the statement that it is the next free block, the check numbers it takes (120–122), the reserved block it takes none of (105–109) and 110 left alone, the flag names it states exactly, the never-commit rule for the two native config files, and the registration of this plan in `docs/mobile/`'s two documents. It writes no code and asserts no behaviour of an app that does not exist. |
+| `internal/cli/docs_mobile_telemetry_test.go` | The pin, seven tests: this document's own claims — the D-block it takes (D253–D260) and the statement that it is the next free block, the check numbers it takes (120–122), the reserved block it takes none of (105–109) and 110 left alone, the flag names it states exactly, the never-commit rule for the two native config files, the registration of this plan in `docs/mobile/`'s two documents, **that every relative link in the four documents this change edits resolves from its own directory**, and **that `SECRET_ITEMS` is still the two-item list the four-item answer is blocked on**. It writes no code and asserts no behaviour of an app that does not exist: the app-side facts it reads (`mobile/package.json`, `mobile/src/accounts/secret.js`, `mobile/src/accounts/secure-store.js`, `website/test/privacy.mjs`) are read **as text**, and the two it tests for absence are **committed paths**, not files on disk. |
 
 **Edited:**
 
@@ -1150,6 +1188,7 @@ those is taken either, and 123 onward is left free.**
 | `docs/mobile/design/push-notifications.md` | The two sentences that say the phone holds *"exactly two items per account 'in these words and no wider ones'"*, each amended 2026-10-22 with a dated note: the words are D111's and the list they close is now **four**, widened by D259's acceptance and by nothing in that document. |
 | `docs/mobile/design/voice-evaluation-switch.md` | The sentence that quotes Global Constraint 4's *"exactly two credential items per account"*, amended 2026-10-22 with a dated note pointing at the same **four**-item record. |
 | `docs/mobile/functional-spec-reconciliation.md` | The row that cites **D111 / tension (b2)** for pairing-token lifetime and revocation, amended 2026-10-22 with a dated note: the *two items per account* it repeats is now **four** under D259's acceptance. |
+| `docs/rigor-modes/reconciliation.md` | **One census row**, and one number in it: the count of `internal/cli/docs_*_test.go` pins, **53 → 54**, because this change adds the fifty-fourth. The row reproduces its own command (`ls internal/cli/docs_*_test.go \| wc -l`), and `TestDocsRigorModesCensusStatesItsCommands` reads it, so the row moved with the tree rather than being left at a number the tree contradicts. **This row is the reason this document is in this table at all**: it edits a document that is not one of this work's own, and a table that declared only the mobile files would make the walk in `docs_mobile_telemetry_test.go` treat this file as one this plan never touched — the silence that pin exists to refuse. |
 
 **Not touched by this change:** `internal/cli/docs_mobile_plan_test.go` — **and that is the point
 of the approval.** Its Phase 6 pin bans `NOT APPROVED` anywhere in the plan, as a stand-in for
@@ -1175,9 +1214,15 @@ unchanged. That is a judgment call and it is stated
 here rather than hidden: this repository's convention is that a planned document is pinned by a
 Go test (over forty such pins exist, and both the mailbox plan and the push design landed with
 theirs), and a plan whose claims nothing holds is a plan whose numbers can drift silently. The
-new file asserts **nothing about an app** — every assertion is about the documents this change
-edits, the register, and the two native config files' absence. Its four mutations were run and
-are recorded in the file's own header.
+new file asserts **nothing about an app's behaviour** — every assertion is about the documents
+this change edits, the register, the two native config files' committed absence, and the two
+fences the four-item answer is blocked on, each read as text or as a path git lists and never
+run. **Four mutations were run and
+restored**, each recorded in the comment of the test it mutates rather than in a header above
+them: two on the headline test (widening the block to D252, and deleting a row from this
+document's own §13 table), one on the never-committed test (`git add -f` on an empty
+`mobile/google-services.json`), and one on the link test (pointing a link back at the wrong
+prefix — the mistake this change made five times).
 
 ---
 
@@ -1282,7 +1327,8 @@ and may start when this plan lands**; step **7b** of
 takes **D253–D260** — the next free decision block, read from the tree (D252 is the highest
 number written anywhere in `docs/`) — and **checks 120, 121 and 122**, the first free numbers
 after every claim (105–109 are reserved, 110 is claimed, **111–113 are written on `main`**, and
-114–119 are claimed or proposed by other works), leaving **123 onward free**. **PR #693 is
+114–119 are claimed by other works — 119 **taken** by the rigor-modes plan and **proposed** by
+console-on-Windows), leaving **123 onward free**. **PR #693 is
 superseded**: it asked for D193–D200 and checks 111–113, and this document takes the numbers
 that were free at its own merge instead. Cheers: none of the three checks has
 been run. Related: [mobile/README.md](../mobile/README.md) ·
