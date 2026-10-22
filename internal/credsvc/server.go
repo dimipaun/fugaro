@@ -105,15 +105,25 @@ func JobAccountsFor(fugaroProject, gcpProject, provider string, jobs []RepoJob) 
 // SharedJobAccountsFor computes the service accounts of the installation's
 // shared project jobs: one per (profile, provider, account) the policy
 // publishes, derived exactly as internal/infra/projectjobs.go deploys them
-// (gcp.ProjectServiceAccountID over config.ProjectJobAccounts' axis). It is
-// what C1.10's verifier refuses a run in a shared project job with — Global
+// (gcp.ProjectServiceAccountID over config.ProjectJobAccounts' axis, the two
+// functions the deployer, the launcher and the runner share). It is what
+// C1.10's verifier refuses a run in a shared project job with — Global
 // Constraint 6's gate, which holds until C3.9 — and it is computed from the
 // policy rather than from a list, so the accounts the service refuses are the
 // accounts the deployer created and not a second list that can drift.
+// TestSharedJobAccountsAreTheNamesProjectJobsDeploys builds one installation
+// both ways and requires the two sets to be equal, which is what makes the
+// claim a test rather than a comment.
+//
+// The account's ID is the profile's own triple and holds no Fugaro project
+// name: a project job's service account is named after the job it runs, which
+// is what makes it the signal a caller cannot forge (the account a run is in
+// is the account Cloud Run minted its ID token for). The email's domain is the
+// GCP project, which is the only place the installation's name enters.
 //
 // A policy that publishes no profile yields nothing: an installation with no
 // shared job has no account to refuse.
-func SharedJobAccountsFor(p *projectpolicy.Policy, fugaroProject, gcpProject string) []string {
+func SharedJobAccountsFor(p *projectpolicy.Policy, gcpProject string) []string {
 	if p == nil {
 		return nil
 	}
@@ -128,7 +138,7 @@ func SharedJobAccountsFor(p *projectpolicy.Policy, fugaroProject, gcpProject str
 			continue
 		}
 		for _, account := range config.ProjectJobAccounts(pr.JobProfile) {
-			out = append(out, serviceAccountEmail(gcp.ProjectServiceAccountID(fugaroProject, pr.Provider, account), gcpProject))
+			out = append(out, serviceAccountEmail(gcp.ProjectServiceAccountID(name, pr.Provider, account), gcpProject))
 		}
 	}
 	slices.Sort(out)
