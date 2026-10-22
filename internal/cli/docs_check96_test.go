@@ -1,9 +1,14 @@
 package cli
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
+
+// pipeIntoPythonHeredocRE matches a pipe into `python3 -` followed by a heredoc
+// opener: the one shape whose stdin the heredoc wins.
+var pipeIntoPythonHeredocRE = regexp.MustCompile(`\|\s*python3?\s+(-\s+)?<<`)
 
 // Check 96 — GitHub tokens through the service (Task C2.4, D145, F34) — as the
 // register writes it.
@@ -75,6 +80,10 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 		// Secret hygiene: a check that mints credentials has to say where they go.
 		"greps its own text for `ghs_`",
 		"**Never paste a token of any kind",
+		// The job's spec is read from the file the guard wrote, by path: a heredoc takes
+		// stdin, so the `printf … | python3 - <<'PY'` this step first used handed python the
+		// script and an empty stdin, and the step printed none of its facts.
+		"python3 - \"$W/job.json\" <<'PY'",
 		// And the Restore, whose final assertion is that nothing survives it.
 		"**Restore.**",
 		"the read-back count (**`0`**",
@@ -156,4 +165,34 @@ func check96Section(t *testing.T) string {
 		t.Fatalf("docs/gcp-live-checklist.md's Check 96 section is %d bytes: this test's markers have moved, and a section this short is not the check", len(rest))
 	}
 	return rest
+}
+
+// TestDocsChecklistHasNoPipeIntoPythonHeredoc is the register-wide rule behind the
+// Check 96 defect this test file was extended for: bash gives a heredoc
+// precedence over a pipe, so `printf '%s' "$JSON" | python3 - <<'PY'` runs the
+// script with the pipe attached to nothing — python's stdin is the heredoc, and
+// `json.load(sys.stdin)` reads EOF and dies. `bash -n` parses it happily (the
+// block is valid shell), and the guard block sets only `set -u`, so the step
+// would have printed none of the facts it exists for and the run would have
+// continued past the one read that decides whether the release landed.
+//
+// It is named `TestDocsChecklist…` and not `TestChecklist…` on purpose: the
+// `TestChecklist…` family is the per-check tests, enumerated by name and count
+// in docs/plans/2026-10-19-compute-backend.md's open item 9 and held to the tree
+// by TestDocsComputeBackendNamesEveryChecklistTest. This is a rule over the
+// register's shell, not a check, so it does not join that family and does not
+// make a foreign plan's enumeration wrong.
+//
+// The rule is stated over the whole register rather than over Check 96, because
+// the shape is invisible: any step that pipes a document into a python heredoc
+// reads nothing. A heredoc that takes its input as an argv path — the form every
+// other heredoc in this file uses — is what to write instead.
+//
+// Mutation (run and restored): Check 96's step 1 put back to
+// `printf '%s' "$JOB_JSON" | python3 - <<'PY'` → FAIL.
+func TestDocsChecklistHasNoPipeIntoPythonHeredoc(t *testing.T) {
+	register := readDoc(t, "docs/gcp-live-checklist.md")
+	if m := pipeIntoPythonHeredocRE.FindString(register); m != "" {
+		t.Errorf("docs/gcp-live-checklist.md pipes a document into a python heredoc (%q): bash gives the heredoc stdin, so the script reads EOF instead of the document and the step prints none of its facts. Pass the document as a file or an argv argument (the form the register's other heredocs use), or use `python3 -c`.", m)
+	}
 }
