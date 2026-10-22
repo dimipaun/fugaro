@@ -1,7 +1,7 @@
 // website/test/faq-community.mjs — the FAQ and the community page (website plan, W1.10).
 //
 // The two pages this file checks are the site's document pages, and the rules they answer to
-// are about what a page may *say* — and, for the community page, how it is *set*. Six of them
+// are about what a page may *say* — and, for the community page, how it is *set*. Eight of them
 // are checked here, and each one reads its source rather than the page's own copy of it
 // (Review Focus: "the test must read the source, not the generator's own output"):
 //
@@ -47,6 +47,18 @@
 //      edit drops by accident: a page whose title falls back to the element default still
 //      passes every other gate in this repository, because every one of them is about what
 //      the page says. Each rule below has a case that plants the defect it refuses.
+//   7. **The FAQ answers the cloud question, and both answers about the cloud reach the Why
+//      GCP page** (the owner's brief of 2026-10-21; the plan's Part 2 step 3, ZF55-ZF56). The
+//      seventh entry is `do-i-need-gcp`, its answer is plain text — the only links an answer
+//      carries are the file it is traceable to and its `more_*` pair — and the two entries
+//      whose subject is the cloud say it once and hand the argument to `/why-gcp/`.
+//   8. **The Why GCP page renders the rows `website/data/why-gcp.yaml` names, in the file's
+//      order, each citing a file that exists** (D243; the plan's Part 2 steps 1-2). The page
+//      writes none of its own facts: it renders the file's rows, each source is a link at the
+//      branch `ci.yml` pushes to, and the reader — `website/src/content.ts`'s `loadWhyGcp` —
+//      stops the build, naming the row, for a source that is not in the tree, an unknown key,
+//      an empty field, a date that is not a date or a fifth point. The sentence the page has
+//      to carry, and the phrases it may not be made of, are `wording.mjs`'s (D249).
 //
 // How it reads a page: `npm run check` builds the site before it runs anything here, so the
 // real pages are read from `website/dist/` — the artifact a reader gets, not a rendering of
@@ -791,6 +803,218 @@ test('the FAQ links the security page and the caps guide rather than summarizing
   assert.match(security, /href="\/security\/"/, 'the FAQ\'s security answer does not link the security page, so it either summarizes the model or says nothing (D99)')
   const caps = element(page, 'cost-and-caps')
   assert.match(caps, /href="\/caps-and-costs\/"/, "the FAQ's cost answer does not link the caps-and-costs page")
+})
+
+test('the FAQ answers the cloud question, and both answers about the cloud reach the Why GCP page', () => {
+  // The owner's brief of 2026-10-21 asks for the seventh answer — "Do I need to be on GCP?" —
+  // and for the two entries that are about the cloud to send a reader to the page that argues
+  // it (the plan's Part 2 step 3, ZF55-ZF56). Three things make that true rather than asserted:
+  // the file's own entries, the artifact's `<article>` list in the file's order, and the link
+  // each entry's `more_href` names resolving to a page the build produced.
+  const entries = faqEntries()
+  const ids = entries.map((entry) => entry.id)
+  assert.deepEqual(ids, [...new Set(ids)], `website/data/faq.yaml carries a duplicate id: ${JSON.stringify(ids)} — an id is the anchor the page renders and the name a build error uses`)
+  assert.equal(
+    ids.length,
+    7,
+    `website/data/faq.yaml carries ${ids.length} answers: the FAQ answers the six W1.10 step 1 fixes and the brief's seventh, "Do I need to be on GCP?" (the owner's brief of 2026-10-21; the plan's Part 2 step 3)`,
+  )
+
+  const page = builtPage('faq')
+  const articles = [...page.matchAll(/<article\b[^>]*\bid="([^"]+)"/g)].map((m) => m[1])
+  assert.deepEqual(articles, ids, 'the FAQ renders its answers in an order that is not the file’s: the page maps `website/data/faq.yaml`’s `questions` in order, so the two lists are the same list')
+
+  const links = entries.filter((entry) => entry.more_href)
+  assert.ok(links.length >= 3, `only ${links.length} answers carry a second link: the two the redesign wrote and the cloud question's are what this case is about`)
+  for (const entry of links) {
+    assert.ok(
+      existsSync(path.join(SITE, 'dist', entry.more_href, 'index.html')),
+      `the FAQ's "${entry.id}" links ${entry.more_href}, and the build produced no page there: a \`more_href\` is a route this site serves (W1.10 step 1)`,
+    )
+    assert.notEqual(entry.more_label ?? '', '', `the FAQ's "${entry.id}" carries a \`more_href\` and no \`more_label\`, so the link a reader follows has no words`)
+  }
+
+  const where = entries.find((entry) => entry.id === 'where-it-runs')
+  const gcp = entries.find((entry) => entry.id === 'do-i-need-gcp')
+  assert.ok(gcp, 'website/data/faq.yaml carries no `do-i-need-gcp` entry: the brief asks the FAQ the cloud question and the page answers it')
+  assert.equal(gcp.question, 'Do I need to be on GCP?', 'the seventh entry is not the brief’s question')
+  assert.equal(gcp.more_href, '/why-gcp/', 'the seventh entry does not reach the Why GCP page, which is the page the brief asks it to reach')
+  assert.equal(
+    where.more_href,
+    '/why-gcp/',
+    'the `where-it-runs` answer already answers the cloud question and does not reach the Why GCP page: the brief asks the two to say it once and hand the argument over',
+  )
+  assert.notEqual(where.answer, gcp.answer, 'the two answers about the cloud are the same answer, which is the page saying the same thing twice')
+
+  // The answer itself is plain text (ZF56): the only links an answer carries are the file it is
+  // traceable to and its `more_*` pair, so a link inside the answer's own paragraph is the
+  // defect — a page whose answer is a second copy of the page it points at.
+  const article = element(page, 'do-i-need-gcp')
+  const answer = /<p class="question-answer"[^>]*>([\s\S]*?)<\/p>/.exec(article)
+  assert.ok(answer, 'the seventh answer is not drawn as the page’s answer paragraph')
+  assert.ok(!/<a\b/.test(answer[1]), `the seventh answer carries a link inside itself: ${JSON.stringify(answer[1])} — an answer is plain text and its links are its source and its \`more_*\` pair (ZF56)`)
+  assert.equal(
+    [...article.matchAll(/<a\b/g)].length,
+    2,
+    'the seventh answer carries a number of links that is not the two it should: the file it is traceable to and the Why GCP page',
+  )
+})
+
+// ---- the Why GCP page (the owner's brief of 2026-10-21; the plan's Part 2) ----------------
+
+/**
+ * The rows `website/data/why-gcp.yaml` writes, read from the file rather than from the page.
+ * The page's own reader is `website/src/content.ts`'s `loadWhyGcp`; this is a second,
+ * independent read of the same file — the pattern `readCITriggers` above is the same one — so
+ * the case below holds the page to the file rather than to the page's opinion of it.
+ */
+function whyGcpRows(file = path.join(SITE, 'data/why-gcp.yaml')) {
+  const rows = { points: [], closing: [] }
+  let section = null
+  let row = null
+  for (const line of readFileSync(file, 'utf8').split('\n')) {
+    if (line.trimStart().startsWith('#') || line.trim() === '') continue
+    const top = /^([a-z]+):\s*$/.exec(line)
+    if (top) {
+      section = top[1]
+      row = section === 'framing' ? (rows.framing = {}) : null
+      continue
+    }
+    const item = /^\s+- id:\s*(\S+)\s*$/.exec(line)
+    if (item) {
+      row = { id: item[1] }
+      assert.ok(section in rows, `website/data/why-gcp.yaml writes an \`id\` under \`${section}\`, which is not a list the page renders`)
+      rows[section].push(row)
+      continue
+    }
+    const field = /^\s+([a-z]+):\s*(.*)$/.exec(line)
+    if (field && row) row[field[1]] = field[2]
+  }
+  return rows
+}
+
+/**
+ * The FAQ's entries as `website/data/faq.yaml` writes them: one block per `- id:`, with the
+ * folded `answer` joined the way the page's own reader joins it.
+ */
+function faqEntries(file = path.join(SITE, 'data/faq.yaml')) {
+  const entries = []
+  let row = null
+  let folded = null
+  for (const line of readFileSync(file, 'utf8').split('\n')) {
+    if (line.trimStart().startsWith('#')) continue
+    if (/^[a-z_]+:/.test(line)) {
+      row = null
+      folded = null
+      continue
+    }
+    if (!row && !/^\s+- id:/.test(line)) continue
+    const item = /^\s+- id:\s*(\S+)\s*$/.exec(line)
+    if (item) {
+      row = { id: item[1] }
+      entries.push(row)
+      folded = null
+      continue
+    }
+    const field = /^\s{4}([a-z_]+):\s*(.*)$/.exec(line)
+    if (field) {
+      if (/^[>|][-+]?$/.test(field[2])) {
+        row[field[1]] = ''
+        folded = field[1]
+      } else {
+        row[field[1]] = field[2]
+        folded = null
+      }
+      continue
+    }
+    if (folded && /^\s{6}\S/.test(line)) row[folded] = `${row[folded]} ${line.trim()}`.trim()
+  }
+  return entries
+}
+
+test('the Why GCP page renders the rows its file names, in order, each citing a file that exists', () => {
+  const rows = whyGcpRows()
+  const page = builtPage('why-gcp')
+  const ci = ciTriggers()
+  const repository = /^repository:\s*(\S+)$/m.exec(readFileSync(path.join(SITE, 'data/site.yaml'), 'utf8'))[1]
+
+  // The four points are the brief's, and the page draws them as the brief's list: the count is
+  // the file's, so a row added or dropped moves the two together or fails here.
+  assert.equal(rows.points.length, 4, `website/data/why-gcp.yaml carries ${rows.points.length} points: the page's \`<ol>\` is the brief's four numbered points, as the tree supports them (the plan's Part 2 step 2)`)
+  assert.ok(rows.closing.length >= 1 && rows.framing, 'website/data/why-gcp.yaml carries no closing rows or no framing row, so the page has nothing to render below its list')
+
+  const readList = (tag, cls) => {
+    const list = new RegExp(`<${tag} class="claims ${cls}"[^>]*>([\\s\\S]*?)</${tag}>`).exec(page)
+    assert.ok(list, `the built page carries no \`<${tag} class="claims ${cls}">\`: the page renders the file's rows in the two lists \`loadWhyGcp\` returns`)
+    return [...list[1].matchAll(/<li\b([^>]*)>([\s\S]*?)<\/li>/g)].map((m) => ({
+      id: /\bid="([^"]+)"/.exec(m[1])?.[1],
+      html: m[2],
+    }))
+  }
+
+  for (const [cls, wanted] of [['points', rows.points], ['closing', rows.closing]]) {
+    const items = readList(cls === 'points' ? 'ol' : 'ul', cls)
+    assert.deepEqual(
+      items.map((item) => item.id),
+      wanted.map((row) => row.id),
+      `the ${cls} the page renders are not the rows website/data/why-gcp.yaml names, in the file's order: the page maps the file's rows, so the two lists are the same list`,
+    )
+    for (const [at, item] of items.entries()) {
+      const row = wanted[at]
+      assert.match(item.html, new RegExp(`Source: <a href="${escaped(`${repository}/blob/${ci.branches[0]}/${row.source}`)}"`), `the page's "${row.id}" does not link ${row.source} at ${ci.branches[0]}, the branch ${CI_FILE} pushes to: a source link at another branch is a link into nothing (W1.10)`)
+      assert.ok(existsSync(path.join(REPO, row.source)), `website/data/why-gcp.yaml's "${row.id}" names ${row.source} as the file that proves it, and this repository does not have that file`)
+      assert.match(item.html, new RegExp(`<time datetime="${escaped(row.date)}"`), `the page's "${row.id}" does not carry ${row.date} as its date: a claim about another cloud is one whose age a reader has to be able to judge (ZF58)`)
+    }
+  }
+
+  // The framing row is the page's one-sentence answer, and it renders as itself with its own
+  // source: the sentence's text is pinned by `wording.mjs` (D249), so what is held here is that
+  // it is a row of the file rather than a sentence written into the template.
+  assert.match(page, new RegExp(`>${escaped(rows.framing.text)}<`), `the built page does not render website/data/why-gcp.yaml's framing sentence ${JSON.stringify(rows.framing.text)}: the page renders the file's rows and writes none of them`)
+  assert.match(page, new RegExp(`href="${escaped(`${repository}/blob/${ci.branches[0]}/${rows.framing.source}`)}"`), `the framing sentence does not carry its source (${rows.framing.source}) as a link`)
+})
+
+test('the Why GCP reader refuses a row the file cannot support, naming it', (t) => {
+  // The reader is `website/src/content.ts`'s `loadWhyGcp`, and what it refuses is the shape
+  // `loadFaq` refuses in (the plan's Part 2 step 2): an unknown key, an empty field, a `source`
+  // that is not a file in the tree, a date that is not a date. Each case below plants one of
+  // them in a copy of the repository and requires the build to stop with the row named —
+  // because a row nothing renders, or a citation into nothing, is the defect a page of facts
+  // has to fail on rather than ship.
+  const file = path.join('website', 'data', 'why-gcp.yaml')
+  const cases = [
+    {
+      what: 'a source that is not a file in this repository',
+      edit: (text) => text.replace('    source: docs/backends.md\n', '    source: docs/backends-that-do-not-exist.md\n'),
+      wanted: /names "docs\/backends-that-do-not-exist\.md"/,
+    },
+    {
+      what: 'an unknown key',
+      edit: (text) => text.replace('    source: docs/backends.md\n', '    source: docs/backends.md\n    reviewed_by: nobody\n'),
+      wanted: /reviewed_by/,
+    },
+    {
+      what: 'an empty field',
+      edit: (text) => text.replace(/    text: >-\n      Fugaro's control plane[\s\S]*?Firebase project\.\n/, "    text: ''\n"),
+      wanted: /\.text is empty/,
+    },
+    {
+      what: 'a date that is not a date',
+      edit: (text) => text.replace('    date: 2026-10-22\n', '    date: the 22nd of October\n'),
+      wanted: /\.date is "the 22nd of October"/,
+    },
+    {
+      what: 'a fifth point',
+      edit: (text) => text.replace('\nclosing:', "\n  - id: one-more-point\n    text: >-\n      A fifth point the brief does not make.\n    source: docs/backends.md\n    date: 2026-10-22\n\nclosing:"),
+      wanted: /points|fifth|4/,
+    },
+  ]
+
+  for (const one of cases) {
+    const built = buildWith(t, (copy) => rewrite(path.join(copy.root, file), one.edit), 'why-gcp')
+    assert.notEqual(built.status, 0, `the build passed with ${one.what} in ${file}, and the page renders facts a reader acts on: a row the file cannot support has to stop the build:\n${built.output}`)
+    assert.match(built.output, one.wanted, `the build stopped for ${one.what} without naming it, so nothing says which row to fix:\n${built.output}`)
+  }
 })
 
 // ---- the bold look (the owner's approved boards of 2026-10-20) ----------------------------

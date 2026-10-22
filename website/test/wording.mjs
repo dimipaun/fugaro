@@ -144,6 +144,62 @@ const CLAIM_WHY =
   'the figure is an illustration: its request is item 3\'s own example and its three results are labels for work a run would report, so only the lines the agent speaks are its skills\' words and the caption may not vouch for the rest (changes spec 2026-10-18, item 3; Global Constraint 6)'
 
 /**
+ * **The third rule: the sentence the Why GCP page answers with, and the phrases it may not
+ * answer with instead** (the owner's decision D249 on the brief of 2026-10-21; the plan's Part
+ * 2 step 5).
+ *
+ * The brief's own suggested framing — "no other cloud offers this as one integrated,
+ * **disposable** project" — is made of a word the repository rejects: a managed project "is
+ * **not disposable** in the way the spec means" (`docs/design/managed-projects.md:18`, and
+ * `:211` lists what would be lost), so the sentence the page carries is the same sentence with
+ * that word taken out (D248, ZF22). And the sentence the brief tells the page *not* to write —
+ * "no real alternative" — is the other half: it is a claim about every other cloud, which is a
+ * claim this repository has no sourced, dated fact for (ZF58, and `website/README.md`: "no
+ * competitor comparison without a source and a date"), and the tree's own position reads the
+ * other way — a second cloud is out of scope for 1.0 and wanted from contributors, which is
+ * what `README.md`'s "Other clouds: help wanted" says (ZF21).
+ *
+ * So the rule has two halves and both are about what a page *says*: the phrases below are
+ * refused wherever a built page carries them — its text, its title, its description, the same
+ * three places the retired word is refused in — and the sentence below has to be on the page
+ * the brief asked for, because a page whose framing row stopped rendering is a page whose
+ * answer to the brief is missing. The exemption is the retired word's and the word ceiling's
+ * (`DOCUMENT_PAGES`, D188): those three pages render a document of this repository rather
+ * than the site's own copy, and a quotation of a document is not a page's own claim.
+ *
+ * The first three entries are the owner's list, and the fourth is D248's word: `disposable` is
+ * refused for that decision's reason rather than as a word in general — the site may say a
+ * container is thrown away, and what it may not say is that a project is. Each pattern is
+ * written so that the entries do not overlap: "no real alternative" is refused as itself, and
+ * "no alternative" is refused with the one word a rewrite would put between them, so a page
+ * that says either is named once.
+ */
+export const BANNED_FRAMING = [
+  { phrase: 'no real alternative', pattern: /\bno real alternative\b/i },
+  { phrase: 'no alternative', pattern: /\bno (?:other |serious |viable |genuine |true )?alternative\b/i },
+  { phrase: 'the only cloud', pattern: /\bthe only cloud\b/i },
+  { phrase: 'disposable', pattern: /\bdisposable\b/i },
+]
+
+/**
+ * The page the brief's framing is answered on, and the sentence it is answered with — the
+ * brief's own sentence with "disposable" out of it, which the reconciliation says is the
+ * supportable form (ZF22). The row it renders is `website/data/why-gcp.yaml`'s `framing` row,
+ * and this is the pin that holds the page to it.
+ */
+export const REQUIRED_FRAMING = {
+  url: '/why-gcp/',
+  sentence: 'No other cloud offers this as one integrated project.',
+}
+
+/**
+ * Why the phrasing is refused, as the sentence a failure ends with. One copy, so the whole
+ * gate says the same thing about the same defect.
+ */
+const FRAMING_WHY =
+  "the page's answer to the cloud question is that no other cloud offers this as one integrated project: a page that says there is no alternative is making a claim about every other cloud, which this repository has no sourced, dated fact for, and the repository's own position is that a second cloud is wanted rather than refused (D248, D249, ZF21, ZF22, ZF58)"
+
+/**
  * The head's text that a reader meets outside the page: the `<title>`, the description and
  * the two cards. The metas are named one by one rather than swept up, because the head
  * carries values that are not text — `viewport`'s `width=device-width` is not a sentence
@@ -210,6 +266,34 @@ export function wordingFailures(dist) {
   return out
 }
 
+/**
+ * Every way a built page breaks D249's framing rule, as the lines a failure lists: the phrases
+ * a page may not carry, on every page, and the sentence the brief's page has to.
+ *
+ * The page's text and its head are read the way the retired word's rule reads them (its text,
+ * its `<title>`, its description and its cards), and the exemption is the same one — D188's
+ * three document-rendering pages, which are quotations rather than the site's own copy.
+ */
+export function framingFailures(dist) {
+  const out = []
+  for (const page of builtPages(dist)) {
+    if (DOCUMENT_PAGES.has(page.url)) continue
+    const text = [textOf(parse(page.html)), headText(page.html)].join(' ').replace(/\s+/g, ' ')
+    for (const { pattern } of BANNED_FRAMING) {
+      const found = pattern.exec(text)
+      if (!found) continue
+      out.push(`${page.rel} carries ${JSON.stringify(found[0])} in ${JSON.stringify(around(text, found.index))}: ${FRAMING_WHY}.`)
+    }
+    if (page.url !== REQUIRED_FRAMING.url) continue
+    if (!text.includes(REQUIRED_FRAMING.sentence)) {
+      out.push(
+        `${page.rel} does not carry ${JSON.stringify(REQUIRED_FRAMING.sentence)}, which is the brief's own framing sentence with the word the repository rejects taken out of it: the page renders it from website/data/why-gcp.yaml's \`framing\` row, so a page without it is a page whose framing stopped rendering (D249, ZF22).`,
+      )
+    }
+  }
+  return out
+}
+
 /** Every way the site's own sources carry the retired word or a retired claim, as failure lines. */
 export function sourceWordingFailures(files) {
   const out = []
@@ -251,6 +335,67 @@ function siteSources() {
   for (const name of ['src', 'data', 'public', 'content']) walk(path.join(SITE, name))
   return files
 }
+
+test('the framing D249 asks for is on the Why GCP page, and the phrases it may not be made of are refused', (t) => {
+  // The artifact first, so the plants below are the only thing that can fail the gate: the
+  // page the brief asked for carries the sentence, and no page of the site carries a phrase
+  // that claims something about every other cloud.
+  const shipped = framingFailures(DIST)
+  assert.deepEqual(shipped, [], `the built site carries framing this gate refuses:\n  ${shipped.join('\n  ')}`)
+
+  // One page per phrase, each in a place the rule looks, and the sentence's own page passing:
+  // a gate that read nothing would pass all of these.
+  const files = {
+    'why-gcp/index.html': shell(`<h1>Why GCP</h1><p>${REQUIRED_FRAMING.sentence}</p>`),
+    'faq/index.html': shell('<h1>FAQ</h1><p>There is no real alternative to one project.</p>'),
+    'console/index.html': shell('<h1>Console</h1><p>It is the only cloud that offers this.</p>', '<meta name="description" content="a disposable project">'),
+    'docs/index.html': shell('<h1>Reference</h1><p>There is no alternative to a disposable project.</p>'),
+  }
+  const failures = framingFailures(distOf(t, files))
+  assert.equal(failures.length, 3, failures.join('\n'))
+  for (const rel of ['faq/index.html', 'console/index.html']) {
+    assert.ok(
+      failures.some((line) => line.startsWith(`${rel} `)),
+      `${rel} carries a banned phrase and the gate did not name it:\n${failures.join('\n')}`,
+    )
+  }
+  assert.ok(
+    failures.some((line) => line.startsWith('console/index.html ') && line.includes('"disposable"')),
+    `a description that calls a project disposable was not refused:\n${failures.join('\n')}`,
+  )
+  assert.ok(
+    !failures.some((line) => line.startsWith('docs/index.html ')),
+    `the gate refused D188's document page, which renders a document rather than the site's own copy:\n${failures.join('\n')}`,
+  )
+})
+
+test('the Why GCP page without the framing sentence, or with the brief’s own version of it, is refused', (t) => {
+  // The sentence is the page's whole answer to the brief's "Suggested framing", so its absence
+  // is the defect this half exists for — a page that dropped the row, or rendered the section
+  // without it, is a page that answers nothing.
+  const dropped = framingFailures(
+    distOf(t, { 'why-gcp/index.html': shell('<h1>Why GCP</h1><p>One project, and here is what it holds.</p>') }),
+  )
+  assert.ok(
+    dropped.some((line) => line.startsWith('why-gcp/index.html ') && /does not carry/.test(line)),
+    `the page without the framing sentence was not refused:\n${dropped.join('\n')}`,
+  )
+
+  // The near miss: the brief's own sentence, which a check that only looked for "one integrated
+  // project" would pass. It carries the word the repository rejects, and it is not the sentence
+  // the page answers with — so both halves of the rule name it.
+  const brief = framingFailures(
+    distOf(t, { 'why-gcp/index.html': shell('<h1>Why GCP</h1><p>No other cloud offers this as one integrated, disposable project.</p>') }),
+  )
+  assert.ok(
+    brief.some((line) => line.includes('"disposable"')),
+    `the brief's own framing sentence was not refused for its word:\n${brief.join('\n')}`,
+  )
+  assert.ok(
+    brief.some((line) => /does not carry/.test(line)),
+    `the brief's own framing sentence passed as the sentence the page has to carry:\n${brief.join('\n')}`,
+  )
+})
 
 test("no built page outside D188's three carries the retired word 'worker' or the retired claim", () => {
   const failures = wordingFailures(DIST)

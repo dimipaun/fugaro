@@ -17,10 +17,11 @@
 #             copy that drifts first (F37, F47).
 #   source    the file the answer is traceable to, relative to the repository root. The
 #             page renders it as a link and fails the build if it is missing.
-#   more_*    an optional second link, for the two answers whose job is to send a reader to
-#             what carries the detail: the caps-and-costs page (figures and their
-#             provenance) and the security page (which renders SECURITY.md, byte for byte
-#             below its title -- a security claim is never paraphrased, F41, D99).
+#   more_*    an optional second link, for the answers whose job is to send a reader to what
+#             carries the detail: the caps-and-costs page (figures and their provenance), the
+#             security page (which renders SECURITY.md, byte for byte below its title -- a
+#             security claim is never paraphrased, F41, D99) and the Why GCP page, which the
+#             two answers about the cloud both reach.
 #
 # **The redesign's cut (P4).** Every answer was 40-75 words and the page was 493; D188
 # gives a page 250 words and its lead 40, so each answer is now one or two sentences and the
@@ -29,10 +30,11 @@
 # two answers whose detail lives elsewhere still link it. What went is the second sentence of
 # every answer -- the one that said the same thing again, more carefully.
 #
-# The questions are the six W1.10 step 1 fixes, and they are deliberately the six the
-# repository can answer: what Fugaro is, where the code runs, what a run costs and what
-# stops it, what a failed run leaves behind, what a run can never change, and what the
-# security model does not promise. The four spec sentences the product cannot back today --
+# The questions are the six W1.10 step 1 fixes plus the owner's brief of 2026-10-21's seventh
+# ("Do I need to be on GCP?", the plan's Part 2 step 3), and they are deliberately the ones the
+# repository can answer: what Fugaro is, where the code runs, whether a reader has to be on
+# GCP, what a run costs and what stops it, what a failed run leaves behind, what a run can
+# never change, and what the security model does not promise. The four spec sentences the product cannot back today --
 # console downloads (D95), Windows/WSL (D94), the "~2 h" duration claim and the ballpark
 # ranges (D96, D97) -- are not here, and no answer mentions a duration, a platform the
 # build does not produce or a download that does not exist (F50, D102).
@@ -55,6 +57,23 @@ questions:
       In your own Google Cloud project, not on a service of ours: each task is one Cloud Run
       job execution. AWS and Azure are not built.
     source: README.md
+    more_label: Why GCP
+    more_href: /why-gcp/
+
+  # The seventh answer, and the one the Why GCP page exists for (the owner's brief of
+  # 2026-10-21; the plan's Part 2 step 3, ZF55-ZF56). It is a question a reader arrives with
+  # rather than one this repository's documents ask, so it answers the question and hands the
+  # argument to the page: the answer is plain text, with no link inside it, because the only
+  # two links an answer carries are the file it is traceable to and its `more_*` pair.
+  - id: do-i-need-gcp
+    question: Do I need to be on GCP?
+    answer: >-
+      Not for your application: Fugaro runs in a Google Cloud project of yours, and where your
+      application itself is hosted does not decide it. AWS and Azure backends are wanted from
+      contributors, not required.
+    source: README.md
+    more_label: Why GCP
+    more_href: /why-gcp/
 
   - id: cost-and-caps
     question: What does a run cost, and what stops it?
