@@ -22,16 +22,17 @@ one an apply would use.
 Everything below was read out of the base branch, not out of a working tree:
 `git log`, `git show` and `git grep` against `origin/integration-0.9.6`.
 
-**The commit is the task's own commit line, verbatim.**
+**The Terraform commit is the task's own commit line, verbatim** (the plan
+paragraph's provenance is a separate commit, corrected below).
 
 ```
 $ git log --oneline origin/integration-0.9.6 -- deploy/terraform/gcp/modules/installation/credentials.tf
-af24947e 703's leftovers: the gid's stale copy goes to Task 10, the reaper pin is
-         named as it is, and the plan-only test stops proving nothing (#702 already
-         landed) (#788)
-aec4ec72 terraform: an opt-in credentials service in the installation root; its
-         credentials are one bundle secret with one accessor grant (D146, D147, Q6) (#732)
+af24947e 703's leftovers: the gid's stale copy goes to Task 10, the reaper pin is named as it is, and the plan-only test stops proving nothing (#702 already landed) (#788)
+aec4ec72 terraform: an opt-in credentials service in the installation root; its credentials are one bundle secret with one accessor grant (D146, D147, Q6) (#732)
 ```
+
+(That output is verbatim: `--oneline` prints one line per commit, each far past
+80 columns, and it is not wrapped here.)
 
 `aec4ec72` is the C1.18 commit: its subject is the task's **Commit.** line
 character for character, and it is an ancestor of `origin/integration-0.9.6`
@@ -49,19 +50,26 @@ what the task says it carries.**
 | `modules/workflow/sa.tf` — model accessors dropped only when the opt-in is on, plus the job SA's `run.invoker` | Present: `sa.tf` keeps `roles/secretmanager.secretAccessor` behind `var.credentials_service == null \|\| !…` and adds `google_cloud_run_v2_service_iam_member "credentials"` with `role = "roles/run.invoker"`, `count = var.credentials_service == null ? 0 : 1` |
 | `modules/workflow/variables.tf`, `modules/repo/workflows.tf` — name and region passed down | Present; `modules/repo/workflows.tf` reads `credentials_service = var.installation.credentials_service` |
 | `roots/installation/tests/installation.tftest.hcl` and the repo root's tests | Present at `deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl` and `…/roots/repo/tests/repo.tftest.hcl` (note the path: `roots/` sits under `deploy/terraform/gcp/`, and the root's own tests live in a `tests/` subdirectory) |
-| The cover's cases in `internal/infra/tf/cover.go` | Present: `credentialsImageOK` is defined in `cover.go` and called from the service case in `Cover.attributes`, and the two tests below exercise it through `Cover` |
+| The cover's cases in `internal/infra/tf/cover.go` | Present: `credentialsImageOK` is defined in `cover.go` and called from the service case in `Cover.attributes`, and the two tests below exercise it through `Cover` — in its **strict** form, which is the later commit's, not `aec4ec72`'s: see the provenance note below |
 
 **Every test the task's Tests line names is declared in the tree**, which is how
 the plan's own guard (`internal/cli/docs_credentials_plan_tests_test.go`) would
-read it:
+read it. The three greps below are quoted verbatim, `origin/integration-0.9.6:`
+prefixes and all, and each asks for the *declaration* (`^func`) rather than every
+mention. A plain `git grep -l` for a name says less than it looks: it also hits
+documents that merely quote the name — the plan above all (both cover-test names
+land there as well as in `cover_test.go`), and `TestAllowedTypesCoverTheModules`
+lands in six files, of which five are not the declaration (three documents,
+including the plan, plus `cover.go`'s comment and
+`internal/managed/stateaccounts_test.go`). Each of the three declarations:
 
 ```
-$ git grep -l TestCoverRefusesACredentialsServiceImageOutsideThePin origin/integration-0.9.6
-internal/infra/tf/cover_test.go
-$ git grep -l TestCoverRefusesACredentialsServiceThatIsNotTheModules origin/integration-0.9.6
-internal/infra/tf/cover_test.go
-$ git grep -l TestAllowedTypesCoverTheModules origin/integration-0.9.6
-internal/infra/tf/cover.go  internal/infra/tf/cover_test.go
+$ git grep -n '^func TestCoverRefusesACredentialsServiceImageOutsideThePin' origin/integration-0.9.6
+origin/integration-0.9.6:internal/infra/tf/cover_test.go:879:func TestCoverRefusesACredentialsServiceImageOutsideThePin(t *testing.T) {
+$ git grep -n '^func TestCoverRefusesACredentialsServiceThatIsNotTheModules' origin/integration-0.9.6
+origin/integration-0.9.6:internal/infra/tf/cover_test.go:955:func TestCoverRefusesACredentialsServiceThatIsNotTheModules(t *testing.T) {
+$ git grep -n '^func TestAllowedTypesCoverTheModules' origin/integration-0.9.6
+origin/integration-0.9.6:internal/infra/tf/cover_test.go:341:func TestAllowedTypesCoverTheModules(tt *testing.T) {
 ```
 
 The Terraform assertions the task names are in the two `*.tftest.hcl` files, by
@@ -93,12 +101,45 @@ invoker grant).
 - **The managed deployer never deploys the service (D146).** `managed_cover.go`
   drops both new types from a managed plan.
 
-**The plan text on the base already records all of this.** The current
-`### Task C1.18` section is the *stricter* version — the digest rule (M1), the
-invoker grant stated per workflow variant (n4), the `prevent_destroy` opt-out
-(M2), the cover's `credentialsImageOK` case and the two cover tests — and
-`aec4ec72` is the commit that put it there. There is no amended or older
-version of the task left to implement: the plan and the Terraform agree.
+**The plan text on the base already records all of this, in two commits rather
+than one.** The `### Task C1.18` section is the *stricter* version — the digest
+rule (M1), the invoker grant stated per workflow variant (n4), the
+`prevent_destroy` opt-out (M2), the cover's `credentialsImageOK` case and the two
+cover tests — and its provenance is worth stating exactly, because it is the
+claim a reviewer will check first:
+
+- **`aec4ec72` (#732, 2026-10-20)** landed the Terraform — `credentials.tf`, the
+  opt-in variable, `sa.tf`'s accessor drop and invoker grant, the variables passed
+  down, both roots' tests — and wrote the C1.18 section with the cover's case in
+  its **first** form: the image held to this run's registry as a job's image is
+  (`baseImageOK`) *and* to an `@sha256:` digest, plus the environment and
+  `invoker_iam_disabled` refusals.
+- **`8a063c90` (#829, 2026-10-21 — the base branch's tip, Task C1.8)** replaced
+  exactly that paragraph with the one the base carries, and implemented the
+  stricter case it describes in `internal/infra/tf/cover.go` (302 changed lines)
+  and `cover_test.go` (273): the image is now held by `credentialsImageOK` — the
+  released pin read back through the ghcr proxy and to nothing else, never a
+  reference under this run's own repositories — and the case also refuses a
+  `value_source` environment, a container that sets a `command` or `args`, and a
+  `template.service_account` that is not the account the module's own
+  `google_service_account.credentials[0]` creates or holds.
+
+```
+$ git log --oneline -ScredentialsImageOK origin/integration-0.9.6 -- docs/credentials-service/implementation-plan.md
+8a063c90 # Task: credentials service C1.8: the exported forwarding helpers the s… (#829)
+```
+
+So the task's **Terraform** deliverable — everything its Files line names under
+`deploy/terraform/`, and the Terraform-side security rules above — is `aec4ec72`'s
+and is on the base; and the base's plan paragraph, together with the cover code
+it names, is a later amendment by `8a063c90` that is *also* on the base. Both are
+in the base's history, which is what this note's conclusion rests on: there is no
+version of the task, older or amended, left to implement, and the plan and the
+Terraform agree. (The correction matters and is made here rather than left
+standing: an earlier draft of this note said `aec4ec72` "is the commit that put
+it there" for the whole stricter paragraph, which is false, and named
+`TestAllowedTypesCoverTheModules` as living in `cover.go` when it is declared in
+`cover_test.go`.)
 
 ## What was not done, and why that is the whole point
 
@@ -121,13 +162,14 @@ branch rather than in this pull request:
 
 ```
 --- FAIL: TestDocsCoordinatorNumbersTableIsReadFromItsSources (0.03s)
-    docs_coordinator_test.go:1502: docs/coordinator/README.md's numbers section cites
-      docs/design/always-on-orchestrator.md in prose: the Check 110 row names the design
-      claiming that number; the design is in open PR #632 and not on main
-    docs_coordinator_test.go:1609: docs/coordinator/README.md's checks row says the highest
-      check section written is 90, and the register's highest `## Check` section is 91
+    docs_coordinator_test.go:1502: docs/coordinator/README.md's numbers section cites docs/design/always-on-orchestrator.md in prose: the Check 110 row names the design claiming that number; the design is in open PR #632 and not on main
+    docs_coordinator_test.go:1609: docs/coordinator/README.md's checks row says the highest check section written is 90, and the register's highest `## Check` section is 91
 FAIL	github.com/dimipaun/fugaro/internal/cli
 ```
+
+(The two `docs_coordinator_test.go` lines are single long lines in the real
+output and are shown here unwrapped, verbatim; the indentation and the `FAIL`
+line are `go test`'s own.)
 
 **It is pre-existing and it is not this change's.** The proof is direct: with
 this note — the pull request's only file — moved out of the tree and nothing else
