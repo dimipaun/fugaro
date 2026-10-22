@@ -141,15 +141,46 @@ func TestDocsCredentialsRunbookPointsStepOneAtSomethingThatAnswers(t *testing.T)
 // are what read the service's address, so removing the service first leaves
 // them pointing at a host that is gone. This checks the order the runbook
 // writes, not merely that it writes both.
+//
+// The pin is §9's OWN step and its command, not the loose phrase the section's
+// preamble also carries. The first version of this test searched the flattened
+// whole document for "re-apply every repository root", and that phrase is in
+// the preamble ("This is an ordered procedure — re-apply every repository root
+// first, then …"), which sits above every step: the guard stayed green with
+// step 1 deleted or moved after step 2, and would have been green with the
+// step written anywhere in the runbook at all (code review of C1.22). So the
+// read is scoped to §9, the marker pinned is the step's own heading, the step
+// is required to carry its command, and the marker is required to be unique in
+// the section — a preamble sentence that repeats it would make the pin
+// ambiguous again.
 func TestDocsCredentialsRunbookOrdersTheOptOut(t *testing.T) {
-	flat := flattenDoc(readDoc(t, credentialsRunbook))
-	repo := strings.Index(flat, "re-apply every repository root")
-	stateRm := strings.Index(flat, "terraform state rm 'module.installation.google_secret_manager_secret.credentials_bundle[0]'")
-	if repo < 0 || stateRm < 0 {
-		t.Fatalf("the runbook does not write both halves of the opt-out (repository re-apply at %d, state rm at %d)", repo, stateRm)
+	doc := readDoc(t, credentialsRunbook)
+	section := flattenDoc(docSection(t, credentialsRunbook, doc, "## 9. Turning the service off"))
+	// The step's own heading, and the command it runs.
+	const step = "Re-apply every repository root, first."
+	const cmd = "fugaro init --repo"
+	const stateRmCmd = "terraform state rm 'module.installation.google_secret_manager_secret.credentials_bundle[0]'"
+	repo, stateRm := strings.Index(section, step), strings.Index(section, stateRmCmd)
+	if repo < 0 {
+		t.Fatalf("§9 does not write the first step as %q: the opt-out's first step is the repository roots' re-apply, and a pin on the looser phrase is satisfied by the section's preamble alone", step)
+	}
+	if stateRm < 0 {
+		t.Fatalf("§9 does not write the state rm (%q)", stateRmCmd)
+	}
+	if !strings.Contains(section[repo:], cmd) {
+		t.Errorf("§9's first step does not run %q: the step is the re-apply itself, not a sentence about it", cmd)
 	}
 	if repo > stateRm {
-		t.Error("the runbook removes the bundle before re-applying the repository roots: the repository roots read the service's address, so they go first (re-review N2)")
+		t.Error("§9 removes the bundle before re-applying the repository roots: the repository roots read the service's address, so they go first (re-review N2)")
+	}
+	if strings.Count(section, step) != 1 {
+		t.Errorf("§9 writes %q %d times: the pin cannot tell the step from a sentence above it", step, strings.Count(section, step))
+	}
+	// The negative half, stated as the invariant the scoped read needs: the
+	// preamble above the step carries the loose phrase, which is what made the
+	// document-wide search match the wrong place.
+	if pre := section[:repo]; !strings.Contains(pre, "re-apply every repository root") {
+		t.Errorf("§9's preamble no longer carries the loose phrase the old document-wide search matched at %q, so this test's scoping is no longer what keeps it honest — re-read the pin above", "re-apply every repository root")
 	}
 }
 
