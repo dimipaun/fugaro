@@ -417,6 +417,13 @@ func TestBundleSchemaMatchesTheLoader(t *testing.T) {
 		{"an unknown key", "antropic-api-key: " + fakeCred(t, "x") + "\n"},
 		{"an account name outside the rule", "claude-oauth-token-9alice: " + fakeCred(t, "x") + "\n"},
 		{"an over-long account name", "claude-oauth-token-" + strings.Repeat("a", 32) + ": " + fakeCred(t, "x") + "\n"},
+		// The one the regex alone admits: 30 repetitions of "-a" consume two
+		// characters each, so this suffix is 61 bytes and still matches
+		// config.ClaudeAccountNameRE. Only the separate
+		// MaxClaudeAccountNameLen bound refuses it, and the loader and the
+		// schema have to refuse it together.
+		{"a dash-heavy account name over the length bound", "claude-oauth-token-a" + strings.Repeat("-a", 30) + ": " + fakeCred(t, "x") + "\n"},
+		{"an account name at the length bound", "claude-oauth-token-" + strings.Repeat("a", 31) + ": " + fakeCred(t, "x") + "\n"},
 		{"a value that is a number", config.AnthropicSecret + ": 1234\n"},
 		{"a value that is empty", config.AnthropicSecret + ": \"\"\n"},
 		{"a value over the bound", config.AnthropicSecret + ": " + strings.Repeat("x", MaxBundleValueBytes+1) + "\n"},
@@ -475,5 +482,65 @@ func TestBundleCredentialKeyIsTheCascadesSpelling(t *testing.T) {
 	}
 	if _, ok := b.Lookup("nobody"); ok {
 		t.Error("Lookup found a credential the document does not hold")
+	}
+}
+
+// TestBundleCredentialKeyHoldsTheAccountNameRuleInBothHalves: CredentialKey is
+// the one place the document's spelling is turned into the cascade's, so the
+// account-name rule it applies is the rule the rest of the platform applies —
+// and that rule is two halves, not one. config.ClaudeAccountNameRE alone
+// admits a name of up to 61 bytes (each of its {0,30} repetitions may consume
+// one character or, via the dash alternative, two), while
+// config.ValidateClaudeAccounts refuses anything over
+// config.MaxClaudeAccountNameLen. A key that only the regex admits is a
+// credential the config path can never produce, so it would load and then be
+// unreachable: no policy could name it and no writer could rotate it.
+//
+// The last two rows are the reservation on the other side: a suffix that is
+// the reserved DefaultClaudeAccount is accepted, and it names the default
+// account, whose own key is the unsuffixed one. That is a spelling no writer
+// produces either, but unlike an over-long name it names an account a policy
+// CAN admit, so it is a live credential rather than a dead one; a document
+// holding both spellings is refused as a duplicate name by ParseBundle.
+func TestBundleCredentialKeyHoldsTheAccountNameRuleInBothHalves(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		key      string
+		wantName string
+		wantTier creds.Tier
+		wantOK   bool
+	}{
+		{name: "the paid key", key: config.AnthropicSecret, wantName: config.AnthropicSecret, wantTier: creds.TierB, wantOK: true},
+		{name: "the default account", key: config.ClaudeOAuthToken, wantName: config.DefaultClaudeAccount, wantTier: creds.TierA, wantOK: true},
+		{name: "a named account", key: config.ClaudeAccountSecret("alice"), wantName: "alice", wantTier: creds.TierA, wantOK: true},
+		{name: "a dash inside a name", key: config.ClaudeAccountSecret("acme-personal"), wantName: "acme-personal", wantTier: creds.TierA, wantOK: true},
+		{name: "the longest name the rule admits", key: config.ClaudeAccountSecret(strings.Repeat("a", config.MaxClaudeAccountNameLen)), wantName: strings.Repeat("a", config.MaxClaudeAccountNameLen), wantTier: creds.TierA, wantOK: true},
+		{name: "a name one byte over the bound", key: config.ClaudeAccountSecret(strings.Repeat("a", config.MaxClaudeAccountNameLen+1)), wantOK: false},
+		{name: "a dash-heavy name the regex alone admits", key: config.ClaudeAccountSecret("a" + strings.Repeat("-a", 30)), wantOK: false},
+		{name: "a name starting with a digit", key: config.ClaudeAccountSecret("9alice"), wantOK: false},
+		{name: "a name ending in a dash", key: config.ClaudeAccountSecret("alice-"), wantOK: false},
+		{name: "an upper-case name", key: config.ClaudeAccountSecret("Alice"), wantOK: false},
+		{name: "an empty suffix", key: config.ClaudeOAuthTokenPrefix, wantOK: false},
+		{name: "the reserved name, spelled the long way", key: config.ClaudeAccountSecret(config.DefaultClaudeAccount), wantName: config.DefaultClaudeAccount, wantTier: creds.TierA, wantOK: true},
+		{name: "a name outside both families", key: "anthropic-oauth-token", wantOK: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gotName, gotTier, ok := CredentialKey(tc.key)
+			if ok != tc.wantOK {
+				t.Fatalf("CredentialKey(%q) ok = %v, want %v", tc.key, ok, tc.wantOK)
+			}
+			if !ok {
+				if gotName != "" || gotTier != "" {
+					t.Errorf("CredentialKey(%q) = (%q, %q) for a key it refused, want empty", tc.key, gotName, gotTier)
+				}
+				return
+			}
+			if gotName != tc.wantName {
+				t.Errorf("CredentialKey(%q) name = %q, want %q", tc.key, gotName, tc.wantName)
+			}
+			if gotTier != tc.wantTier {
+				t.Errorf("CredentialKey(%q) tier = %q, want %q", tc.key, gotTier, tc.wantTier)
+			}
+		})
 	}
 }

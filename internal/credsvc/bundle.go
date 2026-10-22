@@ -287,7 +287,18 @@ func CredentialKey(key string) (name string, tier creds.Tier, ok bool) {
 		// account-name rule is a key no policy can admit and no
 		// `fugaro creds set` writes, so it is refused rather than loaded
 		// under a name the rest of the service cannot speak.
-		if config.ClaudeAccountNameRE.MatchString(account) {
+		//
+		// The rule is the rule config spells in two halves, and BOTH are
+		// needed: ClaudeAccountNameRE alone admits a name up to 61
+		// characters, because each of its {0,30} repetitions may consume one
+		// character or, via the dash alternative, two — a dash-heavy
+		// "a-a-…-a" (30 repetitions of "-a") matches it and is 61 bytes —
+		// while ValidateClaudeAccounts refuses anything over
+		// MaxClaudeAccountNameLen (31). A key the config path can never
+		// produce is a credential that would load here and then be
+		// unreachable: no policy could name it, no account could be
+		// admitted to it, and no writer would ever rotate it.
+		if len(account) <= config.MaxClaudeAccountNameLen && config.ClaudeAccountNameRE.MatchString(account) {
 			return account, creds.TierA, true
 		}
 		return "", "", false
