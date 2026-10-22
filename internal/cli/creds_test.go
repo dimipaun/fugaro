@@ -169,6 +169,63 @@ func TestCredsSetDetectsLostConcurrentUpdate(t *testing.T) {
 	}
 }
 
+// The other half of the same window, and the one the re-read cannot see: the
+// concurrent write lands between this command's READ and its ADD — the long
+// window, the one the hidden prompt sits in. This command's document is built
+// on the older read, so the other writer's entry is not in it; its own write
+// lands as the version after that writer's, so the newest version is this
+// command's document and the re-read agrees with it. Nothing but the version
+// number says a write was lost, which is why the number is checked: the
+// version written must be the version read plus one.
+func TestCredsSetDetectsAConcurrentWriteBeforeItsOwn(t *testing.T) {
+	f := credsFixtureFor(t)
+	first := credsValue(t, "first")
+	ours := credsValue(t, "ours")
+	other := credsValue(t, "other")
+	f.seed(t, []byte(config.ClaudeOAuthToken+": "+first+"\n"))
+
+	// Another terminal's `creds set` writes its document inside the window,
+	// through the fake's own hook on the add request: the fake's state changes
+	// without a client call of this command's, so writes() below is still this
+	// command's add alone.
+	f.OnAddVersion = func(string) {
+		f.AddVersion(f.id, []byte(config.AnthropicSecret+": "+other+"\n"))
+	}
+
+	out, errOut, err := executeStdin(t, ours+"\n", "creds", "set", config.ClaudeOAuthToken)
+	if err == nil {
+		t.Fatalf("a concurrent write that landed before this command's own was not refused: %q", out)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, want %d: %v", ExitCode(err), ExitUserError, err)
+	}
+	msg := err.Error()
+	for _, want := range []string{"another write landed between this command's read and its write", "No version was disabled"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the refusal does not say %q: %s", want, msg)
+		}
+	}
+	if n := f.writes(); n != 1 {
+		t.Errorf("%d versions were written, want 1 (nothing is retried)", n)
+	}
+	// This command's document IS the newest version — it was written last — and
+	// the other writer's entry is not in it. That is the lost update, and it is
+	// why the re-read cannot be the thing that catches this.
+	if got := f.value(t); !strings.Contains(got, ours) || strings.Contains(got, other) {
+		t.Errorf("the newest version is %q, want this command's document and not the other writer's entry", got)
+	}
+	// Nothing was retired: the version this command read is still ENABLED, and
+	// so is the one the other writer added. A disable here would be a disable
+	// of a version this command did not verify, and the entry it lost would be
+	// gone with it.
+	if got := f.Disabled(); len(got) != 0 {
+		t.Errorf("a lost update disabled %q, want nothing", got)
+	}
+	if leak := out + errOut + msg; strings.Contains(leak, ours) || strings.Contains(leak, other) || strings.Contains(leak, first) {
+		t.Errorf("a value leaked: %q", leak)
+	}
+}
+
 // The write is a read-modify-write of ONE document: the entry it was asked for
 // changes, and every other entry keeps its bytes — its comments, its quoting,
 // its block scalars, its order. A writer that rebuilt the document from a Go

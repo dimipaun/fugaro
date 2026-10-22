@@ -557,6 +557,19 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string) error {
 	if err != nil {
 		return remoteErr(err, writeForms(doc, value))
 	}
+	// The version this write landed as has to be the one after the version this
+	// command read. Secret Manager numbers versions in order and never reuses a
+	// number, so any other number means another writer added a version between
+	// this command's read and this write — the long window, the one the hidden
+	// prompt sits in — and the document this command wrote is built on a
+	// document that is no longer the newest: the entry that writer set is not in
+	// it. It is the same lost update as one that lands after the write, caught
+	// before anything is retired, and it has to be caught here rather than by
+	// the re-read: this command's document is the newest version, so the re-read
+	// agrees with it and calls the write verified.
+	if want := nextVersion(before.version); want != "" && version != want {
+		return credsLostUpdateBefore(store.id, before.version, version, want)
+	}
 	back, err := credsWriteBack(ctx, store)
 	if err != nil {
 		return remoteErr(err, writeForms(doc, value))
@@ -620,6 +633,36 @@ var credsWriteBack = func(ctx context.Context, s *bundleStore) (bundleDoc, error
 // nothing was disabled, and the operator is told what to do about it.
 func credsLostUpdate(id, wrote, saw string) error {
 	return userErr("nothing was retried: the write landed as version %s of %s and the bundle read back is version %s, which is not the document this command wrote — another write landed between this command's read and its write, so the credential it set may not be the one the service reads. No version was disabled and nothing was written again: read the bundle with fugaro creds ls and set the credential again", safetext.Field(wrote), safetext.Field(id), safetext.Field(saw))
+}
+
+// credsLostUpdateBefore is the same lost update, caught one step earlier and
+// from the only thing that shows it: the version this command's write landed
+// as is not the version after the one it read, so another writer added a
+// version in the window between the read and the write. That writer's entry is
+// not in the document this command wrote — this command built it from the
+// older read — and the version this command read is not the one it replaced,
+// so nothing is disabled and nothing is retried. The re-read is not asked: it
+// would see this command's own document and call the write verified.
+func credsLostUpdateBefore(id, read, wrote, want string) error {
+	return userErr("nothing was retried: this command read version %s of %s and its write landed as version %s, where the version after %s was %s — another write landed between this command's read and its write, so the document this command wrote is not built on the newest one and the credential that write set is not in it. No version was disabled and nothing was written again: this command's version is live, the entry it lost is not, and the way to settle it is to read the bundle with fugaro creds ls and set the credential again", safetext.Field(read), safetext.Field(id), safetext.Field(wrote), safetext.Field(read), safetext.Field(want))
+}
+
+// nextVersion is the version a write must land as, given the version this
+// command read: the one after it, or the first when the container held no
+// version. It is "" for a read version it does not understand, and the caller
+// then checks nothing rather than refusing a write over its own arithmetic:
+// the read version comes from the version's own name (versionNumber), so this
+// is the command's own bookkeeping and not something to fail an operator's
+// write over.
+func nextVersion(read string) string {
+	if read == "" {
+		return "1"
+	}
+	n, err := strconv.Atoi(read)
+	if err != nil || n < 1 {
+		return ""
+	}
+	return strconv.Itoa(n + 1)
 }
 
 // credsDisabledRefusal is the bundle whose newest version is DISABLED. Secret

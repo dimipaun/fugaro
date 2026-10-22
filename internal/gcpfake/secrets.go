@@ -51,6 +51,11 @@ type Secrets struct {
 	// handled (without the fake's lock), so a test can make the secret
 	// appear between the client's get and its create.
 	OnCreate func(id string)
+	// OnAddVersion, when set, is called with the secret ID before an addVersion
+	// is handled (without the fake's lock), so a test can make a version
+	// appear between the client's read and its write — the window a
+	// read-modify-write has no conditional write for.
+	OnAddVersion func(id string)
 	// FailListWith, when non-zero, makes secrets.list answer that HTTP
 	// status: what pins the degradation of a refused label read.
 	FailListWith int
@@ -236,6 +241,9 @@ func (f *Secrets) SetPolicy(id string, bindings []Binding) {
 func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	if r.Method == http.MethodPost && secretsPathRE.MatchString(r.URL.Path) && f.OnCreate != nil {
 		f.OnCreate(r.URL.Query().Get("secretId"))
+	}
+	if r.Method == http.MethodPost && addVersionRE.MatchString(r.URL.Path) && f.OnAddVersion != nil {
+		f.OnAddVersion(addVersionRE.FindStringSubmatch(r.URL.Path)[2])
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
