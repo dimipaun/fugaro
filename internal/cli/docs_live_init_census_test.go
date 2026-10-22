@@ -81,8 +81,9 @@ import (
 // `docs/credentials-service/`, `docs/website/`, `docs/coordinator/`,
 // `docs/in-job-review/`, `docs/mobile/`, `docs/windows-cli/` and
 // `docs/setup-wizard/`) is what D9 answered on 2026-10-20 and what W2.3's own
-// entry states; W0.2 had written six of them, and the four D9 added sat on
-// `pendingRename` -- which the walk reads as files still owing a rename --
+// entry states; W0.2 had written six of them, and the four the plan names
+// past those six sat on `pendingRename` -- which the walk reads as files still
+// owing a rename --
 // only because the constant and the answer disagreed. The plan is explicit
 // about which half is wrong when that happens: "if the flip prints a file
 // inside one of them, the constant is wrong -- not the file". W2.3 could not
@@ -178,15 +179,15 @@ var datedRecords = []string{
 // (`"fugaro " + "init"`) would be hiding the mention rather than retiring the
 // word, which is the "wrong in one direction" half of Global Constraint 7.
 //
-// internal/cli/testdata/init_retire.golden is deliberately NOT here, although
-// it named the command four times before W2.2: it is a transcript, not a
-// retirement statement, and the three it names today are internal/cli's own
-// strings -- W2.1's -- so W1.2/W2.1 regenerate it with
-// TestInitRepoRetireTranscriptGolden -update-retire exactly like the other two
-// goldens. The fourth was internal/localcfg's build.service_account warning,
-// which W2.2 renamed in the commit that renamed the string it quotes. An
-// exemption for a file the rename empties is the "wrong in one direction" case
-// Global Constraint 7 forbids.
+// internal/cli/testdata/init_retire.golden is deliberately NOT here, and it
+// names the command zero times today, which is the point: it named it four
+// times before the rename reached it. It is a transcript, not a retirement
+// statement, and three of the four were internal/cli's own strings -- W2.1's --
+// so W2.1 regenerated it with TestInitRepoRetireTranscriptGolden
+// -update-retire exactly like the other two goldens; the fourth was
+// internal/localcfg's build.service_account warning, which W2.2 renamed in the
+// commit that renamed the string it quotes. An exemption for a file the rename
+// empties is the "wrong in one direction" case Global Constraint 7 forbids.
 var retirementText = []string{
 	// W1.2's tombstone: one message, two names, non-zero exit.
 	"internal/cli/retired.go",
@@ -261,7 +262,7 @@ const censusRoot = "../.."
 // tree ever has to be renamed again rather than read.
 //
 // Read on main at `1d325928`, the branch W2.1-W2.5 were built on, it was
-// **312** files: 118 non-test Go files, 117 test files, 34 markdown files, 29
+// **304** files: 118 non-test Go files, 117 test files, 26 markdown files, 29
 // Terraform files, the four `.tftest.hcl` fixtures beside them, the two
 // goldens, and eight in none of those groups -- the website's four, the two
 // under images/, the published schema and internal/config/example.yaml. Each
@@ -271,11 +272,14 @@ const censusRoot = "../.."
 // it 107 files down (internal/cli's own strings, plus the generated page),
 // W2.2 108 (everything outside internal/cli), W2.4 seven (the website's), W2.5
 // forty-four (Terraform, the schema, the example config, images/), W2.3 thirty
-// (the live prose and the pins that read it). What that leaves is the residue
+// (the live prose and the pins that read it). Those five numbers count a file
+// once per task that touched it, which is why they sum to more than the census:
+// the file lanes above name the files with more than one writer. What that
+// leaves is the residue
 // the plan's own text calls "the leftover set", and it is the residue W2.6
 // ruled on.
 //
-// **W2.6's own move, and the last one.** Nine files were renamed, and every
+// **W2.6's own move, and the last one.** Five files were renamed, and every
 // one of them is a mention in live text or a pin of live text:
 // docs/gcp-live-checklist.md, the live register W0.3's rewrite left with the
 // retired spelling in its prose (its Checks 27 and 111 already named the new
@@ -286,16 +290,19 @@ const censusRoot = "../.."
 // internal/cli/doctor_bucket_test.go, whose one mention is a comment about a
 // repository re-applied with the repository door.
 //
-// Fifteen files were ruled dated records rather than renamed: the plan records
-// of other artifacts under docs/coordinator/, docs/in-job-review/,
-// docs/mobile/, docs/windows-cli/, docs/central-orchestrator/,
-// docs/mobile-auth/ and docs/rigor-modes/. D9's answer names four of those
-// folders; the other three are the same class and postdate the plan's census,
-// which is why `datedRecords` above carries all seven and says so.
+// Fifteen files were ruled dated records rather than renamed: nine under the
+// four folders the plan exempts past W0.2's six -- docs/coordinator/,
+// docs/in-job-review/ and docs/mobile/, which D9's answer of 2026-10-20 added,
+// and docs/windows-cli/, which postdates the plan's census -- and six under the
+// three folders of that same class which also postdate it
+// (docs/central-orchestrator/, docs/mobile-auth/ and docs/rigor-modes/, each
+// another artifact's own plan record). That is why `datedRecords` above carries
+// thirteen roots and says so.
 //
-// Eight were left naming the command by design, and they are `retirementText`
-// above: the tombstone and its test, this file, the relay case, the two
-// must-not-contain guards whose pattern IS the retired word
+// Eight name the command by design, and they are `retirementText` above --
+// W0.2's three, W1.2's relay case and the four this task added: the tombstone
+// and its test, this file, the relay case whose input IS the retired command
+// line, the two must-not-contain guards whose pattern IS the retired word
 // (internal/cli/docs_setup_wizard_checks_test.go and
 // internal/cli/restore_test.go), and the two pins of dated records
 // (internal/cli/docs_release_notes_test.go and
@@ -1001,7 +1008,7 @@ func TestLiveInitCensusMatchesTheFrozenList(t *testing.T) {
 	// document reached it and the same command regenerated it in that commit.
 	// The rows stay as the invariant they assert -- no generated page is ever
 	// on this list, because a page is regenerated, not renamed -- which is
-	// what W2.4, the task that owns the rest of the site, works from.
+	// what W2.4, the task that owned the rest of the site, worked from.
 	for _, tc := range []struct {
 		page   string
 		listed bool
