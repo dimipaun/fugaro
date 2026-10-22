@@ -14,6 +14,7 @@ package credsvc
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -193,6 +194,68 @@ func TestARefusedCallIsAudited(t *testing.T) {
 			t.Errorf("the upstream saw %d requests with the stop switch on, want none", n)
 		}
 	})
+}
+
+// TestABindingRefusalIsAudited: the pairing of the two identities (server.go's
+// N1 check) is a refusal AFTER admission — Verify returned a whole identity, the
+// run, the repository, the job and the account among it — so it is recorded like
+// every other refusal on this path: one line, with the identity the service
+// verified and the refusal's own class. The repository the line names is the
+// identity's own and not the calling job's, which is the whole of what the
+// refusal is about.
+//
+// The credential field is empty, and truthfully so: no credential was chosen and
+// none was read — the binding is asked before the bundle — so the line names
+// none.
+//
+// Mutation (run, restore): answer this refusal with s.refuse instead of
+// refuseCall (server.go). The refused call writes no line and this test is red.
+func TestABindingRefusalIsAudited(t *testing.T) {
+	s, auditLog := auditSvc(t, nil)
+	// A well-formed run identity of the other repository of the same project:
+	// its uid spells its own slug, so the run token verifies, and it is the
+	// PAIRING of it with the calling job's account that refuses the call (N1).
+	otherSlug := testSlug(t, testOtherRepoPath)
+	other := s.runToken(func(c map[string]any) {
+		c["fs"] = otherSlug
+		c["sub"] = "r~" + otherSlug + "~" + s.run
+		c["user_id"] = c["sub"]
+	})
+	resp := s.postTokens(t, MessagesPath, callBody("bound-elsewhere"), other, s.jobToken(), s.job)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading the answer: %v", err)
+	}
+	if resp.StatusCode != StatusUnverified {
+		t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
+	}
+	if e := refusal(t, resp.StatusCode, body); e.Error != ErrorUnverifiedRunIdentity {
+		t.Errorf("the refusal is %q, want %q", e.Error, ErrorUnverifiedRunIdentity)
+	}
+	lines := forwardLines(t, auditLog)
+	if len(lines) != 1 {
+		t.Fatalf("a refused call wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+	}
+	line := lines[0]
+	checkAuditShape(t, line)
+	for field, want := range map[string]any{
+		"run":        s.run,
+		"repository": otherSlug,
+		"job":        s.job,
+		"caller":     testJobSA,
+		"credential": "",
+		"tier":       "",
+		"purpose":    PurposeForward,
+		"status":     ErrorUnverifiedRunIdentity,
+	} {
+		if got := line[field]; got != want {
+			t.Errorf("the binding refusal's audit line %s = %v, want %q", field, got, want)
+		}
+	}
+	if n := s.up.Count(); n != 0 {
+		t.Errorf("the upstream saw %d requests, want none: the call was refused before it was forwarded", n)
+	}
 }
 
 // TestACallIsRefusedWhenItCannotBeAudited is C1.13's fail-closed rule on the

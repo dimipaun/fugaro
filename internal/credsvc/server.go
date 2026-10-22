@@ -393,13 +393,15 @@ func NewServer(cfg Config) (*Server, error) {
 //
 // What this path answers is recorded (C1.13), one line per call: the issuance
 // the cascade's answer is (cascade.go's answer), and every refusal from the
-// point the caller is admitted on — the stop switches, the policy, the request's
-// own reading, the bundle, the admissions and the cascade's own refusals. The
-// refusals BEFORE admission are not: a route this service does not serve, a
-// request the contract cannot read and an identity it will not verify are
-// answered before there is a run, a repository or a job this service could name,
-// and the audit line's "who" is the identity Verify returned and nothing a
-// caller typed (Identity.Audit).
+// binding on — the pairing of the two identities, the stop switches, the
+// policy, the request's own reading, the bundle, the admissions and the
+// cascade's own refusals. The refusals BEFORE that are not: a route this
+// service does not serve, a request the contract cannot read and an identity it
+// will not verify are answered before there is a run, a repository or a job this
+// service could name, and the audit line's "who" is the identity Verify returned
+// (Identity.Audit) and nothing a caller typed — which is also why the binding
+// refusal, the first one that has a whole identity to name, is the first one
+// recorded.
 //
 // The request-shape refusals (request_refused) are the one refusal after
 // admission this path does not record, and the reason is the contract's own:
@@ -435,6 +437,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.refuseIdentity(ctx, w, err)
 		return
 	}
+	// The purpose the call asks for and the credential a line for it names, and
+	// what every refusal below is recorded as (C1.13): the route decides both,
+	// and they are read here because every refusal that follows — the binding,
+	// the stop switches and an unreadable switch — is answered before the route
+	// is branched on. A refusal of a mint recorded as "forward" would be the
+	// audit telling an operator that a model call was refused when the run asked
+	// for an installation token, and a mint's line names the App key by the rule
+	// the mint itself keeps (auditMint): the credential the endpoint issues from
+	// is the endpoint's own name for it, not a value read out of the bundle.
+	purpose, credential := PurposeForward, ""
+	if r.URL.Path == MintPath {
+		purpose, credential = PurposeMint, config.GitHubAppKeySecret
+	}
 	ja, bound := s.jobs[id.JobAccount]
 	if !bound || ja.Slug != id.Slug {
 		// Review finding N1: the two identities a call carries are verified
@@ -442,26 +457,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// admission question and it is asked here. A run identity is honoured
 		// only by the job whose repository it belongs to, which is what stops
 		// an admitted job account from presenting a run token of another
-		// repository.
-		s.refuse(w, StatusUnverified, ErrorUnverifiedRunIdentity,
+		// repository. The refusal is recorded like the ones below it: the
+		// identity Verify returned is whole, so the line names the run, the
+		// repository the run belongs to, the job and the account — and no
+		// credential, because none was read.
+		s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnverified, ErrorUnverifiedRunIdentity,
 			"the run identity is not a run of the calling job's repository")
 		return
-	}
-	// The purpose the call asks for, and what every refusal below is recorded
-	// as (C1.13): the route decides it, and it is read here because the two
-	// refusals that follow — the stop switches and an unreadable switch — are
-	// answered before the route is branched on. A refusal of a mint recorded as
-	// "forward" would be the audit telling an operator that a model call was
-	// refused when the run asked for an installation token.
-	purpose := PurposeForward
-	if r.URL.Path == MintPath {
-		purpose = PurposeMint
 	}
 	on, which, err := s.cfg.Kills.Stop(ctx, id.Slug)
 	if err != nil {
 		// An unreadable switch is not an off switch (budget's own rule), so
 		// the call is refused rather than served.
-		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, "the operator's stop switches could not be read")
+		s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnavailable, ErrorStateUnavailable, "the operator's stop switches could not be read")
 		return
 	}
 	if on {
@@ -470,7 +478,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// issues no credential at all and answers a refusal the run halts on.
 		// It is read before the bundle, so a stopped service reads no
 		// credential at all.
-		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable,
+		s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnavailable, ErrorStateUnavailable,
 			"the credentials service is stopped by the "+which+" kill switch")
 		return
 	}

@@ -418,6 +418,34 @@ func TestMintForOwnRepositoryOnly(t *testing.T) {
 		if n := gh.count(); n != 0 {
 			t.Errorf("GitHub saw %d requests for a run of another repository, want none", n)
 		}
+		// And the refusal is recorded (C1.13): the binding is asked after the
+		// identity is verified, so the whole identity is known when the call is
+		// refused — the run, the repository the RUN belongs to, the job and the
+		// account — and the line is the mint the run asked for, because that is
+		// the route it called. A mint's line always names the App key, which is
+		// the credential a mint issues from and the only one this endpoint has
+		// (auditMint), whether or not the bundle was read: the name is the
+		// endpoint's, not a value read out of anything.
+		lines := mintAuditLines(t, s)
+		if len(lines) != 1 {
+			t.Fatalf("the refused mint wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+		}
+		line := lines[0]
+		checkAuditShape(t, line)
+		for field, want := range map[string]any{
+			"purpose":    PurposeMint,
+			"credential": config.GitHubAppKeySecret,
+			"status":     ErrorUnverifiedRunIdentity,
+			"run":        s.run,
+			"repository": otherSlug,
+			"job":        s.job,
+			"caller":     testJobSA,
+			"tier":       "",
+		} {
+			if got := line[field]; got != want {
+				t.Errorf("the refused mint's audit line %s = %v, want %q", field, got, want)
+			}
+		}
 	})
 
 	t.Run("the repository is the binding's, not the caller's", func(t *testing.T) {
@@ -941,9 +969,12 @@ func TestMintIsStoppedByTheKillSwitch(t *testing.T) {
 		"repository": s.slug,
 		"job":        s.job,
 		"caller":     testJobSA,
-		// No credential is named: the stop switch is read before the bundle,
-		// so the App key was never read and there is no name to write.
-		"credential": "",
+		// A mint's line always names the App key — the credential this
+		// endpoint issues from and the only one it has (auditMint) — whether
+		// the refusal was taken before the bundle was read (this one) or after
+		// it: the name is the endpoint's own and not something read out of a
+		// bundle or a document.
+		"credential": config.GitHubAppKeySecret,
 		"tier":       "",
 	} {
 		if got := line[field]; got != want {
