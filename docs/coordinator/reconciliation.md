@@ -116,8 +116,8 @@ Cloud Run's own. A timeout exists as a job's *task* timeout
 request timeout. A concurrency setting has no precedent anywhere. → **Q1**.
 
 **#3 — "Part of project init's existing Terraform" is the right shape with the wrong noun, and the plan gate is an allowlist that a new service breaks. — Wrong (the noun) / Rule (the gate).**
-`fugaro init` applies the **installation** root (`internal/cli/init.go:1742 installRoot`,
-`:1843 t.Plan`, `:1877 t.Apply`). There is a Terraform module called `project`
+`fugaro init` applies the **installation** root (`internal/cli/init.go:1766 installRoot`,
+`:1867 t.Plan`, `:1901 t.Apply`). There is a Terraform module called `project`
 (`deploy/terraform/gcp/modules/project/`) — but it is the *shared project jobs* module: it
 creates one Cloud Run job and one job service account per (profile, provider, account)
 (`modules/project/job.tf:10`, `modules/project/sa.tf:5`) and nothing else. It creates no
