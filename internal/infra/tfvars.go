@@ -463,6 +463,57 @@ func CarriedCredentialsService(vars, prev []byte) ([]byte, error) {
 	return sortedJSON(doc)
 }
 
+// CarriedManagedDeployerScoped returns vars with the managed_deployer_scoped
+// entry that the document prev carried, when vars carry none of their own.
+//
+// prev is the same pair of documents CarriedCredentialsService takes — the
+// workdir's snapshot from before the run and the tfvars it holds now — and nil
+// when neither holds any. vars carry a value of their own only when the caller
+// decided it from the project's own creation fact (installRoot and --forget
+// read managed.IsManaged), which is the authority: this never overwrites one.
+//
+// The variable is what creates the managed deployer's seven scoped roles and
+// their seven conditioned bindings, and every path that serializes the
+// installation root's tfvars rebuilds them from a spec that does not carry it
+// (the spec is built from the options, and only the fact read sets the field).
+// Carried forward as it is found, present or absent, an installation that has
+// them keeps them across any such rewrite — `fugaro update --forget` above
+// all, whose plan would otherwise delete all fourteen and be refused by the
+// guard, and `--config-only`, the compute stage's read of the installation's
+// outputs and `--print-vars`, whose document is a reading of the installation
+// the owner has to be able to trust. An installation that never used managed
+// projects carries no key and is unchanged.
+//
+// The creation fact is one-way — nothing in this tree removes the marker
+// object or the project label — so an entry found here is not a stale opt-in
+// for a project that stopped being managed: it is the state of a project that
+// still is. The day something un-manages a project, this carry is one of the
+// places that has to learn about it.
+func CarriedManagedDeployerScoped(vars, prev []byte) ([]byte, error) {
+	if prev == nil {
+		return vars, nil // no document held one: nothing to carry
+	}
+	previous, err := varsDoc(prev)
+	if err != nil {
+		// A tfvars that cannot be read is not a reason to write a document
+		// that drops the fence: fail rather than carry nothing forward.
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	scoped, ok := previous["managed_deployer_scoped"]
+	if !ok || scoped == nil {
+		return vars, nil
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	if _, own := doc["managed_deployer_scoped"]; own {
+		return vars, nil // the caller's own decision stands
+	}
+	doc["managed_deployer_scoped"] = scoped
+	return sortedJSON(doc)
+}
+
 // varsDoc decodes an installation tfvars document, keeping numbers as
 // json.Number so that encoding it again writes the same digits.
 func varsDoc(vars []byte) (map[string]any, error) {

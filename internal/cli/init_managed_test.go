@@ -768,6 +768,97 @@ func TestManagedInitWritesTheDeployerScopeFromTheCreationFact(t *testing.T) {
 	}
 }
 
+// TestForgetKeepsTheManagedDeployerScope: the rollback plans the installation
+// root too, so it decides the deployer's scope the way installRoot does — from
+// the project's own creation fact — and not from the spec the run was handed,
+// which is built from the options and never carries the key. A forget run that
+// wrote the document without it would plan the deletion of the seven scoped
+// roles and their seven conditioned bindings, and the guard refuses a plan
+// like that: the owner's own rollback would stop on a fence the run itself
+// took out of the tfvars.
+//
+// The assertion is on the document the plan is made from. The rig's terraform
+// is scripted (setPlan), so what a real one would plan is read here as the
+// variables that plan would carry — the fourteen resources exist in the config
+// exactly when managed_deployer_scoped is true.
+//
+// Mutation (run, restore): drop the managedScope read from forget: the key is
+// gone after the run and this fails.
+func TestForgetKeepsTheManagedDeployerScope(t *testing.T) {
+	r := newInitRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	r.setPlan(t, forgetPlan()...)
+	out, _, err := executeStdin(t, "", "update", "--forget", "--yes")
+	if err != nil {
+		t.Fatalf("the rollback of a managed installation failed: %v\n%s", err, out)
+	}
+	if len(r.ran(t, "state rm")) != 1 {
+		t.Fatalf("calls = %q", r.calls(t))
+	}
+	if got := r.tfvars(t)["managed_deployer_scoped"]; got != true {
+		t.Errorf("tfvars[managed_deployer_scoped] = %v, want true: the rollback's plan is made from this document, and without the key it deletes the deployer's seven scoped roles and their seven conditioned bindings", got)
+	}
+}
+
+// TestConfigOnlyKeepsTheManagedDeployerScope: --config-only rewrites the
+// installation root's tfvars from a spec that never carries the deployer's
+// scope, and it reads no creation fact of its own, so the key can only come
+// from the document the workdir held — the carry in prepare. What it protects
+// is the reading: the document is the installation, and one that has lost the
+// key says the installation has no fence, which is what a later --print-vars
+// prints and what the Check 68 procedure reads.
+//
+// The first run is the control: a setup of a managed project writes the key,
+// so the second run's snapshot has something to carry.
+//
+// Mutation (run, restore): drop the CarriedManagedDeployerScoped loop from
+// prepare: the second run writes the key away and this fails.
+func TestConfigOnlyKeepsTheManagedDeployerScope(t *testing.T) {
+	r := newInitRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	if out, _, err := executeStdin(t, "", "setup", "--yes"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := r.tfvars(t)["managed_deployer_scoped"]; got != true {
+		t.Fatalf("the fixture's own run wrote tfvars[managed_deployer_scoped] = %v, want true: without it the second run has nothing to carry and this test would pass for the wrong reason", got)
+	}
+	out, _, err := executeStdin(t, "", "update", "--config-only", "--yes")
+	if err != nil {
+		t.Fatalf("update --config-only: %v\n%s", err, out)
+	}
+	if got := r.tfvars(t)["managed_deployer_scoped"]; got != true {
+		t.Errorf("tfvars[managed_deployer_scoped] = %v after --config-only, want true: the document now reads as an installation without the deployer's fence, and the next --print-vars prints that", got)
+	}
+}
+
+// TestPrintVarsKeepsTheManagedDeployerScope: --print-vars prints the
+// installation as it STANDS, and it touches no cloud and no Terraform by
+// design, so the deployer's scope cannot be read from the creation fact here:
+// it is carried from the workdir's own document, the same carry the credentials
+// service's opt-in gets. Printed without it, the document the owner reads (and
+// the one Check 68 is written against) says the fence is off.
+//
+// Mutation (run, restore): drop the CarriedManagedDeployerScoped call from the
+// --print-vars branch: the printed document carries no key and this fails.
+func TestPrintVarsKeepsTheManagedDeployerScope(t *testing.T) {
+	r := newInitRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	if out, _, err := executeStdin(t, "", "setup", "--yes"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	out, _, err := executeStdin(t, "", "setup", "--print-vars")
+	if err != nil {
+		t.Fatalf("setup --print-vars: %v\n%s", err, out)
+	}
+	var printed map[string]any
+	if err := json.Unmarshal([]byte(out), &printed); err != nil {
+		t.Fatalf("--print-vars printed no JSON document: %v\n%s", err, out)
+	}
+	if got := printed["managed_deployer_scoped"]; got != true {
+		t.Errorf("--print-vars printed managed_deployer_scoped = %v, want true: the document an owner reads as the installation says its deployer has no fence", got)
+	}
+}
+
 // identityOf is the identity a plan's own before view carries for one change,
 // read back through the plan the fake would report: it is tf.RemovedIdentity's
 // answer and not a fixture's guess, so an entry built with it matches exactly
