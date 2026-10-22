@@ -14,10 +14,26 @@ type Cost struct {
 	ComputeUSD float64 `json:"compute_usd"`
 	// ComputeEstimated is true only when prices and resources were known;
 	// when false, ComputeUSD is 0 and means "not estimated", not free.
-	ComputeEstimated bool    `json:"compute_estimated"`
-	TotalUSD         float64 `json:"total_usd"`
-	Estimate         bool    `json:"estimate"`
-	ModelBasis       string  `json:"model_basis"`
+	ComputeEstimated bool `json:"compute_estimated"`
+	// TotalUSD is billed dollars: it excludes the model figure of a
+	// subscription run and, in a mixed one, ModelNotionalUSD (P12, D140).
+	TotalUSD   float64 `json:"total_usd"`
+	Estimate   bool    `json:"estimate"`
+	ModelBasis string  `json:"model_basis"`
+	// ModelNotionalUSD is the part of ModelUSD that was notional: calls a
+	// subscription paid for, which count against a plan's limits rather than
+	// being billed — an oauth run's every call, and a cascade run's tier A
+	// (D140, F25). It is set with WithNotional, never by hand, so TotalUSD
+	// cannot drift from it.
+	//
+	// ModelUSD keeps its meaning (every stage's model dollars, notional ones
+	// included), which is what keeps the documented invariant
+	// sum(stages[].model_usd) + model_by["unattributed"] == model_usd true
+	// exactly; ModelNotionalUSD says how much of that figure was notional.
+	// A mixed run's model_basis is api-list for the whole run (its billed
+	// part is the gateway's), so a reader splitting the run's dollars must
+	// split on this field and never on ModelBasis (P12).
+	ModelNotionalUSD float64 `json:"model_notional_usd,omitempty"`
 	// ModelSource says where ModelUSD came from: "gateway" (its settled
 	// ledger) or "claude-code" (the agent's own total_cost_usd).
 	ModelSource string `json:"model_source,omitempty"`
@@ -83,4 +99,25 @@ func newCost(modelUSD, computeUSD float64, estimated bool, basis string) Cost {
 		ModelUSD: modelUSD, ComputeUSD: computeUSD, ComputeEstimated: estimated,
 		TotalUSD: math.Round(total*100) / 100, Estimate: true, ModelBasis: basis,
 	}
+}
+
+// WithNotional records the notional part of ModelUSD (P12, D140) and returns
+// the cost with TotalUSD recomputed from it: the calls a subscription paid
+// for are in ModelUSD -- every stage's figure, so the sum invariant holds --
+// and never in the billed total, whichever basis the run has.
+//
+// usd is clamped into [0, ModelUSD] rather than refused: a figure outside it
+// is a caller's bug, and of the two records that bug can write, the one that
+// bills nothing notional is the safe direction (the alternative bills a
+// negative amount, or claims more of the model figure was a subscription's
+// than the model figure itself).
+func (c Cost) WithNotional(usd float64) Cost {
+	usd = min(max(usd, 0), c.ModelUSD)
+	c.ModelNotionalUSD = usd
+	total := c.ComputeUSD
+	if c.ModelBasis != BasisSubscription {
+		total += c.ModelUSD - usd
+	}
+	c.TotalUSD = math.Round(total*100) / 100
+	return c
 }

@@ -465,7 +465,7 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	sch := compile(t, "result.schema.json")
 	at := time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
 	deadline, finished := at.Add(time.Hour), at.Add(10*time.Minute)
-	cost := runstore.NewCost(4.12, 0.38, runstore.BasisAPIList)
+	cost := runstore.NewCost(4.12, 0.38, runstore.BasisAPIList).WithNotional(0.42)
 	// A VM-backed run's estimate carries the price table it was priced from,
 	// which a record has to be able to store (design compute-backend.md
 	// §5.2, C17).
@@ -486,7 +486,15 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			Warning: "w", StartedAt: at, DurationS: 1.5,
 		}},
 		CostUSD: 4.12, Cost: &cost,
-		Stages:    []runstore.StageTiming{{Name: "implement", StartedAt: at, DurationS: 61, ModelUSD: 0.42, Model: "claude-sonnet-5-5"}},
+		Stages: []runstore.StageTiming{{Name: "implement", StartedAt: at, DurationS: 61, ModelUSD: 0.42, ModelNotionalUSD: 0.12, Model: "claude-sonnet-5-5"}},
+		// The switch log (C1.16, D140): the service's record of a credential
+		// change beside the cache-miss estimate only the gateway can compute,
+		// including the one a tier's unmeasured cache behaviour leaves
+		// unknown rather than free (F24).
+		Switches: []runstore.Switch{
+			{To: "repo-shared-b", Reason: "exhausted", CacheMissUSD: 0.00054},
+			{From: "repo-shared-b", To: "api-key", Reason: "not_admitted", CacheMissUnmeasured: true},
+		},
 		StartedAt: at, Deadline: &deadline, FinishedAt: &finished,
 		FinalizeReserveS: 90,
 		// The artifact fields ride along on the fully-populated record so a
@@ -528,6 +536,27 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	}
 	if err := sch.Validate(bad); err == nil {
 		t.Fatal("schema accepts a numeric compute_source")
+	}
+	// A switch log entry is closed too, and its estimate and its "unmeasured"
+	// fact are different things: a record that carries a string where the
+	// estimate goes, or drops the reason, is refused rather than stored.
+	miss := []byte(`"cache_miss_usd":0.00054`)
+	if !bytes.Contains(data, miss) {
+		t.Fatalf("fixture lacks the literal this test replaces: %s", data)
+	}
+	bad, err = jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, miss, []byte(`"cache_miss_usd":"unknown"`), 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(bad); err == nil {
+		t.Error("schema accepts a switch whose cache-miss estimate is not a number")
+	}
+	bad, err = jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, []byte(`"reason":"exhausted"`), []byte(`"why":"exhausted"`), 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(bad); err == nil {
+		t.Error("schema accepts a switch with no reason")
 	}
 }
 

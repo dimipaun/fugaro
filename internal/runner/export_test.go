@@ -8,6 +8,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/cache"
 	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -128,6 +129,16 @@ func SetCredsWait(t *testing.T, f func(ctx context.Context, d time.Duration) err
 func (h *RunHandle) NoteExhausted(reset time.Time) {
 	h.r.noteExhausted(credsvc.ExhaustedUntil{ResetAt: reset})
 }
+
+// ServiceAnswer is the same answer arriving the way it does in a real run:
+// internal/gateway parses the credentials service's answer out of its wire
+// body and hands it to the run through the upstream's OnServiceAnswer hook
+// (C1.15), which is this function. A test that calls it therefore drives the
+// run through the wired path and not around it, without standing up the
+// service a whole cascade run needs to start (C1.19's own tests do, against
+// a stand-in: TestServiceAnswerReachesTheRunsWait and the record's tests in
+// gateway_service_internal_test.go).
+func (h *RunHandle) ServiceAnswer(a gateway.ServiceAnswer) { h.r.serviceAnswer(a) }
 
 func (h *RunHandle) HaltNow(hl runstore.Halt) bool      { return h.r.haltNow(hl) }
 func (h *RunHandle) CancelHaltedStage(hl runstore.Halt) { h.r.cancelHaltedStage(hl) }

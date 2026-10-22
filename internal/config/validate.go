@@ -236,6 +236,17 @@ func Validate(c *Config) []Problem {
 				// value the repository chose. Refused whether or not a Codex
 				// provider ever names it.
 				add(sp+".name", "%s and names starting %s are reserved for the Codex harness's OAuth credential (codex-oauth-token), not a workflow secret", CodexOAuthToken, CodexOAuthTokenPrefix)
+			} else if s.Name == CredentialsBundleSecret {
+				// The credentials service's one bundle container (C1.11's
+				// review finding n2). Nothing mounts it: its document is every
+				// model credential the installation holds, and the service is
+				// the only reader. A workflow that declared the name would
+				// mount that document into a job — the whole credential set,
+				// into a container a run's agent can read — so the name is
+				// refused here, where every other reserved name is refused,
+				// and again at `fugaro secrets set` (internal/cli's
+				// credentialsBundleRefusal), which is the write path.
+				add(sp+".name", "%s is the credentials service's own bundle container (the platform's), not a workflow secret", CredentialsBundleSecret)
 			}
 			switch {
 			case !envNameRE.MatchString(s.Env):
@@ -385,14 +396,13 @@ func validateCascadeFollowup(a Agent, f Followup) []Problem {
 // ceiling enforces is a cascade workflow whose gateway is on, and refusing it
 // here would refuse a valid repository.
 //
-// `fugaro validate` (internal/cli/validate.go, cascadeProblems) is its only
-// caller today, and it holds the merge. The launch's own side of the same rule
-// is plan Task C1.19 and is not in this change: nothing in internal/cli/run.go
-// or internal/runner reads this function yet, so a `cascade` file whose
-// effective mode is off passes a launch and fails later, in the job, on the
-// runner's own `unknown agent auth "cascade"` — no released runner reads the
-// value at all (cascadeSince, internal/cli/recipes_skew.go), which is the same
-// gap seen from the other side.
+// Its callers hold the merge, because Validate holds one file and the run's
+// mode is a function of the layers above it: `fugaro validate`
+// (internal/cli/validate.go, cascadeProblems) is the author's side, and the
+// launch (internal/cli/run.go, cascadeLaunchRefusal) is the operator's — a
+// launch refuses a cascade run whose effective mode leaves the gateway off,
+// before the claim is taken and before anything is written, rather than
+// letting the job fail on it.
 func CheckCascadeGateway(a Agent, mode string) []Problem {
 	if a.Auth != AuthCascade || mode == policy.ModeObserve || mode == policy.ModeEnforce {
 		return nil

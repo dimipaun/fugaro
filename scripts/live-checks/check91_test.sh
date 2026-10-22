@@ -121,14 +121,12 @@ ALLOWED = {
     ("run", "services", "update"): ("--project", "--region", "--set-env-vars", "--quiet"),
     ("run", "deploy"): ("--project", "--region", "--image", "--no-allow-unauthenticated", "--timeout",
                          "--min-instances", "--max-instances", "--set-env-vars", "--quiet"),
-    ("artifacts", "repositories", "describe"): ("--project", "--location"),
     ("artifacts", "repositories", "create"): ("--project", "--location", "--repository-format", "--description", "--quiet"),
     ("artifacts", "repositories", "delete"): ("--project", "--location", "--quiet"),
     ("artifacts", "repositories", "list"): ("--project", "--location", "--filter", "--format"),
     ("artifacts", "docker", "images", "delete"): ("--project", "--delete-tags", "--quiet"),
     ("artifacts", "docker", "images", "list"): ("--project", "--include-tags", "--format"),
     ("iam", "service-accounts", "list"): ("--project", "--filter", "--format"),
-    ("iam", "service-accounts", "describe"): ("--project",),
     ("iam", "service-accounts", "get-iam-policy"): ("--flatten", "--format", "--project"),
     ("projects", "get-iam-policy"): ("--flatten", "--format", "--project"),
     ("storage", "buckets", "get-iam-policy"): ("--flatten", "--format", "--project"),
@@ -196,7 +194,10 @@ def describe_failed(cmd):
 
 
 def describe_absent(cmd):
-    sys.stderr.write("ERROR: (gcloud.%s) NOT_FOUND: Requested entity was not found.\n" % cmd)
+    # The REAL message of the installed SDK for a service that is not there: no
+    # NOT_FOUND token, exit 1. The script reads no message for absence at all;
+    # this is here so that a code path that did would fail the test.
+    sys.stderr.write("ERROR: (%s) Cannot find service [fugaro-chk91]\n" % cmd.replace("run.services.describe", "gcloud.run.services.describe"))
     sys.exit(1)
 
 
@@ -224,15 +225,6 @@ if mode == "hang":
     time.sleep(600)
 
 if args[:2] == ["run", "services"] and args[2:3] == ["describe"]:
-    if describe_fails("services"):
-        describe_failed("run.services.describe")
-    # `after-deploy` fails only the describes that come once a deploy has been
-    # ATTEMPTED: the guard's describe (which runs on a service that is not there
-    # yet) still answers, and the one that decides whether a failed deploy left
-    # something behind does not. That is the shape that tells the record-keeping
-    # rule apart from the guard's.
-    if describe_fails("after-deploy") and state("deploy-attempted"):
-        describe_failed("run.services.describe")
     # The two describes the step makes AFTER a successful deploy are told apart
     # from the guard's by their --format, so a test can plant a failure in
     # exactly one of them: `url` is the one that reads status.url, `config` the
@@ -253,9 +245,25 @@ if args[:2] == ["run", "services"] and args[2:3] == ["describe"]:
     sys.exit(0)
 
 if args[:2] == ["run", "services"] and args[2:3] == ["list"]:
-    if listfails("services"):
+    # FAKE_GCLOUD_LIST_FAILS is the Restore's COUNT query failing: it fires once
+    # the deploy was attempted, so the existence probes before it still answer.
+    if listfails("services") and state("deploy-attempted"):
         sys.stderr.write(LIST_FAILED)
         sys.exit(1)
+    # FAKE_GCLOUD_PROBE_FAILS: the EXISTENCE probe (the list filtered to one
+    # name) fails. `services` fails every such list before anything was made;
+    # `after-deploy` fails only the FIRST one after a deploy was attempted, the
+    # probe that decides whether a failed deploy left a service behind (the
+    # Restore's own count, which comes later, still answers).
+    probe = os.environ.get("FAKE_GCLOUD_PROBE_FAILS", "").split(",")
+    if "services" in probe or ("after-deploy" in probe and state("deploy-attempted") and not state("probe-failed")):
+        if "services" not in probe:
+            touch("probe-failed")
+        sys.stderr.write(LIST_FAILED)
+        sys.exit(1)
+    if os.environ.get("FAKE_GCLOUD_LIST_GARBAGE") == "services":
+        print("some-other-service")
+        sys.exit(0)
     if state("service"):
         print("fugaro-chk91")
     sys.exit(0)
@@ -301,13 +309,6 @@ if args[:2] == ["run", "deploy"]:
         time.sleep(HANG_SECONDS)
     sys.exit(0)
 
-if args[:2] == ["artifacts", "repositories"] and args[2:3] == ["describe"]:
-    if describe_fails("repositories"):
-        describe_failed("artifacts.repositories.describe")
-    if state("repo") or os.environ.get("FAKE_GCLOUD_REPO_EXISTS") == "yes":
-        sys.exit(0)
-    describe_absent("artifacts.repositories.describe")
-
 if args[:2] == ["artifacts", "repositories"] and args[2:3] == ["create"]:
     # `yes` fails and makes nothing; `after` makes the repository and THEN fails,
     # the twin of the deploy's `after` above: the repository is this run's and
@@ -323,16 +324,52 @@ if args[:2] == ["artifacts", "repositories"] and args[2:3] == ["create"]:
         time.sleep(HANG_SECONDS)
     sys.exit(0)
 
+# FAKE_GCLOUD_AR_SWALLOWS is an Artifact Registry outage the way the real
+# `artifacts repositories list` meets it: on an HTTP 5xx it logs a WARNING on
+# stderr, prints NOTHING and exits 0 (googlecloudsdk command_lib/artifacts/util.py,
+# ListLocationRepos). `probe` swallows every repository list; `restore` swallows
+# those after the deploy was attempted -- the Restore's count -- and fails the
+# repository delete in the same outage, so the repository is still there.
+AR_SWALLOWS = os.environ.get("FAKE_GCLOUD_AR_SWALLOWS", "")
+
+
+def ar_down():
+    return AR_SWALLOWS == "probe" or (AR_SWALLOWS == "restore" and state("deploy-attempted"))
+
+
 if args[:2] == ["artifacts", "repositories"] and args[2:3] == ["delete"]:
+    if ar_down():
+        sys.stderr.write("ERROR: (gcloud.artifacts.repositories.delete) HttpError 503: the fake gcloud was told Artifact Registry is down\n")
+        sys.exit(1)
     rm("repo")
     sys.exit(0)
 
 if args[:2] == ["artifacts", "repositories"] and args[2:3] == ["list"]:
-    if listfails("repositories"):
+    if (listfails("repositories") and state("deploy-attempted")) or "repositories" in os.environ.get("FAKE_GCLOUD_PROBE_FAILS", "").split(","):
         sys.stderr.write(LIST_FAILED)
         sys.exit(1)
-    if state("repo"):
-        print("projects/fugaro-dev/locations/us-east5/repositories/fugaro-chk91")
+    if ar_down():
+        sys.stderr.write("WARNING: Failed to list repositories for project fugaro-dev, location us-east5: HttpError 503\n")
+        sys.exit(0)
+    if os.environ.get("FAKE_GCLOUD_LIST_GARBAGE") == "repositories":
+        print("projects/fugaro-dev/locations/us-east5/repositories/some-other-repo")
+        sys.exit(0)
+    # The project's repositories, and the --filter applied to them the way gcloud
+    # applies `name~REGEX` (a regular-expression SEARCH on the full resource name),
+    # so a filter that lost its `$` anchor matches FAKE_GCLOUD_EXTRA_REPOS's
+    # prefix-named neighbours (fugaro-chk91-old) and is caught.
+    names = ["fugaro-chk91"] if (state("repo") or os.environ.get("FAKE_GCLOUD_REPO_EXISTS") == "yes") else []
+    names += os.environ.get("FAKE_GCLOUD_EXTRA_REPOS", "").split()
+    full = ["projects/fugaro-dev/locations/us-east5/repositories/" + n for n in names]
+    filt = flag("--filter") if has("--filter") else ""
+    if filt:
+        if not filt.startswith("name~"):
+            sys.stderr.write("ERROR: the fake gcloud only knows the name~REGEX repository filter, not: %s\n" % filt)
+            sys.exit(2)
+        import re
+        full = [n for n in full if re.search(filt[len("name~"):], n)]
+    for n in full:
+        print(n)
     sys.exit(0)
 
 if args[:2] == ["artifacts", "docker"] and args[2:3] == ["images"]:
@@ -360,13 +397,15 @@ if args[:2] == ["iam", "service-accounts"]:
     ids = os.environ.get("FAKE_GCLOUD_BUILD_SAS", "fugaro-b-sandbox-abc123").split()
     ids = [] if ids == ["none"] else ids
     if args[2:3] == ["list"]:
+        f = flag("--filter")
+        if f.startswith("email="):
+            want = f[len("email="):]
+            if want.split("@")[0] in ids or want.startswith("fugaro-b-"):
+                print(want)
+            sys.exit(0)
         for i in ids:
             print(i + "@fugaro-dev.iam.gserviceaccount.com")
         sys.exit(0)
-    if args[2:3] == ["describe"]:
-        if args[3].split("@")[0] in ids or args[3].startswith("fugaro-b-"):
-            sys.exit(0)
-        describe_absent("iam.service-accounts.describe")
 
 if args[:2] == ["auth", "list"]:
     print(os.environ.get("FAKE_GCLOUD_ACCOUNT", "owner@example.com"))
@@ -1601,11 +1640,11 @@ test_failed_deploy_keeps_the_record_it_made() {
 test_an_unreadable_describe_is_not_an_absent_resource() {
   local dir=$work/describe-unreadable
   prepare "$dir"
-  run91 "$dir" FAKE_GCLOUD_DESCRIBE_FAILS=services
+  run91 "$dir" FAKE_GCLOUD_PROBE_FAILS=services
   expect_status "$status" 1 "unreadable describe: the verdict"
   expect_contains "$err" "whether fugaro-chk91 is already in fugaro-dev/us-east5 cannot be read" \
     "unreadable describe: the guard stops"
-  expect_contains "$err" "NOT_FOUND" "unreadable describe: the reason is named"
+  expect_contains "$err" "the list failed" "unreadable describe: the reason is named"
   local calls
   calls=$(cat "$dir/logs/gcloud.calls")
   expect_absent "$calls" "repositories create" "unreadable describe: nothing was created"
@@ -1613,6 +1652,36 @@ test_an_unreadable_describe_is_not_an_absent_resource() {
   expect_absent "$calls" "run deploy" "unreadable describe: nothing was deployed"
   expect_absent "$calls" "delete" "unreadable describe: nothing was deleted"
   if [ -d "$scratch" ]; then fail "unreadable describe: the scratch directory survived"; fi
+}
+
+# No code path may depend on the TEXT of an absent answer. The fake prints the
+# REAL `Cannot find service [..]` for a describe of an absent service (exit 1,
+# no NOT_FOUND token): the run must go through the guard without ever reading
+# it, and the existence of the service must never be asked with a describe.
+test_absence_is_an_empty_list_not_an_error_string() {
+  local dir=$work/absent-real-message
+  prepare "$dir"
+  run91 "$dir"
+  expect_status "$status" 0 "absent: the run starts and passes on the real gcloud's answers"
+  local before
+  before=$(sed -n '1,/run deploy/p' "$dir/logs/gcloud.calls")
+  expect_absent "$before" "run services describe" "absent: no describe asks whether the service is there"
+  expect_absent "$before" "repositories describe" "absent: no describe asks whether the repository is there"
+  expect_contains "$before" "run services list" "absent: the service is asked with a list"
+  expect_contains "$before" "artifacts repositories list" "absent: the repository is asked with a list"
+  # A list answering something that is not the one name asked for is not a
+  # reading either: the run stops.
+  dir=$work/absent-garbage
+  prepare "$dir"
+  run91 "$dir" FAKE_GCLOUD_LIST_GARBAGE=services
+  expect_status "$status" 1 "unparsable list: the verdict"
+  expect_contains "$err" "cannot be read" "unparsable list: the guard stops"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "run deploy" "unparsable list: nothing deployed"
+  dir=$work/absent-garbage-repo
+  prepare "$dir"
+  run91 "$dir" FAKE_GCLOUD_LIST_GARBAGE=repositories
+  expect_status "$status" 1 "unparsable repository list: the verdict"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "repositories create" "unparsable repository list: nothing created"
 }
 
 # The same rule one step later: the repository guard's describe fails
@@ -1623,7 +1692,7 @@ test_an_unreadable_describe_is_not_an_absent_resource() {
 test_an_unreadable_repository_describe_stops_before_the_create() {
   local dir=$work/repo-describe-unreadable
   prepare "$dir"
-  run91 "$dir" FAKE_GCLOUD_DESCRIBE_FAILS=repositories
+  run91 "$dir" FAKE_GCLOUD_PROBE_FAILS=repositories
   expect_status "$status" 1 "unreadable repository describe: the verdict"
   expect_contains "$err" "whether a repository named fugaro-chk91 is already in fugaro-dev/us-east5 cannot be read" \
     "unreadable repository describe: the guard stops"
@@ -1642,7 +1711,7 @@ test_an_unreadable_repository_describe_stops_before_the_create() {
 test_an_unreadable_describe_after_a_failed_deploy_keeps_the_record() {
   local dir=$work/deployfail-unreadable
   prepare "$dir"
-  run91 "$dir" FAKE_GCLOUD_DEPLOY_FAILS=yes FAKE_GCLOUD_DESCRIBE_FAILS=after-deploy
+  run91 "$dir" FAKE_GCLOUD_DEPLOY_FAILS=yes FAKE_GCLOUD_PROBE_FAILS=after-deploy
   expect_status "$status" 1 "unreadable describe after a failed deploy: the verdict"
   expect_contains "$err" "whether fugaro-chk91 is there now cannot be read" \
     "unreadable describe after a failed deploy: the record is kept"
@@ -1837,6 +1906,58 @@ test_restore_count_query_failure_is_not_papered_over() {
   else
     kept+=("$scratch")
   fi
+}
+
+# `gcloud artifacts repositories list` SWALLOWS a server error: on an HTTP 5xx it logs
+# `WARNING: Failed to list repositories ...` on stderr, prints nothing and exits 0 -- the
+# shape of "not there". In the guard that would adopt a foreign repository; in the Restore
+# it reads as a repository count of 0 (and skips the image count) while the delete failed
+# in the same outage: `restore: PASS` with the repository left behind. Both fail closed.
+test_a_swallowed_repository_list_error_is_not_absence() {
+  local dir=$work/ar-swallow-probe
+  prepare "$dir"
+  run91 "$dir" FAKE_GCLOUD_AR_SWALLOWS=probe
+  expect_status "$status" 1 "swallowed repository list (guard): the verdict"
+  expect_contains "$err" "whether a repository named fugaro-chk91 is already in fugaro-dev/us-east5 cannot be read" \
+    "swallowed repository list (guard): the guard stops"
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls")
+  expect_absent "$calls" "repositories create" "swallowed repository list (guard): nothing was created"
+  expect_absent "$calls" "run deploy" "swallowed repository list (guard): nothing was deployed"
+  expect_absent "$calls" "delete" "swallowed repository list (guard): nothing was deleted"
+  if [ -d "$scratch" ]; then fail "swallowed repository list (guard): the scratch directory survived"; fi
+
+  dir=$work/ar-swallow-restore
+  prepare "$dir"
+  run91 "$dir" FAKE_GCLOUD_AR_SWALLOWS=restore
+  expect_status "$status" 1 "swallowed repository list (Restore): the verdict"
+  expect_contains "$err" "Failed to list repositories" "swallowed repository list (Restore): gcloud's warning is shown"
+  expect_contains "$out" "FACT restore-counts: FAIL" "swallowed repository list (Restore): the count is not read as 0"
+  expect_contains "$out" "repository unread (exit 1)" "swallowed repository list (Restore): the repository count is the unread one"
+  expect_absent "$out" "FACT restore-counts: PASS" "swallowed repository list (Restore): no count is claimed"
+  expect_absent "$out" "FACT restore: PASS" "swallowed repository list (Restore): no clean project is claimed"
+  expect_contains "$out" "FACT restore: FAIL" "swallowed repository list (Restore): the Restore says it cannot tell"
+  if [ ! -d "$scratch" ]; then
+    fail "swallowed repository list (Restore): the scratch directory was removed"
+  else
+    kept+=("$scratch")
+  fi
+}
+
+# The repository filters are anchored (`name~/repositories/fugaro-chk91$`): a repository
+# whose name merely STARTS with the check's (fugaro-chk91-old) is not this check's and must
+# not be seen by the guard (it would stop as "cannot be read") or by the Restore's count (it
+# would read 1 and FAIL). The fake applies the filter as gcloud does, so an unanchored filter
+# fails this test.
+test_a_prefix_named_repository_is_not_the_checks() {
+  local dir=$work/ar-prefix
+  prepare "$dir"
+  run91 "$dir" FAKE_GCLOUD_EXTRA_REPOS="fugaro-chk91-old xfugaro-chk91"
+  expect_status "$status" 0 "prefix-named repository: the run passes"
+  expect_contains "$out" "FACT restore-counts: PASS — services: 0, images: 0, repository: 0" \
+    "prefix-named repository: the Restore's count does not see it"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "repositories delete fugaro-chk91-old" \
+    "prefix-named repository: it is never deleted"
 }
 
 # A scratch directory the run cannot remove is a FAIL, and a FAIL in the block is a
@@ -2064,7 +2185,10 @@ t test_failed_create_that_made_the_repository_keeps_its_record
 t test_failed_deploy_that_made_nothing_takes_its_record_back
 t test_failed_deploy_keeps_the_record_it_made
 t test_an_unreadable_describe_is_not_an_absent_resource
+t test_absence_is_an_empty_list_not_an_error_string
 t test_an_unreadable_repository_describe_stops_before_the_create
+t test_a_swallowed_repository_list_error_is_not_absence
+t test_a_prefix_named_repository_is_not_the_checks
 t test_an_unreadable_describe_after_a_failed_deploy_keeps_the_record
 t test_a_url_describe_that_fails_after_the_deploy_does_not_end_the_run_bare
 t test_a_config_describe_that_fails_after_the_deploy_does_not_end_the_run_bare

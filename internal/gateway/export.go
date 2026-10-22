@@ -48,7 +48,75 @@ import (
 	"net/url"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/pricing"
 )
+
+// RequestPin is the model rule a request is checked against, apart from the
+// Stage the gateway's own path usually takes it from: a caller with no stage
+// -- the credentials service, which has no repository's configuration and no
+// stage of its own -- applies the SAME check with the model rule it does have,
+// and nothing about the check is respelled for it.
+type RequestPin struct {
+	// Models are the model IDs a request may name, in the gateway's own sense
+	// of "may name" (sameModel: the same ID, or two spellings the price table
+	// resolves to one model). The gateway's own path passes the stage's two
+	// pins, Model and Background.
+	//
+	// An EMPTY list is no model rule: the check then applies everything else
+	// (the shape, the server tools, the model's own max_tokens) and pins
+	// nothing. That is what a caller with no list of its own means, and it is
+	// deliberately not the same as a list that names nothing: a policy that
+	// publishes no allow-list sets no model ceiling (H1), while a list with no
+	// model in it could never admit a call. The credentials service, which is
+	// the caller that reads that policy, refuses such a call before it builds a
+	// pin at all (internal/credsvc, the owner's ruling of 2026-10-22); this
+	// reading is unchanged, because the gateway's own path pins a call to the
+	// stage's models and never to the project's.
+	Models []string
+	// Where names the list in the refusal, after "is not pinned for": the
+	// gateway's own path passes "stage " + Stage.Name, so its sentence is
+	// unchanged, and the credentials service names the project's allow-list
+	// instead. It is read only when Models is not empty.
+	Where string
+	// Model is the one of Models the caller's own max_tokens bound applies to
+	// (the stage's own model: a stage's limit does not hold the background
+	// model's calls). "" is none.
+	Model string
+	// MaxOutputTokens bounds max_tokens for Model's calls only; 0 is no bound.
+	MaxOutputTokens int64
+}
+
+// RequestRefusal reads a Messages request body the way the gateway's own path
+// reads it and returns the refusal the gateway would give it: the model pin,
+// the variant-suffix refusal, the shape refusal (a server tool among them), the
+// foreign-field refusal and the max_tokens bounds (checkRequest, forward.go).
+// "" means the gateway would accept the request; a non-nil error is a body the
+// gateway cannot read at all, which its own path answers as a 400 too.
+//
+// It is the gateway's own check and not a copy of it: Server.handleMessages
+// applies the same function through Server.check, so the two cannot drift --
+// which is the whole point of exporting it. The credentials service calls it
+// before it reads a credential (internal/credsvc), so a request the gateway
+// would refuse never reaches one.
+//
+// prices is the price table the check reads a model's own bounds from (its
+// maximum max_tokens, whether its images are priced); nil is the embedded
+// table, and a model the table does not know is judged at the table's maximum,
+// exactly as the gateway's own path judges it. routes are the provider routes
+// the variant and foreign-field rules are about; a caller with none passes nil,
+// and those two rules then cannot fire -- they are about what a *route* would
+// do with the call, and a caller that routes nothing has no such call.
+//
+// pathModel is the model a Vertex-style path names, "" when the body carries
+// it (parseRequest).
+func RequestRefusal(body []byte, pathModel string, pin RequestPin, prices *pricing.Table, routes []Route) (string, error) {
+	p, err := parseRequest(body, pathModel)
+	if err != nil {
+		return "", err
+	}
+	m, _ := modelFor(prices, p.model)
+	return checkRequest(p, m, pin, prices, routes), nil
+}
 
 // ValidateRoutes reports whether routes may travel with u at all: a route is a
 // provider's endpoint, so it needs the anthropic upstream and never a

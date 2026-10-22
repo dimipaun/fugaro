@@ -100,6 +100,7 @@ release:
 
     - `ghcr.io/dimipaun/fugaro-history:{{ .Version }}` and `ghcr.io/dimipaun/fugaro-history:{{ .Major }}` (the sweeper and history job's image)
     - `ghcr.io/dimipaun/fugaro-base:{{ .Version }}` and `ghcr.io/dimipaun/fugaro-base:{{ .Major }}` (one index for linux/amd64 and linux/arm64; per-architecture tags `{{ .Version }}-amd64` and `{{ .Version }}-arm64`)
+    - `ghcr.io/dimipaun/fugaro-credentials:{{ .Version }}` and `ghcr.io/dimipaun/fugaro-credentials:{{ .Major }}` (the credentials service's image, linux/amd64; signed, with the nightly-immune `{{ .Version }}-pinned` tag `fugaro init --provision-credentials` resolves and verifies)
 
     The images workflow then pulls each one with no login and fails if it is not public or lacks `linux/amd64` (and, for `fugaro-base`, `linux/arm64`); each image's digest is in that run's summary.
 

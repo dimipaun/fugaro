@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/creds-bundle.schema.json",
+  "title": "Fugaro credentials service bundle",
+  "description": "The document in the credentials service's ONE Secret Manager container (Q6, ruled 2026-10-19): a YAML map of credential names to values, read by the service alone (docs/credentials-service/implementation-plan.md, Task C1.11). The keys are exactly the credentials the platform defines — the model credentials and the GitHub App's private key the mint signs with (C2.1) — and the loader refuses a key outside them rather than ignoring it. Written by `fugaro creds set NAME` (C1.25) and by nothing else: no workflow may declare the container's name and `fugaro secrets set` refuses it. A value is never logged, echoed in an error or sent anywhere but to the provider the credential belongs to.",
+  "type": "object",
+  "$comment": "The bounds mirror internal/credsvc/bundle.go's constants, which are the loader's own rules: maxProperties is MaxBundleCredentials (the wire contract's maxTriedEntries, C1.10), maxLength is MaxBundleValueBytes, and the key pattern is internal/config's credentials as internal/credsvc's CredentialKey reads them (config.GitHubAppKeySecret, config.AnthropicSecret, config.ClaudeOAuthToken, and config.ClaudeAccountSecret of a name matching config.ClaudeAccountNameRE and config.MaxClaudeAccountNameLen). propertyNames' maxLength is the account family's second half spelled as a whole-name bound: a named account's key is \"claude-oauth-token-\" (19 bytes) plus at most MaxClaudeAccountNameLen (31), so 50 — the regex alone would admit a dash-heavy suffix of up to 61 bytes, since each of its {0,30} repetitions may consume two characters. It bounds the account family alone; the other three keys are shorter than 50 and are held to their exact spelling by the pattern. TestBundleSchemaMatchesTheLoader in internal/credsvc holds the two together, so neither the schema nor the loader can be widened alone.",
+  "minProperties": 1,
+  "maxProperties": 64,
+  "propertyNames": {
+    "maxLength": 50,
+    "pattern": "^(anthropic-api-key|github-app-key|claude-oauth-token|claude-oauth-token-[a-z](?:[a-z0-9]|-[a-z0-9]){0,30})$"
+  },
+  "additionalProperties": {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 8192
+  }
+}

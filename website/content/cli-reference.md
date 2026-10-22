@@ -31,6 +31,7 @@ Subcommands:
 - `fugaro cancel` -- Cancel a run, letting the runner open a draft PR first
 - `fugaro completion` -- Generate the autocompletion script for the specified shell
 - `fugaro config` -- Work with fugaro.yaml
+- `fugaro creds` -- Set and list the credentials service's one bundle secret (the owner)
 - `fugaro diagnose` -- Explain how a run went: status, tests, review findings, the agent's last word, logs
 - `fugaro doctor` -- Check that Fugaro is set up and ready, without changing anything
 - `fugaro help` -- Help about any command
@@ -1090,6 +1091,133 @@ Flags:
 | `--offline` | bool | `false` | no | never read the runs bucket: resolve against the cached project layer, if any |
 | `--project-layer` | string | "" | no | resolve against this project layer file instead of the published one |
 | `--workflow` | string | "" | no | show only this workflow's keys besides the top-level ones |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro creds`
+
+Set and list the credentials service's one bundle secret (the owner)
+
+Usage: `fugaro creds`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for creds |
+
+Subcommands:
+
+- `fugaro creds ls` -- List the credentials the bundle secret holds: names and metadata, never a value (the owner)
+- `fugaro creds set` -- Set or replace one credential in the credentials service's bundle secret (the owner)
+
+## `fugaro creds ls`
+
+List the credentials the bundle secret holds: names and metadata, never a value (the owner)
+
+List the credentials the credentials service's bundle secret holds: one row
+per credential in the document, with its NAME, whether it is PRESENT, and the
+document's last-changed time (the container's newest version metadata).
+
+NAME is the name in the document's own spelling — the name fugaro creds set
+takes. A named Claude account's row is claude-oauth-token-<account>, where <account>
+is the account the policy's accounts block speaks.
+
+Nothing else is printed: never a value, never a prefix of one, never a length
+that would narrow a guess. --json carries the same shape.
+
+The listing needs the container to exist, and it needs its newest version to be
+one the service could read: an absent container, a container with no version, an
+unreadable payload, a document the service's own loader refuses, and a version
+that is DISABLED are each a named failure, never an empty list — a listing that
+answered nothing for any of them would read as "the bundle holds no credential"
+while the service is in fact issuing from one this command could not read.
+
+It is refused from a coding agent's session and from a run's process, before
+anything is read.
+
+Usage: `fugaro creds ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro creds set`
+
+Set or replace one credential in the credentials service's bundle secret (the owner)
+
+Set or replace one credential in the credentials service's bundle, the ONE
+Secret Manager secret the service reads (Q6). The bundle is a YAML document
+whose keys are credential names and whose values are the credentials; this
+command reads it, sets or replaces the entry NAME and writes it back as a new
+version, and then disables the version it replaced.
+
+NAME is a credential the service can issue, in the document's own spelling:
+
+  claude-oauth-token                    the default Claude account's OAuth token (tier A)
+  claude-oauth-token-<account>       a named Claude account's OAuth token (tier A)
+  anthropic-api-key                the project's Anthropic API key (tier B)
+
+The value is read only from stdin: pipe or redirect it in
+(fugaro creds set claude-oauth-token < token-file), or, when stdin is a terminal, paste it
+at a hidden prompt. It is never taken from an argument, a flag or the
+environment, and never printed. One trailing newline (\n or \r\n) is dropped,
+and the command says so. A value must be 4 bytes to 8192, on one line, with
+no whitespace at either end; a longer value is a document the service's loader
+would refuse, so it is refused here instead.
+
+The write is a read-modify-write of one document: the other entries keep their
+bytes, and the whole document is parsed with the service's own loader
+(internal/credsvc) before it is written, so what this command stores is what
+the service accepts. After the write the bundle is read back and compared: if
+it is not the document this command wrote, another write landed underneath and
+this one lost it, which is said plainly and exits non-zero. Nothing is retried
+silently.
+
+A verified write then DISABLES the version it replaced, which the output names:
+a rotated-away bundle that stays enabled keeps every superseded credential
+readable by anyone who can read the container, which is the one thing a
+rotation is for. Terraform cannot do this (it creates the container and manages
+no version), so the command that writes a version retires the one before it. A
+disable that fails is reported on stderr and does not fail the command: the new
+credential is live either way.
+
+The command needs the container to exist — the installation's Terraform creates
+it (Task C1.18) and no command of ours does — and it works with the owner's own
+project IAM (Project Owner or Editor: secretmanager.versions.get, .add and
+.disable). There is no service account, no actAs and no operator grant on this
+container: a secretVersionAdder on it is the ability to read every credential
+in the bundle at once.
+
+It is refused from a coding agent's session and from a run's process, before
+anything is read, and it is never covered by --yes: there is no non-interactive
+form.
+
+Usage: `fugaro creds set NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
