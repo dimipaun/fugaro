@@ -370,8 +370,21 @@ func TestDocsMultiModelDocumentsTheCascadeSwitch(t *testing.T) {
 		// halts at the gateway (code review of C1.22).
 		"cascadeLaunchRefusal",
 		"reads neither the service nor its bundle",
-		"halts",
-		"budget_unavailable",
+		// What a run past the launch gate does, which the section stated the
+		// wrong way round: with no service address the run is refused while
+		// it is still bootstrapping (serviceUpstream,
+		// internal/runner/gateway.go), so it FAILS as an infra_error and
+		// opens no pull request. The section said it "halts at the gateway,
+		// named (budget_unavailable)", which is the wired service's
+		// unreachable path and not this one — and on this release no job has
+		// the address at all (independent review of C1.22, M2).
+		"ships dormant",
+		"no job is ever given its address",
+		"serviceUpstream",
+		"FUGARO_CREDENTIALS_SERVICE_URL",
+		"failed run, not a halt",
+		"infra_error",
+		"no pull request opened",
 		// What the opt-in does to the job's mounts. The section said an
 		// `oauth` workflow of the same repository "keeps its own mount
 		// unchanged", which is false once the installation opts in:
@@ -394,6 +407,9 @@ func TestDocsMultiModelDocumentsTheCascadeSwitch(t *testing.T) {
 	for _, banned := range []string{
 		// The claim that the service's absence is what refuses the launch.
 		"is refused at launch there too",
+		// The claim that a run with no service halts: it fails at bootstrap.
+		"halts at the gateway",
+		"budget_unavailable",
 		// The claim that an `oauth` workflow keeps its model mount: the
 		// opt-in drops it, per-repository and in every auth mode.
 		"keeps its own mount unchanged",

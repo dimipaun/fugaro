@@ -28,7 +28,7 @@ gcloud run services get-iam-policy fugaro-credentials --project <gcp-project> --
 
 The live checklist's **Check 94** (Task C1.23) is the register's version of these three reads, and it is **not in [docs/gcp-live-checklist.md](../gcp-live-checklist.md) on this release yet** — that file writes no `## Check 94` section here — so until C1.23 lands, the three reads above are the whole of it. §10 is the same check's audit-log half, which is also yours to run.
 
-An installation with the service off is not silent either — but the refusal an operator meets there is the **switch**'s, not this service's. The launch gate reads the project's published policy, the gateway's mode and the rules marker, and never this service or its bundle: so a policy that carries no `routing.claude: {via: cascade}` refuses the run at launch, before any model call, while a policy that carries the switch with no service applied launches the run, and the run then **halts** at the gateway (`budget_unavailable`, §2) with no model credential of its own to fall back to (D143). What makes a `cascade` launch legal is the switch, not the service.
+An installation with the service off is not silent either — but the refusal an operator meets there is the **switch**'s, not this service's. The launch gate reads the project's published policy, the gateway's mode and the rules marker, and never this service or its bundle: so a policy that carries no `routing.claude: {via: cascade}` refuses the run at launch, before any model call, while a policy that carries the switch launches the run, and the run then **fails at bootstrap**: `serviceUpstream` (`internal/runner/gateway.go`) refuses a `cascade` run whose job carries no `FUGARO_CREDENTIALS_SERVICE_URL`, and on this release no job carries one. That is a **failed run, not a halt** — `infra_error`, and **no pull request is opened**, where a halt would have left a draft. What makes a `cascade` launch legal is the switch, not the service.
 
 ## 2. A run halted: read the reason before anything else
 
@@ -41,9 +41,11 @@ A run that halted for this service exits 0 and leaves a **draft** pull request w
 | `budget_unavailable` | The budget backend was unreachable for three minutes. Nothing about the work was decided. | Wait until it is back, then `fugaro run --pr N`. |
 | `kill_switch` | Someone stopped the project or the repository on purpose. | §7 — do **not** follow up until you mean to. |
 
+A `cascade` run whose job has no service address is not in this table at all: it never halts. It fails at bootstrap (`infra_error`, no pull request) — §1.
+
 ## 3. The service is down, or refuses everything
 
-A `cascade` run has **no credential of its own to fall back to** — that is the design (D143), not a bug — so an unreachable service halts the run named rather than reaching for an in-job key. What to check, in order:
+A `cascade` run has **no credential of its own to fall back to** — that is the design (D143), not a bug — so a wired service that is unreachable halts the run named rather than reaching for an in-job key. (A job with no service address at all does not get that far: it fails at bootstrap, §1.) What to check, in order:
 
 ```bash
 fugaro budget show            # the mode, the caps and the kill switches

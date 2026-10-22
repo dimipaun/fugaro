@@ -186,8 +186,18 @@ func TestDocsCredentialsRunbookPointsStepOneAtSomethingThatAnswers(t *testing.T)
 		// C1.22, and the same correction in docs/multi-model.md).
 		"launch gate reads the project's published policy",
 		"never this service or its bundle",
-		"halts",
-		"budget_unavailable",
+		// ...and what a run past that gate does, which §1 stated the wrong
+		// way round too: with no service address the run is refused while it
+		// is still bootstrapping (serviceUpstream, internal/runner/gateway.go),
+		// so it FAILS as an infra_error and opens no pull request. §1 said it
+		// "halts at the gateway (budget_unavailable)", which is the wired
+		// service's unreachable path and not this one — and on this release
+		// no job has the address at all (independent review of C1.22, M2).
+		"fails at bootstrap",
+		"serviceUpstream",
+		"FUGARO_CREDENTIALS_SERVICE_URL",
+		"failed run, not a halt",
+		"no pull request is opened",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("%s §1 does not say %q: this is the step an operator reads first, and the one thing it may not claim is that a Fugaro command reports the service itself", credentialsRunbook, want)
@@ -204,6 +214,10 @@ func TestDocsCredentialsRunbookPointsStepOneAtSomethingThatAnswers(t *testing.T)
 		// switch is what is missing — and would promise a launch refusal for
 		// an installation that has the switch but no service.
 		"is refused at launch, before any model call, rather than halting later",
+		// The old claim about a run that got past the launch: it does not
+		// halt, it fails at bootstrap.
+		"halts at the gateway",
+		"halts the run named at the gateway",
 	} {
 		if strings.Contains(section, banned) {
 			t.Errorf("%s §1 says %q", credentialsRunbook, banned)
