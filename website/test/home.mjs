@@ -245,17 +245,37 @@ function installPathNote(id) {
 }
 
 /**
- * The routes the site's pages live at, from the plan: the page files its tasks' `**Files:**`
+ * The routes the site's pages live at, from the plans: the page files their tasks' `**Files**`
  * lines name. Pages are lowercase and components are capitalised in this repository, so a
  * lowercase `<name>.astro` in a Files line is a page — and this is the only list of the
  * site's pages that exists while the page tasks are still being written.
+ *
+ * **Two plans write this site's pages, and each writes its line its own way.** The website
+ * plan (`docs/website/implementation-plan.md`) is the site's first round and writes
+ * `**Files:**`; this line of work's plan
+ * (`docs/website/zoom-diagrams/implementation-plan.md`) adds routes to the same site — its
+ * Part 2 writes `/why-gcp/` and its Part 3 writes `/mobile/` — and writes `**Files.**`. Both
+ * spellings are read, because a route a plan writes is a route a page of this site lives at
+ * whichever document writes it.
+ *
+ * **The name has to be the whole last segment of a backticked path**, and that is a fix to
+ * this reader rather than a tightening of it: the loose form it was written with — any run of
+ * lowercase letters before `.astro`, anywhere in the line — read
+ * `ArchitectureDiagram.astro` as `/iagram/`, `Terminal.astro` as `/erminal/` and
+ * `Downloads.astro` as `/ownloads/`, so the list it returned held routes no plan writes, which
+ * is the one thing the case below exists to refuse. The website plan writes its own list both
+ * ways (a full `website/src/pages/index.astro` and a bare `how-it-works.astro` beside it), so
+ * the path in front of the name is optional and the backticks are not.
  */
 function plannedRoutes() {
   const routes = new Set()
-  for (const line of repoFile('docs/website/implementation-plan.md').split('\n')) {
-    if (!line.startsWith('**Files:**')) continue
-    for (const m of line.matchAll(/([a-z0-9-]+)\.astro/g)) {
-      routes.add(m[1] === 'index' ? '/' : `/${m[1]}/`)
+  const plans = ['docs/website/implementation-plan.md', 'docs/website/zoom-diagrams/implementation-plan.md']
+  for (const plan of plans) {
+    for (const line of repoFile(plan).split('\n')) {
+      if (!/^\*\*Files[:.]\*\*/.test(line)) continue
+      for (const m of line.matchAll(/`(?:[\w./-]+\/)?([a-z0-9-]+)\.astro`/g)) {
+        routes.add(m[1] === 'index' ? '/' : `/${m[1]}/`)
+      }
     }
   }
   return routes
@@ -2394,7 +2414,7 @@ test("every link on the two pages points at a route the plan's tasks write", () 
     for (const href of internalLinks(page)) {
       assert.ok(
         routes.has(href),
-        `the ${where} page links ${href}, which is not a route the plan's tasks write (the layout's nav and the hero's call to action included, because every link on these pages is checked here): a route outside that list is a 404 in the artifact, and it is Global Constraint 9's defect one page over from the download link it names (W1.4)`,
+        `the ${where} page links ${href}, which is not a route the plans' tasks write (the layout's nav and the hero's call to action included, because every link on these pages is checked here): a route outside that list is a 404 in the artifact, and it is Global Constraint 9's defect one page over from the download link it names (W1.4)`,
       )
     }
   }

@@ -8,7 +8,7 @@ Ephemeral cloud jobs that turn tasks into pull requests.
 
 Website: [fugaro.dev](https://fugaro.dev)
 
-*Fugax* is Latin for "fleeting." Fugaro runs long, self-contained coding-agent loops (implement, test, review, fix, compile, open a pull request) in throwaway cloud containers instead of on your laptop. Each task gets its own Cloud Run job execution in your own Google Cloud project, runs Claude Code headless to completion, pushes its work, opens a pull request and disappears. Google Cloud is the first backend; AWS and Azure are wanted (see [Other clouds](#other-clouds-help-wanted)).
+*Fugax* is Latin for "fleeting." Fugaro runs long, self-contained coding-agent loops (implement, test, review, fix, compile, open a pull request) in throwaway cloud containers instead of on your laptop. Each task gets its own Cloud Run job execution in your own Google Cloud project, runs Claude Code headless to completion, pushes its work, opens a pull request and disappears. Google Cloud is the only backend.
 
 > **Status: pre-1.0.** Minor versions may break things. Releases and their notes are on the [Releases page](https://github.com/dimipaun/fugaro/releases); how a release is cut and verified is in [docs/release.md](docs/release.md).
 
@@ -185,12 +185,6 @@ A run's coder can be a non-Anthropic model served by OpenRouter — one key for 
 - Claude Code, for `/fugaro:setup` and the plugin.
 - macOS or Linux (Windows: untested). Docker is optional, for local image builds.
 
-## Other clouds: help wanted
-
-Only GCP is implemented. We want to run Fugaro on **AWS** (for example ECS/Fargate tasks, S3, Secrets Manager, CloudWatch) and **Azure** (for example Container Apps jobs, Blob Storage, Key Vault, Azure Monitor), and would love help: design feedback, a backend, test accounts, or just telling us what your setup looks like.
-
-A new cloud is a backend behind the interface in `internal/backend` plus its provisioning (today a Terraform module set driven by `fugaro setup`); the runner, the agent loop and the git providers don't know which cloud they run on, and the base images run anywhere a container runs. [docs/backends.md](docs/backends.md) describes the seam and its conformance suite. Please open an issue first so we can agree on the shape, even if you can only review or test.
-
 ## Roadmap
 
 - [x] Runner, git providers (GitHub, Bitbucket Cloud), the base image (one, multi-architecture, with mise), the Cloud Run backend and CLI
@@ -201,7 +195,6 @@ A new cloud is a backend behind the interface in `internal/backend` plus its pro
 - [ ] An egress-restricted network for runs
 - [ ] A Docker-capable backend, for test suites that need Docker
 - [ ] One-command offboarding of a repository
-- [ ] AWS and Azure backends ([help wanted](#other-clouds-help-wanted))
 - [ ] Android workflows (deferred: heavy compiles stay local for now)
 
 Open design questions are tracked in [docs/SPEC.md](docs/SPEC.md#9-open-questions--notes-for-implementer).

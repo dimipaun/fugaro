@@ -30,6 +30,12 @@ func firstRunEnv(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Chdir(work)
+	// The wizard's billing question (billing_prompt.go, W4.3) asks
+	// internal/billing for the caller's accounts. A first run here stubs both
+	// of its sources out (billing_prompt_test.go's noBillingSources): a test
+	// that is about something else must not list a real account, and this
+	// repository's CI has a real gcloud on PATH.
+	noBillingSources(t)
 	return dir
 }
 

@@ -60,9 +60,89 @@ func (e *initEngine) authState(o originInfo) (repoAuth, error) {
 	return authNeeded, nil
 }
 
-// checkoutNote is printed once before the gate when installation-only flags
-// are given in a checkout that the gate would ask about.
-const checkoutNote = "this checkout's repository is not onboarded; the converge in a checkout also onboards its repository. To set up only the installation, run fugaro setup from outside the checkout."
+// checkoutNote is printed once, immediately before the wizard's question, when
+// installation-only flags are given in a checkout the question is about (so it
+// is printed exactly where that question is asked: not by an `update` run,
+// which asks none, and not by a run that cannot ask). W3.4 rewords it: the
+// question below it is now how a reader asks for the installation alone, so
+// the note points at the answer rather than at another command.
+const checkoutNote = "this checkout's repository is not onboarded; the converge in a checkout also onboards its repository, unless the question about it is answered no. To set up only the installation, run fugaro setup from outside the checkout."
+
+// enrolNote is the one line a run since W3.4 prints when there is no checkout
+// to ask about: a repository is enrolled by the run that is in a checkout of
+// it, and the line names `fugaro setup --repo`, the run D5 gives enrolment to.
+// It says nothing about the other door: what `update` does with an unlisted
+// repository of its own is W5.1's to settle.
+func enrolNote() string {
+	return "to enrol a repository later, run " + selfCommand() + " setup --repo in a checkout of it"
+}
+
+// notInACheckout is the opening of the repository target's refusal where there
+// is no checkout at all, which is the one case with no repository to ask
+// about (the others are a checkout the gate refuses). The target builds its
+// refusal from it, so the two cannot drift apart.
+const notInACheckout = "not in a checkout"
+
+// The wizard's first-repository question (W3.4, D5, answered 2026-10-20 as
+// recommended). The converge in a checkout of a repository the project's local
+// config does not list asks whether to onboard it, at the start, before any
+// stage plans. It is the wizard's question and it authorizes nothing: it is
+// asked in front of the gate, not instead of it. Enter takes yes, and yes goes
+// on to the same typed owner/name confirmation an unlisted repository has
+// always needed; no onboards nothing, skips the repository stage (there is
+// nothing left for the user about it: they answered), and says how to enrol
+// the repository later.
+const (
+	onboardAnswerYes = "yes"
+	onboardAnswerNo  = "no"
+)
+
+// onboardLabel is the question's label: the repository of the checkout, by
+// owner/name, as the gate names it everywhere else.
+func onboardLabel(o originInfo) string {
+	return "Onboard " + pluginwire.Printable(o.typed()) + "?"
+}
+
+// asksOnboard is whether this run asks the wizard's question: the setup door,
+// at the user's own terminal, in a checkout whose repository the gate would
+// ask about anyway (authState == authAsk). Asking exactly where the gate asks
+// keeps everything the gate covers unchanged: --yes, --json,
+// --non-interactive, a pipe and a coding agent ask nothing, a repository the
+// config lists or that --onboard-repo opted in is not asked about, and one
+// already answered for this run is not asked again.
+func (e *initEngine) asksOnboard(o originInfo) bool {
+	if !e.theSetupDoor() || !e.canConfirmRepo() {
+		return false
+	}
+	a, err := e.authState(o)
+	return err == nil && a == authAsk
+}
+
+// askOnboard asks the question and returns the answer Enter takes as true.
+// Anything but an answer — the input ended, or three unusable answers — is an
+// error, which is not the user saying no: the gate behind the question decides
+// what to do with it.
+func (e *initEngine) askOnboard(o originInfo) (bool, error) {
+	a, err := e.r.prompt(onboardLabel(o), onboardAnswerYes, func(v string) error {
+		switch strings.ToLower(v) {
+		case onboardAnswerYes, onboardAnswerNo:
+			return nil
+		}
+		return fmt.Errorf("answer %s or %s", onboardAnswerYes, onboardAnswerNo)
+	})
+	if err != nil {
+		return false, err
+	}
+	return strings.EqualFold(a, onboardAnswerYes), nil
+}
+
+// notOnboardingDetail is what the repository stage says when the answer was
+// no: it names the repository the answer was about and how to onboard it
+// later. Nothing is left for the user to do — they answered — so the stage is
+// skipped, not needs-you.
+func notOnboardingDetail(o originInfo) string {
+	return "not onboarding " + pluginwire.Printable(o.typed()) + " (the answer was " + onboardAnswerNo + "): to onboard it later, run " + selfCommand() + " setup --repo in this checkout"
+}
 
 // gateEarly asks the unknown-repository question at the start of a converge,
 // before any stage plans: the installation's and Firebase's Terraform plans
@@ -75,6 +155,14 @@ const checkoutNote = "this checkout's repository is not onboarded; the converge 
 // fugaro.yaml on its default branch names this project); every other case is
 // left to the stages, as before. A repository not typed is remembered, so the
 // stages report needs-you with the opt-in and do not ask again.
+//
+// Since W3.4 the setup door asks the wizard's first-repository question first
+// (asksOnboard): the answer yes changes nothing about the gate below it, and
+// the answer no is the run's — the repository is declined for every stage
+// (declineRepo), and the repository stage reports that it is not onboarding it
+// and says how to enrol it later. Outside a checkout there is nothing to ask
+// about, so that run prints the one line saying how a repository is enrolled
+// (enrolNote).
 func (e *initEngine) gateEarly(ctx context.Context) {
 	if e.repo == nil {
 		return
@@ -82,21 +170,63 @@ func (e *initEngine) gateEarly(ctx context.Context) {
 	e.repo.resolve(ctx)
 	tg := e.repo.tg
 	if tg == nil {
+		if e.asksEnrolNote() {
+			fmt.Fprintln(e.r.w, "note: "+enrolNote())
+		}
 		return
 	}
 	if a, err := e.authState(tg.origin); err != nil || a != authAsk {
 		return
 	}
-	if len(e.r.o.installationFlags()) > 0 {
+	ask := e.asksOnboard(tg.origin)
+	if len(e.r.o.installationFlags()) > 0 && ask {
 		fmt.Fprintln(e.r.w, "note: "+checkoutNote)
 	}
-	if ok, err := e.confirmRepo(tg.root, tg.origin); err == nil && !ok {
-		if e.declined == nil {
-			e.declined = map[string]bool{}
+	if ask {
+		yes, err := e.askOnboard(tg.origin)
+		if err == nil && !yes {
+			// The answer is the run's, not this stage's: the repository is
+			// left out for every stage behind the gate — the secrets and the
+			// plugin wiring write into the checkout and the project, and they
+			// read the same answer instead of asking for the owner/name again
+			// — and the repository stage is the one that says so itself.
+			e.repo.notOnboarding = true
+			e.declineRepo(tg.origin)
+			return
 		}
-		e.declined[strings.ToLower(tg.origin.typed())] = true
+	}
+	if ok, err := e.confirmRepo(tg.root, tg.origin); err == nil && !ok {
+		e.declineRepo(tg.origin)
 	}
 }
+
+// declineRepo remembers, for the rest of the run, that this repository is not
+// onboarded: every stage behind the gate reads it (authState's declined case)
+// and none of them asks for it again. It is how the owner/name that was not
+// typed at the gate is remembered, and how the wizard's question answered no
+// is carried to the stages before the repository one (the secrets and the
+// plugin wiring), which otherwise ask for the same owner/name themselves.
+func (e *initEngine) declineRepo(o originInfo) {
+	if e.declined == nil {
+		e.declined = map[string]bool{}
+	}
+	e.declined[strings.ToLower(o.typed())] = true
+}
+
+// asksEnrolNote is whether a run with no checkout to ask about says how a
+// repository is enrolled: the setup door, at the user's own terminal, where a
+// question could have been asked. A run that cannot ask (--yes, --json,
+// --non-interactive, a pipe, a coding agent) prints nothing: it was not asked
+// for a repository and a line about one would be noise in its output.
+func (e *initEngine) asksEnrolNote() bool {
+	return e.theSetupDoor() && e.canConfirmRepo() && strings.HasPrefix(e.repo.st.Detail, notInACheckout)
+}
+
+// theSetupDoor is whether this run is the wizard's own door: the question and
+// the line about enrolling later are the wizard's, and `fugaro update` asks
+// neither. The field itself is compared, not doorName(): a caller that built
+// the converge's parts without naming a door is not a run of either door.
+func (e *initEngine) theSetupDoor() bool { return e.r.o.door == setupDoor.name }
 
 // canConfirmRepo: a typed confirmation needs the user's own terminal, as the
 // secrets stage does: never with --yes, --non-interactive or --json, nor
@@ -125,7 +255,7 @@ func unknownDetail(project string, o originInfo) string {
 	case !o.standardHost():
 		d += " (host " + pluginwire.Printable(o.Host) + " is not a provider's own)"
 	}
-	return d + "; onboarding it creates cloud resources, so it needs your own opt-in (not covered by --yes); the repository stage was not reached"
+	return d + "; onboarding it creates cloud resources, so it needs your own opt-in (not covered by --yes)"
 }
 
 // confirmRepo asks, in the terminal, for the repository typed: the one

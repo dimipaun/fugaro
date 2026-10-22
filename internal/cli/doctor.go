@@ -366,7 +366,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		return failed(remote(err))
 	}
 	sameProjectFirebase := lc.Budget == nil || lc.Budget.FirebaseProject == "" || lc.Budget.FirebaseProject == lc.GCPProject
-	for _, c := range preflight.Billing(ctx, billingSvc, lc.GCPProject) {
+	for _, c := range preflight.Billing(ctx, billingSvc, crmSvc, lc.GCPProject) {
 		dc := fromPreflight(c)
 		if c.ID == "billing-api" && !lc.Endpoints.NoAuth && infra.CredentialsQuotaProject(ctx) == "" {
 			// Credentials with no quota project: say so, and never suggest the

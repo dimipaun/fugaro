@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **1,447,967 bytes in a checkout with no tags** and to **1,447,967 bytes with the
+  commit builds to **1,512,120 bytes in a checkout with no tags** and to **1,512,120 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -898,8 +898,10 @@ added or removed without this sentence moving fails there:
     fetched for any of it. The page's own words go 332 → **492**, inside D188's 500 and inside
     the ceiling `privacy`'s page derives, so no word ceiling moved. `test/how-it-works.mjs` holds
     the four levels — one `<defs>`, every `<use>` resolving, every symbol used, no level drawing
-    its own copy of an entity, the markers, and every label a row of `website/data/zoom-levels.yaml`
-    in the document the row cites — and `test/a11y.mjs` holds the markers and the captions; the
+    its own copy of an entity, the markers, and every label of a level held to the drawing it is
+    drawn from in both directions — a row of `website/data/zoom-levels.yaml` then, and the owner's
+    own board since 2026-10-22, when the boards replaced the data file — and `test/a11y.mjs` holds
+    the markers and the captions; the
     drawings themselves are the owner's to read, and that is Check 112 in
     `docs/gcp-live-checklist.md`. **Twenty-one of those bytes are the spaces at the end of the
     drawing's own labels**, which `test/spacing.mjs` asked for and the first full run of the suite
@@ -968,6 +970,150 @@ added or removed without this sentence moving fails there:
     route that has left its group, and `test/nav-hover.mjs` reads the two lists the menu
     draws; `base.css`'s phone cut is left at the width the four-item row was measured at.
 
+  - **The phone app's page** (the owner's brief of 2026-10-21, the zoom-diagrams plan's Part 3;
+    D239, D240, D241, D242) adds one page and moves nothing else: **the site figure moves by
+    24,858 bytes** — the new `dist/mobile/index.html` (24,440) and **38 bytes onto each of the
+    11 pages that existed**, which is the menu's one new item, inlined into every page — and no
+    file is removed, so the count of files in `dist/` goes 28 → **29** and the count of pages
+    11 → **12**. **The script did not move at all** — `dist/scripts/site.js` is 70,008 bytes in
+    both builds — and that is the shape this page has: it is a badge and a list, with no
+    behaviour and no picture. The page weight does not move either, and that is the check worth
+    keeping: the heaviest page is still the homepage, which renders none of this, and the phone
+    page's own weight is 116,999 bytes (HTML 24,440, of which 17,529 is the stylesheet Astro
+    inlines into it, and the 92,559 it fetches — the script, the logo and the icons, which every
+    page fetches). The page's words are 139 and its lead 26, inside D188's 600 and the 40-word
+    lead, so no ceiling moved.
+    What the page is, and the four answers that decide it: a **preview badge** over the headline
+    (D240's third condition), **every bullet marked** shipped or planned, the two states rendered
+    as two lists with their own headings and the mark repeated on each card (D240's second
+    condition, D241's answer — *shipped* is status and spend, *planned* is the roster, switching
+    by name, the wake word, QR pairing and the three roles), the **wake word's row saying where
+    the listening and the recognition happen** (D242: on the phone, and the page names no speech
+    service and no cloud, because the local/remote switch is design only and not built), and
+    **no date anywhere** (D240's first condition) and **no waitlist** (D239: no form, no
+    `mailto:`, no third party — the page asks a reader for nothing). The claims are
+    `data/mobile-claims.yaml`'s rows, rendered one for one, and the page refuses to build with
+    either state's list empty: a heading over nothing reads as an app with nothing left to
+    build. **No screenshot is added** (D251: the owner's captures arrive as files, and no agent
+    commits one), so `data/mobile-screens.yaml` ships with no row and the page renders **no
+    slider at all** — no section, no frame and no picture-shaped hole, the console page's own
+    empty-list case; the file is handed to the same shared component the console page and the
+    homepage render, so a row is a slider with this page's own slot and id prefix and nothing in
+    the page or the component moves. The menu gains **one item, Mobile, as *Product*'s fifth**,
+    so the two groups stay two and no third group is added.
+    `test/mobile.mjs` is the page's own gate, and it reads the **built** page: the claims against
+    the data file's rows (with plants that move a planned row into the shipped list and a shipped
+    row into the planned one), the badge (absent, reworded, or below the headline), a four-digit
+    year and every month name in the page's own text, its title and its description (`in 2027`
+    and `March` are the plan's two plants), the voice row and the speech services it may not
+    name, the roster printed among the shipped claims **while `mobile/src/feed/paths.js` denies
+    the phone the `agents` family** (the one reading pinned to a repository file, derived from
+    that file at both ends, so a grant that names the family turns the reading off rather than
+    leaving it stale), and the form, the `mailto:` and the third-party link D239 refuses. Its
+    fixture builds are the other end of each branch — a row in the screenshots file renders the
+    slider with `mobile-screen-` ids and the console's ids do not leak onto the page, and the two
+    refusals the data file itself carries (a state that is neither of the two, a file with no
+    planned row) stop the build naming the file. The page's words, its lead and its links are
+    held by `budget.mjs`, `linkcheck.mjs` and `a11y.mjs` like any other page's, rather than by a
+    second rule here. **The three budget figures below are left where they are**, by the same
+    owner's ruling of 2026-10-20 as the round above, and the page's drawings are the owner's to
+    read: that is **Check 113** in `docs/gcp-live-checklist.md`.
+
+  - **The menu gained Why GCP, and the site gained its twelfth route** (the owner's brief of
+    2026-10-21, `docs/website/zoom-diagrams/`, Part 2 of its implementation plan; D238, D243,
+    D248, D249). The item is *Product*'s second, between How it works and Getting started, and
+    the menu is inlined into every page, so it is **40 bytes onto each of the eleven pages that
+    were already there**; the new route's page, `dist/why-gcp/index.html`, is **23,651 bytes**;
+    and the FAQ page is **753 heavier** — the same 40, plus the 713 of the seventh answer it
+    renders — so the build's whole-site size moves 1,463,812 → **1,488,616** (+24,804) and the
+    artifact goes **28 → 29 files**, **11 → 12 pages**. **The script does not move a byte** (70,008
+    before and after): the page is claims and their sources in markup, and what holds them is
+    the suite rather than the browser. The page's claims live in `website/data/why-gcp.yaml` —
+    one row per claim, each with the file in this repository that proves it and the day it was
+    last read against that file, which is what lets a reader date a claim about what another
+    cloud offers (D243) — and the one sentence the page carries about the other clouds is the
+    sentence D249 requires it to carry, held by `test/wording.mjs` together with the phrases the
+    page may not be made of. The FAQ's seventh answer is the reader's own question ("Do I need
+    to be on GCP?"), the two answers whose detail lives on this page link it by name, and
+    `test/faq-community.mjs` holds both pages: the FAQ's seven entries to their data file, and
+    the Why GCP page to its rows, in the file's order, with the file each row names linked at
+    the branch `ci.yml` pushes to. **The three budget figures below are left where they are**
+    (the owner's ruling of 2026-10-20: they are re-derived when the owner asks, not every
+    round), so this round is stated here and the figures stay the ones the round above derived.
+    The whole-site derivation's own base is stale, and this round is where it is worth saying
+    so: it names 1,447,967 bytes across 28 files, where this build is 1,488,616 across 29 —
+    this round's 24,804 and the 15,845 the checkout was already over the stated figure before
+    it. The ceilings are unaffected either way, being three times the derived value rather than
+    the measurement.
+    Measured against the base this round and the phone app's share, which are the same base
+    (28 files, 11 pages): on the merged tree the two rounds together leave `dist/` at **30
+    files** and **13 pages**, and *Product* holds **six** items — this round's *Why GCP*
+    second, the phone app's *Mobile* last — so the bullet above's "fifth" is where that round
+    put it, not where it sits now.
+
+
+  - **The four zoom levels are the owner's four approved boards, redrawn as the site's inline
+    SVG** (the owner's brief of 2026-10-22, the zoom-diagrams plan's Part 4 redone; D237, D244,
+    D245, D247, D248, D249). Part 4's four levels are **gone**: the owner's reading of them was
+    that those diagrams were terrible, and the drawings are the four boards in
+    `website/design-ref/zoom-levels/level1.dc.html` … `level4.dc.html` — 1280 × 720, drawn in
+    Claude Design, committed by #869 — reproduced as the site's own SVG: the same boxes, the same
+    labels **word for word**, the same arrows including the bent and the double-headed ones and
+    their small labels, the same colours, and the boards' landscape aspect kept (`viewBox="0 0
+    1280 720"` over the content width). **The move is one file**: `dist/how-it-works/index.html`
+    51,560 → **73,899 bytes** (+22,339) and no other file in `dist/` moves a byte, so the count of
+    files stays **29** and the count of pages **12**. The script did not move —
+    `dist/scripts/site.js` is 70,008 bytes in both builds — and neither did the homepage's HTML
+    (56,898 in both), which is why **the page weight does not move either**: the heaviest page is
+    still the homepage, at 563,219 bytes, and it renders none of this. What the page's own 22,339
+    are: the four boards redrawn as four `<svg viewBox="0 0 1280 720" role="img">` drawings, the
+    one zero-size `<svg>` holding the single `<defs>` — **17 `<symbol>`s** (`zoom-job`,
+    `zoom-orchestrator`, `zoom-developer` and `zoom-developer-planned`, `zoom-person` and
+    `zoom-person-planned`, `zoom-card`, `zoom-card-accent`, `zoom-card-planned`, `zoom-laptop`,
+    `zoom-phone`, `zoom-project`, `zoom-loop`, `zoom-draft-pr`, `zoom-firebase`, `zoom-cloud`,
+    `zoom-box`) and **four `<marker>` arrow heads** — the boards' labels as real `<text>` in the
+    site's font stack, the four `<figure>`s
+    with the `<figcaption>` naming each level, the four anchor markers of the level list, and the
+    scoped stylesheet the page inlines, because Astro inlines a component's rules into the one
+    page that renders it.
+    **The page's words go 492 → 868** — the boards' own labels, which are what a level says — and
+    **D188's number moves with them, 600 → 900**: 900 is the smallest round ceiling above the
+    page, and the next page down that D188 governs is the homepage at 563 words (Getting Started
+    is 309; the privacy statement, at 759, is the page the words-per-page ceiling itself is
+    derived from, so D188's own number does not measure it). The
+    levels' words are no longer a data file: `website/data/zoom-levels.yaml` is gone and the
+    boards are the source of truth — `src/lib/zoom-boards.mjs` reads each board's visible strings
+    at build time and `holdZoomBoards` refuses a build whose drawing and board disagree, **in
+    both directions**, so a label a board carries and the drawing dropped fails the build the way
+    a line the drawing wrote for itself does. Every entity is drawn **once**, through the shared
+    `<symbol>`s and their `<use>` references (D244): the same shape for the same entity in all
+    four levels, no level drawing its own copy, and no symbol left unused. `test/how-it-works.mjs`
+    is the page's gate and reads the **built** page: the boards' strings word for word (extracted
+    from the design-ref files, which are the source of truth), the `<use>` rule, **no two labels
+    drawn over each other and none leaving the board** (the text boxes are computed from the
+    written attributes), and **every arrow's endpoints on a card's edge or on the corner of its
+    own chain** (the path data is parsed) — each with a plant that proves it refuses, and the
+    arrows and the labels are the whole of what a reader can check without eyes, since the model
+    that wrote this cannot see the boards. `test/a11y.mjs` holds the four levels as four named
+    anchors a keyboard reaches in order (D245: `<a href="#level-N">` in their own `<nav>`) and
+    each level as **one named picture** (`role="img"` with its own `<title>` and `<desc>`), and
+    `test/spacing.mjs` reads the boards' labels as labels rather than as one word run together
+    because the drawing's own text class is a block. The dashed outlines still mean **planned**
+    and the legend saying so is still on the page, above the levels (D248/D249's wording rules
+    hold: no "disposable" anywhere); the levels are stills in the no-JS and reduced-motion
+    rendering, all four of them in the document; and the pinned scroll-driven zoom between them is
+    Part 5 and not this round, so its selectors and ids — `.zoom`, `#level-1`…`#level-4`,
+    `.zoom-svg`, `.zoom-caption`, `.zoom-nav` and `.zoom-marker` — are kept as they stand.
+    **The site figure is re-derived here, and only it**: the pair moves 1,447,967 → **1,512,120**
+    bytes, of which this round's own move is the 22,339 above and the remaining 41,814 is drift
+    earlier rounds left un-derived (the phone app's page and the boards' own commit among them) —
+    measured against the gates' own build rather than argued, and stated here so the figure a
+    reader sees is the build the site has. The per-page and per-script figures are left where they
+    are, by the owner's ruling of 2026-10-20, and they carry the same drift: the script's figure
+    is stated as 70,016 where the build is 70,008 and the page weight as 563,219 where the
+    homepage's is 563,140. The drawings are the owner's to read, and that is **Check 112** in
+    `docs/gcp-live-checklist.md`.
+
   - **JavaScript per page:** 262,560 bytes. Three times 87,520: the one script the site ships,
     `public/scripts/site.js` (70,016 bytes), plus 25 %. What the file carries is the copy
     control, the menu, the consent gate and **both of the site's sliders** — the console page's,
@@ -1030,8 +1176,8 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 2,112,072 bytes. Three times 704,024: the heaviest page, the
     homepage, at 563,219 bytes (its HTML, the four screenshots it renders, and the files
     it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 5,429,877 bytes. Three times 1,809,959 (every file in `dist/`, 1,447,967
-    bytes across 28 files, plus 25 %) — the gates' own build of the site, which every checkout
+  - **Whole site:** 5,670,450 bytes. Three times 1,890,150 (every file in `dist/`, 1,512,120
+    bytes across 29 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
@@ -1105,7 +1251,8 @@ added or removed without this sentence moving fails there:
     getting-started 431, privacy 277, community 268, every one of them over it — and the
     redesign brought every one of those pages but the privacy statement inside it.)
     **D188's number was 250, the owner's feedback of 2026-10-19 moved it to 300, the
-    bold redesign of 2026-10-20 moved it to 500, and the 2026-10-21 brief moved it to 600.**
+    bold redesign of 2026-10-20 moved it to 500, the 2026-10-21 brief moved it to 600, and the
+    2026-10-22 brief moved it to 900.**
     The 2026-10-19 brief asks the homepage for
     a benefits section, which is a fourth required
     block on the one page that already carried the three the briefs before it require — the
@@ -1119,14 +1266,18 @@ added or removed without this sentence moving fails there:
     (D251, D252) — and the three pictures that lead it are the console page's own, so they
     carry the console page's own `alt` texts: one picture has one account of what it shows,
     and an image's `alt` is text a reader reads. **The four slides are the whole of that
-    move**, 461 → **563 words**, and the page's blocks therefore measure 563. D188's number
-    is therefore
-    the smallest round ceiling above the page that carries every block its briefs and its
-    boards require, and it is still a ceiling rather than a
-    target: the next page down is How
-    It Works at
-    332 words (Getting Started is 291), and a page that wants the extra room has to carry a
-    brief's own block for it.
+    move**, 461 → **563 words**, and the page's blocks therefore measure 563. The 2026-10-22
+    brief then replaces the four zoom levels on How It Works with the owner's four approved
+    boards (`design-ref/zoom-levels/level1.dc.html` … `level4.dc.html`), redrawn as the site's
+    inline SVG: a board's labels are strings the drawing renders, and a string the drawing
+    renders is text a reader reads, so the four levels' labels are words on that page the way
+    the four slides' `alt` texts are words on the homepage. **The boards' labels are the whole
+    of that move**, 492 → **868 words**, and that page is therefore the one D188's number is set
+    against. D188's number is the smallest round ceiling above the page that carries every block
+    its briefs and its boards require, and it is still a ceiling rather than a
+    target: the next page down is the
+    homepage at 563 words (Getting Started is 309), and a page that wants the extra room has to
+    carry a brief's own block for it.
     Every raise is recorded as a reading in `docs/website/redesign/README.md`, the way every
     number the briefs do not spell out is.
 - `test/fold.mjs` — the ordering the fold claim rests on (P5, RF5). Whether the promise and
@@ -1141,7 +1292,7 @@ added or removed without this sentence moving fails there:
   region;
   Getting Started's install section opens with its commands, with the
   sentence about them still there after the paths; and on every route that prints a command —
-  three of the eleven today, and the other eight are skipped rather than asserted about — the
+  three of the thirteen today, and the other ten are skipped rather than asserted about — the
   first `h2` precedes the first `pre`. Its fourth rule is the owner's feedback of 2026-10-19:
   Getting Started is three bands in the order a reader reads them — `#install` (the command
   and the console), `#setup` (what a real installation needs, an `ol` whose every step names
@@ -1482,11 +1633,14 @@ Three things about those commands are worth stating rather than leaving to the t
   `available` by the build itself, which refuses the two disagreeing (below).
   `console-screens.yaml` is the third, and it is the owner's own list rather than a fact
   another file states: it ships empty, and the build renders whatever rows it carries (below).
-  `zoom-levels.yaml` is the fourth, and it is the drawing's own words rather than a fact another
-  file states: the four levels' names, captions and labels, each row with the document it quotes,
-  so that the picture and its text cannot drift: `test/how-it-works.mjs` reads both directions —
-  a label the drawing renders that is no row of the file, and a row the file carries that the
-  drawing does not render, are each refused by the name of the row.
+  The four zoom levels' words are **no longer a data file**: since the 2026-10-22 brief the
+  levels are the owner's four approved boards (`design-ref/zoom-levels/*.dc.html`) redrawn as
+  the site's inline SVG, and the boards are the source of truth for the labels, so
+  `website/src/lib/zoom-boards.mjs` reads a board's visible strings and `holdZoomBoards` stops
+  the build, naming the file, when the drawing says a word the board does not;
+  `test/how-it-works.mjs` reads the same boards the other way round — a line the drawing wrote
+  for itself, and a string of a board the drawing dropped, are each refused by the name of the
+  board. A data file was a second copy of a board's text, and a second copy drifts.
 - **`website/data/typical-costs.yaml` is the owner's own measurement, and the page renders
   it or nothing.** It carries what a job costs on this project's own development runs — one
   entry per kind of run, each with the sample behind it, over a window whose last day is the
@@ -1848,7 +2002,9 @@ website/
   data/release-summaries.yaml      # each release's product summary, pinned by test/changelog-page.mjs
   data/typical-costs.yaml          # the owner's own measurement of what a job costs, pinned by test/caps-and-costs.mjs
   data/console-screens.yaml        # the console page's slides: hand-written, one row per screenshot
-  data/zoom-levels.yaml            # the four zoom levels' names, captions and labels, each with its document
+  data/mobile-claims.yaml          # the phone app's page: one row per claim, with the state the page marks it with (D240, D241)
+  data/mobile-screens.yaml         # the phone page's slides: the same rows as the console's, empty until the owner's captures land (D251)
+  design-ref/zoom-levels/*.dc.html # the four owner-approved zoom boards, redrawn as the site's SVG: the source of the levels' words (2026-10-22)
   data/console-sha256sums.txt      # the console release's own sums file, copied verbatim
   content/                         # generated, do not edit (see the table above)
   src/lib/changelog.mjs            # reads docs/releases/ and the plugin's version at build time

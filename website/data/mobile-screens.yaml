@@ -1,0 +1,24 @@
+# website/data/mobile-screens.yaml — the phone app's screenshots
+# (docs/website/zoom-diagrams/implementation-plan.md, Part 3, item 4; D251).
+#
+# **No row yet, and that is a state the page renders rather than a gap in it.** The mobile page
+# carries the same slider the console page and the homepage render
+# (`src/components/ScreenshotSlider.astro`), handed this file's rows; a file with no row in it
+# renders no slider section, no frame and no picture-shaped hole — a reader who met an empty
+# box could not tell it from a picture that failed to arrive (the console's own case,
+# `website/test/console-screens.mjs`).
+#
+# **The pictures are the owner's** (D251, answered 2026-10-21: "phone screenshots later,
+# supplied by the owner as files"). No agent commits a screenshot (D190), which is why the
+# file ships empty and why the page is written to render whatever arrives here: adding a slide
+# is a row below and the file it names under `public/screenshots/`, and nothing in the page or
+# the component moves.
+#
+# The row's shape is the console's, verbatim — `file`, `alt`, `caption`, `width`, `height` —
+# because it is the same component's: `file` is the NAME under `public/screenshots/` (the site
+# path is derived from it, so no file under `website/` carries a URL), `alt` and `caption` are
+# what a reader gets when the picture does not arrive and the line under it, and `width` and
+# `height` are the file's own pixels, which is what reserves the box before it lands.
+# `website/README.md`, "The console's screenshots", has the rule.
+version: 1
+screens: []

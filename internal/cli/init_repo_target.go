@@ -282,7 +282,7 @@ func resolveRepoTarget(ctx context.Context, project string) (*repoTarget, initfl
 	}
 	root, err := gitRead(ctx, ".", "rev-parse", "--show-toplevel")
 	if err != nil {
-		return skip("not in a checkout: run fugaro update --repo in a checkout of the repository to onboard it")
+		return skip(notInACheckout + ": run fugaro setup --repo in a checkout of the repository to onboard it")
 	}
 	oi, ok := readOrigin(ctx, root)
 	repo := oi.Repo
@@ -291,12 +291,12 @@ func resolveRepoTarget(ctx context.Context, project string) (*repoTarget, initfl
 	}
 	db := defaultBranchParse(ctx, root)
 	if db.ref == "" {
-		return skip("no origin/HEAD, origin/main or origin/master ref here, so no default branch to read: run git fetch origin, then rerun fugaro update --repo")
+		return skip("no origin/HEAD, origin/main or origin/master ref here, so no default branch to read: run git fetch origin, then rerun fugaro setup --repo")
 	}
 	branch := strings.TrimPrefix(db.ref, "origin/")
 	shown := pluginwire.Printable(branch)
 	if !db.read {
-		return skip("no fugaro.yaml on the default branch (" + shown + "): /fugaro:setup writes it; merge its pull request, then rerun fugaro update --repo")
+		return skip("no fugaro.yaml on the default branch (" + shown + "): /fugaro:setup writes it; merge its pull request, then rerun fugaro setup --repo")
 	}
 	cfg := db.cfg
 	if cfg == nil {
@@ -314,7 +314,7 @@ func resolveRepoTarget(ctx context.Context, project string) (*repoTarget, initfl
 	// file (line endings aside).
 	if wt, err := readFugaroYAML(filepath.Join(root, "fugaro.yaml")); err != nil || !bytes.Equal(normalEOL(wt), normalEOL(db.data)) {
 		lf := switchLeft(branch)
-		return nil, initflow.Status{State: initflow.NeedsYou, Detail: "this checkout's fugaro.yaml is not the default branch's (" + pluginwire.Printable(db.ref) + "): the repository is onboarded from the default branch, so run git fetch, switch to it and update it (git pull), then rerun fugaro update --repo", Left: &lf}
+		return nil, initflow.Status{State: initflow.NeedsYou, Detail: "this checkout's fugaro.yaml is not the default branch's (" + pluginwire.Printable(db.ref) + "): the repository is onboarded from the default branch, so run git fetch, switch to it and update it (git pull), then rerun fugaro setup --repo", Left: &lf}
 	}
 	return &repoTarget{root: root, origin: oi, repo: repo, branch: branch, cfg: cfg}, initflow.Status{}
 }

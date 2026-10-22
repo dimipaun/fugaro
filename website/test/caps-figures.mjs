@@ -393,6 +393,32 @@ export function figureLayoutFailures(css, html) {
           }
         }
       }
+
+      // And every mark the bar draws is **inside the drawing** (the owner's feedback of
+      // 2026-10-22). A mark is a coordinate the component computed from the file's own figures,
+      // and the drawing has no width beyond its `viewBox`: a mark placed past it is a figure a
+      // reader never sees, drawn off the card. The scale is what decides it — the bar is drawn
+      // against the per-run cap the figures were **measured under**, and a bar scaled by the cap
+      // in force today would put the owner's own worst figures past the end of the track, which
+      // is the defect this rule exists for: the cap the page prints is $5 and two of the figures
+      // it prints are above it. The reader lowercases an attribute's name, as a browser does
+      // (`viewBox` is written `viewbox`), which is how the drawing's own scale is read here.
+      const declared = bar.attrs.get('viewbox') ?? ''
+      const box = declared.trim().split(/\s+/).map(Number)
+      const boxWidth = box[2]
+      if (!(boxWidth > 0)) {
+        fail(`${where} draws a bar whose viewBox ${JSON.stringify(declared)} names no width, and the marks it draws are placed in that coordinate system`)
+      } else {
+        for (const mark of walk(bar)) {
+          if (mark.name !== 'rect') continue
+          const klass = classesOf(mark).find((name) => name.startsWith('caps-bar-')) ?? 'a rect'
+          const x = Number(mark.attrs.get('x') ?? 0)
+          const width = Number(mark.attrs.get('width') ?? 0)
+          if (!(x >= 0) || !(x + width <= boxWidth)) {
+            fail(`${where} draws ${klass} from x=${mark.attrs.get('x')} to x=${Number((x + width).toFixed(2))}, and the bar's own viewBox ends at ${boxWidth}: a mark past the end of the drawing is a figure a reader never sees, and the bar is scaled by the per-run cap the figures were measured under rather than the one in force today`)
+          }
+        }
+      }
     }
 
     // The card's own `<dl>`: the labelled figures, held to the name each one is under. The
@@ -652,12 +678,17 @@ test('every figures refusal fires on the defect it names', () => {
     ['a figure that prints nothing', plant(/>\$5\.24<\/dd>/, '></dd>'), /prints no figure under the name "Worst"/],
     ['a card with no list of figures', plant(/<dl class="caps-job-figures"[^>]*>([\s\S]*?)<\/dl>/, (_all, inner) => `<div class="caps-job-figures">${inner}</div>`), /carries no <dl> of labelled figures/],
     ['a card with no bar', plant(/class="caps-bar"/, 'class="caps-not-the-bar"'), /draws no bar/],
-    ['a bar with no accessible name', plant(/aria-label="An independent review-only run against our per-run cap: [^"]*"/, 'aria-label=""'), /draws a bar with no accessible name/],
+    ['a bar with no accessible name', plant(/aria-label="An independent review-only run against the \$10\.00 per-run cap these runs ran under: [^"]*"/, 'aria-label=""'), /draws a bar with no accessible name/],
     // The bar's sentence and the marks it draws, read against each other — the pair the review
     // job's own figures pull apart.
-    ['a bar whose sentence drops a mark it draws', plant(/aria-label="A first task run against our per-run cap: the middle half, /, 'aria-label="A first task run against our per-run cap: '), /draws the caps-bar-range mark and its sentence does not name "the middle half"/],
-    ['a bar whose sentence names a mark it does not draw', plant(/aria-label="An independent review-only run against our per-run cap: the median/, 'aria-label="An independent review-only run against our per-run cap: the middle half, the median'), /draws no caps-bar-range mark and its sentence names "the middle half"/],
+    ['a bar whose sentence drops a mark it draws', plant(/aria-label="A first task run against the \$10\.00 per-run cap these runs ran under: the middle half, /, 'aria-label="A first task run against the $10.00 per-run cap these runs ran under: '), /draws the caps-bar-range mark and its sentence does not name "the middle half"/],
+    ['a bar whose sentence names a mark it does not draw', plant(/aria-label="An independent review-only run against the \$10\.00 per-run cap these runs ran under: the median/, 'aria-label="An independent review-only run against the $10.00 per-run cap these runs ran under: the middle half, the median'), /draws no caps-bar-range mark and its sentence names "the middle half"/],
     ['a bar whose sentence loses the worst run it draws', plant(/ and the worst run\."/, '."'), /draws the caps-bar-worst mark and its sentence does not name "the worst run"/],
+    // And the drawing the marks are placed in: a bar whose coordinate system is narrower than the
+    // marks it draws is a bar whose figures are drawn off the card, which is the shape the scale
+    // itself takes when the bar is drawn against the wrong cap (the owner's feedback of
+    // 2026-10-22: the cap is $5 now and the figures were measured under $10).
+    ['a bar whose marks are drawn outside its own viewBox', plant(/viewBox="0 0 100 22"/, 'viewBox="0 0 80 22"'), /the bar's own viewBox ends at 80/],
     // The phone's layout, one declaration at a time.
     ['the cards left in three columns at a phone width', plant(/grid-template-columns:1fr/, 'grid-template-columns:repeat(3,minmax(0,1fr))', 'css'), /laid out in 3 columns/],
     ['a row that cannot wrap', plant(/\.caps-figure-row\[[^\]]*\]\{[^}]*\}/, (rule) => rule.replace('flex-wrap:wrap;', ''), 'css'), /cannot wrap/],

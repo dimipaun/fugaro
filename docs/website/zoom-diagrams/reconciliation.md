@@ -844,3 +844,94 @@ answer list — may cite it as allocated rather than as proposed.**
 | **D250** | When does Part 1 (the shared slider) land? | After PR #842 merges, re-reading `HomeSlider.astro` first | ZF51: the task text names #842 as reworking this component and #842 is not in this checkout, so landing first means writing assertions against markup that may already have moved | Land now against the component as this checkout has it — `home.mjs` churn twice for one feature, and if #842 has landed the assertions are written against a shape that no longer exists | **ANSWERED 2026-10-21: as recommended — after #842, which has merged.** #842 is in this branch's history (`3c5cc354`, "the owner's 2026-10-21 feedback — the spark, Home in the menu, and the slider"), so ZF51's unverifiable pull request is verified, and Part 1 re-reads `HomeSlider.astro` before writing assertions against it: the merge has already changed the component — it carries the door and the slide and dot hooks — while the "See it" panel still holds the one `<img>` (`/images/fugaro-watch.png`) that Part 1 turns into rows. |
 | **D251** | Who supplies the slides? | The owner, as files plus a `MANIFEST.json`-shaped record and a data row each, exactly as the console's four did (`website/README.md:1409-1562`) | ZF49, ZF50: no phone screenshot exists and no agent may commit one; the console's own process is the precedent and is already gated | An agent generates placeholder images — D190 and `website/README.md:1547` forbid it, and a placeholder that ships is worse than an empty slot | **ANSWERED 2026-10-21: the images the Console page already uses, reused.** The slides are the console page's **own four screenshots** (`console-{live,run,spend,installations}.webp`, committed with `MANIFEST.json` and `website/data/console-screens.yaml`), rendered by the shared slider rather than copied again, with the Watch row last; **phone screenshots come later, supplied by the owner as files** (ZF49, ZF50). No agent commits a picture. |
 | **D252** | What happens to the `fugaro watch` slide? | Keep it, last, as the brief says, with its existing alt text and caption, and keep `fugaro-watch.txt` as its text fallback | The brief asks for it; the alt text and its floor are already gated (`home.mjs:1430-1441`), and the caption by the design-record test (`home.mjs:1487-1533`), so the move is a reordering, not a rewrite | Drop it — the brief explicitly keeps it, and the transcription is the only accessible rendering of a terminal screen the site has | **ANSWERED 2026-10-21: as recommended** — the **Fugaro Watch slide stays last**, with its alt text, its caption and its text fallback (`fugaro-watch.txt`). |
+
+## 13. The owner's brief of 2026-10-22: the four levels are the owner's four boards
+
+The owner read Part 4's four diagrams on the preview and rejected them — "those diagrams were
+terrible" — and asked for the four boards the owner had approved in Claude Design to be **redrawn
+as the site's inline SVG**. This section is the record of that round: what the brief settles, what
+it changed in the tree, and what it did not touch. **No new decision number is taken**: the brief
+is an instruction about a drawing, and every rule it lands under is already written (D237, D244,
+D245, D247, D248, D249).
+
+**The boards are the source of truth.** `website/design-ref/zoom-levels/level1.dc.html` …
+`level4.dc.html` (1280 × 720, committed by #869) are the drawings, and the site's four levels are
+those boards reproduced: the same boxes, the same labels **word for word**, the same arrows
+including the bent ones, the double-headed ones and their small labels, the same colours, and the
+boards' landscape aspect (`viewBox="0 0 1280 720"` scaled to the content width). What the brief
+did **not** ask for is judgement: `website/design-ref/` is a reference the page is drawn from, not
+a picture the site serves, so no board is fetched, no board is a raster image, and the site's
+strict CSP and "no third-party origin" rules are untouched.
+
+**What changed in the tree, and what each change replaces.**
+
+- **The levels' words are the boards', not a data file's.** `website/data/zoom-levels.yaml` is
+  **gone**: the file existed so the drawing and its words could not drift, and the boards serve
+  that purpose better — they are what the owner approved. `website/src/lib/zoom-boards.mjs` reads
+  each board's visible strings at build time and `holdZoomBoards` refuses a build whose drawing and
+  board disagree **in both directions**, so a string of a board the drawing dropped fails the build
+  the way a line the drawing wrote for itself does.
+- **A level is one named picture.** Part 4 read a level as a list of labelled parts and refused a
+  level announced as one image; the boards are one drawing each, with their own headline and
+  paragraph inside the frame, so each level now carries `role="img"` with its own `<title>` and
+  `<desc>`, and `website/test/a11y.mjs` refuses a level that is not one named picture. A reader
+  who cannot see the drawing is given the board's title and subtitle rather than forty loose
+  labels in markup order. The brief's own words for the markup are the rule: "Text is real SVG
+  `<text>` with the site's font stack; each level has a `<title>`/`<desc>` and `role="img"`;
+  decorative parts `aria-hidden`" — which is what `website/test/a11y.mjs`'s `zoomA11yFailures`
+  reads, and why a level announced as anything but one named picture is refused there.
+- **The drawings carry the boards' own colours.** The boards are drawn on the palette's ground
+  (`--ground`, the one board colour that is exactly a site token) with thirteen colours the site
+  does not otherwise use; they live at `:root` as `--zoom-*` variables, and the paint and contrast
+  reading holds each label's ink against the card it is drawn in.
+- **D244's rule stands, and it grew with the boards.** The one `<defs>` now holds **seventeen
+  `<symbol>`s** (the job tile, the orchestrator, the developer and its planned form, the person and
+  its planned form, the plain, accent and planned cards, the laptop, the phone, the project, the
+  loop, the draft pull request, the Firebase card, the cloud and the level's own box) and **four
+  arrow-head `<marker>`s**. Every level draws every entity through `<use href="#…">`, no level
+  draws its own copy, and no symbol goes unused — the same three refusals as before, on the
+  entities the boards actually draw.
+- **The phone reading is written down and gated.** A board is 1280 units wide and its labels carry
+  the boards' own sizes, so a drawing scaled to a 390 px column would set a 14 px label at 4.3 px.
+  The figure therefore keeps a **floor** under its width (920 units, where the boards' 14 px labels
+  render at 10.06 px) and scrolls sideways inside its own box rather than shrinking past it, and
+  the boards' small print — the labels they set at 11, 12 and 13 px — is drawn inside
+  `<g class="zoom-fine">`, which the phone's query hides. `website/test/how-it-works.mjs`'s
+  `zoomPhoneFailures` holds both halves against the floor the stylesheet declares, in both
+  directions.
+
+**What the brief leaves standing.** D237: the section stays on `/how-it-works/`, under "The run,
+end to end". D245: the markers are `<a href="#level-N">` anchors with accessible names, in their
+own `<nav>`, and all four levels are stills in the document with no script. D247: the owner's live
+check is still **112**, rewritten to read the boards rather than the data file. D248/D249: the
+wording rules hold, and "disposable" is still nowhere on the page. The reconciliation's §3, which
+is what a level is allowed to say, is now subordinate to the boards: where the two differ, the
+board the owner approved is what the page draws, and the difference is a question for the owner
+rather than a licence for the drawing.
+
+**The gates, and what is not one.** The model that wrote this round cannot see a picture, so the
+hermetic readings are its eyes and the brief says so: the boards' strings word for word in both
+directions, no label drawn over another, no label outside the board (the text boxes computed from
+the written attributes), every arrow's endpoints on a card's edge or on a corner of its own chain
+(the path data parsed), the `<use>` rule, the phone's floor, the anchors, and the one named picture
+per level — each with a plant that proves it refuses. **Whether the drawings look like the boards
+is the owner's check at the preview** (Check 112), and that is the half no gate here can take.
+
+**The figures.** The page's words go 492 → **868** (the boards' own labels) and D188's number
+moves 600 → **900**, the smallest round ceiling above it. The site figure is re-derived:
+1,447,967 → **1,512,120** bytes, of which this round's own move is 22,339 on
+`dist/how-it-works/index.html` alone (51,560 → 73,899) and the rest is drift earlier rounds left
+un-derived — measured against the gates' own build rather than argued. The per-page and per-script
+figures are left where they are, by the owner's ruling of 2026-10-20, and they carry the same
+drift: the script's figure is stated as 70,016 where the build is 70,008, and the page weight as
+563,219 where the homepage's is 563,140.
+
+**What Part 5 inherits.** The pinned scroll-driven zoom is Part 5 of the plan and is **not** in
+this round (PR #864 is halted at its cost cap and still open). It builds on these stills, so the
+selectors and ids it reads are kept as they stand: the section's `.zoom`, its `.zoom-title`, the
+`<nav class="zoom-nav">` and its `.zoom-marker-list` / `.zoom-marker` anchors, `figure.zoom-figure`
+with `id="level-1"` … `id="level-4"`, `.zoom-svg`, the zero-size `.zoom-defs` holding the one
+`<defs>`, and `figcaption.zoom-caption` with its `.zoom-level-name` span. Part 4's own
+`.zoom-level-caption`, `.zoom-label`, `.zoom-labels`, `.zoom-link`, `.zoom-out` and the per-entity
+interior classes (`zoom-console*`, `zoom-orc-*`, `zoom-dev-*`) are gone: nothing draws those shapes
+as markup of its own any more, they are `<symbol>`s.

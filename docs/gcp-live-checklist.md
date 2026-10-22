@@ -373,6 +373,17 @@ so the section is **written below** rather than reserved. Its subject is the fou
 5** of that plan and is not in this checkout, so the one step of the section that is about the zoom
 is written and **cannot be run yet**. The check is owner-run and it is **NOT RUN**.
 
+**Check 113 is the phone app's page, and it is the next number free above 112** (the
+zoom-diagrams plan `docs/website/zoom-diagrams/implementation-plan.md` §3, its Part 3 — decisions
+**D239**, **D240**, **D241** and **D242**, all answered 2026-10-21). The reading is the same shape
+as the two above and is taken the same way: the highest **written** `## Check N` section in this
+file, read at **`d413219b`** — the commit this change is based on — was **112**, and a reservation
+is not a fact about the tree, so the section is **written below**. Its subject is the page a
+reader meets **before** the app exists: a "coming soon" page is the one kind of page that can be
+wrong in a way no byte and no link is — it can promise a date, it can state a plan in the present
+tense, or it can ask a reader for something the project has nowhere to keep. The check is
+owner-run and it is **NOT RUN**.
+
 **That is the end of the register.** The paragraph below is not another
 reservation: it introduces the check that owns 57, whose row is in the table
 below.
@@ -542,7 +553,8 @@ probe account carries predefined grants only).
 | 89 | A signed EAS build, and the store's **internal** track (mobile plan Task P4.2a writes it, and P4.4 **runs** it; D120, C8): a build of the app at `mobile/` — its own artifact, outside the Go module (C2), at the commit whose tag it is versioned from (C6) — signed with **your** distribution credentials (EAS-managed or your own distribution certificate and upload key), and reaching the stores' internal testing tracks only; no public release is implied or made, and the submit track is read before anything is built — step 1's `jq` reads `submit.internal.android.track`, and a profile naming a public track is a stop you take there ("edit it and re-run"), not something the guard reads: the guard hard-stops on the build itself — without `mobile/eas.json` or `mobile/app.config.js` in the checkout (P4.4's), and without the store identity, which it resolves through `app.config.js` out of the two variables you export (the identity is **not** in `app.json` and never will be: the committed config carries no release identity, P3.1's boundary test, and the identity is yours). No agent runs `eas build` or `eas submit`, none touches a signing key, an App Store Connect API key or a Play service-account key, and no store credential enters an agent's environment | See "Check 89" below; **you** run it, at your own terminal, with your own Apple and Google accounts, your own signing keys and your own EAS project, from a clean checkout of the tagged commit; **no agent runs any step of it** (D120, Global Constraint 9). Its guard hard-stops today: P3.1's `mobile/app.json` and P4.4's `mobile/eas.json` and `mobile/app.config.js` are in the tree, so the file tests pass and the stop is the store identity itself — the two variables must be in your shell (or in the EAS project's environment the profile names, for the build job), and until they are, the guard stops before a build that could not reach any track | One build per platform and one submission per platform, on the internal tracks; the signing keys, the App Store Connect API key and the Play service-account key are yours, are never read by this check and are never pasted into a `FACT` line. **USER-RUN, NOT RUN.** |
 
 | 111 | The billing picker's failure modes (setup-wizard plan Task W0.3; D3 and D6): the Cloud Billing API disabled on the quota project — in D3's two cases, the quota project **being** the project set up and the quota project being **another** one — a caller without `billing.accounts.list` on a project whose API **is** enabled (so the API answers **403** rather than the disabled-API refusal), and the three sessions that never list anything at all (no TTY, `--json`, an agent session) — each asserting the guided `gcloud billing projects link` line, that **nothing was enabled**, and that **no account list appears in any output** (the one run where a list *is* expected is the `gcloud` fallback answering an API that refused) | See "Check 111" below; **you** run it at your own terminal, on installation `fugaro` (never `belong`), and **no agent runs any step of it** (an agent session is one of the five modes it observes). | Three throwaway projects of your own — `P` (the installation's), `Q` (API off) and `S` (API on) — and the ADC quota project is repointed by three of the runs. Every step is a refusal, and nothing is created, enabled or linked by the check itself. **NOT RUN.** |
-| 112 | The four zoom levels, drawn once and drawn as stills (zoom-diagrams plan §3, Part 4; D237, D244, D245, D247): the section sits on `/how-it-works/`, **under "The run, end to end" and its diagram** (D237); the four levels are four `<figure>`s in the brief's order, each named by its own `<figcaption>`, which also says which recipe the drawing is; **every entity is one `<symbol>` of one `<defs>`, drawn through `<use>`** — the job tile, the orchestrator, the developer, the console and the project — so a job tile is the same tile at every level (D244), and no level draws its own copy of one; every label of every level is a row of `website/data/zoom-levels.yaml`, held to the document it cites; the four markers are one `<nav>` of anchors with accessible names (D245), each jumping to its own level by keyboard and by pointer; the four levels and every label are in the document **with JavaScript off** (the section ships no script of its own); and the drawings are legible — labels at the palette's own contrast, nothing clipped, nothing drawn as an empty box — on a desktop and at 360, 390 x 844 and 320 (ZU4) | See "Check 112" below; **you** run it, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the live site — read-only, no account, no cloud project touched, no `fugaro` command, and **No agent runs any step of it**. The pinned scroll-driven zoom is **Part 5** and is not in this tree: that step of the section is written and cannot be run yet, and an unrun step is not a pass | One browser, a hard reload, one look at the section with script on and one with it off, and one narrow viewport. Nothing is created, enabled, linked or written. **USER-RUN, NOT RUN.** |
+| 112 | The four zoom levels, drawn once and drawn as stills (zoom-diagrams plan §3, Part 4; D237, D244, D245, D247): the section sits on `/how-it-works/`, **under "The run, end to end" and its diagram** (D237); the four levels are four `<figure>`s in the owner's boards' order, each named by its own `<figcaption>`; **every entity is one `<symbol>` of one `<defs>`, drawn through `<use>`** (D244) — seventeen of them, the job tile, the orchestrator, the developer and its planned form, the person and its planned form, the plain, accent and planned cards, the laptop, the phone, the project, the loop, the draft pull request, the Firebase card, the cloud and the level's own box — so a job tile is the same tile at every level, and no level draws its own copy of one; every label of every level is a string of the board it is drawn from, held word for word in both directions; the four markers are one `<nav>` of anchors with accessible names (D245), each jumping to its own level by keyboard and by pointer; the four levels and every label are in the document **with JavaScript off** (the section ships no script of its own); and the drawings are legible — labels at the palette's own contrast, nothing clipped, nothing drawn as an empty box — on a desktop and at 360, 390 x 844 and 320 (ZU4) | See "Check 112" below; **you** run it, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the live site — read-only, no account, no cloud project touched, no `fugaro` command, and **No agent runs any step of it**. The pinned scroll-driven zoom is **Part 5** and is not in this tree: that step of the section is written and cannot be run yet, and an unrun step is not a pass | One browser, a hard reload, one look at the section with script on and one with it off, and one narrow viewport. Nothing is created, enabled, linked or written. **USER-RUN, NOT RUN.** |
+| 113 | The phone app's page, and every claim on it marked shipped or planned (zoom-diagrams plan §3, Part 3; D239, D240, D241, D242): `/mobile/` is the app's own page and it is a **"coming soon"** page, so it carries a **preview badge** over its headline reading "Coming soon" (D240's third condition) and **no date anywhere** — no year, no month, no season, in the page's text, its title or its description (D240's first condition) — and **every bullet is marked**: the claims of `website/data/mobile-claims.yaml` render as two lists under two headings, *What the app does today* and *What is still to come*, each card carrying its own word, **Shipped** or **Planned**, so the mark is a word and not a colour alone (D240's second condition, D241's answer: shipped is status and spend, planned is the roster, switching by name, the wake word, QR pairing and the three roles); the **wake word's bullet says the listening and the recognition happen on the phone** and the page names no speech service and no cloud (D242); **nothing asks a reader for anything** — no form, no field, no button, no `mailto:`, no third party, no waitlist (D239) — and the page shows **no empty frame**: with no row in `website/data/mobile-screens.yaml` there is no slider, no heading and no picture-shaped hole, and when your captures land the slider appears with this page's own slot and ids (D251); and the page reads at a phone's width, with the marks and the badge legible at 360, 390 x 844 and 320 | See "Check 113" below; **you** run it, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the live site — read-only, no account, no cloud project touched, no `fugaro` command, and **No agent runs any step of it**. The pictures are yours and are **not** in this tree: step 6's second half is written and cannot be run until they land, and an unrun step is not a pass | One browser, a hard reload, one look at the page, one look at the menu, and one narrow viewport. Nothing is created, enabled, linked or written, and no address is entered anywhere. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -4514,7 +4526,7 @@ grep -o '@media (width<=[0-9.]*rem)' website/dist/index.html | head -1
 # and `site.js` ask the same query, and `website/test/nav-hover.mjs` holds the two together).
 grep -o '@media (hover:hover) and (pointer:fine)' website/dist/index.html | head -1
 # The groups and links the menu shows, read out of the layout rather than typed: the names
-# steps 3 and 5 look for, and the nine links step 3 has to reach. Two group labels since the
+# steps 3 and 5 look for, and the eleven links step 3 has to reach. Two group labels since the
 # owner's feedback of 2026-10-21 dropped the Reference group.
 sed -n '/^const NAV_GROUPS/,/^]/p' website/src/layouts/Base.astro | grep -o "label: '[^']*'"
 # The one-row header's height, out of the stylesheet and the markup rather than typed: the
@@ -4588,9 +4600,10 @@ grep -n 'width="47"' website/src/layouts/Base.astro
 
 3. **Every link in the two groups is reachable.** Tab to each group's label, open it, and
    reach each link inside it by keyboard alone, and follow one. The groups are **Product**
-   (How it works, Getting started, Caps and costs, Console) and **Project** (Docs, Security,
-   FAQ, Community, Changelog) — nine links between them, the same nine as before the Reference
-   group was dropped — and **Privacy is not among them** — it is a footer link
+   (How it works, Why GCP, Getting started, Caps and costs, Console, Mobile) and **Project**
+   (Docs, Security, FAQ, Community, Changelog) — eleven links between them, the nine the
+   Reference group's drop left plus the phone app's page (the zoom-diagrams plan, Part 3) and
+   the Why GCP page (its Part 2) — and **Privacy is not among them** — it is a footer link
    (D182). **FACT:** the two group names as rendered, the links under each, and that Privacy
    is in the footer rather than the menu.
 
@@ -4610,19 +4623,19 @@ grep -n 'width="47"' website/src/layouts/Base.astro
    none at any width now — the labels are the menu at every width, and what changes at the
    48 rem the method block reads is only where a group's list is drawn (across the header on a
    phone, a dropdown under its own label from there up). Read the groups: **they are dropdowns
-   at this width too** — two `<summary>` controls, each with its own links behind it (four
+   at this width too** — two `<summary>` controls, each with its own links behind it (six
    under *Product*, five under *Project*) and
    closed until the pointer arrives at it (step 6) or the focus lands on it (step 7) (D182's
    "top-level sections with dropdowns", the same two levels as the phone's menu, which is
-   what makes this a two-level menu rather than a row of nine links). **FACT:** the header's
-   height, the two group names, that no `Menu` control is on the page, and that the nine
+   what makes this a two-level menu rather than a row of eleven links). **FACT:** the header's
+   height, the two group names, that no `Menu` control is on the page, and that the eleven
    links are not printed in the row before anything is opened.
 
 6. **On a hovering pointer, the submenu opens when the pointer arrives (the owner's brief of
    2026-10-18, item 1 — the brief's acceptance line, and the reason `website/test/nav-hover.mjs`
    exists).** Still at 1280 × 900, with a mouse or a trackpad — a device that answers the
    `(hover: hover) and (pointer: fine)` query the method block reads out of the artifact.
-   Move the pointer onto **Product** and **do not click**: its four links appear under the
+   Move the pointer onto **Product** and **do not click**: its six links appear under the
    header's row immediately, and the header's height does not change (step 5's number again).
    Move the pointer **into the list**, onto one of its links: the submenu is still open —
    the pointer has not left the group, so nothing closes under it. Move the pointer **out of
@@ -4750,7 +4763,7 @@ dismissed it, which is what a handback that cannot tell the browser's close from
 looks like. Or, on the keyboard side of step 7, **a device that answers the hover query no
 whose menu the keyboard cannot enter** — a group whose submenu opens only when a hovering
 pointer arrives at it, which leaves the links inside it unreachable by Tab. The wide viewport's
-grouping of the nine links behind two summaries is *not* a
+grouping of the eleven links behind two summaries is *not* a
 failure: the dropdowns are D182's decision, and the whole menu is two groups since the owner's
 feedback of 2026-10-21. The **structural** half of each of those is already
 refused by `website/test/base-styles.mjs` — `navLayoutFailures` holds the header to one row
@@ -5821,7 +5834,7 @@ echo "Check 89 ready: $TAG at $SHA — $APP"
 
 **NOT RUN.** This check is new (setup-wizard plan Task W0.3 writes it, Task W6.2 runs it), and number **111** is the first free number above every claim the register above records — 110 is claimed by an open pull request, and a claim is settled at its merge. Its subject is the other half of the billing picker: **Check 27 step 3 is the picker's success path against a real account, and this is what it does when it cannot list one.**
 
-**Nothing here is a claim that any of it works, and nothing behind it exists on this tree yet.** The setup-wizard implementation plan is *"approved to build; implementation in progress"* (`docs/setup-wizard/implementation-plan.md:13`, the owner's approval of 2026-10-20), and the tree bears that out: `internal/cli/root.go` registers `init`, `upgrade` and `update-skills`, and **no `setup` and no `update`**; `internal/billing/` holds only the read-only account-list client (W4.1): there is **no picker**, and no pty test for one; and `internal/gcpfake/billing.go` fakes `/v1/projects/<id>/billingInfo` alone (`billing.go:33`) — a project's billing *link*, not an account list. **So the picker has not run at all — not against fakes and not against a service** — and the code this section names is W1.x–W5.x's, written after it. This section is written now because the plan says so (W0.3), and the owner runs it at **W6.2**, against a release that carries the picker.
+**Nothing here is a claim that any of it works: no mode of it has ever been run.** The setup-wizard implementation plan is *"approved to build; implementation in progress"* (`docs/setup-wizard/implementation-plan.md:13`, the owner's approval of 2026-10-20), and the tree now carries the half of it this check reads: `internal/cli/root.go` registers `setup` and `update` (W1.2–W1.3); `internal/billing/` holds the account-list client (W4.1) and the `gcloud billing accounts list` fallback (W4.2), and `internal/cli/billing_prompt.go` holds the picker itself (W4.3) and D3's answer when the API is off — the typed offer on the project being set up, the refusal naming another quota project (W4.4) — whose tests drive it through a stubbed terminal predicate (`stdinIsTerminal`) rather than a pty; `internal/preflight/google.go`'s `Billing()` reads the same answer the same way (W4.4); and `internal/gcpfake/billing.go` fakes the account list (`billingAccounts.list`) as well as a project's billing *link*. **What has never happened is the run**: the picker has not been exercised against a real service, and no mode below has been run at all. W4.4 is written on this tree, so what modes 1 and 2 expect of the picker — mode 1(a)'s offer and its decline, mode 1(b)'s refusal naming the line and who to ask — is written too; W4.5 (the comments the reversal falsifies, and the one test that keeps the half of the old rule that survives) is still open, and what it leaves unwritten is prose and the picker's own bounds, not a behaviour a mode here reads. This section is written because the plan says so (W0.3), and the owner runs it at **W6.2**, against a release that carries the picker.
 
 **What it settles (D3 and D6, plan Tasks W4.1–W4.5).** The picker lists the owner's **open** billing accounts by number, at a real terminal only, and **prefers the Cloud Billing API with `gcloud billing accounts list` as a fallback** — it says which one answered, and it is never allowed to list anything at all when `canType()` is false (a real terminal, not `--non-interactive`, not `--json`, not a coding agent's session). Every failure mode below must therefore end in the **same three places**, and each mode asserts all three:
 
@@ -5831,7 +5844,9 @@ echo "Check 89 ready: $TAG at $SHA — $APP"
 
 **A mode here is a failure mode only when *neither* source can answer.** The picker prefers the Cloud Billing API and falls back to `gcloud billing accounts list`; if the fallback can answer, it lists the accounts, which is the **designed** behaviour and Check 27 step 3's success path — not this check. So modes 1(a), 1(b) and 2(b) run with the fallback **maimed by hand** (a `gcloud` wrapper that fails only at `billing accounts`, below: the wizard's own `gcloud` calls must keep working, so removing `gcloud` from `PATH` is *not* the way), and mode 2(a) is the one run here where a list **is** expected — through the fallback, and it is recorded rather than failed.
 
-**Rules.** Use the installation **named `fugaro`** (`N`) on your **throwaway** project (`P` — the one Check 27 created, or a fresh one). Two more throwaway projects of yours are needed, and **you prepare them before mode 1** — no step of this check creates a project, enables or disables an API, links an account or writes a config:
+**Rules.** Use the installation **named `fugaro`** (`N`) on your **throwaway** project (`P` — one of yours that **exists**, has Firebase and has **no billing account linked to it**: Check 27's own project has one, from its step 3, so unlink it first (`gcloud billing projects unlink "${P:?}"`) or use another project). Two more throwaway projects of yours are needed, and **you prepare them before mode 1** — no step of this check creates a project, enables or disables an API, links an account or writes a config. Every mode runs with `--create-project`, so that what the run does is not left to the answer someone gives the wizard's create/adopt question: where that question can be asked (modes 1, 2 and 5 — a terminal, no `--yes`, no `--json`) **create is the default Enter takes** (D11), and a mode that answered `adopt` would run no picker and skip the project stage; where it cannot be asked at all (modes 3 and 4) the run takes **adoption**, with the same result. The flag answers that question for the mode, and `--gcp-project "${P:?}"` keeps the run on `P` rather than on the id `setup` offers (`fugaro-fugaro`), which would be a different project.
+
+Because `--create-project` on a project that is already there reads it and creates nothing, the guided line assertion 1 reads is the **project stage**'s — and the stage prints it as its **left-for-you** line only when `P` **exists**, is **`ACTIVE`**, **has Firebase** and has **no billing link**. In modes 3, 4 and 5 that is the only place it can come from, since their picker never runs; in modes 1 and 2 it is the only place too, since there neither source answers (mode 2(a) alone lists, through the fallback, and the owner answers its prompt `none` — see mode 2(a)). So run every mode on a `P` that is there, is `ACTIVE`, has Firebase and is not linked to an account — an installation that has converged, with nothing linked — or assertion 1 reads something else: a project **without Firebase** is a *todo* whose left-for-you is the add-Firebase typed confirmation (the guided line is then in the plan view's detail alone), a project **linked to an enabled account** is reported **done** and prints the line nowhere, and a project that is **not there yet** is a creation run that stops at the project stage's typed confirmation. **A fresh project is not the easy one**: it has no installation, so modes 3, 4 and 5 stop at that typed confirmation, and the guided line they exist to read is not the stage's own.
 
 - **`Q`**, whose Cloud Billing API is **off**: the ADC quota project of mode 1(b), where the API being disabled on the quota project is the whole premise.
 - **`S`**, whose Cloud Billing API is **on**: the ADC quota project of mode 2, where the API must be reachable for the caller's missing permission to be what refuses (403), rather than the disabled-API path mode 1 already covers.
@@ -5845,7 +5860,7 @@ Never `belong` (the installation on `edge-devel-dimi`), `fugaro-dev` or `edge-de
 # (1a, 1b, 2a, 2b, 3, 4, 5). It reads its own state back out of vars.env, so a
 # mode typed in a NEW SHELL keeps the same config root. ===
 CHK111=/tmp/chk111; mkdir -p "$CHK111"; chmod 700 "$CHK111"
-P=fugaro-live-20261020   # YOUR throwaway project (Check 27's, or a fresh one): HARD-CODED
+P=fugaro-live-20261020   # YOUR throwaway project, which EXISTS, has Firebase and has NO billing link: HARD-CODED
 N=fugaro                 # the installation's NAME: hard-coded, and asserted below
 Q=                       # a SECOND throwaway project of yours, Cloud Billing API OFF: mode 1(b) only, checked by need_q below
 S=                       # a THIRD throwaway project of yours, Cloud Billing API ON: mode 2 only, checked by need_s below
@@ -5958,16 +5973,16 @@ plain() {
 
     ```bash
     maim_fallback
-    capture 1a fugaro setup --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe
+    capture 1a fugaro setup --create-project --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe
     assert_mode 1a
     ```
 
-   `--gcp-project "${P:?}"` is what keeps this a *converge* run on `P`: `setup` creates by default and offers the id `fugaro-<name>`, i.e. `fugaro-fugaro` — accepting that default would create a different project, and the mode would test neither D3(a) nor `P`. This also needs `P` to **exist already** (Check 27's project is the easy one): a run that creates a project cannot have it as its own quota project, which is why this mode is never a creation run. The wizard **may offer to enable** `cloudbilling.googleapis.com`, naming the project and the API, behind a **typed** confirmation that `--yes` never covers (D3, D12 — and note this is the one place in the whole wizard where enabling an API is offered at all). **Decline it**, and record: the offer's exact text; that `--yes` alone did not take it (rerun the same line with `--yes` at a terminal, labelled `capture 1a-yes …`, and record that the typed banner still comes); and then the assertions — the guided line, `gcloud services list --enabled --project="${P:?}" --filter='config.name:cloudbilling.googleapis.com'` printing **nothing**, and no account list anywhere. **FACT:** the offer, the decline, and that the API is still disabled after it.
+   `--create-project` is what makes this the creation path, and the mode needs it: this run is at a terminal, so without it the wizard asks whether to create a project or adopt one — and the mode must not depend on which answer you give, or on your typing `adopt` by mistake, where the picker never runs and the project stage skips, so the guided line this mode asserts would never print. The flag answers that question for the mode, and `--gcp-project "${P:?}"` keeps the run on `P`: `setup` offers the id `fugaro-<name>`, i.e. `fugaro-fugaro`, and accepting that default would create a different project, so the mode would test neither D3(a) nor `P`. This also needs `P` to be in the state the Rules state — it **exists**, is `ACTIVE`, has Firebase and has **no billing link**: the project stage reads it, sees it is there and creates nothing — and a project a run created could not be its own quota project — so no run here creates anything. The wizard **may offer to enable** `cloudbilling.googleapis.com`, naming the project and the API, behind a **typed** confirmation that `--yes` never covers (D3, D12 — and note this is the one place in the whole wizard where enabling an API is offered at all). **Decline it**, and record: the offer's exact text; that `--yes` alone did not take it (rerun the same line with `--yes` at a terminal, labelled `capture 1a-yes …`, and record that it prints no offer at all, because the picker never runs under `--yes`); and then the assertions — the guided line, `gcloud services list --enabled --project="${P:?}" --filter='config.name:cloudbilling.googleapis.com'` printing **nothing**, and no account list anywhere. **FACT:** the offer, the decline, and that the API is still disabled after it.
    **(b) The quota project is ANOTHER project.** `need_q 1b && maim_fallback`, then:
 
     ```bash
     gcloud auth application-default set-quota-project "${Q:?}"
-    capture 1b fugaro setup --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe
+    capture 1b fugaro setup --create-project --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe
     assert_mode 1b
     ```
 
@@ -5979,16 +5994,18 @@ plain() {
 
     ```bash
     gcloud auth application-default set-quota-project "${S:?}"
-    capture 2a fugaro setup --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe
+    capture 2a fugaro setup --create-project --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe
     assert_mode 2a may-list
     ```
+
+   **At the picker's prompt, answer `none` — not a number.** This is the one run where the list itself is what the mode is about, and `none` is the picker's own way out of it: it prints the guided line (`billing_prompt.go`'s `billingLeft`), records no account, and leaves `--link-billing` empty. A number would set it, and the project stage would then take its **link** branch — its plan detail reads `link billing account <ID> (its own typed confirmation; may incur charges)` and its left-for-you is that typed confirmation, so the words `gcloud billing projects link` would appear **nowhere** in the capture and assertion 1 would fail — and typing the confirmation would link that account to `P`, which this section's Rules forbid and which nothing else here undoes. **Record that you answered `none`.**
 
    The API call is refused (403) and the picker must **fall back to `gcloud billing accounts list`**, **say which source answered**, and list what it returns. **FACT:** which account ADC was logged in as, which source answered, the exact message that says so, and whether the fallback listed anything the API's own answer would not have — the two sources can disagree, and that is what this run is for. **A list here is not a leak**: it is the designed fallback, and D6's picker shows each account's display name **and** id, so this is the **one** run whose capture `assert_mode` exempts from the leak greps — record what it listed rather than failing it.
    **(b) Neither answers.** `maim_fallback` first — the API refuses *and* the fallback is maimed — then `capture 2b …` as above and `assert_mode 2b`. The picker must print the guided line: what it must **not** do is crash, print a raw API error as its only output, or claim an account exists. If you took the route that removes the billing role from your own account, ADC stays your usual account here; either way the API refuses and the fallback is maimed. **FACT:** the exact message, **which source answered** (neither), and the assertions.
 3. **No TTY.** No pty here — a pty is exactly what this mode must not have, so **do not use `capture`**:
 
     ```bash
-    fugaro setup --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe < /dev/null \
+    fugaro setup --create-project --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe < /dev/null \
       > "$CHK111/mode-3.log" 2>&1; echo "mode 3 exit: $?"
     assert_mode 3
     ```
@@ -5997,7 +6014,7 @@ plain() {
 4. **`--json`.** The same command with `--json`, its stdout kept apart from its stderr:
 
     ```bash
-    fugaro setup --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe --json \
+    fugaro setup --create-project --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe --json \
       > "$CHK111/mode-4.json" 2> "$CHK111/mode-4.err"; echo "mode 4 exit: $?"
     jq -e '[.. | strings | select(test("billingAccounts/"))] | length == 0' "$CHK111/mode-4.json"
     assert_mode 4
@@ -6009,7 +6026,7 @@ plain() {
     ```bash
     env | grep -E '^(CLAUDECODE|CLAUDE_CODE_ENTRYPOINT|CLAUDE_CODE_SSE_PORT|CLAUDE_CODE_REMOTE|CURSOR_AGENT|AI_AGENT)=' || echo "no agent marker in this shell"
     export AI_AGENT=1          # the marker, set BY HAND — never by asking an agent to run this
-    plain 5 fugaro setup --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe
+    plain 5 fugaro setup --create-project --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe
     unset AI_AGENT             # take it back out: it changes every mode in this shell, not just this one
     assert_mode 5
     ```
@@ -6090,6 +6107,7 @@ assert_mode() {
 
 - **Put your ADC quota project back**: `gcloud auth application-default set-quota-project <your usual quota project>`. Modes 1(a), 1(b) and 2 each changed it — to `P`, `Q` and `S` — so this line is not optional, and it is the first thing to do after the last of them.
 - **Put your ADC account back too**, if mode 2's route logged it in as a second one: `gcloud auth application-default login` again, choosing your usual account (nothing in this check reads or prints a token, and it never asks you to).
+- **Nothing was linked, if you ran mode 2(a) as written**: its picker prompt is answered `none`, so `P` keeps the billing state it came with. If you answered a **number** there and then typed the confirmation that follows, undo it — `gcloud billing projects unlink "${P:?}"` — because that link is the one thing this check could have left on `P`, and every other mode needs `P` to have no link.
 - **Re-enable the API you disabled** on `P` and on `Q` (`gcloud services enable cloudbilling.googleapis.com --project="${P:?}"` and `--project="${Q:?}"`), and **if you removed the billing role from your own account for mode 2(b), put it back** — that role is yours, not the check's. If a project was a fresh throwaway and you are done with it, delete it instead (`gcloud projects delete <that project>`): check that nothing else in your machine's config still points at it first.
 - **Remove this check's own directory** — `rm -rf /tmp/chk111`, which holds its config root (`$C`), its `vars.env`, the maimed `gcloud` wrapper, `account-names.txt`/`account-ids.txt`, and every mode's capture (mode 4's two files among them). `unset AI_AGENT` too, if you have not already.
 - **Never touch `belong`, EdgeWeb or EdgeServer**: no step here writes to them, the guard block is what makes that so, and the guided line this check is about names a project you type, never one of theirs.
@@ -6100,20 +6118,24 @@ assert_mode() {
 **NOT RUN.** Written by **Part 4** of the zoom-diagrams plan
 (`docs/website/zoom-diagrams/implementation-plan.md` §3, decisions D237, D244, D245 and **D247**,
 which takes this number; the reconciliation's §3 is what the levels are allowed to say today), and
-written here rather than left to that plan because this is the file the owner runs live checks out
-of. It is the half of Part 4 no hermetic test can take: the tests hold the section's **shape** and
-its **words** — one `<defs>` of `<symbol>`s drawn through `<use>`, every label a row of
-`website/data/zoom-levels.yaml`, the markers and the captions — and what a browser is for is
-whether the four drawings are **legible**, whether an entity really looks the same at every level,
-and whether a marker lands where it says it lands.
+rewritten by the owner's brief of **2026-10-22**, which replaced Part 4's four diagrams with the
+owner's four approved boards (`website/design-ref/zoom-levels/level1.dc.html` …
+`level4.dc.html`, committed by #869) redrawn as the site's own inline SVG. It is written here
+rather than left to that plan because this is the file the owner runs live checks out of. It is
+the half of the section no hermetic test can take: the tests hold the section's **shape** and its
+**words** — one `<defs>` of `<symbol>`s drawn through `<use>`, every label a string of the board
+it is drawn from, the geometry of the labels and the arrows, the markers and the captions — and
+what a browser is for is whether the four drawings are **legible**, whether an entity really looks
+the same at every level, and whether a marker lands where it says it lands.
 
 **What this tree carries today, and what it does not.** The section exists: `ZoomLevels.astro` is
 mounted on `/how-it-works/` **under "The run, end to end" and its diagram** (D237), it is one
-`<h2>` and one `<nav>` of four markers, and its four `<figure>`s are the levels. Its words are the
-brief's, **corrected to what the runner does**: Level 1 says the first-line review is the coder's
-own model in a new session and that the senior review is a loop bounded by `agent.review_rounds`,
-because that is what `docs/recipes.md` says and what the reconciliation's §3 found the brief's own
-sketch getting wrong. **And it is stills**: there is no animation, no timeline and no script in the
+`<h2>`, one line saying a dashed outline is planned, and one `<nav>` of four markers, and its four
+`<figure>`s are the levels. **Its words are the boards'**, word for word: the drawings are the
+owner's four boards redrawn, so what a level says is what the owner approved, and the boards are
+the source of truth for it (`src/lib/zoom-boards.mjs` reads them at build time and
+`website/test/how-it-works.mjs` holds the drawing and the board against each other in both
+directions). **And it is stills**: there is no animation, no timeline and no script in the
 drawing at all — the page's one script is the site's own, in the head, and it is not this section's
 — so all four levels are whole in the document before anything runs. **The pinned, scroll-driven
 zoom between the levels is Part 5 of the plan and is not in this checkout**, which is why the last
@@ -6123,12 +6145,15 @@ step below is written and **cannot be run yet**: an unrun step is not a pass, an
 **What the gates hold, and what only your eyes can.** `website/test/how-it-works.mjs` reads the
 built page and refuses a `<use>` whose target is missing, a symbol no level draws, a level that
 draws its own copy of an entity (D244's same-shape rule, planted three ways), a level kind the
-paint gate has not been taught, a label that is not a row of the data file, a row the drawing does
-not render, and a label attributed to a document that does not carry that line.
-`website/test/a11y.mjs` holds the one `<nav>` and its markers — one per level, each named, each
-pointing at the level beside it, each reachable with no positive `tabindex` — and refuses a level
-announced as one image, because a level here is a list of labelled parts and its words are the
-telling. `website/test/budget.mjs` holds the page inside its byte and word ceilings. **None of
+paint gate has not been taught, a line the drawing wrote for itself, a string of a board the
+drawing dropped, a level titled as another board, two labels drawn over each other, a label that
+leaves the board, an arrow whose endpoint touches neither a card nor the corner of its own chain,
+and a label the phone would draw under the brief's 10 px. `website/test/a11y.mjs` holds the one
+`<nav>` and its markers — one per level, each named, each pointing at the level beside it, each
+reachable with no positive `tabindex` — and holds **each level as one named picture**: the drawing
+carries `role="img"` with its own `<title>` and `<desc>`, because a board is one drawing with its
+own headline and paragraph rather than forty loose labels, and a level announced as a list of parts
+is refused. `website/test/budget.mjs` holds the page inside its byte and word ceilings. **None of
 them reads a pixel**: whether a tile arrives as a black rectangle, whether a label is legible
 against its panel, whether the drawings fit a phone, and whether the jump lands.
 
@@ -6146,15 +6171,22 @@ sed -n 's/^canonical_url: *//p' website/data/site.yaml
 grep -o 'id="level-[0-9]*"' website/dist/how-it-works/index.html
 # The markers, and where each one points: step 5.
 grep -o 'href="#level-[0-9]*"' website/dist/how-it-works/index.html
-# The five symbols the levels draw through, and the one <defs> that holds them: step 3. Each id
-# appears ONCE (it is a symbol); a second line here is a level drawing its own copy.
-grep -o 'id="zoom-[a-z]*"' website/dist/how-it-works/index.html
+# The seventeen symbols the levels draw through, and the four arrow heads, in the one <defs> that
+# holds them: step 3. Each id appears ONCE (it is a symbol or a marker); a second line here is a
+# level drawing its own copy.
+grep -o '<symbol id="zoom-[a-z-]*"' website/dist/how-it-works/index.html | sort -u
+grep -o '<marker id="zoom-[a-z-]*"' website/dist/how-it-works/index.html | sort -u
 # The section's own classes, so a step below names what the page has: a level, its caption, its
-# drawing, a label and a marker.
-grep -o 'class="zoom-[a-z-]*"' website/dist/how-it-works/index.html | sort -u
-# Every label of every level, out of the data file rather than remembered: the text step 4 compares
-# what the drawing prints against is these lines, and each row's `source:` is the document it cites.
-sed -n 's/^ *text: *//p' website/data/zoom-levels.yaml
+# drawing, a label, a marker, and the group of small print the phone hides (step 7).
+grep -o 'class="zoom-[a-z-]*' website/dist/how-it-works/index.html | sort -u
+# The four boards the levels are drawn from — the source of truth for every word of a level, and
+# what step 4 compares the page against. They are the owner's own drawings, 1280 × 720 each, and a
+# browser opens one from the filesystem: they are not part of the built site, so the localhost
+# server above does not serve them.
+ls website/design-ref/zoom-levels/level*.dc.html
+# The labels the drawing prints, one per line, for the comparison in step 4 — the drawing's own
+# text, in the page's order.
+grep -o 'class="zoom-word[^"]*"[^>]*>[^<]*' website/dist/how-it-works/index.html | sed 's/.*>//'
 # The scripts on the page: one line, the site's own, and no other — the drawing ships none.
 grep -o '<script[^>]*>' website/dist/how-it-works/index.html
 ```
@@ -6167,57 +6199,67 @@ grep -o '<script[^>]*>' website/dist/how-it-works/index.html
    above the run's diagram, or into another page, is D237's decision reversed rather than a
    drawing defect.
 
-2. **The four levels are four figures, in the brief's order, each named by its own caption.**
-   Read the four `<figcaption>`s (`.zoom-caption`): each names its level — *Inside a cloud job*,
-   *Orchestrator fans out jobs*, *The developer's view*, *The whole project* — and each caption
-   also says **which recipe the drawing is** (ZF7), because a level drawn from a recipe that exists
-   is a claim, while a level drawn from one that does not is a promise. **FACT:** the four
+2. **The four levels are four figures, in the owner's boards' order, each named by its own
+   caption.** Read the four `<figcaption>`s (`.zoom-caption`): each names its level — *Inside one
+   job*, *One orchestrator, many jobs*, *The developer's view*, *The whole project* — and the name
+   is the board's own title, which the drawing also carries as its `<title>`. **FACT:** the four
    captions, verbatim and in order, and whether each level drawing matches its caption's subject.
+   Open the board of the level beside it (the `ls` above) and check that the page's drawing is that
+   board: the same boxes, the same words, the same arrows and the same colours.
 
 3. **Every entity is the same entity at every level** (D244's same-shape rule, seen rather than
-   read). The five symbols are in the `grep` above — the job tile, the orchestrator, the developer,
-   the console and the project — and each level draws an entity through `<use href="#zoom-…">`, so
-   the job tile at levels 1, 2, 3 and 4 must be the **same tile**: same size, same bar, same rows,
-   same paint. Look at the tile at Level 1 and at Level 2 side by side, and the orchestrator at
-   Levels 2 and 3. **FACT:** for each entity, which levels draw it and whether the copies are the
-   same shape; anything that differs is the defect this step exists for.
+   read). The seventeen symbols are in the `grep` above — the job tile, the orchestrator, the
+   developer and its planned form, the person and its planned form, the plain, accent and planned
+   cards, the laptop, the phone, the project, the loop, the draft pull request, the Firebase card,
+   the cloud and the level's own box — and each level draws an entity through `<use
+   href="#zoom-…">`, so the job tile at levels 1, 2, 3 and 4 must be the **same tile**: same size,
+   same bar, same rows, same paint. Look at the tile at Level 1 and at Level 2 side by side, and
+   the orchestrator at Levels 2 and 3. **FACT:** for each entity, which levels draw it and whether
+   the copies are the same shape; anything that differs is the defect this step exists for.
 
-4. **Every label is legible, inside its box, and one of the file's rows.** Read each level's
-   labels (`.zoom-label`): no text runs out of the shape or the drawing it belongs to, nothing is
-   clipped at a drawing's edge, and every string is a line of the `sed` output above — the drawing
-   says nothing the data file does not. **The palette's own contrast is the other half**: the
-   labels are the site's `--text` on `--panel`, and a label drawn in a colour the palette does not
-   carry, or a shape that arrives as a **black or empty rectangle** where the drawing should be, is
-   the defect the site hit once on 2026-10-21 and this step is written for. **FACT:** per level,
-   the labels read back, and the ground they are legible against. A label whose text differs by a
-   word from its row is a misquote (the hermetic gate refuses it by the row's name, and a browser
-   is where you see the shape it drew instead).
+4. **Every label is legible, inside its box, and one of its board's own strings.** Read each
+   level's labels (`.zoom-word`): no text runs out of the shape or the drawing it belongs to,
+   nothing is clipped at a drawing's edge, and every string is one the board prints — the drawing
+   says nothing the board does not. **The boards' own contrast is the other half**: the labels are
+   the boards' ink (`--zoom-ink`, `--zoom-muted`, `--zoom-accent`, `--zoom-project`) on the fill of
+   the card, the panel or the ground it is drawn in (`--zoom-card`, `--zoom-panel`, `--ground`,
+   the one board colour that is exactly a site token), and a label drawn in a
+   colour the board does not carry, or a shape that arrives as a **black or empty rectangle** where
+   the drawing should be, is the defect the site hit once on 2026-10-21 and this step is written
+   for. **FACT:** per level, the labels read back, and the ground they are legible against. A label
+   whose text differs by a word from its board is a misquote (the hermetic gate refuses it by the
+   board's name, and a browser is where you see the shape it drew instead).
 
 5. **A marker jumps to its own level, by keyboard and by pointer.** The `<nav>` is the first thing
-   after the section's heading, so Tab reaches it from the top of the section: **four anchors**,
-   each with a name that says which level it is. Press **Enter** on each and read the URL: it gains
-   `#level-N`, the page scrolls so that **that level's figure and its caption** are on screen, and
-   the browser's Back returns you to where you were. Then click one with the pointer: the same
-   landing. **FACT:** the URL after each jump, and whether the level named by the marker is the one
-   on screen. A marker that lands on another level, or nowhere, is the failure; a marker whose
-   focus ring is invisible is the keyboard half of it.
+   after the section's heading and its legend, so Tab reaches it from the top of the section:
+   **four anchors**, each with a name that says which level it is. Press **Enter** on each and read
+   the URL: it gains `#level-N`, the page scrolls so that **that level's figure and its caption**
+   are on screen, and the browser's Back returns you to where you were. Then click one with the
+   pointer: the same landing. **FACT:** the URL after each jump, and whether the level named by the
+   marker is the one on screen. A marker that lands on another level, or nowhere, is the failure; a
+   marker whose focus ring is invisible is the keyboard half of it.
 
 6. **The four levels are there with JavaScript off, and nothing about them moves on its own.**
    Disable JavaScript for the site, hard-reload `/how-it-works/`, and read the page: **all four
    figures, all four captions and every label are in the document, in order**, and the markers
    still jump (they are anchors, and they need no script). Then turn script back on and watch the
    section for a minute without touching it: **nothing animates, nothing hides itself and nothing
-   scrolls on its own** — this half is stills, and Part 4 ships no timeline. **FACT:** with script
-   off, the four captions' texts and the markers' count; with script on, that nothing in the
+   scrolls on its own** — this half is stills, and no part of it ships a timeline. **FACT:** with
+   script off, the four captions' texts and the markers' count; with script on, that nothing in the
    section moves by itself.
 
 7. **The drawings are legible on a phone.** Set the viewport to **360 × 800** (the width ZU4
-   measures), then to **390 × 844** and **320**, hard-reload, and read the section: each drawing
-   fits the column without a sideways scroll
-   (`document.documentElement.scrollWidth` is not wider than the viewport), the labels are drawn at
-   a size a reader can read rather than a whole desktop picture shrunk to fit, and the markers are
-   still targets a thumb can hit. **FACT:** the document's scroll width and the smallest drawn label
-   at each of the three widths, and the markers' rendered heights.
+   measures), then to **390 × 844** and **320**, hard-reload, and read the section. The drawing is
+   a 1280-unit board with the boards' own label sizes, so it is **not** shrunk to the phone's
+   column: the figure keeps a floor under its width (`.zoom-svg`'s `min-width`) and **scrolls
+   sideways inside its own box**, and the boards' small print — the labels they set under 14 px —
+   is drawn inside `<g class="zoom-fine">`, which the phone's query hides. So read: the **page**
+   does not scroll sideways (`document.documentElement.scrollWidth` is not wider than the
+   viewport) even though the figure does; the smallest label still drawn is at least **10 px**; the
+   level's title, its subtitle, its card labels and its paragraph are all still drawn; and the
+   markers are still targets a thumb can hit. **FACT:** the document's scroll width and the
+   figure's own, the smallest drawn label at each of the three widths, which labels went with the
+   small print, and the markers' rendered heights.
 
 8. **The pinned zoom (Part 5's, and not runnable on this tree).** The brief's "Format" bullet asks
    that each level rests as a still, that the zoom **between** the levels is smooth as the reader
@@ -6233,22 +6275,24 @@ grep -o '<script[^>]*>' website/dist/how-it-works/index.html
    animated path.
 
 **Passes when:** the section is on `/how-it-works/` under the run's diagram, headed "The four
-levels"; four figures stand in the brief's order with four captions naming them and the recipe
-each is drawn from; each entity is the same shape at every level it appears at; every label is a
-line of `website/data/zoom-levels.yaml`, legible against its panel and inside its box; four named
-anchors jump to their own levels by keyboard and by pointer; the four levels and their labels are
-in the document with JavaScript off, and nothing in the section animates or hides itself with it
-on; and the drawings fit and stay readable at 360, 390 × 844 and 320.
+levels"; four figures stand in the boards' order, each captioned with its board's own title and
+each drawing matching that board; each entity is the same shape at every level it appears at;
+every label is one the board prints, legible against the card it is drawn in and inside its box;
+four named anchors jump to their own levels by keyboard and by pointer; the four levels and their
+labels are in the document with JavaScript off, and nothing in the section animates or hides
+itself with it on; and on a phone the page does not scroll sideways, the figure does, and no label
+still drawn is under 10 px at 360, 390 × 844 and 320.
 
 **Fails when:** the section is missing, or sits above the run's diagram, or on a page other than
 `/how-it-works/`; a level has no caption, or a caption names a level the drawing is not; an entity
 looks different at two levels, or a level draws a shape of its own (a `<rect>` where a `<use>`
 belongs) — that is D244 broken in the one place a test's message and a reader's eye agree; a label
-is missing, clipped, misquoted against its row, or drawn at a contrast a reader cannot read; a
+is missing, clipped, misquoted against its board, or drawn at a contrast a reader cannot read; a
 shape arrives as a black or empty rectangle; a marker points at another level, lands nowhere, has
 no name, or cannot be reached from the keyboard; a level or a label is missing with JavaScript off,
-or one exists only with it on; something in the section animates, hides or scrolls by itself; or a
-drawing overflows the phone's column. **What failing looks like:** the 2026-10-21 defect again —
+or one exists only with it on; something in the section animates, hides or scrolls by itself; the
+**page** overflows the phone's column; a label still drawn on the phone is under 10 px; or the
+small print the phone drops takes a label the level's own words need. **What failing looks like:** the 2026-10-21 defect again —
 Astro scopes a page's stylesheet to the elements the page renders, so a generated shape drawn from
 a component's markup with a plain class arrives **unstyled**, and every shape is a black rectangle;
 and a marker list that a reader can press but that lands on the section's top rather than the level
@@ -6256,10 +6300,11 @@ it names.
 
 **Paste back** (no secret, no account, nothing from any project): the browser and its version, the
 OS and the date; whether you read the built artifact or the live site, and at which commit; the
-four captions verbatim; per level, the labels you read back and any that differ from the data
-file's rows; for each entity, the levels it is drawn at and whether the shapes matched; the URL
-after each marker jump and whether the level on screen was the one named; the scroll width and the smallest label at 360, at
-390 × 844 and at 320, and any label that was too small to read there; and, for step 8, that it was not
+four captions verbatim; per level, the labels you read back and any that differ from that board's
+own words; for each entity, the levels it is drawn at and whether the shapes matched; the URL
+after each marker jump and whether the level on screen was the one named; the page's scroll width
+and the figure's own, the smallest label still drawn and which labels went with the small print, at
+360, at 390 × 844 and at 320; and, for step 8, that it was not
 run — the pinned zoom is Part 5's. Until both halves have been seen, this row stays **NOT RUN**.
 
 **Restore.** Nothing is created, so there is nothing to undo: no account, no cloud project, no
@@ -6270,6 +6315,210 @@ run — the pinned zoom is Part 5's. Until both halves have been seen, this row 
 - **Put the browser's JavaScript and motion settings back** if you changed either for steps 6 and
   8: they are your browser's, not the check's, and step 6 needs JavaScript on again to be about the
   site you actually read.
+- **Never touch `belong`, EdgeWeb or EdgeServer**: no step here reads or writes a project at all,
+  and the only host this check fetches is the built artifact on localhost or the canonical origin
+  the site's own `site.yaml` names.
+
+## Check 113: the phone app's page, and every claim on it marked shipped or planned (the built artifact or the live site, read-only; run by you; NOT RUN)
+
+**NOT RUN.** Written by **Part 3** of the zoom-diagrams plan
+(`docs/website/zoom-diagrams/implementation-plan.md` §3, the owner's answers of 2026-10-21 under
+**D239**, **D240**, **D241** and **D242**), and written here rather than left to that plan because
+this is the file the owner runs live checks out of. It is the half of Part 3 no hermetic test can
+take. `website/test/mobile.mjs` reads the **built** page and refuses each defect by name — a claim
+rendered in the other state's list, a date, a badge that is missing or reworded or below the
+headline, a named speech service, a form, a `mailto:` — but what a browser is for is the reader's
+own question: **does this page, met cold, tell me what the app does today and what it does not?**
+A page can pass every one of those readings and still leave a reader believing the app ships in
+March, or believing the roster is here.
+
+**What this tree carries today, and what it does not.** The page exists: `/mobile/` renders a
+preview badge reading **"Coming soon"** over its headline, the claims of
+`website/data/mobile-claims.yaml` as two lists under the headings **"What the app does today"** and
+**"What is still to come"**, and a one-line lead that says the app is in progress. **It carries no
+picture**: `website/data/mobile-screens.yaml` ships with no row, so the page renders no slider at
+all — no section, no heading, no frame and no picture-shaped hole — because the captures are
+**yours** and arrive as files (D251, D240's second condition's counterpart in the design: a page
+that shows an empty box is a page whose picture looks broken). **And the page asks a reader for
+nothing**: D239's answer is "no waitlist", so there is no form, no email field, no button and no
+`mailto:` anywhere in the page's own content. What is **not** here is a date: nothing on the page
+says when the app will arrive, and that is the point of step 3 rather than a gap.
+
+**What the gates hold, and what only your eyes can.** `website/test/mobile.mjs` holds the claims
+against the data file's rows — one card per row, in the list its own `state` names, with the same
+word on the card — and refuses a date in the page's text, its title and its description, a badge
+that is missing, reworded or moved below the headline, the speech services a page like this one
+reaches for, the roster printed among the shipped claims while `mobile/src/feed/paths.js` denies
+the phone the `agents` family, and every form of asking. `website/test/budget.mjs` holds the page
+inside its byte and word ceilings, `linkcheck.mjs` resolves every link and anchor on it, and
+`a11y.mjs` holds its landmarks and headings like any other page's. **None of them reads it as a
+reader does**: whether the two lists are told apart at a glance, whether the badge is above the
+fold, whether the marks are legible on a phone, and whether the page leaves the impression the
+app is further along than it is.
+
+**Method.** One browser, one built site, one narrow viewport, no account and no cloud project.
+Either serve the artifact locally or read the deployed site; both are read-only:
+
+```bash
+# What this check needs, read out of the tree rather than remembered. It refuses to start on a
+# build that is not there, so a pass below is a pass about a page that exists.
+[ -f website/dist/index.html ] || { echo "Check 113 stopped: website/dist/ is not built — run (cd website && npm run check) first" >&2; exit 1; }
+(cd website/dist && python3 -m http.server 8080) &     # the built artifact, on localhost:8080
+# ...or, for the deployed site instead, read the canonical origin out of the site's own facts:
+sed -n 's/^canonical_url: *//p' website/data/site.yaml
+# The preview badge, and the two lists' hooks: steps 1 and 2.
+grep -o 'data-preview-badge' website/dist/mobile/index.html
+grep -o 'data-claims="[a-z]*"' website/dist/mobile/index.html
+# Each card's own mark and each card's own words: step 2. The marks are the words a reader reads,
+# so this is what step 2 checks the lists' headings against.
+grep -o 'data-state="[a-z]*"' website/dist/mobile/index.html
+grep -o '<p class="mobile-claim-state"[^>]*>[^<]*' website/dist/mobile/index.html
+# The claims themselves, out of the data file rather than remembered: the texts step 2 reads back.
+# The dash is part of the row's first line (`  - state: shipped`), so the pattern allows it.
+sed -n 's/^ *- *state: *//p;s/^ *text: *//p' website/data/mobile-claims.yaml
+# The screenshots file: one line, and the empty list is what step 6's first half reads.
+sed -n '/^screens:/p' website/data/mobile-screens.yaml
+# Nothing on the page asks a reader for anything: step 5. All three of these must print nothing,
+# and each reads the page's own <main> rather than the whole document. An unscoped read finds the
+# layout's own furniture and reads a correct page as a failure: the consent banner's Accept and
+# Decline are two <button>s, and the footer carries googletagmanager.com and github.com. All of
+# that is on every page of the site and is check 69b's half of "nothing phones home", not this
+# one's (step 5's note). The built page is minified onto one line, so the extraction is a read
+# rather than a sed range — and it stops the block rather than going quiet, because an empty
+# extraction would make all three reads below pass by matching nothing.
+MAIN=$(python3 - <<'PY'
+import re, sys
+html = open("website/dist/mobile/index.html").read()
+m = re.search(r"<main\b.*?</main>", html, re.S)
+if not m:
+    sys.exit("Check 113 stopped: website/dist/mobile/index.html has no <main>, so the three reads below would pass by matching nothing")
+print(m.group(0))
+PY
+) || exit 1
+[ -n "$MAIN" ] || { echo "Check 113 stopped: the page's <main> read back empty" >&2; exit 1; }
+printf '%s' "$MAIN" | grep -o '<form\|<input\|<textarea\|<select\|<button'
+printf '%s' "$MAIN" | grep -o 'mailto:'
+printf '%s' "$MAIN" | grep -o 'https\?://[^"]*' | grep -v 'fugaro.dev\|www.w3.org'
+# The menu item, and the page it points at: step 7.
+grep -o 'href="/mobile/"' website/dist/index.html
+```
+
+1. **The page says what it is before it says anything else.** Open `/mobile/` cold and read only
+   what is above the fold: a badge reading **"Coming soon"**, then the headline, then the lead
+   saying the app is in progress. **FACT:** the badge's text, the headline's text, and whether the
+   badge sits **above** the headline rather than under the bullets it qualifies. A reader who meets
+   the claims first and the badge last has been told the app exists before being told it does not —
+   which is the one failure a "coming soon" page exists to avoid, and it is a placement, not a
+   string, so no test above can see it.
+
+2. **Every bullet is marked, and the mark agrees with the list it is in.** Read the two sections:
+   **"What the app does today"** and **"What is still to come"**. Every card carries a word —
+   **Shipped** or **Planned** — and the word matches its section: **one** card is shipped today
+   (*Status and spend for every run…*), and the roster, switching by name, the wake word, QR
+   pairing and the three roles are all planned. Read each card's words against the `sed` output
+   above: nothing is on the page that is not a row of the data file, and no row is missing.
+   **FACT:** per section, the cards and the word on each; and whether any card's word disagrees
+   with the heading it stands under. **The mark being a word and not a colour is the other half**:
+   the shipped card's border and its mark are drawn differently from the planned ones, so a reader
+   who cannot tell those two colours apart still reads *Shipped* and *Planned*, and a page that
+   marked its bullets by colour alone is the defect this step is for.
+
+3. **There is no date anywhere, and none is implied.** Read the page's own words for a year, a
+   month or a season — **"Coming soon"** and the lead's "in progress" are as far as it goes — and
+   then read the browser tab's title and the page's description: **no year and no month in
+   either**. **FACT:** the page's text, its `<title>` and its description, and the absence of a
+   date in all three. A date here would be a promise this repository cannot keep: the app's
+   schedule is yours, and the page is written to say only what is built. **And nothing else on the
+   page dates it either** — no "shipping in…", no roadmap, no changelog entry claiming a release.
+
+4. **The wake word is the phone's, and the page says so.** Find the wake-word bullet in the
+   planned list and read it whole: it says the listening and the recognition happen **on the
+   phone**. **FACT:** that bullet, verbatim. Then look for any speech service named anywhere on the
+   page — a vendor, an engine, "the cloud", a model — and find none: D242's answer is that the
+   bullet is on-device only, because the local/remote evaluation switch is design only and not
+   built (ZF28), and a page that named an engine would be previewing a switch the owner has not
+   adopted. A bullet that says the phone listens *and* a line elsewhere that says the transcript is
+   sent somewhere is the same defect in two places.
+
+5. **Nothing on the page asks a reader for anything.** D239's answer is "no waitlist": look for a
+   form, an email field, a "notify me" button, a `mailto:` link or a third-party collector, and
+   find **none**. **FACT:** that there is no field to type into and no control to press, and — in
+   the browser's network panel, on a fresh load — that the page itself sends nothing anywhere.
+   (The site's one consent banner and the analytics behind it are the layout's and shared with
+   every page; that half is check 69b's, not this one's. What is this check's is that **this page**
+   has no door of its own on it.)
+
+6. **The pictures: no empty frame today, and the slider when your captures land.** First, today:
+   the page shows **no slider, no heading over one, and no empty box where a picture should be** —
+   a reader who met a broken frame could not tell it from a picture that failed to arrive, which is
+   why a file with no row renders nothing at all. **FACT:** that the page carries no slider section
+   and no picture-shaped gap. Then, **when your captures are in `website/public/screenshots/` and a
+   row per picture is in `website/data/mobile-screens.yaml`**: rebuild, reload, and read the
+   slider — the pictures are the app's own screens, each with the caption the row gives it, and
+   **no slide's address leaks the console's** (`mobile-screen-` and never `console-screen-`). Until
+   the captures land, this half is **not run**, and this row stays **NOT RUN**.
+
+7. **The menu gains one item and stays two groups.** Open the menu on any page: **Product** holds
+   *How it works*, *Why GCP*, *Getting started*, *Caps and costs*, *Console* and **Mobile** — six,
+   with the phone app's page last — and **Project** holds its five as before. There is **no third
+   group**.
+   Follow the Mobile item: it lands on `/mobile/`. **FACT:** both groups' items and their order,
+   and the page the Mobile item opens. A renamed group, a moved item or a third group is the
+   defect; the two groups' contents are held by `website/test/base-styles.mjs`, and what this step
+   adds is that the menu a reader actually opens is the one the tree builds.
+
+8. **The page is readable on a phone.** Set the viewport to **360 × 800**, then **390 × 844** and
+   **320**, and hard-reload `/mobile/`: the badge, the headline, the lead and both lists fit the
+   column without a sideways scroll (`document.documentElement.scrollWidth` is not wider than the
+   viewport), the **Shipped** and **Planned** marks are legible at that width, and the cards are
+   not a wall of text a thumb cannot follow. **FACT:** the document's scroll width at each of the
+   three widths, and the rendered size of the mark's text.
+
+**Passes when:** `/mobile/` shows a "Coming soon" badge above its headline; its claims render as
+two lists under the headings *What the app does today* and *What is still to come*, one card per
+row of `website/data/mobile-claims.yaml`, each carrying the word **Shipped** or **Planned** and
+standing in the list that word names; no date appears in the page's text, its title or its
+description, and none is implied; the wake word's bullet says the listening and the recognition
+happen on the phone and no speech service is named; the page carries no form, no field, no button,
+no `mailto:` and no third party, and sends nothing of its own; it shows no empty frame today, and
+when your captures land the slider shows them with this page's own ids; the menu's Product group
+has five items with Mobile last and no third group exists; and the page is readable and its marks
+legible at 360, 390 × 844 and 320.
+
+**Fails when:** the badge is missing, says something other than "Coming soon", or stands below the
+headline or below the claims; a claim is rendered in the other list, or its card's word disagrees
+with the list it stands in — a reader then believes the app has the roster today, which is the
+false present tense D240's second condition exists to refuse; a year, a month or a season appears
+anywhere in the page's own words, its title or its description; the wake-word bullet stops saying
+where the recognition happens, or any speech service, engine or cloud is named on the page; a form,
+an email field, a button, a `mailto:` or a third party appears in the page's own content — the
+consent banner and the footer are the layout's and every page has them, which is why the Method
+block's three reads are scoped to the page's `<main>` — or the page sends a request of its
+own; the page draws an empty frame or a broken picture where a screenshot should be; the menu gains
+a third group, loses the Mobile item or puts it somewhere other than last in Product; or the page
+overflows a phone's column or draws its marks too small to read. **What failing looks like:** a page
+that is honest in its data file and reads as a launch announcement — the badge below the fold, or a
+planned bullet in the shipped list with the right word on the wrong list.
+
+**Paste back** (no secret, no account, nothing from any project): the browser and its version, the
+OS and the date; whether you read the built artifact or the live site, and at which commit; the
+badge's text and where it sits; per section, the cards and the word on each, and any card whose
+word disagreed with its heading; the page's text, title and description, and the absence of a date
+in all three; the wake-word bullet verbatim and any service named on the page; that no field,
+control, `mailto:` or third party is there, and that a fresh load sends nothing of the page's own;
+that no empty frame is drawn, and — if your captures have landed — the slides you read and their
+ids; the menu's two groups item by item, and the page the Mobile item opened; the scroll width and
+the mark's rendered size at 360, at 390 × 844 and at 320; and, if the captures have not landed
+yet, that step 6's second half was not run. Until it has been, this row stays **NOT RUN**.
+
+**Restore.** Nothing is created, so there is nothing to undo: no account, no cloud project, no
+`fugaro` command, no installation and no file is touched by any step above.
+
+- **Stop the localhost server** the Method block started (`kill %1` in the shell that started it,
+  or close that shell) — that is the whole of the check's footprint on your machine.
+- **Put the browser's JavaScript setting back** if you turned it off to read the page without the
+  layout's script: the page itself ships no behaviour, and the menu and the consent banner are the
+  layout's, so a reading with script off is a reading of a site that is not the one you serve.
 - **Never touch `belong`, EdgeWeb or EdgeServer**: no step here reads or writes a project at all,
   and the only host this check fetches is the built artifact on localhost or the canonical origin
   the site's own `site.yaml` names.

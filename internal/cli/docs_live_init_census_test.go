@@ -156,8 +156,10 @@ var retirementText = []string{
 var liveRoots = []string{
 	"README.md",
 	"CONTRIBUTING.md",
-	// A root file rather than a directory, and on the walk because it names
-	// the command: W2.3 renames it in place.
+	// A root file rather than a directory. It was on the walk because it named
+	// the command, which the owner's feedback of 2026-10-22 renamed in place;
+	// it stays for `scripts/`'s reason -- the plan walks it, and a root that
+	// finds nothing costs one stat.
 	"SECURITY.md",
 	"docs",
 	"plugin",

@@ -26,6 +26,12 @@ type repositoryStage struct {
 	tg     *repoTarget
 	st     initflow.Status
 	warned bool
+	// notOnboarding is the wizard's first-repository question answered no at
+	// the start of the run (W3.4): this repository is left as it is, so this
+	// stage has nothing to do and nothing to ask for — it says so in its own
+	// line, unlike the stages before it, which take the same answer through
+	// the engine's declined set and report needs-you (gateEarly's declineRepo).
+	notOnboarding bool
 }
 
 func newRepositoryStage(e *initEngine) *repositoryStage {
@@ -74,6 +80,12 @@ func (s *repositoryStage) Check(ctx context.Context) (initflow.Status, error) {
 		return s.st, nil
 	}
 	repo := pluginwire.Printable(s.tg.repo)
+	if s.notOnboarding {
+		// The run asked and the answer was no: nothing is onboarded and
+		// nothing is left for the user (W3.4). The stage is skipped, so
+		// nothing after it waits for it.
+		return initflow.Status{State: initflow.Skipped, Detail: notOnboardingDetail(s.tg.origin)}, nil
+	}
 	switch a, err := s.e.authState(s.tg.origin); {
 	case err != nil:
 		return initflow.Status{}, err
