@@ -1432,8 +1432,9 @@ dropped by name now, and the two reporters (TAP's `not ok N - name` and the spec
 reporter's `✖ name`) yield the same list. And the table itself had gone stale:
 two rows named two of the three tests their mutation really reddens, because the
 third test was added to the suite after those rows were written. The whole table
-was regenerated from the script's output, and all 43 rows now agree with it
-name for name (the 43rd is P6.12's, added with the dialogue below) -- which is the comparison a reader can repeat, so it is worth
+was regenerated from the script's output, and all 49 rows now agree with it
+name for name (the last seven are P6.12's, added with
+the dialogue below) -- which is the comparison a reader can repeat, so it is worth
 repeating after any change to this suite. That script runs this module's own
 suite (`node --test 'src/voice/*.test.js'`, from `mobile/`) and not the app's
 whole one, because the mutations are all here and a failure in a neighbouring
@@ -1443,7 +1444,7 @@ node** rather than assuming one (this repository's base image keeps node off
 the pristine suite must pass first, with a test count, because `node --test`
 exits 0 over a glob that matched nothing, and then a mutation that *must* be
 caught is planted before any real one is trusted. `npm test` --
-`node --test "src/**/*.test.js"`, the app's whole suite, **665 tests, all
+`node --test "src/**/*.test.js"`, the app's whole suite, **667 tests, all
 passing** -- is what the pull request reports as the module's verification.
 
 **The column names the tests that went red; it does not count them**, for the
@@ -1502,7 +1503,13 @@ the two apart -- so it is written down here rather than claimed as a kill.
 | `the README's tokens are in the scan's order` | `the README's rule table and the scan are the same list` |
 | `the README names every token the scan carries` | `the README's rule table and the scan are the same list` |
 | `the README loses no rule row` | `the README's rule table and the scan are the same list` |
-| `an unheard read-back is dropped, and cannot be confirmed later` (P6.12) | `the plan, sentence one: a destructive command speaks the read-back from the resolved target and waits` and `the read-back names the resolved target, never the words the speaker used` and `the plan, sentence three: a misheard confirm is refused` and `the plan, sentence four: a timeout says so and drops the action` and `the plan, sentence five: a merge read back at one head speaks the head that is there now` and `the plan, sentence six: a queued prompt is not spoken over the user` and `the pause speaks the interrupt policy’s reason, in the phone’s words` and `an unheard read-back cannot be confirmed, and nothing is sent on an unconfirmed transcript` and `the three routes are kept apart: agent text is sent, an app command is not, an unmatched word is not` and `the offline refusal stays the client’s, and the command still does not travel` and `cancel that drops the read-back, and bad input is refused without throwing` |
+| `an unheard read-back is dropped, and cannot be confirmed later` (P6.12) | `the plan, sentence one: a destructive command speaks the read-back from the resolved target and waits` and `the read-back names the resolved target, never the words the speaker used` and `the plan, sentence three: a misheard confirm is refused` and `the plan, sentence four: a timeout says so and drops the action` and `the plan, sentence five: a merge read back at one head speaks the head that is there now` and `the plan, sentence six: a queued prompt is not spoken over the user` and `the pause speaks the interrupt policy’s reason, in the phone’s words` and `a sentence that did not play out marks nothing heard` and `an unheard read-back cannot be confirmed, and nothing is sent on an unconfirmed transcript` and `the three routes are kept apart: agent text is sent, an app command is not, an unmatched word is not` and `a launch is not confirmed and does travel: it goes as the owner’s own words (D162)` and `the offline refusal stays the client’s, and the command still does not travel` and `cancel that drops the read-back, and bad input is refused without throwing` |
+| `an app command is never forwarded as text` (P6.12) | `the plan, sentence three: a misheard confirm is refused` and `the plan, sentence four: a timeout says so and drops the action` and `the plan, sentence five: a merge read back at one head speaks the head that is there now` and `an unheard read-back cannot be confirmed, and nothing is sent on an unconfirmed transcript` and `the three routes are kept apart: agent text is sent, an app command is not, an unmatched word is not` and `cancel that drops the read-back, and bad input is refused without throwing` |
+| `a launch is sent as the owner's own words` (P6.12) | `the three routes are kept apart: agent text is sent, an app command is not, an unmatched word is not` and `a launch is not confirmed and does travel: it goes as the owner’s own words (D162)` |
+| `a command that carried its own confirmation is refused` (P6.12) | `the plan, sentence two: a confirm in the same utterance as the command is refused` and `the plan, sentence three: a misheard confirm is refused` and `the plan, sentence four: a timeout says so and drops the action` and `the plan, sentence five: a merge read back at one head speaks the head that is there now` and `the plan, sentence six: a queued prompt is not spoken over the user` and `the pause speaks the interrupt policy’s reason, in the phone’s words` and `a sentence that did not play out marks nothing heard` and `an unheard read-back cannot be confirmed, and nothing is sent on an unconfirmed transcript` and `the three routes are kept apart: agent text is sent, an app command is not, an unmatched word is not` and `a launch is not confirmed and does travel: it goes as the owner’s own words (D162)` and `the offline refusal stays the client’s, and the command still does not travel` and `cancel that drops the read-back, and bad input is refused without throwing` |
+| `a timed-out read-back is not offered again` (P6.12) | `the plan, sentence four: a timeout says so and drops the action` |
+| `a moved target is re-proposed and read back again` (P6.12) | `the plan, sentence five: a merge read back at one head speaks the head that is there now` |
+| `a question is marked heard only when its announcement played out` (P6.12) | `the pause speaks the interrupt policy’s reason, in the phone’s words` and `a sentence that did not play out marks nothing heard` |
 
 ### The spoken confirmation (P6.12)
 
