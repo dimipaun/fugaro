@@ -79,6 +79,41 @@ var (
 	ErrUnknownKeyID = errors.New("credsvc: no published key for the token's key id")
 )
 
+// RunEnded is the refusal of a run whose write-once outcome is written: the
+// run has ended, so its identity is not honoured any more. It is an
+// ErrUnverified — errors.Is reads it as one, and its sentence is the one
+// checkLive wrote before this type existed, so a caller that only knows
+// ErrUnverified reads exactly what it read before — and it carries the two
+// things the refusal itself does not need but its *handler* does.
+//
+// It exists because a run's end is the one moment the run's nodes under
+// `creds/` can be removed, and this is the only place the pair is read from a
+// verified identity rather than from the caller's own text (review finding
+// N4: C1.9 writes `creds/current/<slug>/<run>` and `creds/leases/<slug>/<run>`
+// and nothing ever removes them, so the subtree grows with every run the
+// project has ever had). Slug and Run here are the verified `fs` and `fr`
+// claims — the same strings the path builders are given — and neither is a
+// credential: a slug, a run id and a credential name are what the service
+// records, and a value is what it never records.
+//
+// The message does not name them: a refusal is the caller's text to display,
+// and the pair is for the handler's own bookkeeping.
+type RunEnded struct {
+	Slug string
+	Run  string
+}
+
+// Error is the sentence checkLive's refusal carried before this type existed,
+// word for word, because a test and a run's halt message both read it.
+func (e *RunEnded) Error() string {
+	return fmt.Sprintf("%s: the run has ended: its outcome is written", ErrUnverified)
+}
+
+// Unwrap is what makes this an ErrUnverified: every caller that refuses an
+// unverified run refuses an ended one the same way, and only a caller that
+// looks for the type (the handler, for N4) tells them apart.
+func (e *RunEnded) Unwrap() error { return ErrUnverified }
+
 const (
 	// maxTokenBytes bounds a presented token before it is parsed.
 	maxTokenBytes = 8 << 10
@@ -609,7 +644,7 @@ func (a *Authenticator) checkLive(ctx context.Context, slug, run string, now tim
 			return fmt.Errorf("%w: the run's outcome could not be read", ErrUnavailable)
 		}
 		if exists {
-			return fmt.Errorf("%w: the run has ended: its outcome is written", ErrUnverified)
+			return &RunEnded{Slug: slug, Run: run}
 		}
 	}
 	return nil
