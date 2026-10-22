@@ -213,7 +213,7 @@ func jobTokenBinding(saID, slug string) gcpfake.Binding {
 }
 
 // TestDoctorJobTokenGrant: a job account that has its runs/ grant but not the
-// read-only grant on tokens/ (a repository not re-applied with fugaro init
+// read-only grant on tokens/ (a repository not re-applied with fugaro update
 // --repo since the budget token moved there, budget-token-channel.md §7.2) is
 // a warning naming the account and the cure: its runs cannot read the sealed
 // token, and read it as missing. With the grant, the check is OK.
