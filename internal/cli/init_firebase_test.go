@@ -563,12 +563,12 @@ func TestRulesMarkerOnlyAfterTheRulesDeploy(t *testing.T) {
 
 // TestInitRefusesADatabaseFromANewerFugaro: the marker records which
 // generation of the security rules is deployed, and a marker above this
-// binary's RulesVersion says the rules came from a newer Fugaro. init
-// --firebase-project deploys the rules *this* binary carries, so it must refuse rather
-// than overwrite the newer installation's rules with older ones and record its
-// own generation over the newer number — the state doctor warns about and
-// tells the owner not to cause ("do not re-run 'fugaro update --firebase-project' with
-// this binary", policy-rules-skew).
+// binary's RulesVersion says the rules came from a newer Fugaro. fugaro
+// update --firebase-project deploys the rules *this* binary carries, so it
+// must refuse rather than overwrite the newer installation's rules with older
+// ones and record its own generation over the newer number — the state doctor
+// warns about and tells the owner not to cause ("do not re-run 'fugaro update
+// --firebase-project' with this binary", policy-rules-skew).
 //
 // Hand mutation this fails on: dropping the refusal from infra.DB.Plan, which
 // rewrites the marker down to this binary's generation (and, on a real

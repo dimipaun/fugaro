@@ -96,7 +96,7 @@ variable "project_number" {
 }
 
 variable "manage_apis" {
-  description = "Whether this root enables the two APIs. Off, the project is left to be managed elsewhere (fugaro update --skip-apis)."
+  description = "Whether this root enables the two APIs. Off, the project's APIs are left to whoever else manages them (the Firebase root's `skip_apis`, set when the Firebase project is the installation's own; no CLI flag sets this false today)."
   type        = bool
   default     = true
 }

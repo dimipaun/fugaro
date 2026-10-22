@@ -621,29 +621,44 @@ func TestDocsCheck111EveryModeAnswersTheCreateAdoptQuestion(t *testing.T) {
 
 // Two sentences in Check 27's subtree are *about* the rename rather than
 // rewritten by it: the register row's parenthetical, which lists what the
-// rewrite renames (`init` → `fugaro setup`, the converge-again steps →
-// `fugaro update`, `--firebase` → `--firebase-project`), and step 4's "the same
-// one the old text made of `init` run a second time". In both, naming the OLD
-// command is the whole point — the row's own next clause says the recorded run
-// "was made with the **old** command lines".
+// rewrite renames (the retired command's own name → `fugaro setup`, the
+// converge-again steps → `fugaro update`, `--firebase` → `--firebase-project`),
+// and step 4's "the same one the old text made of `init` run a second time".
 //
-// The guard above cannot see this: it forbids the retired spelling in rewritten
-// text, and a mechanical rename that overwrote the left of the first arrow
-// writes the *new* spelling, leaving the row asserting that `fugaro setup` was
-// renamed to `fugaro setup`. This test holds the two sides of that arrow apart,
-// and holds the retired name in the two places that speak about it.
+// The row describes the retired command rather than spelling it, which is that
+// section's own convention: it heads the recorded run with "the retired
+// command's own name, its creating flags and `--firebase`", calls the table
+// below "the record of the retired command's spellings", and the row's own next
+// clause points there ("the run recorded under Check 27 was made with the
+// **old** command lines"). It has to: the register is live text, and the census
+// reads a live file as naming the retired command nowhere, so a row that spelled
+// it would be the one mention of the retired verb no pattern here can see. Step
+// 4 is inside the section whose subject IS the old text, so its bare `init`
+// stays.
+//
+// The guard above cannot see either: it forbids the retired spelling in
+// rewritten text, and a mechanical rename that overwrote the left of the first
+// arrow writes the *new* spelling, leaving the row asserting that `fugaro setup`
+// was renamed to `fugaro setup`. This test holds the two sides of that arrow
+// apart, holds the row's left side to the register's own words rather than to
+// the bare `init` the census' pattern cannot see (a left side that named no
+// program would not say which command was renamed), and holds step 4's clause.
 //
 // Mutation (run, restore): put `fugaro setup` back on the left of the first
-// arrow — the self-mapping check fails. Rewrite step 4's clause to name the new
-// door — the last want fails.
+// arrow — the self-mapping check fails. Spell that left side `init` again — the
+// first want and the bare-spelling check fail. Rewrite step 4's clause to name
+// the new door — the last want fails.
 func TestDocsCheck27NamesTheRetiredCommandWhereItSpeaksOfIt(t *testing.T) {
 	flat := flattenDoc(readDoc(t, setupWizardChecklist))
 
 	if strings.Contains(flat, "`fugaro setup` → `fugaro setup`") {
 		t.Errorf("the register's rename parenthetical maps `fugaro setup` to itself: its left side is what the rewrite renames, so the retired command's name belongs there, not the door it became")
 	}
+	if strings.Contains(flat, "(`init` → `fugaro setup`") {
+		t.Errorf("the register's rename parenthetical spells the retired command as bare `init`: the register is live text, so the row describes the old name the way its own section does and leaves the spelling to the dated record below")
+	}
 	for _, want := range []string{
-		"**Kept, with their commands renamed** (`init` → `fugaro setup`",
+		"**Kept, with their commands renamed** (the retired command's own name → `fugaro setup`",
 		"the converge-again steps → `fugaro update`",
 		"`--firebase` → `--firebase-project`",
 		"the same one the old text made of `init` run a second time",

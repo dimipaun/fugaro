@@ -22,7 +22,7 @@
 // ACCEPTED RISK: the trust anchor is the source tag as the registry resolves
 // it now. Digest verification proves the copy equals what the registry served,
 // not that it is the release: whoever can write ghcr.io/<owner>/fugaro-*:X.Y.Z
-// can make the user's cloud run their code. Plan's expect digest (init
+// can make the user's cloud run their code. Plan's expect digest (fugaro update
 // --expect-digest) pins one obtained out of band; cosign verification and a
 // signed digest list in the release are the planned fix.
 //

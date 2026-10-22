@@ -248,7 +248,7 @@ func (r *imagesRig) pinnedBase(kind, ver string) string {
 	return "us-east5-docker.pkg.dev/" + initProject + "/" + infra.GhcrRegistry + "/dimipaun/fugaro-" + kind + ":" + ver + "@" + r.basePin
 }
 
-// A development build copies nothing and says what to do, and init
+// A development build copies nothing and says what to do, and fugaro update
 // --firebase-project behaves as it did: the history job waits for its image.
 func TestDevBuildHasNoSilentFallback(t *testing.T) {
 	r := newImagesRig(t, "dev")

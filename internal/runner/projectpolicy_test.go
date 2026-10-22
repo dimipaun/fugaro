@@ -121,9 +121,9 @@ func TestRunnerWithoutTheMarkerTreatsADeniedReadAsLegacy(t *testing.T) {
 // Carried review item (a): the same denial with the marker deployed is genuine,
 // and the run does not start. The marker is written by the deploy that grants
 // the read, so a denial means the rules were changed out from under a published
-// policy (an older CLI's init --firebase-project redeploys rules that predate the
-// marker). Falling back to the environment ceiling here would run outside the
-// policy the owner published.
+// policy (an older CLI's fugaro update --firebase-project redeploys rules that
+// predate the marker). Falling back to the environment ceiling here would run
+// outside the policy the owner published.
 func TestRunnerHaltsOnADeniedReadWhenTheMarkerExists(t *testing.T) {
 	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":3,"budget":{"mode":"enforce","per_run_usd":0.05}}`, capScript(3)...)
 	b.db.DenyRead(projectpolicy.PathShared())

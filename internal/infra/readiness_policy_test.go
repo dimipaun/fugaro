@@ -116,7 +116,8 @@ func TestReadinessRefusesAnApplyThatWouldStrandAnExistingJobsPolicy(t *testing.T
 	}
 	readyJob(t, f, spec)
 	// The jobs carry what this config no longer names: an installation that
-	// ran init --firebase-project, met again by a config without budget.rtdb_url.
+	// ran fugaro update --firebase-project, met again by a config without
+	// budget.rtdb_url.
 	for _, ws := range spec.Workflows {
 		f.run.SetJob(ws.Job, ws.Labels, ws.Image)
 		f.run.SetJobEnv(ws.Job, map[string]string{
@@ -244,8 +245,8 @@ func TestReadinessWarnsWhenAnApplyWouldRemoveTheJobFirebaseBackend(t *testing.T)
 	}
 	readyJob(t, f, spec)
 	// The deployed jobs carry what this config no longer names: the markup
-	// of an installation that ran init --firebase-project, met again by a config
-	// that has lost its budget.rtdb_url.
+	// of an installation that ran fugaro update --firebase-project, met again by
+	// a config that has lost its budget.rtdb_url.
 	for _, ws := range spec.Workflows {
 		f.run.SetJob(ws.Job, ws.Labels, ws.Image)
 		f.run.SetJobEnv(ws.Job, map[string]string{

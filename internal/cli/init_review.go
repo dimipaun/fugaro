@@ -31,7 +31,7 @@ import (
 // files that may. And a step whose plan destroys, replaces or removes an IAM
 // grant is not covered either (tf.Cover): it asks its own typed confirmation.
 //
-// Fugaro-owned means: the project was created by this run (init
+// Fugaro-owned means: the project was created by this run (fugaro setup
 // --create-project), or the runs bucket's fugaro/project.json names this
 // project and this GCP project (read-only). A project that is neither (an
 // adopted one, an unmarked one, a failed read) keeps the per-step typed
