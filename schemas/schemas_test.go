@@ -3,10 +3,14 @@ package schemas_test
 import (
 	"bytes"
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1065,6 +1069,7 @@ func TestResultSchemaHalted(t *testing.T) {
 	for _, r := range []runstore.HaltReason{
 		runstore.HaltKillSwitch, runstore.HaltRunCap, runstore.HaltRepoDailyCap, runstore.HaltGlobalDailyCap,
 		runstore.HaltNoCap, runstore.HaltTokenCap, runstore.HaltBudgetUnavailable, runstore.HaltBudgetTokenExpired,
+		runstore.HaltNoCredential, runstore.HaltCredsRulesDenied,
 	} {
 		if err := check(r); err != nil {
 			t.Errorf("schema rejects halt reason %q: %v", r, err)
@@ -1073,6 +1078,94 @@ func TestResultSchemaHalted(t *testing.T) {
 	if err := check("other"); err == nil {
 		t.Error(`schema accepts halt reason "other"`)
 	}
+}
+
+// TestResultSchemaHaltReasonsAgreeWithGo pins result.schema.json's halt.reason
+// enum to the HaltReason constants in internal/runstore, in both directions:
+// a reason the Go side can write but the enum lacks is a result.json a
+// consumer validating against the published schema refuses (the cascade's
+// no_credential and creds_rules_denied were exactly that — the enum was a
+// hand-written copy that no test compared to the constants), and a value only
+// the enum knows is a reason no run can produce.
+//
+// The Go constants are read from the source rather than listed here, so a
+// reason added to runstore.go without the schema fails this test instead of
+// silently widening the gap the next time someone reads the list above.
+// Mutation (run, restored): drop a value from the enum, or add one to
+// runstore.go, and this names the side that has it.
+func TestResultSchemaHaltReasonsAgreeWithGo(t *testing.T) {
+	var want []string
+	for _, vs := range haltReasonSpecs(t) {
+		for _, v := range vs.Values {
+			lit, ok := v.(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				t.Fatalf("a HaltReason constant's value is not a string literal: %v", v)
+			}
+			s, err := strconv.Unquote(lit.Value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want = append(want, s)
+		}
+	}
+	if len(want) == 0 {
+		t.Fatal("no HaltReason constants found in ../internal/runstore/runstore.go: this test proves nothing")
+	}
+	data, err := os.ReadFile("result.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	node, _ := doc["properties"].(map[string]any)
+	node, _ = node["halt"].(map[string]any)
+	node, _ = node["properties"].(map[string]any)
+	node, _ = node["reason"].(map[string]any)
+	raw, ok := node["enum"].([]any)
+	if !ok {
+		t.Fatal(`result.schema.json: halt.reason has no enum`)
+	}
+	var got []string
+	for _, v := range raw {
+		s, ok := v.(string)
+		if !ok {
+			t.Fatalf("result.schema.json: halt.reason enum entry %v is not a string", v)
+		}
+		got = append(got, s)
+	}
+	if !sameStrings(got, want) {
+		t.Errorf("result.schema.json halt.reason = %v, internal/runstore's HaltReason constants = %v", got, want)
+	}
+}
+
+// haltReasonSpecs returns every value spec in runstore.go whose declared type
+// is HaltReason.
+func haltReasonSpecs(t *testing.T) []*ast.ValueSpec {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "../internal/runstore/runstore.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []*ast.ValueSpec
+	for _, decl := range f.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gd.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			if id, ok := vs.Type.(*ast.Ident); ok && id.Name == "HaltReason" {
+				out = append(out, vs)
+			}
+		}
+	}
+	return out
 }
 
 func TestPolicyRecordSchema(t *testing.T) {

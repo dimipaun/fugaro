@@ -1130,21 +1130,22 @@ func TestVerifyRefusesARunIDItCannotPlace(t *testing.T) {
 // scans, and a launch day ahead of this service's own clock.
 func TestVerifyBoundsTheLaunchDayScan(t *testing.T) {
 	// Exactly maxRunDays back is still a run this service places: the scan
-	// covers the launch day and every day since, and the run is admitted. One
-	// day more is the refusal TestVerifyRefusesARunIDItCannotPlace pins, and
-	// the pair is what says the bound is where the constant is rather than
-	// anywhere either side of it.
+	// covers the launch day and every day since, plus the day below the launch
+	// day and the day above today (checkLive's two widenings), and the run is
+	// admitted. One day more is the refusal TestVerifyRefusesARunIDItCannotPlace
+	// pins, and the pair is what says the bound is where the constant is rather
+	// than anywhere either side of it.
 	t.Run("the oldest launch it scans", func(t *testing.T) {
 		f := newFixture(t)
 		today := budget.Day(f.now)
 		f.run = f.now.AddDate(0, 0, -maxRunDays).Format("20060102-150405") + "-ee55"
 		f.verifyOK()
 		days := f.db.daysAsked()
-		if len(days) != maxRunDays+2 {
-			t.Fatalf("days scanned = %v, want %d: the launch day and every day since, plus the day above today", days, maxRunDays+2)
+		if len(days) != maxRunDays+3 {
+			t.Fatalf("days scanned = %v, want %d: the launch day, every day since, the day below the launch day and the day above today", days, maxRunDays+3)
 		}
-		if days[0] != today+1 || days[len(days)-1] != today-maxRunDays {
-			t.Errorf("days scanned = %v, want %d down to %d", days, today+1, today-maxRunDays)
+		if days[0] != today+1 || days[len(days)-1] != today-maxRunDays-1 {
+			t.Errorf("days scanned = %v, want %d down to %d", days, today+1, today-maxRunDays-1)
 		}
 	})
 
@@ -1170,6 +1171,29 @@ func TestVerifyBoundsTheLaunchDayScan(t *testing.T) {
 		}
 	})
 
+	// The same day, written a day early: a run id minted today whose outcome is
+	// under yesterday. That is what a launcher whose clock is ahead of the rules
+	// server's produces — the outcome is written under the *server's* day
+	// (DAYOK's today or yesterday), so an outcome can be a day behind the id
+	// that wrote it just as it can be a day ahead of it. A clamp that only
+	// widens when the launch day is ahead of ours reads one of those two days
+	// and admits a run that has ended. The window is the merged one — the day
+	// above today at the top (the database's clock can be ahead of ours), and
+	// the day before today at the bottom, whatever the launch day is.
+	t.Run("a launch day of today, an outcome yesterday", func(t *testing.T) {
+		f := newFixture(t)
+		today := budget.Day(f.now)
+		f.run = f.now.Format("20060102-150405") + "-ee55"
+		f.db.set(budget.PathOutcome(today-1, f.slug, f.run))
+		_, err := f.verify(f.runToken(), f.jobToken(), f.job)
+		if !errors.Is(err, ErrUnverified) {
+			t.Fatalf("err = %v, want a refusal: the run's outcome is written yesterday", err)
+		}
+		if days := f.db.daysAsked(); len(days) != 3 || days[0] != today+1 || days[1] != today || days[2] != today-1 {
+			t.Errorf("days scanned = %v, want %d, %d and %d", days, today+1, today, today-1)
+		}
+	})
+
 	// The other day of that window, which is the one a clamp to today loses
 	// (review finding m1): a run id dated ahead of our clock, whose outcome is
 	// on the day our clock calls yesterday. The run has ended, and a scan of
@@ -1185,6 +1209,36 @@ func TestVerifyBoundsTheLaunchDayScan(t *testing.T) {
 		}
 		if days := f.db.daysAsked(); len(days) != 3 || days[0] != today+1 || days[1] != today || days[2] != today-1 {
 			t.Errorf("days scanned = %v, want %d, %d and %d", days, today+1, today, today-1)
+		}
+	})
+
+	// The day BELOW the launch day, which the outcome's own day can be: DAYOK
+	// bounds an outcome to the database's today or yesterday, and the day it is
+	// written under is the database's clock rather than the run's launch day --
+	// so a run launched yesterday whose outcome is written as the database's
+	// "yesterday" a further day behind this clock lands on the day below its
+	// launch day. The run has ended, and a scan that stops at the launch day
+	// (the launch bound) admits it: this is the write-once revocation W2 rests
+	// on, so the day is read.
+	//
+	// The launch day is strictly before today on purpose. With a launch day of
+	// today the clamp above already lowers the bound to today-1 -- the day the
+	// outcome is planted on -- so the pre-fix scan reads it too and the subtest
+	// proves nothing (the review round that found it). A launch day the clamp
+	// leaves alone is the only shape that tells the two scans apart: the
+	// outcome sits on today-2, which the pre-fix scan (down to the launch day)
+	// never reads.
+	t.Run("an outcome on the day below the launch day", func(t *testing.T) {
+		f := newFixture(t)
+		today := budget.Day(f.now)
+		f.run = f.now.AddDate(0, 0, -1).Format("20060102-150405") + "-ee55"
+		f.db.set(budget.PathOutcome(today-2, f.slug, f.run))
+		_, err := f.verify(f.runToken(), f.jobToken(), f.job)
+		if !errors.Is(err, ErrUnverified) {
+			t.Fatalf("err = %v, want a refusal: the run's outcome is on the day below its launch day", err)
+		}
+		if days := f.db.daysAsked(); len(days) != 4 || days[0] != today+1 || days[3] != today-2 {
+			t.Errorf("days scanned = %v, want %d down to %d", days, today+1, today-2)
 		}
 	})
 }

@@ -678,7 +678,11 @@ func loadCheckoutResolved(ctx context.Context, dir string, lc *localcfg.Config, 
 	}
 	problems := rf.Problems
 	if rf.Cfg != nil {
-		problems = append(config.Check(rf.Cfg, root), computeProblems(rf.Cfg, lc)...)
+		// Every offline check this file has on this installation's backend, in
+		// one call: the two halves are not independent (see
+		// computeCheckoutProblems), and this read is the one that used to take
+		// only the compute half.
+		problems = computeCheckoutProblems(rf.Cfg, root, lc)
 	}
 	if len(problems) > 0 {
 		msgs := make([]string, len(problems))

@@ -750,15 +750,18 @@ func TestWriteManagedLabelKeepsTheProjectsDisplayName(t *testing.T) {
 // a conditioned one that this test can read, no member may hold a storage
 // write role on the project, which the bucket's policy does not bound
 // (SECURITY.md:56) — with one exception, read rather than assumed: Task 1.5's
-// binding (2), the project-level grant of the scoped deployer role, whose
-// condition is the managed prefix and is matched here clause for clause
-// (managedPrefixFence, deployerConditionClauses) — and a block the scan
-// cannot read is a finding. The live
+// binding (2), the project-level grant of the storage half of the scoped
+// deployer role, whose condition is the managed prefix and is matched here
+// clause for clause against the fence of the role it grants
+// (managedPrefixFence, deployerFenceClauses) — and a block the scan cannot
+// read is a finding. The live
 // bindings are Check 68, owner-run, because Global Constraint 12 forbids a
-// live IAM read from a test. A known residual Check 68 must look at: the
-// build account may submit builds across the project, and a build that
-// names no service account may run as the default build or compute
-// account, which this scan cannot see.
+// live IAM read from a test. A known residual no check in the tree settles
+// either: the build account may submit builds across the project, and a build
+// that names no service account may run as the default build or compute
+// account, which this scan cannot see. (Check 68 is the fence's own live
+// check and does not look at it; the transitive-reach half is Check 67, still
+// unwritten.)
 func TestRunAccountsHaveNoWritePathToTheMarker(t *testing.T) {
 	// The objects at the bucket's root that a run must never write: the
 	// creation fact this task writes, and the delete list Task 1.4 will.
@@ -843,18 +846,31 @@ func TestRunAccountsHaveNoWritePathToTheMarker(t *testing.T) {
 	}
 	// The one project-level storage write this scan admits, and the reason it
 	// admits it: binding (2)'s fence, which the scan read out of the module
-	// and matched clause for clause. The runs bucket's own name is outside it
-	// — that is what the fence is for — and the fence names the reserved
-	// prefix in its storage clauses, so the admission is not vacuous.
-	if scan.fencedWrites < 1 {
-		t.Errorf("the scan admitted %d project-level write grants under the deployer fence, want the scoped deployer role's binding (2)", scan.fencedWrites)
+	// and matched clause for clause against the role the binding grants. The
+	// runs bucket's own name is outside it — that is what the fence is for —
+	// and the fence names the reserved prefix in its storage clauses, so the
+	// admission is not vacuous. One, and not seven: of the seven conditioned
+	// deployer roles only the storage one holds a storage write, so the other
+	// six bindings are not project-level write grants this scan counts at all.
+	if scan.fencedWrites != 1 {
+		t.Errorf("the scan admitted %d project-level write grants under the deployer fence, want exactly the scoped storage deployer role's binding (2)", scan.fencedWrites)
 	}
 	if strings.HasPrefix(testBucket, tf.ManagedPrefix) {
 		t.Errorf("the runs bucket %q carries the reserved prefix %q, so binding (2) reaches it", testBucket, tf.ManagedPrefix)
 	}
-	for _, c := range deployerConditionClauses {
-		if strings.Contains(c, "storage.googleapis.com/") && !strings.Contains(c, "projects/_/buckets/"+tf.ManagedPrefix) {
-			t.Errorf("storage clause %q does not name the reserved prefix %q", c, tf.ManagedPrefix)
+	for _, clauses := range deployerFenceClauses {
+		for _, c := range clauses {
+			if strings.Contains(c, "storage.googleapis.com/") && !strings.Contains(c, "projects/_/buckets/"+tf.ManagedPrefix) {
+				t.Errorf("storage clause %q does not name the reserved prefix %q", c, tf.ManagedPrefix)
+			}
+			// An extract template is the form the design's C6 records — literal
+			// text around ONE placeholder (a reading the design marks UNVERIFIED)
+			// — and the multi-placeholder form is what the first
+			// cut wrote and what IAM refuses. TestDeployerFenceClausesAreTheModules
+			// pins this copy to the module's own text; this reads the copy.
+			if strings.Contains(c, "extract(") && strings.Count(c, "{") != 1 {
+				t.Errorf("clause %q carries %d placeholders, and the extract form C6 records carries one", c, strings.Count(c, "{"))
+			}
 		}
 	}
 	// Each of the three condition variables is the one the Go side builds
@@ -1145,12 +1161,13 @@ locals {
 ` + projectGrantToJob("job_storage", `"roles/storage.admin"`)
 		},
 		// Task 1.5's fence is the only reason a storage write at the project
-		// level is admitted: the three mutations below are what that
-		// admission must not survive.
+		// level is admitted: the mutations below are what that admission must
+		// not survive, and since 0.10.0 the fence is one condition per service,
+		// each the fence of the role its binding names.
 		"the scoped deployer grant without its condition": func(f map[string]string) {
 			f["modules/installation/deployer.tf"] = strings.Replace(f["modules/installation/deployer.tf"], `  condition {
     title      = local.deployer_condition_title
-    expression = local.deployer_condition_expression
+    expression = local.deployer_condition_storage
   }
 
 `, "", 1)
@@ -1160,8 +1177,25 @@ locals {
 		},
 		"a fence clause that names no resource type": func(f map[string]string) {
 			f["modules/installation/deployer.tf"] = strings.ReplaceAll(f["modules/installation/deployer.tf"],
-				`(resource.type == \"run.googleapis.com/Job\" && resource.name.contains(\"/jobs/fmgd-\"))`,
-				`(resource.name.contains(\"/jobs/fmgd-\"))`)
+				`(resource.type == \"storage.googleapis.com/Bucket\" && resource.name.startsWith(\"projects/_/buckets/fmgd-\"))`,
+				`(resource.name.startsWith(\"projects/_/buckets/fmgd-\"))`)
+		},
+		// A binding whose condition is another service's: a real fence, and
+		// the wrong one. The storage role would then be admitted wherever the
+		// API key's fence admits, which is the whole reason the condition is
+		// read against the role the binding grants and not on its own.
+		"the scoped storage role bound under another service's fence": func(f map[string]string) {
+			f["modules/installation/deployer.tf"] = strings.Replace(f["modules/installation/deployer.tf"],
+				`    expression = local.deployer_condition_storage`,
+				`    expression = local.deployer_condition_apikey`, 1)
+		},
+		// A fence with one of its clauses dropped: the remaining clause is a
+		// clause of this role's own fence, so only a clause-for-clause
+		// comparison sees it.
+		"a clause dropped from a service's fence": func(f map[string]string) {
+			f["modules/installation/deployer.tf"] = strings.Replace(f["modules/installation/deployer.tf"],
+				`    "(resource.type == \"storage.googleapis.com/Bucket\" && resource.name.startsWith(\"projects/_/buckets/fmgd-\"))",
+`, "", 1)
 		},
 		"a storage write added to the unconditioned deployer role": func(f map[string]string) {
 			f["modules/installation/deployer.tf"] = strings.Replace(f["modules/installation/deployer.tf"],
@@ -1206,7 +1240,12 @@ locals {
 		t.Run(name, func(t *testing.T) {
 			files := moduleFiles(t)
 			mutate(files)
-			if scan := scanModuleIAM(files); len(scan.findings) == 0 {
+			// The compute module's refusals are in every scan of the modules
+			// (knownComputeRefusals), so a mutation is only caught when the
+			// scan finds something BESIDE them: reading scan.findings here
+			// would make every fixture below pass on the compute module's
+			// findings alone, whatever the mutation did.
+			if rest := otherThanComputeRefusals(t, scanModuleIAM(files).findings); len(rest) == 0 {
 				t.Error("the scan found nothing in this mutation, so it reaches the creation fact")
 			}
 		})
@@ -1258,23 +1297,39 @@ locals {
 }
 
 // knownComputeRefusals are the compute module's grants (main's Cloud Batch
-// backend, deploy/terraform/gcp/modules/compute/iam.tf) that this scan
-// refuses: every one is a grant to a run, reaper or preload account (or to a
-// Google service agent) that runAccountGrants does not list. For 0.8.5 the
-// refusal stands (the owner's ruling of 2026-10-17/18 on the merge of main
-// into next-0.8.5): nobody has reviewed these grants for a write path to
-// fugaro/managed.json, so they are not allowlisted, and the managed cover
-// keeps refusing the compute module. Reviewing them and moving them into
-// runAccountGrants is a decision for a later release, and this list is what
-// that decision deletes.
+// backend, deploy/terraform/gcp/modules/compute/iam.tf and — Task 11's —
+// reaper.tf) that this scan refuses: every one is a grant to a run, reaper,
+// preload or scheduler-agent account (or to a Google service agent) that
+// runAccountGrants does not list. For 0.8.5 the refusal stands (the owner's
+// ruling of 2026-10-17/18 on the merge of main into next-0.8.5): nobody has
+// reviewed these grants for a write path to fugaro/managed.json, so they are
+// not allowlisted, and the managed cover keeps refusing the compute module.
+// Reviewing them and moving them into runAccountGrants is a decision for a
+// later release, and this list is what that decision deletes.
 var knownComputeRefusals = []string{
 	"run_agent_reporter", "run_log_writer", "run_registry_reader", "launcher_user",
 	"reaper", "preload_builder", "preload_build_submitter", "preload_log_writer",
 	"preload_scheduler_agent", "preload_cloud_build_agent", "preload_self_user", "preload_run_account_user",
+	// The reaper's invocation (Task 11, reaper.tf): the job-scoped
+	// roles/run.invoker held by the reaper account itself (the Scheduler job
+	// starts the job with that account's OAuth token) and the actAs the
+	// Scheduler's own agent needs to mint it. Both are refusals for
+	// runAccountGrants's reason and not a judgement about them: the member is
+	// an account, not a set of people, so nobody has reviewed it for a write
+	// path to the creation fact. The operator actAs grant in the same file is
+	// a for_each over people and is not refused.
+	"reaper_runner", "reaper_scheduler_agent",
 }
 
-// computeRefusalFile is where every known compute refusal is found.
-const computeRefusalFile = "modules/compute/iam.tf: "
+// computeRefusalFile is where every known compute refusal is found: the
+// module's iam.tf, and the reaper's own file, which Task 11 added and which
+// makes grants of its own (the job's invoker and the two actAs bindings the
+// Scheduler token needs) — the same kind of grant, refused for the same
+// reason, and so part of the same known limit.
+var computeRefusalFiles = []string{
+	"modules/compute/iam.tf: ",
+	"modules/compute/reaper.tf: ",
+}
 
 // otherThanComputeRefusals returns the findings that are not one of the
 // known compute refusals, and fails the test when the known refusals are not
@@ -1301,9 +1356,15 @@ func otherThanComputeRefusals(t *testing.T, findings []string) []string {
 }
 
 // computeRefusalName is the compute grant a finding refuses, when it is one
-// of knownComputeRefusals in modules/compute/iam.tf.
+// of knownComputeRefusals, in one of the compute module's own files.
 func computeRefusalName(f string) (string, bool) {
-	rest, ok := strings.CutPrefix(f, computeRefusalFile)
+	rest, ok := "", false
+	for _, file := range computeRefusalFiles {
+		rest, ok = strings.CutPrefix(f, file)
+		if ok {
+			break
+		}
+	}
 	if !ok {
 		return "", false
 	}
@@ -1559,15 +1620,18 @@ var runAccountGrants = setOf(
 	// The job account's (a run's own credential): the runs bucket under its
 	// condition, its secrets one by one, Vertex AI.
 	`google_project_iam_member | "roles/aiplatform.user" | project=var.project | google_service_account.job.member | for_each= | perms=`,
-	// Reviewed for C1.18 (the credentials service): the set is still exactly
-	// the workflow's own secret_env values, and on an installation that has
-	// opted in it is those values minus the model credentials — the two named
-	// env vars (ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN) and every
-	// FUGARO_PROVIDER_KEY_* — which the job then reads from the service
-	// instead. Nothing else is dropped, the account is the same, and the
-	// target is still the secret-level container: with the opt-in off
-	// (credentials_service unset, the default) the set is unchanged.
-	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=local.job_secret_names [local.job_secret_names=toset([ for env, logical in var.workflow.secret_env : logical if var.credentials_service == null || !local.is_model_secret_env[env] ])] | perms=`,
+	// Reviewed for C1.18 (the credentials service) and C2.3 (the App key's
+	// grant moves): the set is still exactly the workflow's own secret_env
+	// values, and on an installation that has opted in it is those values minus
+	// the credentials the service holds — the two named model env vars
+	// (ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN), every FUGARO_PROVIDER_KEY_*
+	// and, by logical name, the installation's GitHub App private key — which
+	// the job then reads from the service instead. Nothing else is dropped
+	// (Bitbucket's token and a workflow's own secrets stay, D145/F7), the
+	// account is the same, and the target is still the secret-level container:
+	// with the opt-in off (credentials_service unset, the default) the set is
+	// unchanged.
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=local.job_secret_names [local.job_secret_names=toset([ for env, logical in var.workflow.secret_env : logical if var.credentials_service == null || !local.is_service_held[env] ])] | perms=`,
 	// Reviewed for C1.18: the credentials service's own account, on the one
 	// bundle container C1.18 creates, and on nothing else. secretAccessor on
 	// a secret the installation creates is not a write path to the marker:
@@ -1628,11 +1692,23 @@ var runAccountGrants = setOf(
 	// root is applied as, and the only project-level grant of a storage write
 	// role this test admits. The unconditioned role holds no storage
 	// permission but storage.buckets.create (storageNeutralPerms: creating a
-	// bucket cannot touch the runs bucket), and the conditioned role's storage
-	// writes are fenced by binding (2), which the scan reads clause for clause
-	// (managedPrefixFence) and which the runs bucket's own name is outside.
+	// bucket cannot touch the runs bucket), and the storage half of the
+	// conditioned permissions is fenced by binding (2), which the scan reads
+	// clause for clause against the role the binding names
+	// (managedPrefixFence, deployerFenceClauses) and which the runs bucket's
+	// own name is outside. since 0.10.0 the conditioned half is seven roles,
+	// one per service, each bound once under its own condition: the seven
+	// lines after the unconditioned one, whose permissions partition the 31
+	// the single fugaroDeployerScoped role held before it (deployerFenceClauses
+	// carries each one's fence).
 	`google_project_iam_member | "projects/${var.project}/roles/fugaroDeployer" | project=var.project | google_service_account.fugaro_deployer.member | for_each= | perms=apikeys.keys.create,apikeys.keys.get,apikeys.keys.list,artifactregistry.repositories.create,artifactregistry.repositories.get,artifactregistry.repositories.getIamPolicy,artifactregistry.repositories.list,cloudscheduler.jobs.create,cloudscheduler.jobs.get,cloudscheduler.jobs.list,iam.serviceAccounts.create,iam.serviceAccounts.get,iam.serviceAccounts.getIamPolicy,iam.serviceAccounts.list,run.jobs.create,run.jobs.get,run.jobs.getIamPolicy,run.jobs.list,secretmanager.secrets.create,secretmanager.secrets.get,secretmanager.secrets.getIamPolicy,secretmanager.secrets.list,serviceusage.services.enable,serviceusage.services.get,serviceusage.services.list,storage.buckets.create`,
-	`google_project_iam_member | "projects/${var.project}/roles/fugaroDeployerScoped" | project=var.project | google_service_account.fugaro_deployer.member | for_each= | perms=apikeys.keys.delete,apikeys.keys.update,artifactregistry.repositories.delete,artifactregistry.repositories.setIamPolicy,artifactregistry.repositories.update,cloudscheduler.jobs.delete,cloudscheduler.jobs.enable,cloudscheduler.jobs.pause,cloudscheduler.jobs.run,cloudscheduler.jobs.update,iam.serviceAccounts.actAs,iam.serviceAccounts.delete,iam.serviceAccounts.setIamPolicy,iam.serviceAccounts.update,run.jobs.delete,run.jobs.run,run.jobs.runWithOverrides,run.jobs.setIamPolicy,run.jobs.update,secretmanager.secrets.delete,secretmanager.secrets.setIamPolicy,secretmanager.secrets.update,storage.buckets.delete,storage.buckets.get,storage.buckets.setIamPolicy,storage.buckets.update,storage.objects.create,storage.objects.delete,storage.objects.get,storage.objects.list,storage.objects.update`,
+	`google_project_iam_member | "projects/${var.project}/roles/fugaroDeployerStorage" | project=var.project | google_service_account.fugaro_deployer.member | for_each= | perms=storage.buckets.delete,storage.buckets.get,storage.buckets.setIamPolicy,storage.buckets.update,storage.objects.create,storage.objects.delete,storage.objects.get,storage.objects.list,storage.objects.update`,
+	`google_project_iam_member | "projects/${var.project}/roles/fugaroDeployerSecret" | project=var.project | google_service_account.fugaro_deployer.member | for_each= | perms=secretmanager.secrets.delete,secretmanager.secrets.setIamPolicy,secretmanager.secrets.update`,
+	`google_project_iam_member | "projects/${var.project}/roles/fugaroDeployerAccount" | project=var.project | google_service_account.fugaro_deployer.member | for_each= | perms=iam.serviceAccounts.actAs,iam.serviceAccounts.delete,iam.serviceAccounts.setIamPolicy,iam.serviceAccounts.update`,
+	`google_project_iam_member | "projects/${var.project}/roles/fugaroDeployerApiKey" | project=var.project | google_service_account.fugaro_deployer.member | for_each= | perms=apikeys.keys.delete,apikeys.keys.update`,
+	`google_project_iam_member | "projects/${var.project}/roles/fugaroDeployerRepository" | project=var.project | google_service_account.fugaro_deployer.member | for_each= | perms=artifactregistry.repositories.delete,artifactregistry.repositories.setIamPolicy,artifactregistry.repositories.update`,
+	`google_project_iam_member | "projects/${var.project}/roles/fugaroDeployerRunJob" | project=var.project | google_service_account.fugaro_deployer.member | for_each= | perms=run.jobs.delete,run.jobs.run,run.jobs.runWithOverrides,run.jobs.setIamPolicy,run.jobs.update`,
+	`google_project_iam_member | "projects/${var.project}/roles/fugaroDeployerSchedulerJob" | project=var.project | google_service_account.fugaro_deployer.member | for_each= | perms=cloudscheduler.jobs.delete,cloudscheduler.jobs.enable,cloudscheduler.jobs.pause,cloudscheduler.jobs.run,cloudscheduler.jobs.update`,
 
 	// The operators' and launchers' grants whose for_each this test does not
 	// resolve to a set of people (a conditional, a merge of pairs): pinned
@@ -2266,7 +2342,7 @@ func peopleSetDepth(expr string, locals map[string]string, depth int) bool {
 // local, a resource.
 var tfRefRE = regexp.MustCompile(`\b(?:var|local|data|google_[a-z0-9_]+|each)\.[a-z0-9_.\[\]-]+`)
 
-// classifyRole is what a role can do to the runs bucket: write it, read it,
+// roleKind is what a role can do to the runs bucket: write it, read it,
 // or nothing this test is about.
 type roleKind int
 
@@ -2456,7 +2532,7 @@ func (s *iamScan) checkProjectGrant(r tfResource, roles map[string][]string, loc
 			// the runs bucket (the managed prefix, which fugaro-runs-<project>
 			// does not carry). A write role under any other condition, or
 			// under none, is still a finding.
-			if why := s.managedPrefixFence(r, locals); why != "" {
+			if why := s.managedPrefixFence(r, role, locals); why != "" {
 				s.failf("%s: %s grants the storage write role %s at the project level, where the runs bucket's policy does not bound it (SECURITY.md:56): %s",
 					r.path, r.name, role, why)
 				continue
@@ -2469,35 +2545,145 @@ func (s *iamScan) checkProjectGrant(r tfResource, roles map[string][]string, loc
 	}
 }
 
-// deployerConditionClauses is binding (2)'s fence, clause for clause, as
-// installation/deployer.tf writes it (its local.deployer_condition_expression)
-// and as internal/infra/tf builds it (DeployerConditionClauses, which
-// cover_test.go pins against the module). It is pinned here too, so a widening
-// of the fence is a diff in this file and not only in the package that builds
-// it: nine clauses, one per service, each carrying the resource type it fences
-// and the reserved managed prefix (tf.ManagedPrefix, fmgd-).
-var deployerConditionClauses = []string{
-	`(resource.type == "storage.googleapis.com/Bucket" && resource.name.startsWith("projects/_/buckets/fmgd-"))`,
-	`(resource.type == "storage.googleapis.com/Object" && resource.name.startsWith("projects/_/buckets/fmgd-"))`,
-	`(resource.type == "secretmanager.googleapis.com/Secret" && resource.name.contains("/secrets/fmgd-"))`,
-	`(resource.type == "secretmanager.googleapis.com/SecretVersion" && resource.name.contains("/secrets/fmgd-"))`,
-	`(resource.type == "artifactregistry.googleapis.com/Repository" && resource.name.contains("/repositories/fmgd-"))`,
-	`(resource.type == "run.googleapis.com/Job" && resource.name.contains("/jobs/fmgd-"))`,
-	`(resource.type == "cloudscheduler.googleapis.com/Job" && resource.name.contains("/jobs/fmgd-"))`,
-	`(resource.type == "iam.googleapis.com/ServiceAccount" && resource.name.contains("/serviceAccounts/fmgd-"))`,
-	`(resource.type == "apikeys.googleapis.com/Key" && resource.name.contains("/keys/fmgd-"))`,
+// deployerFenceClauses is the fence of each conditioned deployer binding,
+// role ID -> its clauses, as installation/deployer.tf writes them (the
+// local.deployer_condition_<service> the binding names) and as
+// internal/infra/tf builds them (DeployerConditionClauses, which cover_test.go
+// pins against the module). It is pinned here too — against the module's own
+// text, by TestDeployerFenceClausesAreTheModules — so a widening of any one
+// fence is a diff in this file and not only in the package that builds it.
+//
+// The split into one role per service is what makes this checkable at all: the
+// condition a binding carries has to be the fence of the role that binding
+// grants, so a storage role bound under, say, the API key's fence is a finding
+// rather than a grant read against another role's clauses. Each entry names
+// the resource type(s) its role reaches and the reserved managed prefix
+// (tf.ManagedPrefix, fmgd-); the five extract forms carry the template the
+// design's C6 records — literal text around ONE placeholder, anchored at the
+// collection segment the resource's own name follows (C6 marks the grammar
+// UNVERIFIED: it is the design's reading of the reference, uncited in this
+// tree) — because the segment before that
+// name carries a value no plan knows (a project number, a location). The
+// multi-placeholder form ("projects/{project}/secrets/{secret}") is not that
+// form: it is what the first cut wrote, IAM would refuse the expression and
+// stop the owner-run apply, and TestDeployerExtractTemplatesAreTheRecordedForm
+// (internal/infra/tf) is what refuses it. The account clause is the module's
+// text, interpolation and all.
+var deployerFenceClauses = map[string][]string{
+	"fugaroDeployerStorage": {
+		`(resource.type == "storage.googleapis.com/Bucket" && resource.name.startsWith("projects/_/buckets/fmgd-"))`,
+		`(resource.type == "storage.googleapis.com/Object" && resource.name.startsWith("projects/_/buckets/fmgd-"))`,
+	},
+	"fugaroDeployerSecret": {
+		`(resource.type == "secretmanager.googleapis.com/Secret" && resource.name.extract("/secrets/{secret}").startsWith("fmgd-"))`,
+	},
+	"fugaroDeployerAccount": {
+		`(resource.type == "iam.googleapis.com/ServiceAccount" && resource.name.startsWith("projects/${var.project}/serviceAccounts/fmgd-"))`,
+	},
+	"fugaroDeployerApiKey": {
+		`(resource.type == "apikeys.googleapis.com/Key" && resource.name.extract("/keys/{key}").startsWith("fmgd-"))`,
+	},
+	"fugaroDeployerRepository": {
+		`(resource.type == "artifactregistry.googleapis.com/Repository" && resource.name.extract("/repositories/{repository}").startsWith("fmgd-"))`,
+	},
+	"fugaroDeployerRunJob": {
+		`(resource.type == "run.googleapis.com/Job" && resource.name.extract("/jobs/{job}").startsWith("fmgd-"))`,
+	},
+	"fugaroDeployerSchedulerJob": {
+		`(resource.type == "cloudscheduler.googleapis.com/Job" && resource.name.extract("/jobs/{job}").startsWith("fmgd-"))`,
+	},
+}
+
+// TestDeployerFenceClausesAreTheModules is the pin deployerFenceClauses claims,
+// and it reads the module's own text rather than internal/infra/tf's copy of
+// it: every one of the seven entries is the fence
+// deploy/terraform/gcp/modules/installation/deployer.tf writes for that role,
+// clause for clause and in order, and the map holds no role the module does not
+// condition.
+//
+// Without it six of the seven entries are data nothing compares: only
+// fugaroDeployerStorage holds a storage write, so only its entry is ever reached
+// by managedPrefixFence (the other six are not project-level write grants this
+// scan counts at all), and a fence recorded here that the module does not write
+// — the rejected multi-placeholder extract form, say — would read as a guard
+// while admitting nothing.
+func TestDeployerFenceClausesAreTheModules(t *testing.T) {
+	src, ok := moduleFiles(t)["modules/installation/deployer.tf"]
+	if !ok {
+		t.Fatal("deploy/terraform/gcp/modules/installation/deployer.tf is not among the module files")
+	}
+	// The module's locals: deployer_condition_<suffix> = join(" || ", [ ... ]),
+	// each clause an HCL string literal whose own quotes the file escapes.
+	joinRE := regexp.MustCompile(`(?s)deployer_condition_([a-z0-9_]+)\s*=\s*join\(" \|\| ", \[(.*?)\]\)`)
+	clauseRE := regexp.MustCompile(`"((?:[^"\\]|\\.)*resource\.type(?:[^"\\]|\\.)*)"`)
+	locals := map[string][]string{}
+	for _, jm := range joinRE.FindAllStringSubmatch(src, -1) {
+		var clauses []string
+		for _, c := range clauseRE.FindAllStringSubmatch(jm[2], -1) {
+			clause, err := strconv.Unquote(`"` + c[1] + `"`)
+			if err != nil {
+				t.Fatalf("unquoting the clause %q: %v", c[1], err)
+			}
+			clauses = append(clauses, clause)
+		}
+		if len(clauses) == 0 {
+			t.Errorf("deployer.tf's local deployer_condition_%s is not a join of clause literals", jm[1])
+		}
+		if _, dup := locals["deployer_condition_"+jm[1]]; dup {
+			t.Errorf("deployer.tf declares deployer_condition_%s twice", jm[1])
+		}
+		locals["deployer_condition_"+jm[1]] = clauses
+	}
+	roles := tf.DeployerServiceRoles()
+	if len(deployerFenceClauses) != len(roles) {
+		t.Errorf("this test records %d fences and the module conditions %d roles, want one fence per role", len(deployerFenceClauses), len(roles))
+	}
+	for role := range deployerFenceClauses {
+		if !slices.Contains(roles, role) {
+			t.Errorf("this test records a fence for %s, which is not one of the deployer's conditioned roles", role)
+		}
+	}
+	for _, role := range roles {
+		name := "deployer_condition_" + strings.ToLower(strings.TrimPrefix(role, "fugaroDeployer"))
+		got, ok := locals[name]
+		if !ok {
+			t.Errorf("deployer.tf has no local.%s, and this test records the fence of %s", name, role)
+			continue
+		}
+		delete(locals, name)
+		if want := deployerFenceClauses[role]; !slices.Equal(got, want) {
+			t.Errorf("deployer.tf's %s fence is\n%v\nand the fence this test records for %s is\n%v", name, got, role, want)
+		}
+	}
+	for name := range locals {
+		t.Errorf("deployer.tf declares %s, which is no conditioned deployer role's fence", name)
+	}
 }
 
 // managedPrefixFence is why a project-level grant of a write role is admitted,
-// or "" when it is binding (2) exactly: the condition must be a module local
-// this scan can resolve, that local must be a join(" || ", [...]) of exactly
-// deployerConditionClauses, every clause must carry a resource.type term (a
-// clause with none applies to every type the role reaches), and every storage
-// clause must name a prefix under the reserved managed prefix. A fence that
-// fails any of these is a sentence saying which, and the caller reports it.
-func (s *iamScan) managedPrefixFence(r tfResource, locals map[string]string) string {
+// or "" when it is the conditioned deployer binding exactly: the grant's role
+// must be one of the seven conditioned deployer roles, the condition must be a
+// module local this scan can resolve, that local must be a join(" || ", [...])
+// of exactly that role's clauses in deployerFenceClauses (not another
+// service's — a fence read off the wrong role says nothing about this one),
+// every clause must carry a resource.type term (a clause with none applies to
+// every type the role reaches), and every storage clause must name a prefix
+// under the reserved managed prefix. A fence that fails any of these is a
+// sentence saying which, and the caller reports it.
+func (s *iamScan) managedPrefixFence(r tfResource, role string, locals map[string]string) string {
 	if r.typ != "google_project_iam_member" {
 		return "this scan reads the fence on the member form alone, and this is a " + r.typ
+	}
+	// The role's own ID: the last path segment of projects/<project>/roles/<id>
+	// (not lastSegment, which cuts at a dot for resource references, and this
+	// role carries ${var.project}).
+	id := unquote(role)
+	if i := strings.LastIndex(id, "/"); i >= 0 {
+		id = id[i+1:]
+	}
+	want, known := deployerFenceClauses[id]
+	if !known {
+		return fmt.Sprintf("its role is %s, which is not one of the conditioned deployer roles this test knows (deployerFenceClauses)", id)
 	}
 	expr := conditionExpr(r.body)
 	if expr == "" {
@@ -2515,8 +2701,8 @@ func (s *iamScan) managedPrefixFence(r tfResource, locals map[string]string) str
 	if !ok {
 		return fmt.Sprintf("its condition is %q, not a join of clause literals", resolved)
 	}
-	if !slices.Equal(clauses, deployerConditionClauses) {
-		return "its condition is not the deployer fence this test knows (deployerConditionClauses), clause for clause"
+	if !slices.Equal(clauses, want) {
+		return fmt.Sprintf("its condition is not the fence this test knows for %s (deployerFenceClauses), clause for clause", id)
 	}
 	for _, c := range clauses {
 		if !strings.Contains(c, `resource.type == "`) {

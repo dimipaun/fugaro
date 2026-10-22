@@ -51,8 +51,13 @@ func computeRig(t *testing.T) *initRig {
 	// kind of account the compute root accepts as a run account.
 	r.iam.AddServiceAccount(initProject, "fugaro-acme-web@proj-1234.iam.gserviceaccount.com", "Fugaro job acme/sandbox web")
 	// The rebuild job the compute root creates; the stage starts it once the
-	// apply is done.
-	r.sched.SetJob(initProject, "us-east5", infra.PreloadSchedulerJob,
+	// apply is done. It lives in the SCHEDULER region and not in the
+	// installation's, which is the whole point of that input: Cloud Scheduler
+	// does not serve us-east5 (the rig's region), so the module creates the
+	// job in us-east4 -- the location gcp.SchedulerRegion names for it -- and
+	// a stage that started it in the installation's region would be asking
+	// for a job that is not there.
+	r.sched.SetJob(initProject, "us-east4", infra.PreloadSchedulerJob,
 		"https://cloudbuild.googleapis.com/v1/projects/proj-1234/builds", "fugaro-preload@proj-1234.iam.gserviceaccount.com")
 	// The compute root's own outputs. They are scripted for this root alone:
 	// the installation's answer is a different one (a root's name is the
@@ -211,10 +216,44 @@ func TestComputeStageProvisionsAfterATypedConfirmation(t *testing.T) {
 		"preload_refresh_days": infra.PreloadRefreshDaysDefault,
 		"network":              "projects/" + initProject + "/global/networks/default",
 		"subnetwork":           "projects/" + initProject + "/regions/us-east5/subnetworks/default",
+		// The scheduler region, resolved and not defaulted: the config names
+		// none, and Cloud Scheduler does not serve the installation's us-east5,
+		// so the root's Scheduler jobs are created in the nearest location it
+		// does serve (gcp.SchedulerRegion). The installation's region is NOT
+		// this value, and a tfvars that wrote it there is an apply that fails
+		// at the reaper's sweep.
+		"scheduler_region": "us-east4",
 	} {
 		if got := vars[k]; !equalJSON(got, want) {
 			t.Errorf("tfvars[%q] = %v, want %v", k, got, want)
 		}
+	}
+}
+
+// The installation's own scheduler_region wins over the nearest location Cloud
+// Scheduler serves, and the stage starts the rebuild in the region it named:
+// that is the reading the history job and the daily image check already make
+// of the config's field, and it is what lets an installation keep every
+// schedule in one place it chose.
+func TestComputeStageTakesTheConfigsSchedulerRegion(t *testing.T) {
+	typedThroughYes(t)
+	r := computeRig(t)
+	r.appendConfig(t, "scheduler_region: us-central1\n")
+	// The rebuild the stage starts lives where the config says, not where the
+	// rig's own region would have put it.
+	r.sched.SetJob(initProject, "us-central1", infra.PreloadSchedulerJob,
+		"https://cloudbuild.googleapis.com/v1/projects/proj-1234/builds", "fugaro-preload@proj-1234.iam.gserviceaccount.com")
+	r.save(t)
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-batch")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := computeTfvars(t, r)["scheduler_region"]; !equalJSON(got, "us-central1") {
+		t.Errorf("tfvars[scheduler_region] = %v, want the config's own us-central1", got)
+	}
+	if runs := r.sched.Runs(); len(runs) != 1 || !strings.Contains(runs[0], "/locations/us-central1/") {
+		t.Errorf("the rebuild was started %v, want once in us-central1: the job lives where the config put it", runs)
 	}
 }
 
@@ -374,16 +413,60 @@ func TestComputeStageNoChanges(t *testing.T) {
 	}
 }
 
-// --plan-only applies nothing, --provision-batch or not.
+// --plan-only applies nothing, --provision-batch or not: not the compute
+// root's apply, and not the preload rebuild Apply starts once it has applied.
+//
+// The work is scripted into the compute root alone so that this stage is the
+// one the run plans, and the run's own account is then read to hold that: see
+// the guard below.
 func TestComputeStagePlanOnlyAppliesNothing(t *testing.T) {
 	r := computeRig(t)
+	r.setPlanAt(t, "installation")
+	r.setPlanAt(t, "compute", change("module.compute.google_cloud_scheduler_job.preload_rebuild", "create"))
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, "", "init", "--yes", "--plan-only", "--provision-batch")
+	out, _, err := executeStdin(t, "", "init", "--yes", "--plan-only", "--provision-batch", "--json")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
+	// The guard that keeps the two assertions below honest, and the reason the
+	// work is scripted into the compute root alone: initflow's preview plans
+	// only the FIRST stage with something to do, so a change left in the
+	// installation root (the rig's default) is what gets planned, and this
+	// stage is reported as "will-do ... (after installation)" — a stage a
+	// plan-only run never reaches. Both assertions below are green against a
+	// Plan that starts the build in that case, which is exactly the mutation
+	// they are here to catch; so the run has to be shown to have planned THIS
+	// stage, with work in it, before either of them means anything.
+	var res struct {
+		Stages []struct {
+			Name, State, Detail, After string
+		} `json:"stages"`
+	}
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	compute := -1
+	for i, s := range res.Stages {
+		if s.Name == "compute" {
+			compute = i
+		}
+	}
+	if compute < 0 {
+		t.Fatalf("the run has no compute stage:\n%s", out)
+	}
+	if s := res.Stages[compute]; s.State != "will-do" || s.After != "" || !strings.Contains(s.Detail, "creates") {
+		t.Fatalf("the compute stage %+v is not the stage this plan-only run planned: it is the stage with work, and it is neither done nor waiting for another", s)
+	}
 	if calls := subcommands(computeCalls(t, r)); slices.Contains(calls, "apply") {
 		t.Fatalf("--plan-only applied: %q", calls)
+	}
+	// And it starts nothing: the preload rebuild is Apply's last action, and
+	// a plan is not the confirmation that earns it (the stage's own comment
+	// puts the run after the apply). Asserted rather than assumed, because a
+	// Plan that started the build would spend the image build a --plan-only
+	// run was asked to cost nothing of.
+	if runs := r.sched.Runs(); len(runs) != 0 {
+		t.Fatalf("--plan-only ran the preload rebuild: %q", runs)
 	}
 }
 

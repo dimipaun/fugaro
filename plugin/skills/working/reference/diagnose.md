@@ -66,8 +66,10 @@ A halted run is not a failure. The CLI exits 0, the runner gave the agent a shor
 | `repo_daily_cap`, `global_daily_cap` | A shared daily cap in the budget database is used up. | A budget admin raises it with `budget set` (the command is in the block below, for the user). |
 | `budget_unavailable` | The budget backend was unreachable for three minutes. | Wait until it is back, then follow up. |
 | `budget_token_expired` | The run waited over an hour before it started. Halted at the start, no pull request. | Launch the run again. |
+| `no_credential` | The credentials service answered that no usable credential exists before the reset it named — or that reset falls past this job's own timeout, and the run halted named rather than idle into a timeout that would blame the wrong limit. `halt.detail` names the reset and the deadline. This is not a failure of the task: nothing was decided about the work. | The user or operator. `fugaro accounts ls` shows each admitted account's state, and the project policy's `credentials.fallback` decides whether another tier may be used meanwhile; waiting out the reset and following up afterwards is theirs. |
+| `creds_rules_denied` | The database's deployed rules predate the credentials cascade's fields, so the run's own credential state cannot be written at all — what an older Fugaro leaves behind when it redeploys its own rules over a newer release's. The write is not retried, and the run halts named rather than wait for a reset it cannot record. | An operator redeploys the rules on an up-to-date Fugaro, with the redeploy command in the block below (the user runs it). |
 
-For these: raising a cap, clearing a kill switch and the budget commands belong to the user. Show the exact command, for example `fugaro budget show`, and say which cap applies. The owner's commands are theirs to run, in their own terminal window, not through the agent:
+For these: raising a cap, clearing a kill switch, redeploying the rules the cascade's fields need, and the budget commands belong to the user. Show the exact command, for example `fugaro budget show`, and say which cap applies. The owner's commands are theirs to run, in their own terminal window, not through the agent:
 
 ```bash user-runs
 fugaro budget set --repo <owner/name> --per-run <usd>
@@ -77,6 +79,7 @@ fugaro budget set --global --per-run <usd>
 fugaro budget set --global --daily <usd>
 fugaro budget set --global --max-reserve <usd>
 fugaro budget resume
+fugaro init --firebase <firebase-project-id>
 ```
 
 Don't edit the project's config or `fugaro.yaml` to get around a halt.

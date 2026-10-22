@@ -56,7 +56,7 @@ var managedGateCases = map[string][]string{
 }
 
 // While managedDeployerShipped is false (0.8.6 onward: 0.9.0 still ships with
-// the scoped role gated off, and the redesign is planned for 0.9.5), every
+// the scoped role gated off, and the redesign is planned for 0.10.0), every
 // command that would create a managed project, mark one managed or act as its
 // deployer refuses with the one message, as a user error, before anything
 // else: the message is the first refusal of each, so no other check (and no
@@ -121,7 +121,7 @@ func TestManagedEntryPointsAreAllGated(t *testing.T) {
 // The refusals name what the operator needs: which feature, why, where the
 // design is, and that the ordinary paths are unaffected.
 func TestShippedGateMessages(t *testing.T) {
-	for _, want := range []string{"managed projects are disabled in this release", "scoped role and its binding are not created yet", "docs/design/managed-projects.md", "without --managed is unaffected"} {
+	for _, want := range []string{"managed projects are disabled in this release", "scoped roles and their bindings are not created yet", "docs/design/managed-projects.md", "without --managed is unaffected"} {
 		if !strings.Contains(managedDisabled, want) {
 			t.Errorf("managedDisabled does not say %q", want)
 		}
@@ -168,7 +168,7 @@ func TestShippedGateVariablesAreOnlyTheConstants(t *testing.T) {
 	}
 }
 
-// doctor says plainly, as info, that the scoped deployer role is absent on
+// doctor says plainly, as info, that the scoped deployer roles are absent on
 // purpose in this release, and never warns or fails on it, not even with
 // --strict.
 func TestDoctorSaysManagedDeployerIsDisabled(t *testing.T) {
@@ -180,8 +180,8 @@ func TestDoctorSaysManagedDeployerIsDisabled(t *testing.T) {
 	if c.Severity != "info" {
 		t.Errorf("severity %q, want info", c.Severity)
 	}
-	if !strings.Contains(c.Problem, "disabled in this release") || !strings.Contains(c.Problem, "0.9.5") {
-		t.Errorf("the line does not say the scoped role is disabled in this release and returns in 0.9.5: %q", c.Problem)
+	if !strings.Contains(c.Problem, "disabled in this release") || !strings.Contains(c.Problem, "0.10.0") {
+		t.Errorf("the line does not say the scoped role is disabled in this release and returns in 0.10.0: %q", c.Problem)
 	}
 	if checksFail([]doctorCheck{*c}, true) {
 		t.Error("the managed-deployer line fails doctor --strict")

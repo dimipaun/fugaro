@@ -132,10 +132,17 @@ func Free(leases []Lease, credential string, now time.Time, run Run, limit int) 
 // all "not fewer than limit", and only the third lapse leaves two — and a caller
 // told to wait for the first of the five would wake up to a credential that is
 // still full and wait again, once per lapse, on a path whose whole purpose is to
-// answer when the run should come back. The lapse that matters is therefore the (holders - limit +
-// 1)-th earliest: the one after which fewer than limit holds are left. With a
-// limit of 1 it is the last of them, which is the same answer as "all of them
-// must go" and the same answer this function gave for that case before.
+// answer when the run should come back. The lapse that matters is therefore the
+// (holders - limit + 1)-th earliest: the one after which fewer than limit holds
+// are left — the third of those five, which is len(expiries) - limit + 1 and the
+// `need` computed below. With a limit of 1 it is the last of them, which is the
+// same answer as "all of them must go" and the same answer this function gave
+// for that case before.
+//
+// TestWaitAnswersTheEarliestOfTheCandidates pins the three-of-five case, because
+// the prose here said *two* lapses before the re-review of C1.9: the sentence
+// and `need` disagreed, and a maintainer who made the code match the sentence
+// would reintroduce m10 for every cap above two.
 //
 // A limit of 0 is no cap at all (Free), so there is nothing to wait for; a
 // negative one is the opposite — Free reads it as no room at all, and no lapse

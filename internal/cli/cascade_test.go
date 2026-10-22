@@ -795,9 +795,15 @@ func TestCascadeSkewNamesTheLayerTheValueCameFrom(t *testing.T) {
 // this fails naming the release checklist and both schemas, which still say
 // 0.10.0.
 func TestCascadeSinceIsTheReleaseTheDocsAndSchemasName(t *testing.T) {
+	// The bullet itself, by its own opening, and not the first line that
+	// mentions the constant: the managedDeployerShipped bullet above it cites
+	// this constant's comment for the 2026-10-20 renumbering, and a
+	// cross-reference is not the bullet a release verifies the constant
+	// against. Reading by mention made the checklist checkable only while
+	// nothing else in the file named the constant.
 	var bullet string
 	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
-		if strings.Contains(line, "`cascadeSince`") {
+		if strings.HasPrefix(line, "- **Verify `cascadeSince`") {
 			bullet = line
 			break
 		}

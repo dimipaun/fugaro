@@ -347,9 +347,38 @@ for estimates:
   the metadata signal immediately and the workload's only warning is the
   30 s shutdown period. For a Fugaro run a preemption is a hard kill
   mid-stage: the model spend for that stage is gone, the run does not reach
-  `finalize`, and recovery is a follow-up run. Recommendation: **spot off by
-  default**, opt-in per profile for workloads that tolerate it (a nightly
-  batch, a test-only workflow). If it is ever turned on, the run wants the
+  `finalize`, and recovery is a follow-up run. **Nothing finalizes a preempted
+  run's record, and nothing is asked to.** The owner's ruling of 2026-10-21
+  settled how such a run is reported, and it is the read side that reports it:
+  a run whose record was never finalized, whose backend is `cloud-batch` and
+  whose job's own report carries the platform's preemption — a status event
+  saying so, or the reserved exit code Batch reports for a task whose VM was
+  reclaimed, which `internal/backend/batch` reads in the same `jobs.get` that
+  produces the execution (`preempted`) — **reads as `failed (preempted)`** in
+  `runs ls` and `fugaro diagnose RUN`, in their `--json` forms and in the
+  desktop console's contract, rather than as a run still going. `fugaro watch`
+  shows it in its **degraded mode** — the run-records-only view a project with
+  no budget backend falls into, which reads runs the way `runs ls` does — and
+  **nowhere else**: the live watch's queued scanner reads the runs bucket and
+  **never opens the compute backend** (watch-queued.md §3, a permission
+  boundary rather than an oversight: that scanner works for a launcher or
+  operator who holds no compute role), so it holds no job report to read a
+  preemption out of and decorates nothing.
+  **The derived status is never written back anywhere**: no component gains a
+  storage permission for this, the reaper stays deletion-only (§3.4), the
+  budget lease expires by its own timeout, and the history sweep settles the
+  cost. **The history sweep still records its own word for the same run**: a
+  preempted run whose registry entry outlives its execution is swept like any
+  other run that vanished and gets an `infra_error` outcome in the history
+  database (`internal/budget/sweep.go`), so the history view says `infra_error`
+  where `runs ls` says `failed (preempted)` — the two disagree about the word
+  and agree that the run did not finish, and the derivation, being a reading of
+  the runs bucket, changes nothing about what the sweep writes. A finalized record always wins over the derivation, and a job whose
+  state cannot be read — or whose state is not a terminal `FAILED` — leaves the
+  run exactly as recorded, with a note: **an unreadable job never makes a live
+  run look failed.** Recommendation: **spot off by default**, opt-in per
+  profile for workloads that tolerate it (a nightly batch, a test-only
+  workflow). If it is ever turned on, the run wants the
   120 s notice set explicitly, because the runner's SIGTERM path
   (`cmd/fugaro/main.go` cancels the context so the task still finalizes) has
   only the shutdown period to checkpoint otherwise. Whether Batch's
@@ -1033,11 +1062,12 @@ reading the family would fail the very apply this module exists to complete,
 because the family has no image until the scheduled build has run once. Reading
 the label back takes a Compute client `internal/infra.Clients` does not carry
 (`init_compute.go`'s `Verify` says the same of the preload image), and the
-configuration field it would be written into is §8.1 task 8's, which is not in
-this tree. So the read-back is Check 57b's and `doctor`'s, and
-`Options.Docker.SocketGID` stays unset until then — which is the state Task 7's
-refusal already covers (a Docker run with no recorded gid is refused before the
-create). A recorded gid that no longer matches the image is a mount
+configuration field it would be written into is `batch.socket_gid` (§8.1 task
+8's, `internal/localcfg/localcfg.go`) — which **is** in this tree, and which
+nothing writes yet, because nothing reads the label. So the read-back is Check
+57b's and `doctor`'s, and `Options.Docker.SocketGID` stays unset until then —
+which is the state Task 7's refusal already covers (a Docker run with no
+recorded gid is refused before the create). A recorded gid that no longer matches the image is a mount
 the container comes up unable to open, which is 57b-1's FACT to catch; 57a-6's
 own reading (412, on the image it used) is a measurement of that image and never
 a default this code may carry.
@@ -1542,6 +1572,12 @@ the teardown is assumed rather than read:
   **Built** (Task 5, `internal/backend/batch/reap.go`) as the safety net that
   measurement makes it: Batch's own teardown is the main path (the numbers are
   in this section's bullets above), so the reaper only ever sees the residual.
+  **It deletes, and it writes nothing** — the owner's ruling of 2026-10-21 is
+  that no component gains a storage permission for a run whose record was never
+  finalized, so a job the reaper deletes, like a job the platform preempted,
+  leaves the run's own objects exactly as the run left them. What that run
+  reads as is derived when it is read (§1.3), never finalized by the reaper and
+  never written back.
   The built decisions, each narrower than
   this section's prose: the job pass runs before the instance pass; a job
   `QUEUED` past the queue deadline is **deleted** (`jobs.delete`) — Task 9's
@@ -3066,8 +3102,16 @@ leaked VM of *this check* is told from a real run's.
    or 120 seconds if the job asks for it, and the shutdown afterwards is best
    effort and can take up to 30 seconds (MIG/spot docs, §1.3). **FACT:** whether
    the job asked for the 120-second notice, whether the runner received SIGTERM,
-   whether it reached `finalize`, and the time from the preemption notice to the
-   VM's death.
+   whether it reached `finalize`, the time from the preemption notice to the
+   VM's death, **and — the one the read side's derivation is built on — the exit
+   code the job's own report carries for the killed task, read out of the job's
+   status events in the same `jobs.get` (`internal/backend/batch`'s
+   `preemptExitCode`) rather than from a second call.** The step is what turns
+   that number from second-hand into a measured fact: the derivation accepts a
+   status event that says the VM was preempted *or* the reserved exit code, and
+   the code the platform actually reports is what says which of the two is the
+   one to trust. **Nothing about it is written back** (§1.3): the step measures
+   the report, and the run's own record stays unfinished either way.
 8. **Teardown on every exit path.** For each of: success; failure (a runnable
    that exits non-zero); **cancel** (`gcloud batch jobs cancel` on the job the
    cancel iteration submitted — `jobs.cancel`, **not**
@@ -3609,10 +3653,17 @@ restore cannot find.
    generation labelled `fugaro=managed` with `base-release`, and
    `gcloud compute images describe-from-family <family>` names it. Then, in
    order: **(a)** re-run the schedule by hand
-   (`gcloud scheduler jobs run <preload_scheduler_job> --location <region>`)
-   and confirm the build **builds nothing** — the newest generation is this
-   build's own, matches the family's current release and is inside
-   `preload_refresh_days`, so the run is one API call and no image. **(b)**
+   (`gcloud scheduler jobs run <preload_scheduler_job> --location
+   <scheduler_region>` — the **scheduler** region, which is not the
+   installation's whenever Cloud Scheduler does not serve it: the sandbox's
+   us-east5 is one it does not, so the job lives in the nearest location it
+   does serve (us-east4, `internal/backend/gcp`'s `SchedulerRegion`), and
+   `--location <region>` would name a job that is not there. The stage's own
+   retry and its "start it yourself" line name the same one,
+   `infra.RunSchedulerJob` and `computeStage.Apply`) and confirm the build
+   **builds nothing** — the newest generation is this build's own, matches
+   the family's current release and is inside `preload_refresh_days`, so the
+   run is one API call and no image. **(b)**
    Make the newest generation read as stale — `gcloud compute images update
    <name> --update-labels=base-release=stale`, in the sandbox project only —
    and re-run the schedule: a **new generation** appears in the same family,
@@ -4025,9 +4076,21 @@ senior reviewer before merge, not just the normal one.
    deadlines, the decision table over every `JobStatus.State`, the client-side
    label checks, the refusals and the dry-run, held to by tests against the
    Batch and Compute fakes. The account itself is Task 6's (the five
-   permissions §3.7 lists are what it must carry), and
-   `backend: cloud-batch` stays refused everywhere, so nothing here is
-   reachable in an installation.
+   permissions §3.7 lists are what it must carry). **Task 11 is what runs it,
+   and the sentence this note could not carry until then is the schedule**:
+   `fugaro reaper` (`internal/cli/reaper.go`) runs one pass and prints the
+   report — refusing to run at all where the project has no Batch
+   configuration — and
+   `deploy/terraform/gcp/modules/compute/reaper.tf` creates the Cloud Run job
+   that runs it **as the reaper account**, plus a `google_cloud_scheduler_job`
+   that starts that job **every fifteen minutes**, which is `ReapMargin`: a run
+   that should have ended is swept at most one margin after it should have, so
+   the residual window this safety net exists for is bounded by the margin
+   rather than by a schedule's own period. The report reaches Cloud Logging
+   under the job's own `fugaro_role=reaper` labels (57b-11 measures it), and
+   `backend: cloud-batch` stays refused everywhere until the enable task
+   (Task 10), so the invocation is scheduled while no installation selects the
+   backend it sweeps.
 6. **The Batch provisioning stage in `fugaro init`** (owner-run live step):
    **the Compute and Batch APIs both enabled** (both are OFF by default, and
    enabling Compute creates the default network and the default Compute Engine
@@ -4300,7 +4363,10 @@ above where used):
   57a-8 cancelled a running job and its VM was gone **3 s** later, ending
   `CANCELLED` with its record intact; the **preempted** path is step 7, which
   was **not run** (a separate script is being written), and the
-  `DELETION_IN_PROGRESS` corner was not driven directly.
+  `DELETION_IN_PROGRESS` corner was not driven directly. **That is the standing
+  of the read side's preemption derivation too** (§1.3): the reserved exit code
+  it accepts is the owner's ruling rather than a measurement, it is written in
+  code and deliberately nowhere under `docs/`, and step 7 is what measures it.
 - Batch logs reach Cloud Logging only when the destination is set, and the
   monitored resource is `batch.googleapis.com/Job` with labels
   `resource_container`/`location`/`job_id`

@@ -72,14 +72,11 @@ func resolveCheckout(ctx context.Context, dir string) (*localcfg.Checkout, error
 	if gcp != "" && !config.GCPProjectRE.MatchString(gcp) {
 		return nil, userErr("%s: gcp_project %q is not a GCP project ID", filepath.Join(root, "fugaro.yaml"), gcp)
 	}
-	// The git provider is read leniently and never validated here: this
-	// function answers "which project does this checkout belong to", and a
-	// file that names no provider (or one nothing carries) still answers it.
-	// A provider that is not a string is not an error here either — the file
-	// is refused where it is read as a config, and remembering a checkout is
-	// not the place to refuse one.
-	provider, _ := config.ProviderOf(data)
-	return &localcfg.Checkout{Root: root, Project: project, GCPProject: gcp, Provider: provider}, nil
+	// The file's git.provider is not read here, and the Checkout it becomes
+	// carries none: this function answers "which project does this checkout
+	// belong to", and the provider a checkout is remembered by is the one its
+	// origin remote proves (recordCheckout, below). See localcfg.Checkout.
+	return &localcfg.Checkout{Root: root, Project: project, GCPProject: gcp}, nil
 }
 
 // recordCheckout remembers the checkout a command is running in for the

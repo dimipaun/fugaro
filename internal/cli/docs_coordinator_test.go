@@ -1309,6 +1309,12 @@ var coordinatorCheckRangeRE = regexp.MustCompile(`(?:^|[^A-Za-z0-9])([0-9]+)–(
 // make a number taken whatever any table says about it.
 var coordinatorWrittenCheckRE = regexp.MustCompile(`(?m)^## Check ([0-9]+)`)
 
+// coordinatorHighestWrittenRE reads the checks row's own statement of how far the register has
+// got. It is a claim about the register, so the register is what decides it: the row said the
+// highest section written is 90 while another sentence of the same row said the register does
+// not reach Checks 90-99, and nothing read either against the document.
+var coordinatorHighestWrittenRE = regexp.MustCompile(`The highest check \*section written\* is \*\*([0-9]+)\*\*`)
+
 // coordinatorDRangeRE finds a decision-number range as the table writes it, with or without the
 // second D: `D79–D89`, `D1–D192`, `D39–D54b`.
 var coordinatorDRangeRE = regexp.MustCompile(`D([0-9]+)[a-z]?–D?([0-9]+)`)
@@ -1583,6 +1589,28 @@ func TestDocsCoordinatorNumbersTableIsReadFromItsSources(t *testing.T) {
 				}
 			}
 		}
+	}
+
+	// The row's own count of what the register has written, held against the register: the state
+	// column says the highest check SECTION written is a number, and the register's own `## Check`
+	// sections are what decide it. This is the half the rule above cannot see -- it fires on a
+	// range called unused or free, and the row's statement about what IS written had nothing
+	// reading it, which is how the same row came to say both that the highest section written is
+	// 90 and that the register does not reach Checks 90-99.
+	if m := coordinatorHighestWrittenRE.FindStringSubmatch(row); m != nil {
+		claimed, _ := strconv.Atoi(m[1])
+		highest := 0
+		for n := range written {
+			if n > highest {
+				highest = n
+			}
+		}
+		if claimed != highest {
+			t.Errorf("%s's checks row says the highest check section written is %d, and the register's highest `## Check` section is %d: the row is a reading of the register, and the two move together",
+				coordinatorReadme, claimed, highest)
+		}
+	} else {
+		t.Fatalf("%s's checks row no longer states the highest check section written: this test's marker has moved, and that statement is what a reader takes the register's progress from", coordinatorReadme)
 	}
 
 	// And the same rule on the D-block row, with the allocation's own lines as the judge: a

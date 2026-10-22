@@ -180,6 +180,8 @@ drift from it.
 | `job` | string | — | **yes** | the Cloud Run job this run is in, from the run's own `launch.json` (`runstore.Launch.Job`) — the same read that produces the queued rows, so a live row has it too. Absent when the reader has no `launch.json` for the run. Under the project-centric model this is the **shared** job of a (profile, provider, account), not one repository's. **Display text, not an authority**: `launch.json` is writable by every launcher and, on a shared job, by every run (SECURITY.md, D4), so the value is what that object says, stripped of control characters — never a name to act on |
 | `profile` / `provider` / `account` | string | — | **yes** | the (profile, provider, account) the job's name was **computed from**, matched against the project's published policy — never parsed back out of the name (R2-5), so a `job` no profile computes gets none of them. `profile` and `provider` are present together or absent together; `account` is present only beside them and only for a job of a named Claude account — a profile that lists `claude_accounts` gets **one job per account** beside its no-account job (`config.ProjectJobAccounts`), so a run on a named account's job carries that account's name, and a run on the profile's no-account job carries none. An absent `account` is **not** "this job mounts no credential": the no-account job holds the default account's token when the profile lists `default` and none otherwise (`config.ProjectJobTokenAccount`), so what is empty is the account axis of the job's name, never a claim about the run's credential. All three are absent for a run on a **per-repository** job (a baked workflow, a Bitbucket repository, an installation that has not migrated), whose name is no project job's. `provider` here is the **profile's** provider, not a general stamp of the repository's: it is the reason the field exists on the two run shapes but does not close §7's gap 7 |
 | `launched_by` | string | — | **yes** | who started the run, from the run's own `launch.json` (`runstore.Launch.LaunchedBy`, **CLI 0.9.0**) — a person's address, or the identity an automated launch runs as (a service account, a CI runner). It is the **full recorded identity**: the text views show the short form a column has room for (`runview.LauncherShort` — the part before an address's `@`, the whole value for anything else). Absent when the record has none — one whose `launch.json` the reader does not have, or a launch built without a launcher (the recovery backfill from `result.json`, a local run with no cloud execution, or the synthetic launch `fugaro logs` builds) — **never a value the CLI invents**. **Display text, not an authority**: `launch.json` is writable by every launcher (SECURITY.md, D4), the value is sanitised and capped like every other bucket-derived string (`safetext.Field`, 512 runes), and no policy, admission or budget rule reads it |
+| `credential` | string | — | **yes** | the **name** — never the value — of the credential the run's cascade is currently spending on (`budget.AgentEntry.Credential`, written by the run itself under the rules of C1.3; the credentials service chooses it). **CLI 0.10.0.** Absent when the run has not reported one, which is **"not recorded", never "no credential"**: a run that has not written the field is one this reader cannot account for, not one spending on nothing. A name a run wrote, so it is sanitised like every other database-derived string here, and **never an authority** — no policy, admission or budget rule reads it. A console that wants to say which account a run is on must not treat the field as proof that the run is on that account now (the run reports it as it switches) |
+| `waiting_until` | string | RFC 3339, UTC | **yes** | when a run waiting for a credential expects to resume at (`budget.AgentEntry.WaitingUntil`, epoch ms, D152's "waiting, expected resume time"). **CLI 0.10.0.** Present **only while the run is still waiting**: presence is the state, so a reader that sees the field knows the run is held up rather than spending, and one that wants a countdown compares it with `now`. The text views show the same fact: the plain table as `waiting for a credential, expected resume T`, and the screen's FLAGS column as `waiting` with the instant on the run's detail lines (its column is 30 columns wide at its widest, and the sentence is 59 — a clip would eat the instant and any flag behind it) |
 
 **A live run carries no PR field at all** — no `pr_url`, no `pr_number`, no
 `pr` (design §4.3 gap 6, §5.1 rule 2). The console renders no link for a live
@@ -380,6 +382,7 @@ reads:
 | `recipe`, `config_sha256` | string | **yes** | |
 | `project_layer` | `*runstore.ProjectLayerRecord` | **yes** | absent before 0.6.0 |
 | `status`, `stage`, `reason` | string | `status` no, other two yes | |
+| `derived` | string | **yes** | **what the read side derived, and not a status of its own** — the CLI's 2026-10-21 ruling. Written only on a row whose record was never finalized and whose Cloud Batch job the platform preempted: `status` stays `failed` (the vocabulary every reader already switches on) and `derived` carries the fact (`preempted`, `runview.DerivedPreempted`), with `reason` saying so in a sentence. Absent for every other row, which is what keeps the shape additive. See **the derived status** below |
 | `halt` | `*runstore.Halt` | **yes** | why a run halted |
 | `batch`, `requested_by` | string | **yes** | `requested_by` is a person's address |
 | `launched_by` | string | **yes** | who started the run, from its `launch.json` (**CLI 0.9.0**); absent when the record has none. The same value `JSONRun`/`JSONFinished` carry, and display text only — see `JSONRun`'s row |
@@ -401,6 +404,41 @@ reads:
 | `artifact_count` | int | **yes** | what an artifact run's record says it delivered; absent for every run that has none, and the count `runs ls`'s `ARTIFACTS` column shows — its total is `artifact_bytes` |
 | `artifact_bytes` | int64 | **yes** | the recorded total size of those artifacts (a negative recorded size counts as none) |
 | `changed_files` | `*runstore.ChangedFiles` | **yes** | the paths the run changed, as the run itself recorded them (design D27, console v2 plan V2.1.2): `paths`, `total` and `truncated` below. **Absent for a run that recorded none** — every record written before the field existed, and every run that died before finalize — and absence means **"no record of what this run changed"**, never "it changed nothing" (the `-` cell of `runs ls`'s `FILES` column) |
+
+**The derived status (`derived`), and why it is not a status.** A Cloud Batch
+run on a Spot VM can be preempted: the platform reclaims the VM, the job ends
+`FAILED`, and no component ever finalizes the run's record — the budget lease
+expires by its own timeout and the history sweep settles the cost, so there is
+nothing that could write the outcome down. The owner's ruling of 2026-10-21 is
+that **nothing gains a new permission for this**: the read side derives it when
+the run is read (`runview.Join`), from the run's own objects plus the Batch
+job's own report (`statusEvents`, or the task state's reserved preemption exit
+code — `internal/backend/batch`'s `preemptExitCode`), and the derived status is
+**never written back** anywhere.
+
+So the row reads `status: "failed"`, `derived: "preempted"`, and `reason` is
+`runview.ReasonPreempted`. The three properties a reader needs:
+
+* **`status` is unchanged.** `failed` is what a reader switches on, what the
+  Runs screens draw and what `runs ls`'s table column carries; the derivation
+  is a second key beside it. A row is never *only* `derived`: an absent key
+  means nothing was derived, and `derived` is never `""`.
+* **`derived` is drawn beside the status, never instead of it.** `runs ls`'s
+  table and `fugaro diagnose` print the status and the derivation together
+  (`failed (preempted)`), the way a halt already prints its reason
+  (`halted (run_cap)`); the JSON keeps both keys separate so a script never has
+  to parse the decorated cell. The console reads `status` and `reason` today
+  and may render the marker from `derived` when it does.
+* **A finalized record always wins, and an unreadable job never derives.**
+  A run whose record exists is never derived, however its job reads; a job
+  whose state cannot be read, or whose state is not a terminal `FAILED`, stays
+  exactly as recorded — a live run is never made to look failed by a read the
+  reader could not complete.
+
+`derived` is one of the string keys the console does not sanitize: it is an
+enum the CLI writes from its own table, like `status`, `outcome` and `mode`
+(`NON_TEXT_STRING_KEYS`, `console/src/shared/schema.ts`), never text a job
+wrote.
 
 **`changed_files` is the run's own account, and it is bounded.** The runner
 reads the paths of the run's own commits (`origin/<base>...HEAD` for a first
@@ -529,6 +567,22 @@ parseable JSON).
 the CLI worded them — including the "not on the `PATH` the console gives the
 CLI" class of finding the design's §3.4 rule 5 describes.
 
+**Three check ids are new in CLI 0.10.0** (credentials-service C1.21), all
+`severity: "warning"` — so all three fail `--strict` and none is an `ok: false`
+about the installation: **`creds-broken`**, naming every Claude account the
+database's `creds/marks` marks broken (the service saw a 401), with the fix
+`fugaro accounts clear NAME`; **`creds-unknown-state`**, naming every account
+whose mark carries a state this release does not read (a newer release's hold,
+or one written by hand) with that state word — such a mark is held (`Usable`
+fails closed) and `accounts clear` refuses it, so the remedy is
+`fugaro upgrade`; and **`creds-rules`**, when the published policy
+has the cascade switched on (`routing.claude.via: cascade`) and
+`config/limits/credsRules` is missing, unreadable, hand-edited or of another
+generation than the binary's. An unreadable `creds/` is an `info` check
+instead, so "could not read" is never rendered as "nothing is broken"; that
+note covers both of the marks findings, which are answered by one read of the
+subtree.
+
 **Flags** (`newDoctorCmd`): `--dir` (default `.`), `--plugin`, `--strict`,
 `--json`, **`--check-github-app`** — the last of which reads the App's private
 key out of Secret Manager and is therefore unreachable by the console by
@@ -541,11 +595,72 @@ plugin wiring, not the environment the console draws).
 **Command:** `internal/cli/accounts.go` `newAccountsLsCmd`, indented
 (`printAccounts`). **Document:** `accountsListDoc`:
 `repo` string, `accounts` `[]string`, `complete` bool,
-`note`° (why selection failed). **`complete: false` means the project config
+`note`° (why selection failed), `states`° and `state_note`°. **`complete: false` means the project config
 could not be selected — the screen renders `unavailable`, never "no
 accounts"** (the type's own doc comment is the authority). Flags: `--repo`
-(always passed explicitly), `--json`, plus the cloud flags. Local and offline:
-"never calls Secret Manager".
+(always passed explicitly), `--json`, plus the cloud flags. The **names** are
+local and offline — "never calls Secret Manager" — but **the state column is
+not**: when the selected project has a Firebase budget backend, the marks are
+read from that database as the person (ADC, an admin's read of `creds/marks`),
+which is what makes `states` a value rather than an assumption. **That read is
+bounded — five seconds for the whole of it, one attempt per call, no retry**
+(`accountsStateBudget`, CLI 0.10.0) — so a database that is unreachable rather
+than refusing (a laptop offline, a firewall that drops) costs the screen
+seconds, not the per-call timeout twice, and the command answers with the names
+and a `state_note` naming the bound. A project with no backend, by contrast,
+makes no call at all: it stays offline and answers with the names and a
+`state_note` of its own.
+
+**`states` (CLI 0.10.0, credentials-service C1.21)** is every listed account's
+credential state, keyed by account name, and it is **absent exactly when no
+mark could be read** — then `state_note` says why (no Firebase budget backend,
+a database that is down, a read the person's rules refused). The two are one
+answer: a reader must **not** render "every account is available" from an
+absent `states`, because that is a claim about marks this command did not read.
+Each value is `{"state": …}` plus `until`° — the state word
+`internal/creds` stores, spelled as it stores it (`available`, `exhausted`,
+`backed_off`, `broken`; a state a newer release wrote is passed through
+verbatim rather than rounded to `available`), and, for an exhaustion, the
+instant the hold lapses in RFC 3339. An account with no node, one whose node
+says `available` and one whose mark an operator cleared all carry `available`:
+they are the same credential (`creds.Mark`'s own doc). **Names and states only
+— never a token, a secret ID or a prefix of one (F27).**
+
+The text view of the same command is the plan's column — `available`,
+`exhausted until T`, `backed off`, `broken` — and falls back to one bare name
+per line when there is no state to show, which is the shape a console that
+passes `--json` never sees.
+
+### 6.5a `fugaro accounts clear NAME` — the operator's write
+
+**Command:** `internal/cli/accounts.go` `newAccountsClearCmd`. It is the one
+command in this document that **writes the budget database**, and it is the
+reason §9 rule 1's "never" list must stay exhaustive: the console does not
+spawn it. It writes exactly one node, `creds/marks/NAME`, with
+`creds.Cleared()`, acting as the person (ADC, an admin of the database), and
+the write is conditional (`creds.RTDBStore.UpdateMark` → `PutIfMatch`) so a
+mark the service changed at the same moment is re-read rather than
+overwritten: the callback clears the mark only while its state is still the one
+the confirmation named, so a `broken` mark the service recorded while the
+operator was reading the confirmation of an `exhausted` one is refused rather
+than cleared (both are clearable, but they are two different holds). Flags: `--yes` (skips the typed confirmation of the project's
+name), plus the cloud flags. It prints one line naming the account and the
+state it cleared, and **no value of any kind**. A `broken` or `exhausted` mark
+is clearable; a `backed_off` one is refused (a probe clears it, C1.12) and a
+state this Fugaro does not know is refused rather than overwritten. `NAME` must
+be `default`, a `claude_accounts` name of the selected local config, or a name
+the database already carries a mark for; a name with none of the three is
+refused, so a typo cannot leave a mark node behind. The third case is not an
+edge: `claude_accounts` is per-checkout and never published (the shared config
+strips it), while the marks belong to the project, so a mark can name an
+account this checkout does not list — and §6.4's `creds-broken` finding names
+exactly those marks, so its fix has to be runnable for every one of them. The
+config read is the **local** one, never the shared one. The command refuses no
+coding agent's session — it approves nothing and records no owner decision, and
+its neighbours are `fugaro budget set`/`kill`, not `fugaro allow-delete` and
+`fugaro managed flag` — but it does refuse `GODEBUG=http2debug` before it opens
+anything, like every command that opens the cloud.
+
 
 ### 6.6 `fugaro secrets ls --json`
 
@@ -1002,9 +1117,11 @@ table against the live constructors.
 ## 9. What the console may do with all this
 
 1. **Every document in the console's set is read-only**, and the allow-list is
-   by exact argv (design §5.1 rule 6). The one command this file describes that
-   is a write is `fugaro cancel RUN --json` (§6.3), which is on the design's
-   "never" table and which no v1 console spawns; nothing else here names a
+   by exact argv (design §5.1 rule 6). Two commands this file describes are
+   writes, and neither is in the console's set: `fugaro cancel RUN --json`
+   (§6.3), which is on the design's "never" table and which no v1 console
+   spawns, and `fugaro accounts clear NAME` (§6.5a, credentials-service C1.21),
+   the operator's own write to the cascade's state. Nothing else here names a
    write.
 2. **Exactly two of the commands in the console's set are line-delimited:
    `watch --json` and `logs RUN

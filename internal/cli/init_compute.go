@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
@@ -166,9 +167,16 @@ func (s *computeStage) Apply(ctx context.Context, _ initflow.Env) (initflow.Outc
 	// The preload rebuild, now rather than at the next schedule. A refusal
 	// here is the stage's own error: the provisioning is done, and the one
 	// line that starts the build is the fix.
-	if err := infra.RunSchedulerJob(ctx, e.c, e.spec.Project, e.spec.Region, s.spec.Names.PreloadSchedulerJob); err != nil {
+	//
+	// The job is started where it LIVES, which is the scheduler region and not
+	// the installation's (spec.SchedulerRegion): Cloud Scheduler does not serve
+	// every Cloud Run region, so on an installation in one it does not serve
+	// the job is in the nearest location it does, and naming the installation's
+	// region here would look for a job that is not there. The Fix line below
+	// has to name the same one, for the same reason.
+	if err := infra.RunSchedulerJob(ctx, e.c, e.spec.Project, s.spec.SchedulerRegion, s.spec.Names.PreloadSchedulerJob); err != nil {
 		return initflow.Outcome{}, &initflow.StageError{Err: err,
-			Fix: "start it yourself: gcloud scheduler jobs run " + s.spec.Names.PreloadSchedulerJob + " --location=" + e.spec.Region + " --project=" + e.spec.Project}
+			Fix: "start it yourself: gcloud scheduler jobs run " + s.spec.Names.PreloadSchedulerJob + " --location=" + s.spec.SchedulerRegion + " --project=" + e.spec.Project}
 	}
 	if err := s.readOutputs(ctx); err != nil {
 		return initflow.Outcome{}, err
@@ -328,10 +336,43 @@ func (s *computeStage) prepare(ctx context.Context) error {
 		return initErr(err)
 	}
 	pin := e.lc.BaseImage(config.BaseKind)
+	// The installation's never-touch list, read from the same variable the
+	// reaper command reads (reaperRefuseProjects): it goes into this root's
+	// tfvars so the SCHEDULED sweep refuses the same projects a pass run from a
+	// shell does. Without it the list would hold only while the sweep was
+	// started by hand, which is exactly when it matters least. It can only ADD
+	// to the engine's own floor, and an entry that is not a project id is
+	// refused here rather than dropped, for the reason reaperRefuseProjects
+	// gives.
+	refuse, err := reaperRefuseProjects(os.Getenv)
+	if err != nil {
+		return err
+	}
+	// Where the root's Cloud Scheduler jobs live, which is not the
+	// installation's region whenever Cloud Scheduler does not serve it:
+	// us-east5, the region this installation runs in, is one it does not, and
+	// a Scheduler job created there fails the whole apply -- leaving the
+	// reaper's sweep and the preload's rebuild not merely unscheduled but
+	// absent, which is the leak the sweep exists to close. The installation's
+	// own scheduler_region when it names one, and the nearest location
+	// Scheduler does serve otherwise: the same resolution the history job and
+	// the daily image check make (infra.History, spec.go's check), so an
+	// installation writes the region once and every schedule follows it. The
+	// jobs' HTTP targets name the Cloud Run job's own location, so a Scheduler
+	// job in another region still starts it.
+	schedulerRegion := e.lc.SchedulerRegion
+	if schedulerRegion == "" {
+		r, err := gcp.SchedulerRegion(e.spec.Region)
+		if err != nil {
+			return userErr("%v", err)
+		}
+		schedulerRegion = r
+	}
 	spec := infra.ComputeSpec{
 		Project:            e.spec.Project,
 		ProjectNumber:      fmt.Sprint(number),
 		Region:             e.spec.Region,
+		SchedulerRegion:    schedulerRegion,
 		Network:            infra.DefaultNetwork(e.spec.Project),
 		Subnetwork:         infra.DefaultSubnetwork(e.spec.Project, e.spec.Region),
 		Names:              infra.ComputeNamesFor(),
@@ -348,6 +389,8 @@ func (s *computeStage) prepare(ctx context.Context) error {
 		PreloadRefreshDays: infra.PreloadRefreshDaysDefault,
 		BuilderMachineType: "e2-medium",
 		BuildSubmitterRole: outs.RoleIDs.BuildSubmitter,
+
+		ReaperRefuseProjects: refuse,
 	}
 	vars, err := infra.ComputeVars(spec)
 	if err != nil {

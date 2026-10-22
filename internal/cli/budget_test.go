@@ -61,6 +61,20 @@ func newBudgetFixture(t *testing.T, budgetYAML string) *budgetFixture {
 
 func (f *budgetFixture) runsDir() string { return filepath.Join(f.dir, "runs") }
 
+// appendConfig adds top-level YAML (such as claude_accounts: …) to the local
+// config, the way cloudFixture.appendConfig does.
+func (f *budgetFixture) appendConfig(t *testing.T, yaml string) {
+	t.Helper()
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, []byte(yaml)...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (f *budgetFixture) writeMarker(t *testing.T, name, gcpProject string) {
 	t.Helper()
 	data, err := json.Marshal(infra.ProjectMarker{Version: 1, Name: name, GCPProject: gcpProject})

@@ -36,7 +36,7 @@ const minSecretBytes = 4
 
 // multilineSecret is the one logical secret whose value spans lines: the
 // GitHub App's private key, a PEM.
-const multilineSecret = "github-app-key"
+const multilineSecret = config.GitHubAppKeySecret
 
 func newSecretsCmd() *cobra.Command {
 	cmd := &cobra.Command{

@@ -28,7 +28,7 @@ import (
 // Two directions decide an entry, and leaving one out is the safe one: a
 // refused plan falls back to a confirmation, which is a working program, while
 // a permitted plan that should not have been is the failure this gate exists
-// to avoid. So the list is smaller than init's — the twelve entries in
+// to avoid. So the list is smaller than init's — the seventeen entries in
 // managedDropped are Fugaro's own plumbing, the project-level IAM authority
 // the deployer must not hold, or a type whose resources GCP names on the
 // server's side, where no prefix condition can tell the agent's from Fugaro's.
@@ -114,7 +114,7 @@ var managedDropped = map[string]string{
 	"google_logging_project_sink":            "Fugaro's own log plumbing: a sink in an agent-authored plan would reroute the project's logs, applied by the owner-run installation root",
 	"google_monitoring_alert_policy":         "their resource names are server-assigned (projects/<p>/alertPolicies/<id>), so no prefix condition can tell the agent's from Fugaro's own: an update or a delete would reach the policy the installation's alerts use (D78)",
 	"google_monitoring_notification_channel": "their resource names are server-assigned (projects/<p>/notificationChannels/<id>), so no prefix condition can tell the agent's from Fugaro's own: an update or a delete would reach the email channel Fugaro's alerts use (D78)",
-	"google_project_iam_custom_role":         "the owner-run setup creates the deployer's two roles and no managed plan may: the deployer holds no iam.roles.* (D75 (iii)), so it could not apply it, and an account that can edit its own role can widen itself",
+	"google_project_iam_custom_role":         "the owner-run setup creates the deployer's eight roles and no managed plan may: the deployer holds no iam.roles.* (D75 (iii)), so it could not apply it, and an account that can edit its own role can widen itself",
 	"google_project_iam_member":              "a managed plan binds no project-level IAM at all: the deployer holds no project-level IAM permission (D75 (iii)), which is what keeps it out of the authority that could grant itself object access to the runs bucket and forge the marker",
 }
 
@@ -187,8 +187,8 @@ var managedGrantRules = map[string]bool{
 //     object the change removes (tf.Approves), and only when the resource it
 //     removes or creates is one the rules below admit — neither the address nor
 //     the list alone admits one (NotCovered);
-//   - the type: managedTypes rather than allowedTypes, so the twelve entries
-//     of managedDropped ask for a confirmation instead;
+//   - the type: managedTypes rather than allowedTypes, so the seventeen
+//     entries of managedDropped ask for a confirmation instead;
 //   - the resource: every name a managed resource carries must carry
 //     ManagedPrefix, and the accounts a job or a scheduler runs as must be the
 //     managed project's own, so a plan cannot reach Fugaro's resources, the
@@ -359,7 +359,7 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 			// the owner reads the address, runs fugaro allow-delete — has
 			// nothing to record but the address, which is no longer an
 			// approval.
-			add(rc, "actions "+strings.Join(acts, ", ")+": an address that is not on the owner's delete list (the plan removes "+RemoveIdentityText(rc)+")")
+			add(rc, "actions "+strings.Join(acts, ", ")+": "+notOnDeleteListReason(rc))
 			continue
 		// The list names an address, and the object a removal takes away is
 		// the one in before: with a moved block that object was at another

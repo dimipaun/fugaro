@@ -66,11 +66,16 @@ type Compute struct {
 }
 
 type computeInstance struct {
-	zone    string
-	name    string
-	labels  map[string]string
-	status  string
-	created time.Time
+	zone   string
+	name   string
+	labels map[string]string
+	status string
+	// created is what the listing renders as creationTimestamp; rawCreated,
+	// when set, is rendered verbatim instead: the API answers a string, and a
+	// string this build cannot parse is a fact about the instance rather than
+	// a failure of the call.
+	created    time.Time
+	rawCreated *string
 }
 
 // NewCompute starts a Compute Engine fake that lives until the test ends.
@@ -97,6 +102,19 @@ func (f *Compute) AddInstanceCreated(zone, name string, labels map[string]string
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.add(zone, name, labels, created)
+}
+
+// SetInstanceCreatedRaw makes an instance's creationTimestamp the literal
+// string raw, whatever it is: the aggregated list then answers what the API
+// would have answered, so a caller's own reading of a stamp it cannot parse is
+// exercised. The instance has to exist already; a name the fake does not hold
+// is left alone (there is nothing to render).
+func (f *Compute) SetInstanceCreatedRaw(zone, name, raw string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if i := f.instances[zone+"/"+name]; i != nil {
+		i.rawCreated = &raw
+	}
 }
 
 func (f *Compute) add(zone, name string, labels map[string]string, created time.Time) {
@@ -271,13 +289,17 @@ func (f *Compute) getImageFamily(w http.ResponseWriter, project, family string) 
 }
 
 func (f *Compute) render(i *computeInstance) map[string]any {
+	created := stamp(i.created)
+	if i.rawCreated != nil {
+		created = *i.rawCreated
+	}
 	return map[string]any{
 		"kind":              "compute#instance",
 		"name":              i.name,
 		"zone":              "https://www.googleapis.com/compute/v1/projects/" + f.defProject() + "/zones/" + i.zone,
 		"status":            i.status,
 		"labels":            i.labels,
-		"creationTimestamp": stamp(i.created),
+		"creationTimestamp": created,
 	}
 }
 

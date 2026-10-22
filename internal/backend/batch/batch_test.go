@@ -1060,6 +1060,147 @@ func postRawJob(t *testing.T, bf *gcpfake.Batch, id, body string) {
 	}
 }
 
+// preemptEvent is the report a preempted run's job carries: a task-level status
+// event whose task execution ended with Batch's reserved preemption exit code.
+// The shape is the API's own -- StatusEvent.TaskExecution is documented as
+// "only defined for task-level status events where the task fails", and its
+// ExitCode as the task's exit code, from Batch's reserved list or the runnable
+// (batch/v1's TaskExecution, read off the generated client) -- and *which* of
+// these a live preemption actually leaves behind is Check 57a step 7's
+// (design §7.2, §9).
+func preemptEvent() map[string]any {
+	return map[string]any{
+		"type":        "STATUS_CHANGED",
+		"description": "Task state is FAILED",
+		"taskState":   "FAILED",
+		"taskExecution": map[string]any{
+			"exitCode": preemptExitCode,
+		},
+	}
+}
+
+// TestAPreemptedJobReadsAsPreempted: a run whose Batch job ended FAILED because
+// its Spot VM was reclaimed must be readable as exactly that, from the same
+// jobs.get the backend already makes -- no new permission, no new call
+// (the owner's 2026-10-21 ruling; design compute-backend.md §1.3).
+//
+// The cases below are the whole of the rule, and each is one way a wrong reader
+// would be wrong: a FAILED job whose report names a preemption is preempted; a
+// FAILED job whose report says nothing of the kind is not (a crashed runnable
+// must never read as reclaimed); a *running* job that carries the same event is
+// not (a live run must never read as failed); and a job whose state this build
+// cannot read is not, whatever its events say, because the state is the half
+// that says the execution is over at all.
+//
+// The evidence half is the narrower one and gets four cases of its own, because
+// an event is not evidence of a reclaim merely for mentioning preemption: the
+// reserved code (written out, so the constant has a second home that fails when
+// it moves), the event's own word in another case, and the two reports that
+// mention a preemption without being one -- a quota that ran out of preemptible
+// CPUs and the notice duration. A reader that accepted any of them would tell a
+// person their run's machine was reclaimed by the platform when their run
+// simply crashed.
+func TestAPreemptedJobReadsAsPreempted(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		name      string
+		state     string
+		events    []map[string]any
+		preempted bool
+		terminal  bool
+	}{
+		{name: "FAILED with the preemption exit code", state: "FAILED", events: []map[string]any{preemptEvent()}, preempted: true, terminal: true},
+		{name: "FAILED with a preemption the platform spells out", state: "FAILED", events: []map[string]any{
+			{"type": "STATUS_CHANGED", "description": "Task state is FAILED", "taskState": "FAILED",
+				"taskExecution": map[string]any{"exitCode": 1}},
+			{"type": "STATUS_CHANGED", "description": "The task's VM was preempted"},
+		}, preempted: true, terminal: true},
+		{name: "FAILED for another reason", state: "FAILED", events: []map[string]any{
+			{"type": "STATUS_CHANGED", "description": "Task state is FAILED", "taskState": "FAILED",
+				"taskExecution": map[string]any{"exitCode": 50000}},
+		}, terminal: true},
+		// The number is written out here, once, on purpose. Every other case
+		// reaches it through preemptExitCode, so a constant that moved would
+		// move the test with it and nothing would fail; this literal is what
+		// makes 50001 the platform's answer and not the code's. Change the
+		// constant and this case reads a FAILED job carrying 50001 as *not*
+		// preempted -- which is the failure a number with one home is supposed
+		// to raise, and the one Check 57a step 7 is what finally settles.
+		{name: "FAILED with the reserved preemption code written out", state: "FAILED", events: []map[string]any{
+			{"type": "STATUS_CHANGED", "description": "Task state is FAILED", "taskState": "FAILED",
+				"taskExecution": map[string]any{"exitCode": 50001}},
+		}, preempted: true, terminal: true},
+		// The event's word is read without regard to case: the platform writes
+		// the prose of its own report, and a reader that knew only the
+		// lower-case spelling would find no preemption in a report that shouts
+		// it.
+		{name: "FAILED with the event's word in another case", state: "FAILED", events: []map[string]any{
+			{"type": "STATUS_CHANGED", "description": "The task's VM was PREEMPTED"},
+		}, preempted: true, terminal: true},
+		// And the word has to be the reclaim. "Preemptible" names a class of
+		// VM a *quota* event can say the project ran out of -- a fact about the
+		// project's capacity, not about this execution's machine -- and
+		// "preemption" is the notice's noun rather than the event that took the
+		// VM. Neither is evidence: a run whose VM was never reclaimed must not
+		// read as reclaimed because its project is out of preemptible CPUs or
+		// because the job asked for a notice it never received.
+		{name: "FAILED with a quota event naming preemptible CPUs", state: "FAILED", events: []map[string]any{
+			{"type": "STATUS_CHANGED", "description": "Quota 'PREEMPTIBLE_CPUS' exceeded. Limit: 0.0 in region us-central1.",
+				"taskState": "FAILED", "taskExecution": map[string]any{"exitCode": 1}},
+		}, terminal: true},
+		{name: "FAILED with an event about the preemption notice", state: "FAILED", events: []map[string]any{
+			{"type": "STATUS_CHANGED", "description": "The job's preemption notice duration is 0 seconds."},
+		}, terminal: true},
+		{name: "FAILED with no events at all", state: "FAILED", terminal: true},
+		{name: "RUNNING carrying the preemption event", state: "RUNNING", events: []map[string]any{preemptEvent()}},
+		{name: "a state this build does not know", state: "SOMETHING_NEW", events: []map[string]any{preemptEvent()}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			b, bf, _, _ := newTestBackend(t, nil)
+			ref, err := b.Launch(ctx, spec())
+			if err != nil {
+				t.Fatalf("Launch: %v", err)
+			}
+			bf.SetState(ref.Job, c.state)
+			bf.SetStatusEvents(ref.Job, c.events...)
+			x, err := b.Execution(ctx, ref.Name)
+			if err != nil {
+				t.Fatalf("Execution: %v", err)
+			}
+			if x.State.Terminal() != c.terminal {
+				t.Errorf("state %q read as %v (terminal %v), want terminal %v", c.state, x.State, x.State.Terminal(), c.terminal)
+			}
+			if x.Preempted != c.preempted {
+				t.Fatalf("Preempted = %v, want %v: the read side derives a run's outcome from this field, so a wrong answer here is a wrong status there", x.Preempted, c.preempted)
+			}
+		})
+	}
+}
+
+// TestListCarriesThePreemptionToo: runs ls reads its executions from List, so a
+// preemption List dropped would be a listing that could not derive it while
+// diagnose, which reads the execution on its own, could.
+func TestListCarriesThePreemptionToo(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, nil)
+	ref, err := b.Launch(ctx, spec())
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	bf.SetState(ref.Job, "FAILED")
+	bf.SetStatusEvents(ref.Job, preemptEvent())
+	list, err := b.List(ctx, backend.ListFilter{})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("List returned %d executions, want 1", len(list))
+	}
+	if !list[0].Preempted {
+		t.Fatalf("the listed execution is %+v, want Preempted: List and Execution read the same job, so they must not disagree about it", list[0])
+	}
+}
+
 // TestExecutionRewritesTheProjectNumber: Batch answers a created job's name
 // with the project *number*, so a name taken from it verbatim would stop
 // matching the name the backend launched with (design §2.3). The fake is set
