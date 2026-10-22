@@ -134,9 +134,10 @@ func (h *RunHandle) NoteExhausted(reset time.Time) {
 // internal/gateway parses the credentials service's answer out of its wire
 // body and hands it to the run through the upstream's OnServiceAnswer hook
 // (C1.15), which is this function. A test that calls it therefore drives the
-// run through the wired path and not around it, while a whole cascade run
-// cannot be started yet (GatewayOn refuses the auth until C1.19 teaches it
-// the switch).
+// run through the wired path and not around it, without standing up the
+// service a whole cascade run needs to start (C1.19's own tests do, against
+// a stand-in: TestServiceAnswerReachesTheRunsWait and the record's tests in
+// gateway_service_internal_test.go).
 func (h *RunHandle) ServiceAnswer(a gateway.ServiceAnswer) { h.r.serviceAnswer(a) }
 
 func (h *RunHandle) HaltNow(hl runstore.Halt) bool      { return h.r.haltNow(hl) }

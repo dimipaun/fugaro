@@ -207,9 +207,11 @@ func TestDocsCredentialsAuthListNamesCascade(t *testing.T) {
 // requires the skill's decision line and its reference's §2 table to carry,
 // because it is on config.AgentAuths — and the value is a preview until plan
 // Task C1.19's launch wiring is in a release. The validator knows it and the
-// config reader accepts it (cascadeSince), no runner does, so a `cascade` file
-// whose effective mode is on passes `fugaro validate` and a launch and then
-// dies in the job, on the runner's own `unknown agent auth "cascade"` — the gap
+// config reader accepts it (cascadeSince), and C1.19 is what teaches a runner
+// to carry it (GatewayOn, the service upstream, the O2 switch); before that
+// release reaches an installation's job image, a `cascade` file whose
+// effective mode is on passes `fugaro validate` and a launch and then dies in
+// the job, on the runner's own `unknown agent auth "cascade"` — the gap
 // config.CheckCascadeGateway's comment states from the validator's side, and
 // the reason the skill's offer cannot reach a release uncoupled from C1.19.
 //

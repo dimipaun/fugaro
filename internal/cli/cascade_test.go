@@ -496,14 +496,20 @@ func TestValidateRefusesCascadeWithBudgetOff(t *testing.T) {
 }
 
 // TestValidateCascadeSwitchReasonNeverBlamesTheGateway: a cascade run's
-// gateway is the credentials service's, not a model API's credential, and
-// runner.GatewayOn answers false for `cascade` because it knows api-key and
-// vertex only (the change that teaches it the value is plan Task C1.19). What
-// the switch's reach makes of a cascade run is therefore right today — no run
-// of this configuration has a gateway, so the pins keep Claude's own IDs —
-// but the reason validate printed for it was not: "the gateway needs a model
-// API's credential" is false of a cascade run, whose whole point is a gateway
-// carrying a credential that is not the job's own (D133, D143).
+// gateway is the credentials service's, not a model API's credential, and the
+// sentence validate prints for a cascade run's gateway must not be the
+// model-API one: "the gateway needs a model API's credential" is false of a
+// cascade run, whose whole point is a gateway carrying a credential that is
+// not the job's own (D133, D143).
+//
+// C1.19 taught runner.GatewayOn the value, so the state this is asked in is
+// the other one now: with an effective mode that is off, a cascade run has no
+// gateway at all (the gateway is the budget's to start, D11), the switch
+// reaches no run of the configuration, and the file is refused for the mode
+// beside the note — which is what the two lines below are about. With the mode
+// on, the same file reaches the switch instead, and what validate says about a
+// switch that names a model this checkout carries no route for is the halt
+// TestValidateRefusesCascadeWithBudgetOff's sibling cases cover.
 //
 // The state is the one the switch's reach is asked about: the project config's
 // switch names a Claude model this checkout carries no route for, so the pin
@@ -513,16 +519,20 @@ func TestValidateRefusesCascadeWithBudgetOff(t *testing.T) {
 // RoutingInertNoGateway case — the line then blames the gateway's credential
 // rule and this test fails on that sentence.
 func TestValidateCascadeSwitchReasonNeverBlamesTheGateway(t *testing.T) {
-	f := newLaunchBudget(t, "enforce")
+	f := newLaunchBudget(t, "off")
 	publishPolicy(t, f, cascadePolicy())
 	// The switch is the operator's own file, and it names a model only a route
 	// this repository may not send code to claims (routedProjectBlock admits
 	// acme/sandbox; the checkout is acme/other).
 	f.appendConfig(t, routedProjectBlock+routedSwitchBlock)
 	inCheckoutOf(t, "acme/other")
-	out, errOut, err := execute(t, "validate", writeConfig(t, cascadeCLI))
-	if err != nil {
-		t.Fatalf("validate refused a configuration whose runs do not reach the switch: %v\n%s%s", err, out, errOut)
+	file := strings.Replace(cascadeCLI, "workflows:", "budget: { mode: off }\nworkflows:", 1)
+	out, errOut, err := execute(t, "validate", writeConfig(t, file))
+	// The gateway rule refuses the file: a cascade run with the budget off has
+	// no gateway, and a cascade run has no credential of its own to fall back
+	// to (C1.19's launch carries the same rule; config.CheckCascadeGateway).
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit = %d, want %d (out %q, err %v)", ExitCode(err), ExitUserError, out, err)
 	}
 	if !strings.Contains(errOut, "routing.claude") {
 		t.Fatalf("want the note about the switch's reach:\n%s%s", out, errOut)
