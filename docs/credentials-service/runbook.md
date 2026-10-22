@@ -39,7 +39,15 @@ fugaro creds ls
 
 1. **The kill switch.** `fugaro budget show` says who set it, when and why. If it was deliberate, stop here.
 2. **The service itself.** A Cloud Run service scaled to zero instances, or one whose revision fails to start, answers nothing. Re-deploy the released image, or scale it back up.
-3. **The bundle.** `fugaro creds ls` with no rows means the container exists and holds no document, or holds one the loader refuses: a container with no document is fine in Terraform but the service fails closed on it and answers a named refusal. `fugaro creds set NAME` writes the first document.
+3. **The bundle.** `fugaro creds ls` answers a **named failure** for every way the bundle can be missing, and **never an empty list**: a document this command can list always holds at least one credential, because the loader refuses an empty one. Read the failure it names — each is a different repair:
+
+   | `fugaro creds ls` says | What it means | What you do |
+   |---|---|---|
+   | `the credentials service's bundle container <id> is not in project <gcp-project>` | No container: this installation never applied the credentials service (its Terraform creates the container, and no command of ours does). | Apply the installation with the service on (`fugaro init --provision-credentials`), then `fugaro creds set NAME`. |
+   | `the bundle container <id> holds no version: no credential has been set yet` | The container is there and the owner has never written a document. Fine in Terraform, and the service fails closed on it with a named refusal of its own. | `fugaro creds set NAME` writes the first document. |
+   | `nothing was read: the newest version of the bundle container <id> is DISABLED` | The document is there and Secret Manager will not serve it. Not "no credential", and this command will not guess at it (a write on top of a document it could not read would drop every credential in it). | Enable the version again (`gcloud secrets versions enable <version> --secret=<id>`), or set a credential once it is enabled. |
+   | `the bundle in <id> is not a document the credentials service accepts: <class>` | The loader refused the document — the same loader the service reads it with, so the service is refusing the same document. | Fix the document with `fugaro creds set NAME`; the class names what is wrong. (The sentence begins `nothing was written` here too: one message serves both commands.) |
+   | `this identity may not read the bundle container <id> in project <gcp-project>` | The read is the owner's own project IAM — `secretmanager.versions.get`, and Project Owner or Editor carries it. | Run it as an operator; nothing was read. |
 4. **The rules marker.** `creds_rules_denied` is a *deployed rules* problem, not a service problem: see §5.
 
 ## 4. A run halted for a missing credential

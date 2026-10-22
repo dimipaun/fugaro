@@ -153,6 +153,52 @@ func TestDocsCredentialsRunbookOrdersTheOptOut(t *testing.T) {
 	}
 }
 
+// TestDocsCredentialsRunbookSaysWhatCredsLsAnswersWhenTheBundleIsMissing: §3's
+// third step is the one that reads the bundle back, and the code review of
+// C1.22 found it claiming an output `fugaro creds ls` cannot produce — "with no
+// rows" for a container that holds no document or one the loader refuses.
+//
+// Neither is reachable. credsLs (internal/cli/creds.go) returns a NAMED
+// failure for every one of them — apiErr's 404 ("is not in project"), the
+// container with no version (errNoBundleVersion), a newest version DISABLED
+// (credsDisabledRefusal), a document the loader refuses (credsDocRefusal) and
+// a read the identity may not make (apiErr's 403) — and a listing it does
+// print is never empty, because credsvc.ParseBundle refuses a document that
+// holds no entry (ErrBundleEmpty). So the step must name those failures, not a
+// shape of output that never arrives.
+func TestDocsCredentialsRunbookSaysWhatCredsLsAnswersWhenTheBundleIsMissing(t *testing.T) {
+	doc := readDoc(t, credentialsRunbook)
+	section := flattenDoc(docSection(t, credentialsRunbook, doc, "## 3. The service is down, or refuses everything"))
+	for _, want := range []string{
+		// The claim itself: a named failure, never an empty list.
+		"named failure",
+		"never an empty list",
+		// Every class credsLs prints for a missing bundle, as creds.go words
+		// it (the id and the project are the command's own values, so the
+		// runbook writes them as placeholders).
+		"the credentials service's bundle container <id> is not in project",
+		"the bundle container <id> holds no version: no credential has been set yet",
+		"nothing was read: the newest version of the bundle container <id> is DISABLED",
+		"is not a document the credentials service accepts",
+		"this identity may not read the bundle container <id> in project",
+		// The DISABLED state's own way out, which is the owner's and not a
+		// `fugaro creds set` alone.
+		"gcloud secrets versions enable",
+		// And the first write, for the two states it repairs.
+		"fugaro creds set NAME",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("%s §3 does not say %q: this is the step an operator reads when the bundle is the problem, and the command's own words are the only thing that tells the five states apart", credentialsRunbook, want)
+		}
+	}
+	// The claim the review found, banned document-wide: no output of `creds ls`
+	// is "no rows", and a reader told to look for one waits for something that
+	// never prints.
+	if flat := flattenDoc(doc); strings.Contains(flat, "no rows") {
+		t.Error("the runbook says `creds ls` answers \"no rows\": no such output exists — a missing container, a container with no version, a DISABLED version and a refused document are each a named failure, and a listing that does print holds at least one credential")
+	}
+}
+
 // TestDocsCredentialsRunbookSaysWhatARotationDoesInFlight: rotating the bundle is
 // the one operator step that touches runs already going, and the honest answer
 // is bounded rather than empty. A rotation is read at the next `latest` read,
