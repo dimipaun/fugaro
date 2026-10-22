@@ -1,10 +1,12 @@
 package keychain
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"runtime"
 	"strings"
@@ -72,6 +74,12 @@ func TestKeyIsNeverPrinted(t *testing.T) {
 	// Every printing of a Key there is: the verbs, a struct holding one (a
 	// Gate, a config, a log line's fields), a slice of them, JSON, and a
 	// string built from one.
+	// A log line, through the standard library's own logger. slog formats a
+	// value with the verbs — it reaches String() only for a type that has no
+	// Format — so this row and the hand-built ones below are the two paths a
+	// log line can take.
+	var line bytes.Buffer
+	slog.New(slog.NewTextHandler(&line, nil)).Info("signing", "key", key, "gate", struct{ K Key }{key})
 	printings := map[string]string{
 		"%v":             fmt.Sprintf("%v", key),
 		"%s":             fmt.Sprintf("%s", key),
@@ -84,6 +92,11 @@ func TestKeyIsNeverPrinted(t *testing.T) {
 		"%v in a slice":  fmt.Sprintf("%v", []Key{key}),
 		"Errorf":         fmt.Errorf("the key is %v", key).Error(),
 		"json":           string(doc),
+		// The paths that reach String() without a format verb: a caller
+		// building a message by hand, and slog's own Stringer branch.
+		"a hand-built error":    errors.New("could not sign with " + key.String()).Error(),
+		"a hand-built log line": "key=" + key.String(),
+		"slog":                  line.String(),
 	}
 	for what, got := range printings {
 		if strings.Contains(got, testKey) {
@@ -287,7 +300,7 @@ func TestCommandStoreClassifiesEveryExit(t *testing.T) {
 	// What procgroup.Run really answers when the program cannot be started:
 	// the program and the OS's complaint about it, and nothing the child
 	// printed (TestTheProgramsComplaintIsNeverEchoed is the real path).
-	complaint := errors.New(`exec: "secret-tool": executable file not found in $PATH`)
+	complaint := errMissing
 	cases := []struct {
 		name string
 		out  string
@@ -336,6 +349,62 @@ func TestCommandStoreClassifiesEveryExit(t *testing.T) {
 		})
 	}
 }
+
+// TestTheItemNameAppearsInTheDiagnostic is the other half of M5's rule: the key
+// may never be printed and the item's name always may. An operator told only
+// "there is no key" has nothing to act on, and the name is not a secret — it is
+// what they check their own keychain with. Both failures name something safe:
+// the item for an absent key, the program for a keychain that could not be read.
+func TestTheItemNameAppearsInTheDiagnostic(t *testing.T) {
+	item, err := ParseItem("fugaro-mailbox-aurora", "aurora")
+	if err != nil {
+		t.Fatalf("ParseItem: %v", err)
+	}
+	r, err := readerFor("linux")
+	if err != nil {
+		t.Fatalf("readerFor: %v", err)
+	}
+	cases := []struct {
+		name  string
+		store Store
+		names string
+	}{
+		{name: "an item the keychain does not hold", store: &Fake{}, names: item.Name()},
+		{name: "an unreadable keychain", store: &Fake{Backend: ErrBackend}, names: "the OS keychain"},
+		{
+			name:  "a program that could not be run",
+			store: &commandStore{reader: r, run: func(context.Context, string, ...string) ([]byte, int, error) { return nil, -1, errMissing }},
+			names: r.program,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			key, err := c.store.Key(t.Context(), item)
+			if err == nil {
+				t.Fatalf("Key answered a key: %q", key.Bytes())
+			}
+			if !strings.Contains(err.Error(), c.names) {
+				t.Errorf("the diagnostic does not name %q: %v", c.names, err)
+			}
+			if strings.Contains(err.Error(), testKey) {
+				t.Errorf("the diagnostic carries a key: %v", err)
+			}
+			if key.Len() != 0 {
+				t.Errorf("a refused lookup answered a %d-byte key", key.Len())
+			}
+		})
+	}
+	// The item is printable, and it is the same string a keychain program is
+	// asked for.
+	if item.String() != "fugaro-mailbox-aurora" {
+		t.Errorf("the item prints %q, want its name", item.String())
+	}
+}
+
+// errMissing is the OS's complaint about a program that is not installed: what
+// procgroup.Run really answers, and the only text of a failure this package
+// ever echoes.
+var errMissing = errors.New(`exec: "secret-tool": executable file not found in $PATH`)
 
 // TestTheProgramsComplaintIsNeverEchoed runs a real child through the real
 // runner: the keychain tool complains on its standard error, and the complaint
