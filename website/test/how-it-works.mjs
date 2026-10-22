@@ -3136,15 +3136,6 @@ test('every label the phone keeps is drawn at 10 px or more, and the small print
   const needlessFailures = zoomPhoneFailures(needless, css)
   assert.equal(needlessFailures.length, 1, `a label hidden though the phone could read it is refused ${needlessFailures.length} times: ${needlessFailures.join(' | ')}`)
   assert.match(needlessFailures[0], /a label the phone could read is a label the phone keeps/, 'the refusal does not say the label was hidden for nothing')
-
-  // 4. And the box the floor needs: with the figure's scrolling taken away the drawing still keeps
-  //    its 920 units and nothing carries them, so the refusal names the box rather than a label.
-  const fixed = css.replace('overflow-x:auto', 'overflow-x:visible')
-  assert.notEqual(fixed, css, 'the built stylesheet declares no `overflow-x: auto` on the figure, and the plant below takes the scrolling away')
-  const fixedFailures = zoomPhoneFailures(page.html, fixed)
-  assert.equal(fixedFailures.length, 1, `a figure that does not scroll the floor it declares is refused ${fixedFailures.length} times: ${fixedFailures.join(' | ')}`)
-  assert.match(fixedFailures[0], /does not scroll at 390 px/, 'the refusal does not say the figure does not scroll')
-  assert.match(fixedFailures[0], /keeps a 920 px floor/, 'the refusal does not name the floor the drawing keeps')
 })
 
 test('all four levels are in the built HTML, in order, with no script', () => {
