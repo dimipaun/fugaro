@@ -70,8 +70,7 @@ points:
   - id: control-plane
     text: >-
       Fugaro's control plane is Firebase — the budget, the dashboard and the stats — and it
-      is not behind the backend seam: an AWS or Azure compute backend would still need a
-      Firebase project.
+      is not behind the backend seam.
     source: docs/backends.md
     date: 2026-10-22
 
@@ -117,9 +116,8 @@ closing:
 
   - id: second-cloud
     text: >-
-      Only GCP is implemented, and a second cloud is wanted rather than refused: a new cloud
-      is a backend behind the interface plus its provisioning, and AWS and Azure are on the
-      roadmap.
+      Only GCP is implemented. A cloud is a backend behind the interface plus its
+      provisioning, and the runner does not know which cloud it runs on.
     source: README.md
     date: 2026-10-22
 
