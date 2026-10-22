@@ -1,6 +1,7 @@
 # Website zoom diagrams
 
-**Status: plan answered; Part 1 and Part 4 in progress.** Owner: **@Dimi**. Spec date:
+**Status: plan answered; Parts 1, 4 and 5 landed, Parts 2 and 3 written and waiting on the
+owner's go.** Owner: **@Dimi**. Spec date:
 **2026-10-21** — and **every decision the work raised, `D237`–`D252`, was answered by the owner
 on 2026-10-21** ("The owner's answers (2026-10-21)" below, and the last column of the
 reconciliation's §12).
@@ -11,13 +12,15 @@ redesign ([`../redesign/README.md`](../redesign/README.md), findings `RF1`–`RF
 `docs/plans/` for the same reason the other two are: the site is its own build, in its own
 language, on its own deploy.
 
-**No code, no schema, no config and no page has changed in this line of work's own branch.**
-Nothing under `website/` is touched by it: the parts in progress are the plan's **Part 1** and
-**Part 4**, each landing as a pull request of its own, and Parts 2, 3 and 5 are written and
-waiting on the owner's go. The four documents below are the whole of it, and every claim in them was read
-out of the tree at `3021f4b3` on 2026-10-21, with one exception the answers recorded: `#842`
-has merged into this branch's history since (`3c5cc354`), so the slider the answers name is
-the merged component and not the one the readings were taken from.
+**Each part lands as a pull request of its own**, and three of the five have: Part 1 (the
+homepage's "See it" slider) and Part 4 (the four levels as stills) are in `main`, and Part 5 (the
+pinned, scroll-driven section) lands with this document's update — see "The spike (ZU1)" below
+for what Part 5 did with the question that could have cancelled it. Parts 2 and 3 are written and
+waiting on the owner's go, so the parts still untouched under `website/` are theirs. The four
+documents below are the whole of this line's writing, and every claim in them was read out of the
+tree at `3021f4b3` on 2026-10-21, with one exception the answers recorded: `#842` has merged into
+this branch's history since (`3c5cc354`), so the slider the answers name is the merged component
+and not the one the readings were taken from.
 
 ## The four documents, in reading order
 
@@ -25,7 +28,7 @@ the merged component and not the one the readings were taken from.
 |---|---|
 | [spec.md](spec.md) | **The owner's text, verbatim** — committed alone in this branch's first commit, byte for byte, before anything that answers it. It is the source document for the other three, and it is not edited when they disagree with it. |
 | [reconciliation.md](reconciliation.md) | What the brief asks for, checked against `3021f4b3`. **Fifty-nine numbered findings** classified **Wrong / Partly / Exists / Gap / Rule / Open** — six labels, one per finding, and the headings use no seventh — each citing a path and a symbol; six claim tables (§3 the job's loop, §4 "Why GCP", §5 the mobile page, §6 the waitlist, §7 the pinned zoom section, §8 the "See it" slider); **five UNVERIFIED items** (`ZU1`–`ZU5`); and **sixteen decision rows `D237`–`D252`** under "Open for the owner — answered 2026-10-21", each with the recommendation first and **the owner's answer** in its last column. |
-| [implementation-plan.md](implementation-plan.md) | The plan that executes the reconciliation: **five parts**, each independently mergeable, each with its files, its hermetic and mutation-proven tests, a command an agent can run, and the owner's visual check. Two live checks: **112**, taken by the owner's answer to D247 and written and not run, and **113**, still proposed. |
+| [implementation-plan.md](implementation-plan.md) | The plan that executes the reconciliation: **five parts**, each independently mergeable, each with its files, its hermetic and mutation-proven tests, a command an agent can run, and the owner's visual check. Three of the five have landed — Part 1, Part 4 and Part 5 — and two live checks: **112**, taken by the owner's answer to D247, written and not run, and reading both halves of the four levels now that Part 5 has landed, and **113**, still proposed. |
 | this file | The index, the status line above, the answer list below, and the typo record. |
 
 ## The owner's answers (2026-10-21)
@@ -52,6 +55,44 @@ none of them written "(default)":
 - **D250** the shared slider lands **after #842, which has merged** (`3c5cc354`).
 - **D251** the slides are the **images the Console page already uses** — its four committed screenshots — with phone screenshots later, supplied by the owner as files.
 - **D252** the Fugaro Watch slide **stays last**, with its alt text, caption and text fallback.
+
+## The spike (ZU1), and Part 5's answer to it
+
+**The plan's Part 5 begins with a spike, and the spike was not run as a browser observation —
+because Part 5 does not need its answer.** ZU1 asked what the site's universal reduced-motion rule
+does to a CSS scroll-driven animation: `Base.astro`'s
+`@media (prefers-reduced-motion: reduce)` block sets `animation-duration: 1ms !important` on `*`,
+and whether that neutralises `animation-timeline: view()`, freezes it on its first frame or leaves
+it alone was the one thing no reading of the tree could settle. **It is a question for a browser,
+and the work was implemented where there is none**: the model that wrote Part 5 cannot open a page
+or view an image (D190's screenshot rule read the other way round), and this register's own rule is
+that a reservation is not a fact about the tree (`docs/gcp-live-checklist.md:195`), so **nothing
+below is recorded as if the spike had been observed**. What is recorded is the decision that made
+it unnecessary.
+
+**Part 5 is the script's, not the timeline's.** The section's pinned reading is `site.js`'s: the
+level the reader is on is computed from the reader's own scroll position, written as
+`data-zoom-shown` on that level and `aria-current` on its marker, and the pinning is a
+`position: sticky` box whose height is one viewport of scroll per level. **The section declares no
+CSS scroll timeline and no CSS animation at all**, so the site's universal rule has nothing of the
+section's to neutralise, freeze or leave alone; its one piece of motion is a `transition` on
+`opacity` and `transform`, written inside `@media (prefers-reduced-motion: no-preference)` with a
+`reduce` block that puts the four stills back — and the script stands the section down for a reader
+who has asked for less motion before it writes anything, and again if the preference arrives under
+a page that is already pinned. **The brief's "animated" half is therefore achieved without the
+timeline the spike was about**, and the stills of Part 4 remain what a reader with no script, a
+reader who asked for less motion and a browser too old to answer `matchMedia` are given.
+
+**What is still open, and for whom.** Whether `animation-timeline: view()` survives the site's own
+reduced-motion rule **remains unverified**, and it is worth nobody's time until someone proposes a
+stylesheet-driven timeline again — if that happens, the spike is still the first step of that part
+and it is run by the owner in a browser, never by an agent. What holds the section as it stands:
+`website/test/how-it-works.mjs` reads the hooks, the scoping, the runway's length against the data
+file's four levels and the stills' own rules, and drives the script against the built page — the
+level the reader is on, the marker press, the fragment on load and the reduced-motion stand-down;
+`website/test/a11y.mjs` holds the section's transition inside the motion contract; and the owner's
+**Check 112** in `docs/gcp-live-checklist.md`, which Part 5 moved from a step that "cannot be run
+yet" into the reading, is the half no gate can take.
 
 ## The short version
 
@@ -105,7 +146,10 @@ The corrections the reconciliation makes, in one line each:
   is a design problem.** The highest-risk item is `ZU1`: the site's universal reduced-motion
   rule sets `animation-duration: 1ms !important` on `*` (`website/src/layouts/Base.astro:236-246`),
   and what that does to a CSS scroll timeline is unverified — which is why Part 5 begins with
-  a spike that may cancel the part, and why the brief's "still" half ships first.
+  a spike that may cancel the part, and why the brief's "still" half ships first. **Part 5 landed
+  without the timeline and without the spike being run**: the pinning is `site.js`'s and the
+  section declares no CSS animation at all, so the question the spike asked is not load-bearing
+  ("The spike (ZU1)" above says what is recorded and what is still open).
 - **"A job is always the same tile" is the one thing no gate can see.** The model that writes
   the drawing cannot view an image (D190), so the constraint becomes a testable **SVG
   `<symbol>` rule** (D244): one `<defs>`, every level drawing entities only through `<use>`.
@@ -165,5 +209,6 @@ short form, with the finding that states each in full:
 - [`../../voice-module/reconciliation.md`](../../voice-module/reconciliation.md) — the wake
   word's ruling: a transcript prefix test, no acoustic engine.
 - [`../../gcp-live-checklist.md`](../../gcp-live-checklist.md) — the check register, whose
-  highest written number is 111 and whose rule is that a reservation is not a fact about the
+  highest written number is **112** (this line of work's own, written by Part 4 and moved into
+  the reading by Part 5) and whose rule is that a reservation is not a fact about the
   tree (`:195`).
