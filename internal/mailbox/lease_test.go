@@ -872,9 +872,10 @@ func TestLeaseReadAndWriteAreTheOperatorCredential(t *testing.T) {
 	}
 }
 
-// TestLeaseHeartbeatPath: the lease lives in the one node M1 names, and a
-// mailbox name this command would build a path from is a name the schema
-// accepts — anything else is refused rather than escaped.
+// TestLeaseHeartbeatPath: the lease lives in the one node M1 names, built from
+// a mailbox name the database will hold as a key — a name carrying a character
+// the database refuses in a key is refused here rather than escaped into a path
+// that would name a node the rules do not grant.
 func TestLeaseHeartbeatPath(t *testing.T) {
 	path, err := HeartbeatPath(leaseMailbox)
 	if err != nil {

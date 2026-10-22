@@ -459,7 +459,9 @@ const (
 // LeaseRun is the outcome of one take or re-read.
 type LeaseRun struct {
 	Verdict LeaseVerdict
-	// Lease is the claim this consumer holds, when it holds one.
+	// Lease is the claim this run is about: the one this consumer now holds
+	// when the verdict is held or taken-over, and the one it found — the other
+	// holder's — when the verdict is lost. It is nil only for LeaseNone.
 	Lease *Lease
 	// Holder names whoever holds the mailbox when the verdict is lost.
 	Holder string
