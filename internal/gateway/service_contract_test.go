@@ -20,10 +20,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 const mirrorModel = "claude-sonnet-5-5"
@@ -151,9 +153,22 @@ func TestServiceConstantsMirrorCredsvc(t *testing.T) {
 			t.Errorf("a tried reason is %q in the gateway and %q on the wire", x.gateway, x.wire)
 		}
 	}
-	// The halt D143 names is spelled the way the run's record spells it.
+	// The halt D143 names is spelled the way the run's record and the
+	// budget's own halts spell it: one reason reaches the record through
+	// three packages, and the runner maps the gateway's halt to a runstore
+	// one by that string alone (gatewayHalt, internal/runner/gateway.go). A
+	// divergence here is a run recorded with a reason no consumer knows, so
+	// all three are held together and not only against the literal.
 	if gateway.ReasonBudgetUnavailable != "budget_unavailable" {
 		t.Errorf("the halt is %q, want budget_unavailable (D143)", gateway.ReasonBudgetUnavailable)
+	}
+	if got := string(runstore.HaltBudgetUnavailable); gateway.ReasonBudgetUnavailable != got {
+		t.Errorf("the gateway records the halt as %q and the run's record spells it %q: the runner maps the two by this string alone",
+			gateway.ReasonBudgetUnavailable, got)
+	}
+	if got := string(budget.ReasonBudgetUnavailable); gateway.ReasonBudgetUnavailable != got {
+		t.Errorf("the gateway records the halt as %q and the budget's own halts spell it %q",
+			gateway.ReasonBudgetUnavailable, got)
 	}
 }
 

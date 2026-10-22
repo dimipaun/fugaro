@@ -535,6 +535,37 @@ func claimsRefusal(body []byte) bool {
 	return json.Unmarshal(probe.Error, &typ) == nil && typ != ""
 }
 
+// modelErrorEnvelope reports whether a body is the model API's own error
+// envelope -- {"type":"error","error":{"type":...,"message":...}} -- which the
+// service relays from the credential's upstream unchanged (C1.11). It is the
+// one non-2xx body that is another writer's and is meant for the agent, and it
+// is what separates a relayed model error from the platform's own front door:
+// both arrive as 401 or 403, and the two must not be treated alike.
+//
+// It is as strict as the relay allows, because the two mistakes are not equal.
+// Failing to recognise a relayed model error stops a run that another
+// credential could serve and hides the model's own sentence from the agent;
+// failing to recognise the platform's front door relays a body that names the
+// project and the caller, which is the one thing D143 refuses. So the envelope
+// has to be there in full: the type that identifies it, and the error object
+// inside it with a type of its own, which is the shape the model API writes and
+// the platform's own JSON ({"error":{"code":...,"status":...}}) does not.
+func modelErrorEnvelope(body []byte) bool {
+	var probe struct {
+		Type  string `json:"type"`
+		Error struct {
+			Type string `json:"type"`
+		} `json:"error"`
+	}
+	// The first JSON value alone, as claimsRefusal reads it: a body with
+	// something after it still says what it is, and a relayed body is passed
+	// through whole whatever follows.
+	if json.NewDecoder(bytes.NewReader(body)).Decode(&probe) != nil {
+		return false
+	}
+	return probe.Type == "error" && probe.Error.Type != ""
+}
+
 // validTriedList holds a tried list to the contract's rules: the count bound
 // first, then every entry by name, tier and reason. It is what the contract's
 // own reader asks of every refusal body (credsvc.validateTriedList): the
@@ -619,17 +650,26 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 	}
 	e, ok, err := readServiceRefusal(resp.StatusCode, head)
 	if !ok {
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-			// A 401/403 that is not this contract's refusal is the
-			// platform's own layer answering: Cloud Run IAM refusing this
-			// job's invoker grant, or a proxy in front of the service. The
-			// contract's own 403 (unverified_job_identity) is JSON and was
-			// read above, so what is left here is a caller the service never
-			// admitted. It is not relayed -- the body is the platform's, and
-			// it names the project and the caller -- and it is not a model
-			// error the service passed on: every call this run makes will be
-			// refused the same way, so the run halts budget_unavailable-style
-			// (D143) rather than being answered 401 once per call.
+		// Not this contract's refusal. A 401 or 403 that is not the model
+		// API's own envelope either is the platform's layer answering: Cloud
+		// Run IAM refusing this job's invoker grant, or a proxy in front of
+		// the service. The contract's own 403 (unverified_job_identity) was
+		// read above, so what is left here is a caller the service never
+		// admitted. It is not relayed -- the body is the platform's, and it
+		// names the project and the caller -- and it is not a model error the
+		// service passed on: every call this run makes will be refused the
+		// same way, so the run halts budget_unavailable-style (D143) rather
+		// than being answered 401 once per call.
+		//
+		// A credential's own 401 or 403 is the other thing that arrives with
+		// these statuses, and it is the model's answer about the credential,
+		// not the platform's about the caller. C1.11 acts on two answers
+		// itself -- a usage limit, and a 401 that marks the credential broken
+		// (D139) -- and everything else it relays as it found it, so a 403
+		// from the credential's upstream is the model's and reaches the agent
+		// as it always did. The run is not stopped by it either: another
+		// credential, or a person, may be what fixes it.
+		if (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) && !modelErrorEnvelope(head) {
 			return s.haltService(w, stateDetailUnadmitted), true
 		}
 		return resp.StatusCode, false // a model error the service relayed

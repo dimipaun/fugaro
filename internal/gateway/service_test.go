@@ -609,6 +609,21 @@ func TestServiceRefusalIsNeverRelayed(t *testing.T) {
 			body: `<html>502 Bad Gateway</html>`,
 			want: http.StatusBadGateway, relayed: true,
 		},
+		{
+			// A credential's own 403, relayed by the service: the model's
+			// answer about the credential, not the platform's about the
+			// caller. It reaches the agent, and the run is not stopped by
+			// it -- the same status the front door's own 403 arrives with,
+			// and the two are told apart by the body's writer.
+			name: "a model error the service relayed with a 403", status: http.StatusForbidden,
+			body: `{"type":"error","error":{"type":"permission_error","message":"this credential is not permitted to use claude-sonnet-5-5"}}`,
+			want: http.StatusForbidden, relayed: true,
+		},
+		{
+			name: "a model error the service relayed with a 401", status: http.StatusUnauthorized,
+			body: `{"type":"error","error":{"type":"authentication_error","message":"the credential was rejected"}}`,
+			want: http.StatusUnauthorized, relayed: true,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var answers []ServiceAnswer
@@ -804,6 +819,52 @@ func TestServiceFrontDoorRefusalHalts(t *testing.T) {
 		t.Fatalf("a relayed 404: %d %s", resp.StatusCode, body)
 	}
 	noHalt(t, h)
+
+	// The front door's own JSON, which is not the model's envelope: Google's
+	// error shape has no "type":"error" of its own at the top level, and it
+	// is the body that names the project and the caller. What decides the
+	// halt is the body's writer, not whether it happens to be JSON.
+	t.Run("the platform's own JSON", func(t *testing.T) {
+		const google = `{"error":{"code":403,"message":"The request was not authenticated on project aurora-fp","status":"PERMISSION_DENIED"}}`
+		h, _ := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+			return anthropicfake.Reply{Status: http.StatusForbidden,
+				Header: http.Header{"Content-Type": []string{"application/json"}}, Body: google}
+		}, nil)
+		resp, body := h.post(msg(sonnet, 1000))
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("%d %s, want the halt's 403", resp.StatusCode, body)
+		}
+		if halt := haltOf(t, h); halt.Reason != ReasonBudgetUnavailable || halt.Detail != stateDetailUnadmitted {
+			t.Errorf("the halt is %+v, want %q / %q", halt, ReasonBudgetUnavailable, stateDetailUnadmitted)
+		}
+		if strings.Contains(body, "aurora-fp") || strings.Contains(body, "PERMISSION_DENIED") {
+			t.Errorf("the platform's own answer was relayed to the agent: %s", body)
+		}
+	})
+
+	// A body that wears the envelope's outer member but not the error the
+	// model API writes inside it. It is not a relay this release can vouch
+	// for, and the two mistakes are not equal: a body this gateway refuses
+	// to relay costs a run whose credential could have served it, and one it
+	// relays wrongly names the project and the caller to the agent. So the
+	// envelope has to be there in full.
+	t.Run("the outer member without the error's own", func(t *testing.T) {
+		const wrapped = `{"type":"error","error":{"code":403,"message":"The request was not authenticated on project aurora-fp","status":"PERMISSION_DENIED"}}`
+		h, _ := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+			return anthropicfake.Reply{Status: http.StatusForbidden,
+				Header: http.Header{"Content-Type": []string{"application/json"}}, Body: wrapped}
+		}, nil)
+		resp, body := h.post(msg(sonnet, 1000))
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("%d %s, want the halt's 403", resp.StatusCode, body)
+		}
+		if halt := haltOf(t, h); halt.Reason != ReasonBudgetUnavailable || halt.Detail != stateDetailUnadmitted {
+			t.Errorf("the halt is %+v, want %q / %q", halt, ReasonBudgetUnavailable, stateDetailUnadmitted)
+		}
+		if strings.Contains(body, "aurora-fp") {
+			t.Errorf("the platform's own answer was relayed to the agent: %s", body)
+		}
+	})
 }
 
 // TestServiceUnreadableAnswerSettlesAtItsReservation: a 2xx this gateway
