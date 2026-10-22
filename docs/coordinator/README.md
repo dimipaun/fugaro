@@ -60,9 +60,11 @@ paragraphs that allocate them — `docs/gcp-live-checklist.md` for every range u
 for mobile's **80–89**, and now for **90** itself, whose row and section the register writes and
 whose block's own allocation paragraph it carries — and `docs/mobile/README.md`,
 `docs/mobile/implementation-plan.md` and `docs/credentials-service/README.md` for **90–99** and
-**100–109**, the ranges whose remaining numbers the register does not yet reach: **91**,
-**92** and **96** are written and not run, **94**, **95** and **97–99** are not written, and **93** is
-reserved and unused. Every block
+**100–109**, the two ranges the register's own sections do not cover whole — it writes **90**,
+**91**, **92** and **96** of the first and nothing of the second, which is the row above. Of the
+numbers those documents and the register between them account for: **91**, **92** and **96** are
+written — by the register itself — and not run, **94**, **95** and **97–99** are not written, and
+**93** is reserved and unused. Every block
 either row states names the document it is read from, and
 both rows are held to the line that document carries it on by
 `internal/cli/docs_coordinator_test.go` rather than trusted. One range is read differently by two

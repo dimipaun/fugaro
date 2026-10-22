@@ -159,6 +159,12 @@ func TestSecurityMdStatesTheAppKeyIsTheServicesWhenTheServiceIsOn(t *testing.T) 
 		"A mint call carries the App's ID and nothing else — there is no repository field to fill in.",
 		"**calling job's account is bound to**",
 		"(see \"The GitHub App's key, when the credentials service holds it\" above)",
+		// And the reference back, in the direction it actually points: this
+		// section sits under "### Trust model and known limits" *above* the
+		// "### Known limits" bullet it hands the residual to, so that bullet is
+		// below it and the sentence has to say so — it said "above" until the
+		// review of this round, which is a reader's map to the wrong place.
+		"the residual in \"What one run's agent can reach\" below",
 		"no code path in the job mints a token or reads the App key **when the job's environment names the service**",
 		// The known limit of this release, which the document states because the
 		// keyless path is gated on a variable nothing on this tree sets: an
