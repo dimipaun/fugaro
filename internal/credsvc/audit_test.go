@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/config"
 )
 
 // auditValue is a fake credential VALUE, built at run time from the test's
@@ -25,7 +27,9 @@ func auditValue(t *testing.T) string {
 // audit line may carry.
 const auditName = "shared-one"
 
-// newAudit returns an Auditor writing one JSON line per act into a buffer.
+// newAudit returns an Auditor writing one JSON line per act into a buffer. The
+// auditor is built from the handler, not from a logger (NewAuditor), which is
+// how the service builds it too.
 //
 // An auditor cannot be built without the service's own redaction (NewAuditor),
 // so the default here is the scrub that removes nothing: the tests that are
@@ -34,7 +38,7 @@ const auditName = "shared-one"
 func newAudit(t *testing.T, opts ...AuditOption) (*Auditor, *bytes.Buffer) {
 	t.Helper()
 	var buf bytes.Buffer
-	a, err := NewAuditor(slog.New(slog.NewJSONHandler(&buf, nil)),
+	a, err := NewAuditor(slog.NewJSONHandler(&buf, nil),
 		append([]AuditOption{armed()}, opts...)...)
 	if err != nil {
 		t.Fatalf("NewAuditor: %v", err)
@@ -112,6 +116,28 @@ func checkAuditShape(t *testing.T, line map[string]any) {
 	}
 }
 
+// TestAuditVocabulary pins the words the line is read by: the message an
+// operator greps for the service's acts (the package doc says so), the message
+// an act that could not be recorded leaves, and the classes a refusal gives.
+// The field names are pinned the same way and as literals (auditFields); these
+// are the rest of the vocabulary a check, a runbook or an operator greps, and
+// nothing else in the repository pins them — a rename is a change to a contract
+// and has to come here and argue for itself.
+func TestAuditVocabulary(t *testing.T) {
+	for _, c := range []struct{ got, want string }{
+		{auditMessage, "credsvc: audit"},
+		{auditRefusedMessage, "credsvc: audit event refused"},
+		{refusalMissing, "missing"},
+		{refusalMalformed, "malformed"},
+		{refusalUnknown, "unknown"},
+		{refusalUnexpected, "unexpected"},
+	} {
+		if c.got != c.want {
+			t.Errorf("the audit vocabulary changed: %q, want %q", c.got, c.want)
+		}
+	}
+}
+
 // TestAuditCarriesNamesOnly is C1.13's red step: an audit line carries the
 // names of what the service did — the run, the repository, the job, the
 // caller, the credential's name, the purpose, the tier and the status — and
@@ -124,7 +150,7 @@ func TestAuditCarriesNamesOnly(t *testing.T) {
 
 	t.Run("an issuance carries the name and not the value", func(t *testing.T) {
 		a, buf := newAudit(t)
-		for _, purpose := range []string{PurposeForward, PurposeProbe, PurposeMint} {
+		for _, purpose := range []string{PurposeForward, PurposeProbe} {
 			buf.Reset()
 			if err := a.Write(context.Background(), id.Audit(AuditEvent{Credential: auditName, Tier: TierA, Purpose: purpose, Status: StatusOK})); err != nil {
 				t.Fatalf("Write(%s): %v", purpose, err)
@@ -151,8 +177,37 @@ func TestAuditCarriesNamesOnly(t *testing.T) {
 			// That the line carries no credential VALUE is not asserted here:
 			// this event was given a name, so an assertion that the value is
 			// absent could not fail. It is asserted where the value is actually
-			// present — "a value shaped like a name passes the field rules" and
-			// the scrub subtests below.
+			// present — the scrub subtests below.
+		}
+	})
+
+	t.Run("a mint names the App key and carries no tier", func(t *testing.T) {
+		// The mint's credential is the App key in the bundle (C2.1), and the
+		// App key is not a model credential of the cascade: it is of no tier.
+		// So the shape a mint is audited in is this one — the key's name and no
+		// tier — and C2.1's TestMintAudited writes it without inventing a tier
+		// the key does not have. The name is
+		// config.GitHubAppKeySecret's and not a literal here: it is the name the
+		// service will actually write, and this test is about that mint.
+		a, buf := newAudit(t)
+		if err := a.Write(context.Background(), id.Audit(AuditEvent{Credential: config.GitHubAppKeySecret, Purpose: PurposeMint, Status: StatusOK})); err != nil {
+			t.Fatalf("Write(mint): %v", err)
+		}
+		line := auditLines(t, buf)[0]
+		checkAuditShape(t, line)
+		for field, want := range map[string]string{
+			"run":        f.run,
+			"repository": f.slug,
+			"job":        f.job,
+			"caller":     testJobSA,
+			"credential": config.GitHubAppKeySecret,
+			"purpose":    PurposeMint,
+			"tier":       "",
+			"status":     StatusOK,
+		} {
+			if got := line[field]; got != want {
+				t.Errorf("the mint's line: %s = %v, want %q", field, got, want)
+			}
 		}
 	})
 
@@ -249,6 +304,13 @@ func TestAuditCarriesNamesOnly(t *testing.T) {
 			{"a credential with no tier", full(func(ev *AuditEvent) { ev.Tier = "" }), "credential", refusalMissing, ""},
 			{"a tier with no credential", full(func(ev *AuditEvent) { ev.Credential = "" }), "credential", refusalMissing, ""},
 			{"a tier the contract does not carry", full(func(ev *AuditEvent) { ev.Tier = "D" }), "tier", refusalUnknown, "D"},
+			// A mint's credential is the App key, which is not a model
+			// credential and has no tier: a tier on a mint is a fact the service
+			// does not have, so it is refused rather than recorded, and the
+			// class says the field does not belong to this kind of event rather
+			// than that its value is not a tier. (No content assertion: the
+			// value is one letter, and the line's own level carries it.)
+			{"a tier on a mint, whose credential has none", id.Audit(AuditEvent{Credential: config.GitHubAppKeySecret, Tier: TierA, Purpose: PurposeMint, Status: StatusOK}), "tier", refusalUnexpected, ""},
 			{"a run id that is not a path segment", full(func(ev *AuditEvent) { ev.Run = value + "/" + value }), "run", refusalMalformed, value},
 			{"a run id with no repository", full(func(ev *AuditEvent) { ev.Repository = "" }), "run", refusalMissing, ""},
 			// The repository's own guards, which the run's do not stand in for:
@@ -326,6 +388,40 @@ func TestAuditCarriesNamesOnly(t *testing.T) {
 		}
 	})
 
+	t.Run("the line is the contract's fields whatever the service's logger carries", func(t *testing.T) {
+		// The auditor is built from the handler, not from a logger, and this is
+		// why: a logger is a handler plus what it was built with — Logger.With
+		// and Logger.WithGroup apply to the handler Logger.Handler hands back —
+		// so an auditor built from the service's logger would write the
+		// service's attrs on every audit line, and, under a group, would nest
+		// the contract's own eight fields where a reader does not look for them.
+		//
+		// The service's logger is built with both here, and writes its own line
+		// first: that line is what proves the attrs and the group are real on
+		// this logger, so the audit line's lack of them is the auditor's doing
+		// and not the logger's.
+		var buf bytes.Buffer
+		h := slog.NewJSONHandler(&buf, nil)
+		svcLog := slog.New(h).With("service", "fugaro-credentials").WithGroup("credsvc")
+		svcLog.Info("the service's own line")
+
+		a, err := NewAuditor(h, armed())
+		if err != nil {
+			t.Fatalf("NewAuditor: %v", err)
+		}
+		if err := a.Write(context.Background(), id.Audit(AuditEvent{Credential: auditName, Tier: TierA, Purpose: PurposeForward, Status: StatusOK})); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		lines := auditLines(t, &buf)
+		if len(lines) != 2 {
+			t.Fatalf("the buffer holds %d lines, want the service's and the audit's", len(lines))
+		}
+		if _, ok := lines[0]["service"]; !ok {
+			t.Fatalf("the service's own line does not carry its attrs: %v", lines[0])
+		}
+		checkAuditShape(t, lines[1])
+	})
+
 	t.Run("a name that carries a bidi control is escaped, not carried", func(t *testing.T) {
 		// A run id and a repository slug are held to token.ValidSegment, which
 		// refuses '~', '/' and controls — and a bidi control is neither, so it
@@ -376,7 +472,7 @@ func TestAuditFailsClosed(t *testing.T) {
 
 	t.Run("a log that does not record the line's level is refused", func(t *testing.T) {
 		var buf bytes.Buffer
-		a, err := NewAuditor(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})), armed())
+		a, err := NewAuditor(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}), armed())
 		if err != nil {
 			t.Fatalf("NewAuditor: %v", err)
 		}
@@ -391,7 +487,7 @@ func TestAuditFailsClosed(t *testing.T) {
 	t.Run("a handler that cannot write is refused", func(t *testing.T) {
 		want := errors.New("the disk is full")
 		h := &recordHandler{err: want}
-		a, err := NewAuditor(slog.New(h), armed())
+		a, err := NewAuditor(h, armed())
 		if err != nil {
 			t.Fatalf("NewAuditor: %v", err)
 		}
@@ -412,7 +508,7 @@ func TestAuditFailsClosed(t *testing.T) {
 		bad.Run, bad.Repository = "", ""
 
 		var buf bytes.Buffer
-		quiet, err := NewAuditor(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError})), armed())
+		quiet, err := NewAuditor(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError}), armed())
 		if err != nil {
 			t.Fatalf("NewAuditor: %v", err)
 		}
@@ -421,7 +517,7 @@ func TestAuditFailsClosed(t *testing.T) {
 		}
 
 		want := errors.New("the disk is full")
-		failing, err := NewAuditor(slog.New(&recordHandler{err: want}), armed())
+		failing, err := NewAuditor(&recordHandler{err: want}, armed())
 		if err != nil {
 			t.Fatalf("NewAuditor: %v", err)
 		}
@@ -443,7 +539,7 @@ func TestAuditFailsClosed(t *testing.T) {
 		// rather than on a JSON handler's rendering of it: a host whose local
 		// zone is UTC would render a local time exactly as it renders this one.
 		h := &recordHandler{}
-		a, err := NewAuditor(slog.New(h), armed())
+		a, err := NewAuditor(h, armed())
 		if err != nil {
 			t.Fatalf("NewAuditor: %v", err)
 		}
@@ -476,17 +572,17 @@ func TestAuditFailsClosed(t *testing.T) {
 		if value := auditValue(t); !ValidCredentialName(value) {
 			t.Fatalf("the fake value is not credential-shaped, so this test no longer states the threat: %q", value)
 		}
-		if _, err := NewAuditor(slog.New(&recordHandler{})); err == nil {
+		if _, err := NewAuditor(&recordHandler{}); err == nil {
 			t.Fatal("NewAuditor returned an unarmed auditor: it would write a credential's value into the line")
 		}
-		if _, err := NewAuditor(slog.New(&recordHandler{}), WithAuditScrub(nil)); err == nil {
+		if _, err := NewAuditor(&recordHandler{}, WithAuditScrub(nil)); err == nil {
 			t.Fatal("WithAuditScrub(nil) armed the auditor with nothing, and NewAuditor accepted it")
 		}
 	})
 
-	t.Run("no logger is refused rather than dropped", func(t *testing.T) {
+	t.Run("no handler is refused rather than dropped", func(t *testing.T) {
 		if _, err := NewAuditor(nil, WithAuditScrub(func(s string) string { return s })); err == nil {
-			t.Fatal("NewAuditor accepted a nil logger: an issuance it could not record would be silent")
+			t.Fatal("NewAuditor accepted a nil handler: an issuance it could not record would be silent")
 		}
 	})
 }

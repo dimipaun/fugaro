@@ -27,6 +27,19 @@ import (
 // and not the header's (auth.go's verifyJob), so the run's own claim is
 // recorded beside the verified one rather than instead of it.
 //
+// "And nothing else" is a claim about what the auditor adds: the handler
+// renders its own time, level and message, and NewAuditor takes the handler
+// rather than a logger so that nothing the service's logger carries — an attr
+// or a group it was built with (Logger.With, Logger.WithGroup) — can reach this
+// line.
+//
+// The tier is a model credential's — the cascade's A, B or C — and the App key
+// a mint names is not one of those (PurposeMint): a mint carries no tier, and
+// a tier on a mint is refused rather than written, because a reader would take
+// it for a tier this service assigned. C2.1 mints from the App key in the
+// bundle: it audits its mint without recording a tier the key does not have,
+// and it does not have to invent one to get a line written.
+//
 // There is no free-form field, no map and no message a caller composes,
 // because the property this file exists for is that a credential's VALUE never
 // reaches the log (F32, D143's "every issuance audited by name", Check 94's
@@ -82,6 +95,12 @@ const (
 	PurposeProbe = "probe"
 	// PurposeMint is a GitHub App installation token minted from the App key
 	// in the bundle (C2.1). The credential's name is the App key's.
+	//
+	// The App key is not a model credential of the cascade: it has no tier, so
+	// a mint's event carries no tier, and one that carries a tier is refused
+	// (checked) rather than recorded. A mint C2.1 cannot audit without writing
+	// a tier the App key does not have would be a mint this file had made
+	// unauditable.
 	PurposeMint = "mint"
 )
 
@@ -155,7 +174,11 @@ type AuditEvent struct {
 	// all, the rule SetCredentialHeaders and CredentialHeaders already share: a
 	// line that named one without the other would be a line this service
 	// cannot write, and a reader that guessed at the missing half would be
-	// reading an answer the service did not give.
+	// reading an answer the service did not give. A mint is the one event the
+	// pair does not hold for, because the credential it names is the App key
+	// and the App key is not a model credential: PurposeMint carries a
+	// credential and no tier, and a tier on a mint is refused rather than
+	// recorded.
 	Credential string
 	Tier       string
 	// Purpose is what the credential was issued for (PurposeForward,
@@ -186,10 +209,10 @@ func (id Identity) Audit(ev AuditEvent) AuditEvent {
 }
 
 // Auditor writes the service's audit lines. It is safe for concurrent use (the
-// log is), and it holds nothing but the log and the service's redaction — the
-// second of which it cannot be built without (NewAuditor).
+// handler is), and it holds nothing but the handler and the service's
+// redaction — the second of which it cannot be built without (NewAuditor).
 type Auditor struct {
-	log   *slog.Logger
+	h     slog.Handler
 	scrub func(string) string
 }
 
@@ -215,12 +238,12 @@ func WithAuditScrub(f func(string) string) AuditOption {
 	}
 }
 
-// NewAuditor returns the auditor writing to log, armed with the service's own
+// NewAuditor returns the auditor writing to h, armed with the service's own
 // redaction. Both are required, and each is refused for its own reason:
 //
-//   - a nil log, because an act this service could not audit must not be made
-//     (D143), so a caller with nowhere to write does not get an auditor that
-//     silently drops lines;
+//   - a nil handler, because an act this service could not audit must not be
+//     made (D143), so a caller with nowhere to write does not get an auditor
+//     that silently drops lines;
 //   - no scrub (WithAuditScrub absent, or given a nil f), because the field
 //     rules cannot tell a credential's value from its name: a value is
 //     printable ASCII with no space, which is exactly what ValidCredentialName
@@ -230,16 +253,29 @@ func WithAuditScrub(f func(string) string) AuditOption {
 //     values and doing the redacting), and an auditor that cannot exist
 //     without it is one that cannot leak by a caller's omission.
 //
+// The parameter is the handler and not a logger, deliberately. A logger is a
+// handler plus whatever it was built with — Logger.With and Logger.WithGroup
+// apply their attrs and their group to the handler they return — and
+// Logger.Handler hands that handler back. So an auditor built from the
+// service's own logger would write the service's attrs on every audit line: a
+// field the contract does not have, and, under a group, the contract's own
+// eight fields nested where a reader does not look for them. Handed the handler
+// itself, the auditor writes to that and to nothing else, and the service may
+// With its logger as freely as it likes. (A handler that was already wrapped
+// with WithAttrs or WithGroup carries those on the line too: no auditor can
+// strip what a handler holds, which is why the parameter is the handler the
+// logger was built on and not a logger's Handler.)
+//
 // The set of names the service may issue is not consulted here, and
 // deliberately: that set is the bundle's, and the loader that reads it (C1.11)
 // is the task that owns the interface to it. This file would be writing
 // another task's interface if it took one, and a wrong guess at it would be a
 // rule the loader has to work around.
-func NewAuditor(log *slog.Logger, opts ...AuditOption) (*Auditor, error) {
-	if log == nil {
-		return nil, errors.New("credsvc: no logger: an act this service could not audit must not be made")
+func NewAuditor(h slog.Handler, opts ...AuditOption) (*Auditor, error) {
+	if h == nil {
+		return nil, errors.New("credsvc: no handler: an act this service could not audit must not be made")
 	}
-	a := &Auditor{log: log}
+	a := &Auditor{h: h}
 	for _, o := range opts {
 		o(a)
 	}
@@ -273,6 +309,10 @@ const (
 	// refusalUnknown: the field is one of a closed set the contract owns and
 	// the value is not one of them (a status, a purpose, a tier).
 	refusalUnknown = "unknown"
+	// refusalUnexpected: the field is set and this kind of event does not carry
+	// it — a tier on a mint, whose credential is the App key and not a model
+	// credential of the cascade, so there is no tier it could be holding.
+	refusalUnexpected = "unexpected"
 )
 
 // refusal is why an event was not recorded: the field, and the class of thing
@@ -346,11 +386,12 @@ func (a *Auditor) Write(ctx context.Context, ev AuditEvent) error {
 // and other zones, and a local time in it is a time the reader has to guess
 // the zone of.
 //
-// The handler is used directly rather than through the logger, so the line
-// carries the contract's fields and nothing else — a caller's logger attrs
-// would be extra fields on a line whose shape is the contract's.
+// The handler is used directly, and it is the one the auditor was built with,
+// so the line is the contract's fields and nothing else the auditor could have
+// brought: a line written through a logger would carry whatever that logger was
+// built with (Logger.With, Logger.WithGroup).
 func (a *Auditor) line(ctx context.Context, level slog.Level, msg string, attrs ...slog.Attr) error {
-	h := a.log.Handler()
+	h := a.h
 	if !h.Enabled(ctx, level) {
 		return fmt.Errorf("credsvc: the audit log does not record at %s: an act this service could not audit must not be made", level)
 	}
@@ -369,8 +410,9 @@ func (a *Auditor) line(ctx context.Context, level slog.Level, msg string, attrs 
 //
 // The classes are read off the rules rather than guessed at: a value of the
 // wrong shape is refusalMalformed, a value out of a closed set the contract
-// owns is refusalUnknown, and a field the event needs and does not have is
-// refusalMissing.
+// owns is refusalUnknown, a field the event needs and does not have is
+// refusalMissing, and a field set on an event whose kind does not carry it is
+// refusalUnexpected.
 func (a *Auditor) checked(ev AuditEvent) (AuditEvent, refusal) {
 	ev = a.redact(ev)
 	switch {
@@ -394,11 +436,20 @@ func (a *Auditor) checked(ev AuditEvent) (AuditEvent, refusal) {
 		return AuditEvent{}, refusal{"job", refusalMissing}
 	case ev.Credential != "" && !ValidCredentialName(ev.Credential):
 		return AuditEvent{}, refusal{"credential", refusalMalformed}
-	case (ev.Credential == "") != (ev.Tier == ""):
+	case ev.Purpose == PurposeMint && ev.Tier != "":
+		// The App key a mint names is not a model credential of the cascade and
+		// has no tier, so a tier here is one this service never assigned: the
+		// line would be recording a fact the service does not have, and C2.1's
+		// mint would be auditable only by writing one.
+		return AuditEvent{}, refusal{"tier", refusalUnexpected}
+	case ev.Purpose != PurposeMint && (ev.Credential == "") != (ev.Tier == ""):
 		// The both-or-neither rule the wire already keeps (SetCredentialHeaders,
 		// CredentialHeaders): a line naming one without the other is not one
 		// this service writes, and a reader that guessed the missing half
-		// would be reading an answer the service did not give.
+		// would be reading an answer the service did not give. A mint is the one
+		// purpose it does not hold for, because its credential is the App key
+		// and the App key has no tier to pair with the name — which is why the
+		// tier is refused above rather than required here.
 		return AuditEvent{}, refusal{"credential", refusalMissing}
 	case ev.Tier != "" && !ValidTier(ev.Tier):
 		return AuditEvent{}, refusal{"tier", refusalUnknown}
