@@ -161,10 +161,18 @@ variable "history" {
 
 variable "credentials_service" {
   type = object({
-    account_id    = string
-    service       = string
-    image         = string
-    bundle_secret = string
+    account_id       = string
+    service          = string
+    image            = string
+    bundle_secret    = string
+    firebase_project = string
+    rtdb_url         = string
+    job_accounts = list(object({
+      provider = string
+      repo     = string
+      workflow = string
+    }))
+    url = optional(string)
   })
   # The credentials service (D146, D147), OFF by default: fugaro init's
   # credentials stage (C1.20) is the only writer, and only when the owner runs
@@ -173,6 +181,15 @@ variable "credentials_service" {
   # reads — the project-wide container of the logical name "creds-bundle"
   # (internal/backend/gcp's ProjectSecretID), which that stage fills so this
   # variable and the loader's own derivation (C1.11) name one secret.
+  # firebase_project, rtdb_url and job_accounts are the rest of the service's
+  # environment (C1.14: the Firebase project, the database, and the jobs whose
+  # accounts may call it), and url is the service's own URL — the audience its
+  # callers' tokens are minted for — which Cloud Run assigns, so the module
+  # carries its unassigned placeholder until the apply after the one that
+  # creates the service (the module's own output reads the URL back, and the
+  # stage that fills this variable applies again in the same run; the type is
+  # the module's, and its validations are the ones that hold these four to
+  # their shape).
   default = null
 }
 

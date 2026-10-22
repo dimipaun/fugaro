@@ -37,10 +37,13 @@ func goldenPlan(t *testing.T, name string) *Plan {
 
 // goldenCover is the run each golden plan was made for (the tfvars the
 // script uses): project proj-1234 (the Firebase root's project aurora-fp is
-// a second one), the default registry and the default runs bucket.
+// a second one), the default registry and the default runs bucket, and the
+// installation's pull-through repository with the owner its images are
+// recorded against (installation-credentials names one of them, so the
+// credentials service's stricter image check reads both).
 func goldenCover(listed ...string) Cover {
 	return Cover{Projects: []string{"proj-1234", "aurora-fp"}, Registry: "us-east5-docker.pkg.dev", Region: "us-east5",
-		Buckets: []string{"fugaro-runs-proj-1234"}, Listed: listed}
+		Buckets: []string{"fugaro-runs-proj-1234"}, Ghcr: "fugaro-ghcr", Owner: "dimipaun", Listed: listed}
 }
 
 func TestGoldenPlansAreCovered(t *testing.T) {
@@ -52,8 +55,13 @@ func TestGoldenPlansAreCovered(t *testing.T) {
 		// (TestGoldenAccountJobMountsOnlyItsOwnToken reads the rest).
 		"installation-accounts": nil,
 		"installation-managed":  nil,
-		"repo":                  {"user:launcher@example.com", "user:operator@example.com"},
-		"firebase":              {"user:launcher@example.com", "user:operator@example.com", "user:extra@example.com", "user:owner@example.com", "group:editors@example.com"},
+		// The credentials service ON (C1.14): the same root and run with the
+		// service's seven environment variables on its revision, read off a
+		// real plan. TestGoldenCredentialsServiceCarriesItsSevenNames reads
+		// their values back against the fixture.
+		"installation-credentials": nil,
+		"repo":                     {"user:launcher@example.com", "user:operator@example.com"},
+		"firebase":                 {"user:launcher@example.com", "user:operator@example.com", "user:extra@example.com", "user:owner@example.com", "group:editors@example.com"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := goldenPlan(t, name)

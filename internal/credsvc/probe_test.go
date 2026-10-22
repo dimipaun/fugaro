@@ -181,7 +181,7 @@ func probeSvc(t *testing.T, mutate func(*svc, *Config)) (*svc, *logBuf) {
 func testPolicyDocBackoff(initial, cap string) string {
 	return `{
 		"version": 3,
-		"budget": {"mode": "enforce", "per_run_usd": 5},
+		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
 		"accounts": {
 			"default": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]},
@@ -259,14 +259,45 @@ func wait(t *testing.T, resp *http.Response, body []byte) time.Time {
 	return e.ResetAt
 }
 
+// probeLines is every line a buffer holds for a probe's own act: the fixtures'
+// audit handler is the service's one audit log, and the answer path writes its
+// own lines into it too (C1.13 — an issuance, and the refusal a call that could
+// not be served gets). A line whose purpose is PurposeProbe is a probe's, and a
+// test about probes reads only those; anything that is not purpose-tagged is
+// this file's own bug, not a probe's line.
+func probeLines(t *testing.T, buf *logBuf) []map[string]any {
+	t.Helper()
+	if buf.Len() == 0 {
+		return nil
+	}
+	var out []map[string]any
+	for _, line := range auditLines(t, buf) {
+		if got, ok := line["purpose"].(string); !ok || got == "" {
+			t.Fatalf("an audit line carries no purpose: %v", line)
+		}
+		if line["purpose"] == PurposeProbe {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// noProbeLine fails a test that expected no probe to be audited and found one.
+func noProbeLine(t *testing.T, buf *logBuf, why string) {
+	t.Helper()
+	if lines := probeLines(t, buf); len(lines) != 0 {
+		t.Errorf("%s, and a probe was audited anyway: %v", why, lines)
+	}
+}
+
 // probeLine is the one audit line a probe writes, and whether there is exactly
 // one.
 func probeLine(t *testing.T, buf *logBuf) (map[string]any, bool) {
 	t.Helper()
-	if buf.Len() == 0 {
+	lines := probeLines(t, buf)
+	if len(lines) == 0 {
 		return nil, false
 	}
-	lines := auditLines(t, buf)
 	if len(lines) != 1 {
 		t.Fatalf("a probe wrote %d audit lines, want 1: %v", len(lines), lines)
 	}
@@ -538,9 +569,7 @@ func TestOneProbeAtATime(t *testing.T) {
 	if got := s.up.Count(); got != 0 {
 		t.Errorf("the upstream saw %d requests while another instance held the credential's probe claim", got)
 	}
-	if auditLog.Len() != 0 {
-		t.Errorf("a probe nobody made wrote an audit line: %s", auditLog.String())
-	}
+	noProbeLine(t, auditLog, "a probe nobody made")
 	if m, _ := s.state.mark("default"); m.Backoff != creds.DefaultBackoffInitial {
 		t.Errorf("the mark moved to %+v while another instance was probing", m)
 	}
@@ -628,9 +657,7 @@ func TestWaitWhenAProbeIsOwedAndNotMade(t *testing.T) {
 			if got := s.up.Count(); got != 0 {
 				t.Errorf("the upstream saw %d requests, want none: no probe was made", got)
 			}
-			if auditLog.Len() != 0 {
-				t.Errorf("a probe nobody made wrote an audit line: %s", auditLog.String())
-			}
+			noProbeLine(t, auditLog, "a probe nobody made")
 		})
 	}
 }
@@ -940,9 +967,7 @@ func TestNoProbeOnBroken(t *testing.T) {
 	if got := s.up.Count(); got != 0 {
 		t.Errorf("the upstream saw %d requests for a broken credential", got)
 	}
-	if auditLog.Len() != 0 {
-		t.Errorf("a probe of a broken credential wrote an audit line: %s", auditLog.String())
-	}
+	noProbeLine(t, auditLog, "a probe of a broken credential")
 	if m, _ := s.state.mark("default"); m.State != broken.State || !m.Since.Equal(broken.Since) {
 		t.Errorf("the broken mark moved to %+v, want %+v", m, broken)
 	}
@@ -998,9 +1023,7 @@ func TestNoProbeOnAnUnreadableMark(t *testing.T) {
 	if got := s.up.Count(); got != 0 {
 		t.Errorf("the upstream saw %d requests for a mark this release does not read", got)
 	}
-	if auditLog.Len() != 0 {
-		t.Errorf("a probe was audited for a mark this release does not read: %s", auditLog.String())
-	}
+	noProbeLine(t, auditLog, "a probe of a mark this release does not read")
 	if m, _ := s.state.mark("default"); m != unknown {
 		t.Errorf("the mark is %+v, want the node this release does not read left alone (%+v)", m, unknown)
 	}

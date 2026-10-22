@@ -495,10 +495,17 @@ func TestGatewayOnForCascade(t *testing.T) {
 
 // cascadeRun is the minimal cascade run: agent.auth cascade, the gateway on,
 // and whatever switch the case hands it through the policy node.
+//
+// The node also publishes the model allow-list the credentials service holds
+// every call of a cascade run to (the owner's ruling of 2026-10-22): a cascade
+// run of a project that publishes none is refused in bootstrap
+// (TestCascadeRefusedWithoutAllowList), so the fixture a test uses to get *past*
+// that arm has to carry one — the node is the only layer that service reads.
 func cascadeRun(t *testing.T, sw *config.RoutingClaude) *run {
 	t.Helper()
 	r := routedRun(t, sw, "claude-sonnet-5-5", "claude-opus-5")
 	r.cfg.Agent.Auth = config.AuthCascade
+	r.projPolicy.policy.Budget = projectpolicy.Budget{Mode: policy.ModeObserve, AllowedModels: []string{"claude-sonnet-5-5"}}
 	return r
 }
 
@@ -613,5 +620,62 @@ func TestLocalCascadeIsRefusedAsALocalRun(t *testing.T) {
 	r = cascadeRun(t, nil)
 	if err := r.applyRouting(r.projPolicy.policy, false); err == nil || !strings.Contains(err.Error(), "project policy publish") {
 		t.Errorf("a cascade job with no switch: %v, want the O2 refusal naming the policy", err)
+	}
+}
+
+// TestCascadeRefusedWithoutAllowList (the owner's ruling of 2026-10-22, C1.11):
+// the credentials service carries every call a cascade run makes and holds each
+// of them to the project's published budget.allowed_models, and it refuses a
+// project that publishes none — so such a run could make no call at all. It is
+// refused here, in bootstrap, rather than left to halt on its first forwarded
+// call: the launch refuses the same file one step earlier (internal/cli's
+// cascadeLaunchRefusal), `fugaro validate` reports it to the author
+// (cascadeProblems), and this is the run's own side of it, for a job that
+// started some other way.
+//
+// What is judged is the *node's* list: the service reads the published policy
+// and nothing else, so the job environment's ceiling — the other layer a run's
+// merged allow-list comes from — cannot stand in for it, and the second case
+// below is what says so.
+//
+// Mutation (run, restored): drop the arm and the first case passes with err =
+// nil (the run is left to be refused call by call by the service); judge the
+// run's merged or ceiling list instead of the node's and the second case is
+// admitted for a run whose every call the service refuses.
+func TestCascadeRefusedWithoutAllowList(t *testing.T) {
+	r := cascadeRun(t, &config.RoutingClaude{Via: config.RouteCascade})
+	r.projPolicy.policy.Budget.AllowedModels = nil
+	err := r.applyRouting(r.projPolicy.policy, true)
+	if err == nil {
+		t.Fatal("a cascade run whose policy publishes no allow-list was admitted")
+	}
+	for _, want := range []string{config.AuthCascade, "budget.allowed_models", "project policy publish"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	// The ceiling is another layer, and not the one the service reads: a run
+	// whose job environment carries the allow-list still has none at the node,
+	// and every call of it would be refused.
+	r.spend.AllowedModels = []string{"claude-sonnet-5-5"}
+	if err := r.applyRouting(r.projPolicy.policy, true); err == nil {
+		t.Error("a cascade run whose ceiling publishes the allow-list and whose policy does not was admitted: the ceiling never reaches the credentials service")
+	}
+	// The node's list is the way out, and the run proceeds with it. via:
+	// cascade routes no model of its own, so the pins stay Claude's (D133,
+	// D150) — TestCascadeRefusedWithoutPolicySwitch asserts that in full.
+	r.projPolicy.policy.Budget.AllowedModels = []string{"claude-sonnet-5-5"}
+	if err := r.applyRouting(r.projPolicy.policy, true); err != nil {
+		t.Errorf("a cascade run whose policy publishes the allow-list: %v", err)
+	}
+	// The rule is the cascade's: nothing reads the allow-list for an auth whose
+	// calls the gateway does not forward to the credentials service, so an
+	// api-key run of the same project is not refused by it (via: cascade is
+	// inert for that credential, RoutingInertCascadeOtherAuth).
+	other := cascadeRun(t, &config.RoutingClaude{Via: config.RouteCascade})
+	other.projPolicy.policy.Budget.AllowedModels = nil
+	other.cfg.Agent.Auth = "api-key"
+	if err := other.applyRouting(other.projPolicy.policy, true); err != nil {
+		t.Errorf("an api-key run of a project whose policy publishes no allow-list: %v", err)
 	}
 }

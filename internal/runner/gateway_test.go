@@ -227,7 +227,7 @@ func TestCascadeEnforceWithoutCapsHaltsNoCap(t *testing.T) {
 	g.deps.Project = "aurora"
 	g.deps.Execution = cloudRunExecution(gcp.JobName(repoSlug, gcp.WorkflowVariant("app", "")))
 	g.deps.Env = append(g.deps.Env, "CLOUD_RUN_EXECUTION=exec-1")
-	b := publishPolicy(t, g, fmt.Sprintf(`{"version":%d,"allow_repos":["*"],"routing":{"claude":{"via":"cascade"}}}`, projectpolicy.RulesVersion))
+	b := publishPolicy(t, g, fmt.Sprintf(`{"version":%d,"allow_repos":["*"],"routing":{"claude":{"via":"cascade"}},"budget":{"mode":"enforce","allowed_models":["claude-sonnet-5-5"]}}`, projectpolicy.RulesVersion))
 	// Nothing to lease against, anywhere: the run may not begin.
 	b.db.Set(budget.PathCapsRepo(repoSlug), nil)
 	b.db.Set(budget.PathCapsGlobal, nil)

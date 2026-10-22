@@ -95,3 +95,52 @@ func slicesAll(got []string, want string) bool {
 	}
 	return true
 }
+
+// TestCredsSetRefusesTheAppKeyAtATerminal: the App key is the one entry whose
+// value is not one line, and it is refused at a terminal BEFORE anything is
+// read. The hidden prompt takes one line, so a prompt that took the -----BEGIN
+// line and then failed the shape check would have had the operator paste a
+// private key into a terminal for nothing. The refusal is the same sentence
+// `fugaro secrets set` makes for its one multi-line secret (readSecret,
+// secrets.go), with this command's name, and it names the way in: stdin, from
+// the key file.
+//
+// The pty is real and nothing is ever written to it: the point is that the
+// command answers without waiting for a line, which is why this test needs no
+// timeout of its own -- a prompt that read would hang here.
+func TestCredsSetRefusesTheAppKeyAtATerminal(t *testing.T) {
+	tty := newTTY(t)
+	sm := credsFixtureFor(t)
+	sm.seed(t, nil)
+
+	cmd := NewRootCmd()
+	var out, errOut bytes.Buffer
+	cmd.SetIn(tty.tty)
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs(NormalizeRepoArgs([]string{"creds", "set", config.GitHubAppKeySecret}))
+	err := cmd.Execute()
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("creds set %s at a terminal = %v, want a user error", config.GitHubAppKeySecret, err)
+	}
+	for _, want := range []string{"hidden prompt can't take", "< PATH-TO-THE-KEY-FILE", config.GitHubAppKeySecret} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal is %q, want it to say %q", err, want)
+		}
+	}
+	if n := sm.writes(); n != 0 {
+		t.Fatalf("%d version(s) written at a terminal", n)
+	}
+	if got := sm.Accessed(); len(got) != 0 {
+		t.Errorf("a value was read for a refusal that happens before the read: %q", got)
+	}
+	// The prompt is never printed: the refusal comes first, so there is nothing
+	// for the operator to paste a key into, and the terminal displays no part
+	// of one.
+	if strings.Contains(errOut.String(), "Paste the value") {
+		t.Errorf("the hidden prompt was printed for the App key: %q", errOut.String())
+	}
+	if shown := tty.displayed(); strings.Contains(shown, "PRIVATE KEY") {
+		t.Errorf("the terminal displayed a key: %q", shown)
+	}
+}
