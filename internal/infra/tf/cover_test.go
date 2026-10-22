@@ -397,13 +397,35 @@ func TestAllowedTypesCoverTheModules(tt *testing.T) {
 		// variables credentialsServiceEnv allows. A module edit that renames
 		// or drops one fails here rather than refusing a plan the module
 		// still writes.
-		"modules/installation/credentials.tf": {`invoker_iam_disabled = false`, `"FUGARO_PROJECT"`, `"FUGARO_GCP_PROJECT"`, `"FUGARO_REGION"`},
+		"modules/installation/credentials.tf": {`invoker_iam_disabled = false`, `"FUGARO_PROJECT"`, `"FUGARO_GCP_PROJECT"`, `"FUGARO_REGION"`,
+			// The account its template names, which the case reads back as the
+			// account this plan creates (serviceAccount): a module edit that
+			// points the service at another identity fails here rather than
+			// refusing a plan the module still writes.
+			`service_account = google_service_account.credentials[0].email`},
 	}
 	for file, wants := range pins {
 		got := all[filepath.Join(root, "gcp", file)]
 		for _, w := range wants {
 			if !strings.Contains(got, w) {
 				tt.Errorf("%s no longer contains %s: update the attribute checks in tf/cover.go", file, w)
+			}
+		}
+	}
+	// The service's container sets no command and no args, and no environment
+	// entry carries a value_source: its case in tf/cover.go refuses all three
+	// (the image's own entrypoint is the service, C1.14, and a value_source is
+	// the Secret Manager read credentials.tf's comment says this container does
+	// not make). A module edit that adds one fails here rather than refusing a
+	// plan the module still writes.
+	for _, line := range strings.Split(all[filepath.Join(root, "gcp", "modules/installation/credentials.tf")], "\n") {
+		l := strings.TrimSpace(line)
+		if strings.HasPrefix(l, "#") {
+			continue
+		}
+		for _, attr := range []string{"command", "args", "value_source"} {
+			if strings.HasPrefix(l, attr) {
+				tt.Errorf("modules/installation/credentials.tf sets %q: the credentials service's case in tf/cover.go refuses it", l)
 			}
 		}
 	}
@@ -770,10 +792,39 @@ func TestCoverRefusesACheckSpecOutsideThePin(t *testing.T) {
 	}
 }
 
+// credentialsAccountID and credentialsAccount are the account
+// modules/installation/credentials.tf creates for the service
+// (google_service_account.credentials[0]), and the resource a plan carries for
+// it: the service's template.service_account is held to this account of the
+// same module, so every plan below holds the pair.
+//
+// The address is the module's own, count index and all: the check reads the
+// resource rather than "an account this plan creates", because the same module
+// also creates the deployer, the history and the scheduler accounts
+// (credentialsSibling), and one of those running the service's image is what
+// the check exists to refuse.
+const credentialsAccountID = "fugaro-credentials"
+
+const credentialsAccountEmail = credentialsAccountID + "@proj-1.iam.gserviceaccount.com"
+
+func credentialsAccount(acts ...string) ResourceChange {
+	r := rc("google_service_account", map[string]any{"account_id": credentialsAccountID}, map[string]any{}, acts...)
+	r.Address = "module.m.google_service_account.credentials[0]"
+	return r
+}
+
+// credentialsSibling is another account of the same module — the deployer's,
+// in the fixtures' shape: a google_service_account the module creates, with an
+// address that is not the credentials service's resource.
+func credentialsSibling(id string, acts ...string) ResourceChange {
+	return rc("google_service_account", map[string]any{"account_id": id}, map[string]any{}, acts...)
+}
+
 // service is the credentials service as modules/installation/credentials.tf
 // writes it: one container at template[0].containers[0] — one `template` level
 // fewer than a job's — with image as the container's image, the module's three
-// environment variables, and the IAM check stated rather than implied.
+// environment variables, the account the module creates for it, and the IAM
+// check stated rather than implied.
 //
 // Each env entry carries `"value_source": []` because that is what Terraform
 // writes for a nested block of list nesting mode that the module does not set:
@@ -790,32 +841,41 @@ func service(image string) ResourceChange {
 		map[string]any{"name": "FUGARO_REGION", "value": "us-east5", "value_source": []any{}},
 	}}
 	return rc("google_cloud_run_v2_service", map[string]any{"invoker_iam_disabled": false,
-		"template": []any{map[string]any{"containers": []any{c}}}}, map[string]any{}, "create")
+		"template": []any{map[string]any{"service_account": credentialsAccountEmail, "containers": []any{c}}}}, map[string]any{}, "create")
+}
+
+// servicePlan is the plan the module's own service is covered in: the service
+// and the account it runs as, which the same module creates.
+func servicePlan(r ResourceChange) *Plan {
+	return &Plan{ResourceChanges: []ResourceChange{r, credentialsAccount("create")}}
 }
 
 // The credentials service is the one container image in the tree that is not a
 // job: init's one confirmation admits the type, so its image has to be held to
-// this run's registry exactly as a job's is. Without the check a hand-edited or
-// stale terraform.tfvars.json can name any registry, owner and digest, and the
-// apply runs that image as the account that reads every model credential in the
-// bundle — the operator-push boundary credentials.tf's M1 comment cites, and
-// what baseImageOK refuses for a job image.
+// the released pin. Without the check a hand-edited or stale
+// terraform.tfvars.json can name any registry, owner and digest, and the apply
+// runs that image as the account that reads every model credential in the
+// bundle — the operator-push boundary credentials.tf's M1 comment cites.
 //
-// The image is held to the pin's closed shape (baseImageOK: this run's
-// registry, and under the remote repository's ID the recorded owner, a
-// fugaro-<kind> image, a version tag and a digest) AND to an @sha256: digest,
-// because M1's rule for THIS image is that a tag is never enough: the registry
-// grants roles/artifactregistry.writer to every operator (iam.tf), so a
-// mutable tag would let an operator push the code the next owner apply runs as
-// that account. The module's own validation refuses a tag already
-// (modules/installation/variables.tf, TestCredentialsServiceImageMustBeADigest),
-// so no plan the module can produce is refused here; the digest rule is held at
+// The image is held to the pin's closed shape through the pull-through
+// repository and to NOTHING else (credentialsImageOK): this run's registry, the
+// remote repository's ID, the RECORDED owner, a fugaro-<kind> image, a version
+// tag and a digest. A job's image may also be any reference under this run's own
+// repositories (baseImageOK's loose half, which the job test above pins) — this
+// one may not, and that is the gap a review of this case found: iam.tf grants
+// roles/artifactregistry.writer on the run's base repository to every operator,
+// so an operator can push bytes to <registry>/<project>/fugaro-base/, read the
+// digest back and name it here, and M1's @sha256 rule forbids rewriting a pin
+// without forbidding CHOOSING one. The module's own validation refuses a tag
+// already (modules/installation/variables.tf, TestCredentialsServiceImageMustBeADigest),
+// so no plan the module can produce is refused here; the pin's shape is held at
 // the cover layer too, which is the layer a hand-edited module does not go
 // through.
 //
 // Mutation (run, restore): delete the google_cloud_run_v2_service case from
 // Cover.attributes — every "refused" row below becomes covered, which is the
-// hole this case exists to close.
+// hole this case exists to close. Mutation (run, restore): call baseImageOK
+// instead of credentialsImageOK — the "base registry" rows become covered.
 func TestCoverRefusesACredentialsServiceImageOutsideThePin(t *testing.T) {
 	const reg = "us-east5-docker.pkg.dev/proj-1/"
 	d := strings.Repeat("a", 64)
@@ -824,38 +884,68 @@ func TestCoverRefusesACredentialsServiceImageOutsideThePin(t *testing.T) {
 		covered bool
 	}{
 		"the released image through the proxy":     {reg + "fugaro-ghcr/dimipaun/fugaro-credentials:1.2.3@sha256:" + d, true},
-		"the base registry, pinned by digest":      {reg + "fugaro-base/fugaro-credentials@sha256:" + d, true},
 		"a tag beside the digest, as C1.20 writes": {reg + "fugaro-ghcr/dimipaun/fugaro-credentials:1.2.3@sha256:" + d, true},
-		"a foreign registry with a valid digest":   {"evil.example.com/proj-1/fugaro-base/fugaro-credentials@sha256:" + d, false},
-		"another project of this registry":         {"us-east5-docker.pkg.dev/other-proj/fugaro-base/fugaro-credentials@sha256:" + d, false},
-		"a foreign owner through the proxy":        {reg + "fugaro-ghcr/evil/fugaro-credentials:1.2.3@sha256:" + d, false},
-		"the proxy path without a version tag":     {reg + "fugaro-ghcr/dimipaun/fugaro-credentials@sha256:" + d, false},
-		"the proxy path without a digest":          {reg + "fugaro-ghcr/dimipaun/fugaro-credentials:1.2.3", false},
-		"a mutable tag in the base registry":       {reg + "fugaro-base/fugaro-credentials:latest", false},
-		"a truncated digest in the base registry":  {reg + "fugaro-base/fugaro-credentials@sha256:" + strings.Repeat("a", 63), false},
-		"not a sha256 digest":                      {reg + "fugaro-base/fugaro-credentials@sha512:" + d, false},
-		"a bare path in the registry":              {reg, false},
-		"the registry itself":                      {"us-east5-docker.pkg.dev", false},
-		"dot-dot under the proxy":                  {reg + "fugaro-ghcr/../evil/fugaro-credentials:1@sha256:" + d, false},
-		"an empty image":                           {"", false},
+		// The operator-writable repository, which baseImageOK admits for a job
+		// and this account never may: a digest there is a digest an operator
+		// chose, and the apply runs it as the account that reads the bundle.
+		"the base registry, pinned by digest":     {reg + "fugaro-base/fugaro-credentials@sha256:" + d, false},
+		"the base registry, a tag beside it":      {reg + "fugaro-base/fugaro-credentials:1.2.3@sha256:" + d, false},
+		"the run's own repository":                {reg + "fugaro-acme-webapp/app@sha256:" + d, false},
+		"a foreign registry with a valid digest":  {"evil.example.com/proj-1/fugaro-base/fugaro-credentials@sha256:" + d, false},
+		"another project of this registry":        {"us-east5-docker.pkg.dev/other-proj/fugaro-base/fugaro-credentials@sha256:" + d, false},
+		"a foreign owner through the proxy":       {reg + "fugaro-ghcr/evil/fugaro-credentials:1.2.3@sha256:" + d, false},
+		"the proxy path without a version tag":    {reg + "fugaro-ghcr/dimipaun/fugaro-credentials@sha256:" + d, false},
+		"the proxy path without a digest":         {reg + "fugaro-ghcr/dimipaun/fugaro-credentials:1.2.3", false},
+		"a mutable tag in the base registry":      {reg + "fugaro-base/fugaro-credentials:latest", false},
+		"a truncated digest in the base registry": {reg + "fugaro-base/fugaro-credentials@sha256:" + strings.Repeat("a", 63), false},
+		"not a sha256 digest":                     {reg + "fugaro-base/fugaro-credentials@sha512:" + d, false},
+		"a bare path in the registry":             {reg, false},
+		"the registry itself":                     {"us-east5-docker.pkg.dev", false},
+		"dot-dot under the proxy":                 {reg + "fugaro-ghcr/../evil/fugaro-credentials:1@sha256:" + d, false},
+		"an empty image":                          {"", false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			p := &Plan{ResourceChanges: []ResourceChange{service(tc.image)}}
+			p := servicePlan(service(tc.image))
 			if got := testCover.NotCovered(p, nil); (len(got) == 0) != tc.covered {
 				t.Fatalf("NotCovered = %q, covered want %v", got, tc.covered)
 			}
 		})
 	}
+	// An empty owner refuses every remote path, as it does for a job's image:
+	// a caller that forgets one cannot reopen the hole.
+	noOwner := testCover
+	noOwner.Owner = ""
+	p := servicePlan(service(reg + "fugaro-ghcr/dimipaun/fugaro-credentials:1.2.3@sha256:" + d))
+	if got := noOwner.NotCovered(p, nil); len(got) == 0 {
+		t.Fatalf("NotCovered = %q with an empty owner, want a refusal", got)
+	}
 }
 
-// The service's other two decisions are the plan's, not the module's: its
-// environment, and whether IAM is required at all.
+// The service's other decisions are the plan's, not the module's: its
+// environment, its command line, the account it runs as, and whether IAM is
+// required at all.
 //
 // The environment is an allowlist of the three names the module sets, because
 // an environment is the one path a credential could reach this process without
 // a Secret Manager read, and this process's account reads every model
 // credential in the bundle. An environment the plan does not fully know is
-// refused rather than trusted — the same rule checkSpecs applies to a job's.
+// refused rather than trusted — the same rule checkSpecs applies to a job's —
+// and so is an entry carrying a value_source: a value taken from elsewhere is
+// exactly the Secret Manager read the module's own comment says this container
+// does not make for its environment (an allow-listed NAME with a value_source
+// under it would otherwise pass, review finding).
+//
+// No command and no args either: credentials.tf sets neither, so the image's
+// own entrypoint is the service (C1.14), and an unchecked command would run
+// whatever a hand edit wrote under init's one confirmation (the job case makes
+// the same check against its own table).
+//
+// The account is the one this plan creates for the service in the same module
+// (template.service_account). Unchecked, it lets a hand edit run the service's
+// image as an identity of the editor's choosing; a value that is not known is
+// the module's own only when it creates the account with it (the email is
+// computed at create).
+//
 // invoker_iam_disabled must be false (IAM required), so a plan that turns the
 // front end's IAM check off — letting anyone invoke the one account that reads
 // the bundle — is not covered.
@@ -863,7 +953,7 @@ func TestCoverRefusesACredentialsServiceImageOutsideThePin(t *testing.T) {
 // Mutation (run, restore): delete the google_cloud_run_v2_service case from
 // Cover.attributes — every "refused" row below becomes covered.
 func TestCoverRefusesACredentialsServiceThatIsNotTheModules(t *testing.T) {
-	img := "us-east5-docker.pkg.dev/proj-1/fugaro-base/fugaro-credentials@sha256:" + strings.Repeat("a", 64)
+	img := "us-east5-docker.pkg.dev/proj-1/fugaro-ghcr/dimipaun/fugaro-credentials:1.2.3@sha256:" + strings.Repeat("a", 64)
 	// svc builds the module's service fresh for each row, and container is the
 	// one container of a change svc built.
 	svc := func() ResourceChange { return service(img) }
@@ -872,6 +962,9 @@ func TestCoverRefusesACredentialsServiceThatIsNotTheModules(t *testing.T) {
 	}
 	unkEnv := func(v any) map[string]any {
 		return map[string]any{"template": []any{map[string]any{"containers": []any{map[string]any{"env": v}}}}}
+	}
+	template := func(r ResourceChange) map[string]any {
+		return r.Change.After["template"].([]any)[0].(map[string]any)
 	}
 	for name, tc := range map[string]struct {
 		change  func() ResourceChange
@@ -927,6 +1020,18 @@ func TestCoverRefusesACredentialsServiceThatIsNotTheModules(t *testing.T) {
 			r.Change.AfterUnknown = map[string]any{"template": []any{map[string]any{"containers": []any{map[string]any{"image": true}}}}}
 			return r
 		}, false},
+		"an environment with a value_source": {func() ResourceChange {
+			r := svc()
+			container(r)["env"] = []any{map[string]any{"name": "FUGARO_PROJECT",
+				"value_source": []any{map[string]any{"secret_key_ref": []any{map[string]any{"secret": "creds-bundle", "version": "latest"}}}}}}
+			return r
+		}, false},
+		"an environment whose value_source is not known": {func() ResourceChange {
+			r := svc()
+			container(r)["env"] = []any{map[string]any{"name": "FUGARO_PROJECT"}}
+			r.Change.AfterUnknown = unkEnv([]any{map[string]any{"value_source": true}})
+			return r
+		}, false},
 		// The module sets no command and no args, so the image's entrypoint is
 		// the service (credentials.tf, C1.14): a container that overrides it
 		// runs something else as the account that reads every credential.
@@ -940,9 +1045,20 @@ func TestCoverRefusesACredentialsServiceThatIsNotTheModules(t *testing.T) {
 			container(r)["args"] = []any{"-c", "curl -s $FUGARO_PROJECT"}
 			return r
 		}, false},
+		"a command and args the module does not set": {func() ResourceChange {
+			r := svc()
+			container(r)["command"] = []any{"/bin/sh", "-c"}
+			container(r)["args"] = []any{"cat /proc/self/environ"}
+			return r
+		}, false},
 		"a command that is not known": {func() ResourceChange {
 			r := svc()
 			r.Change.AfterUnknown = map[string]any{"template": []any{map[string]any{"containers": []any{map[string]any{"command": true}}}}}
+			return r
+		}, false},
+		"args that are not known": {func() ResourceChange {
+			r := svc()
+			r.Change.AfterUnknown = map[string]any{"template": []any{map[string]any{"containers": []any{map[string]any{"args": true}}}}}
 			return r
 		}, false},
 		// A name off the allowlist is not the whole of it: an entry can carry
@@ -953,6 +1069,26 @@ func TestCoverRefusesACredentialsServiceThatIsNotTheModules(t *testing.T) {
 			r := svc()
 			container(r)["env"] = []any{map[string]any{"name": "FUGARO_PROJECT",
 				"value_source": []any{map[string]any{"secret_key_ref": []any{map[string]any{"secret": "creds-bundle"}}}}}}
+			return r
+		}, false},
+		"a service account the plan does not create": {func() ResourceChange {
+			r := svc()
+			template(r)["service_account"] = "another@proj-1.iam.gserviceaccount.com"
+			return r
+		}, false},
+		"a service account in another project": {func() ResourceChange {
+			r := svc()
+			template(r)["service_account"] = credentialsAccountID + "@other-proj.iam.gserviceaccount.com"
+			return r
+		}, false},
+		"a service account that is not an address": {func() ResourceChange {
+			r := svc()
+			template(r)["service_account"] = "the-editor's-own-account"
+			return r
+		}, false},
+		"no service account at all": {func() ResourceChange {
+			r := svc()
+			delete(template(r), "service_account")
 			return r
 		}, false},
 		"no container": {func() ResourceChange {
@@ -984,12 +1120,75 @@ func TestCoverRefusesACredentialsServiceThatIsNotTheModules(t *testing.T) {
 		}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			p := &Plan{ResourceChanges: []ResourceChange{tc.change()}}
+			p := servicePlan(tc.change())
 			if got := testCover.NotCovered(p, nil); (len(got) == 0) != tc.covered {
 				t.Fatalf("NotCovered = %q, covered want %v", got, tc.covered)
 			}
 		})
 	}
+	// The module's own shape of the account, both ways: the email is computed
+	// while the account is being created (google_service_account.credentials[0].email),
+	// so an unknown value is the module's own only when the plan creates that
+	// account with it. Without the account in the plan there is nothing the
+	// email can come from, and the service is refused.
+	t.Run("a service account that is not known, none created with it", func(t *testing.T) {
+		r := svc()
+		template(r)["service_account"] = "computed later"
+		r.Change.AfterUnknown = map[string]any{"template": []any{map[string]any{"service_account": true}}}
+		if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{r}}, nil); len(got) == 0 {
+			t.Fatal("a service whose account is not known and not created is covered")
+		}
+	})
+	t.Run("a service account that is not known, created with it", func(t *testing.T) {
+		r := svc()
+		template(r)["service_account"] = "computed later"
+		r.Change.AfterUnknown = map[string]any{"template": []any{map[string]any{"service_account": true}}}
+		if got := testCover.NotCovered(servicePlan(r), nil); len(got) != 0 {
+			t.Fatalf("NotCovered = %q, want covered: the plan creates the account the service runs as", got)
+		}
+	})
+	// The account is the plan's own google_service_account.credentials[0] and
+	// not "an account of this module": the same module also creates the
+	// deployer, the history and the scheduler accounts, and any of them runs
+	// the bundle-reading image just as well. Both shapes are planted — a known
+	// email of a sibling the plan really creates, and an unknown email with
+	// only a sibling created beside it — so a check that reads every account
+	// of the module, which both of these satisfied, fails here.
+	t.Run("a sibling account the module also creates", func(t *testing.T) {
+		r := svc()
+		template(r)["service_account"] = "fugaro-deployer@proj-1.iam.gserviceaccount.com"
+		p := &Plan{ResourceChanges: []ResourceChange{r, credentialsAccount("create"), credentialsSibling("fugaro-deployer", "create")}}
+		if got := testCover.NotCovered(p, nil); len(got) == 0 {
+			t.Fatal("a service running as the module's deployer account is covered")
+		}
+	})
+	t.Run("a sibling account of the same module, held and not created", func(t *testing.T) {
+		r := svc()
+		template(r)["service_account"] = "fugaro-history@proj-1.iam.gserviceaccount.com"
+		p := &Plan{ResourceChanges: []ResourceChange{r, credentialsAccount("create"), credentialsSibling("fugaro-history", "no-op")}}
+		if got := testCover.NotCovered(p, nil); len(got) == 0 {
+			t.Fatal("a service running as an account the module holds is covered")
+		}
+	})
+	t.Run("a service account that is not known, a sibling created with it", func(t *testing.T) {
+		r := svc()
+		template(r)["service_account"] = "computed later"
+		r.Change.AfterUnknown = map[string]any{"template": []any{map[string]any{"service_account": true}}}
+		p := &Plan{ResourceChanges: []ResourceChange{r, credentialsSibling("fugaro-deployer", "create")}}
+		if got := testCover.NotCovered(p, nil); len(got) == 0 {
+			t.Fatal("a service whose account is not known is covered because a sibling account of the module is created")
+		}
+	})
+	// And the plan the module writes after the one that created the service:
+	// the account is a no-op there, and the service keeps naming it. The
+	// resource is read whether or not this plan changes it, or every later
+	// plan would be refused.
+	t.Run("the account unchanged and the service still naming it", func(t *testing.T) {
+		p := &Plan{ResourceChanges: []ResourceChange{svc(), credentialsAccount("no-op")}}
+		if got := testCover.NotCovered(p, nil); len(got) != 0 {
+			t.Fatalf("NotCovered = %q, want covered: the account is the plan's own, unchanged", got)
+		}
+	})
 }
 
 // --- The deployer account of D75 (Task 1.5) -------------------------------

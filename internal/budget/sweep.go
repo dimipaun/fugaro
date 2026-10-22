@@ -289,10 +289,14 @@ func (s *Sweeper) remove(ctx context.Context, slug, run string, e AgentEntry, no
 	// A run id dated ahead of this clock is the one branch where the launch
 	// day cannot be the day: the rules' DAYOK refuses a future day, and the
 	// liveness scan reads the database's window around today (today+1 down to
-	// today-1; checkLive) — so the outcome goes on today, which is inside it,
-	// rather than falling back to the older, run-written heartbeat day —
-	// otherwise a run id dated ahead of the clock and a heartbeat days old
-	// would put the outcome outside the window again, from the far side.
+	// the day below the launch day; checkLive) — so the outcome goes on today,
+	// which is inside it, rather than falling back to the older, run-written
+	// heartbeat day — otherwise a run id dated ahead of the clock and a
+	// heartbeat days old would put the outcome outside the window again, from
+	// the far side. Such a run id's launch day is lowered to today-1 before
+	// that scan runs (checkLive clamps a launch day of today or later), and the
+	// scan reaches the day below the launch day, so the window such an id is
+	// read over is today+1 down to today-2 — and today is inside it.
 	today := Day(now)
 	day := today
 	if hb := time.UnixMilli(e.UpdatedAt); e.UpdatedAt > 0 && hb.Before(now) && now.Sub(hb) < 8*24*time.Hour {
