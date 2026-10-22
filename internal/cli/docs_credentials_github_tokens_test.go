@@ -20,14 +20,17 @@ import (
 // symbols an operator can read the exact one out of.
 //
 // Mutations (verified, run and restored): the stale sentence put back into
-// docs/git-providers.md → FAIL; the "the runner reads no key while the agent can
-// still reach a mounted one" clause deleted, with the held-secrets list still
-// empty in internal/config/providers.go → FAIL, because the documents claim the
-// job keeps the mount and the code is what decides it; `github.ServiceTokens`
-// dropped from the code → FAIL (the document names a token source that is not
-// there); a repository field added to credsvc.MintRequest → FAIL (the document
-// says a mint call carries no repository field, and that is what makes "a run
-// identity for X cannot mint for Y" true).
+// docs/git-providers.md → FAIL; the "the runner still reads the key it is given
+// and the agent can still reach that same mounted copy" clause deleted, with the
+// held-secrets list still empty in internal/config/providers.go → FAIL, because
+// the documents claim the job keeps the mount and the code is what decides it;
+// `github.ServiceTokens` dropped from the code → FAIL (the document names a
+// token source that is not there); a repository field added to
+// credsvc.MintRequest → FAIL (the document says a mint call carries no
+// repository field, and that is what makes "a run identity for X cannot mint for
+// Y" true); the "Nothing on this tree puts that variable in a job's environment"
+// known-limit paragraph deleted → FAIL (the document would claim the mint is the
+// service's while nothing here switches the keyless path on).
 func TestDocsGitProvidersStateWhatReachesTheAgentExactly(t *testing.T) {
 	providers := readDoc(t, "docs/git-providers.md")
 
@@ -49,6 +52,12 @@ func TestDocsGitProvidersStateWhatReachesTheAgentExactly(t *testing.T) {
 		"a run identity for repository X cannot mint a token for Y",
 		"Bitbucket is untouched",
 		"`config.ServiceHeldSecretNames`",
+		// The known limit, which the documents carry because it is what is true
+		// on this tree: the keyless path is switched on by the job's environment
+		// naming the service, and nothing here puts that name there, so an
+		// opted-in runner still reads the key and mints in the job today.
+		"Nothing on this tree puts that variable in a job's environment",
+		"still reads the App key from its environment and mints the installation token in the job",
 	} {
 		if !strings.Contains(providers, want) {
 			t.Errorf("docs/git-providers.md does not say %q: with the credentials service on, the App's key is the service's and the run's installation token is minted by it, and this is the document an operator reads to find that out", want)
@@ -106,21 +115,37 @@ func TestDocsGitProvidersStateWhatReachesTheAgentExactly(t *testing.T) {
 // and the document would claim a drop the code does not make; the caveat put
 // back the other way (the list filled with GitHubAppKeySecret while the section
 // still says the job mounts the key) → FAIL in the other direction; the
-// "no code path in the job mints a token or reads the App key once the service
-// is on" clause deleted → FAIL, because that is the property the opt-in gives
-// today and the sentence the residual in "Known limits" points at.
+// "no code path in the job mints a token or reads the App key **when the job's
+// environment names the service**" clause deleted → FAIL, because that is the
+// property the keyless path gives and the sentence the residual in "Known
+// limits" points at; the known-limit sentence deleted (the document left saying
+// the mint is the service's, with no word that nothing here sets the variable
+// the switch reads) → FAIL.
+//
+// The known-limit half is what this test was extended for after review: the
+// document said "A run's installation token is **minted by the service**" flat,
+// and that is false on this tree — internal/gitprov/providers/providers.go opens
+// the keyless provider only when `FUGARO_CREDENTIALS_SERVICE_URL` is in the
+// job's environment, and nothing in this tree (no installation field, no
+// Terraform module) puts it there — so an opted-in runner still reads the key
+// and mints in the job. The pin is the sentence that says so.
 func TestSecurityMdStatesTheAppKeyIsTheServicesWhenTheServiceIsOn(t *testing.T) {
 	sec := readDoc(t, "SECURITY.md")
 
 	for _, want := range []string{
 		"### The GitHub App's key, when the credentials service holds it",
-		"**Signing is the service's, not the job's.**",
+		"**Signing is the service's, not the job's — from the release that tells a job where the service is, and not before it.**",
 		"`fugaro creds set github-app-key`",
-		"A run's installation token is **minted by the service**",
+		"On the release that sets the variable, a run's installation token is **minted by the service**",
 		"A mint call carries the App's ID and nothing else — there is no repository field to fill in.",
 		"**calling job's account is bound to**",
 		"(see \"The GitHub App's key, when the credentials service holds it\" above)",
-		"no code path in the job mints a token or reads the App key once the service is on",
+		"no code path in the job mints a token or reads the App key **when the job's environment names the service**",
+		// The known limit of this release, which the document states because the
+		// keyless path is gated on a variable nothing on this tree sets: an
+		// opted-in runner still reads the key and mints in the job today.
+		"today an opted-in installation's runner still reads the App key from its environment and mints the installation token in the job",
+		"nothing on this tree sets that variable, so today the key that signs an opted-in run's tokens is still the job's own",
 	} {
 		if !strings.Contains(sec, want) {
 			t.Errorf("SECURITY.md does not say %q: with the credentials service on the App's key is the service's and the run's token is minted by it (D145), and this document is where a reader is told what that reaches", want)
