@@ -15,17 +15,76 @@ import (
 // including, the next line starting with "## " (or to the end of doc). It
 // fails the test if heading is not found, so every caller's assertions are
 // anchored to the right section instead of the whole document.
+//
+// The cut is at the next heading of the same or a higher level than heading's
+// own, not at the next "## " whatever heading's level is. Cutting at "## " is
+// right for a "## " heading and wrong for a "### " one: a "### X" section runs
+// on through every following "### " up to the next "## ", so a claim the
+// caller means to read out of X can be satisfied by a sibling of X. That is
+// how the credentials-service guards came to read SECURITY.md's "### The
+// credentials service" together with all of "### Known limits" — the egress
+// pin was green on the Known-limits bullet alone (code review of C1.22). A
+// heading whose text is not itself an ATX heading keeps the old "## " cut,
+// since there is no level to compare.
 func docSection(t *testing.T, path, doc, heading string) string {
 	t.Helper()
 	idx := strings.Index(doc, heading)
 	if idx == -1 {
 		t.Fatalf("%s has no %q section", path, heading)
 	}
-	section := doc[idx:]
-	if next := strings.Index(section[len(heading):], "\n## "); next != -1 {
-		section = section[:len(heading)+next]
+	level := headingLevel(heading)
+	if level == 0 {
+		level = 2
 	}
-	return section
+	section := doc[idx:]
+	rest := section[len(heading):]
+	cut, off, fenced := len(section), 0, false
+	for len(rest) > 0 {
+		line := rest
+		if nl := strings.IndexByte(rest, '\n'); nl != -1 {
+			line = rest[:nl]
+		}
+		if isFence(line) {
+			fenced = !fenced
+		} else if !fenced {
+			if l := headingLevel(line); l > 0 && l <= level {
+				cut = len(heading) + off
+				break
+			}
+		}
+		off += len(line) + 1
+		rest = rest[len(line):]
+		if len(rest) > 0 {
+			rest = rest[1:]
+		}
+	}
+	return section[:cut]
+}
+
+// headingLevel is the number of leading "#" in line when line is an ATX
+// heading — a run of "#" followed by a space, or the whole line — and 0 when
+// it is not one.
+func headingLevel(line string) int {
+	n := 0
+	for n < len(line) && line[n] == '#' {
+		n++
+	}
+	if n == 0 || (n < len(line) && line[n] != ' ') {
+		return 0
+	}
+	return n
+}
+
+// isFence reports whether line opens or closes a fenced code block: three or
+// more backticks or tildes, indented no more than three spaces. A "#" line
+// inside a fence is a comment, not a heading, and cutting there would end a
+// section in the middle of its own example.
+func isFence(line string) bool {
+	s := strings.TrimLeft(line, " ")
+	if len(line)-len(s) > 3 {
+		return false
+	}
+	return strings.HasPrefix(s, "```") || strings.HasPrefix(s, "~~~")
 }
 
 // TestMultiModelNamesDirectProviders: docs/multi-model.md must document

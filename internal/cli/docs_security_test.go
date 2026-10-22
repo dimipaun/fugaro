@@ -325,6 +325,19 @@ func TestSecurityMdCrossReferencesPointTheRightWay(t *testing.T) {
 // lives only in a bullet pointing here does not make this test pass.
 // Restored immediately; the guards are red before the doc edit and green
 // after it, which is the point of writing them first.
+//
+// The section read was not narrow enough on its own, and the code review of
+// this change found it: docSection cut at the next "## " whatever the
+// heading's own level was, so a "### " heading ran on through every following
+// "### " up to "## Scope" — this section together with all of "### Known
+// limits". The egress pin proved it: SECURITY.md's Known-limits bullet
+// "**Network egress is not restricted.**" satisfied "Network egress is not
+// restricted" on its own, so deleting this section's whole "**Egress is
+// unchanged (D144).**" paragraph left this test green (mutation planted, run
+// and restored — it now fails on that pin and only on it). docSection cuts at
+// the next heading of the same or a higher level, skipping fenced code blocks,
+// and the same mutation is red: the claims below are read out of this
+// subsection alone.
 func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 	s := readDoc(t, "SECURITY.md")
 	// The section is a section: the "In short" bullet links to it and the

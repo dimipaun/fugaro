@@ -7,12 +7,14 @@ What the service *is* — the trust model, the one bundle secret, the invariant,
 ## 1. Is the service on at all?
 
 ```bash
-fugaro doctor
+fugaro creds ls
 ```
 
-`fugaro doctor` names the credentials service's pieces: the service, its own service account, the one bundle container and the one `secretmanager.secretAccessor` grant on it. An installation that never ran `fugaro init --provision-credentials` has none of them, and every symptom below is some other problem — with the service off, a `cascade` workflow is refused at launch, before any model call, rather than halting later.
+`fugaro creds ls` is the one Fugaro command that answers part of this. It reads the bundle container the service issues from, and it needs the container to exist and to hold a version the service's own loader could read — so an installation that never ran `fugaro init --provision-credentials` has no container at all, and the command says so as a named failure rather than as an empty list (an empty answer would read as "the bundle holds no credential" while the service is in fact issuing from one this command could not read). Its rows are the credential **names** and their metadata, never a value.
 
-The service's own view of the bundle is `fugaro creds ls`: the credential **names** the bundle holds and their metadata, never a value.
+**What no Fugaro command answers is whether the Cloud Run service itself is deployed**, and `fugaro doctor` is not the exception: its three credentials checks are about the credential marks (`creds-broken`, `creds-unknown-state`) and the deployed rules' marker (`creds-rules`, silent unless the cascade is switched on), and they name no piece of the service. The reads that do answer it are `gcloud` ones — the service, its own account and the one `secretmanager.secretAccessor` grant on the one container are what Check 94 reads back (§10 is that check's audit-log half).
+
+An installation with the service off is not silent either: a `cascade` workflow is refused at launch, before any model call, rather than halting later.
 
 ## 2. A run halted: read the reason before anything else
 

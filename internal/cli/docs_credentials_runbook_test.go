@@ -95,6 +95,46 @@ func TestDocsCredentialsRunbookIsOwnerRunOnly(t *testing.T) {
 	}
 }
 
+// TestDocsCredentialsRunbookPointsStepOneAtSomethingThatAnswers: §1 is what an
+// operator runs to find out whether the service is on at all, and the code
+// review of this change found it pointing at `fugaro doctor` — which has no
+// credentials-service check. Doctor's three credentials checks
+// (internal/cli/doctor.go's creds-broken, creds-unknown-state and creds-rules)
+// read the credential marks and the deployed rules' marker, and no doctor file
+// mentions the service, its account, the container or the grant at all — so the
+// operator would have read that absent output as "the service is off".
+//
+// The step now names `fugaro creds ls`, which reads the one piece a command can
+// read from here (the bundle container, and the document the service issues
+// from), and the section says outright that the Cloud Run service itself is
+// answered by a `gcloud` read rather than by any Fugaro command.
+//
+// Mutation (verified, run and restored): the old §1 put back — the
+// `fugaro doctor` step and the sentence about the pieces it "names" — fails
+// this on the banned claim and on four of the five pins. It does *not* fail on
+// the `fugaro creds ls` pin, because the old text named the command too, in its
+// last sentence about the bundle's own view; that is why the ban is the
+// load-bearing half here and the pins are the shape around it.
+func TestDocsCredentialsRunbookPointsStepOneAtSomethingThatAnswers(t *testing.T) {
+	section := flattenDoc(docSection(t, credentialsRunbook, readDoc(t, credentialsRunbook), "## 1. Is the service on at all?"))
+	for _, want := range []string{
+		"fugaro creds ls",
+		// What doctor does cover, so the section does not simply drop it.
+		"creds-broken",
+		"creds-unknown-state",
+		"creds-rules",
+		// And what no command covers.
+		"What no Fugaro command answers is whether the Cloud Run service itself is deployed",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("%s §1 does not say %q: this is the step an operator reads first, and the one thing it may not claim is that a Fugaro command reports the service itself", credentialsRunbook, want)
+		}
+	}
+	if strings.Contains(section, "names the credentials service's pieces") {
+		t.Error("the runbook is back to claiming `fugaro doctor` names the credentials service's pieces: doctor has no such check, and its credentials checks report marks and the rules marker rather than any piece of the service")
+	}
+}
+
 // TestDocsCredentialsRunbookOrdersTheOptOut: the opt-out is ordered, and the order
 // is the part that is easy to get wrong. Every repository root is re-applied
 // *before* the two installation steps (re-review N2): the per-repository roots
