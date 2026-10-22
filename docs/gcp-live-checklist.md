@@ -5834,7 +5834,7 @@ echo "Check 89 ready: $TAG at $SHA — $APP"
 
 **NOT RUN.** This check is new (setup-wizard plan Task W0.3 writes it, Task W6.2 runs it), and number **111** is the first free number above every claim the register above records — 110 is claimed by an open pull request, and a claim is settled at its merge. Its subject is the other half of the billing picker: **Check 27 step 3 is the picker's success path against a real account, and this is what it does when it cannot list one.**
 
-**Nothing here is a claim that any of it works, and nothing behind it exists on this tree yet.** The setup-wizard implementation plan is *"approved to build; implementation in progress"* (`docs/setup-wizard/implementation-plan.md:13`, the owner's approval of 2026-10-20), and the tree bears that out: `internal/cli/root.go` registers `init`, `upgrade` and `update-skills`, and **no `setup` and no `update`**; `internal/billing/` holds only the read-only account-list client (W4.1): there is **no picker**, and no pty test for one; and `internal/gcpfake/billing.go` fakes `/v1/projects/<id>/billingInfo` alone (`billing.go:33`) — a project's billing *link*, not an account list. **So the picker has not run at all — not against fakes and not against a service** — and the code this section names is W1.x–W5.x's, written after it. This section is written now because the plan says so (W0.3), and the owner runs it at **W6.2**, against a release that carries the picker.
+**Nothing here is a claim that any of it works: no mode of it has ever been run.** The setup-wizard implementation plan is *"approved to build; implementation in progress"* (`docs/setup-wizard/implementation-plan.md:13`, the owner's approval of 2026-10-20), and the tree now carries the half of it this check reads: `internal/cli/root.go` registers `setup` and `update` (W1.2–W1.3); `internal/billing/` holds the account-list client (W4.1) and the `gcloud billing accounts list` fallback (W4.2), and `internal/cli/billing_prompt.go` holds the picker itself (W4.3), whose tests drive it through a stubbed terminal predicate (`stdinIsTerminal`) rather than a pty; and `internal/gcpfake/billing.go` fakes the account list (`billingAccounts.list`) as well as a project's billing *link*. **What has never happened is the run**: the picker has not been exercised against a real service, and no mode below has been run at all. W4.4 (the refusal when the Cloud Billing API is not enabled) and W4.5 (the comments the reversal falsifies) are still open, so parts of what modes 1 and 2 expect are not written yet. This section is written because the plan says so (W0.3), and the owner runs it at **W6.2**, against a release that carries the picker.
 
 **What it settles (D3 and D6, plan Tasks W4.1–W4.5).** The picker lists the owner's **open** billing accounts by number, at a real terminal only, and **prefers the Cloud Billing API with `gcloud billing accounts list` as a fallback** — it says which one answered, and it is never allowed to list anything at all when `canType()` is false (a real terminal, not `--non-interactive`, not `--json`, not a coding agent's session). Every failure mode below must therefore end in the **same three places**, and each mode asserts all three:
 
@@ -5844,7 +5844,9 @@ echo "Check 89 ready: $TAG at $SHA — $APP"
 
 **A mode here is a failure mode only when *neither* source can answer.** The picker prefers the Cloud Billing API and falls back to `gcloud billing accounts list`; if the fallback can answer, it lists the accounts, which is the **designed** behaviour and Check 27 step 3's success path — not this check. So modes 1(a), 1(b) and 2(b) run with the fallback **maimed by hand** (a `gcloud` wrapper that fails only at `billing accounts`, below: the wizard's own `gcloud` calls must keep working, so removing `gcloud` from `PATH` is *not* the way), and mode 2(a) is the one run here where a list **is** expected — through the fallback, and it is recorded rather than failed.
 
-**Rules.** Use the installation **named `fugaro`** (`N`) on your **throwaway** project (`P` — the one Check 27 created, or a fresh one). Two more throwaway projects of yours are needed, and **you prepare them before mode 1** — no step of this check creates a project, enables or disables an API, links an account or writes a config:
+**Rules.** Use the installation **named `fugaro`** (`N`) on your **throwaway** project (`P` — one of yours that **exists**, has Firebase and has **no billing account linked to it**: Check 27's own project has one, from its step 3, so unlink it first (`gcloud billing projects unlink "${P:?}"`) or use another project). Two more throwaway projects of yours are needed, and **you prepare them before mode 1** — no step of this check creates a project, enables or disables an API, links an account or writes a config. Every mode runs with `--create-project`, so that what the run does is not left to the answer someone gives the wizard's create/adopt question: where that question can be asked (modes 1, 2 and 5 — a terminal, no `--yes`, no `--json`) **create is the default Enter takes** (D11), and a mode that answered `adopt` would run no picker and skip the project stage; where it cannot be asked at all (modes 3 and 4) the run takes **adoption**, with the same result. The flag answers that question for the mode, and `--gcp-project "${P:?}"` keeps the run on `P` rather than on the id `setup` offers (`fugaro-fugaro`), which would be a different project.
+
+Because `--create-project` on a project that is already there reads it and creates nothing, the guided line assertion 1 reads is the **project stage**'s — and the stage prints it as its **left-for-you** line only when `P` **exists**, is **`ACTIVE`**, **has Firebase** and has **no billing link**. In modes 3, 4 and 5 that is the only place it can come from, since their picker never runs; in modes 1 and 2 it is the only place too, since there neither source answers (mode 2(a) alone lists, through the fallback, and the owner answers its prompt `none` — see mode 2(a)). So run every mode on a `P` that is there, is `ACTIVE`, has Firebase and is not linked to an account — an installation that has converged, with nothing linked — or assertion 1 reads something else: a project **without Firebase** is a *todo* whose left-for-you is the add-Firebase typed confirmation (the guided line is then in the plan view's detail alone), a project **linked to an enabled account** is reported **done** and prints the line nowhere, and a project that is **not there yet** is a creation run that stops at the project stage's typed confirmation. **A fresh project is not the easy one**: it has no installation, so modes 3, 4 and 5 stop at that typed confirmation, and the guided line they exist to read is not the stage's own.
 
 - **`Q`**, whose Cloud Billing API is **off**: the ADC quota project of mode 1(b), where the API being disabled on the quota project is the whole premise.
 - **`S`**, whose Cloud Billing API is **on**: the ADC quota project of mode 2, where the API must be reachable for the caller's missing permission to be what refuses (403), rather than the disabled-API path mode 1 already covers.
@@ -5858,7 +5860,7 @@ Never `belong` (the installation on `edge-devel-dimi`), `fugaro-dev` or `edge-de
 # (1a, 1b, 2a, 2b, 3, 4, 5). It reads its own state back out of vars.env, so a
 # mode typed in a NEW SHELL keeps the same config root. ===
 CHK111=/tmp/chk111; mkdir -p "$CHK111"; chmod 700 "$CHK111"
-P=fugaro-live-20261020   # YOUR throwaway project (Check 27's, or a fresh one): HARD-CODED
+P=fugaro-live-20261020   # YOUR throwaway project, which EXISTS, has Firebase and has NO billing link: HARD-CODED
 N=fugaro                 # the installation's NAME: hard-coded, and asserted below
 Q=                       # a SECOND throwaway project of yours, Cloud Billing API OFF: mode 1(b) only, checked by need_q below
 S=                       # a THIRD throwaway project of yours, Cloud Billing API ON: mode 2 only, checked by need_s below
@@ -5971,16 +5973,16 @@ plain() {
 
     ```bash
     maim_fallback
-    capture 1a fugaro setup --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe
+    capture 1a fugaro setup --create-project --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe
     assert_mode 1a
     ```
 
-   `--gcp-project "${P:?}"` is what keeps this a *converge* run on `P`: `setup` creates by default and offers the id `fugaro-<name>`, i.e. `fugaro-fugaro` — accepting that default would create a different project, and the mode would test neither D3(a) nor `P`. This also needs `P` to **exist already** (Check 27's project is the easy one): a run that creates a project cannot have it as its own quota project, which is why this mode is never a creation run. The wizard **may offer to enable** `cloudbilling.googleapis.com`, naming the project and the API, behind a **typed** confirmation that `--yes` never covers (D3, D12 — and note this is the one place in the whole wizard where enabling an API is offered at all). **Decline it**, and record: the offer's exact text; that `--yes` alone did not take it (rerun the same line with `--yes` at a terminal, labelled `capture 1a-yes …`, and record that the typed banner still comes); and then the assertions — the guided line, `gcloud services list --enabled --project="${P:?}" --filter='config.name:cloudbilling.googleapis.com'` printing **nothing**, and no account list anywhere. **FACT:** the offer, the decline, and that the API is still disabled after it.
+   `--create-project` is what makes this the creation path, and the mode needs it: this run is at a terminal, so without it the wizard asks whether to create a project or adopt one — and the mode must not depend on which answer you give, or on your typing `adopt` by mistake, where the picker never runs and the project stage skips, so the guided line this mode asserts would never print. The flag answers that question for the mode, and `--gcp-project "${P:?}"` keeps the run on `P`: `setup` offers the id `fugaro-<name>`, i.e. `fugaro-fugaro`, and accepting that default would create a different project, so the mode would test neither D3(a) nor `P`. This also needs `P` to be in the state the Rules state — it **exists**, is `ACTIVE`, has Firebase and has **no billing link**: the project stage reads it, sees it is there and creates nothing — and a project a run created could not be its own quota project — so no run here creates anything. The wizard **may offer to enable** `cloudbilling.googleapis.com`, naming the project and the API, behind a **typed** confirmation that `--yes` never covers (D3, D12 — and note this is the one place in the whole wizard where enabling an API is offered at all). **Decline it**, and record: the offer's exact text; that `--yes` alone did not take it (rerun the same line with `--yes` at a terminal, labelled `capture 1a-yes …`, and record that the typed banner still comes); and then the assertions — the guided line, `gcloud services list --enabled --project="${P:?}" --filter='config.name:cloudbilling.googleapis.com'` printing **nothing**, and no account list anywhere. **FACT:** the offer, the decline, and that the API is still disabled after it.
    **(b) The quota project is ANOTHER project.** `need_q 1b && maim_fallback`, then:
 
     ```bash
     gcloud auth application-default set-quota-project "${Q:?}"
-    capture 1b fugaro setup --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe
+    capture 1b fugaro setup --create-project --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe
     assert_mode 1b
     ```
 
@@ -5992,16 +5994,18 @@ plain() {
 
     ```bash
     gcloud auth application-default set-quota-project "${S:?}"
-    capture 2a fugaro setup --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe
+    capture 2a fugaro setup --create-project --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe
     assert_mode 2a may-list
     ```
+
+   **At the picker's prompt, answer `none` — not a number.** This is the one run where the list itself is what the mode is about, and `none` is the picker's own way out of it: it prints the guided line (`billing_prompt.go`'s `billingLeft`), records no account, and leaves `--link-billing` empty. A number would set it, and the project stage would then take its **link** branch — its plan detail reads `link billing account <ID> (its own typed confirmation; may incur charges)` and its left-for-you is that typed confirmation, so the words `gcloud billing projects link` would appear **nowhere** in the capture and assertion 1 would fail — and typing the confirmation would link that account to `P`, which this section's Rules forbid and which nothing else here undoes. **Record that you answered `none`.**
 
    The API call is refused (403) and the picker must **fall back to `gcloud billing accounts list`**, **say which source answered**, and list what it returns. **FACT:** which account ADC was logged in as, which source answered, the exact message that says so, and whether the fallback listed anything the API's own answer would not have — the two sources can disagree, and that is what this run is for. **A list here is not a leak**: it is the designed fallback, and D6's picker shows each account's display name **and** id, so this is the **one** run whose capture `assert_mode` exempts from the leak greps — record what it listed rather than failing it.
    **(b) Neither answers.** `maim_fallback` first — the API refuses *and* the fallback is maimed — then `capture 2b …` as above and `assert_mode 2b`. The picker must print the guided line: what it must **not** do is crash, print a raw API error as its only output, or claim an account exists. If you took the route that removes the billing role from your own account, ADC stays your usual account here; either way the API refuses and the fallback is maimed. **FACT:** the exact message, **which source answered** (neither), and the assertions.
 3. **No TTY.** No pty here — a pty is exactly what this mode must not have, so **do not use `capture`**:
 
     ```bash
-    fugaro setup --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe < /dev/null \
+    fugaro setup --create-project --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe < /dev/null \
       > "$CHK111/mode-3.log" 2>&1; echo "mode 3 exit: $?"
     assert_mode 3
     ```
@@ -6010,7 +6014,7 @@ plain() {
 4. **`--json`.** The same command with `--json`, its stdout kept apart from its stderr:
 
     ```bash
-    fugaro setup --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe --json \
+    fugaro setup --create-project --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe --json \
       > "$CHK111/mode-4.json" 2> "$CHK111/mode-4.err"; echo "mode 4 exit: $?"
     jq -e '[.. | strings | select(test("billingAccounts/"))] | length == 0' "$CHK111/mode-4.json"
     assert_mode 4
@@ -6022,7 +6026,7 @@ plain() {
     ```bash
     env | grep -E '^(CLAUDECODE|CLAUDE_CODE_ENTRYPOINT|CLAUDE_CODE_SSE_PORT|CLAUDE_CODE_REMOTE|CURSOR_AGENT|AI_AGENT)=' || echo "no agent marker in this shell"
     export AI_AGENT=1          # the marker, set BY HAND — never by asking an agent to run this
-    plain 5 fugaro setup --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe
+    plain 5 fugaro setup --create-project --gcp-project "${P:?}" --name "$N" --region us-east5 --budget-mode observe
     unset AI_AGENT             # take it back out: it changes every mode in this shell, not just this one
     assert_mode 5
     ```
@@ -6103,6 +6107,7 @@ assert_mode() {
 
 - **Put your ADC quota project back**: `gcloud auth application-default set-quota-project <your usual quota project>`. Modes 1(a), 1(b) and 2 each changed it — to `P`, `Q` and `S` — so this line is not optional, and it is the first thing to do after the last of them.
 - **Put your ADC account back too**, if mode 2's route logged it in as a second one: `gcloud auth application-default login` again, choosing your usual account (nothing in this check reads or prints a token, and it never asks you to).
+- **Nothing was linked, if you ran mode 2(a) as written**: its picker prompt is answered `none`, so `P` keeps the billing state it came with. If you answered a **number** there and then typed the confirmation that follows, undo it — `gcloud billing projects unlink "${P:?}"` — because that link is the one thing this check could have left on `P`, and every other mode needs `P` to have no link.
 - **Re-enable the API you disabled** on `P` and on `Q` (`gcloud services enable cloudbilling.googleapis.com --project="${P:?}"` and `--project="${Q:?}"`), and **if you removed the billing role from your own account for mode 2(b), put it back** — that role is yours, not the check's. If a project was a fresh throwaway and you are done with it, delete it instead (`gcloud projects delete <that project>`): check that nothing else in your machine's config still points at it first.
 - **Remove this check's own directory** — `rm -rf /tmp/chk111`, which holds its config root (`$C`), its `vars.env`, the maimed `gcloud` wrapper, `account-names.txt`/`account-ids.txt`, and every mode's capture (mode 4's two files among them). `unset AI_AGENT` too, if you have not already.
 - **Never touch `belong`, EdgeWeb or EdgeServer**: no step here writes to them, the guard block is what makes that so, and the guided line this check is about names a project you type, never one of theirs.
