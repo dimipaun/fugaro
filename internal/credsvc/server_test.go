@@ -597,9 +597,12 @@ func newSvcWith(t *testing.T, mutate func(*svc, *Config)) *svc {
 		Probes: s.probes,
 		// The audit lines are written as the JSON objects they are (C1.13), so
 		// a test that reads one reads it the way an operator's tooling does.
-		// They go to the same buffer as the service's own lines: the probe's
-		// tests take a buffer of their own where they need to read them apart.
-		AuditLog: slog.NewJSONHandler(s.logs, nil),
+		// They go to the fixture's own audit buffer and NOT to the service's
+		// log: the auditor the service builds for its probe and its answer path
+		// writes to this handler, and a test that asserts what the service's
+		// own logger holds must not be reading audit lines in it. A test that
+		// wants the two apart takes a buffer of its own (probeSvc, auditSvc).
+		AuditLog: slog.NewJSONHandler(s.audit, nil),
 	}
 	if mutate != nil {
 		mutate(s, &cfg)
