@@ -1150,6 +1150,75 @@ func agentAtRef(ctx context.Context, env *cloudEnv, repo, ref string) (config.Ag
 	return a, auth, true
 }
 
+// cascadeRefConfig is the document a cascade launch's own rules are read from
+// here — its agent.auth and its budget mode both: the fugaro.yaml at the ref
+// the run checks out (spec.Ref), read out of this checkout's object database,
+// resolved over the project layer the task carries (spec.ProjectLayer) through
+// runner.ResolveConfig, the runner's own function, exactly as
+// projectJobAgentAuth resolves the credential.
+//
+// It is deliberately not the launcher's working tree (checkoutConfig). The run
+// clones spec.Ref and resolves *that* file (runner.go's blobless checkout of
+// origin/spec.Ref), so a launcher judging its working tree judges a document
+// the run never reads: a checkout left on another branch, or carrying an
+// uncommitted edit, can say budget.mode: observe over a ref that says off, and
+// the launch this gate exists to refuse — one whose run cannot carry a single
+// call — would take the claim, mint a budget token and start an execution that
+// refuses in agent.BuildEnv instead. The reverse refuses a launch the run would
+// carry. agentAtRef reads the ref for this very reason; the mode has to come
+// from the same bytes as the auth, or the gate judges a run that does not
+// exist.
+//
+// nil when the ref cannot be read or does not resolve: the caller falls back to
+// the checkout's own document, as the auth read always has, and the run's own
+// bootstrap refuses what the launcher could not read.
+func cascadeRefConfig(ctx context.Context, env *cloudEnv, spec *task.Spec) *config.Config {
+	if spec.Ref == "" {
+		return nil
+	}
+	root := checkoutRoot(ctx, spec.Repo)
+	if root == "" {
+		return nil
+	}
+	data, err := readFugaroYAMLAtRef(ctx, root, spec.Ref)
+	if err != nil {
+		return nil
+	}
+	out := runner.ResolveConfig(data, spec.ProjectLayer, env.lc.Name)
+	if out.LayerErr != nil || len(out.Problems) > 0 {
+		return nil
+	}
+	return out.Cfg
+}
+
+// defaultBranchPolicyLayer is the default branch's policy as the run reads it:
+// the policy keys of origin/<default branch>'s fugaro.yaml (runner's
+// resolvePolicy, config.PolicyOf). The run merges three layers — the ceiling,
+// this one and the ref's file — and a layer can only tighten, so leaving this
+// one out is not neutral: a mode this layer raises (off < observe < enforce) is
+// one the run has and the gate would not see, and a launch the run would carry
+// would be refused. The security direction is safe the other way (no layer
+// below the ceiling can lower a mode), so a default branch this launcher cannot
+// read is an empty layer rather than a refusal: it has no fetch of its own — a
+// fetch is a network write into a repository this command does not own — and
+// the run's own bootstrap refuses the file it cannot read.
+func defaultBranchPolicyLayer(ctx context.Context, repo string) policy.Layer {
+	root := checkoutRoot(ctx, repo)
+	if root == "" {
+		return policy.Layer{}
+	}
+	db := defaultBranchParse(ctx, root)
+	if !db.read {
+		return policy.Layer{}
+	}
+	p, err := config.PolicyOf(db.data)
+	if err != nil {
+		return policy.Layer{}
+	}
+	return policy.Layer{Mode: p.Mode, PerRunUSD: p.PerRunUSD, PerDayUSD: p.PerDayUSD, MaxRunTokens: p.MaxRunTokens,
+		AllowedModels: p.AllowedModels, MaxOutputCoder: p.MaxOutputTokens.Coder, MaxOutputReviewer: p.MaxOutputTokens.Reviewer}
+}
+
 // checkoutAgentAuth is a checkout's own agent.auth as claudeAccountAllowed
 // judges a name with it, "" when there is no checkout to read one from.
 func checkoutAgentAuth(co *config.Config) string {
@@ -1331,17 +1400,24 @@ func printRecipeNote(warn io.Writer, rr *resolvedRecipe, explicit bool) {
 //     its owner to re-run init from this Fugaro would send them at a command
 //     that refuses them.
 //
-// The auth is read the way the launch reads it everywhere else (agentAtRef):
-// the ref the run will check out, over the project layer this command has
-// already resolved, and the checkout's own config when the ref cannot be read.
-// A launch that cannot resolve an auth at all is left to the run's own
-// bootstrap, which refuses the document it cannot read.
+// Both documents this gate judges are the run's: the auth *and* the mode come
+// from the file the run checks out (spec.Ref, read out of this checkout's
+// object database by cascadeRefConfig), never from the launcher's working tree,
+// which the run does not read — projectJobAgentAuth's finding, and the reason
+// the auth was read at the ref here from the start. The mode is judged over the
+// same three layers the run merges (runner's resolvePolicy): the environment's
+// ceiling, the default branch's policy (defaultBranchPolicyLayer) and the ref's
+// own file.
 func cascadeLaunchRefusal(ctx context.Context, env *cloudEnv, spec *task.Spec) error {
-	co := checkoutConfig(ctx, spec.Repo)
-	_, auth, ok := agentAtRef(ctx, env, spec.Repo, spec.Ref)
-	if !ok {
-		auth = checkoutAgentAuth(co)
+	runCfg := cascadeRefConfig(ctx, env, spec)
+	if runCfg == nil {
+		// The ref could not be read or does not resolve: the checkout's own
+		// document stands in, as the auth read has always fallen back to it,
+		// and the run's own bootstrap refuses what the launcher could not
+		// read.
+		runCfg = checkoutConfig(ctx, spec.Repo)
 	}
+	auth := checkoutAgentAuth(runCfg)
 	if auth != config.AuthCascade {
 		return nil
 	}
@@ -1350,9 +1426,10 @@ func cascadeLaunchRefusal(ctx context.Context, env *cloudEnv, spec *task.Spec) e
 			projectpolicy.PathShared(), rules.PathCredsRulesMarker())
 	}
 	ceiling := ceilingLayer(env.lc)
+	def := defaultBranchPolicyLayer(ctx, spec.Repo)
 	var layer policy.Layer
-	if co != nil {
-		layer = runner.FileLayer(co)
+	if runCfg != nil {
+		layer = runner.FileLayer(runCfg)
 	}
 	p, found, err := env.policy.read(ctx, env.lc)
 	if err != nil {
@@ -1375,7 +1452,7 @@ func cascadeLaunchRefusal(ctx context.Context, env *cloudEnv, spec *task.Spec) e
 	if p.Budget.Mode != "" {
 		ceiling.Mode = p.Budget.Mode
 	}
-	if ps := config.CheckCascadeGateway(config.Agent{Auth: auth}, policy.Merge(ceiling, layer).Mode); len(ps) > 0 {
+	if ps := config.CheckCascadeGateway(config.Agent{Auth: auth}, policy.Merge(ceiling, def, layer).Mode); len(ps) > 0 {
 		msgs := make([]string, len(ps))
 		for i, p := range ps {
 			msgs[i] = p.String()

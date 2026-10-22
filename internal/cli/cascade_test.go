@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // cascadeCLI is the fugaro.yaml a repository asking for the cascade writes:
@@ -1255,6 +1256,85 @@ func TestCascadeLaunchRefusedWhenThePolicyTurnsTheGatewayOff(t *testing.T) {
 	publishPolicy(t, f.launchBudgetFixture, cascadePolicyWithMode("off"))
 	projectJobCheckoutYAML(t, cascadeLaunchYAML)
 	requireCascadeGatewayRefusal(t, f, "the published policy's budget.mode: off")
+}
+
+// TestCascadeLaunchJudgesTheRefsModeNotTheWorkingTrees (C1.19): the gateway
+// rule judges the run's document, not the launcher's. The run clones spec.Ref
+// and merges *that* file, so a working tree left on another branch — or
+// carrying an uncommitted edit — is a document the run never reads, and a mode
+// read from it is a mode no run has. Here the working tree writes
+// budget.mode: observe while origin/main, the ref this launch names, says off:
+// judged from the working tree the launch is admitted, takes the claim, mints a
+// budget token and starts an execution whose run refuses in agent.BuildEnv on
+// its first call — the outcome this gate exists to prevent; judged from the ref
+// it is refused here, before anything is written.
+//
+// Mutation (run, restored): read the working tree again
+// (runner.FileLayer(checkoutConfig(...))) and this launch goes through.
+func TestCascadeLaunchJudgesTheRefsModeNotTheWorkingTrees(t *testing.T) {
+	f := newProjectJobFixtureMode(t, "observe")
+	publishPolicy(t, f.launchBudgetFixture, cascadePolicy())
+	// The ceiling names no mode, so the merge is decided between the two
+	// documents' budget.mode alone (the policy node carries none either).
+	withoutBudgetMode(t, f.cloudFixture)
+	projectJobCheckoutYAMLAt(t,
+		strings.Replace(cascadeLaunchYAML, "workflows:", "budget: { mode: observe }\nworkflows:", 1),
+		strings.Replace(cascadeLaunchYAML, "workflows:", "budget: { mode: off }\nworkflows:", 1))
+	requireCascadeGatewayRefusal(t, f, "the ref's budget.mode: off under a working tree that says observe")
+}
+
+// TestCascadeLaunchMergesTheDefaultBranchesPolicy (C1.19): the launch judges
+// the same three layers the run merges (runner's resolvePolicy: the ceiling, the
+// default branch's policy and the ref's own file), because a layer can only
+// tighten and a mode raised by the default branch is a mode the run has. Here
+// the launch's ref says nothing, the ceiling says nothing, and origin/main — the
+// file the *run* reads as its middle layer — says observe: the run's gateway is
+// on, and the gate must not refuse it.
+//
+// The working tree agrees with the ref (both say nothing) so that the default
+// branch is the only layer that can answer: with it, the mode is observe and the
+// gate passes; without it the merge is empty and CheckCascadeGateway refuses
+// what the run would carry.
+//
+// Mutation (run, restored): drop defaultBranchPolicyLayer from the merge and
+// this launch is refused ("budget.mode is off") although its run has a gateway.
+func TestCascadeLaunchMergesTheDefaultBranchesPolicy(t *testing.T) {
+	f := newProjectJobFixtureMode(t, "observe")
+	publishPolicy(t, f.launchBudgetFixture, cascadePolicy())
+	withoutBudgetMode(t, f.cloudFixture)
+	f.db.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion)
+	cascadeCheckoutAt(t, "feature",
+		strings.Replace(cascadeLaunchYAML, "workflows:", "budget: { mode: observe }\nworkflows:", 1),
+		cascadeLaunchYAML, cascadeLaunchYAML)
+	env, err := openCloud(context.Background(), cloudOptions{stderr: discard})
+	if err != nil {
+		t.Fatalf("opening the fixture's cloud environment: %v", err)
+	}
+	if err := cascadeLaunchRefusal(context.Background(), env, &task.Spec{Repo: "acme/app", Ref: "feature"}); err != nil {
+		t.Errorf("a cascade launch whose gateway the default branch's policy turns on: %v", err)
+	}
+}
+
+// cascadeCheckoutAt lays down a checkout whose three documents are spelled
+// apart: the default branch's fugaro.yaml (origin/main), the ref a launch names
+// (origin/<ref>) and the working tree's. projectJobCheckoutYAMLAt is the same
+// fixture with two of them.
+func cascadeCheckoutAt(t *testing.T, ref, mainYAML, refYAML, workingYAML string) {
+	t.Helper()
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/app.git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": mainYAML})
+	testutil.Git(t, dir, "add", "fugaro.yaml")
+	testutil.Git(t, dir, "commit", "-q", "-m", "the default branch's fugaro.yaml")
+	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/main", "HEAD")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": refYAML})
+	testutil.Git(t, dir, "add", "fugaro.yaml")
+	testutil.Git(t, dir, "commit", "-q", "-m", "the ref's fugaro.yaml")
+	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/"+ref, "HEAD")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": workingYAML})
+	t.Chdir(dir)
 }
 
 // requireCascadeGatewayRefusal runs the launch of the fixture's cascade
