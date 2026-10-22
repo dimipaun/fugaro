@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"io"
 	"strings"
 	"testing"
 
@@ -233,18 +234,22 @@ func TestInitRepoRefusesCatalogSwitches(t *testing.T) {
 }
 
 // gateRig is the start of a converge: the engine, the checkout the gate asks
-// about, and the question gateEarly asks it, with a terminal this test's and
-// stdout collected. The local config lists acme/sandbox (bitbucket) and
-// nothing else, so an origin of a github.com repository is the unlisted case
-// the gate exists for. Nothing here reaches a cloud: gateEarly asks before the
-// first stage plans.
-func gateRig(t *testing.T, door, origin, yaml, stdin string, o *initOptions) (*initEngine, *strings.Builder) {
+// about, and the question gateEarly asks it, with a terminal (when one is
+// asked for) and stdout collected. The local config lists acme/sandbox
+// (bitbucket) and nothing else, so an origin of a github.com repository is the
+// unlisted case the gate exists for. Nothing here reaches a cloud: gateEarly
+// asks before the first stage plans.
+func gateRig(t *testing.T, door, origin, yaml, stdin string, o *initOptions, terminal bool) (*initEngine, *strings.Builder) {
 	t.Helper()
 	r := newInitRig(t)
 	r.stateBucket()
 	dir := repoCheckout(t, origin, yaml)
 	t.Chdir(dir)
-	fakeTerminal(t)
+	if terminal {
+		fakeTerminal(t)
+	} else {
+		stdinIsAPipe(t)
+	}
 	if o == nil {
 		o = &initOptions{}
 	}
@@ -257,6 +262,16 @@ func gateRig(t *testing.T, door, origin, yaml, stdin string, o *initOptions) (*i
 	e.repo = newRepositoryStage(e)
 	e.gateEarly(t.Context())
 	return e, out
+}
+
+// stdinIsAPipe makes stdin not a terminal for this test: the reader a run gets
+// from a shell pipeline or a script. It is set explicitly, because a rig this
+// test built earlier may have left the faked terminal in place.
+func stdinIsAPipe(t *testing.T) {
+	t.Helper()
+	old := stdinIsTerminal
+	stdinIsTerminal = func(io.Reader) bool { return false }
+	t.Cleanup(func() { stdinIsTerminal = old })
 }
 
 // gateCheckoutYAML is the fugaro.yaml a checkout the gate asks about carries,
@@ -282,7 +297,7 @@ func gateOrigin() string { return "https://github.com/" + gateRepo + ".git" }
 func TestSetupAsksToOnboardTheCheckoutsRepository(t *testing.T) {
 	// Yes, the answer Enter takes: the question is asked first, the typed
 	// owner/name behind it is unchanged, and the repository is opted in.
-	e, out := gateRig(t, setupDoor.name, gateOrigin(), gateCheckoutYAML(), "\n"+gateRepo+"\n", nil)
+	e, out := gateRig(t, setupDoor.name, gateOrigin(), gateCheckoutYAML(), "\n"+gateRepo+"\n", nil, true)
 	asked := "Onboard " + gateRepo
 	if !strings.Contains(out.String(), asked) {
 		t.Errorf("setup did not ask whether to onboard the checkout's repository:\n%s", out)
@@ -299,7 +314,7 @@ func TestSetupAsksToOnboardTheCheckoutsRepository(t *testing.T) {
 
 	// No: nothing is onboarded, the typed confirmation is not asked at all,
 	// and the stage is skipped rather than left for the user — they answered.
-	e, out = gateRig(t, setupDoor.name, gateOrigin(), gateCheckoutYAML(), onboardAnswerNo+"\n", nil)
+	e, out = gateRig(t, setupDoor.name, gateOrigin(), gateCheckoutYAML(), onboardAnswerNo+"\n", nil, true)
 	if !strings.Contains(out.String(), asked) {
 		t.Errorf("setup did not ask whether to onboard the checkout's repository:\n%s", out)
 	}
@@ -321,6 +336,27 @@ func TestSetupAsksToOnboardTheCheckoutsRepository(t *testing.T) {
 	}
 	if !strings.Contains(st.Detail, "--repo") {
 		t.Errorf("the skip does not say how to onboard the repository later: %q", st.Detail)
+	}
+
+	// A run that cannot ask is asked nothing: --yes, --json and
+	// --non-interactive never cover onboarding an unlisted repository, and the
+	// wizard's question does not stand in for the typed confirmation they
+	// lack — nor is a pipe a terminal to ask at.
+	for name, tc := range map[string]struct {
+		o        *initOptions
+		terminal bool
+	}{
+		"--yes":             {o: &initOptions{yes: true}, terminal: true},
+		"--json":            {o: &initOptions{asJSON: true}, terminal: true},
+		"--non-interactive": {o: &initOptions{nonInteractive: true}, terminal: true},
+		"a pipe":            {o: &initOptions{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, out := gateRig(t, setupDoor.name, gateOrigin(), gateCheckoutYAML(), "\n", tc.o, tc.terminal)
+			if strings.Contains(out.String(), asked) {
+				t.Errorf("a run that can not ask was asked whether to onboard the repository:\n%s", out)
+			}
+		})
 	}
 }
 
@@ -387,8 +423,11 @@ func TestSetupStillTypesAnUnlistedRepositoryUnderYes(t *testing.T) {
 	}
 	noCloudTouched(t, r, "an unlisted repository under --yes")
 	all := out + errOut + err.Error()
-	if !strings.Contains(all, "Type acme/hostile to onboard it") && !strings.Contains(all, "acme/hostile") {
-		t.Errorf("the refusal does not name the repository whose owner/name is typed:\n%s", all)
+	if !strings.Contains(all, "type "+gateRepo+" at the prompt") {
+		t.Errorf("the refusal does not ask for the owner/name to be typed in the user's own terminal:\n%s", all)
+	}
+	if strings.Contains(all, "Onboard "+gateRepo) {
+		t.Errorf("--yes asked the wizard's question, which a run that cannot ask never does:\n%s", all)
 	}
 	if !strings.Contains(all, "--onboard-repo") {
 		t.Errorf("the refusal does not name the one-line opt-in:\n%s", all)
@@ -403,7 +442,7 @@ func TestSetupStillTypesAnUnlistedRepositoryUnderYes(t *testing.T) {
 // is no still carries the project answers it was given.
 func TestSetupOnboardingIsASeparateAnswerFromTheProjectQuestion(t *testing.T) {
 	e, out := gateRig(t, setupDoor.name, gateOrigin(), gateCheckoutYAML(), onboardAnswerNo+"\n",
-		&initOptions{createProject: true, name: "aurora", cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}})
+		&initOptions{createProject: true, name: "aurora", cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}}, true)
 	if strings.Contains(out.String(), setupAskProject) {
 		t.Errorf("the gate asked the project's question, which is the wizard's own:\n%s", out)
 	}
