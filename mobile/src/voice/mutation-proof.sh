@@ -304,14 +304,10 @@ run "the turn's final is a boundary" \
   "    if (dialogue === null) void accept(event.message.text);
     else void dialogue(event.message.text);"
 run "the turn's final is a message the app accepts" \
-  "  pipeline.on('message', (event) => {
-    if (dialogue === null) void accept(event.message.text);
+  "    if (dialogue === null) void accept(event.message.text);
     else void dialogue(event.message.text);
-    drain();
-  });" \
-  "  pipeline.on('message', () => {
-    drain();
-  });"
+    drain();" \
+  "    drain();"
 run "the OS's refusal of the microphone is recorded" \
   "  pipeline.on('unavailable', (event) => {
     microphone = Object.freeze({ ok: false, code: event.code });
