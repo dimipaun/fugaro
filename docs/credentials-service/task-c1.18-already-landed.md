@@ -190,7 +190,8 @@ guard sees it; the pull request stays a draft for as long as the base is red.
 
 `internal/cli/docs_credentials_plan_tests_test.go` holds a table of tasks whose
 **Tests.** lists are checked against the tree, and it still lists only C0.6,
-C1.2, C1.3 and C1.9 — C1.18's landing commit did not add C1.18's entry, so
+C1.2, C1.3 and C1.9 — neither of the two commits that carry C1.18
+(`aec4ec72` and `8a063c90`) added C1.18's entry, so
 C1.18's three cover tests are not held by that guard the way the other landed
 tasks' lists are. The names do all resolve in the tree today (the `git grep`
 above), so nothing is broken; the guard is simply narrower than its own comment
