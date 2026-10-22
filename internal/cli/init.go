@@ -1485,18 +1485,15 @@ func (r *initRun) stepConfirmation(class initflow.ConfirmClass) stepConfirmation
 	return stepLeave
 }
 
-// neverConfirms is the parenthetical that follows "typed at a real terminal" in
-// the warnings and left-for-yous of a step that could not be confirmed: which
-// ways of running do not give the confirmation. It is the step's own, because
-// D12 makes --yes the way a YesOrTyped step is confirmed with no terminal — a
-// line that told a reader of such a step "--yes never confirms it" would name
-// the one flag that does.
-func (r *initRun) neverConfirms(class initflow.ConfirmClass) string {
-	if class == initflow.YesOrTyped {
-		return "no terminal, --json, a pipe and a coding agent never confirm it, and --yes does"
-	}
-	return "--yes, --non-interactive, --json, a pipe and a coding agent never confirm it"
-}
+// neverConfirmsBuild is the parenthetical that follows "typed at a real
+// terminal" in the warning a run that could not confirm a billable image build
+// prints: which ways of running do not give that confirmation. It names --yes
+// as the way that does, because D12's answer of 2026-10-20 covers the build in
+// BOTH front doors (askCovered) — a line that told the reader "--yes never
+// confirms it" would name the one flag that does. The steps that stay Typed
+// write their own line, at their own call site, where "--yes never confirms it"
+// is true.
+const neverConfirmsBuild = "no terminal, --json, a pipe and a coding agent never confirm it, and --yes does"
 
 // askClass is the confirmation of a step that is money or permanent, of the
 // class: the project's name typed at a real terminal, or --yes for a YesOrTyped
@@ -3334,7 +3331,7 @@ func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *con
 		}
 		if !reachable {
 			r.buildsLeft = append(r.buildsLeft, name)
-			r.warn(fmt.Sprintf("the first image build of %s/%s is billable and was not confirmed: it needs the project's name typed at a real terminal ("+r.neverConfirms(initflow.YesOrTyped)+"), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks for the project's name too), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
+			r.warn(fmt.Sprintf("the first image build of %s/%s is billable and was not confirmed: it needs the project's name typed at a real terminal ("+neverConfirmsBuild+"), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks for the project's name too), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
 			continue
 		}
 		if !ok {
