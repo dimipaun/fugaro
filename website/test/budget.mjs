@@ -99,7 +99,7 @@
 //     docs hub to the console page and back, and this derivation only runs under
 //     `FUGARO_DERIVE_BUDGETS=1` — so a round that changes which page it is re-derives there in
 //     the commit that does, and the README's sentence moves with it.
-//   - Whole site: every file in `dist/` — eleven pages, the script, the brand icons, the manifest,
+//   - Whole site: every file in `dist/` — twelve pages, the script, the brand icons, the manifest,
 //     the two `fugaro watch` assets, and the console's four screenshots and the manifest they
 //     came with — × 1.25, rounded up. It is the build every checkout makes alike, tags or no
 //     tags, since the changelog reads the plugin's version rather than the checkout's tags.

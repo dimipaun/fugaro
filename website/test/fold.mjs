@@ -43,7 +43,7 @@
 //      command they run met a sentence about the page first, which is the ordering the plan
 //      asks this part to fix.
 //   3. **Every page that prints a command prints it under a heading.** The page's first `h2`
-//      comes before its first `pre`, on every route that prints one — three of the eleven
+//      comes before its first `pre`, on every route that prints one — three of the twelve
 //      today — so no page opens with a command that nothing above it names. This is the
 //      general form of the two cases above and the rule a future page keeps: a command block
 //      belongs to a section, and the section's heading is what a reader reads before it.
