@@ -1357,10 +1357,11 @@ func TestInitRepoRefusesInstallationFlags(t *testing.T) {
 	}
 }
 
-// The billable first build is typed at a real terminal and nowhere else:
-// with no terminal, or with --yes (or --json, --non-interactive, a coding
-// agent's environment), it is not started: the banner and a warning are
-// shown, everything else is done, and the run exits 1, the build left for you.
+// The billable first build is an ordinary covered step in both doors (D12's
+// answer of 2026-10-20): --yes starts it. With nothing that can confirm it (no
+// terminal and no --yes, or --json without --yes), it is not started: the banner
+// and a warning are shown, everything else is done, and the run exits 1, the
+// build left for you.
 func TestInitRepoBuildNeedsConfirmation(t *testing.T) {
 	r := sandboxRig(t)
 	r.storedSecrets()
@@ -1369,7 +1370,7 @@ func TestInitRepoBuildNeedsConfirmation(t *testing.T) {
 		t.Fatal(res)
 	}
 	r.script(t, "repo", -1, map[string]any{"plan": map[string]any{"exit": 0}})
-	for _, args := range [][]string{{"--repo", r.checkout}, {"--repo", r.checkout, "--yes"}, {"--repo", r.checkout, "--yes", "--json"}} {
+	for _, args := range [][]string{{"--repo", r.checkout}, {"--repo", r.checkout, "--json"}} {
 		res := r.fugaroInit(t, args...)
 		if res.code != 1 {
 			t.Fatalf("%v: want exit 1, the build left for the user:\n%s", args, res)
@@ -1394,6 +1395,17 @@ func TestInitRepoBuildNeedsConfirmation(t *testing.T) {
 		if len(r.build.Requests()) != 0 {
 			t.Errorf("%v: Cloud Build was called: %d request(s)", args, len(r.build.Requests()))
 		}
+	}
+	// --yes covers it: the build is submitted and the run converges.
+	res := r.fugaroInit(t, "--repo", r.checkout, "--yes")
+	if res.code != 0 {
+		t.Fatalf("--yes: want exit 0, the build covered:\n%s", res)
+	}
+	if !strings.Contains(res.stdout+res.stderr, "confirmed by --yes") {
+		t.Errorf("--yes: the build is not shown as confirmed by --yes:\n%s", res)
+	}
+	if n := r.builds.Load(); n != 1 {
+		t.Errorf("--yes: builds = %d, want 1", n)
 	}
 }
 
