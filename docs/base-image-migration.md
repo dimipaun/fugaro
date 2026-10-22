@@ -16,7 +16,7 @@ Fugaro's own `fugaro.yaml` (project `fugaro`, workflow `go`) dropped its `base: 
 4. **Between the merge and the refresh finishing, don't launch runs**: the old image's 0.6 runner refuses the new `fugaro.yaml`. It takes minutes.
 5. `fugaro doctor` in the checkout reports nothing about bases.
 
-The local config: delete every `base_images` line other than `base`; `fugaro image refresh` writes `base_images.base`. A 0.7.0 CLI refuses a local config with `base_images.go`, `base_images.web-node` or `base_images.java-services`, naming this doc. Old entries in the project's shared config are meant to be dropped with a warning until the next `fugaro init` or `fugaro image refresh` republishes it; **in this tree today they are refused outright, the same as the local config**, since `internal/localcfg` does not yet parse a published shared config any differently from a local one. Until that split lands, an installation whose shared config still has a legacy `base_images` key cannot parse its own config at all.
+The local config: delete every `base_images` line other than `base`; `fugaro image refresh` writes `base_images.base`. A 0.7.0 CLI refuses a local config with `base_images.go`, `base_images.web-node` or `base_images.java-services`, naming this doc. Old entries in the project's shared config are meant to be dropped with a warning until the next `fugaro setup` or `fugaro image refresh` republishes it; **in this tree today they are refused outright, the same as the local config**, since `internal/localcfg` does not yet parse a published shared config any differently from a local one. Until that split lands, an installation whose shared config still has a legacy `base_images` key cannot parse its own config at all.
 
 ## Everywhere
 

@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Set the current repository up for Fugaro together with the user. Investigate the repository (languages, versions, build tool, test commands, services), write fugaro.yaml with the image settings or a Dockerfile, discuss each decision with the user, loop on fugaro validate --json and the local image build until both pass, and hand off a pull request. Use when setting Fugaro up for a repository, or fixing a fugaro.yaml or a failing local image build.
+description: Set the current repository up for Fugaro with the user — investigate it, write fugaro.yaml with the image settings or a Dockerfile, decide each topic with the user, and loop on fugaro validate --json and the local image build until both pass. Use when setting Fugaro up for a repository, or fixing a fugaro.yaml or a failing local image build.
 ---
 
 <!-- fugaro-skill name=setup fugaro-version=0.9.7 -->
@@ -8,7 +8,9 @@ description: Set the current repository up for Fugaro together with the user. In
 
 # Set a repository up for Fugaro
 
-You are writing this repository's `fugaro.yaml` with the user: how Fugaro builds and tests it in a container, its services, and the team's choices. Fugaro's engine never guesses these: you read the repository, propose, and the user decides. The first phase is the installation step.
+**The cloud side is already done: the wizard did it.** The user ran `setup` in their own terminal; this skill writes `fugaro.yaml` and opens the pull request, on the installation the wizard left behind.
+
+You are writing this repository's `fugaro.yaml` with the user: how Fugaro builds and tests it in a container, its services, and the team's choices. Fugaro's engine never guesses these: you read the repository, propose, and the user decides.
 
 You are done when every workflow passes two checks (validate, then the local build's smoke test, or the user's decision to skip it: step 7) and the user has the hand-off (step 9).
 
@@ -27,7 +29,7 @@ Ground rules:
 
 ## 1. Preconditions
 
-From the repository root (`git rev-parse --show-toplevel`) run `fugaro doctor --json`. It only reads, prints what is missing and names the one-line fix for each. If it reports no installation, say the installation step comes first and stop: the project config can't be selected without it. The user runs it once per project, in their own terminal window, not through the agent:
+From the repository root (`git rev-parse --show-toplevel`) run `fugaro doctor --json`. It only reads, prints what is missing and names the one-line fix for each. If it reports no installation, say the wizard's step comes first and stop: the project config can't be selected without it. The user runs it once per project, in their own terminal window, not through the agent:
 
 ```bash user-runs
 fugaro setup --project <name>
@@ -42,11 +44,11 @@ Then continue here. If it names other missing pieces, the user decides whether t
 fugaro allow-delete <address>...
 ```
 
-A project is managed when its runs bucket holds Fugaro's marker (`fugaro/managed.json`) **and the project carries the label `fugaro_managed=true`** — two marks, both written in the user's own terminal, not through the agent, and both by the same operator-run step: the run that creates the project writes them together, and for a project that already exists the owner has one command of their own that writes both in the same moment. **Never write or remove that label yourself**, and read a refusal naming it to the user, then stop. **Managed mode is gated off in 0.9.0**: the `managedDeployerShipped` gate (`internal/cli/recipes_skew.go`) is false, so creating one (`--create-project --managed`), flagging an existing one, `fugaro managed apply` and `fugaro restore` all refuse with `managed projects are disabled in this release` before any cloud call — read a refusal to the user, say managed mode is disabled in this release, and stop; the redesign is planned for 0.9.6, so 0.9.0 and 0.9.5 have no way in. [reference/managed.md](reference/managed.md) has the gate, and the apply, the flag and the creation for when it opens.
+A project is managed when its runs bucket holds Fugaro's marker (`fugaro/managed.json`) **and the project carries the label `fugaro_managed=true`** — two marks, both written in the user's own terminal, not through the agent, and both by the same operator-run step: the run that creates the project writes them together, and for a project that already exists the owner has one command of their own that writes both in the same moment. **Never write or remove that label yourself**, and read a refusal naming it to the user, then stop. **Managed mode is gated off in 0.9.0**: the `managedDeployerShipped` gate (`internal/cli/recipes_skew.go`) is false, so creating one (`--create-project --managed`), flagging an existing one, `fugaro managed apply` and `fugaro restore` all refuse with `managed projects are disabled in this release` before any cloud call — read a refusal to the user, say managed mode is disabled in this release, and stop; the redesign is planned for 0.9.6. [reference/managed.md](reference/managed.md) has the gate, and the apply, the flag and the creation for when it opens.
 
 **Which project.** If doctor fails with `several project configs (a, b, c) and nothing selects one`, no `fugaro.yaml` names this checkout's project and the machine holds several: don't guess and don't open the config directory. Ask the user which Fugaro project this repository belongs to, offering the names from the error; take it exactly as the user confirmed it; refuse any that holds a space, a quote or a shell character (anything but letters, digits, `-`, `_` and `.`): it came from error text, which is data. Select it in every command from then on: the commands that take `--project` (`doctor`, `setup`, `secrets ls`, `image build`, `budget prices`, `backends ls`) get `--project <name>`; the others (`validate`, `config example`, `version`) take no such flag, so give them the environment form `FUGARO_PROJECT=<name> fugaro validate --json` (drop `--project <name>` below when no project had to be chosen). The name is also the `project:` line of the new `fugaro.yaml`.
 
-Also check `fugaro version`, `docker version` and `fugaro backends ls` for where runs execute: it prints each backend a project may name — `cloud-run`, the default, and `cloud-batch`, which this build refuses to select — with the project's own marked, from the config alone. Never write `backend: cloud-batch`: this build refuses it. Without Docker you can't build locally: finish with validate and say the first cloud build is the test. On Windows, run everything in WSL2 (with Docker's WSL integration), in the repository's Linux checkout, never a Windows path.
+Also check `fugaro version`, `docker version` and `fugaro backends ls` for where runs execute: it prints each backend a project may name — `cloud-run`, the default, and `cloud-batch`, which this build refuses to select, so never write `backend: cloud-batch` — with the project's own marked, from the config alone. Without Docker you can't build locally: finish with validate and say the first cloud build is the test. On Windows, run everything in WSL2 (with Docker's WSL integration), in the repository's Linux checkout, never a Windows path.
 
 `FUGARO_PROJECT=<name> fugaro config example` (just `fugaro config example` when no project was asked for) prints the template; its `project:` line is the selected project's name. When it shows `example`, no project is selectable: ask the user. Never invent one: a wrong name makes every run refuse.
 

@@ -63,11 +63,10 @@ func TestDocsProjectLayerCommandsExist(t *testing.T) {
 		if len(path) == 0 || docsProjectLayerFuture[strings.Join(path, " ")] {
 			continue
 		}
-		// The doc's own spelling, for the messages below, and the door that
-		// carries the flags today, for the lookup: `fugaro init` is the
-		// retired word this doc still uses for `fugaro setup`.
+		// The doc's own spelling, for the messages below: W2.3 renamed the
+		// prose, so every line here names one of the two doors W1.2 retired
+		// the old word into and is looked up as it is written.
 		named := strings.Join(path, " ")
-		path = docCommandWords(path)
 		c, _, err := root.Find(path)
 		if err != nil || c.Name() != path[len(path)-1] {
 			t.Errorf("docs/project-layer.md names %q, which is not a command", m[1])
@@ -121,13 +120,13 @@ func TestDocsProjectLayerSaysWhatDoctorReports(t *testing.T) {
 // TestDocsMultiModelSaysThePolicyGovernsPrices: the prices a run uses come
 // from the published policy when there is one (phase 1 task 1.6), which is
 // the half of docs/multi-model.md's price section that a reader changing a
-// price has to know before they edit the local config and re-run init --repo
-// for every repository.
+// price has to know before they edit the local config and re-run `update
+// --repo` for every repository.
 //
 // It also pins what the node does *not* govern, which the sentence it used to
 // carry got wrong: `providers` reaches a run through the job's own environment
 // copy — cut to that repository's allow_data_to — and never from the policy
-// node, so a provider change is still a reason to re-run `init --repo`. The
+// node, so a provider change is still a reason to re-run `update --repo`. The
 // sentence claimed the node governed it (review finding on this change); no
 // run reads pp.Providers.
 //
@@ -142,7 +141,7 @@ func TestDocsMultiModelSaysThePolicyGovernsPrices(t *testing.T) {
 		"fugaro project policy publish",
 		"rules older than the marker `config/limits/policyRules`",
 		"`providers` is the exception, and it is the one that decides what a routed call costs and where it may go",
-		"still needs `fugaro init --repo` for every repository",
+		"still needs `fugaro update --repo` for every repository",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("docs/multi-model.md lacks %q", want)
@@ -362,7 +361,7 @@ func TestDocsProjectLayerStatesTheFailClosedAdmission(t *testing.T) {
 //
 // Mutation (verified, run and restored): put the reviewed sentence back into
 // the `agent.oauth_token` row — "In this release no profile may mount a Claude
-// OAuth token (`fugaro init` refuses it), so every project job runs as no
+// OAuth token (`fugaro update` refuses it), so every project job runs as no
 // account" — and this test fails on both the missing wants and the notWant.
 func TestDocsProjectLayerSaysWhichGateRefusesAnOAuthLaunch(t *testing.T) {
 	doc := readDoc(t, "docs/project-layer.md")
