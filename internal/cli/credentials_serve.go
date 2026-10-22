@@ -334,10 +334,6 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		Secret:  credsvc.BundleSecretID(env[envProject]),
 		Service: sm,
 	}}
-	audit, err := credsvc.NewAuditor(log.Handler(), credsvc.WithAuditScrub(loader.Scrub))
-	if err != nil {
-		return credsvc.Config{}, userErr("the credentials service cannot record what it does, so it will not start: %v", err)
-	}
 	auth, err := credsvc.NewAuthenticator(credsvc.AuthConfig{
 		Project:         env[envProject],
 		FirebaseProject: env[envFirebaseFP],
@@ -356,13 +352,11 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		Policy:  credsvc.RTDBPolicy{DB: db},
 		State:   &creds.RTDBStore{DB: db},
 		Kills:   credsvc.RTDBKills{DB: db},
-		Audit:   audit,
 		DB:      db,
 		Probes:  db,
-		// The probe's own audit line goes to the process's log, which is the
-		// stream Cloud Logging reads; the auditor above is the one that redacts
-		// (NewProbeAuditor arms it with this service's loader inside
-		// NewServer).
+		// Every audited act goes to the process's log, which is the stream
+		// Cloud Logging reads; the one auditor that redacts is built inside
+		// NewServer (NewProbeAuditor arms it with this service's loader).
 		AuditLog:    log.Handler(),
 		JobAccounts: accounts,
 		Log:         log,
