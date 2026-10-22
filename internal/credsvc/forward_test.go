@@ -14,6 +14,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
@@ -808,5 +810,139 @@ func TestServiceSendsTierAOnlyToAnthropicsOwnEndpoint(t *testing.T) {
 	// destination the rule is checked against is the one the request carries.
 	if !strings.HasPrefix(urls[0], "https://api.anthropic.com/") {
 		t.Errorf("the tier-A destination %q is not Anthropic's own endpoint", urls[0])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// A redirect is never followed
+// ---------------------------------------------------------------------------
+
+// TestUpstreamClientNeverFollowsARedirect is the client rule on its own, for
+// both branches: the client the service builds when Config.Client is nil and
+// the one a caller passes in. A caller's client is put through the same
+// function rather than trusted, so a redirect cannot be followed by a client
+// this service was handed.
+func TestUpstreamClientNeverFollowsARedirect(t *testing.T) {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("cookiejar.New: %v", err)
+	}
+	cases := []struct {
+		name string
+		in   *http.Client
+	}{
+		{name: "the service builds one", in: nil},
+		{
+			name: "a caller passes one that would follow anything",
+			in: &http.Client{
+				Timeout:       time.Minute,
+				Jar:           jar,
+				CheckRedirect: func(*http.Request, []*http.Request) error { return nil },
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := upstreamClient(tc.in)
+			if got.CheckRedirect == nil {
+				t.Fatal("the client has no CheckRedirect: it would follow a redirect")
+			}
+			req, err := http.NewRequest(http.MethodPost, "https://example.invalid/v1/messages", nil)
+			if err != nil {
+				t.Fatalf("building the request: %v", err)
+			}
+			if err := got.CheckRedirect(req, nil); !errors.Is(err, http.ErrUseLastResponse) {
+				t.Errorf("CheckRedirect = %v, want http.ErrUseLastResponse: the answer is returned rather than followed", err)
+			}
+			if got.Jar != nil {
+				t.Error("the client kept a cookie jar: an upstream answer must not set state on this service")
+			}
+		})
+	}
+	// A client built here keeps the service's own bound on the whole attempt;
+	// one passed in keeps its own, which is the caller's to choose.
+	if got := upstreamClient(nil); got.Timeout != upstreamTimeout {
+		t.Errorf("the built client's timeout is %v, want %v", got.Timeout, upstreamTimeout)
+	}
+	if got := upstreamClient(cases[1].in); got.Timeout != time.Minute {
+		t.Errorf("a passed-in client's timeout became %v, want the caller's", got.Timeout)
+	}
+}
+
+// TestServiceNeverFollowsAnUpstreamRedirect: a 307 from the upstream, with the
+// Location pointing at another host. The POST and the tier-B key must not go
+// there — Go's client strips Authorization across hosts but not x-api-key — and
+// the redirect is relayed to the client with no credential in it.
+//
+// The other host is a real server, so a service that followed the redirect
+// would be caught having sent the call: it records every request it is sent and
+// this test requires none. The service's client is the one the fixture passes
+// in, which is the branch this test exists for.
+func TestServiceNeverFollowsAnUpstreamRedirect(t *testing.T) {
+	var mu sync.Mutex
+	var elsewhere []string
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		elsewhere = append(elsewhere, r.Method+" "+r.URL.Path+" x-api-key="+r.Header.Get("x-api-key"))
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer other.Close()
+
+	s := newSvcWith(t, func(s *svc, _ *Config) {
+		s.src.docs = [][]byte{testBundlePaidOnlyDoc(t)}
+	})
+	cred := fakeCred(t, "paid")
+	s.up.Script = []anthropicfake.Reply{{
+		Status: http.StatusTemporaryRedirect,
+		Header: http.Header{"Location": []string{other.URL + MessagesPath}},
+		Body:   `{"type":"error","error":{"type":"api_error","message":"moved to ` + cred + `"}}`,
+	}}
+
+	// The client that makes the call to the service must not follow the relayed
+	// redirect either: this test is about what the service does with the
+	// upstream's answer, and a following client would blur the two hops.
+	req, err := http.NewRequest(http.MethodPost, s.http.URL+MessagesPath, strings.NewReader(callBody("redirect")))
+	if err != nil {
+		t.Fatalf("building the call: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+s.jobToken())
+	req.Header.Set(HeaderRunIdentity, s.runToken())
+	req.Header.Set(HeaderRunJob, s.job)
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("the call failed: %v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading the answer: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusTemporaryRedirect {
+		t.Fatalf("the answer is %d, want the upstream's %d relayed", resp.StatusCode, http.StatusTemporaryRedirect)
+	}
+	mu.Lock()
+	got := append([]string(nil), elsewhere...)
+	mu.Unlock()
+	if len(got) != 0 {
+		t.Fatalf("the redirect was followed: the other host saw %v", got)
+	}
+	if n := s.up.Count(); n != 1 {
+		t.Fatalf("the upstream saw %d requests, want 1: the call is not retried onto the redirect", n)
+	}
+	if strings.Contains(string(body), cred) {
+		t.Fatalf("the credential reached the client in the redirect's body:\n%s", body)
+	}
+	if got := resp.Header.Get(HeaderCredential); got != "anthropic-api-key" {
+		t.Errorf("%s = %q, want the credential that was sent", HeaderCredential, got)
+	}
+	// The relayed answer names the other host: it is the upstream's own
+	// Location, and it carries no credential — the run's gateway is free to
+	// refuse it, and nothing here follows it.
+	if loc := resp.Header.Get("Location"); loc != other.URL+MessagesPath {
+		t.Errorf("Location = %q, want the upstream's own", loc)
 	}
 }

@@ -177,8 +177,10 @@ type Config struct {
 	// are launched as it. It is the table the run-to-job binding is checked
 	// against (N1), so an empty one refuses every call.
 	JobAccounts []JobAccount
-	// Client is the HTTP client the upstream call is made with. nil is a
-	// client with the service's own bounds.
+	// Client is the HTTP client the upstream call is made with. nil is a client
+	// with the service's own bounds. Either way it is put through
+	// upstreamClient, so the client that carries a credential never follows a
+	// redirect: a caller cannot hand this service a client that would.
 	Client *http.Client
 	// Log is where the service's own lines go. nil is slog.Default().
 	Log *slog.Logger
@@ -295,9 +297,11 @@ func NewServer(cfg Config) (*Server, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	if cfg.Client == nil {
-		cfg.Client = &http.Client{Timeout: upstreamTimeout}
-	}
+	// The client is hardened whichever one it is: a client this service did not
+	// build is still the client that carries the credential, so the rule that it
+	// never follows a redirect is applied to it here rather than trusted to its
+	// caller.
+	cfg.Client = upstreamClient(cfg.Client)
 	s := &Server{cfg: cfg, log: cfg.Log, now: cfg.Now, jobs: make(map[string]JobAccount, len(cfg.JobAccounts))}
 	for _, ja := range cfg.JobAccounts {
 		if ja.Email == "" || ja.Slug == "" || ja.Repo == "" {

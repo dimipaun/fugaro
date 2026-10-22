@@ -30,6 +30,39 @@ import (
 // released rather than held for the life of the instance.
 const upstreamTimeout = 30 * time.Minute
 
+// upstreamClient is the client every upstream attempt is made with, whether it
+// was built here or handed to NewServer: it never follows a redirect and never
+// keeps a cookie jar.
+//
+// A redirect is the one answer that would take the credential somewhere nobody
+// chose. A 307 or 308 re-sends the request — body and headers — to whatever
+// host the Location names, and Go's own client drops Authorization across hosts
+// but not x-api-key, so a followed redirect is a tier-B paid key (or, on the
+// tier-A path, the subscription token D133 keeps to Anthropic's own endpoint)
+// sent to a host the policy never admitted. The answer itself is still the
+// client's (a 3xx is neither a usage limit nor a 401), so it is relayed — with
+// no credential in it — and this service simply does not go where it points.
+//
+// It is internal/gateway's own upstreamClient (gateway.go), respelled here for
+// the reason carriesAny is: the package does not export it. The compression
+// half is the same rule for the same reason — the transport must not ask for an
+// encoding on its own, because an answer the service relays is an answer it has
+// to be able to read (the usage-limit scan) and to scrub.
+func upstreamClient(c *http.Client) *http.Client {
+	var out http.Client
+	if c != nil {
+		out = *c
+	} else {
+		t := http.DefaultTransport.(*http.Transport).Clone()
+		t.DisableCompression = true
+		out.Transport = t
+		out.Timeout = upstreamTimeout
+	}
+	out.Jar = nil
+	out.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &out
+}
+
 // upstreamKindAnthropic is gateway.Upstream's kind for Anthropic's own API
 // with a key: the tier-B path. It is spelled out here rather than taken from
 // the package because internal/gateway exports no constant for it — the one it
