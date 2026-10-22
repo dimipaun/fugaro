@@ -656,7 +656,13 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request, rt route
 			out.amount, out.settled, out.pricedAs, out.servingModel, out.usage, out.errorType, out.reported
 		s.logCall(cl)
 	}()
-	out = s.forward(w, r, rt, body, p, known, w0, &cl.status)
+	// The tier the service's answer carried, whatever outcome the call
+	// settles as: the ledger charges by it (C1.16), and a call the service
+	// served and this gateway could not price is still a call the run
+	// pays for at the tier it was served from.
+	var served string
+	out = s.forward(w, r, rt, body, p, known, w0, &cl.status, &served)
+	out.charge.tier = served
 }
 
 // outcome is how a forwarded call settles, and what its log line says.
@@ -672,7 +678,7 @@ func zeroOutcome(model string, sent bool) outcome {
 
 // forward sends the call upstream and copies the response back without
 // buffering, teeing it to the usage parser, and says how it settles.
-func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body []byte, p parsed, known bool, w0 pricing.Micros, status *int) outcome {
+func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body []byte, p parsed, known bool, w0 pricing.Micros, status *int, tier *string) outcome {
 	reserved := outcome{charge: charge{amount: w0, unreconciled: w0, model: p.model, sent: true}, settled: settledReserved, pricedAs: pricedTable}
 	if !known {
 		reserved.pricedAs = pricedMax
@@ -745,7 +751,9 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		// the switch, and the refusals that are the service's own answer and
 		// are never relayed. A model answer (2xx, or a model error the
 		// service relayed) is not touched: it goes on to the pump below.
-		if st, done := s.serviceAnswer(w, resp, true); done {
+		st, done, served := s.serviceAnswer(w, resp, true)
+		*tier = served // "" when the answer carried none, which is a halt or a relayed error
+		if done {
 			*status = st
 			// A 2xx this gateway could not account by is a model answer the
 			// service served and the run must still pay for: it settles at
@@ -903,6 +911,8 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, partial bool) outco
 	o.model = serving
 	o.sent = true
 	o.tokens = u.Input + u.CacheWrite5m + u.CacheWrite1h + u.CacheRead + u.Output
+	// What this call had cached is what a switch after it re-reads (F24).
+	o.cacheRead = u.CacheRead
 	if !partial {
 		o.amount, o.settled = reported, settledUsage
 		if pr != nil && t.acc.hasReported {
@@ -1290,7 +1300,7 @@ func (s *Server) forwardFree(w http.ResponseWriter, r *http.Request, rt route) {
 		// answer is not asked for a tier -- but a refusal is the service's
 		// own answer here too, and is acted on rather than copied to the
 		// agent (D143). A model answer passed through.
-		if _, done := s.serviceAnswer(w, resp, false); done {
+		if _, done, _ := s.serviceAnswer(w, resp, false); done {
 			return
 		}
 	}

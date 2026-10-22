@@ -138,8 +138,21 @@ type Stage struct {
 // StageReport is what a stage's calls cost and what they tried that the
 // gateway refused.
 type StageReport struct {
-	Calls         int                       // calls sent upstream
-	Used          pricing.Micros            // settled this stage
+	Calls int // calls sent upstream
+	// Used is the money this stage's calls settled: tiers B and C, and
+	// every call of a run with no cascade, which has no tier at all.
+	Used pricing.Micros
+	// Notional is what tier-A calls settled this stage: the run's
+	// subscription usage, which is reported for visibility and counted
+	// against no cap (C1.16, D140). It is disjoint from Used, and the
+	// stage's whole model figure is their sum.
+	Notional pricing.Micros
+	// ByTier is the settled money by credential tier, keys "b" and "c"
+	// (C1.16, D140): the per-call split the by-tier counters are written
+	// from, and the closed set the database rules allow. A tier-A call is
+	// Notional and is in no key here, and a call that did not go through
+	// the service is in none either: it is real money but no tier.
+	ByTier        map[string]pricing.Micros
 	ByModel       map[string]pricing.Micros // by serving model
 	ByRoute       map[string]pricing.Micros // by provider route (Claude calls have none)
 	Reported      pricing.Micros            // what providers said their calls cost: for comparison, never charged
@@ -162,7 +175,14 @@ type Halt struct {
 
 // Ledger is the run's money: what the cap grants, what settled calls
 // used, and what calls in flight hold in reserve.
-type Ledger struct{ Granted, Used, Reserved pricing.Micros }
+//
+// Used is the money a mixed run paid — tiers B and C — and Notional is the
+// tier-A part of what its model calls cost, which is what the run's
+// subscription spent rather than the run (C1.16, D140). They are disjoint:
+// a reader that wants the run's whole model figure adds them, and one that
+// wants what it owes reads Used. A run with no cascade has no tiers, so its
+// Notional is zero and Used is exactly what it always was.
+type Ledger struct{ Granted, Used, Notional, Reserved pricing.Micros }
 
 // Server is a running gateway.
 type Server struct {
@@ -197,10 +217,23 @@ type Server struct {
 	countSlots chan struct{} // bounds the token counts in flight
 
 	// mu guards everything below: one mutex, one ledger.
-	mu          sync.Mutex
-	used        pricing.Micros
-	reserved    pricing.Micros
-	overrun     pricing.Micros // all calls', for the invariant check
+	mu       sync.Mutex
+	used     pricing.Micros
+	reserved pricing.Micros
+	overrun  pricing.Micros // all calls', for the invariant check
+	// notional is what tier-A calls settled this run: the subscription's
+	// own usage, kept apart from used because it is not money and no cap
+	// counts it (C1.16, D140).
+	notional pricing.Micros
+	// lastCacheRead, lastCacheKnown and lastModel are the last settled
+	// call's cache-read tokens, whether its usage was read at all, and its
+	// serving model: what the next answer's switch is estimated from
+	// (F24). A call whose usage could not be read leaves lastCacheKnown
+	// false, so the estimate that follows says "unmeasured" rather than
+	// zero.
+	lastCacheRead  int64
+	lastModel      string
+	lastCacheKnown bool
 	halt        *Halt
 	haltMsg     string
 	wouldHalted bool           // observe: enforce would have halted by now
@@ -422,13 +455,13 @@ func (s *Server) Ledger() Ledger {
 
 func (s *Server) ledgerLocked() Ledger {
 	if s.o.Lease != nil {
-		return Ledger{Granted: s.granted, Used: s.used, Reserved: s.reserved}
+		return Ledger{Granted: s.granted, Used: s.used, Notional: s.notional, Reserved: s.reserved}
 	}
 	g := pricing.Micros(math.MaxInt64)
 	if s.o.Mode == Enforce {
 		g = s.o.Cap
 	}
-	return Ledger{Granted: g, Used: s.used, Reserved: s.reserved}
+	return Ledger{Granted: g, Used: s.used, Notional: s.notional, Reserved: s.reserved}
 }
 
 // BeginStage starts allowing st's models. A stage still running is ended
@@ -436,7 +469,11 @@ func (s *Server) ledgerLocked() Ledger {
 func (s *Server) BeginStage(st Stage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.stage = &stageState{st: st, rep: StageReport{ByModel: map[string]pricing.Micros{}, ByRoute: map[string]pricing.Micros{}}}
+	s.stage = &stageState{st: st, rep: StageReport{
+		ByTier:  map[string]pricing.Micros{},
+		ByModel: map[string]pricing.Micros{},
+		ByRoute: map[string]pricing.Micros{},
+	}}
 }
 
 // EndStage stops allowing calls, waits (at most 30 s) for the stage's
@@ -448,7 +485,7 @@ func (s *Server) EndStage() StageReport {
 	s.stage = nil
 	s.mu.Unlock()
 	if st == nil {
-		return StageReport{ByModel: map[string]pricing.Micros{}, ByRoute: map[string]pricing.Micros{}}
+		return StageReport{ByTier: map[string]pricing.Micros{}, ByModel: map[string]pricing.Micros{}, ByRoute: map[string]pricing.Micros{}}
 	}
 	done := make(chan struct{})
 	go func() { st.calls.Wait(); close(done) }()
@@ -472,6 +509,10 @@ func (s *Server) stageReport(st *stageState) StageReport {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rep := st.rep
+	rep.ByTier = make(map[string]pricing.Micros, len(st.rep.ByTier))
+	for k, v := range st.rep.ByTier {
+		rep.ByTier[k] = v
+	}
 	rep.ByModel = make(map[string]pricing.Micros, len(st.rep.ByModel))
 	for k, v := range st.rep.ByModel {
 		rep.ByModel[k] = v

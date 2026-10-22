@@ -209,6 +209,12 @@ type ServiceAnswer struct {
 	// (credsvc.SwitchHeader) rather than this package keeping a second
 	// reading of it.
 	Switch string
+	// SwitchCost is what this answer's switch is estimated to cost (C1.16,
+	// F24), computed here from the last call's cache reads and the tier
+	// that answered, and zero when the answer carries no switch. It is the
+	// record's "estimated cache-miss cost", and the service cannot supply
+	// it: what the run has cached is the gateway's own knowledge.
+	SwitchCost SwitchCost
 	// Exhausted, when set, is the service's typed answer that no credential
 	// is usable before its instant: this call was not served, and the one
 	// thing to do about it is wait (C1.17). Every other field is then the
@@ -619,24 +625,31 @@ func exhaustedAnswer(e serviceRefusal) (Exhausted, error) {
 // today, and its body is put back on the response for the relay to stream. A
 // refusal is never relayed: it is fugaro's own answer, it names the project's
 // credentials, and the agent has no business seeing the set of them (D143).
-func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needTier bool) (status int, done bool) {
+func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needTier bool) (status int, done bool, tier string) {
 	if resp.StatusCode/100 == 2 {
 		if !needTier {
-			return resp.StatusCode, false
+			return resp.StatusCode, false, ""
 		}
 		tier, name, ok, err := credentialHeaders(resp.Header)
 		if err == nil && !ok {
 			err = errors.New("the answer carries no tier")
 		}
 		if err != nil {
-			return s.haltService(w, stateDetailUnreadable), true
+			return s.haltService(w, stateDetailUnreadable), true, ""
 		}
 		sw, err := switchValue(resp.Header)
 		if err != nil {
-			return s.haltService(w, stateDetailUnreadable), true
+			return s.haltService(w, stateDetailUnreadable), true, ""
 		}
-		s.answer(ServiceAnswer{Tier: tier, Credential: name, Switch: sw})
-		return resp.StatusCode, false
+		a := ServiceAnswer{Tier: tier, Credential: name, Switch: sw}
+		if sw != "" {
+			// A switch's cache-miss cost is the gateway's to estimate
+			// (F24): it is computed here, where the last call's usage is,
+			// and handed to the run with the record the service wrote.
+			a.SwitchCost = s.switchCost(tier)
+		}
+		s.answer(a)
+		return resp.StatusCode, false, tier
 	}
 	head, rerr := io.ReadAll(io.LimitReader(resp.Body, maxServiceRefusalBytes))
 	// Whatever this answer turns out to be, the reader above has consumed
@@ -646,7 +659,7 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 	if rerr != nil {
 		// A body that broke mid-read, before any of it reached the agent:
 		// not a refusal this code can read, and not one to relay.
-		return s.haltService(w, stateDetailUnreadable), true
+		return s.haltService(w, stateDetailUnreadable), true, ""
 	}
 	e, ok, err := readServiceRefusal(resp.StatusCode, head)
 	if !ok {
@@ -670,18 +683,18 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 		// as it always did. The run is not stopped by it either: another
 		// credential, or a person, may be what fixes it.
 		if (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) && !modelErrorEnvelope(head) {
-			return s.haltService(w, stateDetailUnadmitted), true
+			return s.haltService(w, stateDetailUnadmitted), true, ""
 		}
-		return resp.StatusCode, false // a model error the service relayed
+		return resp.StatusCode, false, "" // a model error the service relayed
 	}
 	if err != nil {
-		return s.haltService(w, stateDetailUnreadable), true
+		return s.haltService(w, stateDetailUnreadable), true, ""
 	}
 	switch e.Error {
 	case ErrorExhaustedUntil:
 		ex, err := exhaustedAnswer(e)
 		if err != nil {
-			return s.haltService(w, stateDetailUnreadable), true
+			return s.haltService(w, stateDetailUnreadable), true, ""
 		}
 		// The wait is not a halt: the runner decides what to do about it
 		// (C1.17), and until it does the call is answered retryably and
@@ -690,17 +703,17 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 		s.answer(ServiceAnswer{Exhausted: &ex})
 		writeError(w, http.StatusServiceUnavailable, "api_error",
 			"fugaro: the credentials service has no credential available before "+ex.ResetAt.UTC().Format(time.RFC3339))
-		return http.StatusServiceUnavailable, true
+		return http.StatusServiceUnavailable, true, ""
 	case ErrorStateUnavailable:
-		return s.haltService(w, refusalDetail(e.Error)), true
+		return s.haltService(w, refusalDetail(e.Error)), true, ""
 	case ErrorUnverifiedRunIdentity, ErrorUnverifiedJobIdentity:
-		return s.haltService(w, refusalDetail(e.Error)), true
+		return s.haltService(w, refusalDetail(e.Error)), true, ""
 	}
 	// A refusal whose type this release does not know. It is the service's
 	// own answer and is not relayed, and the call cannot be accounted for
 	// either: stop rather than improvise (D143's posture). The type is from
 	// a closed set the service writes, and is not echoed into the detail.
-	return s.haltService(w, stateDetailUnreadable), true
+	return s.haltService(w, stateDetailUnreadable), true, ""
 }
 
 // replayBody is a response body whose first bytes were read and put back.
