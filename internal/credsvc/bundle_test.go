@@ -338,6 +338,91 @@ func TestBundleValueNeverInErrorOrLog(t *testing.T) {
 	}
 }
 
+// TestBundleRefusalNamesTheClassAndNeverTheKey: the loader's own error names
+// the key it is about, because the person who hand-edits the document is the
+// person who fixes it. The service relays its refusal to a RUN, and a run is
+// not that person: the key is up to 80 bytes of a document an operator edited
+// and can be a VALUE pasted where a name belongs, so what reaches the run is
+// the class and never the text.
+//
+// The control is the same error read the other way. BundleError.Error() does
+// carry the key — that is what C1.25's operator commands show — so this is a
+// deliberate difference between the two readers and not a message that was
+// lost on the way out.
+//
+// Mutation (run, restore): answer err.Error() instead of the class. The first
+// row is red with the pasted value in the refusal, and the source-failure row
+// is red with Secret Manager's own sentence about the container in it.
+func TestBundleRefusalNamesTheClassAndNeverTheKey(t *testing.T) {
+	// A key that is a credential value pasted where a name belongs: exactly the
+	// hand-edit the loader clips its key for, and the case that makes the
+	// difference between the two readers matter. It is built from the test's
+	// name, so the file holds no secret-shaped literal (Convention 2), and it
+	// is shorter than the loader's 80-byte clip so the control can find it
+	// whole.
+	pasted := "sk-ant-" + strings.ReplaceAll(t.Name(), "/", "-")
+	value := fakeCred(t, "x")
+	keyed, err := ParseBundle([]byte(pasted + ": " + value + "\n"))
+	if keyed != nil || !errors.Is(err, ErrBundleUnknownKey) {
+		t.Fatalf("a document keyed by a value = %v, %v; want ErrBundleUnknownKey", keyed, err)
+	}
+	if !strings.Contains(err.Error(), pasted) {
+		t.Fatalf("the loader's own error does not name the key it is about: %v", err)
+	}
+	// The same for the source's failures, which are another package's sentence
+	// and name the container and the request rather than a key.
+	sourceErr := errors.New("secretmanager: permission denied on projects/aurora/secrets/creds-bundle/versions/latest")
+
+	cases := []struct {
+		name  string
+		err   error
+		want  error
+		notIn []string
+	}{
+		{
+			name:  "a key that is not a credential name",
+			err:   err,
+			want:  ErrBundleUnknownKey,
+			notIn: []string{pasted, value},
+		},
+		{
+			name:  "a key that is a legitimate name",
+			err:   bundleErr(ErrBundleBadValue, config.ClaudeOAuthTokenPrefix+testAccount),
+			want:  ErrBundleBadValue,
+			notIn: []string{config.ClaudeOAuthTokenPrefix + testAccount},
+		},
+		{
+			name: "an absent container",
+			err:  ErrBundleAbsent,
+			want: ErrBundleAbsent,
+		},
+		{
+			name: "an oversize document, wrapped",
+			err:  fmt.Errorf("loading the bundle: %w", ErrBundleTooLarge),
+			want: ErrBundleTooLarge,
+		},
+		{
+			name:  "a source that could not be read",
+			err:   sourceErr,
+			want:  ErrBundleUnreadable,
+			notIn: []string{"secretmanager", "permission denied", "projects/aurora", "creds-bundle"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := BundleRefusal(tc.err)
+			if got != tc.want.Error() {
+				t.Errorf("BundleRefusal(%v) = %q, want the class %q", tc.err, got, tc.want)
+			}
+			for _, s := range tc.notIn {
+				if strings.Contains(got, s) {
+					t.Errorf("the refusal carries %q, which a run is not told:\n%s", s, got)
+				}
+			}
+		})
+	}
+}
+
 // TestBundleSecretIDIsTheInstallationsContainer: the name the loader derives
 // and the name `fugaro init`'s stage fills into
 // `credentials_service.bundle_secret` are the same string. The stage

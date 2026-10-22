@@ -354,26 +354,40 @@ func (s *Server) answer(w http.ResponseWriter, cl *call, ans *answer, c creds.Cr
 	if scan != nil && answerIsStream(ans.resp, cl.requested) {
 		tee = scan.scan
 	}
-	// The credential is scrubbed out of the body on its way to the client. The
-	// writer wraps the client's own ResponseWriter, and the ResponseController
-	// stays on that ResponseWriter rather than on the writer, so flushing is
-	// still the flush of the client's connection (C1.8's pump flushes after
-	// every write, and a stream must not be delayed by the redaction).
+	// The credential is scrubbed out of the body on its way to the client, and
+	// so is every token the caller presented: the run identity this service
+	// verified and the job's ID token. An upstream that echoed one of them —
+	// in a message's text, in an error, in a request id — must not have it
+	// echoed on to the run, and the two tokens are as much this service's to
+	// keep out of an answer as the credential is.
+	//
+	// The writers chain, one per value, and each holds back a tail that could
+	// still become its value, so a value split across two reads is redacted
+	// too. They wrap the client's own ResponseWriter, and the
+	// ResponseController stays on that ResponseWriter rather than on the
+	// outermost writer, so flushing is still the flush of the client's
+	// connection (C1.8's pump flushes after every write, and a stream must not
+	// be delayed by the redaction).
 	out := io.Writer(w)
-	var rw io.WriteCloser
-	if ans.credential != "" {
-		rw = gateway.NewRedactWriter(w, ans.credential)
-		out = rw
+	var rw []io.WriteCloser
+	for _, key := range append([]string{ans.credential}, cl.scrubs...) {
+		if key == "" {
+			continue
+		}
+		r := gateway.NewRedactWriter(out, key)
+		rw = append(rw, r)
+		out = r
 	}
 	// Pump never buffers and flushes after every write, which is what makes
 	// the answer reach the run as it arrives (C1.8). Its bool says the stream
 	// ended rather than failed; nothing here acts on it, because the client's
 	// connection is the client's.
 	gateway.Pump(out, http.NewResponseController(w), ans.resp.Body, tee)
-	if rw != nil {
-		// Whatever the writer held back was not the credential after all: it
-		// is the tail of the answer, and it is written now.
-		_ = rw.Close()
+	// Innermost last: a writer's tail is not its value after all, so it is the
+	// tail of the answer and it is written — into the writer below it, which
+	// then has the same chance to find a value in what it is handed.
+	for i := len(rw) - 1; i >= 0; i-- {
+		_ = rw[i].Close()
 	}
 }
 
@@ -387,12 +401,19 @@ func (s *Server) answer(w http.ResponseWriter, cl *call, ans *answer, c creds.Cr
 // policy does not admit (D152, which only a written `fallback: auto` changes).
 //
 // The tried list is carried on every refusal this path writes, so the run's
-// halt message names what was considered and why each one was skipped.
+// halt message names what was considered and why each one was skipped. The
+// typed wait carries it structurally (ExhaustedUntil), and a refusal that
+// halts carries it in the same field of the same body (WriteWireError), so a
+// run reading either finds the same list in the same place.
 func (s *Server) refuseSelection(w http.ResponseWriter, err error, tried []Tried) {
 	var until *creds.ExhaustedUntil
 	if errors.As(err, &until) {
 		WriteExhaustedUntil(w, ExhaustedUntil{ResetAt: until.At, Tried: tried}, s.now())
 		return
 	}
-	s.refuse(w, StatusUnavailable, ErrorStateUnavailable, err.Error())
+	WriteWireError(w, StatusUnavailable, WireError{
+		Error:   ErrorStateUnavailable,
+		Message: err.Error(),
+		Tried:   tried,
+	})
 }

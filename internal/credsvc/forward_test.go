@@ -11,6 +11,7 @@ package credsvc
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"io"
 	"net/http"
@@ -944,5 +945,195 @@ func TestServiceNeverFollowsAnUpstreamRedirect(t *testing.T) {
 	// refuse it, and nothing here follows it.
 	if loc := resp.Header.Get("Location"); loc != other.URL+MessagesPath {
 		t.Errorf("Location = %q, want the upstream's own", loc)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The tokens the call presents
+// ---------------------------------------------------------------------------
+
+// TestServiceNeverSendsTheCallersTokensUpstream: the two tokens a call presents
+// — the run identity this service verified and the job's ID token — are this
+// service's to keep out of Anthropic's logs, and the gateway's own deny-list
+// covers one header only (Authorization). A run that put its identity token in
+// another header, or pasted either token into the request body, would otherwise
+// have that token reach the upstream: so every header carrying either token is
+// dropped and the body is scrubbed of both, for every tier.
+//
+// The body assertion is the pair — no token, and the marker in its place — so a
+// service that dropped the body, or refused the call, cannot pass by losing the
+// run's own text.
+//
+// Mutation (run, restore): remove the `gateway.RedactHeaders` loop in send, and
+// the header rows are red with the token in the header the upstream was sent;
+// remove the scrub in readCall, and the body rows are red with it in the body.
+func TestServiceNeverSendsTheCallersTokensUpstream(t *testing.T) {
+	cases := []struct {
+		name   string
+		bundle func(*testing.T) []byte
+		tier   string
+	}{
+		{"a tier-A call", func(t *testing.T) []byte { return testBundleDoc(t) }, TierA},
+		{"a tier-B call", testBundlePaidOnlyDoc, TierB},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newSvcWith(t, func(s *svc, _ *Config) { s.src.docs = [][]byte{tc.bundle(t)} })
+			run, job := s.runToken(), s.jobToken()
+			// The body carries both tokens as a run might have pasted them —
+			// in a message's text — and the two extra headers carry them where
+			// the contract's own headers do not.
+			body := `{"model":"` + testModel + `","max_tokens":16,"messages":[{"role":"user","content":"` + run + ` and ` + job + `"}]}`
+			resp, _ := s.call(t, body, func(r *http.Request) {
+				r.Header.Set("X-Run-Identity-Copy", run)
+				r.Header.Set("X-Job-Token-Copy", job)
+			})
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("the answer is %d, want 200", resp.StatusCode)
+			}
+			if got := resp.Header.Get(HeaderTier); got != tc.tier {
+				t.Errorf("%s = %q, want %q", HeaderTier, got, tc.tier)
+			}
+			req := s.firstUpstream(t)
+			for name, vals := range req.Header {
+				for _, v := range vals {
+					if strings.Contains(v, run) || strings.Contains(v, job) {
+						t.Errorf("the upstream was sent the caller's token in %s: %s", name, v)
+					}
+				}
+			}
+			// The header is deleted rather than edited, so the name is gone
+			// with the value: this contract's own headers by prefix (readCall)
+			// and any other header carrying a token by value (send).
+			for _, name := range []string{"X-Run-Identity-Copy", "X-Job-Token-Copy", HeaderRunIdentity, HeaderRunJob} {
+				if got := req.Header.Get(name); got != "" {
+					t.Errorf("the upstream was sent %s = %q, want the header dropped", name, got)
+				}
+			}
+			up := s.up.Body(0)
+			if bytes.Contains(up, []byte(run)) || bytes.Contains(up, []byte(job)) {
+				t.Fatalf("the body the upstream was sent carries the caller's tokens:\n%s", up)
+			}
+			if !bytes.Contains(up, []byte(redactedValue)) {
+				t.Fatalf("the body was not scrubbed but lost:\n%s", up)
+			}
+			// The call's own text is still there: the scrub replaces the token
+			// rather than the body.
+			if !bytes.Contains(up, []byte(" and ")) {
+				t.Errorf("the body's own text was lost rather than scrubbed:\n%s", up)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// What a bundle failure tells a run (review finding n1)
+// ---------------------------------------------------------------------------
+
+// TestServiceRefusesAnUnreadableBundleWithoutCarryingIt: the service's bundle
+// refusal is the CLASS of the failure and never the loader's own text. That
+// text names the key it is about — up to 80 bytes of a hand-edited document,
+// which can be a value pasted where a name belongs — or, when the source
+// itself failed, another package's sentence naming the container and the
+// request. Both are the operator's to read; neither is a run's.
+//
+// Mutation (run, restore): answer err.Error(). The first row is red with the
+// pasted value in the refusal and the second with Secret Manager's sentence.
+func TestServiceRefusesAnUnreadableBundleWithoutCarryingIt(t *testing.T) {
+	pasted := "sk-ant-" + strings.ReplaceAll(t.Name(), "/", "-")
+	sourceErr := errors.New("secretmanager: permission denied on projects/aurora/secrets/creds-bundle/versions/latest")
+	cases := []struct {
+		name  string
+		docs  [][]byte
+		errs  []error
+		class string
+		notIn []string
+	}{
+		{
+			name:  "a key that is not a credential name",
+			docs:  [][]byte{[]byte(pasted + ": " + fakeCred(t, "x") + "\n")},
+			class: ErrBundleUnknownKey.Error(),
+			notIn: []string{pasted},
+		},
+		{
+			name:  "a container the source could not read",
+			errs:  []error{sourceErr},
+			class: ErrBundleUnreadable.Error(),
+			notIn: []string{"secretmanager", "permission denied", "projects/aurora", "creds-bundle"},
+		},
+		{
+			name:  "a document that is not a map of names to values",
+			docs:  [][]byte{[]byte("- " + config.AnthropicSecret + "\n")},
+			class: ErrBundleUnparseable.Error(),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newSvcWith(t, func(s *svc, _ *Config) {
+				s.src.docs = tc.docs
+				s.src.errs = tc.errs
+			})
+			resp, body := s.call(t, callBody("unreadable-bundle"))
+			if resp.StatusCode != StatusUnavailable {
+				t.Fatalf("the answer is %d, want %d", resp.StatusCode, StatusUnavailable)
+			}
+			got := refusal(t, resp.StatusCode, body)
+			if got.Error != ErrorStateUnavailable {
+				t.Errorf("the refusal is %q, want %q", got.Error, ErrorStateUnavailable)
+			}
+			if got.Message != tc.class {
+				t.Errorf("the refusal's message is %q, want the class %q", got.Message, tc.class)
+			}
+			for _, secret := range tc.notIn {
+				if strings.Contains(got.Message, secret) {
+					t.Errorf("the refusal carries %q, which a run is not told:\n%s", secret, got.Message)
+				}
+			}
+			if n := s.up.Count(); n != 0 {
+				t.Errorf("the upstream saw %d requests, want none", n)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The operator's stop switches
+// ---------------------------------------------------------------------------
+
+// TestServiceRefusesWhenTheKillSwitchesCannotBeRead: an unreadable switch is
+// not an off switch (budget's own rule), and it is not a serve either. The
+// service cannot tell whether the operator has stopped it, so it issues nothing
+// and says so in its own sentence — the reader's error is another package's
+// text and the run is not the operator.
+//
+// It is read before the bundle, so a service whose switches cannot be read
+// reads no credential at all, which the bundle read count pins.
+//
+// Mutation (run, restore): answer `false, nil` from an unreadable switch (a
+// fail-open read). The call is served, the answer is 200, and this test is red
+// on the status, the refusal and the upstream's count at once.
+func TestServiceRefusesWhenTheKillSwitchesCannotBeRead(t *testing.T) {
+	s := newSvcWith(t, func(s *svc, _ *Config) {
+		s.kills.err = errors.New("the outcomes node could not be read")
+	})
+	resp, body := s.call(t, callBody("unreadable-switch"))
+	if resp.StatusCode != StatusUnavailable {
+		t.Fatalf("the answer is %d, want %d", resp.StatusCode, StatusUnavailable)
+	}
+	got := refusal(t, resp.StatusCode, body)
+	if got.Error != ErrorStateUnavailable {
+		t.Errorf("the refusal is %q, want %q", got.Error, ErrorStateUnavailable)
+	}
+	if strings.Contains(got.Message, "outcomes node") {
+		t.Errorf("the refusal carries the reader's own text: %q", got.Message)
+	}
+	if n := s.up.Count(); n != 0 {
+		t.Errorf("the upstream saw %d requests, want none", n)
+	}
+	if n := s.kills.readCount(); n != 1 {
+		t.Errorf("the switches were read %d times, want 1", n)
+	}
+	if n := s.src.readCount(); n != 0 {
+		t.Errorf("the bundle was read %d times, want none: the switch is read first", n)
 	}
 }

@@ -79,6 +79,12 @@ const upstreamKindAnthropic = "anthropic"
 // name — a header this contract gains later is dropped by this line too.
 const headerPrefixFugaro = "X-Fugaro-"
 
+// redactedValue is what a scrubbed value is replaced with in a body. It is the
+// gateway's own marker over an answer (route.go's `redacted`), spelled here
+// because the package does not export it; the two are the same string and a
+// body scrubbed by either reads the same way.
+const redactedValue = "[redacted]"
+
 // call is one call being answered: what it asks for, and its body read once so
 // that an attempt can be repeated.
 type call struct {
@@ -102,6 +108,14 @@ type call struct {
 // than the gateway's own bound: the two sit in one path, so a body one of them
 // accepts and the other refuses would be a request that works against one and
 // not the other.
+//
+// The caller's own tokens — the run identity this service verified and the
+// job's ID token it read from Authorization — are scrubbed out of the BODY
+// here, and out of the headers before the call goes upstream (send). A token in
+// a header other than Authorization, or pasted into the request body, is a
+// token in Anthropic's logs: the gateway's own deny-list covers the one header
+// it knows, and a rule that covered only that header would leave every other
+// one, and the body, carrying it.
 func readCall(r *http.Request, scrubs []string) (*call, error) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, gateway.MaxRequestBytes+1))
 	if err != nil {
@@ -109,6 +123,15 @@ func readCall(r *http.Request, scrubs []string) (*call, error) {
 	}
 	if int64(len(body)) > gateway.MaxRequestBytes {
 		return nil, fmt.Errorf("credsvc: the call's body is larger than the %d bytes this service accepts", int64(gateway.MaxRequestBytes))
+	}
+	for _, tok := range scrubs {
+		if tok == "" {
+			continue
+		}
+		// Whole bytes only: a token split by a JSON escape or re-encoded
+		// character is not a token this can find, and a body edit that tried
+		// would be guessing at the caller's encoding.
+		body = bytes.ReplaceAll(body, []byte(tok), []byte(redactedValue))
 	}
 	h := r.Header.Clone()
 	for k := range h {
@@ -168,6 +191,16 @@ func (s *Server) send(ctx context.Context, cl *call, e Entry) (*answer, error) {
 		// The message names the rule, never a value: every error these two
 		// helpers return is written that way (C1.8).
 		return nil, err
+	}
+	// Every header that carries one of the caller's own tokens is dropped, not
+	// only the Authorization header the gateway's deny-list knows: the scrub
+	// above is over the one header, and a token in any other header of the call
+	// is the same token reaching Anthropic's logs. gateway.RedactHeaders is the
+	// gateway's own rule over a header set, exported for exactly this (C1.8),
+	// and it deletes the header rather than editing its value, which is the
+	// direction that cannot half-remove a token.
+	for _, tok := range cl.scrubs {
+		gateway.RedactHeaders(hdr, tok)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, dest, bytes.NewReader(cl.body))
 	if err != nil {

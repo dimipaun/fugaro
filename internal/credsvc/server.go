@@ -375,9 +375,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	b, err := s.cfg.Bundles.Load(ctx)
 	if err != nil {
-		// Fail closed, and name what is wrong without ever carrying a value
-		// (the loader's own errors do exactly that).
-		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, err.Error())
+		// Fail closed, and name the CLASS of what is wrong without ever
+		// carrying a value, a key or another package's text (BundleRefusal):
+		// the loader's own error carries the key it is about for the operator,
+		// and the run reading this refusal is not the operator.
+		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, BundleRefusal(err))
 		return
 	}
 	shared, found, err := s.cfg.Policy.Shared(ctx)

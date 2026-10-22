@@ -252,6 +252,14 @@ func (k *fakeKills) Stop(_ context.Context, slug string) (bool, string, error) {
 	return false, "", nil
 }
 
+// readCount is how many times the switches were read, which is what makes "the
+// switch is read before the bundle" a claim a test can check.
+func (k *fakeKills) readCount() int {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.reads
+}
+
 // fakeStore is the cascade's shared state in memory, as creds.Store: the
 // marks, the placements, the leases and the round-robin counter.
 type fakeStore struct {

@@ -151,6 +151,44 @@ func (e *BundleError) Unwrap() error { return e.Kind }
 
 func bundleErr(kind error, key string) error { return &BundleError{Kind: kind, Key: key} }
 
+// bundleRefusals are the loader's own refusals, the ones BundleRefusal maps a
+// failure to. Every one of them is written by this file.
+var bundleRefusals = []error{
+	ErrBundleAbsent,
+	ErrBundleUnreadable,
+	ErrBundleTooLarge,
+	ErrBundleEmpty,
+	ErrBundleTooMany,
+	ErrBundleUnparseable,
+	ErrBundleUnknownKey,
+	ErrBundleBadValue,
+}
+
+// BundleRefusal is what a bundle failure may tell a caller that is not the
+// operator: the CLASS of the problem and nothing else.
+//
+// The loader's own error carries the key it is about (BundleError), because the
+// person who hand-edited the document is the person who fixes it. The service
+// is not that person: it relays its refusal to a RUN, and the key is up to 80
+// bytes of a document an operator edited, which can be a value pasted where a
+// name belongs — so a run is told the class ("the bundle holds a key that is
+// not a credential name") and never the text. C1.25's own commands, which are
+// the operator's, read BundleError directly and do show the key.
+//
+// The source's failures are covered by the same rule: a Secret Manager error's
+// text names the container and the request, which is not a run's business
+// either, so anything that is not one of this file's refusals is answered as
+// the class it is — unreadable. A refusal is a class and never another
+// package's sentence.
+func BundleRefusal(err error) string {
+	for _, kind := range bundleRefusals {
+		if errors.Is(err, kind) {
+			return kind.Error()
+		}
+	}
+	return ErrBundleUnreadable.Error()
+}
+
 // Entry is one credential the bundle holds, as the cascade names it.
 type Entry struct {
 	// Name is the credential's name: the Claude account's for tier A

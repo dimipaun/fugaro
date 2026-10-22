@@ -391,20 +391,34 @@ func (b *chunkedBody) Close() error { return nil }
 type echoTransport struct {
 	status int
 	body   string
+	// bodyOf, when set, builds the body from the request instead of using
+	// body: it is for the answers that must echo something only the call
+	// carries, and it is handed the request as the service sent it upstream.
+	bodyOf func(*http.Request) string
+	// header is sent as is, for the answers that echo a value in a header.
+	header http.Header
 	chunk  int
 	seen   []*http.Request
 }
 
 func (t *echoTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	t.seen = append(t.seen, r)
+	body := t.body
+	if t.bodyOf != nil {
+		body = t.bodyOf(r)
+	}
+	h := http.Header{"Content-Type": []string{"application/json"}}
+	for k, vs := range t.header {
+		h[k] = vs
+	}
 	n := t.chunk
 	if n <= 0 {
-		n = len(t.body)
+		n = len(body)
 	}
 	return &http.Response{
 		StatusCode: t.status,
-		Header:     http.Header{"Content-Type": []string{"application/json"}},
-		Body:       &chunkedBody{data: []byte(t.body), n: n},
+		Header:     h,
+		Body:       &chunkedBody{data: []byte(body), n: n},
 		// The body is handed over in pieces and its length is not the
 		// declared one, which is what a chunked answer is.
 		ContentLength: -1,
@@ -524,6 +538,143 @@ func TestServiceRedactsAStreamedAnswerBody(t *testing.T) {
 	}
 	if !strings.Contains(string(stream), rateLimitEventType) {
 		t.Errorf("the streamed answer's own text was lost rather than scrubbed:\n%s", stream)
+	}
+}
+
+// TestServiceNeverEchoesTheCallersTokensInTheAnswerBody: the answer is scrubbed
+// of the caller's own tokens — the run identity this service verified and the
+// job's ID token it read from Authorization — as well as of the credential. An
+// upstream that echoed one of them, in a message's text or in an error, must
+// not have it echoed on to the run.
+//
+// The two tokens do not reach the upstream through this service at all
+// (TestServiceNeverSendsTheCallersTokensUpstream pins that), so what this pins
+// is the second line of the same rule: whatever an answer carries, the tokens
+// the call presented are scrubbed out of it before the run reads it — the same
+// rule, over the same writer, that the credential gets, so the two cannot drift
+// apart.
+//
+// Mutation (run, restore): scrub only ans.credential in answer. The body is red
+// with both tokens in the client's hands.
+func TestServiceNeverEchoesTheCallersTokensInTheAnswerBody(t *testing.T) {
+	tr := &echoTransport{status: http.StatusOK}
+	s := newSvcWith(t, func(_ *svc, c *Config) { c.Client = &http.Client{Transport: tr} })
+	// The fixture's tokens are a fixed claim set signed with a fixed key, so
+	// these are the two strings this call presents.
+	run, job := s.runToken(), s.jobToken()
+	tr.body = `{"type":"error","error":{"message":"you sent me ` + run + ` and ` + job + `"}}`
+
+	resp, body := s.call(t, callBody("token-echo"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the answer is %d, want 200: %s", resp.StatusCode, body)
+	}
+	for what, tok := range map[string]string{"the run identity": run, "the job's ID token": job} {
+		if strings.Contains(string(body), tok) {
+			t.Fatalf("%s reached the client in the answer's body:\n%s", what, body)
+		}
+	}
+	if !strings.Contains(string(body), redactedValue) {
+		t.Errorf("the body carries no redaction marker, so it is not the upstream's answer scrubbed:\n%s", body)
+	}
+	if !strings.Contains(string(body), "you sent me") {
+		t.Errorf("the answer's own text was lost rather than scrubbed:\n%s", body)
+	}
+}
+
+// TestServiceRedactsAnAnswerHeaderThatEchoesTheCredential: the no-echo rule is
+// over the whole answer and not only its body. An upstream that echoed the
+// credential it was handed — in a request id, in an error header — must not
+// have it echoed on to the run, and gateway.RedactHeaders deletes the header
+// rather than editing its value, so a header that carried the credential is
+// gone rather than half-removed. The header that carried nothing is untouched,
+// which is what makes this a rule about the value and not "drop every header
+// that is not ours".
+//
+// Mutation (run, restore): drop the gateway.RedactHeaders call in
+// copyAnswerHeaders. The answer reaches the client with the credential whole in
+// the header the upstream echoed it in.
+func TestServiceRedactsAnAnswerHeaderThatEchoesTheCredential(t *testing.T) {
+	cred := fakeCred(t, "default")
+	s := newSvcWith(t, func(s *svc, _ *Config) {
+		s.src.docs = [][]byte{[]byte(config.ClaudeOAuthToken + ": " + cred + "\n")}
+	})
+	s.up.Script = []anthropicfake.Reply{{
+		Status: http.StatusOK,
+		Header: http.Header{
+			"X-Request-Id": []string{cred},
+			"X-Echoed":     []string{"the token " + cred + " was seen"},
+			"X-Clean":      []string{"untouched"},
+		},
+		Body: `{"ok":true}`,
+	}}
+	resp, body := s.call(t, callBody("header-echo"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the answer is %d, want 200: %s", resp.StatusCode, body)
+	}
+	for name, vals := range resp.Header {
+		for _, v := range vals {
+			if strings.Contains(v, cred) {
+				t.Errorf("the credential reached the client in %s: %s", name, v)
+			}
+		}
+	}
+	for _, name := range []string{"X-Request-Id", "X-Echoed"} {
+		if got := resp.Header.Get(name); got != "" {
+			t.Errorf("%s = %q, want the header deleted: it carried the credential", name, got)
+		}
+	}
+	if got := resp.Header.Get("X-Clean"); got != "untouched" {
+		t.Errorf("X-Clean = %q, want it kept: it carried no credential", got)
+	}
+	if strings.Contains(string(body), cred) {
+		t.Errorf("the credential reached the client in the body:\n%s", body)
+	}
+}
+
+// TestServiceNamesTheTriedCredentialsOnEveryRefusal: the tried list is carried
+// on every refusal this path writes — the typed wait carries it structurally
+// and a refusal that halts carries it in the same field of the same body — so a
+// run that halts is told what was considered and why each one was skipped,
+// whether the answer was "wait" or "nothing".
+//
+// This is the halting shape: alice is not admitted to this repository (so she
+// is skipped before anything is sent), and the account that is admitted answers
+// 401, which marks it broken and leaves nothing to send to. The service refuses
+// with the whole list — the skip and the mark — and the refusal is the one the
+// runner halts on rather than the typed wait.
+//
+// Mutation (run, restore): drop Tried from the WireError in refuseSelection's
+// non-wait branch. The refusal reaches the client with no tried list at all.
+func TestServiceNamesTheTriedCredentialsOnEveryRefusal(t *testing.T) {
+	s := newSvcWith(t, func(s *svc, _ *Config) {
+		// Two shared tokens and no paid key: the bundle is the whole cascade,
+		// so nothing but the two below can be considered or selected.
+		s.src.docs = [][]byte{[]byte(config.ClaudeOAuthToken + ": " + fakeCred(t, "default") + "\n" +
+			config.ClaudeOAuthTokenPrefix + testAccount + ": " + fakeCred(t, testAccount) + "\n")}
+		s.policy.admissions[s.slug] = decodeTestChild(t, testChildDoc("default"))
+	})
+	s.up.Script = []anthropicfake.Reply{{Status: http.StatusUnauthorized, Body: `{"type":"error","error":{"type":"authentication_error"}}`}}
+
+	resp, body := s.call(t, callBody("nothing-left"))
+	if resp.StatusCode != StatusUnavailable {
+		t.Fatalf("the answer is %d, want %d", resp.StatusCode, StatusUnavailable)
+	}
+	got := refusal(t, resp.StatusCode, body)
+	if got.Error != ErrorStateUnavailable {
+		t.Errorf("the refusal is %q, want %q", got.Error, ErrorStateUnavailable)
+	}
+	want := []Tried{
+		{Name: testAccount, Tier: TierA, Reason: ReasonNotAdmitted},
+		{Name: config.DefaultClaudeAccount, Tier: TierA, Reason: ReasonBroken},
+	}
+	if !slices.Equal(got.Tried, want) {
+		t.Errorf("the refusal's tried list is %+v, want %+v", got.Tried, want)
+	}
+	if strings.Contains(got.Message, fakeCred(t, "default")) {
+		t.Errorf("the refusal's message carries a credential value: %q", got.Message)
+	}
+	if n := s.up.Count(); n != 1 {
+		t.Errorf("the upstream saw %d requests, want 1: nothing is retried once every candidate is out", n)
 	}
 }
 
