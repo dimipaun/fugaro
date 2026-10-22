@@ -45,7 +45,15 @@ import { CONSOLE_OPERATIONS } from '../../src/main/ipc'
 import { putText } from '../../src/renderer/app'
 import { PROJECT_PANEL_KEYS, PROJECTS_THEMES, buildProjectsModel, renderProjects } from '../../src/renderer/screens/projects'
 import type { ProjectsInputs, ScreenElement, ScreenFactory } from '../../src/renderer/screens/projects'
-import { RUN_LOG_CAP, buildRunModel, linkFor, parseLogWindow, pullRequestUrl, renderRun } from '../../src/renderer/screens/run'
+import {
+  PR_NO_LINK_REASON,
+  RUN_LOG_CAP,
+  buildRunModel,
+  linkFor,
+  parseLogWindow,
+  pullRequestUrl,
+  renderRun,
+} from '../../src/renderer/screens/run'
 import type { RunInputs } from '../../src/renderer/screens/run'
 import { ReplayBuffer } from '../../src/shared/replay'
 import { ADDRESS_PLACEHOLDER, sanitizeText, TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
@@ -115,6 +123,10 @@ function walk(node: ScreenElement): readonly FakeScreen[] {
   for (const child of fake.childNodes()) out.push(...walk(child))
   return out
 }
+
+/** PR_LINE_CLASSES is the pull-request line's cells in the order they are
+ * drawn: the three facts and the separator between them. */
+const PR_LINE_CLASSES = ['run-pr-repo', 'run-pr-number', 'run-pr-sep', 'run-pr-url'] as const
 
 /** all is every node carrying a class, in document order. */
 function all(node: ScreenElement, className: string): readonly FakeScreen[] {
@@ -1054,6 +1066,52 @@ describe('renderRun', () => {
     // Nothing in the pull request panel carries a destination at all: there is
     // no inert link, and none waiting for a provider.
     expect(walk(pr).map((node) => node.getAttribute('data-href'))).toEqual(walk(pr).map(() => null))
+  })
+
+  it('puts an element between the repository, the number and the URL', () => {
+    // The owner's report of 2026-10-21, from the screenshot run: the three
+    // facts stood side by side with nothing between them, and the panel read
+    // `acme/platform-core#412https://github.com/acme/platform-core/pull/412`
+    // -- three values run into one string, with the URL no longer a URL. The
+    // separator is a cell of its own rather than part of a value, so each value
+    // is still exactly the document's string (the case above draws them).
+    const tree = renderRun(factory, buildRunModel(runInputs()), 'light')
+    const line = walk(one(tree, 'run-pr'))
+      .filter((node) => PR_LINE_CLASSES.some((name) => node.classes.includes(name)))
+      .map((node) => node.textContent)
+    expect(line).toEqual([
+      'example-owner/example-repo',
+      ' · ',
+      '#42',
+      ' · ',
+      'https://bitbucket.org/example-owner/example-repo/pull-requests/42',
+    ])
+  })
+
+  it('separates what it draws, so a panel missing a field has no stray separator', () => {
+    // The separator belongs *between* the facts, not before the URL: a run whose
+    // `pr_url` the document does not carry draws two cells and one separator.
+    const withoutUrl = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, pr_url: undefined } }
+    const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis: withoutUrl })), 'light')
+    const pr = one(tree, 'run-pr')
+    const line = walk(pr)
+      .filter((node) => PR_LINE_CLASSES.some((name) => node.classes.includes(name)))
+      .map((node) => node.textContent)
+    expect(line).toEqual(['example-owner/example-repo', ' · ', '#42'])
+    expect(texts(pr, 'run-pr-url')).toEqual([])
+  })
+
+  it('gives the reason no link is offered in one line, in the design’s words', () => {
+    // Design section 5.1 rule 2's own sentence, and design gap 7 is why a link
+    // is not built from a repository and a number: it would name a repository
+    // this run does not use. The panel drew a two-clause explanation of that
+    // instead -- the owner's "long explanatory sentence under it" -- and the
+    // design's own line says the same thing in one.
+    expect(PR_NO_LINK_REASON).toBe(
+      'this CLI does not say which provider this run’s repository is on, so the console will not build a link from it',
+    )
+    const tree = renderRun(factory, buildRunModel(runInputs()), 'light')
+    expect(one(one(tree, 'run-pr'), 'run-pr-reason').textContent).toBe(PR_NO_LINK_REASON)
   })
 
   it('offers the logs link as a destination attribute and never as a navigation', () => {

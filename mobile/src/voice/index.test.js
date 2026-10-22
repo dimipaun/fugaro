@@ -105,6 +105,8 @@ test('the module is exactly these files, at every depth', () => {
   // checkable rather than a claim in a header: an engine is `engine.js`, and
   // this fails -- at any depth, which is why the walk above is recursive.
   assert.deepEqual(FILES, [
+    'dialogue.js',
+    'dialogue.test.js',
     'index.js',
     'index.test.js',
     'interrupt.js',
@@ -118,11 +120,14 @@ test('the module is exactly these files, at every depth', () => {
 
 test('the door exports exactly this, and every name is the screen, its switch or the speaker seam', () => {
   assert.deepEqual(Object.keys(voice).sort(), [
+    'DIALOGUE_CODES',
+    'DIALOGUE_OUTCOME',
     'INTERRUPT_REASON',
     'INTERRUPT_SWITCH',
     'QUEUE_CAP',
     'SCREEN_CODES',
     'createPipelineSpeaker',
+    'createVoiceDialogue',
     'createVoiceScreen',
     'interruptDecision',
   ]);
@@ -255,7 +260,7 @@ function production(dir = DIR) {
 
 test('the scan reads the module, and not an empty list', () => {
   const files = production();
-  assert.deepEqual(files.map(([file]) => file), ['index.js', 'interrupt.js', 'screen.js', 'speaker.js']);
+  assert.deepEqual(files.map(([file]) => file), ['dialogue.js', 'index.js', 'interrupt.js', 'screen.js', 'speaker.js']);
   for (const [file, text] of files) {
     assert.ok(text.includes('export'), `${file} is real code, not a comment`);
   }

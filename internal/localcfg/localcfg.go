@@ -28,6 +28,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/mailbox/keychain"
 	"github.com/dimipaun/fugaro/internal/mirror"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
@@ -152,6 +153,12 @@ type Config struct {
 	Profiles map[string]config.JobProfile `yaml:"profiles,omitempty"`
 	// Watch tunes fugaro watch.
 	Watch *Watch `yaml:"watch,omitempty"`
+	// Mailbox is what `fugaro mailbox` reads out of this project's config
+	// (mobile P4.1, T2). The pairing key itself is never here: the config
+	// holds the NAME of the OS keychain item the key lives at, which is not a
+	// secret and may be printed (M5, D113b — "the settings hold the item's
+	// name only").
+	Mailbox *Mailbox `yaml:"mailbox,omitempty"`
 	// UpdateCheck turns off the daily check for a newer fugaro release and
 	// its one-line stderr nag (FUGARO_NO_UPDATE_CHECK=1 does the same;
 	// `fugaro doctor`'s own cli-version check ignores both); nil or true
@@ -165,6 +172,23 @@ type Config struct {
 	// notes are warnings added after parsing (AddWarning), such as a
 	// published shared config's dropped legacy base_images entries.
 	notes []string
+}
+
+// Mailbox is the mailbox block: what the mailbox consumer needs from the
+// operator's own machine.
+type Mailbox struct {
+	// KeychainItem is the OS keychain item the pairing key lives at (M5,
+	// D113b). It is configuration and it is not a secret — it may be printed,
+	// and the diagnostic a missing key produces names it — but its shape is
+	// fixed, because it becomes an argv element of a keychain program: at most
+	// 64 characters of A-Z, a-z, 0-9, '.', '_' and '-', carrying this project's
+	// name, so a config file cannot name an arbitrary keychain query and two
+	// projects on one machine cannot be made to read each other's key.
+	//
+	// The shape is keychain.ParseItem's, not a second copy of the rule:
+	// validate refuses a name that package refuses, with that package's
+	// sentence.
+	KeychainItem string `yaml:"keychain_item,omitempty"`
 }
 
 // Watch is the watch block: how fugaro watch flags a fast burn.
@@ -1080,6 +1104,16 @@ func (c *Config) validate() error {
 	if w := c.Watch; w != nil && w.BurnAlertUSDPerHour != nil {
 		if _, err := pricing.FromUSD(*w.BurnAlertUSDPerHour); err != nil {
 			bad("watch.burn_alert_usd_per_hour: %v (a finite dollar amount, 0 or more)", err)
+		}
+	}
+	// The mailbox block's one field is a keychain item name, and the rule is
+	// keychain.ParseItem's: this file is the one place the name is written, and
+	// the package that turns it into an argv is the one that says what shape it
+	// may have. A name refused here is refused before `fugaro mailbox` can read
+	// a key, which is the run-level refusal §8's row 1 names.
+	if m := c.Mailbox; m != nil {
+		if _, err := keychain.ParseItem(m.KeychainItem, c.Name); err != nil {
+			bad("mailbox.keychain_item: %v", err)
 		}
 	}
 	for _, region := range slices.Sorted(maps.Keys(c.ComputePrices)) {

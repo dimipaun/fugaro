@@ -2702,6 +2702,30 @@ a scratch copy of the staged file and turned the named test red:
 | `curl … | sh`, `eval`, `env`, `printenv | sort`, `set | grep` added | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the download-and-run and environment-dump scans |
 | the publish job's `sha256sum --strict --check` removed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the publish job's steps |
 | the upload-artifact pin changed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the repository's existing pin |
+
+## The e2e goldens, as recorded (2026-10-18)
+
+The eight golden screenshots are committed under `test/e2e/__screenshots__/`
+(`live-{light,dark}-darwin.png`, and `{projects,spend,run}/{light,dark}-darwin.png`),
+**darwin only**. They were recorded on the owner's machine: macOS 26.7 (Darwin
+25.6.0, x64), Node 22.23.3, `@playwright/test` 1.64.1, Electron 44.7.2 (the
+lockfile's versions), device scale factor 1 as the specs launch the window (the
+PNGs are 1164 px wide), at main `82ba600d`, with `npm run build` then
+`playwright test --workers=1 --update-snapshots`. They were then compared twice in a
+plain run (`playwright test --workers=1`, 93 passed both times). Every frame is
+drawn from the specs' own invented documents (`example-owner/...`, `acme/...`,
+`redacted@example.invalid`); none holds a real name.
+
+**Linux baselines are not committed.** The name carries the platform
+(`{arg}-{platform}{ext}`), and Linux draws different pixels, so
+`live-light-linux.png` and the rest must be recorded on Linux, under
+`xvfb-run --auto-servernum`. **CI does not compare any golden today**:
+`.github/workflows/console-tests.yml` sets `FUGARO_CONSOLE_GOLDENS: skip` at job level
+(line 90), so on both `console (ubuntu-latest)` and `console (macos-latest)` the
+golden tests are skipped and the committed darwin files are compared only on a
+developer's Mac, never on the macos runner, whose rendering has not been compared
+with these files.
+||||||| 82ba600d9
 | `retry_apple_network` removed from `console/scripts/notarize-and-staple.sh` or from the verification step | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the helper's definition in each of the two places and on every call site it must have |
 | the retry wrapped around a step's `codesign --sign`, or around the script's `xcrun notarytool submit` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the only-lines-that-may-name-the-helper clause ("retries … the helper wraps the `xcrun stapler` calls this pipeline makes and nothing else") |
 | the script's `xcrun stapler staple` or `xcrun stapler validate` left unwrapped | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the two retried calls the script must run |

@@ -208,7 +208,7 @@ const FRAMING_WHY =
  * carries values that are not text — `viewport`'s `width=device-width` is not a sentence
  * and a gate that read it would report noise.
  */
-const HEAD_METAS = new Set(['description', 'og:title', 'og:description', 'og:site_name', 'twitter:card', 'twitter:title', 'twitter:description'])
+const HEAD_METAS = new Set(['description', 'og:title', 'og:description', 'og:site_name', 'og:image:alt', 'twitter:card', 'twitter:title', 'twitter:description'])
 
 function headText(html) {
   const out = []
