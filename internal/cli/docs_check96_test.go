@@ -62,10 +62,13 @@ var pipeIntoPythonHeredocRE = regexp.MustCompile(`\|\s*python3?\s+(-\s+)?<<`)
 // pairing refusal as the reason a run identity for X cannot mint for Y, and
 // that clause is the mechanism); the `# 0` read-back on the Restore's scratch
 // line deleted → FAIL (the check's final assertion is that nothing survives
-// it); the known-limit bullet on the URL gate deleted → FAIL (the check would
-// leave a reader taking the keyless path as the state of this tree); step 4's
-// "**no audit line** for it" put back to "always audited" → FAIL (the check
-// would fail a correct release).
+// it); the known-limit bullet on the URL gate deleted whole → FAIL (the check
+// would leave a reader taking the keyless path as the state of this tree);
+// step 4's "**no audit line** for it" put back to "always audited" → FAIL (the
+// check would fail a correct release); and, on the code's side, an audit call
+// added to internal/credsvc/server.go's `refuse` → FAIL (the expectation is
+// held to `refuse`'s body, so the day it starts recording admission refusals
+// this check says so instead of passing).
 func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	check := check96Section(t)
 

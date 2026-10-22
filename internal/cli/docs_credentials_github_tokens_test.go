@@ -29,7 +29,7 @@ import (
 // credsvc.MintRequest → FAIL (the document says a mint call carries no
 // repository field, and that is what makes "a run identity for X cannot mint for
 // Y" true); the "Nothing on this tree puts that variable in a job's environment"
-// known-limit paragraph deleted → FAIL (the document would claim the mint is the
+// known-limit sentence changed → FAIL (the document would claim the mint is the
 // service's while nothing here switches the keyless path on).
 func TestDocsGitProvidersStateWhatReachesTheAgentExactly(t *testing.T) {
 	providers := readDoc(t, "docs/git-providers.md")
@@ -118,9 +118,9 @@ func TestDocsGitProvidersStateWhatReachesTheAgentExactly(t *testing.T) {
 // "no code path in the job mints a token or reads the App key **when the job's
 // environment names the service**" clause deleted → FAIL, because that is the
 // property the keyless path gives and the sentence the residual in "Known
-// limits" points at; the known-limit sentence deleted (the document left saying
-// the mint is the service's, with no word that nothing here sets the variable
-// the switch reads) → FAIL.
+// limits" points at; the known-limit sentence ("nothing on this tree sets that
+// variable, so today the key that signs an opted-in run's tokens is still the
+// job's own") changed to claim the service's key signs today → FAIL.
 //
 // The known-limit half is what this test was extended for after review: the
 // document said "A run's installation token is **minted by the service**" flat,
