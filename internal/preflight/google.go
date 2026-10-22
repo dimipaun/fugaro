@@ -74,10 +74,13 @@ func Billing(ctx context.Context, c *billing.APIService, crmSvc *crm.Service, pr
 // the API is off on.
 func billingAPIDisabled(ctx context.Context, crmSvc *crm.Service, quota, project string) Check {
 	line := "gcloud services enable cloudbilling.googleapis.com --project "
+	// The one wording both readings of "this project" share — the ID spelling
+	// above and the number below — so a reworded half cannot drift from the other.
+	thisProject := Check{ID: "billing-api",
+		Problem: "the Cloud Billing API is disabled on " + project + ", the quota project of your credentials — this project",
+		Fix:     line + shellword.Quote(project)}
 	if quota == project {
-		return Check{ID: "billing-api",
-			Problem: "the Cloud Billing API is disabled on " + project + ", the quota project of your credentials — this project",
-			Fix:     line + shellword.Quote(project)}
+		return thisProject
 	}
 	num, err := infra.ProjectNumber(ctx, &infra.Clients{CRM: crmSvc}, project)
 	switch {
@@ -86,9 +89,7 @@ func billingAPIDisabled(ctx context.Context, crmSvc *crm.Service, quota, project
 			Problem: "the Cloud Billing API is disabled on " + quota + ", the quota project of your credentials; this check could not read project " + project + "'s number, so it cannot say whether that is this project",
 			Fix:     line + shellword.Quote(quota)}
 	case quota == strconv.FormatUint(num, 10):
-		return Check{ID: "billing-api",
-			Problem: "the Cloud Billing API is disabled on " + project + ", the quota project of your credentials — this project",
-			Fix:     line + shellword.Quote(project)}
+		return thisProject
 	}
 	return Check{ID: "billing-api",
 		Problem: "the Cloud Billing API is disabled on " + quota + ", the quota project of your credentials, which is not " + project,
