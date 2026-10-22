@@ -1033,15 +1033,20 @@ func TestTheServiceTokenContractIsTheMints(t *testing.T) {
 		t.Errorf("a mint's body is %s, want %s -- and the run sends exactly this", got, want)
 	}
 	// The answer: the fields the runner reads (token, expires_at) are the
-	// fields this service writes, spelled the same way.
-	now := time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)
-	ans, err := json.Marshal(MintResponse{Token: "ghs_fixture", ExpiresAt: now, Repository: "github/acme/app"})
-	if err != nil {
-		t.Fatal(err)
+	// fields this service writes, spelled the same way. What is read is the
+	// SERVICE's answer, from a real mint call, and not a MintResponse this
+	// test marshalled: a struct built here would carry whatever the test put
+	// in it, so an assertion over it could never fail and would be looking at
+	// nothing. The bundle this call signs with holds the App key, so the bytes
+	// below are the ones a leak would be in.
+	s, _ := mintSvc(t, nil)
+	resp, ans := s.mintCall(t, mintBody("1234"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("a mint was answered %d: %s", resp.StatusCode, ans)
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(ans, &fields); err != nil {
-		t.Fatal(err)
+		t.Fatalf("a mint's answer is not one JSON object: %v", err)
 	}
 	for _, name := range []string{"token", "expires_at"} {
 		if fields[name] == nil {
@@ -1049,14 +1054,15 @@ func TestTheServiceTokenContractIsTheMints(t *testing.T) {
 		}
 	}
 	// The answer is an object of those fields and no credential of its own:
-	// the App key that signs the mint is nowhere in it. The check is for the
-	// key's PEM CORE and not the whole PEM, because what is read here is JSON
-	// and a multi-line value's newlines are escaped -- the trap pemCore's own
-	// comment describes, and a whole-PEM comparison would pass without
-	// looking at anything.
-	for _, v := range fields {
-		if strings.Contains(string(v), pemCore(t)) {
-			t.Errorf("a mint's answer carries the App key")
-		}
+	// the App key that signed the mint is nowhere in the bytes the service
+	// wrote. The scan is over the whole answer BODY as it came off the wire
+	// and not over the fields above, so a leak into a field this contract does
+	// not enumerate -- a header's value, an extra key, text after the JSON --
+	// is found too. It is for the key's PEM CORE and not the whole PEM,
+	// because the body is JSON and a multi-line value's newlines are escaped
+	// (the trap pemCore's own comment describes; a whole-PEM comparison would
+	// pass without looking at anything).
+	if strings.Contains(string(ans), pemCore(t)) {
+		t.Errorf("a mint's answer carries the App key")
 	}
 }
