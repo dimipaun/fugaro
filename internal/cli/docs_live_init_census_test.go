@@ -1012,23 +1012,54 @@ func duplicatePaths(paths []string) []string {
 }
 
 // TestLiveInitCensusMatchesTheFrozenList is D9's line, both halves of it, as a
-// test.
+// test: the walk over the live roots, and the list of files still owing a
+// rename. W2.6 emptied the list, so the assertion today is the retirement
+// itself -- the live tree names the command nowhere.
 //
 // Mutation (run, restore): add a mention of the command to a live file that is
-// not listed -- internal/cli/watch.go is one -- and it fails on the set having
-// grown; rename every mention out of a listed file (internal/cli/config_list.go
-// has one) and it fails on the set having shrunk.
+// not exempt -- internal/cli/watch.go is one -- and it fails with that file
+// named; put a dated record back on `pendingRename` and it fails on the list
+// not being empty; narrow initNameRE so the walk matches nothing and the
+// retirementText anchor fails, which is what keeps "found nothing" from being
+// indistinguishable from "stopped looking".
 func TestLiveInitCensusMatchesTheFrozenList(t *testing.T) {
 	found := liveInitCensus(t, censusRoot)
 
-	// The terminal assertion, and the one W2.6 flips. While the rename is in
-	// flight an empty census means the walk stopped looking -- a root moved, the
+	// The terminal assertion, and the one W2.6 flipped. While the rename was in
+	// flight an empty census meant the walk stopped looking -- a root moved, the
 	// pattern changed -- and "found nothing" is not the same claim as "there is
-	// nothing to find"; W2.6, the task that empties `pendingRename`, turns it
-	// into the opposite: the live tree must then name the retired command
-	// nowhere.
-	if len(found) == 0 {
-		t.Fatal("the walk found no live file naming `fugaro init`: the roots or the pattern are wrong, and an empty census is not a clean tree")
+	// nothing to find". W2.6, the task that empties `pendingRename`, turned it
+	// into the opposite claim: the list is empty because the rename is done, and
+	// the walk finds nothing because the live tree names the retired command
+	// nowhere. The two are asserted separately, because they fail apart: a
+	// rename task that finished a file and left it on the list leaves the walk
+	// empty and the list not, and a file renamed out of a *dated record* is the
+	// mistake that shows up in the other direction.
+	if len(pendingRename) != 0 {
+		t.Fatalf("pendingRename still lists %d file(s): %s -- each is a rename the plan owes, and this list is what is left of the rename", len(pendingRename), strings.Join(pendingRename, ", "))
+	}
+	if len(found) != 0 {
+		t.Errorf("the live tree names the retired command in %d file(s): %s -- outside the dated records and the retirement text it must name it nowhere", len(found), strings.Join(found, ", "))
+	}
+
+	// An empty census is the one answer this test cannot check for itself: a
+	// broken root list and a pattern that matches nothing both report a clean
+	// tree. So the scan is held to the mentions its own exemption classes keep:
+	// a path in `retirementText` exists to name the command, and the day one of
+	// them stops, either the pattern stopped reading (the flattening, the two
+	// spellings) or a sentence whose whole subject is the retirement was
+	// renamed away. A path that does not exist yet contributes nothing, as that
+	// list's own comment says.
+	//
+	// Mutation (run, restore): narrow initNameRE to `fugaro initty` -- every
+	// case below fails, and so does the walk's own silence above.
+	for _, p := range retirementText {
+		if _, err := os.Stat(filepath.Join(censusRoot, p)); err != nil {
+			continue
+		}
+		if !censusNamesInit(t, filepath.Join(censusRoot, p)) {
+			t.Errorf("%s is in retirementText and does not name the command: either the scan stopped seeing it, or a mention whose whole subject is the retirement was renamed away", p)
+		}
 	}
 
 	if !slices.IsSorted(pendingRename) {
@@ -1064,23 +1095,10 @@ func TestLiveInitCensusMatchesTheFrozenList(t *testing.T) {
 		}
 	}
 
-	var grown, shrunk []string
-	for _, p := range found {
-		if !slices.Contains(pendingRename, p) {
-			grown = append(grown, p)
-		}
-	}
-	for _, p := range pendingRename {
-		if !slices.Contains(found, p) {
-			shrunk = append(shrunk, p)
-		}
-	}
-	for _, p := range grown {
-		t.Errorf("%s names `fugaro init` and is not in pendingRename: either rename it, or -- if it is a dated record -- say why it is exempt", p)
-	}
-	for _, p := range shrunk {
-		t.Errorf("pendingRename lists %s, which no longer names the command: take it off the list in the commit that renamed it", p)
-	}
+	// The two sets the list used to be walked against -- what the walk found and
+	// did not list, what the list held and the walk did not find -- are both
+	// asserted empty above, so the diff between them is asserted empty too and
+	// is not recomputed here.
 	t.Logf("the live tree names the retired command in %d files; pendingRename lists %d", len(found), len(pendingRename))
 }
 
