@@ -33,8 +33,14 @@ import (
 //     account's ID), or to a project that already has billing (an existing
 //     link is never changed), or without --create-project (a project this
 //     run did not ask to create or adopt is never billed);
-//   - list the user's billing accounts, or print the account a project is
-//     linked to.
+//   - print the account a project is linked to: the project's own billing is
+//     read (infra.ReadProject), and the account that read names is
+//     deliberately not carried out of it (infra.ProjectInfo has no field for
+//     one), so no mode of this stage can print it. The wizard's billing
+//     question does list the operator's open accounts, and only there and
+//     only where canType() says yes (billing_prompt.go, W4.3; the reversal
+//     and its bounds are written down in internal/billing's package doc).
+//     This stage lists nothing itself, in any mode.
 //
 // Without --link-billing the stage prints the one gcloud line that links
 // billing and stops needs-you. The calls are the user's own
