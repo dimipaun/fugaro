@@ -118,30 +118,6 @@ var trackedDocCommands = map[string]func() *cobra.Command{
 	"fugaro artifacts get": newArtifactsGetCmd,
 }
 
-// docCommandWords is the command words a doc's `fugaro …` line names, with the
-// retired spelling resolved to the door that carries them today. One live
-// document still writes it: docs/gcp-live-checklist.md's run record quotes the
-// retired two-word spelling of the repository door as the commands its rewrite
-// renames, and its own rewrite is the task that empties it (W2.6). Because
-// that spelling is a hidden tombstone with no flags at all since W1.2, a
-// line's flags are held to `fugaro setup` — the front door that checklist's
-// steps mean — rather than to a command that exists only to say it moved.
-// W2.3 renamed the prose of every other document these doc-versus-tree checks
-// read, so the callers it left are the ones whose doc is still the
-// checklist's.
-//
-// Only the command word is translated. The words after it are left as the doc
-// writes them, so a path that no longer resolves still fails the check that
-// resolves it.
-func docCommandWords(words []string) []string {
-	if len(words) == 0 || words[0] != "init" {
-		return words
-	}
-	out := append([]string{}, words...)
-	out[0] = "setup"
-	return out
-}
-
 // mustBeAbsentFlags lists, per tracked command phrase, flag names a doc may
 // mention while saying the command does NOT have them (a documented
 // negative, such as gcp-setup.md and release.md's "there is still no --json
