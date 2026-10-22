@@ -842,10 +842,20 @@ export interface TypicalCostsFacts {
   to: string
   runs: number
   jobs: TypicalCostJob[]
-  /** The per-run cap Fugaro's own installation sets, and the cap these runs ran under: the
-   * ceiling a looping run met. Not a CLI default, so it is a fact about the installation the
-   * runs were taken from and never a claim about what `fugaro` ships. */
+  /** The per-run cap Fugaro's own installation sets today: the ceiling a looping run meets. Not
+   * a CLI default, so it is a fact about the installation the runs were taken from and never a
+   * claim about what `fugaro` ships. It is **not** the cap these figures were measured under —
+   * see `measuredUnderCapUSD`. */
   perRunCapUSD: number
+  /** The day the cap above took effect, as the file spells it (`YYYY-MM-DD`). The page prints
+   * it beside the cap, so a reader can tell which cap was in force when the figures were
+   * measured rather than taking today's cap for the one they ran under. */
+  perRunCapSince: string
+  /** The per-run cap the figures above were measured under, which is a second figure and not a
+   * copy of the one above: the owner lowered the cap on the date above, so a page that printed
+   * today's cap as the one these runs ran under would claim a measurement under a cap that did
+   * not exist yet. The bars are drawn against this one, so every mark sits inside its track. */
+  measuredUnderCapUSD: number
 }
 
 const TYPICAL_COSTS_FILE = 'website/data/typical-costs.yaml'
@@ -863,7 +873,7 @@ export function loadTypicalCosts(minRuns: number): TypicalCostsFacts {
     file,
     'the document',
   )
-  refuseUnknownKeys(doc, ['jobs', 'per_run_cap_usd', 'version', 'window'], file)
+  refuseUnknownKeys(doc, ['jobs', 'measured_under_cap_usd', 'per_run_cap_since', 'per_run_cap_usd', 'version', 'window'], file)
 
   if (asInt(doc.version, file, 'version') !== 1) {
     throw new Error(`${file}: version is not 1, and this reader knows version 1 (W1.3 step 2).`)
@@ -933,6 +943,10 @@ export function loadTypicalCosts(minRuns: number): TypicalCostsFacts {
   if (perRunCapUSD <= 0) {
     throw new Error(`${file}: per_run_cap_usd is ${perRunCapUSD}, and the cap the page prints as the ceiling a looping run meets is above zero (W1.3 step 2).`)
   }
+  const measuredUnderCapUSD = asCents(doc.measured_under_cap_usd, file, 'measured_under_cap_usd')
+  if (measuredUnderCapUSD <= 0) {
+    throw new Error(`${file}: measured_under_cap_usd is ${measuredUnderCapUSD}, and the cap the page draws the bars of its figures against is above zero: a bar scaled by a cap of nothing is a bar whose every mark is at infinity (the owner's feedback of 2026-10-22).`)
+  }
 
   return {
     from: asString(window.from, file, 'window.from'),
@@ -940,6 +954,8 @@ export function loadTypicalCosts(minRuns: number): TypicalCostsFacts {
     runs,
     jobs,
     perRunCapUSD,
+    perRunCapSince: asString(doc.per_run_cap_since, file, 'per_run_cap_since'),
+    measuredUnderCapUSD,
   }
 }
 

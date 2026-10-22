@@ -1174,7 +1174,7 @@ added or removed without this sentence moving fails there:
     boards require, and it is still a ceiling rather than a
     target: the next page down is How
     It Works at
-    332 words (Getting Started is 291), and a page that wants the extra room has to carry a
+    332 words (Getting Started is 309), and a page that wants the extra room has to carry a
     brief's own block for it.
     Every raise is recorded as a reading in `docs/website/redesign/README.md`, the way every
     number the briefs do not spell out is.

@@ -622,7 +622,7 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 	// The budget backend is the one thing that cannot move on its own: its
 	// RTDB, its Firestore database, its restricted key and its signer are the
 	// old project's, and where they live next is the operator's decision
-	// (fugaro update --firebase), not the restore's. The operator's own
+	// (fugaro update --firebase-project), not the restore's. The operator's own
 	// settings stay, the four that name the old project go, and the step that
 	// builds them again is named.
 	t.Run("the budget backend's project-naming fields go, and are named", func(t *testing.T) {
@@ -645,7 +645,7 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 		if next.Budget.RTDBURL != "" || next.Budget.FirebaseProject != "" || next.Budget.FirebaseAPIKey != "" || next.Budget.TokenSigner != "" {
 			t.Errorf("the budget section still names the old project: %+v", *next.Budget)
 		}
-		if joined := strings.Join(left, "\n"); !strings.Contains(joined, "fugaro update --firebase") {
+		if joined := strings.Join(left, "\n"); !strings.Contains(joined, "fugaro update --firebase-project") {
 			t.Errorf("the stranded budget backend is not named with the step that builds it again: %v", left)
 		}
 	})

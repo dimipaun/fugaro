@@ -25,7 +25,7 @@ import (
 )
 
 // The job environment variables that point the runner at the project's
-// budget backend, set by fugaro update --firebase on every workflow job
+// budget backend, set by fugaro update --firebase-project on every workflow job
 // whenever the installation has a backend, whatever the job's mode (D11: the
 // mode is policy now, and a run needs the URL and the key to read it — only
 // the grace stays mode-gated, plan R10). Without RTDBURLEnv the runner is

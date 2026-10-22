@@ -156,8 +156,10 @@ var retirementText = []string{
 var liveRoots = []string{
 	"README.md",
 	"CONTRIBUTING.md",
-	// A root file rather than a directory, and on the walk because it names
-	// the command: W2.3 renames it in place.
+	// A root file rather than a directory. It was on the walk because it named
+	// the command, which the owner's feedback of 2026-10-22 renamed in place;
+	// it stays for `scripts/`'s reason -- the plan walks it, and a root that
+	// finds nothing costs one stat.
 	"SECURITY.md",
 	"docs",
 	"plugin",
@@ -188,7 +190,7 @@ var initNameRE = regexp.MustCompile(`fugaro init|init --repo`)
 const censusRoot = "../.."
 
 // pendingRename is today's census: every file under liveRoots that names the
-// command, sorted. It is 52 files -- 18 test files and 34 markdown files, and
+// command, sorted. It is 50 files -- 18 test files and 32 markdown files, and
 // nothing else: the five that fell in no group were the website's, and W2.4
 // renamed them (below). No non-test Go file and no golden is on it any more:
 // W2.1's rename emptied internal/cli and the retirement transcript, and the
@@ -306,11 +308,26 @@ const censusRoot = "../.."
 // README.md's Getting started in the same commit: the file asserts that
 // section's two steps, so the two moves are one move.
 //
-// One website file stays, and it is the generated one: website/content/
-// security.md is SECURITY.md rendered byte for byte, so a document that still
-// names the command still generates a page that does -- and SECURITY.md is
-// W2.3's, which is why this task depends on it. website/content/
-// cli-reference.md left the list earlier, when W2.1 regenerated it.
+// The one website file W2.4 left behind is the generated website/content/
+// security.md, which is SECURITY.md rendered byte for byte -- and it left the
+// list with the document, in the owner's feedback of 2026-10-22 (below).
+// website/content/cli-reference.md left the list earlier, when W2.1
+// regenerated it.
+//
+// **The owner's feedback of 2026-10-22 (item 4, "init becomes setup") moved
+// the list two files down, and they are the security document and the page
+// generated from it.** SECURITY.md's eight live mentions were renamed to
+// today's commands: `fugaro setup` for the secrets stage, for
+// `--no-log-isolation`, for the project ceiling, for the jobs it builds for
+// every profile a local config names and for the IAM and Terraform it creates;
+// `fugaro update --repo` for the repository-level refusal beside
+// `fugaro validate`; and `fugaro update` for the run that applies 0.7.0's
+// migration, which keeps the release number as the migration's own name and
+// names the command an operator runs today. `go run ./internal/clidoc` then
+// regenerated website/content/security.md, and it emptied with the document
+// because it is SECURITY.md byte for byte. README.md, CONTRIBUTING.md and the
+// docs below keep their mentions: the rest of the rename is still owed, and
+// the census is what says so.
 //
 // Each task that renames a string takes the file off this list in the same
 // commit, and W2.6 empties it.
@@ -318,7 +335,6 @@ var pendingRename = []string{
 	".claude/skills/new-release/SKILL.md",
 	"CONTRIBUTING.md",
 	"README.md",
-	"SECURITY.md",
 	"docs/backends.md",
 	"docs/base-image-migration.md",
 	"docs/base-image.md",
@@ -366,7 +382,6 @@ var pendingRename = []string{
 	"internal/cli/doctor_bucket_test.go",
 	"internal/cli/restore_test.go",
 	"plugin/setup_skill_test.go",
-	"website/content/security.md",
 }
 
 // censusExempt reports whether a repository-relative path is one of the two
@@ -1011,14 +1026,15 @@ func TestLiveInitCensusMatchesTheFrozenList(t *testing.T) {
 	// where that is visible: a page leaves the list when its generator runs,
 	// not when a hand edit removes a mention. cli-reference.md is rendered
 	// from the command tree (`go run ./internal/clidoc`), so W2.1's rename
-	// reached it and it has left; security.md is prose a person writes, so it
-	// stays until W2.4 regenerates it.
+	// reached it and it has left; security.md is SECURITY.md byte for byte, so
+	// it left with the document in the owner's feedback of 2026-10-22, when
+	// the document's mentions were renamed and the generator ran.
 	for _, tc := range []struct {
 		page   string
 		listed bool
 	}{
 		{"website/content/cli-reference.md", false},
-		{"website/content/security.md", true},
+		{"website/content/security.md", false},
 	} {
 		if got := slices.Contains(pendingRename, tc.page); got != tc.listed {
 			t.Errorf("pendingRename lists the generated %s = %v, want %v: it is written by its generator, so it leaves the list by being regenerated, not edited", tc.page, got, tc.listed)

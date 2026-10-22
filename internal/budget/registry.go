@@ -86,7 +86,7 @@ func (s *Session) Start(ctx context.Context, entry AgentEntry) error {
 		s.mu.Unlock()
 		err = s.retryBoot(ctx, "registry", write)
 		if err == nil {
-			s.log.Warn("budget: the database's rules predate recipes, so the registry entry goes without the recipe; run fugaro update --firebase <firebase-project-id> to update the rules")
+			s.log.Warn("budget: the database's rules predate recipes, so the registry entry goes without the recipe; run fugaro update --firebase-project <firebase-project-id> to update the rules")
 		}
 	}
 	if err != nil {
@@ -210,7 +210,7 @@ func (s *Session) checkNewKeys(ctx context.Context) {
 	s.entry.Action, s.entry.Tokens = "", 0
 	s.mu.Unlock()
 	s.dbOK()
-	s.log.Warn("budget: the dashboard rules predate 0.7.0, so the last action and token count are not shown; run fugaro update --firebase <firebase-project-id> to update them")
+	s.log.Warn("budget: the dashboard rules predate 0.7.0, so the last action and token count are not shown; run fugaro update --firebase-project <firebase-project-id> to update them")
 }
 
 // snapshotEntry is the entry as the next heartbeat sends it.
