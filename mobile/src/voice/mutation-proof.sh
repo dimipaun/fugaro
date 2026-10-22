@@ -298,12 +298,15 @@ run "a full queue refuses rather than evicting" \
 run "the utterance ending is a boundary" \
   "  pipeline.on('utterance', () => drain());" ""
 run "the turn's final is a boundary" \
-  "    void accept(event.message.text);
+  "    if (dialogue === null) void accept(event.message.text);
+    else void dialogue(event.message.text);
     drain();" \
-  "    void accept(event.message.text);"
+  "    if (dialogue === null) void accept(event.message.text);
+    else void dialogue(event.message.text);"
 run "the turn's final is a message the app accepts" \
   "  pipeline.on('message', (event) => {
-    void accept(event.message.text);
+    if (dialogue === null) void accept(event.message.text);
+    else void dialogue(event.message.text);
     drain();
   });" \
   "  pipeline.on('message', () => {
