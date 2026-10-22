@@ -86,6 +86,7 @@
         "total_usd": { "type": "number", "minimum": 0, "description": "Billed dollars only: excludes the model figure when model_basis is subscription." },
         "estimate": { "type": "boolean" },
         "model_basis": { "enum": ["api-list", "subscription"] },
+        "model_notional_usd": { "type": "number", "minimum": 0, "description": "The part of model_usd that was notional: what the calls a subscription paid for would have cost at list rates (an oauth run's every call, and a cascade run's tier A, D140). It is never in total_usd. model_usd keeps its meaning -- every stage's model dollars, notional ones included -- so sum(stages[].model_usd) + model_by[\"unattributed\"] == model_usd still holds exactly, and this says how much of it was notional. A mixed run's model_basis is api-list for the whole run, so a reader splitting the run's dollars must split on this field, never on model_basis. Absent when nothing was notional, and in records written before this field existed." },
         "model_source": { "enum": ["gateway", "claude-code"], "description": "Where model_usd came from: the gateway's settled ledger or Claude Code's own total." },
         "model_by": { "type": "object", "additionalProperties": { "type": "number", "minimum": 0 }, "description": "Model spend in USD, by model." },
         "route_by": { "type": "object", "additionalProperties": { "type": "number", "minimum": 0 }, "description": "Model spend in USD, by provider route; calls on Anthropic have no route." },
@@ -106,7 +107,24 @@
           "started_at": { "type": "string", "format": "date-time" },
           "duration_s": { "type": "number", "minimum": 0 },
           "model_usd": { "type": "number", "minimum": 0, "description": "What this stage's model calls cost, whatever model they were on: the gateway's figure for the stage (the background model's calls included), or, without the gateway, the result event's total_cost_usd. The stages sum to cost.model_usd to the micro-dollar, except for gateway spend that settled after its stage's wait ran out, which is cost.model_by's \"unattributed\" and in no stage." },
-          "model": { "type": "string", "description": "The model the stage was pinned to: the stage role's models.<role>, else agent.model. It is not what the upstream served, and a stage may also have called the background model, so it does not account for model_usd on its own. Absent when the config pinned none." }
+          "model": { "type": "string", "description": "The model the stage was pinned to: the stage role's models.<role>, else agent.model. It is not what the upstream served, and a stage may also have called the background model, so it does not account for model_usd on its own. Absent when the config pinned none." },
+          "model_notional_usd": { "type": "number", "minimum": 0, "description": "The part of this stage's model_usd that was notional: Claude Code's own figure when the stage ran on oauth, and, in a cascade run, the tier-A calls' share of what the gateway settled (D140). The stage's own split is the only place it exists -- one stage of a cascade run can hold both -- so cost.model_notional_usd says how much of the run's figure was notional and this says where. Absent when the stage's figure was all billed." }
+        }
+      }
+    },
+    "switches": {
+      "type": "array",
+      "description": "The run's switch log (D140): every credential switch the credentials service reported on one of this run's calls, in the order the gateway settled the answers that carried them. Names and reason words of the service's contract, never a credential value, and nothing reads it to decide anything. Absent for a run that never switched, and in records written before this field existed.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["to", "reason"],
+        "properties": {
+          "from": { "type": "string", "description": "The credential the call was on; absent when the call started on the credential that answered it (the service's own meaning for an empty from)." },
+          "to": { "type": "string", "description": "The credential that answered." },
+          "reason": { "type": "string", "description": "Why the cascade moved, one of the credentials service's closed set of reason words (credsvc.ValidReason), never free text." },
+          "cache_miss_usd": { "type": "number", "minimum": 0, "description": "The estimated cost of re-reading what the previous call had cached, priced at the answering tier's input rate less its cache-read rate (F24). An estimate for a reader, charged to nothing: the ledger settles the calls themselves." },
+          "cache_miss_unmeasured": { "type": "boolean", "description": "True when the answering tier's cache behaviour is not measured (a Claude model on tier C's OpenRouter route, F24, Checks 46 and 50). Then the miss is unknown rather than free, and cache_miss_usd is 0 because there is no figure, not because it is one." }
         }
       }
     },

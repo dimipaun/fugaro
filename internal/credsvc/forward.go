@@ -102,6 +102,13 @@ type call struct {
 	// carries either. They live for the length of one call and are written
 	// nowhere.
 	scrubs []string
+	// probed is every tier this call made a probe on (C1.12), in the order
+	// the probes were made and once per tier: what the answer carries to the
+	// run (HeaderProbe), which settles each probe by it — notional on tier A,
+	// money on any other tier (C1.16, the plan's rule for a probe). It is the
+	// ledger input only: the names a probe was made on are the service's own
+	// record (C1.13's audit line) and are not carried here.
+	probed []string
 }
 
 // readCall reads the call the service was handed, and refuses a body larger

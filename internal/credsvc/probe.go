@@ -513,6 +513,15 @@ func (s *Server) probeOne(ctx context.Context, sel *creds.Selector, id Identity,
 	callCtx, callDone := probeCallContext(ctx)
 	ans, err := s.send(callCtx, probe, e)
 	callDone()
+	if ans != nil {
+		// The call was made, so it is the run's to account for (C1.16): the tier
+		// it was made on is recorded on the call the run is waiting for, and the
+		// answer carries it (HeaderProbe). It is recorded here, where the call
+		// happened, and not after the audit line below: the call is made either
+		// way, and an audit line that could not be written withholds the probe's
+		// EFFECT (the mark) and never the fact that a call was spent.
+		cl.probed = append(cl.probed, wireTier(c.Tier))
+	}
 	recordCtx, recordDone := probeRecordContext(ctx)
 	defer recordDone()
 	reset := time.Time{}

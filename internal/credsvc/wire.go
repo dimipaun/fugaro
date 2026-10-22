@@ -77,6 +77,25 @@ const (
 	// from one credential to another inside the service, and the run's
 	// record logs it (C1.16).
 	HeaderSwitch = "X-Fugaro-Switch"
+	// HeaderProbe, when present, is the tier (or the tiers, comma separated)
+	// a probe was made on for this call (C1.12): the service asked a
+	// backed-off credential whether it works before serving, and that call is
+	// the run's to account for — notional on tier A, money on any other tier
+	// (C1.16, the plan's own rule for a probe).
+	//
+	// It carries tiers and never a name. Which credential a probe was made on
+	// is the service's own record (C1.13's audit line, whose tier is this
+	// one), and the run needs the ledger input and not the name: a name here
+	// would be one more field to sanitise on a record the run never displays,
+	// and the run learns the name of the credential that ANSWERED anyway
+	// (HeaderCredential, C1.19).
+	//
+	// The header is written on a served call's answer only. A probe is made
+	// on the path of the call that owes it (probeCall), so a probe owed on a
+	// token count goes to the counting endpoint, which bills nothing and
+	// settles nothing — and an answer that would carry this header is a
+	// Messages answer.
+	HeaderProbe = "X-Fugaro-Probed"
 )
 
 // The credential tiers of the spec, as they are spelled on the wire. Tier C
@@ -185,6 +204,15 @@ const (
 	// two sides; the tie to C1.11's bundle bound is recorded as a C1.11
 	// obligation, since that task's limit does not exist yet.
 	maxTriedEntries = 64
+	// maxProbedTiers bounds how many tiers one answer's probe header may
+	// carry. A call probes at most one credential per credential it may probe
+	// (C1.12's per-call bound is per name, firstDue), and the tiers are a
+	// closed set of three, so an honest answer carries one or two
+	// (TierA and TierB; tier C is reserved) and never more than this. The
+	// writer refuses to write a longer list and the reader to read one, so a
+	// hostile or broken peer cannot make the run settle an unbounded number
+	// of probes.
+	maxProbedTiers = 3
 )
 
 // Why a credential was not used, in the tried list. They are display strings:
@@ -676,6 +704,74 @@ func SetSwitchHeader(h http.Header, s Switch) error {
 	}
 	h.Set(HeaderSwitch, string(body))
 	return nil
+}
+
+// SetProbeHeader records the tiers a probe was made on for a call (C1.12).
+// The order is the order the probes were made and a tier is written once: two
+// probes of one call on one tier are one ledger input, and the run settles the
+// money, not the attempts.
+//
+// Every tier is held to ValidTier and the list to maxProbedTiers: the tier
+// settles the probe as notional or as money (C1.16), so a value this contract
+// does not know must not be carried. The error names the field and never a
+// value, as everywhere in this file. An empty list writes no header — an
+// answer with no probe is most answers.
+func SetProbeHeader(h http.Header, tiers []string) error {
+	seen := make(map[string]bool, len(tiers))
+	out := make([]string, 0, len(tiers))
+	for _, tier := range tiers {
+		if !ValidTier(tier) {
+			return errors.New("credsvc: a probed tier is not one of A, B or C")
+		}
+		if seen[tier] {
+			continue
+		}
+		seen[tier] = true
+		out = append(out, tier)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	if len(out) > maxProbedTiers {
+		return fmt.Errorf("credsvc: an answer's probe header carries %d tiers, over this contract's bound of %d", len(out), maxProbedTiers)
+	}
+	h.Set(HeaderProbe, strings.Join(out, ","))
+	return nil
+}
+
+// ProbedTiers reads the tiers a probe was made on back, and holds them to the
+// rules they were written by: each one a tier of this contract, no repeats and
+// at most maxProbedTiers of them. ok is false for an answer that carries no
+// probe header, which is most answers; an answer that carries one this code
+// could not have written is an error rather than a list, because the tier is
+// what the run settles the probe by (C1.16) and a reader that guessed at it
+// would be settling a probe the service did not report.
+//
+// The error names the field and never the value: the list arrives as header
+// text from another process.
+func ProbedTiers(h http.Header) (tiers []string, ok bool, err error) {
+	value, present, err := responseHeader(h, HeaderProbe)
+	if err != nil {
+		return nil, false, err
+	}
+	if !present {
+		return nil, false, nil
+	}
+	parts := strings.Split(value, ",")
+	if len(parts) > maxProbedTiers {
+		return nil, false, fmt.Errorf("credsvc: the answer's probe header carries %d tiers, over this contract's bound of %d", len(parts), maxProbedTiers)
+	}
+	seen := make(map[string]bool, len(parts))
+	for _, tier := range parts {
+		if !ValidTier(tier) {
+			return nil, false, errors.New("credsvc: the answer's probed tier is not one of A, B or C")
+		}
+		if seen[tier] {
+			return nil, false, errors.New("credsvc: the answer's probe header names one tier twice, which this contract never writes")
+		}
+		seen[tier] = true
+	}
+	return parts, true, nil
 }
 
 // SwitchHeader reads a switch back. ok is false when the answer carries none;
