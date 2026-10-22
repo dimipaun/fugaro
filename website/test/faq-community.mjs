@@ -1011,6 +1011,14 @@ test('the Why GCP reader refuses a row the file cannot support, naming it', (t) 
       // loose pattern would match some other failure's output and hold nothing.
       wanted: /carries 5 points, and the page renders the brief's four/,
     },
+    {
+      // A row's id is rendered as the row's own `id`, so two rows sharing one are two
+      // elements with one name: a link to either resolves to the first, and the page has an
+      // anchor a reader cannot reach the second claim by.
+      what: 'two rows with one id',
+      edit: (text) => text.replace('  - id: gcp-project\n', '  - id: control-plane\n'),
+      wanted: /two rows share the id "control-plane"/,
+    },
   ]
 
   for (const one of cases) {
