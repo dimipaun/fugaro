@@ -359,17 +359,6 @@ func answerIsStream(resp *http.Response, requested bool) bool {
 	return gateway.IsSSE(resp.Header, requested)
 }
 
-// streamed reports whether the answer has begun to reach the client, which is
-// the one thing that forbids a retry. It is asked of the status the service
-// decided to write and not of the upstream's: the moment bytes are on their way
-// the call is the client's, and a second upstream call would be a second
-// charge for one request.
-//
-// A 2xx is always streamed, whatever its content type: a usage limit that
-// arrives inside a 200 stream is met by marking the credential after the answer
-// (see usageLimitScanner), never by retrying.
-func streamed(status int) bool { return status < 400 }
-
 // dropAnswerHeaders are the headers of an upstream answer that never reach the
 // client. They are internal/gateway's own lists (hopByHop,
 // dropResponseHeaders), respelled here because the package exports neither:
