@@ -52,16 +52,30 @@ func collaborator(association string) bool {
 // Provider; a passing failure (a cancelled context, a network error, a 408,
 // 429 or 5xx)
 // is not, so the next call asks again. A failure is warned about once.
+//
+// When the App's key is the credentials service's (C2.2) this process holds
+// no JWT to read it with, so the answer is always "unknown" and every caller
+// that needs it fails closed -- Self stays false (reviewmode.go's trusted
+// gate then wants a collaborator) and a follow-up's comments are not read as
+// Fugaro's. The warning says so, in the same words as a failed read, because
+// it is the same loss: the key is not this process's to hold.
 func (p *Provider) appSlug(ctx context.Context) (slug string, ok bool) {
 	p.identityMu.Lock()
 	defer p.identityMu.Unlock()
 	if p.identityDone {
 		return p.slug, p.slug != ""
 	}
+	if p.app == nil {
+		if !p.identityWarned {
+			p.identityWarned = true
+			p.warn("github: the App's key is the credentials service's, so this run can't read the App's identity (GET /app) and Fugaro's own comments can't be told apart from others")
+		}
+		return "", false
+	}
 	var app struct {
 		Slug string `json:"slug"`
 	}
-	err := p.tokens.app.Do(ctx, "GET", "/app", nil, &app)
+	err := p.app.Do(ctx, "GET", "/app", nil, &app)
 	switch {
 	case err == nil && app.Slug != "":
 		p.identityDone, p.slug = true, app.Slug

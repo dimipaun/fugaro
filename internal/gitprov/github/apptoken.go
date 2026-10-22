@@ -3,6 +3,7 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/rsa"
@@ -13,13 +14,16 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/httpjson"
 )
 
@@ -200,4 +204,264 @@ func (s *tokenSource) Token(ctx context.Context, minValid time.Duration) (string
 	}
 	s.token, s.expires = tok.Token, tok.ExpiresAt
 	return s.token, s.expires, nil
+}
+
+// The contract of the credentials service's mint (C2.1, D145): the path, the
+// two headers that carry the identities a mint is verified by, and the fields
+// of the request and the answer. They are spelled here rather than imported
+// because this package cannot import internal/credsvc -- credsvc imports this
+// one, for MintInstallationToken and RunTokenPermissions -- and internal/credsvc's
+// TestTheServiceTokenContractIsTheMints holds every one of them to the
+// service's own spelling, so the two cannot drift apart.
+const (
+	// ServiceTokenPath is where the service mints a run's installation token.
+	ServiceTokenPath = "/v1/github/installation-token"
+	// ServiceHeaderRunIdentity carries the run's own Firebase ID token: the
+	// identity the service verifies the run by (credsvc.HeaderRunIdentity).
+	ServiceHeaderRunIdentity = "X-Fugaro-Run-Identity"
+	// ServiceHeaderRunJob names the Cloud Run job the run reports it is in
+	// (credsvc.HeaderRunJob). The service holds it to the job-name rule and
+	// decides nothing from it: which job called is decided from the verified
+	// service-account email.
+	ServiceHeaderRunJob = "X-Fugaro-Run-Job"
+)
+
+// maxServiceAnswerBytes bounds a mint's answer. It is one small object (a
+// token, an expiry and the repository's name), so a longer answer is not one
+// this contract wrote, and the refusal below is what an operator sees rather
+// than a body of unknown size.
+const maxServiceAnswerBytes = 16 << 10
+
+// serviceMintRequest is a mint call's body and serviceMintAnswer is the
+// service's answer (credsvc.MintRequest and MintResponse): the App's ID, and
+// nothing else, because the repository is the one the calling job account is
+// bound to and a body that named one is refused there.
+type serviceMintRequest struct {
+	AppID string `json:"app_id"`
+}
+
+type serviceMintAnswer struct {
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// serviceWireError is the error code an answer carries when the service
+// refused (credsvc's wire contract): a bounded word like "state_unavailable".
+// The code is read to say WHICH refusal it was; the message beside it is
+// another writer's text and is never relayed -- see mint.
+var serviceErrorCode = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+
+// The refusals a service mint can end in. Every one of them is a sentence
+// written here, and none of them carries a token, an identity or the
+// service's own text: the value this endpoint exists to hand over reaches the
+// caller and nothing else -- no log line, no error, and no other field.
+var (
+	// ErrServiceTokens is the credentials service refusing a mint, or the
+	// call to it failing. A run halts on it (D143): the job holds no App key
+	// of its own to fall back to.
+	ErrServiceTokens = errors.New("github: the credentials service did not mint an installation token")
+	// ErrServiceTokensIdentity is this run's inability to present the two
+	// identities a mint is verified by. It is a fact about how the run was
+	// launched -- a run with no budget identity is not one the service can
+	// serve -- and never about the service.
+	ErrServiceTokensIdentity = errors.New("github: the identities the credentials service verifies a mint with are not available")
+)
+
+// ServiceTokens is where a run's installation tokens come from when the
+// installation's credentials service holds the App key (C2.2, D145): the
+// service mints them, and the job holds no App key at all.
+//
+// It is the service's mint (C2.1) as a TokenSource, and it is deliberately
+// shaped like the in-job tokenSource: the same cache, the same rule about
+// minValid, and the same refusal of a token that could not satisfy the
+// caller. What differs is where the token comes from and who signs for it --
+// and that a mint is an act the service AUDITS (C1.13), so a token that is
+// handed out and thrown away per call would be a line per API call. The cache
+// is what keeps one mint per hour per run rather than one per call.
+//
+// Every field but HTTP, Job and Now is required, and a missing one is a
+// refusal (ErrServiceTokensIdentity) rather than a call the service would
+// answer with less: a mint without the run's own identity is not one the
+// service verifies, and a call under the job's identity alone is not a call
+// this code makes (C1.10).
+type ServiceTokens struct {
+	// URL is the credentials service's base URL, from the job's environment
+	// (the installation's own Cloud Run service, C1.15/D147).
+	URL string
+	// AppID is the GitHub App's ID: a number, not a credential, and the one
+	// thing a mint's body carries. The service's own environment does not
+	// hold it (Global Constraint 12: one bundle secret and one grant), and
+	// the job's does (FUGARO_GITHUB_APP_ID), so the caller names it -- and
+	// cannot name anything else: the key that signs, the repositories and
+	// the permissions are the service's.
+	AppID string
+	// HTTP is the client the call is made with; nil means the default.
+	HTTP *http.Client
+	// IDToken mints the job service account's Google ID token for URL, which
+	// is what Cloud Run IAM admits for run.invoker (D135). It is called on
+	// every mint and never cached here: see metadataIDToken in internal/runner
+	// for why the job does not cache one.
+	IDToken func(ctx context.Context) (string, error)
+	// RunIDToken is the run's own Firebase ID token, the identity the budget
+	// backend admitted it with (C1.10). It is read per call -- the session's
+	// token changes under it -- and an empty value is a refusal: the service
+	// verifies both identities on every call, and there is no second way to
+	// be admitted.
+	RunIDToken func() string
+	// Job is the Cloud Run job name the run reports it is in. Empty is
+	// allowed here and refused by the service: this is a claim the service
+	// holds to its own rule and decides nothing from.
+	Job string
+	// Now is the clock; nil means time.Now.
+	Now func() time.Time
+
+	mu      sync.Mutex
+	token   string
+	expires time.Time
+}
+
+// ServiceTokens is the TokenSource a provider installs (gitprov.TokenSource)
+// when the installation's service holds the App key.
+var _ gitprov.TokenSource = (*ServiceTokens)(nil)
+
+func (s *ServiceTokens) now() time.Time {
+	if s.Now == nil {
+		return time.Now()
+	}
+	return s.Now()
+}
+
+// Token returns an installation token valid for at least minValid, minting
+// one at the service when the cached token would expire sooner -- the same
+// contract, and the same rule, as the in-job tokenSource.
+//
+// The whole check-then-mint runs under the lock, as tokenSource's does: many
+// goroutines (the API calls of a stage) reach Token at once, and a mint the
+// service AUDITS must not happen once per caller.
+func (s *ServiceTokens) Token(ctx context.Context, minValid time.Duration) (string, time.Time, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.token != "" && s.expires.Sub(s.now()) >= minValid {
+		return s.token, s.expires, nil
+	}
+	tok, exp, err := s.mint(ctx, minValid)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	s.token, s.expires = tok, exp
+	return s.token, s.expires, nil
+}
+
+// mint makes one mint call and returns its token.
+//
+// Nothing here can put a value in an error: the identities and the token are
+// never formatted into one, and the service's own answer is read for the
+// status and the error code alone. The message beside that code is the
+// service's text -- a sentence this project wrote, but written for the
+// operator's log and not for a run, and an answer's body is another writer's
+// to fill -- so it is dropped rather than relayed, exactly as the forward
+// path's refusals are (credsvc/github.go's mint logs GitHub's status and
+// never its text, for the same reason in the other direction).
+func (s *ServiceTokens) mint(ctx context.Context, minValid time.Duration) (string, time.Time, error) {
+	if s.URL == "" || s.AppID == "" || s.IDToken == nil || s.RunIDToken == nil {
+		return "", time.Time{}, fmt.Errorf("%w: this run has no credentials service to mint at", ErrServiceTokensIdentity)
+	}
+	run := s.RunIDToken()
+	if run == "" {
+		return "", time.Time{}, fmt.Errorf("%w: the run's own identity token is not available, and a mint under the job's identity alone is not one the service verifies", ErrServiceTokensIdentity)
+	}
+	id, err := s.IDToken(ctx)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("%w: the job's identity token could not be minted: %v", ErrServiceTokensIdentity, err)
+	}
+	if id == "" {
+		return "", time.Time{}, fmt.Errorf("%w: the metadata server answered with no identity token", ErrServiceTokensIdentity)
+	}
+	body, err := json.Marshal(serviceMintRequest{AppID: s.AppID})
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("%w: the mint's request could not be built", ErrServiceTokens)
+	}
+	// One clean header value each: a token with a newline in it is refused
+	// here rather than sent, the rule internal/runner keeps for the same two
+	// values on the forward path.
+	for _, v := range []string{run, id} {
+		if !printableValue(v) {
+			return "", time.Time{}, fmt.Errorf("%w: an identity token is not one header value", ErrServiceTokensIdentity)
+		}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(s.URL, "/")+ServiceTokenPath, bytes.NewReader(body))
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("%w: the mint's request could not be built", ErrServiceTokens)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+id)
+	req.Header.Set(ServiceHeaderRunIdentity, run)
+	req.Header.Set(ServiceHeaderRunJob, s.Job)
+	hc := s.HTTP
+	if hc == nil {
+		hc = http.DefaultClient
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("%w: the credentials service could not be reached", ErrServiceTokens)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxServiceAnswerBytes+1))
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("%w: the service's answer could not be read", ErrServiceTokens)
+	}
+	if len(data) > maxServiceAnswerBytes {
+		return "", time.Time{}, fmt.Errorf("%w: the service's answer is larger than a mint's", ErrServiceTokens)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", time.Time{}, fmt.Errorf("%w: the service answered %d%s", ErrServiceTokens, resp.StatusCode, refusalCode(data))
+	}
+	var ans serviceMintAnswer
+	if err := json.Unmarshal(data, &ans); err != nil {
+		return "", time.Time{}, fmt.Errorf("%w: the service's answer is not a mint's", ErrServiceTokens)
+	}
+	if ans.Token == "" {
+		// An empty token is no token: it would fail every git call as an
+		// authentication error, deep in a stage, and it must never be
+		// cached as if it were one.
+		return "", time.Time{}, fmt.Errorf("%w: the service's answer carries no token", ErrServiceTokens)
+	}
+	if ans.ExpiresAt.Sub(s.now()) < minValid {
+		// The GitAuth contract promises a token valid for at least minValid,
+		// and the token has already been minted and audited at the service:
+		// it reaches nobody, and it is never printed, so the caller gets the
+		// refusal instead of a credential it could not honor.
+		return "", time.Time{}, fmt.Errorf("%w: the token the service minted expires too soon to satisfy the requested %s validity", ErrServiceTokens, minValid)
+	}
+	return ans.Token, ans.ExpiresAt, nil
+}
+
+// refusalCode is the wire error code of a refused answer, as ", refused: code",
+// or "" when the answer carries none this contract could have written. Only
+// the code is read: the message beside it is the service's text and is never
+// relayed into a run's log or error.
+func refusalCode(data []byte) string {
+	var refusal struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(data, &refusal) != nil || !serviceErrorCode.MatchString(refusal.Error) {
+		return ""
+	}
+	return ", refused: " + refusal.Error
+}
+
+// printableValue reports whether v is one clean HTTP header value: non-empty
+// printable ASCII with no space (internal/credsvc's own rule for a presented
+// token, auth.go's maxTokenBytes and wire.go's printableHeaderValue).
+func printableValue(v string) bool {
+	if v == "" {
+		return false
+	}
+	for i := 0; i < len(v); i++ {
+		if v[i] < 0x21 || v[i] > 0x7e {
+			return false
+		}
+	}
+	return true
 }

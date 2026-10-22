@@ -43,6 +43,13 @@ type Options struct {
 	BaseURL     string // REST API root; empty means DefaultBaseURL
 	HTTP        *http.Client
 	Now         func() time.Time // nil means time.Now
+	// ServiceHeldKey says the App's private key is not this process's to
+	// hold: the installation's credentials service holds it and mints the
+	// run's installation tokens (C2.2, D145). New then needs no PrivateKey
+	// and refuses every token until UseServiceTokens installs the source
+	// the service's tokens come from, so a provider built this way can never
+	// fall back to a key it was not given.
+	ServiceHeldKey bool
 	// Warn, when set, receives adapter warnings meant for the run's log,
 	// such as a failed lookup of the App's own identity. Nil drops them.
 	Warn func(string)
@@ -53,8 +60,15 @@ type Provider struct {
 	owner, repo string
 	api         *httpjson.Client // authenticated with the installation token
 	graphqlURL  string
-	tokens      *tokenSource
-	warn        func(string)
+	// tokens is where installation tokens come from: the in-job mint
+	// (tokenSource, when this process holds the App key) or the credentials
+	// service (ServiceTokens, when it does not -- C2.2).
+	tokens tokenMinter
+	// app is the client authenticated AS the App (JWT), used for the reads
+	// only an App's own key authorizes (GET /app). It is nil when the key is
+	// the service's: see appSlug.
+	app  *httpjson.Client
+	warn func(string)
 
 	identityMu     sync.Mutex
 	identityDone   bool   // GET /app gave a definite answer
@@ -62,12 +76,33 @@ type Provider struct {
 	slug           string // the App's slug; "" until GET /app gives it
 }
 
+// tokenMinter is what a provider asks for an installation token. Both
+// tokenSource (the App's key is in this process) and ServiceTokens (the
+// credentials service holds it, C2.2) are one.
+type tokenMinter interface {
+	Token(ctx context.Context, minValid time.Duration) (string, time.Time, error)
+}
+
+// noTokenSource refuses every token until the real source is installed. It
+// is what a provider with ServiceHeldKey starts with, so that a provider
+// whose tokens are meant to come from the service cannot mint one anywhere
+// else even for a moment, and a missing install is a refusal rather than a
+// call that skipped the service.
+type noTokenSource struct{}
+
+func (noTokenSource) Token(context.Context, time.Duration) (string, time.Time, error) {
+	return "", time.Time{}, fmt.Errorf("%w: this provider's tokens come from the credentials service and no source has been installed", ErrServiceTokensIdentity)
+}
+
 // New returns a Provider for o.
 func New(o Options) (*Provider, error) {
 	if o.Owner == "" || o.Repo == "" {
 		return nil, errors.New("github: owner and repository are required")
 	}
-	if o.AppID == "" || o.PrivateKey == nil {
+	if o.AppID == "" {
+		return nil, errors.New("github: an App ID is required")
+	}
+	if o.PrivateKey == nil && !o.ServiceHeldKey {
 		return nil, errors.New("github: an App ID and private key are required")
 	}
 	if o.BaseURL == "" {
@@ -82,19 +117,42 @@ func New(o Options) (*Provider, error) {
 		"X-Github-Api-Version": {"2022-11-28"},
 		"User-Agent":           {"fugaro"},
 	}
-	app := &httpjson.Client{BaseURL: o.BaseURL, HTTP: o.HTTP, Header: header, Auth: appAuth(o.AppID, o.PrivateKey, o.Now)}
+	// The App-authenticated client exists only where the key does: with the
+	// key held by the service this process cannot sign a JWT, and a client
+	// that could not authenticate would fail later, further from the reason.
+	var app *httpjson.Client
+	var tokens tokenMinter = noTokenSource{}
+	if o.PrivateKey != nil {
+		app = &httpjson.Client{BaseURL: o.BaseURL, HTTP: o.HTTP, Header: header, Auth: appAuth(o.AppID, o.PrivateKey, o.Now)}
+		tokens = &tokenSource{app: app, owner: o.Owner, repo: o.Repo, now: o.Now}
+	}
 	if o.Warn == nil {
 		o.Warn = func(string) {}
 	}
 	p := &Provider{
 		owner: o.Owner, repo: o.Repo, graphqlURL: graphqlURL(o.BaseURL), warn: o.Warn,
-		tokens: &tokenSource{app: app, owner: o.Owner, repo: o.Repo, now: o.Now},
+		tokens: tokens, app: app,
 	}
 	p.api = &httpjson.Client{BaseURL: o.BaseURL, HTTP: o.HTTP, Header: header, Auth: func(ctx context.Context) (string, error) {
 		tok, _, err := p.tokens.Token(ctx, apiMinValid)
 		return "Bearer " + tok, err
 	}}
 	return p, nil
+}
+
+// UseServiceTokens installs the credentials service as this provider's source
+// of installation tokens (gitprov.ServiceTokenSetter). It is how the runner
+// hands a ServiceHeldKey provider the service it was built for (C2.2); it is
+// called once, before the run's first git call, and it takes effect for every
+// call after it -- the API client above reads p.tokens per call, so a token
+// minted before the install is never reused as one minted here.
+var _ gitprov.ServiceTokenSetter = (*Provider)(nil)
+
+func (p *Provider) UseServiceTokens(src gitprov.TokenSource) {
+	if src == nil {
+		return
+	}
+	p.tokens = src
 }
 
 // graphqlURL derives the GraphQL endpoint from the REST root: GitHub
