@@ -7,6 +7,15 @@
 // It never rewrites a body, never buffers a stream, never retries, and
 // never logs a header or a body. Money is integer micro-dollars throughout.
 //
+// The retry is the gateway's and not the forwarder's: the helpers this
+// package exports (export.go) are reused by the credentials service
+// (internal/credsvc), which forwards a run's calls to one of several
+// credentials and retries a call on the next one when a credential answers a
+// usage limit -- once per credential, and only before the first byte of the
+// answer has reached the client, so nothing a client has already seen is
+// replayed. The in-runner gateway itself still never retries: the service's
+// retry happens inside the one client request the gateway reserved for.
+//
 // A halt's Detail (a Refusal's, or HaltExternal's) is shown to the agent in
 // the 403 every later call gets, as one line clipped to 300 bytes. The
 // gateway does not redact it: callers must keep it free of secrets.
