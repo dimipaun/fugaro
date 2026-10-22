@@ -53,6 +53,17 @@
  *     four names they have to agree on and no more (the section below), because what each one
  *     drives is different: this one moves panels the block names, and the console's moves a
  *     scroll container the block reads back.
+ *   - **The four zoom levels: the pinned, scroll-driven section on How It Works (Part 5;
+ *     D245, D247).** The section is four stills in the markup — the drawings, their captions
+ *     and the four level anchors, all of it readable with no script — and what this file adds
+ *     is the pinning: the section's own `data-zoom-ready` is the state the stylesheet's sticky
+ *     runway, its one-panel-at-a-time stage and its scale and fade are scoped to, and the level
+ *     on screen is the panel marked `data-zoom-shown`. The reading is the runway's own
+ *     position, the markers are answered here because four panels in one sticky box are four
+ *     anchors pointing at one place, and a reader who has asked their system for less motion is
+ *     given none of it — the section stands down to the stills it was built as. Nothing here is
+ *     load-bearing: with no script the four levels are four pictures in order, and four anchors
+ *     that resolve to them.
  *   - **The consent banner, and the analytics gate behind it (W1.12, W3.2; D93, D106).** The
  *     banner's two buttons write one decision to `localStorage`; this file reveals the banner
  *     when no decision is stored, and — only when that decision is `granted` — loads Google's
@@ -1288,6 +1299,201 @@
     arm()
   }
 
+  // ---- the four zoom levels: the pinned, scroll-driven section (Part 5; D245, D247) --------
+  //
+  // `/how-it-works/` renders the four levels as four stills — a drawing, a caption and an
+  // anchor each, in order, all of them in the markup (`ZoomLevels.astro`) — and this is what
+  // turns them into the brief's pinned sequence for a reader whose browser runs it: the section
+  // is marked `data-zoom-ready`, which is the state the stylesheet's sticky runway, its
+  // one-panel-at-a-time stage and its scale and fade are scoped to, and the level on screen is
+  // the panel this file marks `data-zoom-shown`.
+  //
+  // **Nothing here is load-bearing**, and that is the rule the whole section is written to: the
+  // pinned layout, the scale and the fade are the stylesheet's and are scoped to an attribute
+  // only this file writes, so a page whose script never arrived is the four stills the build
+  // wrote. Three readers get those stills by design — one with no script, one whose system asks
+  // for less motion (this file stands the section down before it writes anything, and watches
+  // the answer, so a preference turned on under a pinned page is answered too), and one whose
+  // browser cannot be asked the question at all, which is read as "leave it alone" the way the
+  // menu reads the same silence. A browser that cannot measure the page gets them as well.
+  //
+  // **The reading is the runway's own position.** The runway is one viewport of scroll per
+  // level and the stage is pinned at the window's top for the whole of it, so how far the
+  // runway's top has travelled past the top of the window, cut into as many equal parts as
+  // there are levels, is the level on screen: every level gets the same length of scroll, and
+  // the last one is reached at the end of the runway rather than a quarter of the way short.
+  //
+  // **The markers are answered here rather than left to the browser** (D245). In the stills
+  // each level stands at its own place in the column and the browser's own jump to `#level-3`
+  // is the right one; with the section pinned, the four levels are stacked in one sticky box
+  // and the four fragments name one place between them, so a press is turned into the move it
+  // asks for — the same shape the two sliders' dots are read with, and for the same reason.
+  var ZOOM = '[data-zoom]'
+  var ZOOM_RUNWAY = '[data-zoom-runway]'
+  var ZOOM_PANEL = '[data-zoom-panel]'
+  var ZOOM_MARKER = '[data-zoom-marker]'
+
+  // The two attributes this file writes and the markup never carries: the state the stylesheet's
+  // pinned rules are scoped to, and the mark on the level on screen. Both are the section's own
+  // — the door above is `[data-zoom]`, the same shape as the sliders' — and both are read by
+  // `website/test/how-it-works.mjs` over the built page, where their absence is the fallback.
+  var ZOOM_READY = 'data-zoom-ready'
+  var ZOOM_SHOWN = 'data-zoom-shown'
+
+  /**
+   * One zoom section, driven. The section is handed in by `start()` with every other block's
+   * door, and a page that carries none — every page but How It Works — never calls this.
+   */
+  function zoom(section) {
+    var runway = section.querySelector(ZOOM_RUNWAY)
+    var panels = section.querySelectorAll(ZOOM_PANEL)
+    // No runway is nothing to pin, and one level is nowhere to go: the same rule the two
+    // sliders read from their own end, said about a section that is one picture.
+    if (!runway || panels.length < 2) return
+    // A browser that cannot measure the page cannot drive a pinned section, and a level this
+    // file guessed at is worse than the four stills the markup already is: no measurement, no
+    // pinning.
+    if (typeof runway.getBoundingClientRect !== 'function' || typeof window.innerHeight !== 'number') return
+    // The reader's own answer on less motion, through the page's one query (`motion`, declared
+    // with the homepage's slider) and asked before anything is written. No answer at all — a
+    // browser with no `matchMedia` — is read as "leave it alone": the section stays the stills
+    // it was built as rather than being pinned on a guess.
+    if (!motion && typeof window.matchMedia === 'function') motion = window.matchMedia(LESS_MOTION)
+    if (!motion) return
+
+    var markers = section.querySelectorAll(ZOOM_MARKER)
+    var shown = -1
+
+    /** The level the reader is on, off the runway's own position: how far the runway's top has
+     *  travelled past the top of the window, over the whole travel, times the number of levels.
+     *  A runway the page is not laying out — one inside a `display: none` subtree, or a browser
+     *  that has laid nothing out yet — has no travel to cut up, and the first level is where a
+     *  reader who has not reached the section is. */
+    function level() {
+      var box = runway.getBoundingClientRect()
+      var height = box && typeof box.height === 'number' ? box.height : 0
+      var travel = height - window.innerHeight
+      if (!(travel > 0)) return 0
+      var past = -(box.top || 0)
+      if (!(past > 0)) return 0
+      var at = Math.floor((past / travel) * panels.length)
+      return at < 0 ? 0 : at > panels.length - 1 ? panels.length - 1 : at
+    }
+
+    /** Where the page has to be for a level to be the one on screen: the runway's top, plus
+     *  that level's own share of the travel. The runway's top in page coordinates is its top in
+     *  the window's plus how far the page has been scrolled — read as the page reports it,
+     *  because the two are the same number and a browser that answers neither is not one this
+     *  moves. */
+    function offset(index) {
+      var box = runway.getBoundingClientRect()
+      var height = box && typeof box.height === 'number' ? box.height : 0
+      var page = window.pageYOffset || window.scrollY || 0
+      return page + (box.top || 0) + ((height - window.innerHeight) * index) / panels.length
+    }
+
+    /** Draw the reading: the section's own state, the level on screen, and the mark on the
+     *  marker that jumps to it. Every marker is written rather than added and taken off —
+     *  `false` is a value the attribute has — which is the same rule the sliders' dots are
+     *  marked with. */
+    function paint() {
+      section.setAttribute(ZOOM_READY, '')
+      for (var i = 0; i < panels.length; i++) {
+        if (i === shown) panels[i].setAttribute(ZOOM_SHOWN, '')
+        else if (panels[i].hasAttribute(ZOOM_SHOWN)) panels[i].removeAttribute(ZOOM_SHOWN)
+      }
+      var id = panels[shown].getAttribute('id') || ''
+      for (var m = 0; m < markers.length; m++) {
+        var mark = markers[m].getAttribute('href') === '#' + id ? 'true' : 'false'
+        if (markers[m].getAttribute('aria-current') !== mark) markers[m].setAttribute('aria-current', mark)
+      }
+    }
+
+    /** The section back to the markup's own stills: the state this file writes is taken off
+     *  again, so the stylesheet's pinned rules stop reaching it and the four levels are four
+     *  pictures in order. That is what a reader who has asked for less motion is given, and
+     *  what they are given again if they ask while the page is open. */
+    function stand() {
+      if (!section.hasAttribute(ZOOM_READY)) return
+      section.removeAttribute(ZOOM_READY)
+      for (var i = 0; i < panels.length; i++) if (panels[i].hasAttribute(ZOOM_SHOWN)) panels[i].removeAttribute(ZOOM_SHOWN)
+      for (var m = 0; m < markers.length; m++) markers[m].setAttribute('aria-current', 'false')
+      shown = -1
+    }
+
+    /** What the reader's own scroll comes to: the level the runway is on, drawn only where it
+     *  has changed — a `scroll` event arrives many times a second and every one of them is the
+     *  same level until the reader has travelled a level's own share of the runway. */
+    function settle() {
+      if (calm()) {
+        stand()
+        return
+      }
+      var at = level()
+      if (at === shown) return
+      shown = at
+      paint()
+    }
+
+    /** Go to a level: the page is moved to where that level's share of the runway begins, and
+     *  the reading is drawn from the move rather than from a scroll event still travelling.
+     *  `behavior: 'instant'` for the reason the console slider's moves are — CSSOM-View
+     *  resolves `'auto'` to the box's computed `scroll-behavior`, and a move the browser
+     *  animates is a reading that narrates the levels it passed through. A browser with no
+     *  `scrollTo` to call keeps the reading and loses the move. */
+    function go(index) {
+      shown = index
+      paint()
+      if (typeof window.scrollTo !== 'function') return
+      window.scrollTo({ top: offset(index), behavior: 'instant' })
+    }
+
+    /** A marker's own level, read out of the link the markup wrote: the fragment is the
+     *  panel's id, which is the pairing the no-script anchors are built on. */
+    function levelFor(marker) {
+      var href = marker.getAttribute('href') || ''
+      if (href.charAt(0) !== '#') return -1
+      for (var i = 0; i < panels.length; i++) if (panels[i].getAttribute('id') === href.slice(1)) return i
+      return -1
+    }
+
+    for (var k = 0; k < markers.length; k++) {
+      ;(function (marker) {
+        marker.addEventListener('click', function (event) {
+          var index = levelFor(marker)
+          if (index < 0) return
+          if (event && event.preventDefault) event.preventDefault()
+          go(index)
+        })
+      })(markers[k])
+    }
+
+    // The reader's own scroll is the reading's source, so the section follows a swipe, a
+    // trackpad, a keyboard's Page Down and a restored scroll position alike. The motion query
+    // is watched rather than sampled once: a reader can turn less motion on without reloading.
+    window.addEventListener('scroll', settle, { passive: true })
+    if (motion.addEventListener) motion.addEventListener('change', settle)
+    else if (motion.addListener) motion.addListener(settle)
+
+    // Where the section opens. A reader who arrived on one of the levels — the markers are
+    // links, and a link whose fragment is a level's own id is a link to that level — is put on
+    // it rather than on the first, which is where the browser's own jump lands once the four
+    // panels stand in one sticky box. A reader who arrived on the page is put on the level the
+    // runway is already at, which is the first one while the section is still below them. The
+    // address is read defensively, the way the homepage's slider reads its own: a stub DOM that
+    // has no `location` is not one this throws in.
+    var hash = window.location && window.location.hash ? window.location.hash.slice(1) : ''
+    if (hash) {
+      for (var h = 0; h < panels.length; h++) {
+        if (panels[h].getAttribute('id') === hash) {
+          go(h)
+          return
+        }
+      }
+    }
+    settle()
+  }
+
   function start() {
     menu()
     consent()
@@ -1306,6 +1512,10 @@
       slider(sliders[s])
       panels(sliders[s])
     }
+    // The zoom section's own door, on the one page that carries it: the same shape as the
+    // sliders' above, and a page with no section is a page this loop does not enter.
+    var zooms = document.querySelectorAll(ZOOM)
+    for (var z = 0; z < zooms.length; z++) zoom(zooms[z])
     var blocks = document.querySelectorAll('[data-copy]')
     if (blocks.length === 0) return
     if (!canCopy()) return

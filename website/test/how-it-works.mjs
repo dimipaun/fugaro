@@ -87,6 +87,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { DIST, REPO, builtPages, cssDeclarations, cssRules, findAll, parse, textOf, walk } from './lib/html.mjs'
+import { fakeDOM, SCRIPT_SOURCE } from './lib/dom.mjs'
 import { ancestorsOf, classesOf, ruleReaches } from './lib/selectors.mjs'
 import { contrastRatio, paletteTokensInForce, parseColour } from './lib/colour.mjs'
 
@@ -2698,4 +2699,594 @@ test('all four levels are in the built HTML, in order, with no script', () => {
   // And the order: the levels are a sequence, so a page that drew them out of order is refused.
   const reversed = levels.slice().reverse()
   assert.match(zoomStillFailures(page.html, reversed).join(' | '), /the levels are in order/, 'the reading passes the levels in any order, and the four are one sequence')
+})
+
+// ---- the pinned zoom (Part 5; ZU1, D245, D247) ---------------------------------------------
+//
+// **What this half holds.** The readings above hold the four stills; these hold the scroll-driven
+// half on top of them, and they hold it the only two ways it can be held here: the markup and the
+// stylesheet are read out of the built page, and the script is **run** in `lib/dom.mjs`'s stub
+// browser over that page, level by level.
+//
+//   - **The hooks are the build's and the state is the script's.** The built page carries the
+//     runway, the stage, the panel hook on each level and the marker hook on each anchor, and it
+//     carries **none** of `data-zoom-ready`, `data-zoom-shown` and the markers' `aria-current`:
+//     those are written by `site.js` and by nothing else, which is the whole of the fallback. A
+//     rule that pins the section is therefore a rule a page with no script cannot reach, and the
+//     reading below refuses any pinned rule that is not scoped to the script's own state — the
+//     defect this file exists for is a section that is pinned for a reader the script never
+//     reached, and no gate can see that on a screenshot.
+//   - **The runway is as long as the data file has levels.** The stylesheet's own length for the
+//     runway, read as viewport heights, has to be the number of levels the page draws: one
+//     viewport of scroll per level is what the section is pinned for, so a fifth row in
+//     `website/data/zoom-levels.yaml` without this number moving is a level a reader reaches in a
+//     fifth of the scroll the other four get. The number is read out of the artifact rather than
+//     written here, the way every other pin in this file is.
+//   - **The zoom is gated on the reader's answer, and the reduced-motion path is the stills.**
+//     The transition between two levels is declared inside `prefers-reduced-motion:
+//     no-preference`, so a reader who asked for less motion has no transition to neutralise; and
+//     a `reduce` block puts the runway's length, the stage's stickiness and the levels' opacity
+//     back, which is the half that holds where the preference is turned on under a page that has
+//     already been pinned.
+//   - **The script's half, run rather than read.** The section opens pinned on the first level,
+//     follows the reader's own scroll quarter by quarter, marks the marker of the level on screen,
+//     answers a marker press by moving the page to that level's own share of the runway (and
+//     cancels the anchor's own jump, because four panels in one sticky box are four fragments
+//     pointing at one place — D245), opens on the level a reader followed a link to, and stands
+//     the whole thing down for a reader who has asked for less motion — at load and under a page
+//     already pinned. Every case is proved by planting the defect it names, in the page's own
+//     stylesheet and in the script's own text.
+//
+// **What none of it claims.** There is no layout engine in this repository and no browser in this
+// container: nothing below has seen a section stick, scale or fade, and no case here says it has.
+// The visual half is the owner's check 112 (`docs/gcp-live-checklist.md`), written and not run
+// (D247, ZU1).
+
+/** The attributes `site.js` writes on the section and the levels, and the build never does. */
+const ZOOM_STATE = ['data-zoom-ready', 'data-zoom-shown']
+
+/**
+ * The properties that ARE the pinning: a rule that declares one of them for the runway, the stage
+ * or a level is a rule that changes what a reader sees, and it has to be one the script's own
+ * state reaches. `margin`, `border` and the paint properties are not here — the stills are laid
+ * out and painted too, and the levels' own margin is the column's.
+ */
+const PINNED_PROPERTIES = new Set([
+  'position',
+  'top',
+  'opacity',
+  'visibility',
+  'transform',
+  'grid-area',
+  'grid-column',
+  'grid-row',
+  'grid-template-columns',
+  'display',
+  'min-height',
+  'align-content',
+])
+
+/**
+ * The zoom section's pinned half, as everything the script's door and the stylesheet's selectors
+ * are written for: the one runway, the one stage, the levels as `<figure>`s with the panel hook,
+ * the markers, and every piece of state the build has already written — which is none of it.
+ */
+export function zoomPinnedOf(html) {
+  const doc = parse(html)
+  const sections = findAll(doc, (el) => el.name === 'section' && has(el, 'zoom'))
+  const section = sections[0] ?? null
+  const zoom = { sections: sections.length, section, runways: [], stages: [], panels: [], markers: [], state: [] }
+  if (section === null) return zoom
+  zoom.runways = findAll(section, (el) => el.attrs.has('data-zoom-runway'))
+  zoom.stages = findAll(section, (el) => el.attrs.has('data-zoom-stage'))
+  zoom.markers = findAll(section, (el) => el.attrs.has('data-zoom-marker')).map((node) => ({
+    href: node.attrs.get('href') ?? '',
+    node,
+  }))
+  zoom.panels = findAll(section, (el) => el.name === 'figure' && el.attrs.has('data-zoom-panel')).map((node) => ({
+    id: node.attrs.get('id') ?? '',
+    panel: node.attrs.get('data-zoom-panel') ?? '',
+    node,
+  }))
+  // The section itself as well as everything inside it: `data-zoom-ready` is written on the
+  // section, and a reading that only walked its children would never see it.
+  for (const el of [section, ...walk(section)]) {
+    for (const name of ZOOM_STATE) if (el.attrs.has(name)) zoom.state.push({ name, node: el })
+    if (el.attrs.has('aria-current')) zoom.state.push({ name: 'aria-current', node: el })
+  }
+  return zoom
+}
+
+/**
+ * Every way the section's hooks are not what the pinned half drives, as the lines a reader of the
+ * failure gets: a runway or a stage that is missing or doubled, a stage outside the runway, a
+ * level outside the stage or marked with a hook that is not its own id, a marker inside the runway
+ * (where the pinning would carry it away from the reader), and any of the script's own state
+ * already written into the built page.
+ */
+export function zoomPinnedFailures(html) {
+  const out = []
+  const zoom = zoomPinnedOf(html)
+  if (zoom.section === null) {
+    return ['the page renders no zoom section, and the pinned zoom is a state of the four levels on How It Works under "The run, end to end" (D237, Part 5)']
+  }
+  const levels = zoom.panels.length
+  if (zoom.runways.length !== 1) {
+    out.push(`the section carries ${zoom.runways.length} box(es) marked data-zoom-runway, and the pinned half pins one: the runway is the scroll length the stage is held for, and the script reads the runway's own position to know which level is on screen (Part 5)`)
+  }
+  if (zoom.stages.length !== 1) {
+    out.push(`the section carries ${zoom.stages.length} box(es) marked data-zoom-stage, and the pinned half pins one: the stage is the box that sticks while the runway passes, and the four levels are its four panels (Part 5)`)
+  }
+  const [runway] = zoom.runways
+  const [stage] = zoom.stages
+  if (runway !== undefined && stage !== undefined && !ancestorsOf(stage).includes(runway)) {
+    out.push('the stage stands outside the runway, and a box that sticks while the runway passes is a box the runway holds: the runway is the section\'s own length and the stage is what the reader sees for the whole of it (Part 5)')
+  }
+  if (levels < 2) {
+    out.push(`the section marks ${levels} level(s) with data-zoom-panel, and a pinned sequence is two levels at least: one level is a picture, and the script leaves a section of one alone (Part 5)`)
+  }
+  for (const panel of zoom.panels) {
+    if (panel.id === '') {
+      out.push('a level carries data-zoom-panel and no id, and the marker that jumps to it is an anchor whose fragment is that id: the level\'s id is what the two halves are paired on (D245, Part 5)')
+    } else if (panel.panel !== panel.id) {
+      out.push(`the level ${JSON.stringify(panel.id)} is marked data-zoom-panel=${JSON.stringify(panel.panel)}, and the hook is the level's own id: the script reads a marker press out of the fragment and the panel hook is how the two are held together (D245, Part 5)`)
+    }
+    if (stage !== undefined && !ancestorsOf(panel.node).includes(stage)) {
+      out.push(`the level ${JSON.stringify(panel.id)} stands outside the stage, and the four levels are the four panels of the one pinned box: a level outside it is a level the pinning does not reach (Part 5)`)
+    }
+  }
+  for (const marker of zoom.markers) {
+    if (runway !== undefined && ancestorsOf(marker.node).includes(runway)) {
+      out.push('a level marker stands inside the runway, and a marker a reader presses has to stay where they can reach it while the stage is pinned: the nav is the section\'s own, beside the runway rather than inside it (D245, Part 5)')
+    }
+  }
+  for (const { name, node } of zoom.state) {
+    out.push(`the built page already carries ${name} on a <${node.name}>, and that attribute is the script's own: the build writes the four stills, and the pinned state is what site.js adds to them — a page whose script never ran must not be pinned by the markup (Part 5, ZF39)`)
+  }
+  return out
+}
+
+/** The number of viewport heights a length is — `400vh`, `calc(4 * 100vh)`, `calc(100vh * 4)` —
+ *  or `null` for a length that is not written in them at all. */
+function viewportHeights(value) {
+  const text = (value ?? '').trim()
+  const direct = /^([\d.]+)vh$/.exec(text)
+  if (direct) return Number(direct[1]) / 100
+  const inner = /^calc\(([^()]*)\)$/.exec(text)?.[1]
+  if (inner === undefined) return null
+  const product = /^([\d.]+)\s*\*\s*100vh$/.exec(inner.trim()) ?? /^100vh\s*\*\s*([\d.]+)$/.exec(inner.trim())
+  if (product) return Number(product[1])
+  const single = /^([\d.]+)vh$/.exec(inner.trim())
+  return single ? Number(single[1]) / 100 : null
+}
+
+/** The motion preference a rule's own conditions ask about, or `null` for a rule that asks none. */
+function motionOf(conditions) {
+  return /prefers-reduced-motion\s*:\s*(reduce|no-preference)/.exec((conditions ?? []).join(' '))?.[1] ?? null
+}
+
+/**
+ * Every way the built page's stylesheet pins more than the script's own state reaches, as the
+ * lines a reader of the failure gets. Four rules, and each is the whole of one decision:
+ *
+ *   1. the runway's own length, under `[data-zoom-ready]`, is the number of levels in viewport
+ *      heights — read out of the artifact on both sides, so a fifth level in the data file and a
+ *      runway that did not move are caught against each other;
+ *   2. every declaration of a pinned property for the stage or a level is scoped to
+ *      `[data-zoom-ready]`, which only `site.js` writes;
+ *   3. the transition between two levels is declared inside `prefers-reduced-motion:
+ *      no-preference` rather than neutralised afterwards;
+ *   4. a `reduce` block puts the runway's length, the stage's stickiness and the levels' opacity
+ *      back, so a reader whose preference arrives under a pinned page is given the stills.
+ */
+export function zoomPinnedStyleFailures(html, css) {
+  const out = []
+  const zoom = zoomPinnedOf(html)
+  if (zoom.section === null) {
+    return ['the page renders no zoom section, and the pinned zoom is a state of the four levels on How It Works under "The run, end to end" (D237, Part 5)']
+  }
+  const levels = zoom.panels.length
+  const namesRunway = (selector) => /\.zoom-runway(?![\w-])/.test(selector)
+  const namesPinned = (selector) => /\.zoom-(?:stage|figure)(?![\w-])/.test(selector)
+  const declarations = []
+  for (const rule of cssRules(css)) {
+    const selector = rule.selector ?? ''
+    const motion = motionOf(rule.conditions)
+    for (const [property, value] of cssDeclarations(rule.body ?? '')) declarations.push({ selector, motion, property, value })
+  }
+
+  // 1. The runway's length, under the state the script writes.
+  const pinnedHeights = declarations.filter((one) => one.property === 'height' && namesRunway(one.selector) && one.motion === null && one.selector.includes('[data-zoom-ready]'))
+  if (pinnedHeights.length === 0) {
+    out.push('no rule gives the runway a height under [data-zoom-ready], and a pinned sequence is as long as it has levels: one viewport of scroll per level is the length the stage is held for (Part 5)')
+  }
+  for (const one of pinnedHeights) {
+    const heights = viewportHeights(one.value)
+    if (heights === null) {
+      out.push(`the runway's height under [data-zoom-ready] is ${JSON.stringify(one.value)}, which is not written in viewport heights, and the runway is one viewport of scroll per level (Part 5)`)
+    } else if (Math.abs(heights - levels) > 1e-9) {
+      out.push(`the runway is ${heights} viewport height(s) long and the page draws ${levels} levels, and the runway is one viewport of scroll per level: a level added to website/data/zoom-levels.yaml without this number moving is a level a reader reaches in a share of the scroll the other levels do not get (Part 5)`)
+    }
+  }
+
+  // 2. Every pinned declaration is the script's state's to reach.
+  for (const one of declarations) {
+    if (!PINNED_PROPERTIES.has(one.property) || !namesPinned(one.selector)) continue
+    if (one.selector.includes('[data-zoom-ready]')) continue
+    out.push(`the rule ${JSON.stringify(one.selector)} declares ${one.property} for a level or the stage and is not scoped to [data-zoom-ready], and that attribute is written by site.js alone: the build writes the four stills, so a pinned layout the script's own state does not gate is a layout a reader with no script is given (Part 5, ZF39)`)
+  }
+
+  // 3. The zoom between two levels, gated on the reader's own answer.
+  const transitions = declarations.filter((one) => one.property === 'transition' && namesPinned(one.selector))
+  if (transitions.length === 0) {
+    out.push('no rule declares a transition on the levels, and the zoom between two levels is a transition the stylesheet declares: four pictures that cut from one to the next are not the zoom the brief asks for (Part 5)')
+  }
+  for (const one of transitions) {
+    if (one.motion === 'no-preference') continue
+    const where = one.motion === null ? 'no motion query at all' : `inside \`prefers-reduced-motion: ${one.motion}\``
+    out.push(`the rule ${JSON.stringify(one.selector)} declares a transition (${where}), and the section's one piece of motion is gated on the reader's own answer: a reader who has asked for less motion is given no transition to have to neutralise (D105, Part 5)`)
+  }
+
+  // 4. The reduced-motion path, which is the stills again.
+  const reduce = declarations.filter((one) => one.motion === 'reduce')
+  for (const [property, value, what, names] of [
+    ['height', 'auto', 'the runway back to the height its own content gives it', namesRunway],
+    ['position', 'static', 'the stage out of the window\'s own edge', namesPinned],
+    ['opacity', '1', 'the levels visible', namesPinned],
+    ['visibility', 'visible', 'the levels visible', namesPinned],
+  ]) {
+    const restored = reduce.some((one) => one.property === property && names(one.selector) && one.value.replace(/\s+/g, '') === value)
+    if (!restored) {
+      out.push(`no \`prefers-reduced-motion: reduce\` rule puts ${what} (${property}: ${value}), and the reduced-motion path is the four stills again: the pinning, the scale and the fade are taken back off for a reader who has asked for less motion (D105, Part 5)`)
+    }
+  }
+  return out
+}
+
+/**
+ * The built page driven in `lib/dom.mjs`'s stub browser: the page itself, the runway where the
+ * case laid it out (its top in the document, and one viewport of scroll per level, which is what
+ * the stylesheet writes), and the window's own height. `options` are the stub's own — a
+ * clipboard, a motion preference, a fragment the page was opened on.
+ */
+function zoomRun(html, { at = 1000, viewport = 800, ...options } = {}) {
+  const levels = zoomPinnedOf(html).panels.length
+  const page = fakeDOM(html, { rects: { '[data-zoom-runway]': { top: at, height: viewport * levels } }, viewport, ...options })
+  return { html, page, at, viewport, options, travel: viewport * levels - viewport, levels }
+}
+
+/**
+ * Every way the script's half of the pinned section is not what the section is, as the lines a
+ * reader of the failure gets. The section is driven the way a reader drives it — the page
+ * scrolling, a marker pressed, the motion preference turned on and off under a running page — and
+ * every reading is taken from the state the script wrote on the built page's own markup.
+ */
+function zoomScriptFailures(run) {
+  const { html, page, at, viewport, options, travel } = run
+  const out = []
+  const fail = (line) => out.push(line)
+  const sections = page.find('[data-zoom]')
+  if (sections.length === 0) return ['the page carries no [data-zoom] section, and the pinned half is the script\'s own door (Part 5)']
+  const [section] = sections
+  const panels = page.find('[data-zoom-panel]')
+  const markers = page.find('[data-zoom-marker]')
+  if (panels.length < 2) return [`the page marks ${panels.length} level(s) with data-zoom-panel, and this case drives a pinned sequence of two at least (Part 5)`]
+  const shown = () => panels.findIndex((panel) => panel.hasAttribute('data-zoom-shown'))
+  const marks = () => markers.map((marker) => marker.getAttribute('aria-current'))
+  const shownLevel = (why) => `the section is showing level ${shown()} ${why}: the level on screen is the panel the script marked data-zoom-shown (Part 5)`
+
+  // The page as it opens, before anything moves: pinned, on the first level, with the first
+  // marker marked — a reader who has not reached the runway is on the first level, and the mark
+  // says which level is on screen rather than which one was pressed last.
+  if (!section.hasAttribute('data-zoom-ready')) {
+    fail('the section is not marked data-zoom-ready on a page whose script ran, and the stylesheet\'s pinned rules are scoped to that attribute: the reader a scripted page gets is the four stills (Part 5)')
+  }
+  if (shown() !== 0) fail(`${shownLevel('when the page loaded')}; a reader who has not reached the runway is on the first level`)
+  if (marks()[0] !== 'true' || marks().some((mark, i) => i > 0 && mark !== 'false')) {
+    fail(`the markers read ${JSON.stringify(marks())} when the page loaded, and the marker of the level on screen carries aria-current="true" with every other one "false": a marker with no value at all is a marker a screen reader is told nothing about (Part 5)`)
+  }
+
+  // The reader's own scroll, level by level: each level's own share of the runway, the seam
+  // between two levels on both sides of it, and the two ends.
+  for (let i = 0; i < panels.length; i++) {
+    const past = (travel * i) / panels.length
+    page.setScroll(at + past)
+    if (shown() !== i) fail(`${shownLevel(`${past} px into a runway that gives each of its ${panels.length} levels the same share`)}; level ${i} is the one whose share the reader is in`)
+    if (marks()[i] !== 'true') fail(`the reader is ${past} px into the runway and the markers read ${JSON.stringify(marks())}, and level ${i} is the one on screen: the mark follows the reading rather than a press (Part 5)`)
+    if (marks().filter((mark) => mark === 'true').length !== 1) fail(`the markers read ${JSON.stringify(marks())} with level ${i} on screen, and exactly one of them is the current one (Part 5)`)
+  }
+  if (panels.length > 1) {
+    const seam = (travel * 1) / panels.length
+    page.setScroll(at + seam - 1)
+    if (shown() !== 0) fail(`${shownLevel(`one pixel short of level 2's own share of the runway`)}; a level begins where its own share of the runway does and not a pixel earlier`)
+  }
+
+  // A marker press: the anchor is what a reader with no script follows, and with the section
+  // pinned the four fragments name one place — so the script answers the press, moves the page to
+  // that level's own share of the runway and marks it.
+  const last = panels.length - 1
+  page.setScroll(at)
+  const press = markers[last].dispatch('click')
+  if (!press.defaultPrevented) {
+    fail('a marker press was left to the anchor\'s own jump, and with the four levels stacked in one sticky box the four fragments name one place: the script answers the press itself (D245, Part 5)')
+  }
+  const asked = page.pageScrolls[page.pageScrolls.length - 1]?.init ?? {}
+  const landing = at + (travel * last) / panels.length
+  if (Math.abs(Number(asked.top) - landing) > 0.5) {
+    fail(`a press on the last marker asked the page for ${JSON.stringify(asked.top)} and level ${last + 1}'s own share of the runway begins at ${landing}: a press lands on the level the marker names (Part 5)`)
+  }
+  if (Math.abs(page.pageScroll() - landing) > 0.5) {
+    fail(`after a press on the last marker the page is at ${page.pageScroll()} and the level's own share of the runway begins at ${landing}: the move is the page's own scroll (Part 5)`)
+  }
+  if (shown() !== last) fail(`${shownLevel('after a press on the last marker')}; the press lands on the level the marker names`)
+  if (marks()[last] !== 'true') fail(`after a press on the last marker the markers read ${JSON.stringify(marks())}, and the marker that was pressed is the current one (Part 5)`)
+  if (asked.behavior !== 'instant') {
+    fail(`the page was moved to a level with behavior: ${JSON.stringify(asked.behavior ?? null)}, and a move the browser is free to animate is a reading that narrates the levels it passes through: CSSOM-View resolves 'auto' to the box's own scroll-behavior (Part 5)`)
+  }
+
+  // A reader who has asked for less motion: no pinning at all, at load and under a running page.
+  const calm = zoomRun(html, { at, viewport, ...options, reduce: true })
+  if (calm.page.find('[data-zoom]')[0].hasAttribute('data-zoom-ready')) {
+    fail('a page whose reader has asked for less motion is pinned anyway, and the reduced-motion path is the four stills: the section is stood down before the script writes anything (D105, Part 5)')
+  }
+  if (calm.page.find('[data-zoom-shown]').length > 0) {
+    fail('a page whose reader has asked for less motion has a level marked data-zoom-shown, and the stills are all four levels visible in order: no level is singled out (D105, Part 5)')
+  }
+  if (calm.page.find('[data-zoom-marker]').some((marker) => marker.getAttribute('aria-current') !== null)) {
+    fail('a page whose reader has asked for less motion has a marker carrying aria-current, and the section is not pinned at all: the marks are the reading\'s, and there is no reading to mark (D105, Part 5)')
+  }
+  page.setReduce(true)
+  if (section.hasAttribute('data-zoom-ready')) {
+    fail('the section is still pinned after the reader asked for less motion under a running page, and the answer is watched rather than sampled once: a reader who turns the preference on is given the stills (D105, Part 5)')
+  }
+  if (page.find('[data-zoom-shown]').length > 0) fail('a level is still marked data-zoom-shown after the reader asked for less motion under a running page: the section stands down to the stills (D105, Part 5)')
+  if (marks().some((mark) => mark !== 'false')) fail(`the markers read ${JSON.stringify(marks())} after the reader asked for less motion under a running page, and none of them is current once the section is the stills (D105, Part 5)`)
+  page.setReduce(false)
+  if (!section.hasAttribute('data-zoom-ready')) {
+    fail('the section does not come back when the reader lets less motion go under a running page: the preference is an answer the page follows in both directions (D105, Part 5)')
+  }
+
+  // A browser too old to be asked the question is left alone rather than pinned on a guess.
+  const silent = zoomRun(html, { at, viewport, ...options, matchMedia: false })
+  if (silent.page.find('[data-zoom]')[0].hasAttribute('data-zoom-ready')) {
+    fail('a browser with no matchMedia is pinned anyway, and a browser that cannot be asked about the reader\'s motion preference is read as "leave it alone": the stills are what it is given (Part 5)')
+  }
+
+  // A reader who arrived on a level, by a marker's own link or a shared address: the section opens
+  // on that level rather than on the first, which is where the browser's own jump lands once the
+  // four panels stand in one sticky box.
+  const deep = zoomRun(html, { at, viewport, ...options, hash: panels[last].getAttribute('id') })
+  if (deep.page.find('[data-zoom-panel]').findIndex((panel) => panel.hasAttribute('data-zoom-shown')) !== last) {
+    fail(`a page opened on #${panels[last].getAttribute('id')} opens on level ${deep.page.find('[data-zoom-panel]').findIndex((panel) => panel.hasAttribute('data-zoom-shown'))}, and a reader who followed a level's own link is put on that level (Part 5)`)
+  }
+  return out
+}
+
+/** The built page's own stylesheet with one declaration of one rule rewritten: the plants below
+ *  are the page's own rules, edited, rather than rules appended beside them — an appended rule is
+ *  a stylesheet the page does not have. The selector is the artifact's own text, `[data-astro-cid…]`
+ *  and all, and the first rule that declares the property is the one edited. */
+function redeclare(css, selector, property, value) {
+  const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  for (let at = css.indexOf(selector); at >= 0; at = css.indexOf(selector, at + 1)) {
+    const open = css.indexOf('{', at)
+    const close = css.indexOf('}', open)
+    const body = css.slice(open + 1, close)
+    const found = cssDeclarations(body).find(([name]) => name === property)
+    if (!found) continue
+    const declaration = new RegExp(`${property}\\s*:\\s*${escape(found[1])}`)
+    if (!declaration.test(body)) continue
+    return css.slice(0, open + 1) + body.replace(declaration, `${property}:${value}`) + css.slice(close)
+  }
+  throw new Error(`the stylesheet carries no rule ${JSON.stringify(selector)} declaring ${property} to rewrite`)
+}
+
+/** The page's own stylesheet with the query around one block of rules taken off: the plant for a
+ *  motion rule that is not gated — the page's own transition, moved out of the query that gates
+ *  it. The rules stay; only the answer they were written behind goes. */
+function ungated(css, opening) {
+  const at = css.indexOf(opening)
+  if (at < 0) throw new Error(`the stylesheet carries no ${JSON.stringify(opening)} to unwrap`)
+  const open = css.indexOf('{', at)
+  let depth = 0
+  for (let k = open; k < css.length; k++) {
+    if (css[k] === '{') depth++
+    else if (css[k] === '}') {
+      depth--
+      if (depth === 0) return css.slice(0, at) + css.slice(open + 1, k) + css.slice(k + 1)
+    }
+  }
+  throw new Error(`the block ${JSON.stringify(opening)} is never closed`)
+}
+
+/** The page's own stylesheet with the block opened by `opening` — the first one whose text
+ *  carries `contains` — taken out whole: the plant for a path the page no longer has. */
+function dropBlock(css, opening, contains) {
+  for (let at = css.indexOf(opening); at >= 0; at = css.indexOf(opening, at + 1)) {
+    const open = css.indexOf('{', at)
+    let depth = 0
+    for (let k = open; k < css.length; k++) {
+      if (css[k] === '{') depth++
+      else if (css[k] === '}') {
+        depth--
+        if (depth === 0) {
+          if (css.slice(at, k).includes(contains)) return css.slice(0, at) + css.slice(k + 1)
+          break
+        }
+      }
+    }
+  }
+  throw new Error(`the stylesheet carries no ${JSON.stringify(opening)} block holding ${JSON.stringify(contains)}`)
+}
+
+test('the pinned section\'s hooks are in the built page, and none of the state they are read for is', () => {
+  const page = howItWorks()
+  const failures = zoomPinnedFailures(page.html)
+  assert.deepEqual(failures, [], `${page.rel}: the zoom section's pinned half has no hooks to drive (Part 5):\n  ${failures.join('\n  ')}`)
+
+  // And the artifact is what the readings above are about: one runway, one stage, four panels
+  // inside the stage, four markers outside it, and the levels' ids the markers' fragments name.
+  const zoom = zoomPinnedOf(page.html)
+  assert.equal(zoom.runways.length, 1, `the section carries ${zoom.runways.length} runways, and the pinned half pins one (Part 5)`)
+  assert.equal(zoom.stages.length, 1, `the section carries ${zoom.stages.length} stages, and the pinned half pins one (Part 5)`)
+  assert.deepEqual(
+    zoom.panels.map((panel) => panel.id),
+    zoom.panels.map((panel) => panel.panel),
+    'the levels are not marked with their own ids, and a marker\'s fragment is the id of the level it jumps to (D245, Part 5)',
+  )
+  assert.deepEqual(
+    zoom.markers.map((marker) => marker.href),
+    zoom.panels.map((panel) => `#${panel.id}`),
+    'the markers do not point at the levels, in order: the four anchors are the four levels (D245, Part 5)',
+  )
+  assert.deepEqual(zoom.state, [], 'the built page carries state that only the script writes, so a page with no script would be pinned by its own markup (Part 5)')
+})
+
+test('the pinning is refused plant by plant: the hooks, the runway\'s length, the scoping, the gate and the stills', () => {
+  // A reading that never disagrees with the page is a reading of nothing, so each of the nine
+  // rules above is proved by the defect it names. The markup plants are the built page with one
+  // hook changed; the stylesheet plants are the page's own rules, edited.
+  const page = howItWorks().html
+  const css = pageCss(page)
+  assert.deepEqual(zoomPinnedFailures(page), [], 'the built page does not pass the reading its own plants are drawn from')
+  assert.deepEqual(zoomPinnedStyleFailures(page, css), [], 'the built stylesheet does not pass the reading its own plants are drawn from')
+
+  const marker = '<a class="zoom-marker" data-zoom-marker'
+  assert.ok(page.includes(marker), 'the built page carries no marker with data-zoom-marker, and the plants below rewrite one')
+  assert.ok(page.includes('data-zoom-panel="level-3"'), 'the built page marks no level-3 panel, and the plants below rewrite it')
+
+  /** The page with one element opened right after the tag carrying `hook`: how a plant puts a
+   *  box where it does not belong without rewriting the whole element. */
+  const insideAfter = (html, hook, element) => {
+    const at = html.indexOf(hook)
+    assert.ok(at >= 0, `the built page carries no ${JSON.stringify(hook)} to open after`)
+    const close = html.indexOf('>', at) + 1
+    return html.slice(0, close) + element + html.slice(close)
+  }
+
+  /** The page with the level-3 figure moved out of the stage — after the stage's own close and
+   *  still inside the runway — which is a level the pinning does not reach. */
+  const levelOutsideTheStage = (html) => {
+    const at = html.indexOf('data-zoom-panel="level-3"')
+    const open = html.lastIndexOf('<figure', at)
+    const close = html.indexOf('</figure>', at) + '</figure>'.length
+    const figure = html.slice(open, close)
+    const without = html.slice(0, open) + html.slice(close)
+    const last = without.lastIndexOf('data-zoom-panel=')
+    const stageClose = without.indexOf('</div>', last) + '</div>'.length
+    assert.ok(open >= 0 && close > open && stageClose > last, 'the built page does not carry the four panels inside one stage, and this plant moves one out of it')
+    return without.slice(0, stageClose) + figure + without.slice(stageClose)
+  }
+
+  const markup = [
+    ['a marker moved inside the runway', insideAfter(page, 'data-zoom-runway', '<a class="zoom-marker" data-zoom-marker href="#level-1" aria-label="Level 1">1</a>'), /marker stands inside the runway/],
+    ['a level marked with a hook that is not its id', page.replace('data-zoom-panel="level-3"', 'data-zoom-panel="level-4"'), /is marked data-zoom-panel="level-4"/],
+    ['a level outside the stage', levelOutsideTheStage(page), /stands outside the stage/],
+    ['a stage outside the runway', page.replace('data-zoom-stage', 'data-zoom-stage-removed').replace('<h2 class="zoom-title"', '<h2 class="zoom-title" data-zoom-stage'), /stage stands outside the runway/],
+    ['the state written into the build', page.replace('<section class="zoom" data-zoom', '<section class="zoom" data-zoom data-zoom-ready'), /already carries data-zoom-ready/],
+    ['a marker left marked by the build', page.replace(marker, `${marker} aria-current="true"`), /already carries aria-current/],
+  ]
+  for (const [what, planted, wants] of markup) {
+    assert.notEqual(planted, page, `${what}: the planted edit changed nothing, so this fixture proves nothing`)
+    const failures = zoomPinnedFailures(planted)
+    assert.ok(
+      failures.some((line) => wants.test(line)),
+      `${what} was not refused (${wants}); the reading said:\n  ${failures.join('\n  ') || '(nothing)'}`,
+    )
+  }
+
+  // The stylesheet's own four rules. Each plant is one edit to one of the page's rules, and each
+  // has to be refused by name: the runway's length read against the level count, a pinned
+  // declaration the script's state does not gate, a transition moved out of the query that gates
+  // it, and the reduced-motion path taken away.
+  const runwayRule = cssRules(css).find((rule) => /\.zoom-runway/.test(rule.selector) && rule.body.includes('height') && rule.selector.includes('[data-zoom-ready]')).selector
+  const stageRule = cssRules(css).find((rule) => /\.zoom-stage/.test(rule.selector) && rule.body.includes('position:sticky')).selector
+  const figureRule = cssRules(css).find((rule) => /\.zoom-figure/.test(rule.selector) && rule.body.includes('opacity:0')).selector
+  const stylesheet = [
+    ['a runway a level short', redeclare(css, runwayRule, 'height', '300vh'), /the runway is 3 viewport height\(s\) long and the page draws 4 levels/],
+    ['a pinned stage the script\'s state does not gate', redeclare(css, stageRule, 'position', 'fixed').replace(`[data-zoom-ready] .zoom-stage`, '.zoom-stage'), /declares position for a level or the stage and is not scoped to \[data-zoom-ready\]/],
+    ['a level pinned with no state to gate it', redeclare(css, figureRule, 'opacity', '0').replace(`[data-zoom-ready] .zoom-figure`, '.zoom-figure'), /is not scoped to \[data-zoom-ready\]/],
+    ['a transition the reader\'s answer does not gate', ungated(css, '@media (prefers-reduced-motion:no-preference)'), /declares a transition \(no motion query at all\)/],
+    ['no reduced-motion path', dropBlock(css, '@media (prefers-reduced-motion:reduce)', '.zoom-figure'), /no `prefers-reduced-motion: reduce` rule puts/],
+  ]
+  for (const [what, planted, wants] of stylesheet) {
+    assert.notEqual(planted, css, `${what}: the planted edit changed nothing, so this fixture proves nothing`)
+    const failures = zoomPinnedStyleFailures(page, planted)
+    assert.ok(
+      failures.some((line) => wants.test(line)),
+      `${what} was not refused (${wants}); the reading said:\n  ${failures.join('\n  ') || '(nothing)'}`,
+    )
+  }
+})
+
+test('the pinned section follows the reader\'s own scroll, level by level, and a marker press lands on its level', () => {
+  const page = howItWorks()
+  const run = zoomRun(page.html)
+  const failures = zoomScriptFailures(run)
+  assert.deepEqual(failures, [], `${page.rel}: the script does not drive the pinned zoom the section is (Part 5):\n  ${failures.join('\n  ')}`)
+
+  // And the numbers the reading is made of are the section's own: four levels, a runway one
+  // viewport long per level, and the four markers' fragments the four panels' ids.
+  assert.equal(run.levels, 4, `the built page draws ${run.levels} levels, and the pinned sequence is the brief's four (D237, Part 5)`)
+  assert.equal(run.travel, run.viewport * 3, `the reading drives a runway of ${run.travel} px of travel and the stylesheet's is one viewport per level less the one the stage takes (Part 5)`)
+})
+
+test('the pinned section is refused plant by plant, in the script itself', () => {
+  // The other half of the reading above: the script's own text, edited five ways, each of which is
+  // a way the section stops being the section. Every plant is one string in the file the build
+  // copies into `dist/` verbatim, so no plant needs a rebuild.
+  const html = howItWorks().html
+  const defects = [
+    {
+      what: 'a section that never says it is ready',
+      plant: (src) => src.replace("      section.setAttribute(ZOOM_READY, '')", ''),
+      wants: /not marked data-zoom-ready/,
+    },
+    {
+      what: 'a level read off the wrong number',
+      plant: (src) => src.replace('var at = Math.floor((past / travel) * panels.length)', 'var at = Math.floor(past / travel)'),
+      wants: /is the one whose share the reader is in/,
+    },
+    {
+      what: 'a marker press left to the anchor',
+      // The zoom handler's own press, and not the console slider's identical line above it: the
+      // plant is anchored on the two lines it sits between, so the edit lands where it says.
+      plant: (src) =>
+        src.replace(
+          '          var index = levelFor(marker)\n          if (index < 0) return\n          if (event && event.preventDefault) event.preventDefault()',
+          '          var index = levelFor(marker)\n          if (index < 0) return',
+        ),
+      wants: /left to the anchor's own jump/,
+    },
+    {
+      what: 'a move the browser is free to animate',
+      plant: (src) => src.replace("window.scrollTo({ top: offset(index), behavior: 'instant' })", "window.scrollTo({ top: offset(index), behavior: 'auto' })"),
+      wants: /free to animate/,
+    },
+    {
+      what: 'a reader who asked for less motion pinned anyway',
+      plant: (src) => src.replace('      if (calm()) {\n        stand()\n        return\n      }', ''),
+      wants: /asked for less motion/,
+    },
+    {
+      what: 'a browser that cannot be asked, pinned on a guess',
+      // Anchored on the line above it: `if (!motion) return` is written twice in the file — the
+      // console slider's own arm and this section's — and only the section's is the plant.
+      plant: (src) =>
+        src.replace(
+          "    if (!motion && typeof window.matchMedia === 'function') motion = window.matchMedia(LESS_MOTION)\n    if (!motion) return",
+          "    if (!motion && typeof window.matchMedia === 'function') motion = window.matchMedia(LESS_MOTION)\n    if (!motion) motion = { matches: false }",
+        ),
+      wants: /no matchMedia is pinned anyway/,
+    },
+  ]
+  for (const { what, plant, wants } of defects) {
+    const planted = plant(SCRIPT_SOURCE)
+    assert.notEqual(planted, SCRIPT_SOURCE, `${what}: the planted edit changed nothing, so this fixture proves nothing`)
+    const failures = zoomScriptFailures(zoomRun(html, { script: planted }))
+    assert.ok(
+      failures.some((line) => wants.test(line)),
+      `${what} was not refused (${wants}); the reading said:\n  ${failures.join('\n  ') || '(nothing)'}`,
+    )
+  }
 })
