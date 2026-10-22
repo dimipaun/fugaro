@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -232,6 +233,14 @@ const (
 // than a body of unknown size.
 const maxServiceAnswerBytes = 16 << 10
 
+// serviceMintTimeout bounds one mint call. A mint is a short call -- one
+// request, one answer, no streaming -- so a service that neither answers nor
+// fails is cut off here rather than holding the run until the platform's own
+// job timeout. The in-job path has the same shape (the API clients' own
+// timeouts) and this one has no stage deadline above it: the run's first mint
+// is the clone's, which bootstrap asks for before any budget session exists.
+const serviceMintTimeout = 30 * time.Second
+
 // serviceMintRequest is a mint call's body and serviceMintAnswer is the
 // service's answer (credsvc.MintRequest and MintResponse): the App's ID, and
 // nothing else, because the repository is the one the calling job account is
@@ -295,7 +304,10 @@ type ServiceTokens struct {
 	// cannot name anything else: the key that signs, the repositories and
 	// the permissions are the service's.
 	AppID string
-	// HTTP is the client the call is made with; nil means the default.
+	// HTTP is the client the call is made with; nil means this package's own
+	// hardened one (serviceMintClient: no redirects, no jar, no compression,
+	// a bounded timeout). A client passed in is copied with the same
+	// redirect and jar rules; its transport and timeout stay the caller's.
 	HTTP *http.Client
 	// IDToken mints the job service account's Google ID token for URL, which
 	// is what Cloud Run IAM admits for run.invoker (D135). It is called on
@@ -366,6 +378,15 @@ func (s *ServiceTokens) mint(ctx context.Context, minValid time.Duration) (strin
 	if s.URL == "" || s.AppID == "" || s.IDToken == nil || s.RunIDToken == nil {
 		return "", time.Time{}, fmt.Errorf("%w: this run has no credentials service to mint at", ErrServiceTokensIdentity)
 	}
+	// The URL is checked before anything is sent to it. A mint presents the
+	// run's own Firebase ID token, which is a bearer credential for the whole
+	// run: over plain http it would travel in cleartext, and a URL whose
+	// scheme nobody chose is not one to hand it to. https, or http on a
+	// loopback address, is the rule the model path already holds its own URL
+	// to (internal/gateway's checkBaseURL, internal/runner's serviceUpstream).
+	if err := checkServiceURL(s.URL); err != nil {
+		return "", time.Time{}, err
+	}
 	run := s.RunIDToken()
 	if run == "" {
 		return "", time.Time{}, fmt.Errorf("%w: the run's own identity token is not available, and a mint under the job's identity alone is not one the service verifies", ErrServiceTokensIdentity)
@@ -398,11 +419,7 @@ func (s *ServiceTokens) mint(ctx context.Context, minValid time.Duration) (strin
 	req.Header.Set("Authorization", "Bearer "+id)
 	req.Header.Set(ServiceHeaderRunIdentity, run)
 	req.Header.Set(ServiceHeaderRunJob, s.Job)
-	hc := s.HTTP
-	if hc == nil {
-		hc = http.DefaultClient
-	}
-	resp, err := hc.Do(req)
+	resp, err := serviceMintClient(s.HTTP).Do(req)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("%w: the credentials service could not be reached", ErrServiceTokens)
 	}
@@ -435,6 +452,67 @@ func (s *ServiceTokens) mint(ctx context.Context, minValid time.Duration) (strin
 		return "", time.Time{}, fmt.Errorf("%w: the token the service minted expires too soon to satisfy the requested %s validity", ErrServiceTokens, minValid)
 	}
 	return ans.Token, ans.ExpiresAt, nil
+}
+
+// checkServiceURL refuses a credentials service URL this code will not send a
+// mint to: https, or http on a loopback address (a test's fixture server, or
+// a service run on the run's own machine). It is internal/gateway's
+// checkBaseURL rule for the model path (gateway.go) and internal/runner's for
+// the forward path, respelled here because neither package exports it and
+// this one cannot import them (credsvc imports this package, and the runner
+// imports credsvc).
+//
+// The refusal carries the URL's shape and never the URL: the job's
+// environment wrote it, and this package's refusals name no value.
+func checkServiceURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("%w: the credentials service URL must be a scheme and a host only", ErrServiceTokens)
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		if ip := net.ParseIP(u.Hostname()); (ip != nil && ip.IsLoopback()) || u.Hostname() == "localhost" {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: the credentials service URL must be https, or http on a loopback address", ErrServiceTokens)
+}
+
+// serviceMintClient is the client a mint is made with: it never follows a
+// redirect, never keeps a cookie jar, and -- when this code builds the
+// transport rather than being handed one -- never asks for compression on its
+// own and never waits on an answer forever.
+//
+// The redirect half is the one that matters most here. A mint's request
+// carries the run's own Firebase ID token in X-Fugaro-Run-Identity and the
+// job's Google ID token in Authorization; Go's client strips Authorization
+// across hosts but not a custom header, so a followed 307 or 308 would hand
+// the run's identity to whatever host the Location named. Every other
+// credential-carrying client in this repository refuses redirects for exactly
+// that reason (internal/gateway's upstreamClient, internal/credsvc's own copy
+// of it, pinned by forward_test.go). The URL's scheme is checked too
+// (checkServiceURL): a followed http:// hop, or an http:// service URL, would
+// send the same value in cleartext.
+//
+// A client handed in is copied, not used as it is, so its redirect policy and
+// jar are this function's whatever the caller set -- the same as
+// internal/gateway's upstreamClient. Its transport and its timeout stay the
+// caller's.
+func serviceMintClient(c *http.Client) *http.Client {
+	var out http.Client
+	if c != nil {
+		out = *c
+	} else {
+		t := http.DefaultTransport.(*http.Transport).Clone()
+		t.DisableCompression = true
+		out.Transport = t
+		out.Timeout = serviceMintTimeout
+	}
+	out.Jar = nil
+	out.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &out
 }
 
 // refusalCode is the wire error code of a refused answer, as ", refused: code",
