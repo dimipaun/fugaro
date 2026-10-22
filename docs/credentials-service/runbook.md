@@ -14,7 +14,7 @@ fugaro creds ls
 
 **What no Fugaro command answers is whether the Cloud Run service itself is deployed**, and `fugaro doctor` is not the exception: its three credentials checks are about the credential marks (`creds-broken`, `creds-unknown-state`) and the deployed rules' marker (`creds-rules`, silent unless the cascade is switched on), and they name no piece of the service. The reads that do answer it are `gcloud` ones — the service, its own account and the one `secretmanager.secretAccessor` grant on the one container are what Check 94 reads back (§10 is that check's audit-log half).
 
-An installation with the service off is not silent either: a `cascade` workflow is refused at launch, before any model call, rather than halting later.
+An installation with the service off is not silent either — but the refusal an operator meets there is the **switch**'s, not this service's. The launch gate reads the project's published policy, the gateway's mode and the rules marker, and never this service or its bundle: so a policy that carries no `routing.claude: {via: cascade}` refuses the run at launch, before any model call, while a policy that carries the switch with no service applied launches the run, and the run then **halts** at the gateway (`budget_unavailable`, §2) with no model credential of its own to fall back to (D143). What makes a `cascade` launch legal is the switch, not the service.
 
 ## 2. A run halted: read the reason before anything else
 

@@ -360,9 +360,29 @@ func TestDocsMultiModelDocumentsTheCascadeSwitch(t *testing.T) {
 		"it names no model of its own",
 		"refused",
 		"docs/credentials-service/runbook.md",
+		// What the launch actually refuses on. The section first said the
+		// service's absence is what refuses a launch ("an installation that
+		// never ran `fugaro init --provision-credentials` has none, and a
+		// `cascade` run is refused at launch there too"), and the launch gate
+		// reads no such thing: cascadeLaunchRefusal (internal/cli/run.go)
+		// judges the published switch, the gateway's mode and the rules
+		// marker, so a published switch with no service launches a run that
+		// halts at the gateway (code review of C1.22).
+		"cascadeLaunchRefusal",
+		"reads neither the service nor its bundle",
+		"halts",
+		"budget_unavailable",
 	} {
 		if !strings.Contains(flat, want) {
 			t.Errorf("%s's cascade section never says %q", path, want)
+		}
+	}
+	for _, banned := range []string{
+		// The claim that the service's absence is what refuses the launch.
+		"is refused at launch there too",
+	} {
+		if strings.Contains(flat, banned) {
+			t.Errorf("%s's cascade section says %q: the launch reads the policy switch, not the service", path, banned)
 		}
 	}
 }

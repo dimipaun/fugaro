@@ -125,13 +125,33 @@ func TestDocsCredentialsRunbookPointsStepOneAtSomethingThatAnswers(t *testing.T)
 		"creds-rules",
 		// And what no command covers.
 		"What no Fugaro command answers is whether the Cloud Run service itself is deployed",
+		// What a launch actually refuses on, which §1 stated the wrong way
+		// round: the gate reads the switch, not the service (code review of
+		// C1.22, and the same correction in docs/multi-model.md).
+		"launch gate reads the project's published policy",
+		"never this service or its bundle",
+		"halts",
+		"budget_unavailable",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("%s §1 does not say %q: this is the step an operator reads first, and the one thing it may not claim is that a Fugaro command reports the service itself", credentialsRunbook, want)
 		}
 	}
-	if strings.Contains(section, "names the credentials service's pieces") {
-		t.Error("the runbook is back to claiming `fugaro doctor` names the credentials service's pieces: doctor has no such check, and its credentials checks report marks and the rules marker rather than any piece of the service")
+	for _, banned := range []string{
+		// Doctor has no such check.
+		"names the credentials service's pieces",
+		// And the launch does not read the service: cascadeLaunchRefusal
+		// (internal/cli/run.go) judges the published switch, the gateway's
+		// mode and the rules marker. The sentence this bans claimed the
+		// service's absence is itself what refuses the launch, which is the
+		// reading that would send an operator to apply the service when the
+		// switch is what is missing — and would promise a launch refusal for
+		// an installation that has the switch but no service.
+		"is refused at launch, before any model call, rather than halting later",
+	} {
+		if strings.Contains(section, banned) {
+			t.Errorf("%s §1 says %q", credentialsRunbook, banned)
+		}
 	}
 }
 
