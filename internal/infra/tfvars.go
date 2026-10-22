@@ -74,11 +74,13 @@ type InstallOptions struct {
 	BudgetBackend bool
 	// ManagedDeployerScoped opts the installation in to the managed
 	// deployer's seven per-service roles and their seven conditioned
-	// bindings (the module's managed_deployer_scoped). Nothing sets it
-	// while internal/cli's managedDeployerShipped is false (0.8.6): the
-	// redesign is applied but unmeasured -- Check 68 has not been run, and
-	// the fmgd- fence has not been seen stored by IAM (deployer.tf's
-	// header).
+	// bindings (the module's managed_deployer_scoped). init sets it for an
+	// installation that uses managed projects — the run that creates one
+	// with --create-project --managed, and every later run against one,
+	// read from the project's creation fact (init's installRoot) — so the
+	// key follows the installation and not the run. What it does not settle
+	// is whether the fence works: Check 68 has not been run
+	// (deployer.tf's header, docs/design/managed-deployer-fence.md).
 	ManagedDeployerScoped bool
 }
 

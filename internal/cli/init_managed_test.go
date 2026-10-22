@@ -115,47 +115,6 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 		}
 	})
 
-	// (c') The same creation in the release as it ships, with managed
-	// projects off (managedDeployerShipped false): the creation fact is
-	// written as it always was, and the label is not, so the project does
-	// not read as managed — which would change init's own guard refusal for
-	// it to the managed text, with no --allow-delete — in a release whose
-	// every managed entry point refuses. And the run does not say it is
-	// Fugaro-managed.
-	t.Run("--create-project with managed projects off", func(t *testing.T) {
-		closeShippedGates(t)
-		r := newProjectRig(t)
-		bucket := "fugaro-runs-" + newProj
-		r.gcs.AddProject(newProj, gcpfake.FirstCreatedProjectNumber)
-		r.gcs.AddBucket(bucket, gcpfake.FirstCreatedProjectNumber, managedBucketLabels)
-		roles := map[string]string{}
-		for _, r := range []string{"launcher", "job_runner", "build_submitter", "tag_mover"} {
-			roles[r] = "projects/" + newProj + "/roles/fugaro" + strings.ToUpper(r[:1]) + r[1:]
-		}
-		r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
-			"runs_bucket":               bucket,
-			"registry_host":             "us-east5-docker.pkg.dev/" + newProj,
-			"scheduler_service_account": "fugaro-scheduler@" + newProj + ".iam.gserviceaccount.com",
-			"role_ids":                  roles,
-		})}
-		r.save(t)
-		r.bill.AddAccount(billingAcc, true)
-		out, _, err := r.run(t, true, newProj+"\n"+billingAcc+"\n"+initProjectName+"\n", "--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New")
-		if err != nil {
-			t.Fatalf("%v\n%s", err, out)
-		}
-		b, ok := markerAt(t, r.gcs, bucket)
-		if want := `{"version":1,"gcp_project":"` + newProj + `"}`; !ok || b != want {
-			t.Errorf("gs://%s/%s = %q (present %v), want %s", bucket, managed.MarkerObject, b, ok, want)
-		}
-		if got, set := r.crm.Labels(newProj)[managed.ProjectLabelKey]; set {
-			t.Errorf("%s=%q written on %s with managed projects off in this release", managed.ProjectLabelKey, got, newProj)
-		}
-		if strings.Contains(out, "it is Fugaro-managed") || !strings.Contains(out, "managed projects are off in this release") {
-			t.Errorf("the run's line about the creation fact is not the one for managed projects off:\n%s", out)
-		}
-	})
-
 	// (c'') The label write refused: the project can be read and not written
 	// (no resourcemanager.projects.update — the shape every credential a run
 	// holds is in), so the object lands and the label does not. It is the one

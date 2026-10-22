@@ -128,60 +128,53 @@ const catalogSince = "0.7.5"
 // docs/release.md's checklist line for catalogSince in that commit too.
 const catalogShipped = false
 
-// managedDeployerShipped is false until the release that ships a managed
-// deployer IAM can actually create: 0.10.0, by the owner's ruling of
-// 2026-10-20, which moved the redesign off 0.9.5 (the ruling of 2026-10-19 had
-// moved it off 0.9.0, where the ruling of 2026-10-18 put it: "Gate it off by
-// default; redesign for 0.9.0") and renumbered the release it lands in. The
-// renumbering is the one thing to read twice here: the same ruling first
-// placed the redesign in 0.9.6, the number the next release was then expected
-// to ship under, and then renumbered that release to 0.10.0 — one placement
-// under two numbers, not two placements. cascadeSince's own comment in this
-// file and docs/release.md's bullet for it record the renumbering in as many
-// words ("the line named 0.9.6 while the release was expected to ship as
-// 0.9.6, and the owner renumbered it"), on integration-0.9.6, the branch this
-// work merges into; 0.9.5 is the last release tagged, so no 0.9.6 was ever
-// cut. 0.9.0 and 0.9.5 therefore ship with the scoped half still gated off, as
-// 0.8.6 and 0.8.7 do. The deployer's
-// scoped half is now seven per-service custom roles, each bound exactly once
-// under its own condition, whose 0.8.6 shape GCP rejected as written (one
-// role, 17 logical operators where IAM allows 12, resource.name.contains() is
-// not a supported function, and resource.name is not supported for most of the
-// resource types it named). The redesign is applied but unmeasured -- no test
-// can ask Google whether the seven conditions are accepted or honoured, which
-// is what Check 68 (docs/gcp-live-checklist.md) is for and it has not been run
-// -- so the installation module creates those roles and their bindings only
-// with managed_deployer_scoped, which nothing sets
-// (deploy/terraform/gcp/modules/installation/deployer.tf). While it is false,
-// every command that would create a managed project or act as its deployer
-// (fugaro setup --create-project --managed, fugaro managed apply and fugaro
-// restore) refuses with managedDisabled before any cloud call, rather than
-// failing later at the apply or the impersonation.
+// managedDeployerShipped is true as of 0.10.0, the release the owner's ruling
+// of 2026-10-22 ships the managed deployer in: managed projects ship enabled.
+// Until then it was false, because the deployer's scoped half could not be
+// created — first as the 0.8.6 shape GCP rejected as written (one role, 17
+// logical operators where IAM allows 12, resource.name.contains(), which is
+// not a supported function, and resource.name on resource types that do not
+// support it), and then because the redesign that replaced it had not been
+// measured live. 0.8.6, 0.8.7, 0.9.0 and 0.9.5 shipped with the scoped half
+// gated off; the ruling of 2026-10-18 ("Gate it off by default; redesign for
+// 0.9.0") is why it was ever closed, and the rulings of 2026-10-19 and
+// 2026-10-20 moved the redesign off 0.9.0 and off 0.9.5 (the latter placing it
+// in 0.9.6 and then renumbering that release to 0.10.0 — one placement under
+// two numbers, not two placements; cascadeSince's comment in this file and
+// docs/release.md's bullet for it record the same renumbering, and 0.9.5 is
+// the last release tagged, so no 0.9.6 was ever cut).
 //
-// Flip it to true only in the release whose deployer fence has been
-// redesigned and measured live (Check 68 run and passed), and in that same
-// change set infra.InstallOptions.ManagedDeployerScoped for the installations
-// that opt in; docs/release.md's "Before you tag" checklist verifies it.
-const managedDeployerShipped = false
-
-// managedDeployerOpen is managedDeployerShipped. It is a variable only so the
-// tests of the managed paths themselves can run them with the gate open
-// (TestMain opens it); the refusal tests reset it to the constant, and no
-// production code assigns it.
-var managedDeployerOpen = managedDeployerShipped
-
-// managedDisabled is the one refusal every managed entry point gives while
-// managedDeployerShipped is false.
-const managedDisabled = "managed projects are disabled in this release: the managed deployer's scoped roles and their bindings are not created yet (docs/design/managed-projects.md); a project created without --managed is unaffected"
-
-// refuseManagedNotShipped is managedDisabled as an error, nil once the
-// managed deployer ships.
-func refuseManagedNotShipped() error {
-	if managedDeployerOpen {
-		return nil
-	}
-	return userErr("%s", managedDisabled)
-}
+// WHAT THE FLIP DOES NOT SETTLE, and what a reader of this constant must not
+// take it as: the fence has not been measured. The deployer's scoped half is
+// seven per-service custom roles, each bound exactly once under its own
+// condition (deploy/terraform/gcp/modules/installation/deployer.tf,
+// docs/design/managed-deployer-fence.md), and no test can ask Google whether
+// IAM accepts those seven bindings or honours resource.name per type — that is
+// what Check 68 (docs/gcp-live-checklist.md) measures, and it is owner-run
+// AFTER this release, by the same ruling. So 0.10.0 ships a fence it cannot
+// yet prove: if IAM rejects a binding, the installation apply that creates it
+// fails partway through; if IAM accepts one and does not honour resource.name,
+// that role grants nothing (fail-closed, and no fence). The caveat is stated
+// in the release note's "Known limits" and in docs/release.md's bullet for
+// this constant, and Check 68's pass is what settles it.
+//
+// The installation module creates those roles and their bindings only with
+// managed_deployer_scoped, and an installation that uses managed projects sets
+// it: installRoot reads the project's creation fact — the same read init's
+// guard refusal makes, and the one that survives a run that did not create the
+// project — and writes the module's variable from it
+// (infra.InstallOptions.ManagedDeployerScoped). So a run that creates a
+// managed project (--create-project --managed) and every later run against one
+// (the owner's `fugaro managed flag` included) keeps the scoped half, and an
+// installation that never asked for managed writes the same tfvars as before
+// the variable existed.
+//
+// There is deliberately no managedDeployerOpen, no managedDisabled and no
+// refuseManagedNotShipped beside it: an open gate nothing closes and a refusal
+// nothing can reach are names a later reader re-opens, which is exactly what
+// the pair existed to prevent (batchProvisionShipped below went the same way in
+// 0.9.5).
+const managedDeployerShipped = true
 
 // batchProvisionShipped is true as of 0.9.5, the release that fixed the
 // compute module the stage behind it applies. Until then it was false because
@@ -196,8 +189,9 @@ func refuseManagedNotShipped() error {
 // There is deliberately no batchProvisionOpen, no batchProvisionDisabled and
 // no refuseBatchProvisionNotShipped beside it: an open gate nothing closes and
 // a refusal nothing can reach are names a later reader re-opens, which is
-// exactly what the pair existed to prevent. The managed gate above keeps its
-// pair because it is still closed.
+// exactly what the pair existed to prevent. The managed gate above kept its
+// pair until 0.10.0, and 0.10.0 took it the same way: both gates are open now,
+// and neither has a refusal left to name.
 const batchProvisionShipped = true
 
 // artifactsSince is the first fugaro release whose runner implements a

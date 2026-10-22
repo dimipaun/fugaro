@@ -294,7 +294,8 @@ const (
 	// resource.name unsupported for five of the nine types it named), so the
 	// fence was gated off and redesigned — docs/design/managed-deployer-fence.md.
 	// The module creates them, and their bindings, only with
-	// managed_deployer_scoped, which nothing sets. A plan without them has
+	// managed_deployer_scoped, which fugaro writes for an installation that
+	// uses managed projects (0.10.0). A plan without them has
 	// nothing of them to cover; one with them is covered binding by binding.
 	DeployerStorageRole    = "fugaroDeployerStorage"
 	DeployerSecretRole     = "fugaroDeployerSecret"
@@ -616,8 +617,9 @@ var RolePermissions = map[string][]string{
 	// serviceusage.services.enable in fugaroDeployer, and every update, delete,
 	// run, pause, *.setIamPolicy and actAs split one role per service across
 	// the seven below, each bound exactly once and only under its own
-	// DeployerConditionExpression (when the installation opts in with
-	// managed_deployer_scoped; off by default in 0.8.6). The seven lists
+	// DeployerConditionExpression (when the installation uses managed
+	// projects, which is what managed_deployer_scoped records; off by
+	// default). The seven lists
 	// partition D75's 31 scoped permissions and nothing else: see
 	// TestDeployerScopedRolesAreD75Partitioned. Widening any list is a
 	// decision: TestDeployerRolesHoldOnlyWhatD75Names states what each may not

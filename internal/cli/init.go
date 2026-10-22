@@ -830,26 +830,16 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	// all — projectStage.Apply needs a terminal and a typed confirmation)
 	// nor `fugaro managed apply`, which only reads, reaches one.
 	//
-	// While managed projects are off in this release (managedDeployerShipped),
-	// the label is not written: with it, a project this run created reads as
-	// managed, and the one reader of that in this release is init's own guard,
-	// whose refusal for a managed project drops the --allow-delete advice —
-	// in a release whose every managed entry point refuses. The creation fact
-	// is written as it always was, so the project is the state a project
-	// created before the label existed is in (docs/gcp-setup.md has the
-	// owner-run line that completes it).
-	labelOff := false
+	// The label is written for every managed creation, as it has been since
+	// the mark had two halves: while managed projects were off
+	// (managedDeployerShipped, false until 0.10.0) this step was skipped, and
+	// 0.10.0 is the release that made a project this run created read as
+	// managed again.
 	if err == nil {
-		if managedDeployerOpen {
-			err = managed.WriteManagedLabel(ctx, e.c.CRM, r.res.Created, r.gcpProject)
-		} else {
-			labelOff = true
-		}
+		err = managed.WriteManagedLabel(ctx, e.c.CRM, r.res.Created, r.gcpProject)
 	}
-	marked := err == nil && !labelOff
+	marked := err == nil
 	switch {
-	case labelOff:
-		fmt.Fprintf(r.w, "recorded that this run created project %s (gs://%s/%s); managed projects are off in this release, so it is not labelled %s=%s and is not a managed project\n", r.res.Created, bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue)
 	case marked:
 		if c := r.o.created; c != nil {
 			c.Marked = true
@@ -1049,16 +1039,13 @@ func (o *initOptions) firebaseProject() string {
 }
 
 // check refuses flag combinations that mean nothing.
+//
+// Two features were once refused here before any cloud call, and neither is
+// any more: --managed until 0.10.0 (managedDeployerShipped) and
+// --provision-batch until 0.9.5, when the compute module's reaper role stopped
+// naming a permission Google does not have (batchProvisionShipped). The flags
+// themselves stay: they still select what they always selected.
 func (o *initOptions) check() error {
-	// The one feature this release cannot complete, refused first and before
-	// any cloud call (managedDeployerShipped). --provision-batch was refused
-	// here too until 0.9.5, when the compute module's reaper role stopped
-	// naming a permission Google does not have (batchProvisionShipped).
-	if o.managed {
-		if err := refuseManagedNotShipped(); err != nil {
-			return err
-		}
-	}
 	if o.noBuild || o.allowJobDelete || o.retire {
 		// The door, not `update`: check() runs for both doors, and neither flag
 		// set is foreign to either of them -- setupDoor.foreign is --forget
@@ -1721,9 +1708,10 @@ const initManagedDeleteAdvice = "This is a managed project: deleting or replacin
 var isManagedFact = managed.IsManaged
 
 // managedProject is whether the project this run installs into is managed: the
-// creation fact of Task 0.2, read only when a guard refusal needs it — the
-// fact decides which text that refusal ends with, and nothing else in init's
-// flow turns on it.
+// creation fact of Task 0.2. Two things turn on it — which text a guard refusal
+// ends with, and whether the installation gets the managed deployer's scoped
+// roles (installRoot writes the module's managed_deployer_scoped from it) — and
+// it is read for both the same way, once.
 //
 // It fails closed: an error reading the fact is returned, never read as "not
 // managed", because not managed is the mode whose refusal names the flag; and
@@ -1838,6 +1826,23 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	// own eligible names unioned with every one discovery found live, so a
 	// config edit can never shrink the module's for_each (N3).
 	spec.ProjectSecrets = im.ProjectSecrets
+	// Whether this installation uses managed projects, which is what the
+	// module's managed_deployer_scoped turns on: the deployer's seven scoped
+	// roles and their seven conditioned bindings (managedDeployerShipped,
+	// deploy/terraform/gcp/modules/installation/deployer.tf). The fact is the
+	// project's own — the creation fact init's guard refusal reads, and the
+	// only record of it that outlives one run — so the run that creates a
+	// managed project (--managed) and every later run against one, the owner's
+	// `fugaro managed flag` included, write the variable; an installation that
+	// never asked for managed writes the same tfvars it wrote before the
+	// variable existed. Read here, and not in installOptions, because the
+	// answer is a cloud fact: a plain `fugaro update` of a managed
+	// installation that dropped the variable would plan the destruction of the
+	// fourteen resources the fence is.
+	spec.ManagedDeployerScoped, err = r.managedProject(ctx, c)
+	if err != nil {
+		return outs, false, initErr(err)
+	}
 	for _, n := range im.Notes {
 		r.warn(n)
 	}
