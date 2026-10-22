@@ -20,7 +20,7 @@
 //      renders, once, inside the list its own `state` names, with the state marked on the card
 //      too. The plants move a planned row into the shipped list and a shipped row into the
 //      planned one, which is the defect the condition is about — a page whose bullets are all
-//      present tense is a page that states four falsehoods the repository documents against.
+//      present tense is a page that states five falsehoods the repository documents against.
 //   4. **The roster is planned while the phone cannot read it** (ZF23, D241). This is the one
 //      reading in this file that pins a *product* fact to a repository file rather than to a
 //      document, and it is deliberate: `mobile/src/feed/paths.js` denies `agents/**` to the
