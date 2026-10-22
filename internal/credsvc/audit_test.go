@@ -115,9 +115,11 @@ func TestAuditCarriesNamesOnly(t *testing.T) {
 					t.Errorf("Write(%s): %s = %v, want %q", purpose, field, got, want)
 				}
 			}
-			if strings.Contains(buf.String(), value) {
-				t.Errorf("Write(%s): the audit line carries the credential's value: %s", purpose, buf.String())
-			}
+			// That the line carries no credential VALUE is not asserted here:
+			// this event was given a name, so an assertion that the value is
+			// absent could not fail. It is asserted where the value is actually
+			// present — "a value shaped like a name passes the field rules" and
+			// the scrub subtests below.
 		}
 	})
 
@@ -143,6 +145,72 @@ func TestAuditCarriesNamesOnly(t *testing.T) {
 		}
 	})
 
+	t.Run("a value shaped like a name passes the field rules, which is why the scrub is the guard", func(t *testing.T) {
+		// The threat the scrub exists for, stated as a test: a credential's
+		// value is printable ASCII with no space, so it is a credential NAME as
+		// far as ValidCredentialName is concerned, and a caller that hands one
+		// where a name belongs is not refused by any field rule. An unarmed
+		// auditor writes it — which is why C1.11's loader, the one place the
+		// service holds a value, must arm WithAuditScrub.
+		a, buf := newAudit(t)
+		if err := a.Write(context.Background(), id.Audit(AuditEvent{Credential: value, Tier: TierA, Purpose: PurposeForward, Status: StatusOK})); err != nil {
+			t.Fatalf("the field rules refused the value outright, so this test no longer states the threat: %v", err)
+		}
+		if !strings.Contains(buf.String(), value) {
+			t.Errorf("the unarmed auditor did not write the value, so this test no longer states the threat: %s", buf.String())
+		}
+	})
+
+	t.Run("the scrub reaches every field, not only the credential", func(t *testing.T) {
+		// The promise is that the service's redaction is applied to EVERY field
+		// before any rule looks at one, so a value a caller hands reaches
+		// neither the line nor the refusal's error. Each case hands the value
+		// where that field's own value belongs and arms a scrub that puts a
+		// substitute the field may hold in its place: the line is written and
+		// carries the substitute, so the substitute's presence is what says the
+		// scrub ran on that field.
+		//
+		// Every case fails if the scrub skips its field: the value is left
+		// there, and it is either written (run, repository, credential, and the
+		// caller, which is one clean header value too) or refused, which the
+		// error assertion catches. That is why the substitutes are valid ones
+		// rather than a marker: a marker would make the refusal the expected
+		// outcome and hide the difference.
+		for _, c := range []struct {
+			field string
+			set   func(*AuditEvent, string)
+			repl  string // what the scrub puts in the field's place: a value it may hold
+		}{
+			{"run", func(ev *AuditEvent, v string) { ev.Run = v }, "scrubbed-run"},
+			{"repository", func(ev *AuditEvent, v string) { ev.Repository = v }, "scrubbed-repo"},
+			{"job", func(ev *AuditEvent, v string) { ev.Job = v }, "scrubbed-job"},
+			{"caller", func(ev *AuditEvent, v string) { ev.Caller = v }, "scrubbed@example.invalid"},
+			{"credential", func(ev *AuditEvent, v string) { ev.Credential = v }, "scrubbed-credential"},
+			{"tier", func(ev *AuditEvent, v string) { ev.Tier = v }, TierA},
+			{"purpose", func(ev *AuditEvent, v string) { ev.Purpose = v }, PurposeForward},
+			{"status", func(ev *AuditEvent, v string) { ev.Status = v }, StatusOK},
+		} {
+			t.Run(c.field, func(t *testing.T) {
+				value := auditValue(t)
+				a, buf := newAudit(t, WithAuditScrub(func(s string) string {
+					return strings.ReplaceAll(s, value, c.repl)
+				}))
+				ev := id.Audit(AuditEvent{Credential: auditName, Tier: TierA, Purpose: PurposeForward, Status: StatusOK})
+				c.set(&ev, value)
+				if err := a.Write(context.Background(), ev); err != nil {
+					t.Fatalf("Write with the scrub armed: %v", err)
+				}
+				raw := buf.String()
+				if strings.Contains(raw, value) {
+					t.Fatalf("the audit line carries the credential's value: %s", raw)
+				}
+				if got := auditLines(t, buf)[0][c.field]; got != c.repl {
+					t.Errorf("%s = %v, want the scrub's %q: the scrub did not reach this field", c.field, got, c.repl)
+				}
+			})
+		}
+	})
+
 	t.Run("a field that cannot be one is refused, and the refusal names it and not what it held", func(t *testing.T) {
 		// Every field of the line is held to the rule the rest of the package
 		// already holds it to. The table is the rules: a field that cannot be
@@ -162,11 +230,16 @@ func TestAuditCarriesNamesOnly(t *testing.T) {
 			{"a credential name that is not one header value", full(func(ev *AuditEvent) { ev.Credential = value + " " + value }), "credential", value},
 			{"a credential with no tier", full(func(ev *AuditEvent) { ev.Tier = "" }), "credential", ""},
 			{"a tier with no credential", full(func(ev *AuditEvent) { ev.Credential = "" }), "credential", ""},
-			{"a tier the contract does not carry", full(func(ev *AuditEvent) { ev.Tier = "D" }), "tier", ""},
+			{"a tier the contract does not carry", full(func(ev *AuditEvent) { ev.Tier = "D" }), "tier", "D"},
 			{"a run id that is not a path segment", full(func(ev *AuditEvent) { ev.Run = value + "/" + value }), "run", value},
 			{"a run id with no repository", full(func(ev *AuditEvent) { ev.Repository = "" }), "run", ""},
-			{"a job name that is not one", full(func(ev *AuditEvent) { ev.Job = "not a job name" }), "job", ""},
-			{"a caller that is not an address", full(func(ev *AuditEvent) { ev.Caller = "not an address" }), "caller", ""},
+			// The repository's own guards, which the run's do not stand in for:
+			// a slug is held to the same segment rule and escaped by the same
+			// safetext call, and neither is pinned by a case that only moves Run.
+			{"a repository slug that is not a path segment", full(func(ev *AuditEvent) { ev.Repository = value + "/" + value }), "repository", value},
+			{"a repository with no run", full(func(ev *AuditEvent) { ev.Run = "" }), "run", ""},
+			{"a job name that is not one", full(func(ev *AuditEvent) { ev.Job = "not a job name" }), "job", "not a job name"},
+			{"a caller that is not an address", full(func(ev *AuditEvent) { ev.Caller = "not an address" }), "caller", "not an address"},
 			{"a job with no caller", full(func(ev *AuditEvent) { ev.Caller = "" }), "job", ""},
 			{"an issuance that names no credential", full(func(ev *AuditEvent) { ev.Credential, ev.Tier = "", "" }), "credential", ""},
 			{"an issuance with no purpose", full(func(ev *AuditEvent) { ev.Purpose = "" }), "purpose", ""},
@@ -229,22 +302,35 @@ func TestAuditCarriesNamesOnly(t *testing.T) {
 	})
 
 	t.Run("a name that carries a bidi control is escaped, not carried", func(t *testing.T) {
-		// A slug is held to token.ValidSegment, which refuses '~', '/' and
-		// controls — and a bidi control is neither, so it passes that rule and
-		// reaches this line. internal/safetext is what stops it reaching the
-		// terminal (F32: the names that travel are text from another writer).
+		// A run id and a repository slug are held to token.ValidSegment, which
+		// refuses '~', '/' and controls — and a bidi control is neither, so it
+		// passes that rule and reaches this line. internal/safetext is what
+		// stops it reaching the terminal (F32: the names that travel are text
+		// from another writer). Both fields are checked: the two take the same
+		// rule and the same escaping, and neither call stands in for the other.
 		const rlo = "‮"
-		a, buf := newAudit(t)
-		ev := id.Audit(AuditEvent{Credential: auditName, Tier: TierA, Purpose: PurposeForward, Status: StatusOK})
-		ev.Run = f.run + rlo + "gpj.exe"
-		if err := a.Write(context.Background(), ev); err != nil {
-			t.Fatalf("Write: %v", err)
-		}
-		if strings.Contains(buf.String(), rlo) {
-			t.Errorf("the audit line carries a bidi control: %q", buf.String())
-		}
-		if got := auditLines(t, buf)[0]["run"]; got == f.run+rlo+"gpj.exe" {
-			t.Errorf("run = %q, want the control escaped", got)
+		for _, c := range []struct {
+			field string
+			set   func(*AuditEvent, string)
+			raw   string
+		}{
+			{"run", func(ev *AuditEvent, v string) { ev.Run = v }, f.run + rlo + "gpj.exe"},
+			{"repository", func(ev *AuditEvent, v string) { ev.Repository = v }, f.slug + rlo + "gpj"},
+		} {
+			t.Run(c.field, func(t *testing.T) {
+				a, buf := newAudit(t)
+				ev := id.Audit(AuditEvent{Credential: auditName, Tier: TierA, Purpose: PurposeForward, Status: StatusOK})
+				c.set(&ev, c.raw)
+				if err := a.Write(context.Background(), ev); err != nil {
+					t.Fatalf("Write: %v", err)
+				}
+				if strings.Contains(buf.String(), rlo) {
+					t.Errorf("the audit line carries a bidi control: %q", buf.String())
+				}
+				if got := auditLines(t, buf)[0][c.field]; got == c.raw {
+					t.Errorf("%s = %q, want the control escaped", c.field, got)
+				}
+			})
 		}
 	})
 
