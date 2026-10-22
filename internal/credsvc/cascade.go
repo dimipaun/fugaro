@@ -11,6 +11,7 @@ package credsvc
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"time"
 
@@ -320,6 +321,17 @@ const markRefusal = "the credential's state could not be recorded"
 // The headers are built and validated before any of them is written, so an
 // answer that cannot carry them is a typed refusal with no upstream header
 // leaking onto it.
+//
+// The body is scrubbed of the credential as the headers are, and for every
+// tier rather than the subscription one alone: an upstream that echoes the
+// credential it was handed — in a 200 body, in a 400's error text, in a
+// request id — must not have it echoed on to the run, and every credential
+// this service attaches is a secret value (tier B's paid key as much as tier
+// A's token). gateway.NewRedactWriter is the gateway's own no-echo rule over a
+// body, and it is used here rather than re-implemented for the reason C1.8
+// exists: the two forwarders must not drift. It also holds back a tail that
+// could still become the credential, so a credential split across two reads is
+// redacted too, and its Close writes that tail once the stream ends.
 func (s *Server) answer(w http.ResponseWriter, cl *call, ans *answer, c creds.Credential, sw *Switch, scan *usageLimitScanner) {
 	defer ans.resp.Body.Close()
 	hdr := http.Header{}
@@ -342,11 +354,27 @@ func (s *Server) answer(w http.ResponseWriter, cl *call, ans *answer, c creds.Cr
 	if scan != nil && answerIsStream(ans.resp, cl.requested) {
 		tee = scan.scan
 	}
+	// The credential is scrubbed out of the body on its way to the client. The
+	// writer wraps the client's own ResponseWriter, and the ResponseController
+	// stays on that ResponseWriter rather than on the writer, so flushing is
+	// still the flush of the client's connection (C1.8's pump flushes after
+	// every write, and a stream must not be delayed by the redaction).
+	out := io.Writer(w)
+	var rw io.WriteCloser
+	if ans.credential != "" {
+		rw = gateway.NewRedactWriter(w, ans.credential)
+		out = rw
+	}
 	// Pump never buffers and flushes after every write, which is what makes
 	// the answer reach the run as it arrives (C1.8). Its bool says the stream
 	// ended rather than failed; nothing here acts on it, because the client's
 	// connection is the client's.
-	gateway.Pump(w, http.NewResponseController(w), ans.resp.Body, tee)
+	gateway.Pump(out, http.NewResponseController(w), ans.resp.Body, tee)
+	if rw != nil {
+		// Whatever the writer held back was not the credential after all: it
+		// is the tail of the answer, and it is written now.
+		_ = rw.Close()
+	}
 }
 
 // refuseSelection turns creds.Select's answer into the client's.

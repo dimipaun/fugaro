@@ -10,12 +10,14 @@ package credsvc
 
 import (
 	"bufio"
+	"io"
 	"net/http"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -349,6 +351,179 @@ func TestCascadeUsesAdmittedAccountsOnly(t *testing.T) {
 	}
 	if got := s.policy.readAdmissions(); !slices.Equal(got, []string{s.slug}) {
 		t.Errorf("the admissions read were %v, want just this repository's", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The credential never reaches the client in the answer's body
+// ---------------------------------------------------------------------------
+
+// chunkedBody hands its bytes out in pieces of at most n, so that a credential
+// written across two of them is a credential the redaction has to hold back and
+// join rather than one it can only find whole.
+type chunkedBody struct {
+	data []byte
+	n    int
+}
+
+func (b *chunkedBody) Read(p []byte) (int, error) {
+	if len(b.data) == 0 {
+		return 0, io.EOF
+	}
+	n := b.n
+	if n > len(p) {
+		n = len(p)
+	}
+	if n > len(b.data) {
+		n = len(b.data)
+	}
+	copy(p, b.data[:n])
+	b.data = b.data[n:]
+	return n, nil
+}
+
+func (b *chunkedBody) Close() error { return nil }
+
+// echoTransport answers every request with one scripted answer, whatever URL
+// the service built. It is how a test hands the service a body no
+// anthropicfake reply can shape: one that echoes the credential it was sent,
+// in pieces.
+type echoTransport struct {
+	status int
+	body   string
+	chunk  int
+	seen   []*http.Request
+}
+
+func (t *echoTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	t.seen = append(t.seen, r)
+	n := t.chunk
+	if n <= 0 {
+		n = len(t.body)
+	}
+	return &http.Response{
+		StatusCode: t.status,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       &chunkedBody{data: []byte(t.body), n: n},
+		// The body is handed over in pieces and its length is not the
+		// declared one, which is what a chunked answer is.
+		ContentLength: -1,
+		Request:       r,
+	}, nil
+}
+
+// TestServiceNeverEchoesTheCredentialInTheAnswerBody: the no-echo rule over the
+// answer's BODY, for every tier and for an answer that is an error as well as
+// one that is the run's result.
+//
+// The headers were already redacted (copyAnswerHeaders) and the body was not:
+// the service pumped the upstream's bytes straight to the client, so an
+// upstream that echoed the credential it was handed — in a 200's text, in a
+// 400's error message — handed it to the run. Every credential this service
+// attaches is a secret value, tier B's paid key as much as tier A's token, so
+// the wrap is not the subscription path's alone.
+//
+// One row splits the echo across two reads: the redaction holds back a tail
+// that could still become the credential, so a credential no single chunk holds
+// is redacted too, and a service that only searched each chunk would fail here
+// with the credential in the client's body.
+//
+// Mutation (run, restore): pump ans.resp.Body straight to w. Every row is red
+// with the credential whole in the client's body — including the split one,
+// where the two halves arrive as two writes.
+func TestServiceNeverEchoesTheCredentialInTheAnswerBody(t *testing.T) {
+	// The upstream's answer echoes the credential it was sent, in the shape an
+	// error or a message body would carry it.
+	const echo = `{"type":"message","content":[{"type":"text","text":"you sent me $CRED and I am keeping it"}]}`
+	oauthOnly := func(t *testing.T) []byte {
+		return []byte(config.ClaudeOAuthToken + ": " + fakeCred(t, "default") + "\n")
+	}
+	keyOnly := func(t *testing.T) []byte {
+		return []byte(config.AnthropicSecret + ": " + fakeCred(t, "paid") + "\n")
+	}
+	cases := []struct {
+		name   string
+		bundle func(*testing.T) []byte
+		what   string
+		status int
+		split  bool
+	}{
+		{name: "a tier-A 200 that echoes the token", bundle: oauthOnly, what: "default", status: http.StatusOK},
+		{name: "a tier-A 200 that echoes it across two reads", bundle: oauthOnly, what: "default", status: http.StatusOK, split: true},
+		{name: "a tier-B 400 that echoes the paid key", bundle: keyOnly, what: "paid", status: http.StatusBadRequest},
+		{name: "a tier-B 400 that echoes it across two reads", bundle: keyOnly, what: "paid", status: http.StatusBadRequest, split: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cred := fakeCred(t, tc.what)
+			answer := strings.ReplaceAll(echo, "$CRED", cred)
+			tr := &echoTransport{status: tc.status, body: answer}
+			if tc.split {
+				// A piece that ends three bytes into the credential: the
+				// boundary falls inside it, so no single read holds it whole.
+				tr.chunk = strings.Index(answer, cred) + 3
+			}
+			s := newSvcWith(t, func(s *svc, c *Config) {
+				s.src.docs = [][]byte{tc.bundle(t)}
+				c.Client = &http.Client{Transport: tr}
+			})
+			resp, body := s.call(t, callBody("echo"))
+			if resp.StatusCode != tc.status {
+				t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, tc.status, body)
+			}
+			if strings.Contains(string(body), cred) {
+				t.Fatalf("the credential the service attached reached the client in the answer's body:\n%s", body)
+			}
+			if !strings.Contains(string(body), "redacted") {
+				t.Errorf("the body carries no redaction marker, so it is not the upstream's answer scrubbed:\n%s", body)
+			}
+			if !strings.Contains(string(body), "keeping it") {
+				t.Errorf("the answer's own text was lost rather than scrubbed:\n%s", body)
+			}
+			if len(tr.seen) != 1 {
+				t.Fatalf("the upstream saw %d requests, want 1", len(tr.seen))
+			}
+		})
+	}
+}
+
+// TestServiceRedactsAStreamedAnswerBody is the same rule for the other shape an
+// answer comes back in — the streamed one — where the credential is written
+// inside an event rather than in a whole body. The redaction wraps the writer
+// the pump writes through, so it applies to a stream exactly as to a message;
+// the usage-limit scanner still reads the upstream's own bytes, which is why
+// the limit event below is still found with the credential redacted around it.
+func TestServiceRedactsAStreamedAnswerBody(t *testing.T) {
+	cred := fakeCred(t, "default")
+	s := newSvcWith(t, func(s *svc, _ *Config) {
+		s.src.docs = [][]byte{[]byte(config.ClaudeOAuthToken + ": " + cred + "\n")}
+	})
+	s.up.Script = []anthropicfake.Reply{{
+		Status: http.StatusOK,
+		Events: []anthropicfake.Event{
+			anthropicfake.StartEvent(testModel, testUsage),
+			{Name: "error", Data: `{"type":"error","error":{"type":"` + rateLimitEventType + `","message":"you sent me ` + cred + `"}}`},
+		},
+	}}
+	resp := s.post(t, MessagesPath, callBody("stream-echo"), func(r *http.Request) {
+		r.Header.Set("Accept", "text/event-stream")
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the answer is %d, want 200", resp.StatusCode)
+	}
+	stream, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading the answer: %v", err)
+	}
+	if strings.Contains(string(stream), cred) {
+		t.Fatalf("the credential reached the client in the stream:\n%s", stream)
+	}
+	if !strings.Contains(string(stream), "redacted") {
+		t.Errorf("the stream carries no redaction marker:\n%s", stream)
+	}
+	if !strings.Contains(string(stream), rateLimitEventType) {
+		t.Errorf("the streamed answer's own text was lost rather than scrubbed:\n%s", stream)
 	}
 }
 
