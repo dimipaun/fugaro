@@ -46,11 +46,13 @@ var pipeIntoPythonHeredocRE = regexp.MustCompile(`\|\s*python3?\s[^\n]*<<`)
 //   - The keyless path is switched on by the job's environment naming the
 //     service, not by the opt-in: internal/gitprov/providers/providers.go opens
 //     the keyless provider only when FUGARO_CREDENTIALS_SERVICE_URL is set, and
-//     nothing on this tree puts that name on a job (no field of internal/infra,
-//     no module of deploy/terraform/gcp), so an opted-in runner still reads the
-//     App key and mints in the job today. A check that read "the mint is the
-//     service's" as the state of this tree would be false, and this is the check
-//     the owner runs after that release.
+//     no job's environment on this tree carries that name — the one place the
+//     name is written at all is the credentials service's own container, as that
+//     service's audience (deploy/terraform/gcp/modules/installation/
+//     credentials.tf, from the installation field credentials_service.url) — so
+//     an opted-in runner still reads the App key and mints in the job today. A
+//     check that read "the mint is the service's" as the state of this tree
+//     would be false, and this is the check the owner runs after that release.
 //   - The service refuses every call on this tree: its deployment configures it
 //     now — the seven names credentials.tf sets are what C1.14's builder reads,
 //     so a revision starts and serves — and its account holds exactly one grant,
@@ -61,10 +63,17 @@ var pipeIntoPythonHeredocRE = regexp.MustCompile(`\|\s*python3?\s[^\n]*<<`)
 //     credentials.tf grants that account no `firebasedatabase` role.
 //
 // One more thing is held to the code rather than to the prose: step 4's pass
-// condition. The pairing refusal is made in ServeHTTP, before the mint handler
-// is reached, and internal/credsvc/server.go's refuse writes the answer and no
-// audit line — so the check must expect NO audit line for it. It first expected
-// one ("always audited"), which a correct release would have failed.
+// condition. The pairing refusal is made in ServeHTTP after Auth.Verify returned
+// a whole identity, so it is answered by refuseCall (internal/credsvc/cascade.go),
+// which writes ONE audit line through auditCall before the wire error — purpose
+// `mint`, credential `github-app-key`, no tier, status `unverified_run_identity`,
+// the RUN's own repository. So the check must expect exactly one line for it, and
+// the line it expects is the route's and not the branch's. Only the refusals
+// answered before there is a verified identity to record take `refuse`, which
+// writes the answer and nothing else (server.go's refuseIdentity is the one on
+// this path). The check first expected NO line for the pairing refusal, on the
+// reading that `refuse` answers it; that was false, and a check that kept it
+// would have failed a correct release on the day it ran.
 //
 // Mutations (verified, run and restored): "**No step of it has been run, and
 // nothing here is a claim that it works.**" deleted → FAIL (a check whose steps
@@ -86,11 +95,13 @@ var pipeIntoPythonHeredocRE = regexp.MustCompile(`\|\s*python3?\s[^\n]*<<`)
 // line deleted → FAIL (the check's final assertion is that nothing survives
 // it); the known-limit bullet on the URL gate deleted whole → FAIL (the check
 // would leave a reader taking the keyless path as the state of this tree);
-// step 4's "**no audit line** for it" put back to "always audited" → FAIL (the
-// check would fail a correct release); and, on the code's side, an audit call
-// added to internal/credsvc/server.go's `refuse` → FAIL (the expectation is
-// held to `refuse`'s body, so the day it starts recording admission refusals
-// this check says so instead of passing).
+// step 4's "**exactly `1` audit line** for the pairing refusal's run id" put
+// back to "**`0` audit lines**" → FAIL (the check would fail a correct release,
+// whose refusal is recorded by refuseCall); the pairing refusal's line moved
+// out of server.go's refuseCall and into refuse → FAIL in the other direction
+// (the check's expectation is held to refuseCall's body and to auditCall's
+// being written before the answer); and a mint's own refusals moved off
+// refuseMint/auditMint → FAIL (the check states those as audited too).
 func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	check := check96Section(t)
 
@@ -131,11 +142,13 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 		// puts that name there, so an opted-in runner still reads the key and mints in-job.
 		"the expected answer today is `false`",
 		"**What to expect today is therefore `FUGARO_CREDENTIALS_SERVICE_URL` absent from the job's environment and the key still read in-job**",
-		// And the corrected audit expectation of step 4: the pairing refusal is made before
-		// the mint is reached, so it is not audited, and a check that expected a line there
-		// would fail a correct release.
-		"**a refusal that never reaches the mint is not audited**",
-		"**no audit line** for it: the refusal is made before the mint is reached",
+		// And the audit expectation of step 4, which is the truth of the answer path: the
+		// pairing refusal is made after the identity was verified, so refuseCall records it —
+		// exactly one line, the route's purpose and credential, no tier, the refusal's own
+		// status — and a check that expected none would fail a correct release.
+		"**exactly `1` audit line for the pairing refusal's run id**",
+		"which writes one line through `auditCall` and only then the typed refusal",
+		"**A `0` here would be the finding**",
 		// And the Restore, whose final assertion is that nothing survives it.
 		"**Restore.**",
 		"the read-back count (**`0`**",
@@ -169,15 +182,40 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	if !strings.Contains(server, "the run identity is not a run of the calling job's repository") {
 		t.Errorf("internal/credsvc/server.go no longer answers `the run identity is not a run of the calling job's repository`: Check 96 records that sentence as the refusal's own body")
 	}
-	// Step 4's audit expectation, held to the code on the other side: the refusal
-	// is answered by `refuse`, which writes the wire error and no audit line, so
-	// the check must expect no line for it. If `refuse` ever grows an audit call,
-	// the check's expectation is the thing that has to change with it.
-	if !strings.Contains(server, "func (s *Server) refuse(w http.ResponseWriter") {
-		t.Errorf("internal/credsvc/server.go no longer has `refuse`: Check 96's step 4 is written on its behaviour — it answers the pairing refusal and writes no audit line")
+	// Step 4's audit expectation, held to the code on the other side: the pairing
+	// refusal is answered by `refuseCall` (cascade.go), which writes one line
+	// through `auditCall` and only then the wire error, so the check must expect
+	// exactly one line for it — the route's purpose and credential, no tier, the
+	// refusal's own status. `refuse` is the wire writer alone, and it is the path
+	// the refusals answered before there is a verified identity take
+	// (`refuseIdentity`), which is what the check says about (b). If either half of
+	// that pair moves, the check's expectation is the thing that has to move with
+	// it.
+	if !strings.Contains(server, "s.refuseCall(ctx, w, id, purpose, credential, \"\", StatusUnverified, ErrorUnverifiedRunIdentity,") {
+		t.Errorf("internal/credsvc/server.go no longer answers the pairing refusal through `refuseCall`: Check 96's step 4 expects exactly one audit line for it — an answer through `refuse` would leave a refusal this service made unrecorded — so the check and the code have moved apart")
 	}
-	if body := check96FuncBody(t, server, "func (s *Server) refuse(w http.ResponseWriter"); strings.Contains(body, "Audit.Write") || strings.Contains(body, "auditMint") {
-		t.Errorf("internal/credsvc/server.go's `refuse` now writes an audit line (%q): Check 96's step 4 expects NO audit line for the pairing refusal — an admission refusal is not a mint's act — so the check and the code have moved apart", strings.TrimSpace(body))
+	if !strings.Contains(server, "func (s *Server) refuseIdentity(ctx context.Context, w http.ResponseWriter") {
+		t.Errorf("internal/credsvc/server.go no longer has `refuseIdentity`: Check 96 states the identity refusal as the one refusal on this path that is answered before an identity is verified, and so the one that writes no audit line")
+	}
+	cascade := readDoc(t, "internal/credsvc/cascade.go")
+	if !strings.Contains(cascade, "func (s *Server) refuseCall(ctx context.Context, w http.ResponseWriter") {
+		t.Errorf("internal/credsvc/cascade.go no longer has `refuseCall`: Check 96's step 4 is written on its behaviour — it writes the refusal's one audit line and then the typed refusal")
+	}
+	if body := check96FuncBody(t, cascade, "func (s *Server) refuseCall(ctx context.Context, w http.ResponseWriter"); !strings.Contains(body, "auditCall") || !strings.Contains(body, "s.refuse(") {
+		t.Errorf("internal/credsvc/cascade.go's `refuseCall` no longer writes the audit line before the answer (%q): Check 96's step 4 expects exactly one line for the pairing refusal, written before the answer goes out", strings.TrimSpace(body))
+	}
+	if !strings.Contains(server, "func (s *Server) refuse(w http.ResponseWriter") {
+		t.Errorf("internal/credsvc/server.go no longer has `refuse`: Check 96's step 4 is written on its behaviour — it is the wire writer the refusals answered before an identity is verified take, and it writes no audit line")
+	}
+	if body := check96FuncBody(t, server, "func (s *Server) refuse(w http.ResponseWriter"); strings.Contains(body, "Audit.Write") || strings.Contains(body, "auditMint") || strings.Contains(body, "auditCall") {
+		t.Errorf("internal/credsvc/server.go's `refuse` now writes an audit line (%q): Check 96 states it as the wire writer alone — the refusals answered before there is a verified identity take it — so the check and the code have moved apart", strings.TrimSpace(body))
+	}
+	mintGo := readDoc(t, "internal/credsvc/github.go")
+	if !strings.Contains(mintGo, "func (s *Server) refuseMint(ctx context.Context, w http.ResponseWriter") {
+		t.Errorf("internal/credsvc/github.go no longer has `refuseMint`: Check 96 states a mint's own refusals as audited too, and that is the path they take")
+	}
+	if body := check96FuncBody(t, mintGo, "func (s *Server) refuseMint(ctx context.Context, w http.ResponseWriter"); !strings.Contains(body, "auditMint") {
+		t.Errorf("internal/credsvc/github.go's `refuseMint` no longer audits the mint it refuses (%q): Check 96 states that a refused mint is recorded like an issued one", strings.TrimSpace(body))
 	}
 
 	// The second thing that is not true on this tree, held to the code as well:

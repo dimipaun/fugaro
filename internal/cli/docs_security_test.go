@@ -421,10 +421,14 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 	section := flattenDoc(docSection(t, "SECURITY.md", readDoc(t, "SECURITY.md"), "### The credentials service"))
 	for _, want := range []string{
-		// C1.11's answer path: the auditor is armed and writes a probe's and
-		// a mint's line; the forwarded call's line is defined and not called.
-		"a forwarded call writes no audit line yet",
-		"does not audit every issuance",
+		// The audit limit this list used to carry is gone, and deliberately not
+		// replaced here: C1.11 landed the answer path's auditor (one line per act —
+		// a model call served, a mint issued or refused, and every refusal answered
+		// once the caller's identity is verified; internal/credsvc/cascade.go's
+		// refuseCall and auditCall, github.go's auditMint), so "a forwarded call
+		// writes no audit line yet" was a limit that had closed and a sentence that
+		// was false. What the audit log records is stated where it belongs, in the
+		// service's own section above, and Check 96's test holds it to the code.
 		// ServiceHeldSecretNames is empty, so the App key does not move.
 		"the GitHub App key does not move off the job in this release",
 		"config.ServiceHeldSecretNames",
