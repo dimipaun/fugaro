@@ -60,6 +60,10 @@
  * the same breakpoint hides. Nothing is ever shrunk below the floor, and what a phone reader
  * loses is the small print, not the drawing: the shapes, the arrows and the colours are all
  * still there, and the level's title, subtitle, card labels and paragraph are all still read.
+ * `website/test/how-it-works.mjs` reads both halves against the floor this file's stylesheet
+ * declares — every label the phone keeps at 10 px or more, and every label it drops at less —
+ * so a label of a board's small print written outside the group is refused rather than shipped
+ * at 9 px.
  *
  * **Nothing is fetched, nothing is a picture file, no colour is a literal in the markup and no
  * font is load-bearing.** The boards' colours are named CSS variables on the section (`--zoom-*`)
@@ -78,6 +82,18 @@ const H = 720
  *  Inter, whose lowercase runs a little over half an em, and a wrapped line that is a few units
  *  wider than this estimate is a line the card has room for. */
 const CHAR = 0.55
+
+/**
+ * The size a board's small print is set at, and below which a label is drawn inside the
+ * `<g class="zoom-fine">` the phone hides: the drawing keeps a floor of 920 units on a phone
+ * (`min-width`, see the styles), so a label the boards set at 14 px renders at 10.06 px there and
+ * a label they set at 13 px renders at 9.34 px — which is not text. Every label under this size
+ * is the small print the phone loses, and a label of exactly this size is the smallest one it
+ * keeps. `website/test/how-it-works.mjs` holds both halves against the floor the stylesheet
+ * declares, so a label of a board's small print drawn outside the group is refused rather than
+ * shipped at 9 px.
+ */
+const SMALL_PRINT = 14
 
 const esc = (text) =>
   String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -136,16 +152,21 @@ function card(words, opts) {
   const cx = x + w / 2
   const parts = [entity(id, x, y, w, h)]
   if (icon !== null) parts.push(entity(icon, cx - 14, top, 28, 28))
+  const small = []
   for (const [index, line] of drawn.entries()) {
-    parts.push(
-      label(words, line.text, cx, top + iconRoom + index * step + lead, {
-        size: line.size,
-        weight: line.weight,
-        anchor: 'middle',
-        ink: line.ink,
-      }),
-    )
+    const markup = label(words, line.text, cx, top + iconRoom + index * step + lead, {
+      size: line.size,
+      weight: line.weight,
+      anchor: 'middle',
+      ink: line.ink,
+    })
+    // A line of the board's small print goes inside the group the phone hides, wherever it is
+    // drawn: the card's own shape and its title stay, and the note under them goes with the
+    // other small print (see `SMALL_PRINT`).
+    if (line.size < SMALL_PRINT) small.push(markup)
+    else parts.push(markup)
   }
+  if (small.length > 0) parts.push(`<g class="zoom-fine">${small.join('')}</g>`)
   return `<g class="zoom-card">${parts.join('')}</g>`
 }
 

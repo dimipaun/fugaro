@@ -2750,6 +2750,122 @@ export function zoomStillFailures(html, levels = null) {
   return out
 }
 
+// ---- the phone's reading of the four levels ----------------------------------------------
+
+/** The width the brief of 2026-10-22 names for the phone reading, and the size the smallest
+ *  label a phone keeps must still be drawn at there. */
+const ZOOM_PHONE_WIDTH = 390
+const ZOOM_PHONE_MIN = 10
+
+/**
+ * Every way the four levels are not read on a phone, as the lines a reader of the failure gets:
+ * the figure with no floor under its width, a label the phone keeps that the floor draws under
+ * the brief's 10 px, a label the phone drops that the floor could have drawn, and a group of
+ * small print that is not hidden where the phone reads the page.
+ *
+ * **Why the floor is the whole of the phone reading.** A board is 1280 units wide and its labels
+ * carry the board's own sizes, so a drawing scaled to a 390 px column sets the boards' 14 px
+ * labels at 4.3 px, which is not text. The drawing therefore keeps a floor (`min-width`) and
+ * scrolls sideways inside its own box rather than shrinking past it, and the labels the floor
+ * cannot draw at 10 px — the boards' 11, 12 and 13 px small print — are drawn inside
+ * `<g class="zoom-fine">`, which the phone's own query hides. Both halves are read here against
+ * the floor the page's stylesheet declares, so the floor and the small print can only move
+ * together: raise the floor and a hidden label is refused as one the phone could read, lower it
+ * and a kept label is refused as one it cannot.
+ */
+export function zoomPhoneFailures(html, css) {
+  const out = []
+  const zoom = zoomLevelsOf(html)
+  if (zoom.section === null) {
+    return ['the page renders no zoom section, and the four levels are the section on How It Works under "The run, end to end" (D237)']
+  }
+
+  // The floor the phone gets: the `min-width` the stylesheet puts under the drawing, in a query
+  // that holds at the brief's own width.
+  let floor = null
+  for (const rule of cssRules(css)) {
+    const selector = rule.selector ?? ''
+    if (!/\.zoom-svg/.test(selector)) continue
+    for (const [property, value] of cssDeclarations(rule.body ?? '')) {
+      if (property !== 'min-width') continue
+      const px = lengthInPx(value, css)
+      if (Number.isNaN(px)) {
+        out.push(
+          `\`${selector}\` is \`min-width: ${value}\`, which this reading cannot turn into pixels: the floor under the drawing is the width every label of the four levels is measured against on a phone, so a floor nothing can measure is a floor nothing has checked (the brief of 2026-10-22)`,
+        )
+        continue
+      }
+      if (!appliesAt(rule.conditions, ZOOM_PHONE_WIDTH)) {
+        out.push(
+          `\`${selector}\` keeps its \`min-width: ${value}\` in a query that does not hold at ${ZOOM_PHONE_WIDTH} px (${(rule.conditions ?? []).join(' ') || 'no query'}): a floor the phone does not get is a 1280-unit board scaled to the phone's column, which draws the boards' own labels at a third of their size (the brief of 2026-10-22)`,
+        )
+        continue
+      }
+      if (floor === null || px > floor) floor = px
+    }
+  }
+  if (floor === null) {
+    out.push(
+      `the page's stylesheet puts no \`min-width\` under \`.zoom-svg\` at ${ZOOM_PHONE_WIDTH} px, and a 1280-unit board scaled to a phone's column draws the boards' own labels at a third of their size: the drawing keeps a floor and scrolls sideways inside its own box rather than shrinking below what a reader can read (the brief of 2026-10-22)`,
+    )
+    return out
+  }
+
+  // And the group the labels under that floor are drawn in is hidden there.
+  let hidden = false
+  for (const rule of cssRules(css)) {
+    if (!/\.zoom-fine/.test(rule.selector ?? '')) continue
+    if (!appliesAt(rule.conditions, ZOOM_PHONE_WIDTH)) continue
+    for (const [property, value] of cssDeclarations(rule.body ?? '')) {
+      if (property === 'display' && value.trim() === 'none') hidden = true
+      if (property === 'visibility' && value.trim() === 'hidden') hidden = true
+    }
+  }
+  if (!hidden) {
+    out.push(
+      `\`.zoom-fine\` is not hidden at ${ZOOM_PHONE_WIDTH} px, and the labels the ${floor} px floor cannot draw at ${ZOOM_PHONE_MIN} px are drawn inside it: the phone either hides them or draws them at a size no reader reads (the brief of 2026-10-22)`,
+    )
+  }
+
+  for (const level of zoom.levels) {
+    const where = `the level ${JSON.stringify(level.id)}`
+    // The reader lowercases an attribute's name, as a browser does (`viewBox` is written
+    // `viewbox` in what it hands back).
+    const box = (level.svg?.attrs.get('viewbox') ?? '').trim().split(/\s+/).map(Number)
+    const units = box.length === 4 && Number.isFinite(box[2]) && box[2] > 0 ? box[2] : null
+    if (units === null) {
+      out.push(
+        `${where} declares \`viewBox="${level.svg?.attrs.get('viewbox') ?? '(none)'}"\`, and the width of a board is what its labels are scaled by: a drawing with no readable width is a drawing whose labels are measured against nothing (the brief of 2026-10-22)`,
+      )
+      continue
+    }
+    for (const text of level.texts_) {
+      const label = JSON.stringify(textOf(text).trim())
+      const size = Number(text.attrs.get('font-size'))
+      if (!Number.isFinite(size)) {
+        out.push(
+          `${where} draws ${label} with no \`font-size\` this reading can read, and the size of a label is the whole of what the phone's floor is measured against (the brief of 2026-10-22)`,
+        )
+        continue
+      }
+      const rendered = (size * floor) / units
+      const small = ancestorsOf(text).some((el) => has(el, 'zoom-fine'))
+      if (small && rendered >= ZOOM_PHONE_MIN) {
+        out.push(
+          `${where} draws ${label} inside the group the phone hides, and at the ${floor} px floor a label the board sets at ${size} px renders at ${rendered.toFixed(1)} px: a label the phone could read is a label the phone keeps (the brief of 2026-10-22)`,
+        )
+        continue
+      }
+      if (!small && rendered < ZOOM_PHONE_MIN) {
+        out.push(
+          `${where} draws ${label} at ${size} px, and the ${floor} px floor the phone gets renders it at ${rendered.toFixed(1)} px: a label under the brief's ${ZOOM_PHONE_MIN} px is drawn inside \`<g class="zoom-fine">\`, which the phone's query hides, or the floor is raised to the width the label needs (the brief of 2026-10-22)`,
+        )
+      }
+    }
+  }
+  return out
+}
+
 // ---- the gate ----------------------------------------------------------------------------
 
 /** The built How It Works page, which is where the four levels are. */
@@ -2961,6 +3077,43 @@ test('every arrow of the four levels starts and ends on a card, or on the corner
   const bentFailures = zoomArrowFailures(bent)
   assert.equal(bentFailures.length, 1, `an arrow this reading cannot parse is refused ${bentFailures.length} times: ${bentFailures.join(' | ')}`)
   assert.match(bentFailures[0], /is not a straight run from a point/, 'the refusal does not say the path was not read')
+})
+
+test('every label the phone keeps is drawn at 10 px or more, and the small print is hidden there', () => {
+  const page = howItWorks()
+  const css = pageCss(page.html)
+  const failures = zoomPhoneFailures(page.html, css)
+  assert.deepEqual(failures, [], `${page.rel}: the four levels are not read on a phone the way the brief asks:\n  ${failures.join('\n  ')}`)
+
+  // The reading's own proof, one plant per half. 1. A board's small print drawn outside the
+  // group the phone hides: the group loses its class and its 13 px label is drawn at 9.3 px.
+  const loose = page.html.replace('<g class="zoom-fine">', '<g>')
+  assert.notEqual(loose, page.html, 'the built page draws no `<g class="zoom-fine">`, and the plant below unwraps one')
+  const looseFailures = zoomPhoneFailures(loose, css)
+  assert.ok(looseFailures.length > 0, 'small print drawn outside the group the phone hides is not refused, and the group is the whole of what keeps the phone above 10 px')
+  const bounce = looseFailures.find((line) => /"one bounce back"/.test(line))
+  assert.ok(bounce, `the refusal does not name the label the phone would draw under 10 px: ${looseFailures.join(' | ')}`)
+  assert.match(bounce, /at 13 px/, 'the refusal does not say the size the board sets the label at')
+  assert.match(bounce, /renders it at 9\.3 px/, 'the refusal does not say the size the floor draws the label at')
+
+  // 2. The floor lowered under what the labels need: the same labels are then drawn at 7 px, and
+  //    the refusal names the floor the stylesheet declares rather than the size the board sets.
+  const low = css.replace('min-width:57.5rem', 'min-width:40rem')
+  assert.notEqual(low, css, 'the built stylesheet declares no `min-width: 57.5rem` under `.zoom-svg`, and the plant below lowers the floor')
+  const lowFailures = zoomPhoneFailures(page.html, low)
+  assert.ok(lowFailures.length > 0, 'a floor under what the labels need is not refused, and the floor is what the phone reading is measured against')
+  assert.match(lowFailures[0], /the 640 px floor/, 'the refusal does not name the floor the stylesheet declares')
+
+  // 3. And the other direction: a label the floor could draw, hidden from the phone anyway — a
+  //    word of a board the phone loses for nothing.
+  const needless = page.html.replace(
+    '<text class="zoom-word zoom-ink-accent" x="640" y="197" font-size="13" text-anchor="middle">one bounce back</text>',
+    '<text class="zoom-word zoom-ink-accent" x="640" y="197" font-size="14" text-anchor="middle">one bounce back</text>',
+  )
+  assert.notEqual(needless, page.html, 'the built page draws no 13 px `<text>one bounce back</text>`, and the plant below raises it to 14 px')
+  const needlessFailures = zoomPhoneFailures(needless, css)
+  assert.equal(needlessFailures.length, 1, `a label hidden though the phone could read it is refused ${needlessFailures.length} times: ${needlessFailures.join(' | ')}`)
+  assert.match(needlessFailures[0], /a label the phone could read is a label the phone keeps/, 'the refusal does not say the label was hidden for nothing')
 })
 
 test('all four levels are in the built HTML, in order, with no script', () => {

@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **1,512,081 bytes in a checkout with no tags** and to **1,512,081 bytes with the
+  commit builds to **1,512,120 bytes in a checkout with no tags** and to **1,512,120 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -1017,6 +1017,66 @@ added or removed without this sentence moving fails there:
     owner's ruling of 2026-10-20 as the round above, and the page's drawings are the owner's to
     read: that is **Check 113** in `docs/gcp-live-checklist.md`.
 
+  - **The four zoom levels are the owner's four approved boards, redrawn as the site's inline
+    SVG** (the owner's brief of 2026-10-22, the zoom-diagrams plan's Part 4 redone; D237, D244,
+    D245, D247, D248, D249). Part 4's four levels are **gone**: the owner's reading of them was
+    that those diagrams were terrible, and the drawings are the four boards in
+    `website/design-ref/zoom-levels/level1.dc.html` … `level4.dc.html` — 1280 × 720, drawn in
+    Claude Design, committed by #869 — reproduced as the site's own SVG: the same boxes, the same
+    labels **word for word**, the same arrows including the bent and the double-headed ones and
+    their small labels, the same colours, and the boards' landscape aspect kept (`viewBox="0 0
+    1280 720"` over the content width). **The move is one file**: `dist/how-it-works/index.html`
+    51,560 → **73,899 bytes** (+22,339) and no other file in `dist/` moves a byte, so the count of
+    files stays **29** and the count of pages **12**. The script did not move —
+    `dist/scripts/site.js` is 70,008 bytes in both builds — and neither did the homepage's HTML
+    (56,898 in both), which is why **the page weight does not move either**: the heaviest page is
+    still the homepage, at 563,219 bytes, and it renders none of this. What the page's own 22,314
+    are: the four boards redrawn as four `<svg viewBox="0 0 1280 720" role="img">` drawings, the
+    one zero-size `<svg>` holding the single `<defs>` — **17 `<symbol>`s** (`zoom-job`,
+    `zoom-orchestrator`, `zoom-developer` and `zoom-developer-planned`, `zoom-person` and
+    `zoom-person-planned`, `zoom-card`, `zoom-card-accent`, `zoom-card-planned`, `zoom-laptop`,
+    `zoom-phone`, `zoom-project`, `zoom-loop`, `zoom-draft-pr`, `zoom-firebase`, `zoom-cloud`,
+    `zoom-box`) and **four `<marker>` arrow heads** — the boards' labels as real `<text>` in the
+    site's font stack, the four `<figure>`s
+    with the `<figcaption>` naming each level, the four anchor markers of the level list, and the
+    scoped stylesheet the page inlines, because Astro inlines a component's rules into the one
+    page that renders it.
+    **The page's words go 492 → 868** — the boards' own labels, which are what a level says — and
+    **D188's number moves with them, 600 → 900**: 900 is the smallest round ceiling above the
+    page, and the next page down is the homepage at 563 words (Getting Started is 309). The
+    levels' words are no longer a data file: `website/data/zoom-levels.yaml` is gone and the
+    boards are the source of truth — `src/lib/zoom-boards.mjs` reads each board's visible strings
+    at build time and `holdZoomBoards` refuses a build whose drawing and board disagree, **in
+    both directions**, so a label a board carries and the drawing dropped fails the build the way
+    a line the drawing wrote for itself does. Every entity is drawn **once**, through the shared
+    `<symbol>`s and their `<use>` references (D244): the same shape for the same entity in all
+    four levels, no level drawing its own copy, and no symbol left unused. `test/how-it-works.mjs`
+    is the page's gate and reads the **built** page: the boards' strings word for word (extracted
+    from the design-ref files, which are the source of truth), the `<use>` rule, **no two labels
+    drawn over each other and none leaving the board** (the text boxes are computed from the
+    written attributes), and **every arrow's endpoints on a card's edge or on the corner of its
+    own chain** (the path data is parsed) — each with a plant that proves it refuses, and the
+    arrows and the labels are the whole of what a reader can check without eyes, since the model
+    that wrote this cannot see the boards. `test/a11y.mjs` holds the four levels as four named
+    anchors a keyboard reaches in order (D245: `<a href="#level-N">` in their own `<nav>`) and
+    each level as **one named picture** (`role="img"` with its own `<title>` and `<desc>`), and
+    `test/spacing.mjs` reads the boards' labels as labels rather than as one word run together
+    because the drawing's own text class is a block. The dashed outlines still mean **planned**
+    and the legend saying so is still on the page, above the levels (D248/D249's wording rules
+    hold: no "disposable" anywhere); the levels are stills in the no-JS and reduced-motion
+    rendering, all four of them in the document; and the pinned scroll-driven zoom between them is
+    Part 5 and not this round, so its selectors and ids — `.zoom`, `#level-1`…`#level-4`,
+    `.zoom-svg`, `.zoom-caption`, `.zoom-nav` and `.zoom-marker` — are kept as they stand.
+    **The site figure is re-derived here, and only it**: the pair moves 1,447,967 → **1,512,120**
+    bytes, of which this round's own move is the 22,339 above and the remaining 41,814 is drift
+    earlier rounds left un-derived (the phone app's page and the boards' own commit among them) —
+    measured against the gates' own build rather than argued, and stated here so the figure a
+    reader sees is the build the site has. The per-page and per-script figures are left where they
+    are, by the owner's ruling of 2026-10-20, and they carry the same drift: the script's figure
+    is stated as 70,016 where the build is 70,008 and the page weight as 563,219 where the
+    homepage's is 563,140. The drawings are the owner's to read, and that is **Check 112** in
+    `docs/gcp-live-checklist.md`.
+
   - **JavaScript per page:** 262,560 bytes. Three times 87,520: the one script the site ships,
     `public/scripts/site.js` (70,016 bytes), plus 25 %. What the file carries is the copy
     control, the menu, the consent gate and **both of the site's sliders** — the console page's,
@@ -1079,7 +1139,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 2,112,072 bytes. Three times 704,024: the heaviest page, the
     homepage, at 563,219 bytes (its HTML, the four screenshots it renders, and the files
     it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 5,670,306 bytes. Three times 1,890,102 (every file in `dist/`, 1,512,081
+  - **Whole site:** 5,670,450 bytes. Three times 1,890,150 (every file in `dist/`, 1,512,120
     bytes across 29 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
