@@ -1395,9 +1395,11 @@ func printRecipeNote(warn io.Writer, rr *resolvedRecipe, explicit bool) {
 //     node is the only list the service can read, and the environment's
 //     ceiling and the repository's file never reach it. The rule has no skip
 //     for a project layer this launcher cannot read — an absent node is
-//     refused by the switch's arm above, and the run's own bootstrap reads the
-//     node itself and refuses the cascade for it, fail closed, exactly as the
-//     service now does.
+//     refused by the switch's arm above — and this read is the one all three
+//     surfaces the cascade is judged on make: `fugaro validate` reports it to
+//     the author (validate.go's cascadeProblems) and the run refuses it in
+//     bootstrap, before any model call (internal/runner/routing.go's
+//     applyRouting).
 //   - the rules marker (budget/rules, C1.3): the deployed document must carry
 //     the credentials family, or the run's first write of the credential's
 //     name is denied and it halts named (HaltCredsRulesDenied, C1.17). This is

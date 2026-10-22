@@ -55,8 +55,10 @@ func cascadePolicyWithMode(mode string) string {
 // cascadePolicyAllowList is the policy a project that really serves cascade
 // runs publishes: O3's switch, and the model allow-list the credentials service
 // holds every call of such a run to (the owner's ruling of 2026-10-22 — the
-// service refuses a project that publishes none, and the launch refuses it one
-// step earlier, cascadeLaunchRefusal). A policy that carries a budget block must
+// service refuses a project that publishes none, `fugaro validate` reports it
+// to the author (cascadeProblems), the launch refuses it before a job starts
+// (cascadeLaunchRefusal) and the run refuses it in bootstrap (runner's
+// applyRouting)). A policy that carries a budget block must
 // name a mode (projectpolicy.validBudget), so the allow-list never arrives
 // alone: the mode is the caller's, because the node's mode is a layer the
 // gateway rule and the run's own merge judge, and a test about either has to
@@ -133,7 +135,10 @@ func cascadeOtherProject(t *testing.T, name, policy string) {
 // refusal, and the mode the node set is the only thing that changes.
 func TestValidateReadsTheGatewayModeFromThePolicyNode(t *testing.T) {
 	f := newLaunchBudget(t, "off")
-	publishPolicy(t, f, cascadePolicyWithMode("observe"))
+	// The allow-list comes with the mode: what this test is about is the mode
+	// the node overlays, and a node without the list would be refused for that
+	// instead (TestValidateRefusesCascadeWithoutAllowList).
+	publishPolicy(t, f, cascadePolicyAllowList("observe"))
 	out, errOut, err := execute(t, "validate", writeConfig(t, cascadeCLI))
 	if err != nil {
 		t.Fatalf("a cascade file whose policy sets the mode was refused: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
@@ -156,7 +161,9 @@ func TestValidateReadsTheGatewayModeFromThePolicyNode(t *testing.T) {
 // of taking it as the ceiling's own — the file is reported valid and this fails.
 func TestValidateRefusesCascadeWhenThePolicyNodeTurnsTheGatewayOff(t *testing.T) {
 	f := newLaunchBudget(t, "observe")
-	publishPolicy(t, f, cascadePolicyWithMode("off"))
+	// The list is published with the mode, so that the refusal this test reads
+	// is the gateway's and not the allow-list's.
+	publishPolicy(t, f, cascadePolicyAllowList("off"))
 	out, errOut, err := execute(t, "validate", writeConfig(t, cascadeCLI))
 	if err == nil {
 		t.Fatalf("a cascade file whose policy turns the budget off was admitted:\nstdout:\n%s\nstderr:\n%s", out, errOut)
@@ -207,7 +214,10 @@ func TestValidateRefusesCascadeWithoutPolicySwitch(t *testing.T) {
 
 	t.Run("the policy's switch is published", func(t *testing.T) {
 		f := newLaunchBudget(t, "observe")
-		publishPolicy(t, f, cascadePolicy())
+		// The list as well as the switch: a policy that carries the switch and
+		// no allow-list is refused below, by this rule, so the case that has to
+		// pass publishes both.
+		publishPolicy(t, f, cascadePolicyAllowList("observe"))
 		out, errOut, err := execute(t, "validate", writeConfig(t, cascadeCLI))
 		if err != nil {
 			t.Fatalf("validate: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
@@ -385,6 +395,62 @@ func TestValidateRefusesCascadeWithoutPolicySwitch(t *testing.T) {
 	})
 }
 
+// TestValidateRefusesCascadeWithoutAllowList (the owner's ruling of 2026-10-22,
+// C1.11): the credentials service holds every call it carries to the project's
+// published budget.allowed_models and refuses a project that publishes none, so
+// a cascade run of such a project could make no call at all. The launch refuses
+// that file before a job starts (cascadeLaunchRefusal) and the run refuses it in
+// bootstrap (runner's applyRouting); this is the surface that tells the
+// repository's author, and the reason it is a rule of its own here is the reason
+// it is one everywhere: every other cascade rule is judged where the file is
+// written *and* where it runs.
+//
+// The policy is the state an installation really reaches — the switch published,
+// the budget mode on, and no allow-list, which projectpolicy.validBudget leaves
+// as the absent key rather than an empty list — and what is asserted is that the
+// refusal is *this* rule's: the switch is published, so nothing may answer with
+// O2's sentence about setting it.
+//
+// Mutation (run, restored): drop the case from cascadeProblems and the first
+// half reports the file valid, for a launch that refuses it.
+func TestValidateRefusesCascadeWithoutAllowList(t *testing.T) {
+	f := newLaunchBudget(t, "observe")
+	publishPolicy(t, f, cascadePolicyWithMode("observe"))
+	out, _, err := execute(t, "validate", writeConfig(t, cascadeCLI))
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("a cascade file whose policy publishes no allow-list was admitted: exit = %d, want %d (err %v, out %q)", ExitCode(err), ExitUserError, err, out)
+	}
+	for _, want := range []string{"agent.auth", "budget.allowed_models", "fugaro project policy publish"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the refusal does not say %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "routing.claude: {via: cascade}") {
+		t.Errorf("the allow-list refusal also claimed the policy does not turn the cascade on, which it does:\n%s", out)
+	}
+
+	// The way out: the same file, the same installation, the node publishing
+	// the allow-list the ruling requires.
+	publishPolicy(t, f, cascadePolicyAllowList("observe"))
+	out, errOut, err := execute(t, "validate", writeConfig(t, cascadeCLI))
+	if err != nil {
+		t.Fatalf("a cascade file whose policy publishes the allow-list was refused: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
+	}
+	if !strings.Contains(out, "is valid") {
+		t.Fatalf("the allow-list was published and the file was not valid:\n%s\n%s", out, errOut)
+	}
+
+	// The installation's ceiling is another layer and not the one the service
+	// reads: a project config that carries the allow-list does not stand in for
+	// the node, and the file is refused just the same.
+	publishPolicy(t, f, cascadePolicyWithMode("observe"))
+	ceilingAllowList(t, f.cloudFixture)
+	out, _, err = execute(t, "validate", writeConfig(t, cascadeCLI))
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "budget.allowed_models") {
+		t.Errorf("a cascade file whose ceiling publishes the allow-list and whose policy does not: exit = %d, out %q, err = %v, want the allow-list refusal (the ceiling never reaches the credentials service)", ExitCode(err), out, err)
+	}
+}
+
 // TestValidateCascadeReadsNoPolicyOffline: `fugaro validate --offline` promises
 // the command reads nothing over the network ("never read the runs bucket"), and
 // the cascade rule is the one place validate would otherwise break that promise:
@@ -406,7 +472,7 @@ func TestValidateRefusesCascadeWithoutPolicySwitch(t *testing.T) {
 // own, so both the counter and the message fail.
 func TestValidateCascadeReadsNoPolicyOffline(t *testing.T) {
 	f := newLaunchBudget(t, "observe")
-	publishPolicy(t, f, cascadePolicy())
+	publishPolicy(t, f, cascadePolicyAllowList("observe"))
 
 	before := len(f.db.Requests())
 	out, _, err := execute(t, "validate", "--offline", writeConfig(t, cascadeCLI))
@@ -484,7 +550,10 @@ func TestValidateOfflineHelpNamesThePolicyRead(t *testing.T) {
 // run's.
 func TestValidateRefusesCascadeWithBudgetOff(t *testing.T) {
 	f := newLaunchBudget(t, "off")
-	publishPolicy(t, f, cascadePolicy())
+	// The allow-list is published with the switch: the node's mode is off, so
+	// the refusal this test is about is the gateway's, and a policy that
+	// publishes no allow-list would add this file's own refusal to the report.
+	publishPolicy(t, f, cascadePolicyAllowList("off"))
 	path := writeConfig(t, strings.Replace(cascadeCLI, "workflows:", "budget: { mode: off }\nworkflows:", 1))
 	out, _, err := execute(t, "validate", path)
 	if ExitCode(err) != ExitUserError {
@@ -504,7 +573,7 @@ func TestValidateRefusesCascadeWithBudgetOff(t *testing.T) {
 	// (policy.Merge keeps the stricter of the two), so its cascade workflow is
 	// valid. A check reading the file's own mode would refuse it.
 	observing := newLaunchBudget(t, "observe")
-	publishPolicy(t, observing, cascadePolicy())
+	publishPolicy(t, observing, cascadePolicyAllowList("observe"))
 	out, errOut, err := execute(t, "validate", path)
 	if err != nil {
 		t.Fatalf("a cascade file whose installation observes was refused: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
@@ -536,7 +605,9 @@ func TestValidateRefusesCascadeWithBudgetOff(t *testing.T) {
 // rule and this test fails on that sentence.
 func TestValidateCascadeSwitchReasonNeverBlamesTheGateway(t *testing.T) {
 	f := newLaunchBudget(t, "off")
-	publishPolicy(t, f, cascadePolicy())
+	// With the allow-list, so that the report this test reads is the gateway's
+	// refusal and the note beside it, and not the allow-list's refusal too.
+	publishPolicy(t, f, cascadePolicyAllowList("off"))
 	// The switch is the operator's own file, and it names a model only a route
 	// this repository may not send code to claims (routedProjectBlock admits
 	// acme/sandbox; the checkout is acme/other).
