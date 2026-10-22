@@ -16,6 +16,7 @@ import (
 	"golang.org/x/oauth2/google"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gateway"
@@ -23,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // VertexBudgetRefusal is what a Vertex workflow under a budget in enforce
@@ -276,18 +278,24 @@ const execName = "fugaro exec"
 // that is in flight, so it takes no lock of its own beyond noteExhausted's
 // and does nothing a caller could block on.
 //
-// Only the exhausted answer is acted on. It is the one answer that is a
-// decision about the stage in flight: the stage ends -- it did not fail --
-// and the runner waits for the reset and resumes it (C1.17, D138). The tier a
-// call settled by, the credential's name and the switch are C1.16's ledger
-// and C1.19's record to consume; reading them here as well would be a second
-// reading of one contract, and this release has one reader per field.
+// Two answers are acted on. The exhausted one is a decision about the stage in
+// flight: the stage ends -- it did not fail -- and the runner waits for the
+// reset and resumes it (C1.17, D138). The other is the name of the credential
+// that answered (C1.19): a cascade run is the one run whose credential is not
+// its own, so it is the one run that has to record which one it spent on --
+// the record `/runs/<id>/result.json` carries (D140) and the registry entry
+// the dashboard reads (C1.3). Both are written here, where the answer arrives,
+// because a second reader of the same contract is how two records come to
+// disagree. The tier a call settled by and the switch are C1.16's ledger.
 //
 // The typed answer is turned back into the contract's own type
 // (credsvc.ExhaustedUntil) rather than a runner type of its own: the wire
 // contract is the only spelling of it, and noteExhausted's caller in a test
 // hands it the same shape.
 func (r *run) serviceAnswer(a gateway.ServiceAnswer) {
+	if a.Credential != "" {
+		r.recordCredential(a.Credential)
+	}
 	if a.Exhausted == nil {
 		return
 	}
@@ -296,6 +304,37 @@ func (r *run) serviceAnswer(a gateway.ServiceAnswer) {
 		tried = append(tried, credsvc.Tried{Name: tr.Name, Tier: tr.Tier, Reason: tr.Reason})
 	}
 	r.noteExhausted(credsvc.ExhaustedUntil{ResetAt: a.Exhausted.ResetAt, Tried: tried})
+}
+
+// recordCredential is the cascade's own record (C1.19, D140): the name -- never
+// the value, which never leaves the service -- of the credential the run's
+// cascade answered a call with. It is written in two places, each the one its
+// reader has: the record the run ends with (runstore.Record.OAuthAccount,
+// which `fugaro runs` reads when a record exists) and the registry entry the
+// dashboard reads while the run is running (budget.AgentEntry.Credential).
+//
+// The name is whatever the service answered, so it is written as one word: a
+// name carrying a control or bidi character would have the whole PATCH denied
+// and freeze the run's registry, which clipEntry's clipString already strips
+// (internal/budget) -- this is the second bound, for the record, which no
+// clipEntry sees.
+//
+// A cascade run is the only run whose agent.auth makes a credential that is not
+// its own visible to it, and the gateway only ever forwards to the credentials
+// service for one, so no test of agent.auth is needed here to keep another
+// run's record untouched: a non-cascade run's answers carry no credential, the
+// gateway having answered them itself with its own route's key.
+func (r *run) recordCredential(name string) {
+	name = safetext.Field(name)
+	if name == "" {
+		return
+	}
+	r.mu.Lock()
+	if r.rec != nil && r.rec.OAuthAccount != name {
+		r.rec.OAuthAccount = name
+	}
+	r.mu.Unlock()
+	r.noteRegistry(func(e *budget.AgentEntry) { e.Credential = name })
 }
 
 // metadataIDToken mints the job service account's Google ID token for

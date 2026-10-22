@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,10 +12,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // cascadeCLI is the fugaro.yaml a repository asking for the cascade writes:
@@ -949,5 +952,90 @@ func TestRepoEngineNamesTheProjectLayerThatAsksForTheCascade(t *testing.T) {
 	}
 	if applies := r.ran(t, "apply"); len(applies) != 0 {
 		t.Errorf("the refusal applied anyway: %v", applies)
+	}
+}
+
+// cascadeLaunchYAML is cascadeCLI shaped for a launch fixture: the workflow is
+// the one the cloud fixture's repository admits (its config lists `web`), so a
+// launch resolves a spec and reaches the gate this file is about rather than
+// refusing the workflow first.
+const cascadeLaunchYAML = `version: 1
+project: aurora
+git: { provider: github }
+agent:
+  auth: cascade
+  model: claude-sonnet-5-5
+workflows:
+  web: { commands: { build: sh build.sh, test: sh test.sh } }
+`
+
+// TestCascadeRefusedWithoutService (C1.19): a repository that asks for the
+// cascade on an installation whose config names no database is refused at
+// launch. Neither the policy switch that turns the cascade on nor the
+// credentials rules marker lives anywhere this launcher can read, and the job
+// of such an installation mounts no model credential at all (C1.20), so the
+// run would have nothing to fall back to (D143). The mutation: reading the
+// database only where a policy was found, which launches the run on an
+// installation that has no service at all.
+func TestCascadeRefusedWithoutService(t *testing.T) {
+	f := newCloudFixture(t)
+	projectJobCheckoutYAML(t, cascadeLaunchYAML)
+	const run = "20261022-090000-ca5c"
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("a cascade launch without a service: err = %v, want a refusal", err)
+	}
+	for _, want := range []string{"cascade", "credentials service", "--provision-credentials"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions, want none: nothing of a refused cascade launch may start", n)
+	}
+}
+
+// TestCascadeRefusedWithoutCredsRulesMarker (C1.19): the installation has a
+// database and its mode runs the gateway, but the deployed rules predate the
+// credentials family (C1.3's marker, C1.17's named halt). The run is refused
+// here, before anything is written, rather than in the job where the first
+// credential it records is denied.
+//
+// Hand mutations this fails on: dropping the marker read (the launch goes on
+// and the job halts on HaltCredsRulesDenied); reading the marker as "found is
+// enough" (a generation below this Fugaro's passes, and the deployed document
+// is not the one this binary reads); refusing on the marker for every auth
+// (every api-key launch of the installation stops).
+func TestCascadeRefusedWithoutCredsRulesMarker(t *testing.T) {
+	f := newProjectJobFixtureMode(t, "enforce")
+	projectJobCheckoutYAML(t, cascadeLaunchYAML)
+	const run = "20261022-090000-ca5c"
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("a cascade launch without the rules marker: err = %v, want a refusal", err)
+	}
+	for _, want := range []string{"credsRules", "init --firebase", "halt"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions, want none", n)
+	}
+	if tok := readToken(t, f.cloudFixture, run); tok != "" {
+		t.Error("a refused cascade launch minted a budget token")
+	}
+	// The same installation with the marker at this Fugaro's generation is not
+	// refused for the marker: the refusal above is the marker's, and the same
+	// gate must let the launch past it once the deploy is current. What is
+	// asserted is the gate's own answer, since the rest of a launch needs a
+	// whole fixture (a build record, an image) that has nothing to do with it.
+	f.db.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion)
+	env, err := openCloud(context.Background(), cloudOptions{stderr: discard})
+	if err != nil {
+		t.Fatalf("opening the fixture's cloud environment: %v", err)
+	}
+	if err := cascadeLaunchRefusal(context.Background(), env, &task.Spec{Repo: "acme/app"}); err != nil {
+		t.Errorf("a cascade launch on an installation whose marker is current: %v", err)
 	}
 }

@@ -396,14 +396,13 @@ func validateCascadeFollowup(a Agent, f Followup) []Problem {
 // ceiling enforces is a cascade workflow whose gateway is on, and refusing it
 // here would refuse a valid repository.
 //
-// `fugaro validate` (internal/cli/validate.go, cascadeProblems) is its only
-// caller today, and it holds the merge. The launch's own side of the same rule
-// is plan Task C1.19 and is not in this change: nothing in internal/cli/run.go
-// or internal/runner reads this function yet, so a `cascade` file whose
-// effective mode is off passes a launch and fails later, in the job, on the
-// runner's own `unknown agent auth "cascade"` — no released runner reads the
-// value at all (cascadeSince, internal/cli/recipes_skew.go), which is the same
-// gap seen from the other side.
+// Its callers hold the merge, because Validate holds one file and the run's
+// mode is a function of the layers above it: `fugaro validate`
+// (internal/cli/validate.go, cascadeProblems) is the author's side, and the
+// launch (internal/cli/run.go, cascadeLaunchRefusal) is the operator's — a
+// launch refuses a cascade run whose effective mode leaves the gateway off,
+// before the claim is taken and before anything is written, rather than
+// letting the job fail on it.
 func CheckCascadeGateway(a Agent, mode string) []Problem {
 	if a.Auth != AuthCascade || mode == policy.ModeObserve || mode == policy.ModeEnforce {
 		return nil
