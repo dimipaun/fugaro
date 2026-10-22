@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **1,447,967 bytes in a checkout with no tags** and to **1,447,967 bytes with the
+  commit builds to **1,512,081 bytes in a checkout with no tags** and to **1,512,081 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -1079,8 +1079,8 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 2,112,072 bytes. Three times 704,024: the heaviest page, the
     homepage, at 563,219 bytes (its HTML, the four screenshots it renders, and the files
     it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 5,429,877 bytes. Three times 1,809,959 (every file in `dist/`, 1,447,967
-    bytes across 28 files, plus 25 %) — the gates' own build of the site, which every checkout
+  - **Whole site:** 5,670,306 bytes. Three times 1,890,102 (every file in `dist/`, 1,512,081
+    bytes across 29 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
@@ -1154,7 +1154,8 @@ added or removed without this sentence moving fails there:
     getting-started 431, privacy 277, community 268, every one of them over it — and the
     redesign brought every one of those pages but the privacy statement inside it.)
     **D188's number was 250, the owner's feedback of 2026-10-19 moved it to 300, the
-    bold redesign of 2026-10-20 moved it to 500, and the 2026-10-21 brief moved it to 600.**
+    bold redesign of 2026-10-20 moved it to 500, the 2026-10-21 brief moved it to 600, and the
+    2026-10-22 brief moved it to 900.**
     The 2026-10-19 brief asks the homepage for
     a benefits section, which is a fourth required
     block on the one page that already carried the three the briefs before it require — the
@@ -1168,14 +1169,18 @@ added or removed without this sentence moving fails there:
     (D251, D252) — and the three pictures that lead it are the console page's own, so they
     carry the console page's own `alt` texts: one picture has one account of what it shows,
     and an image's `alt` is text a reader reads. **The four slides are the whole of that
-    move**, 461 → **563 words**, and the page's blocks therefore measure 563. D188's number
-    is therefore
-    the smallest round ceiling above the page that carries every block its briefs and its
-    boards require, and it is still a ceiling rather than a
-    target: the next page down is How
-    It Works at
-    332 words (Getting Started is 309), and a page that wants the extra room has to carry a
-    brief's own block for it.
+    move**, 461 → **563 words**, and the page's blocks therefore measure 563. The 2026-10-22
+    brief then replaces the four zoom levels on How It Works with the owner's four approved
+    boards (`design-ref/zoom-levels/level1.dc.html` … `level4.dc.html`), redrawn as the site's
+    inline SVG: a board's labels are strings the drawing renders, and a string the drawing
+    renders is text a reader reads, so the four levels' labels are words on that page the way
+    the four slides' `alt` texts are words on the homepage. **The boards' labels are the whole
+    of that move**, 492 → **868 words**, and that page is therefore the one D188's number is set
+    against. D188's number is the smallest round ceiling above the page that carries every block
+    its briefs and its boards require, and it is still a ceiling rather than a
+    target: the next page down is the
+    homepage at 563 words (Getting Started is 309), and a page that wants the extra room has to
+    carry a brief's own block for it.
     Every raise is recorded as a reading in `docs/website/redesign/README.md`, the way every
     number the briefs do not spell out is.
 - `test/fold.mjs` — the ordering the fold claim rests on (P5, RF5). Whether the promise and
@@ -1531,11 +1536,14 @@ Three things about those commands are worth stating rather than leaving to the t
   `available` by the build itself, which refuses the two disagreeing (below).
   `console-screens.yaml` is the third, and it is the owner's own list rather than a fact
   another file states: it ships empty, and the build renders whatever rows it carries (below).
-  `zoom-levels.yaml` is the fourth, and it is the drawing's own words rather than a fact another
-  file states: the four levels' names, captions and labels, each row with the document it quotes,
-  so that the picture and its text cannot drift: `test/how-it-works.mjs` reads both directions —
-  a label the drawing renders that is no row of the file, and a row the file carries that the
-  drawing does not render, are each refused by the name of the row.
+  The four zoom levels' words are **no longer a data file**: since the 2026-10-22 brief the
+  levels are the owner's four approved boards (`design-ref/zoom-levels/*.dc.html`) redrawn as
+  the site's inline SVG, and the boards are the source of truth for the labels, so
+  `website/src/lib/zoom-boards.mjs` reads a board's visible strings and `holdZoomBoards` stops
+  the build, naming the file, when the drawing says a word the board does not;
+  `test/how-it-works.mjs` reads the same boards the other way round — a line the drawing wrote
+  for itself, and a string of a board the drawing dropped, are each refused by the name of the
+  board. A data file was a second copy of a board's text, and a second copy drifts.
 - **`website/data/typical-costs.yaml` is the owner's own measurement, and the page renders
   it or nothing.** It carries what a job costs on this project's own development runs — one
   entry per kind of run, each with the sample behind it, over a window whose last day is the
@@ -1899,7 +1907,7 @@ website/
   data/console-screens.yaml        # the console page's slides: hand-written, one row per screenshot
   data/mobile-claims.yaml          # the phone app's page: one row per claim, with the state the page marks it with (D240, D241)
   data/mobile-screens.yaml         # the phone page's slides: the same rows as the console's, empty until the owner's captures land (D251)
-  data/zoom-levels.yaml            # the four zoom levels' names, captions and labels, each with its document
+  design-ref/zoom-levels/*.dc.html # the four owner-approved zoom boards, redrawn as the site's SVG: the source of the levels' words (2026-10-22)
   data/console-sha256sums.txt      # the console release's own sums file, copied verbatim
   content/                         # generated, do not edit (see the table above)
   src/lib/changelog.mjs            # reads docs/releases/ and the plugin's version at build time

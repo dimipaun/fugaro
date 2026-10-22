@@ -589,6 +589,13 @@ holdZoomBoards(LEVELS)
      the shape. */
   .zoom :global(.zoom-word) {
     font-family: var(--font-sans);
+    /* A label of a board is placed by its coordinates: an SVG `<text>` is not laid out in the
+       run of words beside it, however the markup puts one element after another. The site's
+       spacing gate reads the page's own stylesheet for exactly that — a class the artifact
+       lays out as a block is a boundary a reader sees — so two labels written one after the
+       other are two labels and not one word, which is how the run diagram's own labels say
+       the same thing. */
+    display: block;
   }
 
   .zoom :global(.zoom-ink) {
