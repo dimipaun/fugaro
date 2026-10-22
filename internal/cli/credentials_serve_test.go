@@ -3,6 +3,8 @@ package cli
 import (
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // The credentials service's entry point (plan task C1.14) is not a command
@@ -26,6 +28,34 @@ func TestCredentialsServeHidden(t *testing.T) {
 	if strings.Contains(out, "serve") {
 		t.Fatalf("fugaro credentials --help lists serve:\n%s", out)
 	}
+	// And the hiding is the commands' own Hidden field, not an accident of
+	// cobra's rules. The help output above would still be clean without it: a
+	// group with no Run of its own and only hidden subcommands is left out of
+	// its parent's list anyway, and the day this group gains a visible
+	// subcommand `fugaro --help` would list it. The field is what the image's
+	// entrypoint is held to.
+	root := NewRootCmd()
+	group := findSub(t, root, "credentials")
+	if !group.Hidden {
+		t.Error("the credentials group is not hidden: fugaro --help would list it as soon as it gains a visible subcommand")
+	}
+	if !findSub(t, group, "serve").Hidden {
+		t.Error("credentials serve is not hidden: fugaro credentials --help would list it")
+	}
+}
+
+// findSub returns the named direct subcommand of cmd, failing when there is
+// none: a test that walked an empty list instead would pass for the wrong
+// reason.
+func findSub(t *testing.T, cmd *cobra.Command, name string) *cobra.Command {
+	t.Helper()
+	for _, c := range cmd.Commands() {
+		if c.Name() == name {
+			return c
+		}
+	}
+	t.Fatalf("%s has no %q subcommand", cmd.CommandPath(), name)
+	return nil
 }
 
 // The service's environment is the installation module's: credentials.tf sets
