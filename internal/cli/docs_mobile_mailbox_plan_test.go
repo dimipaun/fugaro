@@ -185,7 +185,7 @@ var planWillCreate = map[string]string{
 	"internal/mailbox/keychain":               "T2's keychain item-name reader",
 	"internal/mailbox/mac.go":                 "T2 (verify) and T2a (sign)",
 	"internal/mailbox/ledger.go":              "T4",
-	"internal/mailbox/expiry.go":              "T3, T4",
+	"internal/mailbox/expiry.go":              "T7 (the hidden sweeper; the plan names it there, not under T3 or T4)",
 	"internal/mailbox/action.go":              "T6",
 	"internal/mailbox/parity_test.go":         "T8 (replays shared/mailbox/parity.test.js's corpus)",
 	"internal/mailbox/mac_sign_test.go":       "T2a",

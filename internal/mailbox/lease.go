@@ -34,14 +34,24 @@
 // signed by a **signer the caller passes in** — `LeaseSigner` — which is how
 // M4b's rule is enforced here without this package owning the key.
 //
-// **One thing the plan's loop does not do, said out loud:** the heartbeat this
-// file reads back is validated as a heartbeat (its shape) but its **tag is not
-// verified** before its claim is believed — the plan's §7 loop goes straight
-// from the ETag read to `takeLease`, and the verification function is mac.go's
-// (T2). The exposure is bounded and named: the read is under the operator's ADC
-// and the CAS is still the fence, so a forged heartbeat can at most make one
-// consumer yield, never make two act. It is listed in the pull request rather
-// than fixed here, because fixing it would take a task this one is not.
+// **One thing this file does not do, said out loud, and with its real bound:**
+// the heartbeat it reads back is validated as a heartbeat (its shape) but its
+// **tag is not verified** before its claim is believed — the plan's §7 loop goes
+// straight from the ETag read to `takeLease`, and the verification function is
+// mac.go's (T2). So a heartbeat whose stamp is forged — backdated by at least
+// `ttl − MaxClockSkew`, which reads as stale — lets a second consumer take the
+// mailbox over by CAS **while the first holder is still inside its
+// `claim.at + ttl − MaxClockSkew` action window**, and two consumers can act on
+// one message. The CAS does not help here: the forgery is a deliberate handover,
+// not a race it can refuse.
+//
+// What bounds it is the credential, not the tag (C0 and the plan's §15 decision
+// 1): this writer runs on the operator's ADC, which the store does not hold to
+// the mailbox's `.write` claims or `.validate` lists at all, so **whoever can
+// forge a heartbeat can already write the mailbox outright** — the tag adds no
+// privilege to them. Verifying the tag first (T2's function, wired into T6.7's
+// loop) is what closes it, and it is listed in the pull request rather than
+// fixed here, because fixing it would take a task this one is not.
 package mailbox
 
 import (
@@ -447,9 +457,10 @@ const (
 	// LeaseTakenOver: the lease was stale (or absent) and this consumer now
 	// holds it.
 	LeaseTakenOver LeaseVerdict = "taken-over"
-	// LeaseLost: someone else holds it, the store refused the write, or the
-	// re-read no longer found this consumer's claim — either way this consumer
-	// writes nothing and acts on nothing until the next take.
+	// LeaseLost: someone else holds it, the store refused the write, the
+	// re-read no longer found this consumer's claim, or the heartbeat is gone —
+	// either way this consumer writes nothing and acts on nothing until the
+	// next take.
 	LeaseLost LeaseVerdict = "lost"
 	// LeaseNone: no lease was taken because no heartbeat is written
 	// (`--no-heartbeat`), so nothing may be acted on.
@@ -461,12 +472,18 @@ type LeaseRun struct {
 	Verdict LeaseVerdict
 	// Lease is the claim this run is about: the one this consumer now holds
 	// when the verdict is held or taken-over, and the one it found — the other
-	// holder's — when the verdict is lost. It is nil only for LeaseNone.
+	// holder's — when the verdict is lost. It is **nil** when the run has no
+	// claim at all: for LeaseNone, and for a lost run over a heartbeat that is
+	// absent, where nobody holds the mailbox and there is no claim to name. A
+	// caller must read Holder, not Lease.Holder, to ask who holds the mailbox.
 	Lease *Lease
-	// Holder names whoever holds the mailbox when the verdict is lost.
+	// Holder names whoever holds the mailbox when the verdict is lost. It is
+	// empty exactly when Lease is nil (LeaseNone, or a lost run over an absent
+	// heartbeat): nobody holds the mailbox.
 	Holder string
 	// ExpiresAt is the instant the claim stops being fresh: `at + ttl`. It is
-	// the module's arithmetic, not a deadline this package watches.
+	// the module's arithmetic, not a deadline this package watches, and it is
+	// zero exactly when Lease is nil.
 	ExpiresAt int64
 	// Attempts is how many compare-and-swap attempts the run spent, so a caller
 	// can see the retry stayed inside its bound.
@@ -637,6 +654,9 @@ func Confirm(ctx context.Context, store HeartbeatStore, opts LeaseOptions) (Leas
 	}
 	if claim == nil || claim.Holder != opts.Holder {
 		if claim == nil {
+			// The heartbeat is gone: nobody holds the mailbox, so there is no
+			// claim to name — and no holder, which is the one shape a lost run
+			// has that lostRun's does not (see LeaseRun).
 			return LeaseRun{Verdict: LeaseLost, Attempts: 1}, nil
 		}
 		return lostRun(*claim, ttl, 1), nil

@@ -514,6 +514,7 @@ func TestTwoConsumersOneLease(t *testing.T) {
 	if winnerRun.Verdict != LeaseHeld {
 		t.Fatalf("the winner holds %q, not held: %+v", winnerRun.Verdict, winnerRun)
 	}
+	leaseRunIsSound(t, winnerRun, ClaimTTL, "the winner's take")
 	if loserOutcome.err != nil {
 		t.Fatalf("the loser's take ended in an error rather than a lost race: %v", loserOutcome.err)
 	}
@@ -523,6 +524,7 @@ func TestTwoConsumersOneLease(t *testing.T) {
 	if loserOutcome.run.Holder != leaseHolder {
 		t.Errorf("the loser is told the mailbox is held by %q, not by %q", loserOutcome.run.Holder, leaseHolder)
 	}
+	leaseRunIsSound(t, loserOutcome.run, ClaimTTL, "the loser's take")
 
 	// The loser's take said `ok` — its write was attempted — and the store
 	// refused it: that refusal is the fence.
@@ -557,6 +559,7 @@ func TestTwoConsumersOneLease(t *testing.T) {
 	if again.Verdict != LeaseLost || again.Holder != leaseHolder {
 		t.Errorf("the loser's second take holds the mailbox anyway: %+v", again)
 	}
+	leaseRunIsSound(t, again, ClaimTTL, "the loser's second take")
 	if loser.puts != 1 {
 		t.Errorf("the loser wrote %d times in total; a fresh lease it does not hold is never written", loser.puts)
 	}
@@ -641,6 +644,7 @@ func TestLeaseSkewBoundariesOverTheStore(t *testing.T) {
 			if run.Verdict != tc.verdict {
 				t.Fatalf("the take answered %q; this lease should be %q", run.Verdict, tc.verdict)
 			}
+			leaseRunIsSound(t, run, ClaimTTL, tc.name)
 			value := object(t, f.Value(path), "the heartbeat")
 			switch tc.verdict {
 			case LeaseLost:
@@ -730,6 +734,91 @@ func TestLeaseConfirmBeforeActingPastTheBound(t *testing.T) {
 	if stale.Verdict != LeaseLost {
 		t.Errorf("a stale claim of our own answered %q, and past its TTL it is not the holder's to act on", stale.Verdict)
 	}
+	leaseRunIsSound(t, stale, ClaimTTL, "the re-read of a stale claim")
+}
+
+// TestLeaseConfirmOnAGoneHeartbeatNamesNoHolder is the one lost run with no
+// claim behind it: the heartbeat a holder was relying on has been deleted (the
+// sweeper, or a hand), and the re-read finds nobody holding the mailbox. The run
+// answers lost with **no lease and no holder**, and this test is what pins that:
+// a caller that reads the doc and reaches for `run.Lease.Holder` on a lost run
+// must not be dereferencing nil. The invariant holds for every run this package
+// answers, and leaseRunIsSound checks it here.
+func TestLeaseConfirmOnAGoneHeartbeatNamesNoHolder(t *testing.T) {
+	f := gcpfake.NewRTDB(t)
+	path, _ := HeartbeatPath(leaseMailbox)
+	f.Set(path, map[string]any{
+		"at":   leaseAt,
+		"boot": leaseHolder,
+		"mac":  mustSign(t, leaseOptions(leaseHolder, leaseAt)),
+	})
+	store := &countingStore{inner: leaseClient(t, f)}
+
+	held, err := Confirm(context.Background(), store, leaseOptions(leaseHolder, leaseAt+1))
+	if err != nil {
+		t.Fatalf("the re-read before the deletion: %v", err)
+	}
+	if held.Verdict != LeaseHeld {
+		t.Fatalf("the re-read before the deletion answered %q, not held", held.Verdict)
+	}
+	leaseRunIsSound(t, held, ClaimTTL, "the re-read before the deletion")
+
+	f.Set(path, nil) // the heartbeat is gone
+	gone, err := Confirm(context.Background(), store, leaseOptions(leaseHolder, leaseAt+2))
+	if err != nil {
+		t.Fatalf("the re-read after the deletion: %v", err)
+	}
+	if gone.Verdict != LeaseLost {
+		t.Errorf("a re-read of a deleted heartbeat answered %q, and nobody holds the mailbox", gone.Verdict)
+	}
+	if gone.Lease != nil || gone.Holder != "" || gone.ExpiresAt != 0 {
+		t.Errorf("the run over a deleted heartbeat is %+v: it must carry no claim and no holder, so a caller cannot be handed a nil claim as if it named someone", gone)
+	}
+	if gone.Attempts != 1 {
+		t.Errorf("the re-read spent %d attempts, not one read", gone.Attempts)
+	}
+	leaseRunIsSound(t, gone, ClaimTTL, "the re-read after the deletion")
+
+	// And taking it over is what happens next: nobody holds it, so the next
+	// take succeeds.
+	taken, err := Take(context.Background(), store, leaseOptions(leaseHolder, leaseAt+3))
+	if err != nil {
+		t.Fatalf("the take after the deletion: %v", err)
+	}
+	if taken.Verdict != LeaseHeld {
+		t.Errorf("the take after the deletion answered %q, not held", taken.Verdict)
+	}
+	leaseRunIsSound(t, taken, ClaimTTL, "the take after the deletion")
+}
+
+// leaseRunIsSound checks the invariants LeaseRun's own doc promises, so a caller
+// that reads the doc is not surprised by a run: a nil Lease comes with an empty
+// Holder and a zero ExpiresAt, a run that carries a claim names that claim's
+// holder and expires with it, and only the verdicts that hold a lease carry one.
+func leaseRunIsSound(t *testing.T, run LeaseRun, ttl int64, where string) {
+	t.Helper()
+	switch run.Verdict {
+	case LeaseNone:
+		if run.Lease != nil {
+			t.Errorf("%s: the no-lease verdict carries the claim %+v", where, run.Lease)
+		}
+	case LeaseHeld, LeaseTakenOver:
+		if run.Lease == nil {
+			t.Errorf("%s: %q carries no claim", where, run.Verdict)
+		}
+	}
+	if run.Lease == nil {
+		if run.Holder != "" || run.ExpiresAt != 0 {
+			t.Errorf("%s: a run with no claim names the holder %q and expires at %d", where, run.Holder, run.ExpiresAt)
+		}
+		return
+	}
+	if run.Holder != run.Lease.Holder {
+		t.Errorf("%s: the run names %q and its claim names %q", where, run.Holder, run.Lease.Holder)
+	}
+	if run.ExpiresAt != run.Lease.At+ttl {
+		t.Errorf("%s: the run expires at %d and its claim at %d plus the TTL is %d", where, run.ExpiresAt, run.Lease.At, run.Lease.At+ttl)
+	}
 }
 
 // TestLeaseNoHeartbeatTakesNoLease: `--no-heartbeat` takes no lease and writes
@@ -754,6 +843,7 @@ func TestLeaseNoHeartbeatTakesNoLease(t *testing.T) {
 		if run.Verdict != LeaseNone || run.Lease != nil || run.Attempts != 0 {
 			t.Errorf("%s with --no-heartbeat answered %+v, not the no-lease verdict", tc.name, run)
 		}
+		leaseRunIsSound(t, run, ClaimTTL, tc.name+" with --no-heartbeat")
 	}
 }
 
