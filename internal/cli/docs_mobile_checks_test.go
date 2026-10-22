@@ -368,7 +368,8 @@ func TestDocsMobileChecklistHasChecks100To104(t *testing.T) {
 				"**custom tokens only**",
 				"The web API key is public, so only custom tokens signed by Fugaro's signer may work",
 				"`PAIRING`",
-				"config/pairing/$UID/request",
+				"config/pairing/<the p~ uid>/request",
+				"`PUBKEY`",
 				"**FACT:**",
 				"**Passes when:**",
 				"**Fails when:**",
@@ -385,6 +386,9 @@ func TestDocsMobileChecklistHasChecks100To104(t *testing.T) {
 			wants: []string{
 				"NOT RUN",
 				"`fugaro pair revoke`",
+				"`$DEV`",
+				"`$OLD`",
+				"never `$UID`",
 				"deletes the **node first**",
 				"denied",
 				rules.PathDevices,
@@ -405,6 +409,8 @@ func TestDocsMobileChecklistHasChecks100To104(t *testing.T) {
 				"**recognition rate**",
 				"airplane mode",
 				"**false-accept count**",
+				"**recognised over W**",
+				"N − W",
 				"near miss",
 				"Check 85",
 				"**FACT:**",
@@ -429,6 +435,8 @@ func TestDocsMobileChecklistHasChecks100To104(t *testing.T) {
 				"**A replayed confirm.**",
 				"**A confirm for another target.**",
 				"branch protection",
+				"D169",
+				"§3.1",
 				"**FACT:**",
 				"**Passes when:**",
 				"**Fails when:**",
@@ -447,6 +455,7 @@ func TestDocsMobileChecklistHasChecks100To104(t *testing.T) {
 				"stale",
 				"action record",
 				"delivered late",
+				"mailbox/$MB/outbox.json",
 				"**FACT:**",
 				"**Passes when:**",
 				"**Fails when:**",
@@ -541,6 +550,130 @@ func TestDocsMobileChecklistHasChecks100To104(t *testing.T) {
 	for _, want := range []string{"func refusePublicSignUp(", "The web API key is public, so only custom tokens signed by Fugaro's signer may work"} {
 		if !strings.Contains(firebase, want) {
 			t.Errorf("internal/cli/init_firebase.go does not carry %q, which check 100 quotes for the sign-in half of the amendment: sign-in is custom tokens only, and this refusal is the code that makes that true", want)
+		}
+	}
+}
+
+// TestDocsMobileChecks100To104ReadTheIdsTheySet: the three defects the review of
+// this task found were all the same one -- a command block reading a variable
+// nothing in the check sets. Check 101's two reads of the device node were
+// written `config/admin/devices/$UID.json`, and bash defines `UID` as the
+// caller's numeric user id, so both negatives (the node absent after the
+// revocation, the Auth user absent after the delete) would have read node 1000
+// and recorded a false PASS on a check whose whole subject is revocation; step
+// 3 read `$OLD`, the ID token captured in step 2, which no block set; and check
+// 104's step 1 wrote the mailbox URL with `$MB` -- under `set -u` the block
+// aborted at its first use, and pasted on its own it read `mailbox//outbox.json`
+// (a null read) and left steps 2-4 recording nothing. Check 81 already carries
+// this pin for its own ids (TestDocsCheck81StepsNameTheIdsTheyInherit,
+// docs_mobile_checks_review_test.go): a step that reads an id set by another
+// step names it in its prerequisite header as "`$ID` from step N", which is
+// also why re-running a guard never clears it.
+//
+// Read here over all five: a variable a step's block reads has to be * assigned
+// in the same block, or * assigned by the check's own guard block (which is
+// re-run before every step), or * one of the values check 81's guard resolves
+// for the register (`$DB`, `$KEY`, `$FP` -- every one of these five says so in
+// its preamble) or the shell's own (`$HOME`). Anything else fails. Neither
+// `UID` nor `USER` is on that list, deliberately: they are the caller's, not the
+// device's, and treating them as resolved is exactly the false PASS this pin
+// exists to prevent.
+func TestDocsMobileChecks100To104ReadTheIdsTheySet(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+
+	// Values the register resolves elsewhere, plus the shell's own.
+	resolved := map[string]bool{
+		"DB": true, "KEY": true, "FP": true, // check 81's guard block, named in each preamble
+		"HOME": true, "PATH": true, "TMPDIR": true,
+	}
+	stepRE := regexp.MustCompile(`(?m)^(\d+)\. \*\*`)
+	fenceRE := regexp.MustCompile("(?s)```[a-z]*\n(.*?)```")
+	assignRE := regexp.MustCompile(`(?m)^[ \t]*(?:export[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)=`)
+	readRE := regexp.MustCompile(`\$\{?([A-Za-z_][A-Za-z0-9_]*)`)
+	// A comment is not a command. The blocks in these five warn against the very
+	// names this test is about, in comments -- check 101's step 1 says "this, not
+	// $UID, is the account in question", check 104's says "the mailbox's $mb" --
+	// and a comment cannot abort under `set -u` or read an empty string, so
+	// nothing after a `#` that starts a word is read here.
+	stripComments := func(s string) string {
+		var out []string
+		for _, line := range strings.Split(s, "\n") {
+			if i := strings.Index(line, "#"); i == 0 || (i > 0 && (line[i-1] == ' ' || line[i-1] == '\t')) {
+				line = line[:i]
+			}
+			out = append(out, line)
+		}
+		return strings.Join(out, "\n")
+	}
+
+	for _, n := range []string{"100", "101", "102", "103", "104"} {
+		section := docSection(t, path, doc, "## Check "+n+":")
+		at := stepRE.FindAllStringSubmatchIndex(section, -1)
+		if len(at) < 2 {
+			t.Fatalf("## Check %s: carries %d numbered steps, so this test cannot read a step's header and its block", n, len(at))
+		}
+		type step struct{ n, header, cmds string }
+		var steps []step
+		for i, loc := range at {
+			end := len(section)
+			if i+1 < len(at) {
+				end = at[i+1][0]
+			}
+			text := section[loc[0]:end]
+			header, _, _ := strings.Cut(text, "\n")
+			var b strings.Builder
+			for _, m := range fenceRE.FindAllStringSubmatch(text, -1) {
+				b.WriteString(m[1])
+			}
+			steps = append(steps, step{n: section[loc[2]:loc[3]], header: header, cmds: stripComments(b.String())})
+		}
+		// The ids each step's own block assigns, and the check's guard block
+		// (every fence before the first numbered step) as a step of its own: it
+		// is re-run before every step, so it resolves an id for all of them.
+		guard := section[:at[0][0]]
+		setters := map[string]string{}
+		var guardCmds strings.Builder
+		for _, m := range fenceRE.FindAllStringSubmatch(guard, -1) {
+			guardCmds.WriteString(stripComments(m[1]))
+		}
+		for _, st := range append([]step{{n: "guard", cmds: guardCmds.String()}}, steps...) {
+			for _, m := range assignRE.FindAllStringSubmatch(st.cmds, -1) {
+				if _, seen := setters[m[1]]; !seen {
+					setters[m[1]] = st.n
+				}
+			}
+		}
+		guardSet := map[string]bool{}
+		for _, m := range assignRE.FindAllStringSubmatch(guardCmds.String(), -1) {
+			guardSet[m[1]] = true
+		}
+		if len(guardSet) == 0 {
+			t.Fatalf("## Check %s: the guard block assigns nothing, so this test cannot tell a value the guard resolves from one nothing sets -- read the guard before changing the check", n)
+		}
+		for _, st := range steps {
+			if st.cmds == "" {
+				continue
+			}
+			own := map[string]bool{}
+			for _, m := range assignRE.FindAllStringSubmatch(st.cmds, -1) {
+				own[m[1]] = true
+			}
+			for _, m := range readRE.FindAllStringSubmatch(st.cmds, -1) {
+				id := m[1]
+				if own[id] || guardSet[id] || resolved[id] {
+					continue
+				}
+				setter, ok := setters[id]
+				if !ok {
+					t.Errorf("## Check %s step %s: a command block reads `$%s` and nothing in this check sets it -- no step assigns it, the guard block does not, and it is not one of the values check 81's guard resolves (`$DB`, `$KEY`, `$FP`) or the shell's: under `set -u` the block aborts at its first use, and pasted on its own it reads an empty string, which is how `$UID` (the caller's numeric user id, not the device's) records a false PASS and how `$MB` leaves the steps after it with nothing to look at", n, st.n, id)
+					continue
+				}
+				want := "`$" + id + "` from step " + setter
+				if !strings.Contains(st.header, want) {
+					t.Errorf("## Check %s step %s: the block reads `$%s`, which step %s sets, and the step's prerequisite header does not say %q: the header is the list an owner runs the step from, and with `set -u` on an id the block does not set the step aborts after recording the statuses above it (the model is check 81's `$MSG`/`$OUT`, held by TestDocsCheck81StepsNameTheIdsTheyInherit)", n, st.n, id, setter, want)
+				}
+			}
 		}
 	}
 }
