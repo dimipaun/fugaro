@@ -942,13 +942,17 @@ export function zoomSectionOf(html) {
  * What a screen reader would get wrong about the four levels, as the lines a reader sees: a
  * marker with no name (a list of numbers with no subject), a marker that points somewhere other
  * than the level it names, a marker a keyboard cannot reach, a level with no name of its own, a
- * level hidden from assistive technology, and a level announced as one image.
+ * level hidden from assistive technology, and a level that is not one named image.
  *
- * **Why a level is not one image** (the brief's "role=img with an aria-label only where a level
- * is a single picture"): these four levels are lists of labelled parts — each one draws the
- * repository's own words beside its shapes — so the words are the telling. A drawing that
- * announced itself as one picture would be read out once by its name and never by its labels,
- * which is the run diagram's rule read the other way round for a drawing that is not one image.
+ * **Why a level is one image** (the owner's brief of 2026-10-22, recorded in
+ * `docs/website/zoom-diagrams/reconciliation.md` §13: each level carries a `<title>`, a `<desc>`
+ * and `role="img"`, and the decorative parts are `aria-hidden`). A level is drawn from a board and
+ * is a picture of a system: the boards
+ * label their parts, and the parts are not a sentence read in markup order. So the drawing is
+ * announced once, by its `<title>`, with its `<desc>` as the telling — the paragraph under the
+ * board and the caption beside it are the page's own text and stay readable in their own right.
+ * A level with no name, no `<title>` or no `<desc>` is a picture a screen reader announces as
+ * nothing, which is what this reading refuses.
  *
  * The rest of the page's contract is not this reading's: one `<h1>`, named landmarks, no positive
  * `tabindex` and the palette's contrast are held for every built page by `pageA11yFailures`
@@ -1001,16 +1005,24 @@ export function zoomA11yFailures(html) {
       out.push(`the zoom section's level ${JSON.stringify(id)} is hidden from assistive technology (aria-hidden="true" on it or on something above it), and the four levels are the section's subject: a reader given none of them has been given nothing`)
     }
     for (const drawing of [...walk(figure)].filter((el) => el.name === 'svg')) {
-      const role = drawing.attrs.get('role') ?? ''
-      const label = (drawing.attrs.get('aria-label') ?? '').trim()
-      const words = [...walk(drawing)].filter((el) => el.name === 'text').length
-      if (role !== 'img') continue
-      if (label === '') {
-        out.push(`the zoom section's level ${JSON.stringify(id)} draws an \`<svg role="img">\` with no name, and a picture with no name is a picture a screen reader announces as nothing`)
-        continue
+      const byId = new Map(findAll(drawing, (el) => el.attrs.has('id')).map((el) => [el.attrs.get('id'), el]))
+      const role = (drawing.attrs.get('role') ?? '').trim()
+      const title = drawing.children.filter((el) => el.name === 'title').map((el) => textOf(el).trim()).join(' ').trim()
+      const desc = drawing.children.filter((el) => el.name === 'desc').map((el) => textOf(el).trim()).join(' ').trim()
+      if (hiddenFromAT(drawing)) {
+        out.push(`the zoom section's level ${JSON.stringify(id)} hides its drawing from assistive technology (aria-hidden="true" on the \`<svg>\` or on something above it), and the drawing is the level: a reader given neither the picture nor its name has been given nothing`)
       }
-      if (words > 0) {
-        out.push(`the zoom section's level ${JSON.stringify(id)} is announced as one image (\`role="img"\` with an aria-label) and carries ${words} <text> labels: a level is a list of labelled parts, so its words are the telling — a reader told the picture's name is never told the parts (the brief's "role=img only where a level is a single picture")`)
+      if (role !== 'img') {
+        out.push(`the zoom section's level ${JSON.stringify(id)} draws an \`<svg role=${JSON.stringify(role)}>\`, and a level is one image with a name: a drawing a screen reader is not told is a picture is every one of its \`<text>\` nodes read out in markup order, and the boards' labels are not a sentence (the brief of 2026-10-22)`)
+      }
+      if (title === '') {
+        out.push(`the zoom section's level ${JSON.stringify(id)} draws no \`<title>\`, and a level is named by one: the title is what a screen reader reads where the picture is (the brief of 2026-10-22)`)
+      }
+      if (desc === '') {
+        out.push(`the zoom section's level ${JSON.stringify(id)} draws no \`<desc>\`, and a level is one image whose parts are told by one: a reader who cannot see the drawing is given the description or nothing (the brief of 2026-10-22)`)
+      }
+      if (nameOf(drawing, byId) === '' && title === '') {
+        out.push(`the zoom section's level ${JSON.stringify(id)} draws a picture with no name — no aria-label, no aria-labelledby that resolves inside the drawing, and no \`<title>\` — and a picture with no name is a picture a screen reader announces as nothing`)
       }
     }
   })
@@ -1183,7 +1195,7 @@ test('motion gated on no-preference, or neutralised by its own reduce rule, pass
   assert.deepEqual(motionFailures(bare + '.t{animation:spin 1s}@media (prefers-reduced-motion:reduce){.t{animation:none}}'), [])
 })
 
-test('the four levels are four named anchors a keyboard reaches in order, and no level is one image', () => {
+test('the four levels are four named anchors a keyboard reaches in order, and every level is one named picture', () => {
   const page = builtPages().find((entry) => entry.rel === 'how-it-works/index.html')
   assert.ok(page, 'the built site has no How It Works page, and the four levels are a section of it (D237)')
   const failures = zoomA11yFailures(page.html)
@@ -1216,11 +1228,25 @@ test('the four levels are four named anchors a keyboard reaches in order, and no
   const wrongHref = page.html.replace('href="#level-2"', 'href="#level-3"')
   assert.match(verdict(wrongHref).join(' | '), /points at "#level-3" and the level beside it is `#level-2`/, 'the reading passes a marker that points at another level')
 
-  const imageless = page.html.replace(/<svg class="zoom-svg"[^>]*>/, (tag) => `${tag.slice(0, -1)} role="img" aria-label="a level">`)
-  assert.notEqual(imageless, page.html, 'the built page carries no level <svg> of the shape the plant below rewrites')
-  assert.match(verdict(imageless).join(' | '), /announced as one image/, 'the reading passes a level announced as one image, and a level is a list of labelled parts')
+  const roleless = page.html.replace(' role="img" aria-labelledby="level-1-title"', '')
+  assert.notEqual(roleless, page.html, 'the built page carries no level <svg> of the shape the plant below rewrites')
+  const rolelessFailures = verdict(roleless)
+  assert.equal(rolelessFailures.length, 1, `a level drawn as anything but one image is refused ${rolelessFailures.length} times: ${rolelessFailures.join(' | ')}`)
+  assert.match(rolelessFailures[0], /is one image with a name/, 'the reading passes a level that is not announced as one image')
 
-  const numberOnly = page.html.replace(/ aria-label="Level 1 — Inside a cloud job"/, '')
+  const untitled = page.html.replace('<title id="level-1-title">Inside one job</title>', '')
+  assert.notEqual(untitled, page.html, 'the built page carries no level <title>, and the plant below takes it off')
+  const untitledFailures = verdict(untitled)
+  assert.match(untitledFailures.join(' | '), /draws no `<title>`/, 'the reading passes a level with no <title>')
+  assert.match(untitledFailures.join(' | '), /draws a picture with no name/, 'the reading passes a level whose aria-labelledby resolves to nothing')
+
+  const undescribed = page.html.replace('<desc>Level 1 of 4. One run is one ephemeral cloud job.</desc>', '')
+  assert.notEqual(undescribed, page.html, 'the built page carries no level <desc>, and the plant below takes it off')
+  const undescribedFailures = verdict(undescribed)
+  assert.equal(undescribedFailures.length, 1, `a level with no <desc> is refused ${undescribedFailures.length} times: ${undescribedFailures.join(' | ')}`)
+  assert.match(undescribedFailures[0], /draws no `<desc>`/, 'the reading passes a level whose parts are told by nothing')
+
+  const numberOnly = page.html.replace(/ aria-label="Level 1 — Inside one job"/, '')
   assert.notEqual(numberOnly, page.html, 'the built page carries no named first marker, and the plant below takes the name off it')
   assert.match(verdict(numberOnly).join(' | '), /is named "1", and a marker's name says which level it jumps to/, 'the reading passes a marker a screen reader reads as "1"')
 
@@ -1235,13 +1261,9 @@ test('the four levels are four named anchors a keyboard reaches in order, and no
   assert.notEqual(tabbed, page.html, 'the built page carries no first marker of the shape the plant below rewrites')
   assert.match(verdict(tabbed).join(' | '), /carries `tabindex="1"`/, 'the reading passes a positive tabindex on a marker')
 
-  const unnamedLevel = page.html.replace(/<figcaption class="zoom-caption"[^>]*>(?:(?!<\/figcaption>).)*Inside a cloud job(?:(?!<\/figcaption>).)*<\/figcaption>/, '')
+  const unnamedLevel = page.html.replace(/<figcaption class="zoom-caption"[^>]*>(?:(?!<\/figcaption>).)*Inside one job(?:(?!<\/figcaption>).)*<\/figcaption>/, '')
   assert.notEqual(unnamedLevel, page.html, 'the built page carries no figure caption of the shape the plant below rewrites')
   assert.match(verdict(unnamedLevel).join(' | '), /carries 0 <figcaption>s, and every level is named by one/, 'the reading passes a level with no <figcaption>')
-
-  const unnamedPicture = imageless.replace(' aria-label="a level"', '')
-  assert.notEqual(unnamedPicture, imageless, 'the planted picture above carries no name, and the plant below takes it off')
-  assert.match(verdict(unnamedPicture).join(' | '), /draws an `<svg role="img">` with no name/, 'the reading passes an unnamed picture')
 
   const strayId = page.html.replace('<figure class="zoom-figure" id="level-3"', '<figure class="zoom-figure" id="step-3"')
   assert.notEqual(strayId, page.html, 'the built page carries no third level of the shape the plant below rewrites')

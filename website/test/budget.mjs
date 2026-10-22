@@ -1056,8 +1056,16 @@ test('the word reader counts what a reader reads, and nothing else', (t) => {
  * above it is 600. D188's own rule is what moves it and not convenience: the number is the
  * ceiling above the page that carries the required blocks, and a page that wants the room has
  * to carry one. website/README.md records every reading beside the words line.
+ *
+ * **900 since the 2026-10-22 brief**, which replaces the four zoom levels with the owner's four
+ * approved design boards (`website/design-ref/zoom-levels/level1.dc.html` … `level4.dc.html`)
+ * redrawn as the site's inline SVG: a board's labels are strings the drawing renders, and a
+ * string the drawing renders is text a reader reads, so the four levels' labels are words on How
+ * It Works the way the slider's `alt` texts are words on the homepage. The page goes 492 → **868
+ * words** — the boards' own labels, word for word, which is the whole of what the brief asks it
+ * to draw — and the smallest round ceiling above it is 900.
  */
-export const D188_WORDS = 600
+export const D188_WORDS = 900
 
 /** The one page the words ceiling is derived from, by its built URL. */
 const WORDS_CEILING_PAGE = '/privacy/'
