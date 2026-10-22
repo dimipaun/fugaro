@@ -249,7 +249,7 @@ const CloudAssetRole = "fugaroCloudAssetReader"
 // so it is its own kind of principal (toDeployer).
 var (
 	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole}
-	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
+	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload", "fugaro-credentials"}
 )
 
 // The deployer account of D75, and the condition that fences the half of it
@@ -1837,7 +1837,8 @@ func (c Cover) attributes(rc ResourceChange, creates, createdSAIDs, heldSAIDs ma
 		//     module does not write under init's one confirmation (the same
 		//     check the job case makes, with the module's pair rather than a
 		//     table of them);
-		//   - the environment is the module's three names, with literal values
+		//   - the environment is the module's own names (credentialsServiceEnv),
+		//     with literal values
 		//     and no value_source: an environment is the one path a credential
 		//     could reach this process without a Secret Manager read, and a
 		//     value_source on an allow-listed name is that read (independent
@@ -1847,8 +1848,8 @@ func (c Cover) attributes(rc ResourceChange, creates, createdSAIDs, heldSAIDs ma
 		//     nesting mode as an empty list rather than omitting it: every env
 		//     entry of a plan the module writes carries `"value_source": []`
 		//     (testdata/golden/*.plan.json), so a test on the key alone refuses
-		//     the module's own three literals; the check below reads the
-		//     contents, and the row pinned to that shape fails if it does not;
+		//     the module's own literals; the check below reads the contents,
+		//     and the row pinned to that shape fails if it does not;
 		//   - the account it runs as is the plan's own
 		//     google_service_account.credentials[0] — that resource, and not
 		//     any other account of the module: credentials.tf writes that

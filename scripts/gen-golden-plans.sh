@@ -62,8 +62,14 @@ golden=$repo/internal/infra/tf/testdata/golden
 # already deploys; installation-managed is the installation root with
 # managed_deployer_scoped set: the managed deployer's scoped role and its
 # conditioned binding, which are off by default (0.8.6) and so absent from
-# installation.plan.json, are still planned and covered there.
-for pair in installation:installation installation-accounts:installation installation-managed:installation repo:repo firebase:firebase firebase-same-project:firebase; do
+# installation.plan.json, are still planned and covered there;
+# installation-credentials is the installation root with the credentials
+# service ON, so the service, its account, its one bundle container and its
+# one accessor grant are planned and covered, and its SEVEN environment
+# variables are read off a real plan (C1.14: the module's own names and
+# nothing else — TestGoldenCredentialsServiceCarriesItsSevenNames reads the
+# values back against the fixture).
+for pair in installation:installation installation-accounts:installation installation-managed:installation installation-credentials:installation repo:repo firebase:firebase firebase-same-project:firebase; do
   r=${pair%%:*}
   root=${pair##*:}
   (
@@ -73,6 +79,7 @@ for pair in installation:installation installation-accounts:installation install
       installation) cp "$repo/internal/infra/testdata/installation-budget-job.tfvars.json" terraform.tfvars.json ;;
       installation-accounts) cp "$repo/internal/infra/testdata/installation-accounts.tfvars.json" terraform.tfvars.json ;;
       installation-managed) jq '. + {managed_deployer_scoped: true}' "$repo/internal/infra/testdata/installation-budget-job.tfvars.json" > terraform.tfvars.json ;;
+      installation-credentials) cp "$repo/internal/infra/testdata/installation-credentials.tfvars.json" terraform.tfvars.json ;;
     esac
     sed -i.bak '/backend "gcs" {}/d' main.tf
     "${tfenv[@]}" terraform init -backend=false >/dev/null
