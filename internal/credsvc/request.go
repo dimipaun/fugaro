@@ -42,7 +42,11 @@ const requestPinWhere = "the project's model allow-list"
 //
 // It is the gateway's function and not a copy of it — the whole point of the
 // export — so a rule that changes for the gateway changes here, and a body the
-// gateway would forward is a body this service forwards.
+// gateway would forward to the same upstream under the same pin is a body this
+// service forwards. The pin is where the two part company: a body the gateway
+// forwards to a *provider route* (a model the stage's pins admit only through
+// the routing switch) is refused here as unpinned, because this service's pin
+// is the project's allow-list and its routes are nil — see below.
 //
 // The routes are nil, so the two rules that are about a *provider route* — the
 // variant suffix that changes a route's routing and price, and the foreign
@@ -95,8 +99,17 @@ func requestPin(p *projectpolicy.Policy) gateway.RequestPin {
 //
 // It is the table a run's own gateway prices and bounds a call by, which is
 // what makes this service's "max_tokens is above the model's maximum" the same
-// refusal the run would have got: the overrides are the owner's, and a model
-// they price is bounded by their limits rather than by the table's defaults.
+// refusal the run would have got — for a model the embedded catalogue knows,
+// which is the ordinary case: the overrides are the owner's, and a model they
+// price is priced by their rates here as it is there.
+//
+// The one place it is not the same table: pricing.Overrides carries rates only
+// (pricing.Rates), so a model the project prices that the embedded catalogue
+// does not have lands here on a rate-only row with no output maximum, and this
+// service bounds it by pricing.DefaultMaxOutputTokens. A run's table is built
+// with the catalogue, so it bounds that same model by the catalogue's own
+// limit. The bound here can therefore be the looser of the two, and a
+// max_tokens the run would have refused can be forwarded by this service.
 func requestPriceTable(p *projectpolicy.Policy, now time.Time) (*pricing.Table, error) {
 	var overrides pricing.Overrides
 	if p != nil && len(p.Prices) > 0 {

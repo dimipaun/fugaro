@@ -411,8 +411,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if refusal != "" {
 			// The gateway's own sentence, and the one thing this service's
 			// answer adds to it: the refusal happened before any credential was
-			// read. Nothing of the request's own text is echoed back and no
-			// credential value is anywhere in it — none was touched.
+			// read. The sentence does quote the request's own model ID and the
+			// tool type or field it objects to — that is what makes it
+			// actionable — but no credential value is anywhere in it: none was
+			// touched.
 			s.refuse(w, StatusRequestRefused, ErrorRequestRefused, requestRefused+refusal)
 			return
 		}

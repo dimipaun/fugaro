@@ -264,3 +264,74 @@ func TestServiceWithNoAllowListPinsNoModel(t *testing.T) {
 		t.Fatalf("the call is answered %d, want 200: %s", resp.StatusCode, body)
 	}
 }
+
+// TestServiceWithoutAnAllowListStillRefusesAShape: no allow-list means no
+// *model* rule, and nothing more — the server-tool refusal, the shape refusal
+// and the model's own max_tokens bound apply either way (request.go). That is
+// the case that matters most, because a project that publishes no allow-list is
+// the default, and for it this check is the only control between an agent
+// holding the job's own ID token and a credential.
+//
+// The sentences are the exported check's own, asked for the same bodies with an
+// empty pin, so a service that skipped the rest of the check along with the
+// model rule would answer something this test does not accept. The upstream and
+// the bundle are asserted untouched for the same reason as in the pinned cases.
+//
+// Mutation (run, restore): make requestRefusal return "" when the pin names no
+// model — the hole this file exists to close, for the projects where the check
+// is the only control — and every subtest here is red while the rest of this
+// file stays green.
+func TestServiceWithoutAnAllowListStillRefusesAShape(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "a server tool",
+			body: `{"model":"` + testModel + `","max_tokens":16,"messages":[{"role":"user","content":"hi"}],` +
+				`"tools":[{"type":"web_search_20260209","name":"web_search"}]}`,
+		},
+		{
+			name: "a shape the budget cannot bound",
+			body: `{"model":"` + testModel + `","max_tokens":16,"messages":[{"role":"user","content":"hi"}],` +
+				`"mcp_servers":[{"type":"url","url":"https://mcp.example.invalid","name":"mcp"}]}`,
+		},
+	}
+	s := newSvc(t)
+	p, found, err := s.policy.Shared(context.Background())
+	if err != nil || !found {
+		t.Fatalf("the fixture's own policy could not be read: %v, %v", found, err)
+	}
+	if p.Budget.AllowedModels != nil {
+		t.Fatalf("the fixture's policy carries an allow-list (%v): this test needs one that does not", p.Budget.AllowedModels)
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			want, err := gateway.RequestRefusal([]byte(tc.body), "", gateway.RequestPin{}, pricing.Embedded(), nil)
+			if err != nil {
+				t.Fatalf("the gateway cannot read the test's own body: %v", err)
+			}
+			if want == "" {
+				t.Fatal("the gateway accepts the test's own body: this case tests nothing")
+			}
+			before := s.up.Count()
+			resp, body := s.call(t, tc.body)
+			if resp.StatusCode != StatusRequestRefused {
+				t.Fatalf("the call is answered %d, want %d: %s", resp.StatusCode, StatusRequestRefused, body)
+			}
+			e := refusal(t, resp.StatusCode, body)
+			if e.Error != ErrorRequestRefused {
+				t.Errorf("the refusal's type is %q, want %q", e.Error, ErrorRequestRefused)
+			}
+			if !strings.Contains(e.Message, want) {
+				t.Errorf("the refusal is %q, want the gateway's own sentence %q in it", e.Message, want)
+			}
+			if n := s.up.Count(); n != before {
+				t.Errorf("the upstream saw %d requests, want the %d it had: a refused call is not forwarded", n, before)
+			}
+			if n := s.src.readCount(); n != 0 {
+				t.Errorf("the bundle was read %d times, want 0: a refused request must not touch a credential", n)
+			}
+		})
+	}
+}
