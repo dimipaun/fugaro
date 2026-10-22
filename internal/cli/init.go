@@ -364,7 +364,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.StringVar(&o.alertEmail, "alert-email", "", "where failed image checks and rebuilds are reported (default: the local config's)")
 	f.BoolVar(&o.noLogIsolation, "no-log-isolation", false, "leave Fugaro job logs in _Default instead of their own log bucket")
 	f.StringVar(&o.registryCleanup, "registry-cleanup", "", "Artifact Registry cleanup: dry-run (the default), on or off")
-	f.StringVar(&o.firebase, "firebase-project", "", "build the budget backend in this Firebase project: the run's Firebase project is the installation's own --gcp-project by default (one id for both, D7), so this is the advanced flag, for a Firebase project of its own (one you created and linked to billing, or created with --create-project). It is also the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: typed in fugaro setup, covered by --yes in fugaro update) and the config")
+	f.StringVar(&o.firebase, "firebase-project", "", "build the budget backend in this Firebase project: the run's Firebase project is the installation's own --gcp-project by default (one id for both, D7), so this is the advanced flag, for a Firebase project of its own (one you created and linked to billing, or created with --create-project). It is also the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: typed where it is a first-time question, covered by --yes where the run re-converges an installation that is already there) and the config")
 	f.StringVar(&o.budgetMode, "budget-mode", "", "with --firebase-project: off, observe or enforce: the jobs' budget mode in the project config, and for observe and enforce the project-wide mode in the database (an absent one is seeded observe)")
 	f.StringArrayVar(&o.budgetAdmins, "budget-admin", nil, "with --firebase-project: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins)")
 	f.BoolVar(&o.createProject, "create-project", false, "create the GCP project --gcp-project names and add Firebase to it, as you, after you type its ID at a terminal (never with --yes, --non-interactive or --json). An ID that exists and you can read is adopted; one held by someone else is refused. Billing is not linked unless --link-billing is also given; without it "+d.name+" prints the one gcloud command that links it")
@@ -386,11 +386,22 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// is the Firestore database's location — covered in `update`, kept typed in
 	// `setup`, the door that asks for it as a first-time question. The door
 	// that takes --forget is `update`.
+	//
+	// Both doors print this one flag set, so both halves of the sentence have
+	// to be the reader's own door: a line naming the other one tells half its
+	// readers to switch commands for nothing
+	// (TestNoDoorsFlagHelpNamesTheOtherDoor).
 	covers := "a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it)"
+	never := "creating a project, linking a billing account, the Firestore database's location, or a secret value"
 	if d.takes("forget") {
 		covers = "the Firestore database's location, " + covers
+		// The location is one of this door's covered steps, so it is not in
+		// this door's never list; the two that cannot arise here at all are
+		// still true of --yes wherever they can (they are the other door's
+		// flags, refused by name here).
+		never = "creating a project, linking a billing account, or a secret value"
 	}
-	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — "+covers+" — and it never covers creating a project, linking a billing account, the Firestore database's location in fugaro setup, or a secret value: each of those is typed at a real terminal, and no door relaxes them. Under a coding agent's environment variable (CLAUDECODE and the like) "+d.name+" applies nothing, --yes included (except "+d.name+" --anchor, which only edits the checkout's fugaro.yaml and honours --yes there); that is a mitigation, not a barrier: an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint")
+	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — "+covers+" — and it never covers "+never+": each of those is typed at a real terminal, and no door relaxes them. Under a coding agent's environment variable (CLAUDECODE and the like) "+d.name+" applies nothing, --yes included (except "+d.name+" --anchor, which only edits the checkout's fugaro.yaml and honours --yes there); that is a mitigation, not a barrier: an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint")
 	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes also covers onboarding such a repository, and neither it nor this flag is honoured in a coding agent's session; any other origin takes the typed confirmation)")
 	f.BoolVar(&o.allowFork, "allow-fork", false, "let the plugin-wiring stage move the ref of a fugaro marketplace in .claude/settings.json that names a repository other than dimipaun/fugaro (a fork you host); never done otherwise")
 	// The flags --non-interactive only stops from prompting, worded for this
@@ -1507,7 +1518,20 @@ func (r *initRun) stepConfirmation(class initflow.ConfirmClass) stepConfirmation
 // confirms it" would name the one flag that does. The steps that stay Typed
 // write their own line, at their own call site, where "--yes never confirms it"
 // is true.
-const neverConfirmsBuild = "no terminal, --json, a pipe and a coding agent never confirm it, and --yes does"
+//
+// agent is the run's own reading of the coding-agent marker, and it is why this
+// is a function: a `--repo` run has no agent gate in front of the build (the
+// converge plans read-only instead, so it never prints this), so an agent's
+// session does reach the warning — and there --yes is the flag that session
+// refuses, so naming it would be a recipe for getting past the check, in text
+// the agent reads (AgentAdvice). The clause is chosen by the marker, as
+// convergeOptIn's is.
+func neverConfirmsBuild(agent bool) string {
+	if agent {
+		return "no terminal, --json, a pipe and a coding agent never confirm it"
+	}
+	return "no terminal, --json, a pipe and a coding agent never confirm it, and --yes does"
+}
 
 // askClass is the confirmation of a step that is money or permanent, of the
 // class: the project's name typed at a real terminal, or --yes for a YesOrTyped
@@ -3345,7 +3369,7 @@ func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *con
 		}
 		if !reachable {
 			r.buildsLeft = append(r.buildsLeft, name)
-			r.warn(fmt.Sprintf("the first image build of %s/%s is billable and was not confirmed: it needs the project's name typed at a real terminal ("+neverConfirmsBuild+"), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks for the project's name too), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
+			r.warn(fmt.Sprintf("the first image build of %s/%s is billable and was not confirmed: it needs the project's name typed at a real terminal ("+neverConfirmsBuild(r.conditions().Agent != "")+"), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks for the project's name too), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
 			continue
 		}
 		if !ok {
