@@ -255,7 +255,7 @@ func unknownDetail(project string, o originInfo) string {
 	case !o.standardHost():
 		d += " (host " + pluginwire.Printable(o.Host) + " is not a provider's own)"
 	}
-	return d + "; onboarding it creates cloud resources, so it needs your own opt-in (not covered by --yes), and the repository stage waits for it"
+	return d + "; onboarding it creates cloud resources, so it needs your own opt-in (not covered by --yes)"
 }
 
 // confirmRepo asks, in the terminal, for the repository typed: the one
