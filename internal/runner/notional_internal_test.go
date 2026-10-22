@@ -150,9 +150,9 @@ func TestGatewayStageCostTellsNotionalFromMoney(t *testing.T) {
 
 	// The switch log: the service's record of the move, and the gateway's
 	// estimate beside it. A tier-A call's cache is measured, so this one is a
-	// figure rather than "unmeasured" -- its size is the gateway's own, and
-	// only this run's usage can make it zero, which the answer's one input
-	// token does.
+	// figure rather than "unmeasured"; its size is the gateway's own arithmetic
+	// over the usage the second call reported, which is why the fixture reports
+	// a cached context at all.
 	if len(r.rec.Switches) != 1 {
 		t.Fatalf("the switch log is %+v, want the switch the answer carried", r.rec.Switches)
 	}

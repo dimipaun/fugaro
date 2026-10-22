@@ -478,7 +478,7 @@ func (r *run) lastWaited() int {
 // The figure is the money and the notional part together, which is what
 // record.CostUSD and cost.model_usd mean (C1.16, P12): the run's whole model
 // spend, of which cost.ModelNotionalUSD says how much was the subscription's.
-// The billed side is cost.TotalUSD, which withNotional keeps money-only --
+// The billed side is cost.TotalUSD, which WithNotional keeps money-only --
 // a cascade run's tier-A dollars are in the model figure and in no total and
 // against no cap (D140).
 func (r *run) recordGatewayStageCost(stage string, claudeUSD float64, stopped bool) {
