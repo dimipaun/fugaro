@@ -370,6 +370,28 @@ func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
 			add(at+".secret", "starts with %q: that is the beginning of an API key, not a secret's name; .secret is the NAME of the secret in Secret Manager that holds the key", keyPrefix)
 		case reservedSecretName(p.Secret):
 			add(at+".secret", "%q is a secret Fugaro already uses: give the provider key its own name", p.Secret)
+		case p.Secret == CredentialsBundleSecret:
+			// The credentials service's own bundle container (C1.11's review
+			// finding n2), refused here for the reason the other two surfaces
+			// refuse it and one more of its own. It is deliberately NOT in
+			// ReservedSecrets — nothing mounts it, and its value is not a plain
+			// secret a job's environment may carry — so the case above does not
+			// catch it, and the name is the platform's just the same: the one
+			// document in that container is every model credential the
+			// installation holds, the service is its only reader and
+			// `fugaro creds set NAME` (C1.25) its only writer.
+			//
+			// The case is not only about a confusing name. A provider's .secret
+			// resolves to a container through internal/infra's
+			// projectSecretContainers, which is gcp.ProjectSecretID of the
+			// logical name — the same derivation as gcp.CredsBundleSecretID —
+			// so this name resolves to the bundle's own container, and a job of
+			// every repository the provider allows would mount that document as
+			// the provider's key. The value cannot be written by
+			// `fugaro secrets set` (that path refuses the name), but it is
+			// written by the service's own writer, so the mount would carry
+			// every credential the installation holds.
+			add(at+".secret", "%q is the credentials service's own bundle container (the platform's): that one document holds every model credential the installation has, and no provider's key may be read from it", p.Secret)
 		case HarnessOAuthSecret(p.Secret):
 			// A harness's OAuth credential name, bare or in a named
 			// namespace: a person's subscription token belongs there
