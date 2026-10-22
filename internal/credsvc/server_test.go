@@ -105,6 +105,24 @@ func testPolicyDocAccounts(fallback, accounts string) string {
 	}`
 }
 
+// testPolicyDocAllowRepos is the same document with the project's own top-level
+// allow-list written out. It is the list `project repos rm` removes a
+// repository from — the command takes the repository out of the allow-list and
+// does not touch its child — so a test that needs the gap that command leaves
+// needs a document where the child and the accounts still name the repository
+// and the project does not.
+func testPolicyDocAllowRepos(allowRepos, accounts string) string {
+	return `{
+		"version": 3,
+		"budget": {"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": ` + allowRepos + `,
+		"accounts": {
+			` + accounts + `
+		},
+		"credentials": {"fallback": "auto"}
+	}`
+}
+
 // testPolicyDocNoCredentials is the same document with the `credentials` block
 // left out. That is a policy Decode accepts — the block is optional, and an
 // installation that writes none gets the spec's protective defaults — and it

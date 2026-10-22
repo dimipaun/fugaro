@@ -551,6 +551,45 @@ func TestServiceIgnoresAChildWiderThanTheSharedNode(t *testing.T) {
 	}
 }
 
+// TestServiceNeverGivesTierAWhenTheProjectNoLongerAdmitsTheRepository: O4's
+// admission is an intersection of three published facts, and the third is the
+// shared node's own top-level allow_repos — the leg that closes the
+// `project repos rm` gap. That command removes a repository from the
+// allow-list and does not touch its child, so a service that read the child and
+// the accounts' own allow_repos alone would keep issuing a shared token to a
+// repository the project has removed from itself.
+//
+// The child and both accounts still name this repository: the only thing that
+// has changed is the project's own list, which is exactly the state the command
+// leaves behind.
+//
+// Mutation (run, restore): drop the AdmitRepo(shared.AllowRepos, canonical)
+// check in admittedAccounts. The answer is tier A and the call carries a shared
+// token.
+func TestServiceNeverGivesTierAWhenTheProjectNoLongerAdmitsTheRepository(t *testing.T) {
+	s := newSvcWith(t, func(s *svc, _ *Config) {
+		s.policy.shared = decodeTestPolicy(t, testPolicyDocAllowRepos(`["`+testOtherRepo+`"]`,
+			`"default": {"allow_repos": ["`+testRepo+`", "`+testOtherRepo+`"]},
+			"`+testAccount+`": {"allow_repos": ["`+testRepo+`", "`+testOtherRepo+`"]}`))
+		s.policy.admissions[s.slug] = decodeTestChild(t, testChildDoc("default", testAccount))
+	})
+	resp, _ := s.call(t, callBody("removed-from-the-allow-list"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the answer is %d, want the paid key's 200", resp.StatusCode)
+	}
+	if got := resp.Header.Get(HeaderTier); got != TierB {
+		t.Fatalf("%s = %q, want %q: the project no longer admits this repository", HeaderTier, got, TierB)
+	}
+	if got := s.up.Seen()[0].Header.Get("Authorization"); got != "" {
+		t.Error("the call carried a shared token to a repository the project removed")
+	}
+	// The admission was still asked: the answer is "this repository is admitted
+	// to nothing", and not "the question was skipped".
+	if got := s.policy.readAdmissions(); !slices.Equal(got, []string{s.slug}) {
+		t.Errorf("the admissions read were %v, want this repository's own node", got)
+	}
+}
+
 // TestServiceRefusesWhenTheAdmissionCannotBeRead: an unreadable node is a
 // refusal and not an empty admission. The two answers differ — an empty
 // admission means "this repository has none", a refusal means "nobody can say" —
