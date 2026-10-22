@@ -132,7 +132,9 @@ func TestImagesWorkflowPublishesAndVerifiesEveryImage(t *testing.T) {
 				} `yaml:"matrix"`
 			} `yaml:"strategy"`
 			Steps []struct {
-				Run string `yaml:"run"`
+				If   string `yaml:"if"`
+				Name string `yaml:"name"`
+				Run  string `yaml:"run"`
 			} `yaml:"steps"`
 		} `yaml:"jobs"`
 	}
@@ -152,9 +154,16 @@ func TestImagesWorkflowPublishesAndVerifiesEveryImage(t *testing.T) {
 	}
 	// Every image in the tree is one the kinds list can name, and every step
 	// of its build is gated on that list: an image the list never reports is a
-	// leg that never runs and never fails.
+	// leg that never runs and never fails. The publish jobs carry the kinds
+	// gate on the job's own if instead (asserted below for
+	// publish-credentials), the way publish-base does.
 	if !strings.Contains(string(data), "for k in history base credentials;") {
 		t.Error("the kinds step does not report every image the workflow builds")
+	}
+	for _, s := range wf.Jobs["credentials"].Steps {
+		if !strings.Contains(s.If, "needs.version.outputs.kinds") {
+			t.Errorf("the credentials job's step %q is not gated on the images the tree builds (if: %q)", s.Name, s.If)
+		}
 	}
 	for _, img := range []string{"history", "credentials"} {
 		if !strings.Contains(string(data), "fugaro-"+img+":ci") || !strings.Contains(string(data), "images/smoke-"+img+".sh") {
