@@ -82,17 +82,17 @@ locals {
   model_secret_env_names  = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
   model_secret_env_prefix = "FUGARO_PROVIDER_KEY_"
 
-  # The App key's name, and it is EMPTY until the release that also stops the
-  # job reading the key (C2.2, review finding F1): config.ServiceHeldSecretNames
-  # is the switch, this literal is held to it by the guard test, and Go's
-  # internal/infra mirrors the same list. With the name in it and the runner
-  # still reading FUGARO_GITHUB_APP_PRIVATE_KEY, this module would take the
-  # job's accessor away from a container that still mounts the key — a job
-  # Cloud Run refuses to create, so every GitHub run of an installation that
-  # opted in would fail. Until then the job keeps the accessor and the mount,
-  # and a GitHub run works exactly as it did before this file knew about the
-  # service.
-  service_held_secret_names = []
+  # The App key's name. It is filled because C2.2's release stops the job
+  # READING the key — the runner fetches the run's installation tokens from the
+  # service instead of reading FUGARO_GITHUB_APP_PRIVATE_KEY:
+  # config.ServiceHeldSecretNames is the switch, this literal is held to it by
+  # the guard test, and Go's internal/infra mirrors the same list. With the name
+  # here, an installation that opted in drops the job's accessor AND its mount
+  # in one plan; before C2.2 the list had to stay empty, because taking the
+  # accessor away from a container that still mounts the key is a job Cloud Run
+  # refuses to create, so every GitHub run of an installation that opted in
+  # would have failed (review finding F1).
+  service_held_secret_names = ["github-app-key"]
 
   # One entry per mount, so the drop below is per mount and never per name.
   is_service_held = {
@@ -136,9 +136,9 @@ locals {
   # together. service_held_secret_names is the App key alone, which is
   # exactly the difference; is_service_held would take the model mounts too.
   #
-  # Like service_held_secret_names, this is inert while the list is empty
-  # (review finding F1): with the opt-in on and the list filled, the App key's
-  # mount goes in the same plan as its accessor.
+  # It reads the same list as the accessor drop, so the App key's mount goes in
+  # the same plan as its accessor (review finding F1), whether the workflow's
+  # secret_env still names the key or the spec has already dropped it.
   #
   # The check job is not this module: it runs as the build account, which
   # keeps its accessor on the App key and clones with it (D148, F3).

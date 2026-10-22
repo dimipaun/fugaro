@@ -1303,9 +1303,9 @@ func (rs RepoSpec) Addresses() []string {
 			// — and the job's mount goes with it (Readiness drops it, and the
 			// module's job_mounts repeats the rule), so the mirror must not
 			// name a grant the spec no longer produces — it would read as one
-			// that survives a retirement. The App key's half is inert until
-			// config.ServiceHeldSecretNames names it (C2.2's release, review
-			// finding F1).
+			// that survives a retirement. config.ServiceHeldSecretNames names
+			// the App key, so its half is live (C2.2's release, review finding
+			// F1).
 			if rs.Installation.CredentialsService != nil && mountsServiceHeldSecret(ws, logical) {
 				continue
 			}
@@ -1335,9 +1335,10 @@ func (rs RepoSpec) Addresses() []string {
 // (config.IsServiceHeldSecretEnv — a model credential by its variable, a name
 // config.ServiceHeldSecretNames lists by its name), so the service holds it
 // once an installation opts in (D145, D146) and the job's account keeps no
-// accessor on it (C1.18, C2.3). The App key's half of that list is empty until
-// C2.2's release (review finding F1), so this answers false for it today and
-// the job keeps the accessor it needs to read the key.
+// accessor on it (C1.18, C2.3). The App key is in that list since C2.2's
+// release (review finding F1), so this answers true for it and the job gives up
+// the accessor it no longer needs — the runner reads the key from the service,
+// not its environment.
 //
 // It is the same question modules/workflow/sa.tf's job_secret_names asks, one
 // mount at a time, and it is written the same way — a name survives if ANY
