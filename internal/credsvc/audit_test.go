@@ -26,15 +26,26 @@ func auditValue(t *testing.T) string {
 const auditName = "shared-one"
 
 // newAudit returns an Auditor writing one JSON line per act into a buffer.
+//
+// An auditor cannot be built without the service's own redaction (NewAuditor),
+// so the default here is the scrub that removes nothing: the tests that are
+// about the scrub arm a real one, and a test that wanted an unarmed auditor
+// cannot have one.
 func newAudit(t *testing.T, opts ...AuditOption) (*Auditor, *bytes.Buffer) {
 	t.Helper()
 	var buf bytes.Buffer
-	a, err := NewAuditor(slog.New(slog.NewJSONHandler(&buf, nil)), opts...)
+	a, err := NewAuditor(slog.New(slog.NewJSONHandler(&buf, nil)),
+		append([]AuditOption{armed()}, opts...)...)
 	if err != nil {
 		t.Fatalf("NewAuditor: %v", err)
 	}
 	return a, &buf
 }
+
+// armed is the arming an auditor cannot be built without (NewAuditor): the
+// service's own redaction, which in a test that writes names and no values
+// removes nothing.
+func armed() AuditOption { return WithAuditScrub(func(s string) string { return s }) }
 
 // recordHandler is a slog.Handler that keeps the records it is handed and can
 // be made to fail, so a test can read what the auditor built rather than what
@@ -164,22 +175,6 @@ func TestAuditCarriesNamesOnly(t *testing.T) {
 		}
 		if got := auditLines(t, buf)[0]["credential"]; got != marker {
 			t.Errorf("credential = %v, want the marker %q", got, marker)
-		}
-	})
-
-	t.Run("a value shaped like a name passes the field rules, which is why the scrub is the guard", func(t *testing.T) {
-		// The threat the scrub exists for, stated as a test: a credential's
-		// value is printable ASCII with no space, so it is a credential NAME as
-		// far as ValidCredentialName is concerned, and a caller that hands one
-		// where a name belongs is not refused by any field rule. An unarmed
-		// auditor writes it — which is why C1.11's loader, the one place the
-		// service holds a value, must arm WithAuditScrub.
-		a, buf := newAudit(t)
-		if err := a.Write(context.Background(), id.Audit(AuditEvent{Credential: value, Tier: TierA, Purpose: PurposeForward, Status: StatusOK})); err != nil {
-			t.Fatalf("the field rules refused the value outright, so this test no longer states the threat: %v", err)
-		}
-		if !strings.Contains(buf.String(), value) {
-			t.Errorf("the unarmed auditor did not write the value, so this test no longer states the threat: %s", buf.String())
 		}
 	})
 
@@ -381,7 +376,7 @@ func TestAuditFailsClosed(t *testing.T) {
 
 	t.Run("a log that does not record the line's level is refused", func(t *testing.T) {
 		var buf bytes.Buffer
-		a, err := NewAuditor(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+		a, err := NewAuditor(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})), armed())
 		if err != nil {
 			t.Fatalf("NewAuditor: %v", err)
 		}
@@ -396,7 +391,7 @@ func TestAuditFailsClosed(t *testing.T) {
 	t.Run("a handler that cannot write is refused", func(t *testing.T) {
 		want := errors.New("the disk is full")
 		h := &recordHandler{err: want}
-		a, err := NewAuditor(slog.New(h))
+		a, err := NewAuditor(slog.New(h), armed())
 		if err != nil {
 			t.Fatalf("NewAuditor: %v", err)
 		}
@@ -417,7 +412,7 @@ func TestAuditFailsClosed(t *testing.T) {
 		bad.Run, bad.Repository = "", ""
 
 		var buf bytes.Buffer
-		quiet, err := NewAuditor(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError})))
+		quiet, err := NewAuditor(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError})), armed())
 		if err != nil {
 			t.Fatalf("NewAuditor: %v", err)
 		}
@@ -426,7 +421,7 @@ func TestAuditFailsClosed(t *testing.T) {
 		}
 
 		want := errors.New("the disk is full")
-		failing, err := NewAuditor(slog.New(&recordHandler{err: want}))
+		failing, err := NewAuditor(slog.New(&recordHandler{err: want}), armed())
 		if err != nil {
 			t.Fatalf("NewAuditor: %v", err)
 		}
@@ -448,7 +443,7 @@ func TestAuditFailsClosed(t *testing.T) {
 		// rather than on a JSON handler's rendering of it: a host whose local
 		// zone is UTC would render a local time exactly as it renders this one.
 		h := &recordHandler{}
-		a, err := NewAuditor(slog.New(h))
+		a, err := NewAuditor(slog.New(h), armed())
 		if err != nil {
 			t.Fatalf("NewAuditor: %v", err)
 		}
@@ -469,8 +464,28 @@ func TestAuditFailsClosed(t *testing.T) {
 		}
 	})
 
+	t.Run("an auditor that was not armed with the service's redaction is refused", func(t *testing.T) {
+		// The premise first, asserted: a credential's value is one clean header
+		// value, so ValidCredentialName accepts it — no field rule refuses a
+		// caller that hands a value where a name belongs. That is the threat,
+		// and arming the auditor is the plan's answer to it (F32's redactWriter
+		// rule, C1.11's loader holding the values and doing the redacting). So
+		// an auditor that was not armed is one this service must not have: a
+		// caller that forgets gets no auditor, and so issues nothing (D143),
+		// rather than one that writes the value it was handed.
+		if value := auditValue(t); !ValidCredentialName(value) {
+			t.Fatalf("the fake value is not credential-shaped, so this test no longer states the threat: %q", value)
+		}
+		if _, err := NewAuditor(slog.New(&recordHandler{})); err == nil {
+			t.Fatal("NewAuditor returned an unarmed auditor: it would write a credential's value into the line")
+		}
+		if _, err := NewAuditor(slog.New(&recordHandler{}), WithAuditScrub(nil)); err == nil {
+			t.Fatal("WithAuditScrub(nil) armed the auditor with nothing, and NewAuditor accepted it")
+		}
+	})
+
 	t.Run("no logger is refused rather than dropped", func(t *testing.T) {
-		if _, err := NewAuditor(nil); err == nil {
+		if _, err := NewAuditor(nil, WithAuditScrub(func(s string) string { return s })); err == nil {
 			t.Fatal("NewAuditor accepted a nil logger: an issuance it could not record would be silent")
 		}
 	})

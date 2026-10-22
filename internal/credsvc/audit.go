@@ -17,14 +17,21 @@ import (
 // can read what the service did with which credential and why it refused what
 // it refused.
 //
-// The line carries the plan's fields and nothing else: the run, the
-// repository, the job the run reported, the account that called, the
-// credential's NAME, the purpose, the tier and the status. There is no
-// free-form field, no map and no message a caller composes, because the
-// property this file exists for is that a credential's VALUE never reaches the
-// log (F32, D143's "every issuance audited by name", Check 94's "the audit log
-// carries names, never values"): a caller holding a value has nowhere in an
-// AuditEvent to put it.
+// The line carries the plan's fields and the two the spec and C1.10 add, and
+// nothing else: the run, the repository, the job the run reported, the account
+// that called, the credential's NAME, the purpose, the tier and the status.
+// The plan's task names six of those (run, repository, credential name,
+// purpose, tier, status); the job is spec.md's ("every secret issuance and
+// proxied call is logged with job, repo, secret name and purpose"), and the
+// account that called is C1.10's — "which job called" is the account's answer
+// and not the header's (auth.go's verifyJob), so the run's own claim is
+// recorded beside the verified one rather than instead of it.
+//
+// There is no free-form field, no map and no message a caller composes,
+// because the property this file exists for is that a credential's VALUE never
+// reaches the log (F32, D143's "every issuance audited by name", Check 94's
+// "the audit log carries names, never values"): a caller holding a value has
+// nowhere in an AuditEvent to put it.
 //
 // Three rules make that hold:
 //
@@ -44,11 +51,15 @@ import (
 //     handler's level excludes the line or because the handler fails to write
 //     it (see line: slog's own LogAttrs would drop either one silently and
 //     return no error);
-//   - the auditor may be armed with the service's own redaction
+//   - the auditor cannot exist without the service's own redaction
 //     (WithAuditScrub), applied to every field before anything else looks at
 //     it. That is redactWriter's rule in the gateway, extended to this line:
 //     the code that holds the values is the code that removes them, so a value
-//     reaches neither the line nor the error a refused line returns. C1.11's
+//     reaches neither the line nor the error a refused line returns. NewAuditor
+//     refuses an auditor that was not armed with one, because the field rules
+//     alone cannot tell a value from a name — a value is one clean header
+//     value, which is what ValidCredentialName accepts — so a caller that
+//     forgot to arm one must get no auditor rather than a leaking one. C1.11's
 //     bundle loader is what arms it.
 //
 // Everything the line carries is text from another writer — a slug, a job
@@ -175,8 +186,8 @@ func (id Identity) Audit(ev AuditEvent) AuditEvent {
 }
 
 // Auditor writes the service's audit lines. It is safe for concurrent use (the
-// log is), and it holds nothing but the log and the redaction it was armed
-// with.
+// log is), and it holds nothing but the log and the service's redaction — the
+// second of which it cannot be built without (NewAuditor).
 type Auditor struct {
 	log   *slog.Logger
 	scrub func(string) string
@@ -190,8 +201,12 @@ type AuditOption func(*Auditor)
 // value the service holds is removed here and reaches neither the line nor the
 // error a refused line returns. It is redactWriter's rule (F32) at the last
 // place a value could land, and C1.11's bundle loader — the one place the
-// service reads a credential — is what arms it. A nil f leaves the auditor as
-// it was.
+// service reads a credential — is what arms it.
+//
+// There is no way to leave the auditor unarmed: a nil f sets nothing, and
+// NewAuditor refuses an auditor with no scrub. That is the whole point of the
+// option — a caller that forgets it does not get an auditor that writes
+// values, it gets no auditor, and so it does not issue (D143).
 func WithAuditScrub(f func(string) string) AuditOption {
 	return func(a *Auditor) {
 		if f != nil {
@@ -200,9 +215,26 @@ func WithAuditScrub(f func(string) string) AuditOption {
 	}
 }
 
-// NewAuditor returns the auditor writing to log. A nil log is refused: an
-// issuance this service could not audit must not be made (D143), so a caller
-// with no log to write to does not get an auditor that silently drops lines.
+// NewAuditor returns the auditor writing to log, armed with the service's own
+// redaction. Both are required, and each is refused for its own reason:
+//
+//   - a nil log, because an act this service could not audit must not be made
+//     (D143), so a caller with nowhere to write does not get an auditor that
+//     silently drops lines;
+//   - no scrub (WithAuditScrub absent, or given a nil f), because the field
+//     rules cannot tell a credential's value from its name: a value is
+//     printable ASCII with no space, which is exactly what ValidCredentialName
+//     accepts, so an auditor that is not armed writes a value into the line
+//     when a caller hands one where a name belongs. Arming is the plan's own
+//     answer to that (F32's redactWriter rule, C1.11's loader holding the
+//     values and doing the redacting), and an auditor that cannot exist
+//     without it is one that cannot leak by a caller's omission.
+//
+// The set of names the service may issue is not consulted here, and
+// deliberately: that set is the bundle's, and the loader that reads it (C1.11)
+// is the task that owns the interface to it. This file would be writing
+// another task's interface if it took one, and a wrong guess at it would be a
+// rule the loader has to work around.
 func NewAuditor(log *slog.Logger, opts ...AuditOption) (*Auditor, error) {
 	if log == nil {
 		return nil, errors.New("credsvc: no logger: an act this service could not audit must not be made")
@@ -210,6 +242,9 @@ func NewAuditor(log *slog.Logger, opts ...AuditOption) (*Auditor, error) {
 	a := &Auditor{log: log}
 	for _, o := range opts {
 		o(a)
+	}
+	if a.scrub == nil {
+		return nil, errors.New("credsvc: no redaction: an auditor that is not armed with the service's own redaction can write a credential's value into the line, so an act it would audit must not be made")
 	}
 	return a, nil
 }
@@ -387,11 +422,9 @@ func (a *Auditor) checked(ev AuditEvent) (AuditEvent, refusal) {
 
 // redact applies the service's own redaction to every field before any rule
 // looks at one, so a value the service holds reaches neither the line nor the
-// error a refused line returns (redactWriter's rule, F32).
+// error a refused line returns (redactWriter's rule, F32). The scrub is never
+// nil — NewAuditor refuses an auditor that was not armed with one.
 func (a *Auditor) redact(ev AuditEvent) AuditEvent {
-	if a.scrub == nil {
-		return ev
-	}
 	ev.Run = a.scrub(ev.Run)
 	ev.Repository = a.scrub(ev.Repository)
 	ev.Job = a.scrub(ev.Job)
