@@ -1172,9 +1172,11 @@ tests it with the tools stubbed on PATH, and `go test ./scripts/` runs that test
 The deploy workflow is still W2.1's and **not a Fugaro run's to write**: W2.1 stages a
 workflow under `docs/pending-workflows/` for the owner to copy in, and the owner runs it to
 deploy to the Firebase project created for the website only (D91, D109) — a run may not
-change `.github/workflows/`. `docs/pending-workflows/` now holds one pending workflow,
-`docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
-P4.3), which is not this site's: the website's two manual
+change `.github/workflows/`. `docs/pending-workflows/` now holds two pending workflows,
+`docs/pending-workflows/images.yml` — the credentials service's image leg
+(credentials-service plan, task C1.14) — and `docs/pending-workflows/shared-tests.yml`
+— the shared package's test job (mobile plan Task
+P4.3) — neither of which is this site's: the website's two manual
 workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the
 owner, and no deploy workflow is staged. The only other workflow files left there are the desktop
 console's `console-tests.yml` and `console-release.yml`, which the owner has copied in as well:
