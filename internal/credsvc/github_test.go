@@ -1002,3 +1002,57 @@ func TestTheAppKeyIsNeverACascadeCandidate(t *testing.T) {
 		t.Errorf("the upstream was called with a credential that is not one of the bundle's model credentials: %q", got)
 	}
 }
+
+// TestTheServiceTokenContractIsTheMints pins the runner's half of the mint to
+// this service's own spelling.
+//
+// The run's mint (internal/gitprov/github's ServiceTokens) is written in a
+// package that cannot import this one -- this one imports it, for
+// MintInstallationToken and RunTokenPermissions -- so the path, the two
+// identity headers and the JSON fields are spelled there a second time. This
+// test is what holds the two spellings together: a change to either side that
+// the other did not follow fails here, which is the only place both are
+// visible.
+func TestTheServiceTokenContractIsTheMints(t *testing.T) {
+	if github.ServiceTokenPath != MintPath {
+		t.Errorf("the run asks for a mint at %q, this service serves %q", github.ServiceTokenPath, MintPath)
+	}
+	if github.ServiceHeaderRunIdentity != HeaderRunIdentity {
+		t.Errorf("the run presents its identity in %q, this service reads %q", github.ServiceHeaderRunIdentity, HeaderRunIdentity)
+	}
+	if github.ServiceHeaderRunJob != HeaderRunJob {
+		t.Errorf("the run reports its job in %q, this service reads %q", github.ServiceHeaderRunJob, HeaderRunJob)
+	}
+	// The body: the runner's request (internal/runner's git_service_internal_test.go
+	// holds the bytes it sends) is this service's own request type, verbatim.
+	body, err := json.Marshal(MintRequest{AppID: "1234"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(body), `{"app_id":"1234"}`; got != want {
+		t.Errorf("a mint's body is %s, want %s -- and the run sends exactly this", got, want)
+	}
+	// The answer: the fields the runner reads (token, expires_at) are the
+	// fields this service writes, spelled the same way.
+	now := time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)
+	ans, err := json.Marshal(MintResponse{Token: "ghs_fixture", ExpiresAt: now, Repository: "github/acme/app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(ans, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"token", "expires_at"} {
+		if fields[name] == nil {
+			t.Errorf("a mint's answer carries no %q, so a run reading one reads nothing: %s", name, ans)
+		}
+	}
+	// The answer is an object of those fields and no credential of its own:
+	// the App key that signs the mint is nowhere in it.
+	for _, v := range fields {
+		if strings.Contains(string(v), appKeyPEM(t)) {
+			t.Errorf("a mint's answer carries the App key")
+		}
+	}
+}
