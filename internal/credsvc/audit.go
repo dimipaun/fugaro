@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -37,7 +38,12 @@ import (
 //     refused, and the refusal names the field and never its content;
 //   - an event that cannot be recorded is not recorded, and the act it belongs
 //     to does not happen: Write returns an error, and a caller that cannot
-//     audit an issuance must not make it (D143's fail-closed rule);
+//     audit an issuance must not make it (D143's fail-closed rule). "Cannot be
+//     recorded" is both halves — an event whose fields are not ones this
+//     service writes, and a log that is not recording, whether because the
+//     handler's level excludes the line or because the handler fails to write
+//     it (see line: slog's own LogAttrs would drop either one silently and
+//     return no error);
 //   - the auditor may be armed with the service's own redaction
 //     (WithAuditScrub), applied to every field before anything else looks at
 //     it. That is redactWriter's rule in the gateway, extended to this line:
@@ -224,7 +230,13 @@ const (
 // contract's, so a reader does not have to tell "not known" from "not there".
 // The order is the plan's, and every field goes through internal/safetext on
 // the way out — a slug, a job name, an account and a credential's name are all
-// text another writer chose.
+// text another writer chose. The line therefore carries the ESCAPED form of a
+// name, which is what an operator reads: a run id with a bidi control in it
+// (token.ValidSegment allows one — a bidi control is a format character, not a
+// control) is written with that character replaced, so the line reads as the
+// terminal shows it rather than handing the control on to whatever reads the
+// log. The name in its own spelling is the identity's, and it is not this
+// line's to carry.
 func (a *Auditor) Write(ctx context.Context, ev AuditEvent) error {
 	ev, bad := a.checked(ev)
 	if bad != "" {
@@ -234,7 +246,7 @@ func (a *Auditor) Write(ctx context.Context, ev AuditEvent) error {
 		a.log.WarnContext(ctx, auditRefusedMessage, "field", bad)
 		return fmt.Errorf("credsvc: the audit event's %s is not one this service can record", bad)
 	}
-	a.log.LogAttrs(ctx, slog.LevelInfo, auditMessage,
+	return a.line(ctx, slog.LevelInfo, auditMessage,
 		slog.String("run", safetext.OneLine(ev.Run)),
 		slog.String("repository", safetext.OneLine(ev.Repository)),
 		slog.String("job", safetext.OneLine(ev.Job)),
@@ -244,6 +256,34 @@ func (a *Auditor) Write(ctx context.Context, ev AuditEvent) error {
 		slog.String("tier", safetext.OneLine(ev.Tier)),
 		slog.String("status", safetext.OneLine(ev.Status)),
 	)
+}
+
+// line writes one record to the auditor's handler and reports whether it was
+// written. It is not Logger.LogAttrs, and that is the point: LogAttrs drops a
+// record silently when the handler's level excludes it and returns no error at
+// all when the handler fails, so an act this service could not audit would
+// look exactly like one it audited. Here the handler is asked whether it
+// records the level before anything is built, and its own error is returned,
+// so a log that is not recording is a failure the caller cannot mistake for a
+// written line (D143).
+//
+// The record's time is UTC: a log line is read beside lines from other hosts
+// and other zones, and a local time in it is a time the reader has to guess
+// the zone of.
+//
+// The handler is used directly rather than through the logger, so the line
+// carries the contract's fields and nothing else — a caller's logger attrs
+// would be extra fields on a line whose shape is the contract's.
+func (a *Auditor) line(ctx context.Context, level slog.Level, msg string, attrs ...slog.Attr) error {
+	h := a.log.Handler()
+	if !h.Enabled(ctx, level) {
+		return fmt.Errorf("credsvc: the audit log does not record at %s: an act this service could not audit must not be made", level)
+	}
+	r := slog.NewRecord(time.Now().UTC(), level, msg, 0)
+	r.AddAttrs(attrs...)
+	if err := h.Handle(ctx, r); err != nil {
+		return fmt.Errorf("credsvc: the audit line was not written: %w", err)
+	}
 	return nil
 }
 

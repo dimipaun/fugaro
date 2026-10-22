@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // auditValue is a fake credential VALUE, built at run time from the test's
@@ -33,6 +35,26 @@ func newAudit(t *testing.T, opts ...AuditOption) (*Auditor, *bytes.Buffer) {
 	}
 	return a, &buf
 }
+
+// recordHandler is a slog.Handler that keeps the records it is handed and can
+// be made to fail, so a test can read what the auditor built rather than what
+// a handler made of it — a record's own time and level are the auditor's, and
+// a JSON handler's rendering of them is the JSON handler's.
+type recordHandler struct {
+	records []slog.Record
+	err     error // what Handle returns, for the tests about a log that cannot write
+}
+
+func (h *recordHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *recordHandler) Handle(_ context.Context, r slog.Record) error {
+	h.records = append(h.records, r)
+	return h.err
+}
+
+func (h *recordHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+
+func (h *recordHandler) WithGroup(string) slog.Handler { return h }
 
 // auditLines parses what an auditor wrote: one JSON object per physical line,
 // which is what "one structured line" means here — a field carrying a newline
@@ -331,6 +353,94 @@ func TestAuditCarriesNamesOnly(t *testing.T) {
 					t.Errorf("%s = %q, want the control escaped", c.field, got)
 				}
 			})
+		}
+	})
+}
+
+// TestAuditFailsClosed: an act the service could not record is not recorded,
+// and the caller is told — the fail-closed half of the file's contract (D143).
+// It is a third test beside the plan's two because the plan's two are about
+// what a line carries and this one is about whether there is a line at all:
+// slog's own LogAttrs drops a record silently when the handler's level
+// excludes it and returns no error when the handler fails, so a Write built on
+// it would answer "audited" for an act that left nothing behind.
+func TestAuditFailsClosed(t *testing.T) {
+	f := newFixture(t)
+	id := f.verifyOK()
+	ok := func() AuditEvent {
+		return id.Audit(AuditEvent{Credential: auditName, Tier: TierA, Purpose: PurposeForward, Status: StatusOK})
+	}
+
+	t.Run("a log that does not record the line's level is refused", func(t *testing.T) {
+		var buf bytes.Buffer
+		a, err := NewAuditor(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+		if err != nil {
+			t.Fatalf("NewAuditor: %v", err)
+		}
+		if err := a.Write(context.Background(), ok()); err == nil {
+			t.Fatal("Write reported an issuance it did not write: the handler does not record at the line's level")
+		}
+		if buf.Len() != 0 {
+			t.Errorf("Write wrote a line after all: %s", buf.String())
+		}
+	})
+
+	t.Run("a handler that cannot write is refused", func(t *testing.T) {
+		want := errors.New("the disk is full")
+		h := &recordHandler{err: want}
+		a, err := NewAuditor(slog.New(h))
+		if err != nil {
+			t.Fatalf("NewAuditor: %v", err)
+		}
+		err = a.Write(context.Background(), ok())
+		if err == nil {
+			t.Fatal("Write reported an issuance the handler could not write")
+		}
+		if !errors.Is(err, want) {
+			t.Errorf("the handler's own error is not in Write's: %v", err)
+		}
+	})
+
+	t.Run("a refused event is an error whether or not its line could be written", func(t *testing.T) {
+		// The refusal is the caller's answer; the refusal line is the
+		// operator's. A log that records neither must not turn a refusal into
+		// a silent success.
+		var buf bytes.Buffer
+		a, err := NewAuditor(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError})))
+		if err != nil {
+			t.Fatalf("NewAuditor: %v", err)
+		}
+		ev := ok()
+		ev.Run, ev.Repository = "", ""
+		if err := a.Write(context.Background(), ev); err == nil {
+			t.Fatal("Write accepted an issuance that names no run")
+		}
+	})
+
+	t.Run("the line's time is UTC", func(t *testing.T) {
+		// A line is read beside lines from other hosts and other zones, so its
+		// time is the record's and not the host's. The check is on the record
+		// rather than on a JSON handler's rendering of it: a host whose local
+		// zone is UTC would render a local time exactly as it renders this one.
+		h := &recordHandler{}
+		a, err := NewAuditor(slog.New(h))
+		if err != nil {
+			t.Fatalf("NewAuditor: %v", err)
+		}
+		if err := a.Write(context.Background(), ok()); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		if len(h.records) != 1 {
+			t.Fatalf("the handler was handed %d records, want one", len(h.records))
+		}
+		if got := h.records[0].Time.Location(); got != time.UTC {
+			t.Errorf("the line's time is in %v, want UTC", got)
+		}
+		if got := h.records[0].Level; got != slog.LevelInfo {
+			t.Errorf("the line's level is %v, want %v", got, slog.LevelInfo)
+		}
+		if got := h.records[0].Message; got != auditMessage {
+			t.Errorf("the line's message is %q, want %q", got, auditMessage)
 		}
 	})
 
