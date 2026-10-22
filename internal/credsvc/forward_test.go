@@ -637,3 +637,104 @@ func TestServiceRefusesAnEndedRunWhateverTheCleanupDoes(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// The call's query
+// ---------------------------------------------------------------------------
+
+// TestServiceDropsAQueryThatCarriesTheCallersTokens: the gateway's own rule
+// over its own token (route.go's upstreamQuery/carriesToken), which C1.8's
+// exported helpers do not cover and which the service therefore has to hold
+// itself. The query of a call is kept as the client wrote it — the SDK puts
+// things there, and a service that dropped every query would change what a
+// call means — unless it carries one of the two tokens the caller presented,
+// in which case it is dropped WHOLE (an edited query is a query that has been
+// half-forwarded) rather than passed on. A token in the query of a call to
+// Anthropic is a token in Anthropic's logs.
+//
+// Mutation (run, restore): append the query unconditionally, or compare it
+// without the case fold and the lenient unescape, and the subtests below are
+// red.
+func TestServiceDropsAQueryThatCarriesTheCallersTokens(t *testing.T) {
+	s := newSvc(t)
+	s.up.Script = []anthropicfake.Reply{
+		anthropicfake.MessageOK(testModel, testUsage),
+		anthropicfake.MessageOK(testModel, testUsage),
+		anthropicfake.MessageOK(testModel, testUsage),
+		anthropicfake.MessageOK(testModel, testUsage),
+		anthropicfake.MessageOK(testModel, testUsage),
+		anthropicfake.MessageOK(testModel, testUsage),
+	}
+	runTok, jobTok := s.runToken(), s.jobToken()
+	// A run identity token and a job ID token are JWTs: base64url, so they
+	// carry "-" and "_" and no "+", "/" or "=". Encoded for a query they are
+	// spelled as they are; the test spells one with the escapes a client could
+	// also have used, which is the case the lenient unescape is for, and one
+	// with its letters shifted, which is the case the case fold is for.
+	encoded := strings.ReplaceAll(strings.ReplaceAll(runTok, "a", "%61"), "E", "%45")
+	cases := []struct {
+		name  string
+		query string
+		want  string
+	}{
+		{"a query that carries nothing of the caller's goes upstream", "beta=true", "beta=true"},
+		{"the run identity in the query drops the query", "t=" + runTok, ""},
+		{"the job's ID token in the query drops the query", "t=" + jobTok, ""},
+		{"an escaped run identity is still the run identity", "t=" + encoded, ""},
+		{"a recased run identity is still the run identity", "t=" + strings.ToUpper(runTok), ""},
+		{"a query that is empty stays empty", "", ""},
+	}
+	for i, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := MessagesPath
+			if c.query != "" {
+				path += "?" + c.query
+			}
+			resp, body := s.callPath(t, path, callBody("query"), func(r *http.Request) {
+				r.Header.Set("Authorization", "Bearer "+jobTok)
+				r.Header.Set(HeaderRunIdentity, runTok)
+				r.Header.Set(HeaderRunJob, s.job)
+			})
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("the answer is %d, want 200: %s", resp.StatusCode, body)
+			}
+			seen := s.up.Seen()
+			if len(seen) != i+1 {
+				t.Fatalf("the upstream saw %d requests, want %d", len(seen), i+1)
+			}
+			if got := seen[i].URL.RawQuery; got != c.want {
+				t.Errorf("the upstream was called with query %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// TestServiceServesBothAnthropicPaths: the other half of the endpoint check.
+// TestServiceHasNoAdminRoutes holds every path BUT the two Anthropic ones to a
+// 404; this one holds the two the service does serve to a forward, because a
+// condition that lost one of them would still refuse everything else and would
+// still look like a working service — the run's own calls to that path would
+// simply 404, and the SDK's token count is a call the harness makes.
+//
+// Mutation (run, restore): drop CountTokensPath (or MessagesPath) from
+// ServeHTTP's condition, and the subtest for it is red.
+func TestServiceServesBothAnthropicPaths(t *testing.T) {
+	s := newSvc(t)
+	for _, path := range []string{MessagesPath, CountTokensPath} {
+		t.Run(path, func(t *testing.T) {
+			s.up.Script = append(s.up.Script, anthropicfake.MessageOK(testModel, testUsage))
+			before := s.up.Count()
+			resp, body := s.callPath(t, path, callBody("path"))
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("POST %s is answered %d, want 200: %s", path, resp.StatusCode, body)
+			}
+			seen := s.up.Seen()
+			if len(seen) != before+1 {
+				t.Fatalf("the upstream saw %d requests, want %d", len(seen), before+1)
+			}
+			if got := seen[before].URL.Path; got != path {
+				t.Errorf("the upstream was called at %q, want %q", got, path)
+			}
+		})
+	}
+}
