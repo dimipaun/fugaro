@@ -303,7 +303,7 @@ export function createDemoMode(options = {}) {
     // own utterance from its outbox, and the replies are read in THIS look --
     // before there is anything of the phone's for them to answer. So when the
     // pass ends, `pending()` holds the utterances this run has just written, all
-    // three landed (`landed: true`: the SDK accepted them; the consumer has not
+    // three landed (`landed: true`: the store took them; the consumer has not
     // answered). With the look at the end it was empty, because the two answers
     // had already retired the two sentences they name. Both are real states of
     // the app -- a phone that sent and has not looked since, and a phone that
