@@ -660,15 +660,22 @@ something verifies it: `fugaro init`'s credentials stage resolves
 then writes the digest it names into the service's Terraform variable
 (`internal/cli/init_credentials.go`, task C1.20; `internal/infra/tf` refuses a
 tag at plan time), and its own rig publishes exactly that `-pinned` tag.
-Nothing else in the file changes: the triggers, `version`'s version-picking,
-`fugaro-base`, `publish-base` and `docker-tests` are carried over byte for
-byte, comments included. The diff against the committed file is six things:
+Nothing outside the hunks below changes: the triggers, the `version` job's
+version-picking, the `fugaro-base` and `docker-tests` jobs, every *step* of
+`publish` and `publish-base` and `publish`'s own `needs: [version, history]`
+and `matrix.base: [history]` are carried over byte for byte. Two *comments* are
+not, and they are hunks of their own below: a comment naming the jobs that hold
+`packages: write` and `id-token: write` is part of the trust boundary it
+describes, and both copies of it would otherwise be wrong. The diff against the
+committed file is six things:
 
 - **`version`'s "Which images this tree builds" list gains `credentials`:**
-  `for k in history base credentials;`. The list is the one place an image is
-  registered, and every step of every leg is gated on it, so a tag whose tree
-  predates `images/credentials/Dockerfile` (any release before this one) skips
-  that leg instead of failing every nightly.
+  `for k in history base credentials;`, plus six added comment lines above the
+  loop (a bare `#` and five lines of prose) recording why a tag whose tree
+  predates the image skips that leg. The list is
+  the one place an image is registered, and every step of every build leg is
+  gated on it, so a tag whose tree predates `images/credentials/Dockerfile`
+  (any release before this one) skips that leg instead of failing every nightly.
 - **A `credentials` job**, on the `history` job's shape: checkout, the resolved
   tag on a nightly or dispatch run, `images/build-base.sh credentials
   fugaro-credentials:ci`, `images/smoke-credentials.sh`, `images/size-budget.sh`,
@@ -681,7 +688,20 @@ byte, comments included. The diff against the committed file is six things:
   it — and the vulnerability scan is off pull requests, exactly as it is for
   the base. There is no multi-arch leg:
   the service's revision is linux/amd64, which is what `build-base.sh` builds
-  by default.
+  by default. Nothing in the job passes the service's three variables
+  (`FUGARO_PROJECT`, `FUGARO_GCP_PROJECT`, `FUGARO_REGION`): the Cloud Run
+  service gets them from the installation module (`credentials.tf`) and the
+  image's `credentials serve` refuses to start without them.
+  `images/smoke-credentials.sh` asserts exactly that in the built image, and
+  that the image carries no credential-shaped environment of its own.
+- **`publish-base`'s header comment names three jobs, not two:** its closing
+  two lines said "this job and publish are the only ones with packages: write;
+  id-token: write is here alone"; they now say that `publish-base`, `publish`
+  and `publish-credentials` are the only ones with `packages: write` and that
+  `id-token: write` is on `publish-base` and `publish-credentials` alone. The
+  sentence is the written form of what `TestOnlyPublishJobsHoldPackagesWrite`
+  and `signingProblems`' id-token check assert, so leaving it stale would have
+  made the file disagree with its own guard.
 - **A `publish-credentials` job**, `publish-base`'s chain for a
   single-architecture image: load the artifact, push `<version>` (and
   `<major>` when that tag moves), take the digest **from the push's own
@@ -703,9 +723,16 @@ byte, comments included. The diff against the committed file is six things:
   account runs. The chain itself is `publish-base`'s, from the review that
   produced it (`docs/plans/2026-10-13-retire-image-mirror.md`, Task 1, PR
   #377); what is new is that a second job carries it.
-- **`publish` no longer publishes it:** `needs: [version, history]` and
-  `matrix.base: [history]` again, since the credentials image moves to the job
-  that can sign it.
+- **`publish`'s header comment says why it is not the one publishing this
+  image:** it said "this job and publish-base are the only ones that need
+  packages: write, and neither ever runs on pull_request"; it now names
+  `publish-credentials` too and says the base and the credentials service
+  publish through the two jobs above *because those two are signed*. Its
+  `needs:` and `matrix.base:` lines are **not** part of the change: they
+  already read `[version, history]` and `[history]` in the committed file,
+  because the 0.7.0 cut (`838e0b0`) had already removed the base from this
+  job's matrix — the credentials image is a job that never joins it rather
+  than an image leaving it.
 - **`verify-public` pull-checks it:** `for img in history credentials; do`, so
   the published image is pulled back with no login, and the job now waits on
   `publish-credentials`, gating on it exactly as it gates on `publish-base` —
@@ -717,13 +744,6 @@ byte, comments included. The diff against the committed file is six things:
   step for a new package applies here:** after the first release that
   publishes it, `fugaro-credentials` has to be made public by hand, or this
   job fails the next release and every one after it.
-- **The `credentials` leg's environment is the image's own:** nothing in the
-  workflow passes the service's three variables (`FUGARO_PROJECT`,
-  `FUGARO_GCP_PROJECT`, `FUGARO_REGION`), because the Cloud Run service gets
-  them from the installation module (`credentials.tf`) and the image's
-  `credentials serve` refuses to start without them. `images/smoke-credentials.sh`
-  asserts exactly that in the built image, and that the image carries no
-  credential-shaped environment of its own.
 
 **What the copy-in has to leave true.** After the copy and the `git rm`, the
 real `.github/workflows/images.yml` is what `images/base_workflow_test.go`'s
