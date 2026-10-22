@@ -99,7 +99,7 @@ func (s *repositoryStage) Check(ctx context.Context) (initflow.Status, error) {
 		return initflow.Status{State: initflow.NeedsYou, Detail: unknownDetailNotEnrolled(s.e.lc.Name, s.tg.origin, s.e.r.o.doorName()), Left: &lf}, nil
 	case a == authNeeded:
 		lf := onboardLeft(s.tg.origin, s.e.r.o.doorName())
-		return initflow.Status{State: initflow.NeedsYou, Detail: unknownDetail(s.e.lc.Name, s.tg.origin, convergeOptIn(s.tg.origin)), Left: &lf}, nil
+		return initflow.Status{State: initflow.NeedsYou, Detail: unknownDetail(s.e.lc.Name, s.tg.origin, convergeOptIn(s.e.lc, s.tg.origin)), Left: &lf}, nil
 	}
 	return initflow.Status{State: initflow.Todo, Detail: "onboards " + repo + "; plans when applied"}, nil
 }

@@ -500,7 +500,7 @@ func (s *secretsStage) Check(ctx context.Context) (initflow.Status, error) {
 		return initflow.Status{State: initflow.NeedsYou, Detail: unknownDetailNotEnrolled(s.e.lc.Name, s.origin, s.e.r.o.doorName()), Left: &lf}, nil
 	case a == authNeeded:
 		lf := onboardLeft(s.origin, s.e.r.o.doorName())
-		return initflow.Status{State: initflow.NeedsYou, Detail: unknownDetail(s.e.lc.Name, s.origin, convergeOptIn(s.origin)), Left: &lf}, nil
+		return initflow.Status{State: initflow.NeedsYou, Detail: unknownDetail(s.e.lc.Name, s.origin, convergeOptIn(s.e.lc, s.origin)), Left: &lf}, nil
 	case a == authAsk:
 		s.checked = false
 		return initflow.Status{State: initflow.Todo, Detail: "which secrets are stored is read after you confirm the repository " + pluginwire.Printable(s.origin.typed())}, nil

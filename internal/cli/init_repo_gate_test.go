@@ -283,35 +283,39 @@ func TestUnknownDetailNamesTheRouteTheRunHas(t *testing.T) {
 	plain := originInfo{Repo: "acme/app", Host: "github.com"}
 	rewritten := originInfo{Repo: "acme/app", Host: "github.com", Raw: "https://github.com/acme/app.git", Effective: "https://github.com/acme/other.git", Rewritten: true}
 	other := originInfo{Repo: "acme/app", Host: "gitlab.example"}
+	// The project's config knows this name at another host: onboardCovered
+	// refuses it, so --yes does not cover it either.
+	lc := &localcfg.Config{Repos: map[string]localcfg.Repo{"acme/app": {Provider: "bitbucket"}}}
+	none := &localcfg.Config{}
 
 	t.Setenv("CLAUDECODE", "")
-	if got := convergeOptIn(plain); !strings.Contains(got, "--yes covers it") {
-		t.Errorf("a converge of an unambiguous origin does not name --yes: %q", got)
+	if got := convergeOptIn(none, plain); !strings.Contains(got, "--yes covers it") {
+		t.Errorf("an unambiguous origin does not name --yes: %q", got)
 	}
 	for _, oi := range []originInfo{rewritten, other} {
-		got := convergeOptIn(oi)
+		got := convergeOptIn(none, oi)
 		if !strings.Contains(got, "--yes does not give it") || strings.Contains(got, "--yes covers it") {
 			t.Errorf("an origin whose identity is not the one it claims names --yes as the way in: %q", got)
 		}
+	}
+	if got := convergeOptIn(lc, plain); !strings.Contains(got, "--yes does not give it here") {
+		t.Errorf("a name the config knows at another host names --yes as the way in: %q", got)
 	}
 	// A coding agent's session confirms nothing, so the sentence names no flag
 	// for it to paste: the ordinary origin's clause says so rather than
 	// offering --yes, and the other two keep denying it.
 	t.Setenv("CLAUDECODE", "1")
-	if got := convergeOptIn(plain); !strings.Contains(got, "confirms nothing") || strings.Contains(got, "covers it") {
+	if got := convergeOptIn(&localcfg.Config{}, plain); !strings.Contains(got, "confirms nothing") || strings.Contains(got, "covers it") {
 		t.Errorf("an agent session is handed --yes: %q", got)
 	}
 	for _, oi := range []originInfo{rewritten, other} {
-		if got := convergeOptIn(oi); strings.Contains(got, "covers it") {
+		if got := convergeOptIn(none, oi); strings.Contains(got, "covers it") {
 			t.Errorf("an agent session is told --yes covers the step: %q", got)
 		}
 	}
 	t.Setenv("CLAUDECODE", "")
-	if !strings.Contains(repoGateOptIn, "--yes does not give here") {
-		t.Errorf("the --repo gate's clause does not say --yes cannot answer its question: %q", repoGateOptIn)
-	}
 	// And the clause is part of the sentence the reader sees, once.
-	d := unknownDetail("aurora", plain, convergeOptIn(plain))
+	d := unknownDetail("aurora", plain, convergeOptIn(none, plain))
 	if strings.Count(d, "--yes") != 1 || !strings.Contains(d, "needs your own opt-in — --yes covers it") {
 		t.Errorf("the detail names the route %d times: %q", strings.Count(d, "--yes"), d)
 	}
@@ -321,7 +325,7 @@ func TestUnknownDetailNamesTheRouteTheRunHas(t *testing.T) {
 func TestHostileOriginIsTruncatedInDetail(t *testing.T) {
 	long := strings.Repeat("x", 5000)
 	oi := originInfo{Repo: "acme/" + long, Host: "evil.example", Raw: "https://evil.example/" + long, Effective: "https://github.com/" + long, Rewritten: true}
-	d := unknownDetail("aurora", oi, convergeOptIn(oi))
+	d := unknownDetail("aurora", oi, convergeOptIn(&localcfg.Config{}, oi))
 	if len(d) > 1500 || !strings.Contains(d, "(truncated)") {
 		t.Errorf("%d bytes: %.80q", len(d), d)
 	}
@@ -591,27 +595,34 @@ func TestSetupOutsideACheckoutSaysHowToEnrol(t *testing.T) {
 	}
 }
 
-// TestSetupStillTypesAnUnlistedRepositoryUnderYes is today's row, on purpose
-// (W3.4): onboarding a repository the run was not told about is Typed before
-// 2026-10-20 and stays so until W5.1 lands, which flips the call site. The
-// wizard's question does not stand in for it, and --yes does not cover it.
-func TestSetupStillTypesAnUnlistedRepositoryUnderYes(t *testing.T) {
+// TestSetupRepoOnboardsAnUnlistedRepositoryUnderYes is W3.4's row inverted by
+// W5.1, which is the change that flips the call site (D12's answer of
+// 2026-10-20): onboarding a repository the run was not told about was Typed
+// before, and is covered by --yes now — in this mode too, the standalone --repo
+// engine, not only in the converge. The wizard's question does not stand in for
+// it (a run that cannot ask never asks it), and what --yes does not cover is the
+// origin whose identity is not the one it claims, which the next test pins.
+func TestSetupRepoOnboardsAnUnlistedRepositoryUnderYes(t *testing.T) {
 	r, dir := hostileRepoRig(t, "https://github.com/acme/hostile.git")
 	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--github-app-id", "42", "--yes", dir)
-	if err == nil || ExitCode(err) != ExitUserError {
-		t.Fatalf("exit %d, err %v:\n%s%s", ExitCode(err), err, out, errOut)
+	all := out + errOut
+	if strings.Contains(all, "is not one of project") {
+		t.Errorf("--yes was refused at the gate:\n%s", all)
 	}
-	noCloudTouched(t, r, "an unlisted repository under --yes")
-	all := out + errOut + err.Error()
-	if !strings.Contains(all, "type "+gateRepo+" at the prompt") {
-		t.Errorf("the refusal does not ask for the owner/name to be typed in the user's own terminal:\n%s", all)
+	if strings.Contains(all, "type "+gateRepo+" at the prompt") {
+		t.Errorf("--yes still asked for the owner/name to be typed:\n%s", all)
 	}
 	if strings.Contains(all, "Onboard "+gateRepo) {
 		t.Errorf("--yes asked the wizard's question, which a run that cannot ask never does:\n%s", all)
 	}
-	if !strings.Contains(all, "--onboard-repo") {
-		t.Errorf("the refusal does not name the one-line opt-in:\n%s", all)
+	if strings.Contains(all, "--onboard-repo") {
+		t.Errorf("--yes offered the opt-in flag for a step it already covered:\n%s", all)
 	}
+	// Past the gate the engine runs as it always did (this rig's local config
+	// has no base image, which it refuses before any cloud call) — that is what
+	// says the repository was let through.
+	pastGate(t, err)
+	noCloudTouched(t, r, "an unlisted repository under --yes")
 }
 
 // TestSetupOnboardingIsASeparateAnswerFromTheProjectQuestion: the wizard asks

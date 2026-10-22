@@ -22,13 +22,14 @@ import (
 // of:
 //
 //   - the run's own confirmation (D12, 2026-10-20): --yes, which covers
-//     onboarding an unlisted repository in either front door's converge, for an
-//     origin whose identity is the one it claims; or
+//     onboarding an unlisted repository in either front door and in either mode
+//     — the converge and the standalone --repo engine alike — for an origin
+//     whose identity is the one it claims; or
 //   - its own typed confirmation, naming owner/name (from the origin) and the
 //     checkout's path, in the user's own terminal, before the stage's first
-//     cloud call or write — which is what the standalone --repo engine always
-//     asks, and what a converge asks where the run's own confirmation is not
-//     there to give; or
+//     cloud call or write — which is what a run asks where the run's own
+//     confirmation is not there to give, and what every run asked before D12;
+//     or
 //   - --onboard-repo owner/name, the one explicit non-interactive opt-in,
 //     which must equal the origin repository exactly.
 //
@@ -62,18 +63,19 @@ func (e *initEngine) authState(o originInfo) (repoAuth, error) {
 		// Asked once, at the start of the run, and not typed: the stages say
 		// what to do and are not asked again.
 		return authNeeded, nil
-	case !opts.repo && e.onboardCovered(o):
-		// The converge's onboarding of an unlisted repository is covered by
-		// the run's own confirmation (D12's answer of 2026-10-20): --yes, in
-		// either front door, for an origin whose identity is the one it
-		// claims. It is still never given by a pipe, --json, --non-interactive
-		// or a coding agent's session (canConfirmTyped), and the review's own
-		// answer is not it either (onboardCovered).
+	case e.onboardCovered(o):
+		// The onboarding of an unlisted repository is covered by the run's own
+		// confirmation (D12's answer of 2026-10-20): --yes, in either front
+		// door and in either mode — the converge and the standalone --repo
+		// engine, whose gate this is too (gateRepo) — for an origin whose
+		// identity is the one it claims. It is still never given by a pipe,
+		// --json, --non-interactive or a coding agent's session
+		// (canConfirmTyped), and the review's own answer is not it either
+		// (onboardCovered).
 		//
-		// The standalone engine (--repo) is not this case: there the gate's
-		// question is the identity of the repository in a checkout the run
-		// was pointed at, which is the one thing --yes cannot answer, and
-		// that path is unchanged (gateRepo).
+		// The two cases onboardCovered refuses stay the gate's own question
+		// wherever they arise: an origin git config rewrites or a host that is
+		// not a provider's own, and a name the config knows at another host.
 		return authOK, nil
 	case !opts.enrolling():
 		// This door does not enrol: the repository is left for the user, with
@@ -88,14 +90,16 @@ func (e *initEngine) authState(o originInfo) (repoAuth, error) {
 	return authNeeded, nil
 }
 
-// onboardCovered reports whether the converge's own confirmation covers
-// onboarding this repository now: YesOrTyped's rule, the class D12 gives the
-// step in both front doors, and the run's own confirmation actually given. --yes
-// is the way to give it (r.conditions().Yes, which --plan-only turns off); a run
-// that cannot give it leaves the repository for the user, and at a terminal the
-// typed owner/name is the step's own confirmation, asked where it always was
-// (confirmRepo). A coding agent's session, --json, a pipe and --non-interactive
-// give nothing (canConfirmTyped).
+// onboardCovered reports whether the run's own confirmation covers onboarding
+// this repository now: YesOrTyped's rule, the class D12 gives the step in both
+// front doors — and in both of their modes, the converge and the standalone
+// --repo engine, which is what W3.4's row recorded as "Typed, covered after
+// W5.1" and what W5.1's commit inverts — and the run's own confirmation
+// actually given. --yes is the way to give it (r.conditions().Yes, which
+// --plan-only turns off); a run that cannot give it leaves the repository for
+// the user, and at a terminal the typed owner/name is the step's own
+// confirmation, asked where it always was (confirmRepo). A coding agent's
+// session, --json, a pipe and --non-interactive give nothing (canConfirmTyped).
 //
 // It reads the run's conditions and never r.review: the review's own answer
 // (init_review.go) covers the installation's ordinary steps, and the repository
@@ -328,32 +332,32 @@ func unknownDetail(project string, o originInfo, optIn string) string {
 	return d + "; onboarding it creates cloud resources, so it needs your own opt-in" + optIn + "; the repository stage was not reached"
 }
 
-// convergeOptIn is unknownDetail's clause for a stage of a converge, where the
-// run's own confirmation can cover the step (D12, 2026-10-20): --yes covers
-// onboarding an unlisted repository in either front door, so the sentence names
-// it as the way in. It does not where --yes cannot: an origin whose identity is
-// not the one it claims (a rewritten URL, a host that is not a provider's own)
-// takes the typed confirmation whatever the run was given, and a coding agent's
-// session confirms nothing at all (initflow.CanConfirmManaged) — where the flag
-// must not be named as a way in, since it would be a line for the agent to
-// paste (AgentAdvice). A door that does not enrol has its own sentence
+// convergeOptIn is unknownDetail's clause for a stage of a run whose own
+// confirmation can cover the step (D12, 2026-10-20): --yes covers onboarding an
+// unlisted repository in either front door and in either mode, so the sentence
+// names it as the way in. It does not where --yes cannot, and those are exactly
+// onboardCovered's three refusals — an origin whose identity is not the one it
+// claims (a rewritten URL, a host that is not a provider's own), a name the
+// config knows at another host, and a coding agent's session, which confirms
+// nothing at all (initflow.CanConfirmManaged) and where the flag must not be
+// named as a way in at all, since it would be a line for the agent to paste
+// (AgentAdvice). A door that does not enrol has its own sentence
 // (unknownDetailNotEnrolled), so it never reaches this clause.
-func convergeOptIn(o originInfo) string {
+//
+// It takes the local config because one of the three is the config's: the same
+// sentence is printed by the converge's stages and by the standalone --repo
+// gate (gateRepo), so it cannot be a property of the origin alone.
+func convergeOptIn(lc *localcfg.Config, o originInfo) string {
 	switch {
 	case o.Rewritten || !o.standardHost():
 		return ", and --yes does not give it for an origin whose identity is not the one it claims: type its owner/name at your own terminal"
+	case repoNameListed(lc, o):
+		return ", and --yes does not give it here: the project's config knows this name at another host, so the origin is this gate's own question"
 	case agentEnv(os.Getenv):
 		return " (a coding agent's session confirms nothing, --yes included): type its owner/name in your own terminal window"
 	}
 	return " — --yes covers it, or type its owner/name at your own terminal"
 }
-
-// repoGateOptIn is unknownDetail's clause for the standalone --repo gate: there
-// the question is the identity of the repository in a checkout the run was
-// pointed at, which is the one thing --yes cannot answer, so the sentence says
-// so and the flag is not offered as a way in (gateRepo's own line names the
-// typed route).
-const repoGateOptIn = ", which --yes does not give here: this gate's question is the identity of the repository in the checkout it was pointed at"
 
 // enrolLeft is what a door that does not enrol a repository by asking leaves
 // instead of the typed question: one line naming the door that does. `update`
@@ -402,12 +406,14 @@ func (e *initEngine) confirmRepo(root string, o originInfo) (bool, error) {
 	return true, nil
 }
 
-// gateRepo is the same gate for update --repo run on its own, before its first
-// cloud call: a repository the local config does not list is onboarded only
-// after its owner/name is typed at the user's own terminal, or by
-// --onboard-repo (never from a coding agent's session). A known repository
-// goes on as it always did. The converge's repository stage has done this
-// itself, and --plan-only and --forget change no repository, so they skip it.
+// gateRepo is the same gate for a --repo run, before its first cloud call: a
+// repository the local config does not list is onboarded only by the run's own
+// confirmation (--yes, D12's answer of 2026-10-20, which W5.1's commit extends
+// to this gate — it used to be typed here too), or after its owner/name is
+// typed at the user's own terminal, or by --onboard-repo (never from a coding
+// agent's session). A known repository goes on as it always did. The converge's
+// repository stage has done this itself, and --plan-only and --forget change no
+// repository, so they skip it.
 func (r *initRun) gateRepo(ctx context.Context, root string, lc *localcfg.Config) error {
 	oi, ok := readOrigin(ctx, root)
 	if !ok {
@@ -431,8 +437,9 @@ func (r *initRun) gateRepo(ctx context.Context, root string, lc *localcfg.Config
 	if lf := onboardLeft(oi, e.r.o.doorName()); lf.Kind == initflow.LeftCommand {
 		how = "pass --onboard-repo " + quoteWord(oi.Repo) + ", or " + how
 	}
-	// unknownDetail states the reason and the clause this gate's --yes cannot
-	// answer (repoGateOptIn); `how` is this gate's own line, so the sentence
-	// names the way in once and the two cannot contradict each other.
-	return userErr("%s: %s", unknownDetail(lc.Name, oi, repoGateOptIn), how)
+	// unknownDetail states the reason and the clause for this origin and this
+	// session (convergeOptIn, the same one the converge's stages print); `how`
+	// is this gate's own line, so the sentence names the way in once and the two
+	// cannot contradict each other.
+	return userErr("%s: %s", unknownDetail(lc.Name, oi, convergeOptIn(lc, oi)), how)
 }
