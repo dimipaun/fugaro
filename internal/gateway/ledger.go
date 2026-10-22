@@ -99,8 +99,15 @@ type charge struct {
 	// cacheRead is the call's reported cache-read tokens, which is what the
 	// next switch's cache-miss cost is estimated from (F24). It is kept for
 	// every call, whatever served it: the call a switch follows is as often
-	// an ordinary one as a tier A one.
+	// an ordinary one as a tier A one. It means something only when usageRead
+	// says the call reported usage at all.
 	cacheRead int64
+	// usageRead is true for a call whose usage this gateway read (its report,
+	// complete or partial). A call that settled with no usage -- one that
+	// never reached the upstream, a relayed model or provider error, a
+	// redirect, a 2xx whose usage did not parse -- says nothing about what
+	// the run had cached, and that is not zero (F24).
+	usageRead bool
 }
 
 // settle releases a call's reservation w and charges it. An amount above
@@ -134,9 +141,17 @@ func (s *Server) settle(st *stageState, w pricing.Micros, c charge) {
 	// The last call's cache reads and model, for the estimate a switch
 	// carries (F24): the next call's answer may say it moved credentials,
 	// and what that costs is this call's cached context re-read on the new
-	// tier. A call settled at its reservation because its usage could not
-	// be read leaves what it had cached unknown, which is not zero.
-	s.lastCacheRead, s.lastModel, s.lastCacheKnown = c.cacheRead, c.model, !c.unparsed
+	// tier. Only a call that reported usage speaks for the run's cache: a
+	// call that settled with none at all leaves the figure unknown, which is
+	// not zero -- the call before it may well have read a cached context,
+	// and a switch after it must record itself unmeasured rather than as a
+	// miss that cost nothing (F24).
+	if c.usageRead {
+		s.lastCacheRead, s.lastCacheKnown = c.cacheRead, true
+	} else {
+		s.lastCacheRead, s.lastCacheKnown = 0, false
+	}
+	s.lastModel = c.model
 	r := &st.rep
 	if c.sent {
 		r.Calls++

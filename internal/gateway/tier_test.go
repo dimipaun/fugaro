@@ -344,3 +344,46 @@ func TestSwitchCostUnmeasuredWithoutALastCall(t *testing.T) {
 		})
 	}
 }
+
+// TestSwitchCostUnmeasuredAfterACallThatReportedNoUsage (F24, C1.16): the
+// estimate is the last call's cached context, and a call that settled with
+// no usage at all -- an error the upstream relayed, say -- read none of it.
+// Its absent usage is not zero cache reads: taking it for zero would turn
+// the next switch into a measured $0, while the call before it may well have
+// read a whole cached context, and re-reading that is exactly what the
+// switch costs. Unknown stays unknown, whichever of the two settled last.
+func TestSwitchCostUnmeasuredAfterACallThatReportedNoUsage(t *testing.T) {
+	const sw = `{"to":"repo-shared-b","reason":"not_admitted"}`
+	var answers []ServiceAnswer
+	var n atomic.Int64
+	h, _ := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+		if n.Add(1) == 1 {
+			// The upstream's error, relayed: the call is paid for, and its
+			// answer carries no usage at all.
+			return anthropicfake.Reply{Status: http.StatusBadRequest, Body: `{"type":"error","error":{"type":"invalid_request_error","message":"too long"}}`}
+		}
+		r := tierReply(TierB, "repo-shared-b", pricing.Usage{Input: 800, Output: 40})
+		r.Header.Set(HeaderSwitch, sw)
+		return r
+	}, func(o *Options) {
+		o.OnServiceAnswer = func(a ServiceAnswer) { answers = append(answers, a) }
+	})
+	if resp, b := h.post(msg(sonnet, 100)); resp.StatusCode == http.StatusOK {
+		t.Fatalf("the call that was to report no usage was served: %s", b)
+	}
+	if rep := h.gw.EndStage(); rep.Calls != 1 || rep.UsageUnparsed != 0 {
+		t.Fatalf("that call settled as %+v, want one counted call and no usage read", rep)
+	}
+	h.gw.BeginStage(defaultStage)
+	if resp, b := h.post(msg(sonnet, 100)); resp.StatusCode != http.StatusOK {
+		t.Fatalf("the call that switched: %d %s", resp.StatusCode, b)
+	}
+	h.gw.EndStage()
+	last := answers[len(answers)-1]
+	if last.Switch != sw {
+		t.Fatalf("the switch was not read off the answer: %+v", last)
+	}
+	if !last.SwitchCost.Unmeasured || last.SwitchCost.USD != 0 {
+		t.Errorf("the switch after a call with no usage is estimated at %+v, want unmeasured", last.SwitchCost)
+	}
+}
