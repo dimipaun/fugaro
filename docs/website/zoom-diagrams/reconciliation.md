@@ -256,12 +256,13 @@ is: *a managed project is a new project that holds only Fugaro's resources*.
 
 ### ZF17 — **Wrong** — "Fugaro gets its own isolated, Fugaro-managed project", in the present tense
 
-Managed projects are **gated off**: `internal/cli/recipes_skew.go:152`
-`const managedDeployerShipped = false`, and every command that would create one or act as
-its deployer refuses before any cloud call (`internal/cli/managed_flag.go:178`,
-`internal/cli/init.go:749,944`, `internal/cli/restore.go:192`,
-`internal/cli/managed_apply.go:157`). `docs/design/managed-projects.md:3` says it outright.
-`docs/releases/v0.9.5.md` lists managed projects among the disabled features.
+Managed projects were **gated off** when this note was written: `internal/cli/recipes_skew.go`'s
+`const managedDeployerShipped = false` (true as of 0.10.0), and every command that would create
+one or act as its deployer refused before any cloud call (`internal/cli/managed_flag.go`,
+`internal/cli/init.go`'s `check`, `internal/cli/restore.go`,
+`internal/cli/managed_apply.go`). `docs/design/managed-projects.md` says it outright, and
+`docs/releases/v0.9.5.md` lists managed projects among the disabled features; 0.10.0's note
+lists them among the shipped ones, with the fence unmeasured (Check 68).
 
 ### ZF18 — **Wrong** — "so there is no extra setup"
 

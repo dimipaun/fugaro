@@ -626,17 +626,21 @@ func runInit(r *initRun) error {
 		if err != nil {
 			return err
 		}
-		// The printed variables are the installation as it STANDS, so the one
-		// key this spec never carries is carried forward from the workdir —
-		// the same carry a real run makes (prepare). Without it, --print-vars
-		// on an installation that has opted in prints a document that drops
-		// the opt-in, which is a reading of it the owner cannot trust. It is
+		// The printed variables are the installation as it STANDS, so the keys
+		// this spec never carries are carried forward from the workdir — the
+		// same carry a real run makes (prepare). Without it, --print-vars on
+		// an installation that has opted in (or that uses managed projects,
+		// whose fence the spec never carries either) prints a document that
+		// drops them, which is a reading of it the owner cannot trust. It is
 		// read, never written: --print-vars changes nothing, and a missing or
 		// unreadable workdir is "no key", not an error to print a warning
 		// about (this path touches no cloud and no Terraform by design).
 		if dir, derr := infra.InstallationWorkdir(os.Getenv, lc.GCPProject); derr == nil {
 			if prev, perr := infra.ReadWorkdirVars(dir, "installation"); perr == nil {
 				if data, err = infra.CarriedCredentialsService(data, prev); err != nil {
+					return err
+				}
+				if data, err = infra.CarriedManagedDeployerScoped(data, prev); err != nil {
 					return err
 				}
 			}
@@ -830,26 +834,16 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	// all — projectStage.Apply needs a terminal and a typed confirmation)
 	// nor `fugaro managed apply`, which only reads, reaches one.
 	//
-	// While managed projects are off in this release (managedDeployerShipped),
-	// the label is not written: with it, a project this run created reads as
-	// managed, and the one reader of that in this release is init's own guard,
-	// whose refusal for a managed project drops the --allow-delete advice —
-	// in a release whose every managed entry point refuses. The creation fact
-	// is written as it always was, so the project is the state a project
-	// created before the label existed is in (docs/gcp-setup.md has the
-	// owner-run line that completes it).
-	labelOff := false
+	// The label is written for every managed creation, as it has been since
+	// the mark had two halves: while managed projects were off
+	// (managedDeployerShipped, false until 0.10.0) this step was skipped, and
+	// 0.10.0 is the release that made a project this run created read as
+	// managed again.
 	if err == nil {
-		if managedDeployerOpen {
-			err = managed.WriteManagedLabel(ctx, e.c.CRM, r.res.Created, r.gcpProject)
-		} else {
-			labelOff = true
-		}
+		err = managed.WriteManagedLabel(ctx, e.c.CRM, r.res.Created, r.gcpProject)
 	}
-	marked := err == nil && !labelOff
+	marked := err == nil
 	switch {
-	case labelOff:
-		fmt.Fprintf(r.w, "recorded that this run created project %s (gs://%s/%s); managed projects are off in this release, so it is not labelled %s=%s and is not a managed project\n", r.res.Created, bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue)
 	case marked:
 		if c := r.o.created; c != nil {
 			c.Marked = true
@@ -1049,16 +1043,13 @@ func (o *initOptions) firebaseProject() string {
 }
 
 // check refuses flag combinations that mean nothing.
+//
+// Two features were once refused here before any cloud call, and neither is
+// any more: --managed until 0.10.0 (managedDeployerShipped) and
+// --provision-batch until 0.9.5, when the compute module's reaper role stopped
+// naming a permission Google does not have (batchProvisionShipped). The flags
+// themselves stay: they still select what they always selected.
 func (o *initOptions) check() error {
-	// The one feature this release cannot complete, refused first and before
-	// any cloud call (managedDeployerShipped). --provision-batch was refused
-	// here too until 0.9.5, when the compute module's reaper role stopped
-	// naming a permission Google does not have (batchProvisionShipped).
-	if o.managed {
-		if err := refuseManagedNotShipped(); err != nil {
-			return err
-		}
-	}
 	if o.noBuild || o.allowJobDelete || o.retire {
 		// The door, not `update`: check() runs for both doors, and neither flag
 		// set is foreign to either of them -- setupDoor.foreign is --forget
@@ -1721,9 +1712,10 @@ const initManagedDeleteAdvice = "This is a managed project: deleting or replacin
 var isManagedFact = managed.IsManaged
 
 // managedProject is whether the project this run installs into is managed: the
-// creation fact of Task 0.2, read only when a guard refusal needs it — the
-// fact decides which text that refusal ends with, and nothing else in init's
-// flow turns on it.
+// creation fact of Task 0.2. Two things turn on it — which text a guard refusal
+// ends with, and whether the installation gets the managed deployer's scoped
+// roles (managedScope writes the module's managed_deployer_scoped from it) —
+// and it is read for both the same way, once.
 //
 // It fails closed: an error reading the fact is returned, never read as "not
 // managed", because not managed is the mode whose refusal names the flag; and
@@ -1753,12 +1745,58 @@ func (r *initRun) managedProject(ctx context.Context, c *infra.Clients) (bool, e
 	return ok, nil
 }
 
+// managedScope is whether the installation uses managed projects, decided from
+// the project's own creation fact: the module's managed_deployer_scoped, which
+// is what creates the managed deployer's seven scoped roles and their seven
+// conditioned bindings. Every path that plans the installation root decides it
+// here — installRoot, which writes the variable into the tfvars the plan is
+// made from, and --forget, whose plan is the installation root's too and would
+// otherwise delete all fourteen.
+//
+// A failure is the run's own and not a refusal: there is no plan to refuse
+// yet, and a run that cannot tell whether the variable belongs on or off plans
+// nothing rather than guessing. (The guard's read-error refusal, which is this
+// same fact read at the point where a plan exists to refuse, is elsewhere.) The
+// text the read failed with is a bounded field: it is a service's words about
+// an object in the operator's project, and the operator is who has to act on
+// it.
+func (r *initRun) managedScope(ctx context.Context, c *infra.Clients) (bool, error) {
+	ok, err := r.managedProject(ctx, c)
+	if err != nil {
+		return false, initErr(fmt.Errorf("whether %s is a managed project could not be read while this installation was being planned: %s", safetext.Field(r.projectName), safetext.Field(err.Error())))
+	}
+	return ok, nil
+}
+
 // prepare writes the root's tfvars, imports and backend configuration.
 func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports) (map[string]string, error) {
 	vars, err := infra.InstallationVars(spec)
 	if err != nil {
 		return nil, err
 	}
+	// The keys this spec never carries are carried forward from BOTH documents
+	// that can hold them, the older first:
+	//
+	//   - wd.PrevVars, the snapshot PrepareWorkdir took BEFORE it rebuilt
+	//     the tree. It is all an ordinary run has: the tree is fresh, so
+	//     no tfvars file is there yet. Never a read of wd.Root at this
+	//     point — PrepareWorkdir has already deleted the file it names,
+	//     and the read would answer "nothing to carry" for exactly the
+	//     installation that opted in.
+	//   - wd.Vars, the tfvars the workdir holds NOW. A LATER stage of the
+	//     same run reaches prepare again — the compute stage's read of the
+	//     installation's outputs, on the same workdir — and the keys the
+	//     run's own stages wrote into that document are not in the
+	//     snapshot: the credentials stage's opt-in is the one that matters.
+	//     Without it, naming --provision-batch beside --provision-credentials
+	//     would drop the opt-in at the compute stage's first line, before
+	//     its own typed confirmation and therefore for an owner who
+	//     declines it as much as for one who accepts.
+	now, err := wd.Vars()
+	if err != nil {
+		return nil, userErr("reading the installation's tfvars: %v", err)
+	}
+	documents := [][]byte{wd.PrevVars, now}
 	if spec.CredentialsService == nil {
 		// The credentials service's opt-in is the credentials stage's alone
 		// (C1.20): this spec never carries it, and the tfvars are rewritten
@@ -1767,33 +1805,25 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports) (
 		// bundle container's prevent_destroy refuses, so every ordinary run of
 		// fugaro update after the opt-in would fail instead of applying. The key
 		// is carried forward exactly as the workdir had it, present or absent.
-		//
-		// The key is carried from BOTH documents that can hold it, the older
-		// first:
-		//
-		//   - wd.PrevVars, the snapshot PrepareWorkdir took BEFORE it rebuilt
-		//     the tree. It is all an ordinary run has: the tree is fresh, so
-		//     no tfvars file is there yet. Never a read of wd.Root at this
-		//     point — PrepareWorkdir has already deleted the file it names,
-		//     and the read would answer "nothing to carry" for exactly the
-		//     installation that opted in.
-		//   - wd.Vars, the tfvars the workdir holds NOW. A LATER stage of the
-		//     same run reaches prepare again — the compute stage's read of the
-		//     installation's outputs, on the same workdir — and the keys the
-		//     run's own stages wrote into that document are not in the
-		//     snapshot: the credentials stage's opt-in is the one that matters.
-		//     Without it, naming --provision-batch beside --provision-credentials
-		//     would drop the opt-in at the compute stage's first line, before
-		//     its own typed confirmation and therefore for an owner who
-		//     declines it as much as for one who accepts.
-		now, err := wd.Vars()
-		if err != nil {
-			return nil, userErr("reading the installation's tfvars: %v", err)
-		}
-		for _, prev := range [][]byte{wd.PrevVars, now} {
+		for _, prev := range documents {
 			if vars, err = infra.CarriedCredentialsService(vars, prev); err != nil {
 				return nil, userErr("reading the installation's tfvars: %v", err)
 			}
+		}
+	}
+	// The other key this spec never carries, and for a sharper reason than the
+	// opt-in above: it is the deployer's scope, which is what creates the seven
+	// scoped roles and their seven conditioned bindings, and a document that
+	// loses it plans all fourteen away. The paths that plan the installation
+	// root decide it from the project's creation fact (installRoot and
+	// --forget, both through managedScope), and there this carry is a no-op
+	// because the spec it was handed already carries the answer; it is the
+	// paths that only re-serialize the root — --config-only, the compute
+	// stage's read of the installation's outputs, adopt — that would otherwise
+	// write a document that reads as an installation without the fence.
+	for _, prev := range documents {
+		if vars, err = infra.CarriedManagedDeployerScoped(vars, prev); err != nil {
+			return nil, userErr("reading the installation's tfvars: %v", err)
 		}
 	}
 	if err := wd.WriteVars(vars); err != nil {
@@ -1838,6 +1868,27 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	// own eligible names unioned with every one discovery found live, so a
 	// config edit can never shrink the module's for_each (N3).
 	spec.ProjectSecrets = im.ProjectSecrets
+	// Whether this installation uses managed projects, which is what the
+	// module's managed_deployer_scoped turns on: the deployer's seven scoped
+	// roles and their seven conditioned bindings (managedDeployerShipped,
+	// deploy/terraform/gcp/modules/installation/deployer.tf). The fact is the
+	// project's own — the creation fact init's guard refusal reads, and the
+	// only record of it that outlives one run — so the run that creates a
+	// managed project (--managed) and every later run that reaches this
+	// function (the setup and update doors, which are the only ones that plan
+	// and apply the installation root) write the variable; an installation that
+	// never asked for managed writes the same tfvars it wrote before the
+	// variable existed. A project the owner flags with `fugaro managed flag`
+	// gets the fence here, at the next such run, because that command writes
+	// the fact and applies nothing. Read here, and not in installOptions,
+	// because the answer is a cloud fact: a plain `fugaro update` of a managed
+	// installation that dropped the variable would plan the destruction of the
+	// fourteen resources the fence is — and --forget, the other path that plans
+	// this root, reads it the same way (managedScope).
+	spec.ManagedDeployerScoped, err = r.managedScope(ctx, c)
+	if err != nil {
+		return outs, false, err
+	}
 	for _, n := range im.Notes {
 		r.warn(n)
 	}
@@ -2433,6 +2484,16 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 		return userErr("the state bucket still holds repository state (%s; only *.tfstate objects count, not locks): run fugaro update --repo --forget for each repository first", strings.Join(repos, ", "))
 	}
 	fs := infra.ForgetSpec(spec)
+	// The rollback plans the installation root, so it decides the deployer's
+	// scope the way installRoot does and not from the spec it was handed —
+	// that spec is built from the options and never carries the key. Without
+	// this the rollback of a managed installation plans the deletion of the
+	// seven scoped roles and their seven conditioned bindings, which the guard
+	// then refuses: the owner's own rollback stops on a fence the run itself
+	// took out of the tfvars.
+	if fs.ManagedDeployerScoped, err = r.managedScope(ctx, c); err != nil {
+		return err
+	}
 	backend, err := prepare(wd, fs, infra.Imports{})
 	if err != nil {
 		return err

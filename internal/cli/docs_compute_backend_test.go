@@ -2076,11 +2076,11 @@ func TestDocsSharedConfigStatesTheImageChecksExactly(t *testing.T) {
 // owner moved this work "and the managed redesign with it" out of 0.9.0, which
 // reads as one placement for the two. They are not the same: this work is 0.9.5,
 // and the redesign is placed elsewhere — the number `internal/cli/recipes_skew.go`'s
-// `managedDeployerShipped` comment names, and the one `docs_managed_label_test.go`
-// and `shipped_gates_test.go` pin in the managed documents. A plan that gives a
-// second answer for the redesign's release is read by whoever schedules the
-// fence's flip, so the number here is taken from the constant's own comment
-// rather than written into this test.
+// `managedDeployerShipped` comment names (the release the flip shipped in, "true
+// as of"), and the one `docs_managed_label_test.go` pins in the managed
+// documents. A plan that gives a second answer for the redesign's release is
+// read by whoever schedules the fence's flip, so the number here is taken from
+// the constant's own comment rather than written into this test.
 //
 // Mutations (verified, run and restored): put "and the managed redesign with it"
 // back into Fact 1 — the first check fails naming it; change the release the plan
@@ -2090,7 +2090,7 @@ func TestComputeBackendPlanPlacesTheManagedRedesignRight(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	decl := regexp.MustCompile(`(?s)managedDeployerShipped is false until the release[^.]*?(\d+\.\d+\.\d+)`).FindStringSubmatch(string(gate))
+	decl := regexp.MustCompile(`(?s)managedDeployerShipped is (?:true as of |false until the release\D*?)(\d+\.\d+\.\d+)`).FindStringSubmatch(string(gate))
 	if decl == nil {
 		t.Fatal("recipes_skew.go's managedDeployerShipped comment no longer names the release the redesign ships in: this test reads the tree's own answer from there")
 	}

@@ -135,8 +135,10 @@ variable "managed_deployer_scoped" {
   # The managed deployer's seven scoped roles and their seven conditioned
   # bindings — the 0.10.0 redesign of the fence. Before 0.10.0 this flag created
   # one scoped role under one condition, and that condition could not be
-  # expressed as a GCP IAM condition at all. Off by default, and fugaro update
-  # never sets it: the gate has never been flipped. An installation that does
+  # expressed as a GCP IAM condition at all. Off by default, and set by fugaro
+  # for an installation that uses managed projects (the project's own creation
+  # fact is what decides it): managed projects ship in 0.10.0, and the fence's
+  # live measurement (Check 68) follows that release. An installation that does
   # not name it plans exactly as before, minus those fourteen resources. The
   # module's own variable (../../modules/installation/variables.tf) says why
   # there are seven, and what the redesign changed.

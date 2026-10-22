@@ -3737,7 +3737,7 @@ func TestRootManagedDeployerScopedDefaultsOff(t *testing.T) {
 	}
 	body := code[m[1]:matchBrace(code, m[1]-1)]
 	if !hasAttr(body, "default", "false") {
-		t.Errorf("the root's managed_deployer_scoped must default to false; fugaro update never sets it in 0.8.6:\n%s", body)
+		t.Errorf("the root's managed_deployer_scoped must default to false: fugaro writes it only for an installation that uses managed projects (internal/cli/init.go's installRoot, from the project's own creation fact), so an installation that never asks for managed plans none of the fence's resources:\n%s", body)
 	}
 }
 

@@ -74,11 +74,13 @@ type InstallOptions struct {
 	BudgetBackend bool
 	// ManagedDeployerScoped opts the installation in to the managed
 	// deployer's seven per-service roles and their seven conditioned
-	// bindings (the module's managed_deployer_scoped). Nothing sets it
-	// while internal/cli's managedDeployerShipped is false (0.8.6): the
-	// redesign is applied but unmeasured -- Check 68 has not been run, and
-	// the fmgd- fence has not been seen stored by IAM (deployer.tf's
-	// header).
+	// bindings (the module's managed_deployer_scoped). init sets it for an
+	// installation that uses managed projects — the run that creates one
+	// with --create-project --managed, and every later run against one,
+	// read from the project's creation fact (init's installRoot) — so the
+	// key follows the installation and not the run. What it does not settle
+	// is whether the fence works: Check 68 has not been run
+	// (deployer.tf's header, docs/design/managed-deployer-fence.md).
 	ManagedDeployerScoped bool
 }
 
@@ -458,6 +460,57 @@ func CarriedCredentialsService(vars, prev []byte) ([]byte, error) {
 		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
 	}
 	doc["credentials_service"] = svc
+	return sortedJSON(doc)
+}
+
+// CarriedManagedDeployerScoped returns vars with the managed_deployer_scoped
+// entry that the document prev carried, when vars carry none of their own.
+//
+// prev is the same pair of documents CarriedCredentialsService takes — the
+// workdir's snapshot from before the run and the tfvars it holds now — and nil
+// when neither holds any. vars carry a value of their own only when the caller
+// decided it from the project's own creation fact (installRoot and --forget
+// read managed.IsManaged), which is the authority: this never overwrites one.
+//
+// The variable is what creates the managed deployer's seven scoped roles and
+// their seven conditioned bindings, and every path that serializes the
+// installation root's tfvars rebuilds them from a spec that does not carry it
+// (the spec is built from the options, and only the fact read sets the field).
+// Carried forward as it is found, present or absent, an installation that has
+// them keeps them across any such rewrite — `fugaro update --forget` above
+// all, whose plan would otherwise delete all fourteen and be refused by the
+// guard, and `--config-only`, the compute stage's read of the installation's
+// outputs and `--print-vars`, whose document is a reading of the installation
+// the owner has to be able to trust. An installation that never used managed
+// projects carries no key and is unchanged.
+//
+// The creation fact is one-way — nothing in this tree removes the marker
+// object or the project label — so an entry found here is not a stale opt-in
+// for a project that stopped being managed: it is the state of a project that
+// still is. The day something un-manages a project, this carry is one of the
+// places that has to learn about it.
+func CarriedManagedDeployerScoped(vars, prev []byte) ([]byte, error) {
+	if prev == nil {
+		return vars, nil // no document held one: nothing to carry
+	}
+	previous, err := varsDoc(prev)
+	if err != nil {
+		// A tfvars that cannot be read is not a reason to write a document
+		// that drops the fence: fail rather than carry nothing forward.
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	scoped, ok := previous["managed_deployer_scoped"]
+	if !ok || scoped == nil {
+		return vars, nil
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	if _, own := doc["managed_deployer_scoped"]; own {
+		return vars, nil // the caller's own decision stands
+	}
+	doc["managed_deployer_scoped"] = scoped
 	return sortedJSON(doc)
 }
 

@@ -402,9 +402,6 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	}
 
 	o.Checks = append(o.Checks, doctorBaseImage(lc), doctorCosign(lc))
-	if c := doctorManagedDeployer(); c != nil {
-		o.Checks = append(o.Checks, *c)
-	}
 
 	// The installation's project-wide secret containers, listed once for
 	// doctor's three project-secret checks: the two per-repository ones
@@ -477,21 +474,6 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 
 	o.OK = !checksFail(o.Checks, strict)
 	return emitDoctor(cmd, o, asJSON)
-}
-
-// doctorManagedDeployer is the info line that says plainly why the managed
-// deployer's seven scoped roles and their seven conditioned bindings are
-// absent from every installation in this release (managedDeployerShipped): so
-// that nobody reads their absence as a broken installation. Informational,
-// never a warning and never failing, not even with --strict; nil once the
-// managed deployer ships.
-func doctorManagedDeployer() *doctorCheck {
-	if managedDeployerOpen {
-		return nil
-	}
-	return &doctorCheck{ID: "managed-deployer-disabled", Severity: "info",
-		Problem: "the managed deployer's scoped roles are disabled in this release, so their absence is expected: the redesigned fmgd- prefix fence (one IAM condition per service) has not been measured live yet, so the seven roles and their seven bindings are not created, and managed projects (fugaro setup --create-project --managed, fugaro managed apply, fugaro restore) are refused until 0.10.0",
-		Fix:     "nothing to do: an installation and a project created without --managed are unaffected (docs/design/managed-deployer-fence.md, Check 68 of docs/gcp-live-checklist.md)"}
 }
 
 // doctorBaseImage warns when the installation has no Fugaro base recorded

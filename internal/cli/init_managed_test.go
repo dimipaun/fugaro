@@ -115,47 +115,6 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 		}
 	})
 
-	// (c') The same creation in the release as it ships, with managed
-	// projects off (managedDeployerShipped false): the creation fact is
-	// written as it always was, and the label is not, so the project does
-	// not read as managed — which would change init's own guard refusal for
-	// it to the managed text, with no --allow-delete — in a release whose
-	// every managed entry point refuses. And the run does not say it is
-	// Fugaro-managed.
-	t.Run("--create-project with managed projects off", func(t *testing.T) {
-		closeShippedGates(t)
-		r := newProjectRig(t)
-		bucket := "fugaro-runs-" + newProj
-		r.gcs.AddProject(newProj, gcpfake.FirstCreatedProjectNumber)
-		r.gcs.AddBucket(bucket, gcpfake.FirstCreatedProjectNumber, managedBucketLabels)
-		roles := map[string]string{}
-		for _, r := range []string{"launcher", "job_runner", "build_submitter", "tag_mover"} {
-			roles[r] = "projects/" + newProj + "/roles/fugaro" + strings.ToUpper(r[:1]) + r[1:]
-		}
-		r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
-			"runs_bucket":               bucket,
-			"registry_host":             "us-east5-docker.pkg.dev/" + newProj,
-			"scheduler_service_account": "fugaro-scheduler@" + newProj + ".iam.gserviceaccount.com",
-			"role_ids":                  roles,
-		})}
-		r.save(t)
-		r.bill.AddAccount(billingAcc, true)
-		out, _, err := r.run(t, true, newProj+"\n"+billingAcc+"\n"+initProjectName+"\n", "--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New")
-		if err != nil {
-			t.Fatalf("%v\n%s", err, out)
-		}
-		b, ok := markerAt(t, r.gcs, bucket)
-		if want := `{"version":1,"gcp_project":"` + newProj + `"}`; !ok || b != want {
-			t.Errorf("gs://%s/%s = %q (present %v), want %s", bucket, managed.MarkerObject, b, ok, want)
-		}
-		if got, set := r.crm.Labels(newProj)[managed.ProjectLabelKey]; set {
-			t.Errorf("%s=%q written on %s with managed projects off in this release", managed.ProjectLabelKey, got, newProj)
-		}
-		if strings.Contains(out, "it is Fugaro-managed") || !strings.Contains(out, "managed projects are off in this release") {
-			t.Errorf("the run's line about the creation fact is not the one for managed projects off:\n%s", out)
-		}
-	})
-
 	// (c'') The label write refused: the project can be read and not written
 	// (no resourcemanager.projects.update — the shape every credential a run
 	// holds is in), so the object lands and the label does not. It is the one
@@ -740,20 +699,163 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 	}
 
 	// (e) A plan with no delete is never refused because of the list or the
-	// flag: not with an unreadable list, not with an --allow-delete naming
-	// nothing in the plan, and the creation fact is not even read for it.
+	// flag: not with an unreadable list, and not with an --allow-delete naming
+	// nothing in the plan. The creation fact is read once for it, and not by
+	// the guard: the installation's managed_deployer_scoped is written from it
+	// (installRoot, which is what gives an installation that uses managed
+	// projects the deployer's fence), so the read is the plan's own and not the
+	// refusal's — the guard reads the fact only once a plan is refused.
 	r = newInitRig(t)
 	r.managedRuns(t, initProjectName, initProject)
 	if err := r.gcs.Bucket(t, initRunsBucket).Bucket.WriteAll(context.Background(), managed.AllowDeleteObject, []byte("not a list"), nil); err != nil {
 		t.Fatal(err)
 	}
-	reads := stubManagedFact(t, false, errors.New("must not be read"))
+	reads := stubManagedFact(t, false, nil)
 	out, _, err := executeStdin(t, "", "setup", "--yes", "--allow-delete", address)
 	if err != nil || len(r.ran(t, "apply")) != 1 {
 		t.Fatalf("a plan with no delete: err %v, %d applies\n%s", err, len(r.ran(t, "apply")), out)
 	}
-	if *reads != 0 {
-		t.Errorf("the creation fact was read %d time(s) for a plan the guard admits", *reads)
+	if *reads != 1 {
+		t.Errorf("the creation fact was read %d time(s) for a plan the guard admits, want 1 (installRoot's managed_deployer_scoped read)", *reads)
+	}
+}
+
+// TestManagedInitWritesTheDeployerScopeFromTheCreationFact is the wiring the
+// flip added, asserted where it lands: installRoot writes the installation
+// module's managed_deployer_scoped from the project's own creation fact, and
+// that variable is the whole of what creates the deployer's seven scoped roles
+// and their seven conditioned bindings (deployer.tf's count on every one of
+// them). Both directions are asserted, because the value is a bool and a
+// regression can drop it as easily as invert it: a managed project's
+// terraform.tfvars.json carries the key as true, and a project that is not
+// managed writes the document it wrote before the variable existed — the
+// field is `omitempty`, so "off" is the absent key and not a false one.
+//
+// The fact is read through the fake APIs, not through stubManagedFact: the
+// marker object and the project label managedRuns writes are what the real
+// managed.IsManaged answers true for, so this test also pins that the value
+// comes from the project's record rather than from anything the run knows
+// about itself.
+//
+// Mutation (run, restore): drop the spec.ManagedDeployerScoped assignment from
+// installRoot, or write its negation, and the managed row fails — the key is
+// absent or false where the fence is owed, so the installation plans no scoped
+// role and no conditioned binding at all.
+func TestManagedInitWritesTheDeployerScopeFromTheCreationFact(t *testing.T) {
+	for name, managedProject := range map[string]bool{"managed": true, "not managed": false} {
+		r := newInitRig(t)
+		if managedProject {
+			r.managedRuns(t, initProjectName, initProject)
+		} else {
+			r.stateBucket()
+		}
+		if out, _, err := executeStdin(t, "", "setup", "--yes"); err != nil {
+			t.Fatalf("%s: %v\n%s", name, err, out)
+		}
+		if n := len(r.ran(t, "apply")); n != 1 {
+			t.Fatalf("%s: the installation root was applied %d time(s), want 1: the tfvars read below are the ones that apply was planned from", name, n)
+		}
+		got, ok := r.tfvars(t)["managed_deployer_scoped"]
+		if managedProject {
+			if !ok || got != true {
+				t.Errorf("managed: tfvars[managed_deployer_scoped] = %v (present %v), want true: the installation plans no scoped deployer role, so the fence does not exist for the project the fact describes", got, ok)
+			}
+			continue
+		}
+		if ok {
+			t.Errorf("not managed: tfvars[managed_deployer_scoped] = %v, want the key absent: an installation that never asked for managed plans the deployer's scoped roles", got)
+		}
+	}
+}
+
+// TestForgetKeepsTheManagedDeployerScope: the rollback plans the installation
+// root too, so it decides the deployer's scope the way installRoot does — from
+// the project's own creation fact — and not from the spec the run was handed,
+// which is built from the options and never carries the key. A forget run that
+// wrote the document without it would plan the deletion of the seven scoped
+// roles and their seven conditioned bindings, and the guard refuses a plan
+// like that: the owner's own rollback would stop on a fence the run itself
+// took out of the tfvars.
+//
+// The assertion is on the document the plan is made from. The rig's terraform
+// is scripted (setPlan), so what a real one would plan is read here as the
+// variables that plan would carry — the fourteen resources exist in the config
+// exactly when managed_deployer_scoped is true.
+//
+// Mutation (run, restore): drop the managedScope read from forget: the key is
+// gone after the run and this fails.
+func TestForgetKeepsTheManagedDeployerScope(t *testing.T) {
+	r := newInitRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	r.setPlan(t, forgetPlan()...)
+	out, _, err := executeStdin(t, "", "update", "--forget", "--yes")
+	if err != nil {
+		t.Fatalf("the rollback of a managed installation failed: %v\n%s", err, out)
+	}
+	if len(r.ran(t, "state rm")) != 1 {
+		t.Fatalf("calls = %q", r.calls(t))
+	}
+	if got := r.tfvars(t)["managed_deployer_scoped"]; got != true {
+		t.Errorf("tfvars[managed_deployer_scoped] = %v, want true: the rollback's plan is made from this document, and without the key it deletes the deployer's seven scoped roles and their seven conditioned bindings", got)
+	}
+}
+
+// TestConfigOnlyKeepsTheManagedDeployerScope: --config-only rewrites the
+// installation root's tfvars from a spec that never carries the deployer's
+// scope, and it reads no creation fact of its own, so the key can only come
+// from the document the workdir held — the carry in prepare. What it protects
+// is the reading: the document is the installation, and one that has lost the
+// key says the installation has no fence, which is what a later --print-vars
+// prints and what the Check 68 procedure reads.
+//
+// The first run is the control: a setup of a managed project writes the key,
+// so the second run's snapshot has something to carry.
+//
+// Mutation (run, restore): drop the CarriedManagedDeployerScoped loop from
+// prepare: the second run writes the key away and this fails.
+func TestConfigOnlyKeepsTheManagedDeployerScope(t *testing.T) {
+	r := newInitRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	if out, _, err := executeStdin(t, "", "setup", "--yes"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := r.tfvars(t)["managed_deployer_scoped"]; got != true {
+		t.Fatalf("the fixture's own run wrote tfvars[managed_deployer_scoped] = %v, want true: without it the second run has nothing to carry and this test would pass for the wrong reason", got)
+	}
+	out, _, err := executeStdin(t, "", "update", "--config-only", "--yes")
+	if err != nil {
+		t.Fatalf("update --config-only: %v\n%s", err, out)
+	}
+	if got := r.tfvars(t)["managed_deployer_scoped"]; got != true {
+		t.Errorf("tfvars[managed_deployer_scoped] = %v after --config-only, want true: the document now reads as an installation without the deployer's fence, and the next --print-vars prints that", got)
+	}
+}
+
+// TestPrintVarsKeepsTheManagedDeployerScope: --print-vars prints the
+// installation as it STANDS, and it touches no cloud and no Terraform by
+// design, so the deployer's scope cannot be read from the creation fact here:
+// it is carried from the workdir's own document, the same carry the credentials
+// service's opt-in gets. Printed without it, the document the owner reads (and
+// the one Check 68 is written against) says the fence is off.
+//
+// Mutation (run, restore): drop the CarriedManagedDeployerScoped call from the
+// --print-vars branch: the printed document carries no key and this fails.
+func TestPrintVarsKeepsTheManagedDeployerScope(t *testing.T) {
+	r := newInitRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	if out, _, err := executeStdin(t, "", "setup", "--yes"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	out, _, err := executeStdin(t, "", "setup", "--print-vars")
+	if err != nil {
+		t.Fatalf("setup --print-vars: %v\n%s", err, out)
+	}
+	var printed map[string]any
+	if err := json.Unmarshal([]byte(out), &printed); err != nil {
+		t.Fatalf("--print-vars printed no JSON document: %v\n%s", err, out)
+	}
+	if got := printed["managed_deployer_scoped"]; got != true {
+		t.Errorf("--print-vars printed managed_deployer_scoped = %v, want true: the document an owner reads as the installation says its deployer has no fence", got)
 	}
 }
 
@@ -813,9 +915,10 @@ func TestManagedInitRefusalOfWhatNoApprovalClearsHasNoAdvice(t *testing.T) {
 }
 
 // Task 3.2's review, finding 3: the creation-fact read fails closed. An error
-// reading it is not "not managed" — the refusal names no flag and no hint and
-// says the read failed — nothing is applied, and the error is not remembered:
-// the next refusal reads again.
+// reading it is not "not managed" — the run says the read failed, names no flag
+// and no hint, and stops before it plans anything (installRoot's own read of
+// the fact, which writes the installation's managed_deployer_scoped) — and the
+// error is not remembered: the next refusal reads again.
 func TestManagedInitFactReadErrorFailsClosed(t *testing.T) {
 	const a = "user:a@example.com"
 	address := `module.installation.google_storage_bucket_iam_member.state["` + a + `"]`
@@ -823,13 +926,21 @@ func TestManagedInitFactReadErrorFailsClosed(t *testing.T) {
 	r.stateBucket()
 	r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
 	reads := stubManagedFact(t, false, errors.New("the storage API answered 400"))
-	_, _, err := executeStdin(t, "", "setup", "--yes")
-	managedRefusal(t, err, address, false)
-	if !strings.Contains(err.Error(), "could not be read") || !strings.Contains(err.Error(), "the storage API answered 400") {
-		t.Errorf("the refusal does not say the read failed:\n%s", err)
+	out, _, err := executeStdin(t, "", "setup", "--yes")
+	// A remote failure, not a refusal: the run is stopped by the read itself,
+	// before any plan exists to refuse.
+	if ExitCode(err) != ExitRemoteError {
+		t.Fatalf("exit %d, err %v; want the read's own failure", ExitCode(err), err)
 	}
-	if len(r.ran(t, "apply")) != 0 {
-		t.Fatal("a plan the guard refused was applied")
+	if !strings.Contains(err.Error(), "could not be read") || !strings.Contains(err.Error(), "the storage API answered 400") {
+		t.Errorf("the failure does not say the read failed:\n%s", err)
+	}
+	noFlagName(t, err.Error())
+	if strings.Contains(err.Error(), address) {
+		t.Errorf("the failure names a plan's address, and no plan was made:\n%s", err)
+	}
+	if len(r.ran(t, "plan"))+len(r.ran(t, "apply")) != 0 {
+		t.Fatalf("a run whose read of the creation fact failed planned or applied something:\n%s", out)
 	}
 	if *reads != 1 {
 		t.Errorf("%d reads, want 1", *reads)
@@ -946,7 +1057,9 @@ func TestManagedInitRefusalAtEveryCallSite(t *testing.T) {
 }
 
 // Task 3.2's review, finding 4, at init's sites: the refusal's address, and a
-// failed read's own words, are bounded fields.
+// failed read's own words — in the guard's refusal and in installRoot's own
+// read of the same fact, which is where a failed read stops a `fugaro setup`
+// before any plan — are bounded fields.
 func TestManagedInitRefusalBoundsUntrustedText(t *testing.T) {
 	for name, v := range map[string]string{
 		"C1 CSI":        "module.installation.google_storage_bucket.a" + string(rune(0x9b)) + "31m",
@@ -961,8 +1074,15 @@ func TestManagedInitRefusalBoundsUntrustedText(t *testing.T) {
 				r.stateBucket()
 				r.setPlan(t, change(v, "delete"))
 				_, _, err := executeStdin(t, "", "setup", "--yes")
-				if ExitCode(err) != ExitUserError {
-					t.Fatalf("exit %d, err %v", ExitCode(err), err)
+				// A read that failed stops the run at installRoot's own read of
+				// the fact (a remote failure, before any plan), while a refusal
+				// is the guard's, once the plan exists.
+				wantCode := ExitUserError
+				if readErr != nil {
+					wantCode = ExitRemoteError
+				}
+				if ExitCode(err) != wantCode {
+					t.Fatalf("exit %d, err %v; want %v", ExitCode(err), err, wantCode)
 				}
 				msg := err.Error()
 				for _, r := range msg {
@@ -970,7 +1090,13 @@ func TestManagedInitRefusalBoundsUntrustedText(t *testing.T) {
 						t.Errorf("the refusal carries %U:\n%q", r, msg)
 					}
 				}
-				if want := 2 + map[bool]int{true: 1}[readErr != nil]; strings.Count(msg, "\n")+1 != want {
+				// The guard's refusal is its sentence and the read-failed line
+				// (two and three); installRoot's read failure is one.
+				want := 2 + map[bool]int{true: 1}[readErr != nil]
+				if readErr != nil {
+					want = 1
+				}
+				if strings.Count(msg, "\n")+1 != want {
 					t.Errorf("the refusal is %d lines, want %d:\n%s", strings.Count(msg, "\n")+1, want, msg)
 				}
 				if strings.Contains(msg, strings.Repeat("x", 600)) {

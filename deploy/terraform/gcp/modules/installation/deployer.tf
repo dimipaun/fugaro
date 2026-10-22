@@ -43,18 +43,23 @@
 # (a Cloud Run operation, for instance: a poll the provider makes may need one,
 # and it fails closed rather than being granted unfenced).
 #
-# GATED OFF since 0.8.6 (owner's ruling, 2026-10-18: "Gate it off by default;
-# redesign for 0.9.0" — moved to 0.9.5 by the owner's ruling of 2026-10-19 and
-# to 0.10.0 by the owner's ruling of 2026-10-20, which placed the redesign in
-# 0.9.6 and then renumbered that release to 0.10.0, so 0.9.0 and 0.9.5 ship with
-# the scoped half still gated off, as 0.8.6 and 0.8.7 do). The seven conditioned
-# roles and their seven bindings exist only when
-# var.managed_deployer_scoped is true, and nothing sets it, because the
-# redesigned fence has not been measured live yet. Until it is (Check 68 of
-# docs/gcp-live-checklist.md, which is written and NOT RUN), the account, the
-# unconditioned create-and-read role and the operators' impersonation grant are
-# created as before, and every command that would use the deployer refuses
-# first (internal/cli's managedDeployerShipped).
+# SHIPPED IN 0.10.0, AND NOT YET MEASURED. The owner's ruling of 2026-10-22
+# ships managed projects in 0.10.0, so the seven conditioned roles and their
+# seven bindings are created for an installation that uses managed projects
+# (var.managed_deployer_scoped, which fugaro writes from the project's own
+# creation fact — internal/cli/init.go's installRoot). The ruling also leaves
+# the fence unmeasured: Check 68 of docs/gcp-live-checklist.md, which is what
+# asks IAM whether it accepts these bindings and honours resource.name per
+# type, is owner-run AFTER the release. So an apply that creates them is the
+# first live test of the shape: if IAM refuses a condition the installation
+# apply fails at the binding, and a service whose resource.name is not honoured
+# gets a role that grants nothing (fail-closed, and no fence). Until 0.10.0 the
+# scoped half was gated off, by the owner's ruling of 2026-10-18 ("Gate it off
+# by default; redesign for 0.9.0" — moved to 0.9.5 by the ruling of 2026-10-19
+# and to 0.10.0 by the ruling of 2026-10-20, which placed the redesign in 0.9.6
+# and then renumbered that release to 0.10.0, so 0.8.6, 0.8.7, 0.9.0 and 0.9.5
+# shipped with it closed): the account, the unconditioned create-and-read role
+# and the operators' impersonation grant were created then as they are now.
 #
 # It exists in every installation, belong included (C8's answer, 2026-10-16:
 # the installation module, not a fourth root). That is the owner's accepted

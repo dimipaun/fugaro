@@ -1,10 +1,13 @@
 # The managed deployer's fence, redesigned for 0.10.0
 
-Status: **design + implementation, GATED OFF.** `managed_deployer_scoped`
-defaults to false and `internal/cli`'s `managedDeployerShipped` stays false, so
-no installation plans the new shape and no command uses the account. This
-document is the design an independent review gates; §9 is the live check the
-owner runs before the gate can be flipped, and it has not been run.
+Status: **design + implementation, SHIPPED IN 0.10.0, AND NOT YET MEASURED.**
+The owner's ruling of 2026-10-22 ships managed projects in 0.10.0:
+`managed_deployer_scoped` is written by `fugaro init` for an installation that
+uses managed projects (from the project's own creation fact) and
+`internal/cli`'s `managedDeployerShipped` is true as of that release, so the new
+shape is planned and the account is used. §9 is the live check that measures it,
+and it has not been run: it is owner-run *after* the release, by the same
+ruling.
 
 It supersedes nothing: D75 (`docs/design/managed-projects.md` §5) still says
 what the deployer may hold and why. What changes is *how the fence is
@@ -44,8 +47,8 @@ accounts, Cloud Run jobs, Cloud Scheduler jobs, Artifact Registry repositories
 and API keys — would, if `resource.name` is unsupported for them, have
 conditions that can never be satisfied: every request against those types is
 denied, so those five roles grant nothing. That is fail-closed and it is the
-safe direction, but it is not a fence: **after the flag flips, the deployer is
-expected to be fenced for Cloud Storage (proved by Check 32) and for Secret
+safe direction, but it is not a fence: **now that the gate is open (0.10.0),
+the deployer is expected to be fenced for Cloud Storage (proved by Check 32) and for Secret
 Manager, and to hold five roles that do nothing** — and the Secret Manager half
 is **measured, not expected**: that service's name-prefix condition is Check 52's
 U3, **RUN 2026-10-16 and answered yes — the condition is honoured** (F5's table
@@ -56,11 +59,12 @@ feature's own use of those services would then have to be reconsidered (§8 poin
 
 ## 1. The problem, as the tree records it
 
-**F1 — the fence is off because it cannot be applied.** `deploy/terraform/gcp/
-modules/installation/deployer.tf`'s "GATED OFF since 0.8.6" comment records the
-owner's 2026-10-18 ruling ("Gate it off by default; redesign for 0.9.0"), and
-its "ONE BINDING PER SERVICE (0.10.0 redesign)" comment records the three
-defects:
+**F1 — the shape could not be applied as first written, and the gate that kept
+it off is open.** `deploy/terraform/gcp/modules/installation/deployer.tf`'s
+"SHIPPED IN 0.10.0, AND NOT YET MEASURED" comment records the owner's ruling of
+2026-10-22 (0.10.0 ships managed projects, with the fence unmeasured until Check
+68), and its "ONE BINDING PER SERVICE (0.10.0 redesign)" comment records the
+three defects that kept the scoped half off from 0.8.6 to 0.9.5:
 
 1. the expression joins 9 clauses with **17 logical operators** where IAM allows
    **12**;
@@ -225,8 +229,7 @@ one D75 already needed.
 
 **Failure modes.**
 - A condition Google rejects (C1/C2/C3 wrong) stops the apply — F1's failure,
-  which is why the gate stays off until §9 passes. Detected at creation, not at
-  use.
+  which is why §9 is what settles the shape. Detected at creation, not at use.
 - `extract` does not behave as C6/C7 read it: under that reading a
   non-match extracts nothing and denies, and the tree models exactly that
   (`extractSegment`, `TestDeployerConditionFencesOnlyTheManagedPrefix`) — which
@@ -648,16 +651,20 @@ the shape decided by the document rather than by the answer.
   outage**: the installation root is what every installation's `fugaro init`
   applies, so a shape IAM refuses is not one installation's bad apply — it is
   `setIamPolicy` refusing the binding and stopping **every** init, `belong`
-  included, which is exactly what the 0.8.6 expression did (F1). Today the seven
+  included, which is exactly what the 0.8.6 expression did (F1). The seven
   roles and their bindings sit behind `count = var.managed_deployer_scoped ? 1 :
-  0` (`deploy/terraform/gcp/modules/installation/deployer.tf`), false in every
-  installation, so nothing plans them and `belong` keeps only the unconditioned
-  role — and that gate is what makes the ruling safe to record before the
-  measurement: **the change that un-gates them is the change that follows Check
-  68's pass**, made with the
-  measurement in hand and in the release that carries it, not here. A repeat of
-  the 0.8.6 init outage across every installation is the risk this dependency
-  exists to keep out of the branch that has not measured the shape.
+  0` (`deploy/terraform/gcp/modules/installation/deployer.tf`), and in 0.10.0
+  fugaro writes that variable only for an installation that uses managed
+  projects — read from the project's own creation fact, `internal/cli/init.go`'s
+  installRoot — so `belong`, which never asks for managed, keeps only the
+  unconditioned role. **The ruling read "the change that un-gates them is the
+  change that follows Check 68's pass"; the owner's ruling of 2026-10-22 takes
+  that change first, with the measurement still to come** (the release note's
+  "Known limits" and `docs/release.md`'s bullet for `managedDeployerShipped` say
+  so). What bounds the exposure is the variable and not the ruling: a shape IAM
+  refuses fails the apply of an installation that opted into managed projects,
+  which is the same blast radius as any other defect in the managed path, and
+  the 0.8.6 shape — which every installation applied — is not what ships.
 - **Point 7 — one shared condition title** for all seven bindings
   (`fugaro-managed-prefix`), as implemented; a per-service title is not taken.
 
@@ -711,5 +718,12 @@ Check 67 (the plan's Task 5.3) owns the transitive-reach half — what the
 identity can reach through impersonation and through the roles it may grant —
 and this check owns the fence half. Neither substitutes for the other.
 
-**Until Check 68 has run and passed, `managed_deployer_scoped` stays false and
-`managedDeployerShipped` stays false.**
+**Check 68 has not been run.** 0.10.0 ships the shape with the measurement
+still ahead of it (the owner's ruling of 2026-10-22): `managedDeployerShipped`
+is true and `managed_deployer_scoped` is written for an installation that uses
+managed projects, so an apply that creates the seven roles and their seven
+bindings is the first live test of the shape. What Check 68 passing would
+settle, and what its failure would leave open (F5's table, §8 point 3, §5's
+fallback), is unchanged by the flip; what the flip changes is that the answer
+now arrives from the first installation that turns managed projects on rather
+than from a sandbox apply made before the gate opened.
