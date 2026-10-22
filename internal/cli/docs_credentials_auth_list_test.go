@@ -336,3 +336,33 @@ func namesEveryAuth(t *testing.T, where, text string, auths []string) {
 		}
 	}
 }
+
+// TestMultiModelDocumentsTheCascadeSwitch is Task C1.22's other half of the
+// doc sweep: docs/multi-model.md §5 refuses a provider model under
+// `agent.auth: cascade` and never says what the value *is* for. This pins the
+// section that does, and it is checked against that section alone (docSection)
+// so a claim that lives only in §5's refusal does not make it pass. The claims
+// are the ones an author has to get right: the cascade is a credential switch
+// that names no model of its own (D133, D150), it reaches a run only when the
+// operator-written project policy turns it on (O2/O3), the repository's file
+// is refused rather than ignored when the policy does not, and the runbook is
+// where an operator goes when a run halts on it.
+func TestMultiModelDocumentsTheCascadeSwitch(t *testing.T) {
+	const path = "docs/multi-model.md"
+	section := docSection(t, path, readDoc(t, path), "## The cascade, and the project policy switch")
+	flat := flattenDoc(section)
+	for _, want := range []string{
+		"agent.auth: cascade",
+		"routing.claude: {via: cascade}",
+		"fugaro project policy publish",
+		"the project policy",
+		"the credentials service",
+		"it names no model of its own",
+		"refused",
+		"docs/credentials-service/runbook.md",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("%s's cascade section never says %q", path, want)
+		}
+	}
+}

@@ -298,3 +298,107 @@ func TestSecurityMdCrossReferencesPointTheRightWay(t *testing.T) {
 		t.Fatalf("read %d cross-references out of SECURITY.md: the file has moved, so this check saw nothing", refs)
 	}
 }
+
+// TestSecurityMdStatesTheCredentialsService is Task C1.22's headline: the
+// credentials service changes what SECURITY.md may claim, and this is what
+// holds the document to the claims that are true on this tree. It pins the
+// sentences the task names — D148's scope sentence with the identities it does
+// *not* cover, Q6's one secret and one grant, the invariant, the revocation
+// stated exactly, the accepted limits the owner ruled on, and the ADVISORY
+// cap — and it bans the three overclaims a rewrite drifts into: that the
+// service is the only identity with Secret Manager access, that it audits
+// every issuance, and that the bundle cannot leak.
+//
+// Mutation-proofed once, on 2026-10-22, in the task's own red step: replacing
+// the sentence "the only Fugaro runtime identity with access to model
+// credentials" with "the only Fugaro identity with access to model
+// credentials" (the wider claim the design's D148 draft used) makes this test
+// fail on the "the only Fugaro runtime identity with access to model
+// credentials" pin, and nothing else in the file changes. Restored
+// immediately; the guards are red before the doc edit and green after it,
+// which is the whole point of writing them first.
+func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
+	s := readDoc(t, "SECURITY.md")
+	// The section is a section: the "In short" bullet links to it and the
+	// cross-reference guard resolves against its heading, so the heading is
+	// matched on the file as written.
+	if !strings.Contains(s, "\n### The credentials service\n") {
+		t.Error("SECURITY.md has no `### The credentials service` section: the service changes the trust model, and the section is where it is stated")
+	}
+	flat := flattenDoc(s)
+	for _, want := range []string{
+		// D148's sentence, at the scope D148 gives it: a runtime identity,
+		// not every identity.
+		"the only Fugaro runtime identity with access to model credentials",
+		"not the only identity with access to Secret Manager",
+		"the build service account",
+		"Project Owners and Editors",
+		// Q6's shape and its cost.
+		"one secret, one grant, one leak",
+		"a read of the bundle is every credential the service holds at once",
+		// Off by default, opt-in, and the flag that opts in.
+		"fugaro init --provision-credentials",
+		"with it off",
+		// The job holds nothing.
+		"a job holds no model credential at all",
+		"fugaro creds set",
+		// The invariant, spelled as the code enforces it.
+		"an OAuth token is only ever sent to Anthropic's own endpoint",
+		// Unreachable halts rather than falls back (D143).
+		"never falls back",
+		// The stop flag.
+		"fugaro budget kill --all",
+		// The revocation, stated exactly: write-once outcome, and fx as the
+		// only bound until it exists.
+		"the write-once outcome",
+		"the only bound on a replayed identity",
+		// The accepted limits the owner ruled on 2026-10-19.
+		"the launcher's reach",
+		"the replay bounds",
+		// The cap is advisory.
+		"ADVISORY",
+		// Egress stays a known limit (D144).
+		"Network egress is not restricted",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("SECURITY.md never says %q: the credentials service is in the trust model, and the document does not state it", want)
+		}
+	}
+	// The three overclaims. Each is the shape a rewrite drifts into, so each
+	// is banned as the whole sentence, not as a word: "the service is not the
+	// only identity with access to Secret Manager" is the true sentence and
+	// does not contain the banned one.
+	for _, banned := range []string{
+		"the service is the only identity with access to Secret Manager",
+		"the service audits every issuance",
+		"the bundle cannot leak",
+	} {
+		if strings.Contains(flat, banned) {
+			t.Errorf("SECURITY.md says %q: that claim is wider than the code on this tree", banned)
+		}
+	}
+}
+
+// TestSecurityMdNamesTheCredentialsServicesKnownLimits: the parts of the
+// service that are *not* wired on this tree, said plainly rather than left for
+// a reader to assume. Each is a claim the section would otherwise make by
+// being silent, and each names the thing a later release turns on.
+func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
+	flat := flattenDoc(readDoc(t, "SECURITY.md"))
+	for _, want := range []string{
+		// C1.11's answer path: the auditor is armed and writes a probe's and
+		// a mint's line; the forwarded call's line is defined and not called.
+		"a forwarded call writes no audit line yet",
+		"does not audit every issuance",
+		// ServiceHeldSecretNames is empty, so the App key does not move.
+		"the GitHub App key does not move off the job in this release",
+		"config.ServiceHeldSecretNames",
+		// The launch-side allow-list check is the service's, not the
+		// launcher's.
+		"the launcher makes no account allow-list check of its own",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("SECURITY.md does not state the known limit %q: a limit that is not stated is read as a guarantee", want)
+		}
+	}
+}

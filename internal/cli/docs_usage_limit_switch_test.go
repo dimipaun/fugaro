@@ -262,3 +262,32 @@ func TestDocsSkillSummaryDoesNotRestateTheOldLooseTrigger(t *testing.T) {
 		t.Error("SKILL.md's usage-limit paragraph no longer points to reference/diagnose.md's usage-limit section")
 	}
 }
+
+// TestDocsUsageLimitSwitchDoesNotApplyToACascadeRun is Task C1.22's change to
+// §5. The switch is a *personal* Claude subscription's: the section already
+// scopes itself to `agent.auth: oauth`, and a `cascade` workflow is a second
+// auth that can run out of Claude headroom without being one — its tier A is a
+// subscription token the credentials service holds and chooses, not an account
+// this machine's local config admits, so `fugaro accounts ls` cannot answer
+// what it may use and `--token NAME` cannot name what the service will pick.
+// The paragraph is what stops the section's advice being followed for a run it
+// does not fit: a cascade run that ran out of tier A is the *service's*
+// business (it marks the credential and switches to the next tier), and the
+// skill sends the user to the runbook rather than to the account switch.
+func TestDocsUsageLimitSwitchDoesNotApplyToACascadeRun(t *testing.T) {
+	diagnose := readSkillFile(t, "../../plugin/skills/working/reference/diagnose.md")
+	section := docSection(t, "plugin/skills/working/reference/diagnose.md", diagnose, "## 5. A Claude usage limit")
+	flat := flattenDoc(section)
+	for _, want := range []string{
+		"agent.auth is cascade",
+		"the credentials service",
+		"docs/credentials-service/runbook.md",
+		"fugaro accounts ls cannot answer",
+		"--token NAME does not name",
+		"not a run this section switches",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("diagnose.md §5 never says %q: a cascade run that ran out of tier A is the service's to answer, and the section's switch does not fit it", want)
+		}
+	}
+}
