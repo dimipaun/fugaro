@@ -57,10 +57,12 @@ const (
 
 // Upstream is where calls go and with what credential.
 type Upstream struct {
-	Kind string // "anthropic", "vertex" or KindOAuth (tier A, oauth.go)
+	Kind string // "anthropic", "vertex", KindOAuth (tier A, oauth.go) or KindService (C1.15, service.go)
 	// BaseURL overrides the real API's base for tests: "" is
 	// https://api.anthropic.com, or the Vertex host of each call's
-	// location. It must be https, or http on a loopback address.
+	// location. KindService requires it: it is the credentials service's own
+	// URL, which has no default. It must be https, or http on a loopback
+	// address.
 	BaseURL string
 	APIKey  string             // anthropic: the real key; KindOAuth: the subscription token, sent as its bearer token and only to Anthropic's own endpoint
 	Token   oauth2.TokenSource // vertex: called per request (it caches)
@@ -69,6 +71,13 @@ type Upstream struct {
 	// VertexLocations are the locations a Vertex path may name:
 	// CLOUD_ML_REGION plus every VERTEX_REGION_* value.
 	VertexLocations []string
+	// Service, with KindService, is how this job identifies itself to the
+	// credentials service (C1.15, service.go). It is required for that kind
+	// and must be nil for every other: the credential a service run's calls
+	// are made with is the service's own, never one of the job's, and
+	// validate refuses a service upstream that carries an in-job credential
+	// (D143).
+	Service *Service
 }
 
 // Options configure a gateway.
@@ -93,6 +102,18 @@ type Options struct {
 	// EndStageWait bounds how long EndStage waits for a stage's calls in
 	// flight; 0 is 30 s. Tests shorten it.
 	EndStageWait time.Duration
+	// OnServiceAnswer, when set, is called once for every answer the
+	// credentials service gives (KindService, C1.15): the tier a Messages
+	// call settles by (C1.16's ledger hook), the credential's name a run
+	// records (C1.19) and the switch it logs, and the typed exhausted answer
+	// the runner waits on (C1.17).
+	//
+	// It is called from concurrent calls, with no lock of this package's
+	// held, so it must be safe for that; it is never called for an answer
+	// from another upstream kind. A call it is not told about is the
+	// answer's own fault (an answer this gateway could not read halts the
+	// run instead) — never the hook's.
+	OnServiceAnswer func(ServiceAnswer)
 }
 
 // DefaultGeos are the usage.inference_geo values a default request is
@@ -230,6 +251,18 @@ func Start(ctx context.Context, o Options) (*Server, error) {
 		// Tier A (oauth.go): the read timeout a subscription call is held to.
 		s.client = oauthUpstreamClient(s.client)
 	}
+	if o.Upstream.Kind == KindService {
+		// C1.15 (service.go): the wait for the service's response headers is
+		// bounded, and nothing else is. The client's own timeout stays as it
+		// is -- none: the call is cancelled by the client that asked for it,
+		// by the stage's deadline and by Close, and the service may stream a
+		// model answer for minutes -- and a service that is not reachable at
+		// all fails the connection instead (D143's halt). What is left
+		// unbounded without this is a connection that never answers and
+		// never fails either, which would hang the call until the stage's
+		// deadline instead of halting the run.
+		s.client = serviceUpstreamClient(s.client)
+	}
 	s.base, s.cancelBase = context.WithCancel(context.WithoutCancel(ctx))
 	s.hctx, s.hstop = context.WithCancel(s.base)
 	s.gctx, s.gstop = context.WithCancel(context.WithoutCancel(ctx))
@@ -282,6 +315,33 @@ func (o Options) validate() error {
 		}
 		if u.APIKey == "" {
 			return errors.New("gateway: the OAuth upstream has no credential")
+		}
+	case KindService:
+		// C1.15 (service.go). The destination is required and has no
+		// default: it is the installation's own credentials service.
+		if u.BaseURL == "" {
+			return errors.New("gateway: the service upstream has no base URL")
+		}
+		// D143, structurally: a service run's calls are made with the
+		// credential the service attaches, and an in-job credential beside
+		// it is a fallback waiting to happen -- the one thing the ruling
+		// refuses. There is nothing to fall back with here, so a gateway
+		// built with one is a mistake, refused at start rather than the
+		// first time the service is unreachable.
+		if u.APIKey != "" || u.Token != nil {
+			return errors.New("gateway: the service upstream carries a credential of the job's own: a cascade run's calls are made with the credential the service attaches, and never with one the job holds (D143)")
+		}
+		if u.Service == nil {
+			return errors.New("gateway: the service upstream has no identity")
+		}
+		if u.Service.IDToken == nil {
+			return errors.New("gateway: the service upstream has no job identity (the ID token Cloud Run IAM admits)")
+		}
+		if u.Service.RunIDToken == nil {
+			return errors.New("gateway: the service upstream has no run identity")
+		}
+		if !validJobName(u.Service.Job) {
+			return errors.New("gateway: the service upstream reports no Cloud Run job name")
 		}
 	case "vertex":
 		if u.Token == nil {
@@ -509,9 +569,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	var rt route
 	switch s.o.Upstream.Kind {
-	case "anthropic", KindOAuth:
-		// Tier A (oauth.go) serves the same paths, with the same gateway
-		// token, as the Anthropic upstream: only the credential differs.
+	case "anthropic", KindOAuth, KindService:
+		// Tier A (oauth.go) and the credentials service (C1.15, service.go)
+		// serve the same paths, with the same gateway token, as the
+		// Anthropic upstream: only the destination and the credential
+		// differ. A service upstream's base URL is required and is the
+		// service's own, so anthropicBase is the service's base for it --
+		// the function is "the base this upstream sends to" and nothing
+		// about Anthropic's host is assumed below.
 		p := r.URL.Path
 		if r.Method != http.MethodPost || (p != "/v1/messages" && p != "/v1/messages/count_tokens") {
 			writeError(w, http.StatusNotFound, "not_found_error", "fugaro: the budget gateway doesn't serve "+r.Method+" "+logValue(p))

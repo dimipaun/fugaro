@@ -632,11 +632,33 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 
 	up, sent, err := s.upstreamRequest(ctx, r, rt, body)
 	if err != nil {
+		if s.o.Upstream.Kind == KindService && errors.Is(err, errServiceUnidentified) {
+			// C1.15 (service.go), D143: a service call this job cannot
+			// present its own identity on is a run the service cannot serve
+			// at all. The metadata server is the only place the job's ID
+			// token comes from and the run's own token is the only identity
+			// the service verifies it by, so this is a halt -- like an
+			// unreachable service -- rather than one 502 per call until the
+			// stage's deadline. Nothing was sent: nothing to charge.
+			s.haltService(w, stateDetailUnidentified)
+			return zeroOutcome(p.model, false)
+		}
 		writeError(w, http.StatusBadGateway, "api_error", "fugaro: "+err.Error())
 		return zeroOutcome(p.model, false)
 	}
 	resp, err := s.client.Do(up)
 	if err != nil {
+		if s.o.Upstream.Kind == KindService && s.serviceUnreachable(w, s.base, r.Context()) {
+			// C1.15 (service.go), D143: an unreachable credentials service
+			// halts the run -- it never falls back to a credential of the
+			// job's own, which this upstream has none of. Nothing reached
+			// the upstream: nothing to charge. Anything did: the service may
+			// have been generating, so the whole reservation.
+			if !sent.Load() {
+				return zeroOutcome(p.model, false)
+			}
+			return reserved
+		}
 		// No status. Nothing reached the upstream: nothing to charge.
 		// Anything did: the upstream may be generating, so the whole
 		// reservation.
@@ -661,6 +683,30 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		return zeroOutcome(p.model, true)
 	}
 	*status = resp.StatusCode
+	if s.o.Upstream.Kind == KindService {
+		// C1.15 (service.go): what the service said about this call is read
+		// here, where it leaves the upstream and before a byte of it reaches
+		// the agent -- the tier the call settles by, the credential's name,
+		// the switch, and the refusals that are the service's own answer and
+		// are never relayed. A model answer (2xx, or a model error the
+		// service relayed) is not touched: it goes on to the pump below.
+		if st, done := s.serviceAnswer(w, resp, true); done {
+			*status = st
+			// A 2xx this gateway could not account by is a model answer the
+			// service served and the run must still pay for: it settles at
+			// its reservation, exactly as an unparsed 2xx does, rather than
+			// handing the run a whole answer for nothing. Every other answer
+			// `done` covers is a refusal -- the service's own, or a job its
+			// front door would not admit -- and no model generated anything
+			// for it.
+			if resp.StatusCode/100 == 2 {
+				reserved.unparsed = true
+				s.logUsageUnparsed(p.model, rt.provider, "no_tier", nil)
+				return reserved
+			}
+			return zeroOutcome(p.model, true)
+		}
+	}
 
 	src, closeSrc, decoded, readable := decodeBody(resp)
 	defer closeSrc()
@@ -681,14 +727,26 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 	} else {
 		copyResponseHeaders(w.Header(), resp.Header, decoded)
 	}
-	if rt.provider != nil || s.o.Upstream.Kind == KindOAuth {
+	if rt.provider != nil || s.o.Upstream.Kind == KindOAuth || s.o.Upstream.Kind == KindService {
 		// Whatever else comes back is scrubbed of the credential that was
-		// sent: a provider's key, or the tier-A subscription token (which
-		// an error body may echo). The credential is the one in the
-		// request, read at request time.
+		// sent: a provider's key, the tier-A subscription token, or the
+		// service call's job ID token (which an error body may echo). The
+		// credential is the one in the request, read at request time.
 		key := keyFrom(up.Header)
 		redactHeaders(w.Header(), key)
-		rw = newRedactWriter(w, key)
+		if s.o.Upstream.Kind == KindService {
+			// The run's own identity travels on the service call as well
+			// (HeaderRunIdentity), and it is a Firebase token for this run:
+			// it is dropped from an answer that echoes it -- headers and
+			// body both -- exactly as the bearer credential is. The model
+			// never receives the header, so the only body that can carry it
+			// is one the service itself wrote.
+			run := up.Header.Get(HeaderRunIdentity)
+			redactHeaders(w.Header(), run)
+			rw = newRedactWriter(w, key, run)
+		} else {
+			rw = newRedactWriter(w, key)
+		}
 		out = rw
 	}
 	w.WriteHeader(resp.StatusCode)
@@ -868,6 +926,18 @@ func (s *Server) upstreamRequest(ctx context.Context, r *http.Request, rt route,
 		up.Header = h
 		return up, sent, nil
 	}
+	if s.o.Upstream.Kind == KindService {
+		// C1.15 (service.go): the job's Google ID token and the run's own,
+		// and no credential of the job's -- which the upstream has none of
+		// (validate). Both are attached inside serviceUpstream, in the one
+		// place they are written.
+		h, err := s.serviceUpstream(ctx, rt, r.Header)
+		if err != nil {
+			return nil, nil, err
+		}
+		up.Header = h
+		return up, sent, nil
+	}
 	up.Header = forwardHeaders(r.Header)
 	s.scrubToken(up.Header)
 	switch s.o.Upstream.Kind {
@@ -922,8 +992,17 @@ var hopByHop = map[string]bool{
 
 // dropResponseHeaders never reach the agent: they identify the
 // organization behind the real key, or set state on the gateway's origin.
+//
+// The credentials service's answer headers are three more of them (C1.15,
+// service.go), and they are dropped for every upstream kind rather than only
+// under a service one: the tier is what C1.16 charges the call by, the name
+// is which of the project's credentials answered, and the switch is which
+// credential a call moved between. The agent is the one party that must never
+// learn the set of credentials its project holds (D143), and every later
+// upstream kind that answers with them would have to remember this list.
 var dropResponseHeaders = map[string]bool{
 	"Anthropic-Organization-Id": true, "Set-Cookie": true, "Set-Cookie2": true,
+	HeaderTier: true, HeaderCredential: true, HeaderSwitch: true,
 }
 
 func copyResponseHeaders(dst, src http.Header, decoded bool) {
@@ -1126,31 +1205,63 @@ func (s *Server) forwardFree(w http.ResponseWriter, r *http.Request, rt route) {
 	defer stopHalt()
 	up, _, err := s.upstreamRequest(ctx, r, rt, body)
 	if err != nil {
+		if s.o.Upstream.Kind == KindService && errors.Is(err, errServiceUnidentified) {
+			// C1.15 (service.go), D143: as a Messages call's, a count this
+			// job cannot present its identity on halts the run rather than
+			// being answered 502 per call. Nothing was sent.
+			s.haltService(w, stateDetailUnidentified)
+			return
+		}
 		writeError(w, http.StatusBadGateway, "api_error", "fugaro: "+err.Error())
 		return
 	}
 	resp, err := s.client.Do(up)
 	if err != nil {
+		if s.o.Upstream.Kind == KindService && s.serviceUnreachable(w, s.base, r.Context()) {
+			// C1.15 (service.go), D143: as a Messages call's, an unreachable
+			// service halts the run rather than being retried or fallen back
+			// from. A count holds no reservation, so there is nothing to
+			// settle either way.
+			return
+		}
 		if r.Context().Err() == nil {
 			writeError(w, http.StatusBadGateway, "api_error", "fugaro: the upstream request failed")
 		}
 		return
 	}
 	defer resp.Body.Close()
+	if s.o.Upstream.Kind == KindService {
+		// C1.15 (service.go): a count is free and settles nothing, so its
+		// answer is not asked for a tier -- but a refusal is the service's
+		// own answer here too, and is acted on rather than copied to the
+		// agent (D143). A model answer passed through.
+		if _, done := s.serviceAnswer(w, resp, false); done {
+			return
+		}
+	}
 	src, closeSrc, decoded, _ := decodeBody(resp)
 	defer closeSrc()
 	copyResponseHeaders(w.Header(), resp.Header, decoded)
 	var out io.Writer = w
 	var rw *redactWriter
-	if s.o.Upstream.Kind == KindOAuth {
-		// Tier A (oauth.go): a token count goes to Anthropic with the
-		// subscription credential too, and this path copies the answer
+	if s.o.Upstream.Kind == KindOAuth || s.o.Upstream.Kind == KindService {
+		// Tier A (oauth.go), and a service call (C1.15): a token count goes
+		// upstream with a credential too, and this path copies the answer
 		// through unread -- so an answer that echoes the credential is
 		// scrubbed here exactly as a messages call's is. Without this a
 		// count_tokens call would hand the token to the agent.
 		key := keyFrom(up.Header)
 		redactHeaders(w.Header(), key)
-		rw = newRedactWriter(w, key)
+		if s.o.Upstream.Kind == KindService {
+			// The run's identity is on this call too (HeaderRunIdentity),
+			// and is dropped from an answer that echoes it -- headers and
+			// body both, as in forward.
+			run := up.Header.Get(HeaderRunIdentity)
+			redactHeaders(w.Header(), run)
+			rw = newRedactWriter(w, key, run)
+		} else {
+			rw = newRedactWriter(w, key)
+		}
 		out = rw
 	}
 	w.WriteHeader(resp.StatusCode)
