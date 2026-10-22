@@ -76,11 +76,11 @@ document that allocates. **100–104** are **approved 2026-10-18**
 two documents around them still disagree in a smaller place: the plan approved all of Phase 6 —
 those five checks with it — on 2026-10-18, `docs/mobile/README.md` still writes them *proposed*,
 and Task P6.11 has written all five into the register since (`## Check 100`–`## Check 104`,
-between check 89's section and 111's). The row above follows the register for their written state and the plan
-for whose block they are, and it names the five without repeating the range, because the pin over
-that row (`internal/cli/docs_coordinator_test.go`) reads every range in a cell that calls
-anything in it unused against the sections the register has written, and these five are no longer
-that.
+between check 89's section and 111's). The row above follows the register for their written state
+and the plan for whose block they are, and its state cell leaves their numbers to that sentence
+rather than repeating the range, because the pin over the row
+(`internal/cli/docs_coordinator_test.go`) reads every range in a cell that calls anything in it
+unused against the sections the register has written, and these five are no longer that.
 
 ## What this work collides with, in one paragraph
 
