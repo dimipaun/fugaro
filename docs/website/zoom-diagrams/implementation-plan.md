@@ -292,6 +292,18 @@ the owner's go.
 
 ### Part 4 — the four levels as stills, with the same shapes (ZF36–ZF43; D237, D244)
 
+> **Superseded on 2026-10-22, in part.** The owner's brief of that date replaced the four
+> diagrams this part drew with the owner's own four approved boards
+> (`website/design-ref/zoom-levels/level1.dc.html` … `level4.dc.html`, committed by #869),
+> redrawn as the site's inline SVG. What stands of this part is its **shape**: one `<defs>` of
+> `<symbol>`s drawn through `<use>`, four `<figure>`s under "The run, end to end", one `<nav>`
+> of `#level-1` … `#level-4`, and the levels as stills. What changed: the levels' words are the
+> **boards'** rather than `website/data/zoom-levels.yaml`'s (the file is gone and the boards are
+> the source of truth), the drawings carry the boards' own colours rather than the palette's
+> tokens alone, and a level is now **one named picture** (`role="img"` with its own `<title>`
+> and `<desc>`) rather than a list of labelled parts read out in markup order. The plan below is
+> kept as the plan of record for the rest of the sequence.
+
 **What.** One component, `website/src/components/ZoomLevels.astro`, rendering the four levels
 as **inline SVG**, in order, all visible with no script.
 
