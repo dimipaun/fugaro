@@ -226,8 +226,10 @@ export function createDemoMode(options = {}) {
 
   /**
    * Enter the demo: build the app's real client over the demo's transport,
-   * send the sample utterances (real, signed writes), poll once (the real
-   * verification, the real speak, the real ack), put the consumer's question in
+   * **poll first** (P6.10's gate needs an observation before the first send),
+   * then send the sample utterances (real, signed writes), then verify, speak
+   * and ack the consumer's messages that the look read, then put the
+   * consumer's question in
    * P6.5's queue and read the destructive command back with P6.2's machine.
    *
    * Entering twice is the same demo, not a second one. There are two ways a
@@ -288,15 +290,28 @@ export function createDemoMode(options = {}) {
     });
 
     const problems = [];
-    // **The pass starts with the poll, and P6.10 is why** (the offline gate's
+    // **The pass starts with a poll, and P6.10 is why** (the offline gate's
     // second review, M2): the gate fails closed on a consumer the phone has not
     // observed, so the app's own first act is the look that says whether the
     // orchestrator is there at all -- and the demo does what the app does, in
     // the app's order. The transport has already delivered the sample heartbeat,
     // so this observes a live consumer, and the utterances below are sent by a
-    // phone that has looked. Nothing else changes: a poll reads the outbox and
-    // the heartbeat and mints no id, so the ids the utterances get are the same
-    // ones they got when the poll came last.
+    // phone that has looked.
+    //
+    // **What moving the look to the front did change, said plainly.** It is one
+    // state, and it is `pending()`. A verified reply is what retires a phone's
+    // own utterance from its outbox, and the replies are read in THIS look --
+    // before there is anything of the phone's for them to answer. So when the
+    // pass ends, `pending()` holds the utterances this run has just written, all
+    // three landed (`landed: true`: the SDK accepted them; the consumer has not
+    // answered). With the look at the end it was empty, because the two answers
+    // had already retired the two sentences they name. Both are real states of
+    // the app -- a phone that sent and has not looked since, and a phone that
+    // has -- and the demo runs one pass, so it shows the first. Nothing renders
+    // `pending()` today; `index.test.js` asserts it rather than leaving it to be
+    // discovered. Nothing else moved: sending speaks nothing, the id source
+    // mints no id in a poll, and the words the reviewer hears are the same words
+    // in the same order.
     const poll = await client.poll();
     if (!poll.ok) problems.push(Object.freeze({ at: 'poll', code: poll.code }));
 

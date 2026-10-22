@@ -80,10 +80,18 @@ test('the client the door builds is the one the tests in this directory build', 
   // poll over the consumer's own heartbeat, signed the way the other end signs
   // it. Without it this test would be a test of `consumer-unobserved`.
   const beat = { at: 1_700_000_000_000 - 1_000, boot: 'boot-0001' };
-  await store.write('mailbox/uid-0001/heartbeat', {
-    ...beat,
-    mac: macOf(beat, 'synthetic-key', 'heartbeat'),
-  });
+  // `deliver`, not `write`: the heartbeat is the OTHER end's node, and
+  // `store.js` says so where it defines the door ("`write` is the PHONE's door
+  // ... a harness that wants the tree to already hold the other end's side is
+  // not making a phone write and must not appear to be one"). Every other
+  // fixture that plants a consumer's beat does it this way.
+  assert.deepEqual(
+    store.deliver('mailbox/uid-0001/heartbeat', {
+      ...beat,
+      mac: macOf(beat, 'synthetic-key', 'heartbeat'),
+    }),
+    { ok: true },
+  );
   assert.equal((await client.poll()).presence.state, 'live');
   assert.deepEqual(await client.send('run 42 finished'), {
     ok: true,

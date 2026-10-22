@@ -436,7 +436,7 @@ cost of the false refusal is a phone that cannot speak.
 ## The mutation proof
 
 ```sh
-mobile/src/mailbox/mutation-proof.sh     # 55 guards, one planted bug each
+mobile/src/mailbox/mutation-proof.sh     # 57 guards, one planted bug each
 ```
 
 Every mutation disables exactly one guard and must make that guard's own suite
@@ -445,7 +445,14 @@ round for PR #604 -- `mac.js` with `mac.test.js` (the tag comparison),
 `store.js` with `store.test.js` and, for the read's own-key rule, with
 `client.test.js` (its consequence for the outbox), and `src/app/root.js` with
 `write-path.test.js` (the one-write-path scan), each mutation naming its file
-and its suite. It finds a working node rather than assuming one (this
+and its suite. **Since P6.10 two more files carry guards of their own**:
+`gate.js` with `gate.test.js` (a connection that is not `true`, a consumer that
+is not verified, the unobserved refusal, and `clock-differs` keeping its own
+reason) and `connection.js` with `connection.test.js` (the double's constructor
+is no more generous than the gate). The store's SDK-queue guard is the one
+mutation proved **twice** -- against `store.test.js` and against
+`client.test.js` -- because "the SDK queue would have noticed" is the control
+the client's own claim rests on. It finds a working node rather than assuming one (this
 repository's base image keeps node off PATH), runs a positive control (the
 pristine suite passes, over tests that ran) and a negative control (a `refuse()`
 that always succeeds must be caught) before any verdict is trusted, and asserts
