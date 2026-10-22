@@ -60,3 +60,23 @@ func CodexOAuthSecret(name string) bool {
 func HarnessOAuthSecret(name string) bool {
 	return ClaudeOAuthSecret(name) || CodexOAuthSecret(name)
 }
+
+// CredentialsBundleSecret is the logical name of the ONE Secret Manager
+// container the credentials service reads (Q6, docs/credentials-service's
+// implementation plan, C1.11; the reservation is its review finding n2). It
+// is a name of the platform's, and the reason is stronger than the harness
+// names above rather than weaker: the container's document is the service's
+// whole credential set, written by `fugaro creds set NAME` alone (C1.25), so
+// a workflow that declared the name in its `secrets:` would mount the
+// service's document into a job, and an operator who stored a value under it
+// with `fugaro secrets set` would replace every credential at once. Refusing
+// the name at both write paths is what keeps "one container, one writer and
+// one reader" true by construction rather than by convention.
+//
+// It is deliberately NOT in ReservedSecrets, which is the set of names the
+// platform MOUNTS into a job (ReservedSecrets' own doc, and
+// ProjectScopeByDefault's rule that the project-wide scope is that set):
+// nothing mounts this one, and its value is not a plain secret a job's
+// environment may carry. The container itself is derived by
+// gcp.CredsBundleSecretID, which is ProjectSecretID of this name.
+const CredentialsBundleSecret = "creds-bundle"

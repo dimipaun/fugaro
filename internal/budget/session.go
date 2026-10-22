@@ -607,6 +607,20 @@ func (s *Session) SetUsage(used func() Micros) {
 // Lease is the gateway's budget source for this run.
 func (s *Session) Lease() gateway.Lease { return &leaseSource{s: s} }
 
+// IDToken is the run's own Firebase ID token, as a function because the
+// session's token changes under it (token.Session.Token returns the current
+// one and never blocks on the network). It is the identity the launcher
+// minted and this session exchanged, and it is what a reader that has to
+// present the run -- rather than act as it -- asks for: the credentials
+// service verifies a run by it (C1.10's X-Fugaro-Run-Identity), which the
+// gateway attaches to every service call (C1.15).
+//
+// It is the same token this session sends the database as ?auth=, and it is
+// handed on as the function the reader calls per request rather than as a
+// value: a caller that took one now would keep presenting a token the
+// session has since refreshed.
+func (s *Session) IDToken() func() string { return s.tok.Token }
+
 // GrantedMicros and ReleasedMicros are what the leases granted and gave back
 // so far, for the run record.
 func (s *Session) GrantedMicros() Micros  { s.mu.Lock(); defer s.mu.Unlock(); return s.granted }

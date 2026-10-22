@@ -236,6 +236,17 @@ func Validate(c *Config) []Problem {
 				// value the repository chose. Refused whether or not a Codex
 				// provider ever names it.
 				add(sp+".name", "%s and names starting %s are reserved for the Codex harness's OAuth credential (codex-oauth-token), not a workflow secret", CodexOAuthToken, CodexOAuthTokenPrefix)
+			} else if s.Name == CredentialsBundleSecret {
+				// The credentials service's one bundle container (C1.11's
+				// review finding n2). Nothing mounts it: its document is every
+				// model credential the installation holds, and the service is
+				// the only reader. A workflow that declared the name would
+				// mount that document into a job — the whole credential set,
+				// into a container a run's agent can read — so the name is
+				// refused here, where every other reserved name is refused,
+				// and again at `fugaro secrets set` (internal/cli's
+				// credentialsBundleRefusal), which is the write path.
+				add(sp+".name", "%s is the credentials service's own bundle container (the platform's), not a workflow secret", CredentialsBundleSecret)
 			}
 			switch {
 			case !envNameRE.MatchString(s.Env):

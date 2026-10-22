@@ -10,6 +10,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -65,6 +66,26 @@ func exhaustedStage(t *testing.T, handle func() *runner.RunHandle, reset time.Ti
 	}
 }
 
+// serviceExhaustedStage is exhaustedStage with the answer arriving the way it
+// does in a real run: not as the runner's own note, but as internal/gateway's
+// hand-off of the credentials service's typed answer (C1.15's OnServiceAnswer
+// hook). The tier and the credential's name ride along as the gateway reads
+// them from the service's headers, so a test that uses this drives the run
+// through the wired path rather than around it.
+func serviceExhaustedStage(t *testing.T, handle func() *runner.RunHandle, reset time.Time) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		handle().ServiceAnswer(gateway.ServiceAnswer{
+			Tier:       gateway.TierB,
+			Credential: "repo-shared-b",
+			Exhausted: &gateway.Exhausted{ResetAt: reset, Tried: []gateway.Tried{
+				{Name: "repo-shared-b", Tier: gateway.TierB, Reason: "exhausted"},
+			}},
+		})
+		<-ctx.Done() // the answer ends the stage
+		return initOnly(t, req.SessionID), ctx.Err()
+	}
+}
+
 // TestStageWaitsAndResumes is C1.17's red step: the credentials service's
 // typed exhausted_until does not fail the stage — the runner ends it, waits
 // for the reset the answer names inside the job's own timeout, and runs the
@@ -103,6 +124,106 @@ func TestStageWaitsAndResumes(t *testing.T) {
 	}
 	if n := len(h.agent.calls); n != 3 {
 		t.Fatalf("%d agent calls; want the implement stage twice (before and after the wait) and the review", n)
+	}
+}
+
+// TestServiceAnswerStartsTheWait: the credentials service's answer reaches the
+// run through the gateway and nothing else (C1.15), and what the runner does
+// with it is C1.17's wait. The two halves meet here: the answer arrives as the
+// gateway hands it over -- the typed exhausted_until, with the tier and the
+// credential's name the service sent -- and the run ends the stage in flight,
+// waits for the reset inside the job's own timeout, resumes the interrupted
+// stage's session, and, when the reset is not inside that timeout, halts named
+// rather than idling into a stage timeout that would blame the wrong limit.
+func TestServiceAnswerStartsTheWait(t *testing.T) {
+	t.Run("a reset inside the job's own timeout waits and resumes", func(t *testing.T) {
+		h := newHarness(t, "", nil)
+		handle := watchRun(t)
+		var waits []time.Duration
+		runner.SetCredsWait(t, func(ctx context.Context, d time.Duration) error {
+			waits = append(waits, d)
+			return nil
+		})
+		// Inside the fixture workflow's own timeout (total 5m, reserve 30s).
+		reset := time.Now().Add(3 * time.Minute)
+		resumed := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+			if !req.Resume || req.SessionID != h.agent.calls[0].SessionID {
+				t.Errorf("the stage resumed %q (resume %v); want the session the interrupted stage ran in, %q",
+					req.SessionID, req.Resume, h.agent.calls[0].SessionID)
+			}
+			return implement("feature")(t, ctx, req)
+		}
+		rec, err := h.run(t, withSession(serviceExhaustedStage(t, handle, reset), "", "interrupted\n"), resumed, review("ship", 0))
+		if err != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady || rec.Halt != nil {
+			t.Fatalf("rec = %+v, err = %v", rec, err)
+		}
+		if len(waits) != 1 || waits[0] <= 2*time.Minute || waits[0] > 3*time.Minute {
+			t.Fatalf("waits = %v; want one wait, for the reset the service named (about 3m)", waits)
+		}
+		if n := len(h.agent.calls); n != 3 {
+			t.Fatalf("%d agent calls; want the implement stage twice (before and after the wait) and the review", n)
+		}
+	})
+
+	t.Run("a reset past the job's own timeout halts with no_credential", func(t *testing.T) {
+		h := newHarness(t, "", nil)
+		handle := watchRun(t)
+		runner.SetCredsWait(t, func(ctx context.Context, d time.Duration) error {
+			t.Errorf("the runner waited %s for a reset beyond the job's own timeout", d)
+			return nil
+		})
+		reset := time.Now().Add(24 * time.Hour)
+		rec, err := h.run(t, serviceExhaustedStage(t, handle, reset))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.Status != runstore.StatusHalted || rec.Halt == nil ||
+			rec.Halt.Reason != runstore.HaltNoCredential || rec.Halt.Scope != "run" {
+			t.Fatalf("rec = %+v, halt = %+v; want a halted run with reason %q", rec, rec.Halt, runstore.HaltNoCredential)
+		}
+		if !strings.Contains(rec.Halt.Detail, reset.UTC().Format(time.RFC3339)) {
+			t.Errorf("the halt's detail lacks the reset the service named, %s: %q", reset.UTC().Format(time.RFC3339), rec.Halt.Detail)
+		}
+		if n := len(h.agent.calls); n != 1 {
+			t.Fatalf("%d agent calls; the stage must not run again", n)
+		}
+	})
+}
+
+// TestInterruptedAttemptsCountTowardsTheRunTotal: an attempt the credentials
+// service's exhausted answer ended is a whole agent process that spent what it
+// spent, and the run's own token total has to carry it. The caller's own
+// countTokens only ever sees the last attempt of a stage, so the interrupted
+// ones are counted where they end (stage, C1.15's owed fix from C1.17's
+// review). Without that, a run could spend maxCredentialResumes attempts on
+// one stage and have the ceiling count one, reaching it a whole stage late.
+//
+// The figures are chosen so the under-count changes the outcome: the
+// interrupted attempt and the resumed one each report 40 tokens and the review
+// reports 40, so the run's total is 120 and the 100-token ceiling halts it. A
+// total that lost the interrupted attempt's 40 stops at 80 and the run
+// succeeds.
+func TestInterruptedAttemptsCountTowardsTheRunTotal(t *testing.T) {
+	h := newHarness(t, tokenCfg(t, "100"), nil)
+	handle := watchRun(t)
+	runner.SetCredsWait(t, func(ctx context.Context, d time.Duration) error { return nil })
+	reset := time.Now().Add(3 * time.Minute)
+	interrupted := withUsage(withSession(serviceExhaustedStage(t, handle, reset), "", "interrupted\n"),
+		agent.Usage{Input: 40}, nil)
+	resumed := withUsage(implement("feature"), agent.Usage{Input: 40}, nil)
+	rev := withUsage(review("ship", 0), agent.Usage{Input: 40}, nil)
+	rec, err := h.run(t, interrupted, resumed, rev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Halt == nil || rec.Halt.Reason != runstore.HaltTokenCap || rec.Halt.Scope != "run" {
+		t.Fatalf("rec = %+v, halt = %+v; want the run halted by its token ceiling", rec, rec.Halt)
+	}
+	if want := "run used 120 tokens of 100"; rec.Halt.Detail != want {
+		t.Fatalf("detail = %q, want %q: the interrupted attempt's tokens are not in the run's total", rec.Halt.Detail, want)
+	}
+	if n := len(h.agent.calls); n != 3 {
+		t.Fatalf("%d agent calls; want the interrupted implement, the resumed one and the review", n)
 	}
 }
 

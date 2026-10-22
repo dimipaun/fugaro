@@ -349,6 +349,19 @@ func codexOAuthRefusal(name string) error {
 		pluginwire.Printable(name), config.CodexOAuthToken, config.CodexOAuthTokenPrefix)
 }
 
+// credentialsBundleRefusal is the one message every refusal of the credentials
+// service's bundle container name uses (config.CredentialsBundleSecret, C1.11's
+// review finding n2). The name is the platform's — the container holds the ONE
+// document every model credential the service issues lives in — so there is no
+// scope of `secrets set` that may write it, and the writer is
+// `fugaro creds set NAME` alone (C1.25). name goes through Printable, since a
+// name reaching this path may not have passed config.SecretNameRE (a reserved
+// name skips that check, exactly as the Codex names do).
+func credentialsBundleRefusal(name string) error {
+	return userErr("%s is the credentials service's own bundle container (%s): every model credential the service issues lives in that one document, which `fugaro creds set` writes and nothing else may",
+		pluginwire.Printable(name), config.CredentialsBundleSecret)
+}
+
 // providerConventionRefusal is the one message every refusal of a configured
 // provider's conventional key name uses when the name is not that provider's
 // own secret (config.ReservedProviderSecret): storing a workflow's or another
@@ -418,6 +431,17 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 		// independent refusal (the Claude namespace's claudeOAuthAccountRefusal
 		// is the same shape, decided per account and per repository).
 		return codexOAuthRefusal(name)
+	}
+	if name == config.CredentialsBundleSecret {
+		// The credentials service's one bundle container (C1.11's review
+		// finding n2), refused here for the Codex names' reason: before the
+		// scope decision, before the checkout is read and before any cloud
+		// call, so no spelling of the command may store a value under it. The
+		// document in that container is every model credential the
+		// installation holds, and `fugaro creds set NAME` (C1.25) is its only
+		// writer: a value written here would be read by the service as the
+		// credential it is not.
+		return credentialsBundleRefusal(name)
 	}
 	if err := o.checkScope(cmd); err != nil {
 		return err
