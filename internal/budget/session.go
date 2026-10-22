@@ -38,6 +38,12 @@ const (
 // any answer — a credential *name* is all a cascade run ever writes.
 const credsRulesDeniedDetail = "the database's rules refused this run's credential state: they predate the credentials cascade's fields, and the write is not retried. Re-run 'fugaro init --firebase <firebase-project-id>' with this release to deploy the rules that carry them"
 
+// byTierDeniedDetail is the same refusal for the by-tier counters (C1.16):
+// the same fix, named for the write that was refused. The split is not
+// retried and the run's totals are unaffected -- what it loses is the tier a
+// settled call was paid by.
+const byTierDeniedDetail = "the database's rules refused this run's by-tier spend counters: they predate the credentials cascade's fields, and the split is not retried. Re-run 'fugaro init --firebase <firebase-project-id>' with this release to deploy the rules that carry them"
+
 // Halt is a cause to stop the run that the session found by itself: a kill
 // switch, the grace running out, a revoked identity. Detail is shown to
 // people (the report) and, through the gateway, to the agent: it never holds
@@ -476,8 +482,10 @@ func (s *Session) readState(ctx context.Context, day int64) (State, error) {
 
 // AdmitOptions say what the run needs from the backend.
 type AdmitOptions struct {
-	// Gateway: the run's model calls are leased (api-key and vertex). An
-	// oauth run has no lease and is checked for kill switches only.
+	// Gateway: the run's model calls are leased (api-key, vertex and the
+	// cascade, whose calls the credentials service's upstream carries,
+	// C1.19). An oauth run has no lease and is checked for kill switches
+	// only.
 	Gateway bool
 	// LocalEnforce: the run's merged mode is enforce, whatever the project's.
 	LocalEnforce bool
@@ -606,6 +614,20 @@ func (s *Session) SetUsage(used func() Micros) {
 
 // Lease is the gateway's budget source for this run.
 func (s *Session) Lease() gateway.Lease { return &leaseSource{s: s} }
+
+// IDToken is the run's own Firebase ID token, as a function because the
+// session's token changes under it (token.Session.Token returns the current
+// one and never blocks on the network). It is the identity the launcher
+// minted and this session exchanged, and it is what a reader that has to
+// present the run -- rather than act as it -- asks for: the credentials
+// service verifies a run by it (C1.10's X-Fugaro-Run-Identity), which the
+// gateway attaches to every service call (C1.15).
+//
+// It is the same token this session sends the database as ?auth=, and it is
+// handed on as the function the reader calls per request rather than as a
+// value: a caller that took one now would keep presenting a token the
+// session has since refreshed.
+func (s *Session) IDToken() func() string { return s.tok.Token }
 
 // GrantedMicros and ReleasedMicros are what the leases granted and gave back
 // so far, for the run record.

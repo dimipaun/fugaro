@@ -208,6 +208,26 @@ func ProjectSecretID(fugaroProject, logical string) string {
 	return derive(sanitize("fugaro-project-"+fugaroProject+"-"+logical), "project\x00"+fugaroProject, logical, maxSecretID, secretHashHex)
 }
 
+// CredsBundleSecretID is the Secret Manager secret holding the credentials
+// service's ONE bundle container (Q6, docs/credentials-service: every model
+// credential the service reads lives in one document, and the service holds
+// one secretmanager.secretAccessor grant on it and nothing else).
+//
+// It is ProjectSecretID of the logical name internal/infra spells
+// CredentialsBundleName, and that is why the name is written as a literal
+// here rather than imported: internal/infra builds the installation's tfvars
+// *from* this package (ProjectSecretID is how it derives the same string), so
+// this package cannot import it back. Two tests pin the two spellings
+// together from the two sides that can see both — internal/infra's
+// TestInstallationCredentialsServiceVars compares the tfvars value against
+// ProjectSecretID of the literal, and internal/credsvc's
+// TestBundleSecretIDIsTheInstallationsContainer compares the loader's own
+// derivation against the same literal — so a rename on one side fails a test
+// rather than leaving the service reading a container nobody created.
+func CredsBundleSecretID(fugaroProject string) string {
+	return ProjectSecretID(fugaroProject, "creds-bundle")
+}
+
 // ImageName is the derived image of (slug, workflow) in registry, untagged,
 // built like JobName without the fugaro- prefix.
 func ImageName(registry, slug, workflow string) string {
