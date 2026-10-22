@@ -43,8 +43,8 @@ func checkGolden(t *testing.T, name string, got []byte) {
 	}
 }
 
-// The tfvars init --firebase-project writes, byte for byte: a change here is a change
-// to what Terraform is given.
+// The tfvars fugaro update --firebase-project writes, byte for byte: a change
+// here is a change to what Terraform is given.
 func TestFirebaseTfvarsGolden(t *testing.T) {
 	inst := installationSpec(t)
 	inst.Launchers = []string{"user:launcher@example.com"}
@@ -448,11 +448,12 @@ func TestDBLimitsKeepOwnerValues(t *testing.T) {
 }
 
 // A deployed marker *above* this binary's RulesVersion is a newer Fugaro's
-// rules. init --firebase-project deploys the rules the binary carries, so an older
-// binary would put its own, older document over the newer installation's and
-// record generation RulesVersion in the marker over the newer number — the
-// downgrade `fugaro doctor` warns about and tells the owner not to cause
-// ("do not re-run 'fugaro update --firebase-project' with this binary", doctorRulesSkew).
+// rules. fugaro update --firebase-project deploys the rules the binary carries,
+// so an older binary would put its own, older document over the newer
+// installation's and record generation RulesVersion in the marker over the newer
+// number — the downgrade `fugaro doctor` warns about and tells the owner not to
+// cause ("do not re-run 'fugaro update --firebase-project' with this binary",
+// doctorRulesSkew).
 // The deploy path refuses instead: nothing is planned, nothing is written, and
 // the rules and the marker are left exactly as the newer installation left
 // them.

@@ -237,9 +237,9 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 	// Firebase: the stage adds Firebase where the project is, and creates
 	// nothing. This is where D73's "adding Firebase is never what makes a
 	// project managed" is decided — the AddFirebase branch of the same stage
-	// that creates — so it is pinned here and not only through init
-	// --firebase-project (b), a different stage. The bucket is the project's own,
-	// seeded and numbered as (c) seeds it, so a mutation that marks the
+	// that creates — so it is pinned here and not only through fugaro update
+	// --firebase-project (b), a different stage. The bucket is the project's
+	// own, seeded and numbered as (c) seeds it, so a mutation that marks the
 	// project on adding Firebase really writes.
 	t.Run("--create-project adding Firebase to an existing project", func(t *testing.T) {
 		r := newProjectRig(t)
@@ -669,7 +669,8 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 	const a = "user:a@example.com"
 	address := `module.installation.google_storage_bucket_iam_member.state["` + a + `"]`
 
-	// (c) An address on the owner's list does not permit an init --yes delete.
+	// (c) An address on the owner's list does not permit a fugaro setup --yes
+	// delete.
 	r := newInitRig(t)
 	r.managedRuns(t, initProjectName, initProject)
 	r.allowDeleteList(t, initProject, address)

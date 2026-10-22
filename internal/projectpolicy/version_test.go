@@ -70,13 +70,14 @@ func TestTheCLISkewRemediesStayApart(t *testing.T) {
 	if !strings.Contains(CLISkewNewer, "fugaro project policy publish --delete") || !strings.Contains(CLISkewNewer, "publish it again") {
 		t.Errorf("CLISkewNewer = %q, want the delete-then-publish remedy for the older node", CLISkewNewer)
 	}
-	// And not the remedy that cannot be carried out: fugaro update --firebase-project
-	// deploys this release's rules template and marker and never writes
-	// config/policy/shared, while this release's publish refuses to overwrite
-	// a node of another version (internal/cli's publishedPolicyOf) — so an
-	// operator sent to re-run init arrives back at this same refusal.
-	if strings.Contains(CLISkewNewer, "init --firebase-project") {
-		t.Errorf("CLISkewNewer = %q: init --firebase-project writes no policy node, so it cannot be the remedy for a node that is behind", CLISkewNewer)
+	// And not the remedy that cannot be carried out: fugaro update
+	// --firebase-project deploys this release's rules template and marker and
+	// never writes config/policy/shared, while this release's publish refuses
+	// to overwrite a node of another version (internal/cli's
+	// publishedPolicyOf) — so an operator sent to re-converge arrives back at
+	// this same refusal.
+	if strings.Contains(CLISkewNewer, "fugaro update --firebase-project") {
+		t.Errorf("CLISkewNewer = %q: fugaro update --firebase-project writes no policy node, so it cannot be the remedy for a node that is behind", CLISkewNewer)
 	}
 	for name, msg := range map[string]string{"CLISkew": CLISkew, "CLISkewNewer": CLISkewNewer} {
 		if strings.Contains(msg, "%!") || strings.Count(msg, "%") != 2 {
@@ -129,25 +130,25 @@ func TestSkewSentencePicksByDirectionAndReader(t *testing.T) {
 			// is removed and published again.
 			name: "an older node, the CLI", ve: olderNode, reader: ReaderCLI,
 			want:    []string{"version 0", understood, "fugaro project policy publish --delete", "publish it again"},
-			notWant: []string{"upgrade Fugaro", "fugaro upgrade", "init --firebase-project", "runner image"},
+			notWant: []string{"upgrade Fugaro", "fugaro upgrade", "fugaro update --firebase-project", "runner image"},
 		},
 		{
 			// The same node read by an image: the remedy is the operator's and
 			// the run cannot carry it out.
 			name: "an older node, the runner", ve: olderNode, reader: ReaderRunner,
 			want:    []string{"version 0", understood, "fugaro project policy publish --delete", "publishes one this image understands", "cannot do either mid-run"},
-			notWant: []string{"upgrade Fugaro", "fugaro upgrade", "init --firebase-project", "refresh the runner image"},
+			notWant: []string{"upgrade Fugaro", "fugaro upgrade", "fugaro update --firebase-project", "refresh the runner image"},
 		},
 		{
 			// The node is ahead of this binary: the upgrade is missing here.
 			name: "a newer node, the CLI", ve: newerNode, reader: ReaderCLI,
 			want:    []string{ahead, understood, "upgrade Fugaro"},
-			notWant: []string{"publish --delete", "init --firebase-project", "runner image"},
+			notWant: []string{"publish --delete", "fugaro update --firebase-project", "runner image"},
 		},
 		{
 			name: "a newer node, the runner", ve: newerNode, reader: ReaderRunner,
 			want:    []string{ahead, understood, "refresh the runner image", "fugaro upgrade"},
-			notWant: []string{"publish --delete", "init --firebase-project", "upgrade Fugaro ("},
+			notWant: []string{"publish --delete", "fugaro update --firebase-project", "upgrade Fugaro ("},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

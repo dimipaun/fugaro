@@ -138,8 +138,8 @@ type ComputeSpec struct {
 	Subnetwork string `json:"subnetwork"`
 
 	Names ComputeNames `json:"names"`
-	// ManageAPIs is false with init --skip-apis: the project's APIs are
-	// managed elsewhere, so this root enables neither Compute nor Batch.
+	// ManageAPIs is false with fugaro update --skip-apis: the project's APIs
+	// are managed elsewhere, so this root enables neither Compute nor Batch.
 	ManageAPIs bool `json:"manage_apis"`
 
 	Launchers []string `json:"launchers"`

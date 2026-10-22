@@ -2977,8 +2977,8 @@ const printVarsUngated = "these values are ungated: no discovery or readiness ch
 	"its job uses the new image path (which may not be built yet), and its account gets the new display name " +
 	"(an adopted bootstrap account would be renamed); adopt a repository through fugaro update --repo, not by applying these"
 
-// printVarsUngatedInstallation is init --print-vars's warning: the values
-// it prints skip discovery.
+// printVarsUngatedInstallation is fugaro setup --print-vars's warning: the
+// values it prints skip discovery.
 const printVarsUngatedInstallation = "these values are ungated: no discovery ran, so adopt_legacy_registry is false even when the bootstrap's legacy registry exists and is ours " +
 	"(a plan from these values would try to create it, and nothing imports what exists); set up the installation through fugaro setup, not by applying these"
 

@@ -188,8 +188,9 @@ func (r *run) policyReadError(err error) error {
 // denied read, a node that is not this Fugaro's policy, a read that failed. The
 // run does not start — never on the environment ceiling, which would be less
 // constrained than what the owner published. The message names the node, the
-// one cause that is not tampering (an older CLI's init --firebase-project redeploys the
-// pre-policy rules and leaves the marker in place), and the fix.
+// one cause that is not tampering (an older CLI's fugaro update
+// --firebase-project redeploys the pre-policy rules and leaves the marker in
+// place), and the fix.
 func (r *run) unreadablePolicy(err error) error {
 	marker := projectpolicy.PathRulesMarker()
 	if errors.Is(err, rtdb.ErrPermission) && !strings.Contains(err.Error(), projectpolicy.PathShared()) {
@@ -204,10 +205,11 @@ func (r *run) unreadablePolicy(err error) error {
 	}
 	if errors.Is(err, rtdb.ErrPermission) {
 		// The node's read was denied, with the marker read: the one cause that
-		// is not tampering is an older CLI's init --firebase-project, which redeploys
-		// the rules from before the policy nodes while leaving the marker in
-		// place, so a policy that was published becomes unreadable and every
-		// budget-on run of the project stops here (R2-8(b)).
+		// is not tampering is an older CLI's fugaro update --firebase-project,
+		// which redeploys the rules from before the policy nodes while leaving
+		// the marker in place, so a policy that was published becomes
+		// unreadable and every budget-on run of the project stops here
+		// (R2-8(b)).
 		return fmt.Errorf("the project's policy at %s could not be read: the deployed rules are older than the marker %s and refuse this run's token for a node that exists, which is what an older fugaro's 'fugaro update --firebase-project' leaves behind when it redeploys rules that predate that marker and leaves it in place. Run 'fugaro update --firebase-project' again with an up-to-date fugaro, which deploys the rules generation this runner reads (%d). The run does not start on a ceiling the policy did not set: %s",
 			projectpolicy.PathShared(), marker, projectpolicy.RulesVersion, r.redact(err.Error()))
 	}

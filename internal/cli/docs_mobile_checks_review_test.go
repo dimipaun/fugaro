@@ -524,12 +524,12 @@ func TestGcpSetupDatabaseStepOrderIsTheCodes(t *testing.T) {
 }
 
 // TestDocsCheck82PrintVarsKeys: check 82 step 2 tells the owner to read the
-// resolved Firebase project and the region out of `init --firebase-project
-// --print-vars`. That output is one JSON object, `{"installation": ...,
-// "firebase": ...}` (`init_firebase.go`'s firebaseVars), where the project is
-// `firebase.project` and the region `installation.region`; the name
-// `firebase_project` is the local config's key and the Firebase root's output,
-// not a key of this document. The step names the two keys it means.
+// resolved Firebase project and the region out of `fugaro update
+// --firebase-project --print-vars`. That output is one JSON object,
+// `{"installation": ..., "firebase": ...}` (`init_firebase.go`'s firebaseVars),
+// where the project is `firebase.project` and the region `installation.region`;
+// the name `firebase_project` is the local config's key and the Firebase root's
+// output, not a key of this document. The step names the two keys it means.
 func TestDocsCheck82PrintVarsKeys(t *testing.T) {
 	const path = "docs/gcp-live-checklist.md"
 	doc := readDoc(t, path)

@@ -579,19 +579,22 @@ type Endpoints struct {
 	// CloudBilling is read by fugaro update --firebase-project to check that the
 	// Firebase project has billing.
 	CloudBilling string `yaml:"cloud_billing,omitempty"`
-	// FirebaseDatabase lists the Firebase project's databases (init --firebase-project).
+	// FirebaseDatabase lists the Firebase project's databases (fugaro update
+	// --firebase-project).
 	FirebaseDatabase string `yaml:"firebase_database,omitempty"`
-	// APIKeys reads the Firebase project's API keys (init --firebase-project).
+	// APIKeys reads the Firebase project's API keys (fugaro update
+	// --firebase-project).
 	APIKeys string `yaml:"api_keys,omitempty"`
-	// FirebaseManagement is where init --create-project adds Firebase to a
-	// project it creates (Firebase Management v1beta1).
+	// FirebaseManagement is where fugaro setup --create-project adds Firebase
+	// to a project it creates (Firebase Management v1beta1).
 	FirebaseManagement string `yaml:"firebase_management,omitempty"`
-	// IdentityToolkit is where init --firebase-project ensures Identity Platform is
-	// initialized in the Firebase project (Identity Toolkit's REST API).
+	// IdentityToolkit is where fugaro update --firebase-project ensures Identity
+	// Platform is initialized in the Firebase project (Identity Toolkit's REST
+	// API).
 	IdentityToolkit string `yaml:"identity_toolkit,omitempty"`
-	// Firestore and FirebaseRules are where init --firebase-project ensures the
-	// Firebase project's Firestore database exists and deploys its deny-all
-	// security rules (the Firestore and Firebase Rules REST APIs).
+	// Firestore and FirebaseRules are where fugaro update --firebase-project
+	// ensures the Firebase project's Firestore database exists and deploys its
+	// deny-all security rules (the Firestore and Firebase Rules REST APIs).
 	Firestore     string `yaml:"firestore,omitempty"`
 	FirebaseRules string `yaml:"firebase_rules,omitempty"`
 	// IAMCredentials is where the launcher signs a run's budget token (signJwt).
