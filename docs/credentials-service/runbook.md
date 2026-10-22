@@ -1,0 +1,140 @@
+# The credentials service: the operator's runbook
+
+**The owner runs every step in this file**, in the owner's own terminal, with the owner's own credentials — and **none of them is runnable by a run**. That is not a convention, it is what the commands are: `fugaro creds set` refuses a coding agent's session and a run's process before it reads anything, `fugaro init --provision-credentials` is refused inside a coding agent's environment, and `fugaro budget kill` and `fugaro accounts clear` write the project's own database as you. A run that could take any of these steps could give itself a credential, take off a hold the service placed, or stop the service for everyone. If you are an agent reading this to help someone: say which step is theirs and stop; do not run it.
+
+What the service *is* — the trust model, the one bundle secret, the invariant, the accepted limits — is [SECURITY.md's "The credentials service"](../../SECURITY.md#the-credentials-service). This file is what you do when something is wrong.
+
+## 1. Is the service on at all?
+
+```bash
+fugaro doctor
+```
+
+`fugaro doctor` names the credentials service's pieces: the service, its own service account, the one bundle container and the one `secretmanager.secretAccessor` grant on it. An installation that never ran `fugaro init --provision-credentials` has none of them, and every symptom below is some other problem — with the service off, a `cascade` workflow is refused at launch, before any model call, rather than halting later.
+
+The service's own view of the bundle is `fugaro creds ls`: the credential **names** the bundle holds and their metadata, never a value.
+
+## 2. A run halted: read the reason before anything else
+
+A run that halted for this service exits 0 and leaves a **draft** pull request whose report starts `Halted: <reason>`. `fugaro runs ls` shows the same reason, and `fugaro diagnose <run> --json` carries it with the halt's detail and the log tail.
+
+| Reason | What happened | What you do |
+|---|---|---|
+| `no_credential` | The service answered that no credential was usable — every tier is exhausted, broken or held — or it kept answering that way through the runner's bounded waits. | §4 |
+| `creds_rules_denied` | The database's deployed rules predate the cascade's fields, so the run's own credential state cannot be written at all. | §5 |
+| `budget_unavailable` | The budget backend was unreachable for three minutes. Nothing about the work was decided. | Wait until it is back, then `fugaro run --pr N`. |
+| `kill_switch` | Someone stopped the project or the repository on purpose. | §7 — do **not** follow up until you mean to. |
+
+## 3. The service is down, or refuses everything
+
+A `cascade` run has **no credential of its own to fall back to** — that is the design (D143), not a bug — so an unreachable service halts the run named rather than reaching for an in-job key. What to check, in order:
+
+```bash
+fugaro budget show            # the mode, the caps and the kill switches
+fugaro accounts ls --repo <owner/name> --json
+fugaro creds ls
+```
+
+1. **The kill switch.** `fugaro budget show` says who set it, when and why. If it was deliberate, stop here.
+2. **The service itself.** A Cloud Run service scaled to zero instances, or one whose revision fails to start, answers nothing. Re-deploy the released image, or scale it back up.
+3. **The bundle.** `fugaro creds ls` with no rows means the container exists and holds no document, or holds one the loader refuses: a container with no document is fine in Terraform but the service fails closed on it and answers a named refusal. `fugaro creds set NAME` writes the first document.
+4. **The rules marker.** `creds_rules_denied` is a *deployed rules* problem, not a service problem: see §5.
+
+## 4. A run halted for a missing credential
+
+The service answers with a typed refusal naming the reset time when an account is exhausted, and the runner **waits** for that reset inside the job's own timeout, resuming the stage it was in (D138). A halt means the waits ran out — or the service kept naming a reset that had already passed — so the credential really is unusable now.
+
+1. **See the states.** `fugaro accounts ls --repo <owner/name> --json` prints each admitted account and its state: free, exhausted (with its reset), broken (a 401 — nothing clears it on its own) or backed off. Read `complete` first: when it is `false`, project selection failed on this machine and the list may be short of the repository's real accounts, so say that rather than concluding there is nothing to switch to.
+2. **Wait, or replace.** An exhausted account needs its reset time to pass, or a different token under the same name. A broken account needs its token replaced — that is `fugaro creds set claude-oauth-token-<account>` (or `fugaro creds set claude-oauth-token` for the default account), which reads the value from stdin or a hidden prompt and never from an argument.
+3. **Clear the mark** for a replaced token: §5. A **backed-off** mark is refused by `fugaro accounts clear` on purpose — a probe is what clears it, and clearing it by hand would route real work to a credential that has not answered since it was held.
+4. **Continue the run.** `fugaro run --pr N` on the draft pull request the halt left, once a credential is usable again. A run that halted *before* pushing anything has no pull request: start it again.
+
+Nothing here is a switch of account: the cascade picks the credential, and the account a run used is not the local config's to choose. The account switch in [the working skill's diagnose reference](../../plugin/skills/working/reference/diagnose.md) §5 is for an `oauth` workflow's personal subscription and does not apply to a `cascade` run.
+
+## 5. A wrong mark: clearing an exhausted or broken credential
+
+```bash
+fugaro accounts clear NAME            # add --yes to skip the typed confirmation
+fugaro init --firebase <firebase-project-id>   # only for creds_rules_denied
+```
+
+`fugaro accounts clear NAME` is the only thing that ends a `broken` mark, and it also clears `exhausted`. It writes one node — `creds/marks/NAME` — conditionally on the value it read, so a mark the service changed while you were reading is not lost. Replace the token **first**: the service marks it broken again if the token is still refused.
+
+`creds_rules_denied` is the other kind of wrong state, and it is not a mark: the database's deployed rules predate the fields the cascade writes, so the run cannot record its own credential state. The remedy is the owner-run `fugaro init --firebase <firebase-project-id>` with a current release, which deploys the rules the cascade's fields need; the halt's own report names that command. Until it runs, every `cascade` run halts there.
+
+## 6. Rotating the bundle
+
+```bash
+fugaro creds ls                       # the names, never a value
+fugaro creds set NAME < token-file    # read-modify-write, then the old version is disabled
+```
+
+The bundle is **one** Secret Manager secret holding every credential the service can issue (Q6), so a rotation is a read-modify-write of one document: the other entries keep their bytes, the whole document is parsed with the service's own loader before it is written, and the version it replaced is **disabled** afterwards — a superseded bundle that stayed enabled keeps every rotated-away credential readable, which is the one thing a rotation is for. Terraform manages no version and cannot do that, so the command that writes does.
+
+**What a rotation does to a run in flight:**
+
+- **the call already in flight keeps the credential it was given** — the service attached it before the rotation, and the rotation does not reach into a call already being proxied;
+- **the next read of the bundle** serves everything after it, so a run that has not called yet gets the new credential at its next call, and the bundle's short cache bounds how long "the next read" is;
+- a run **mid-way through** a credential a rotation *removes* is the wait-or-switch path (§4): the service answers its typed refusal, and the runner waits for the reset or the run halts named. Rotate a name away only when you mean to end the runs using it.
+
+## 7. Stopping the service issuing, in one command
+
+```bash
+fugaro budget kill --all                  # the whole project
+fugaro budget kill --repo <owner/name>    # one repository
+fugaro budget resume                      # --all or --repo, to clear it
+```
+
+The service reads the same kill switch the rest of Fugaro does, **before it reads the bundle**: a stopped service reads no credential at all and answers a typed refusal that halts the run. This is the one-command "stop issuing" — it needs no service deploy, and it reaches runs already in flight (they halt within seconds, except a run in its last stage, which finishes pushing its work first). An unreadable switch is a refusal, never an off switch, so a database outage stops issuance rather than opening it.
+
+This is also the switch that a wrong credential or a runaway tier A is answered with: stop issuance first, then work out which credential was wrong. `fugaro budget show` names who set the switch, when and why.
+
+## 8. Taking a `credentials` member off a published node
+
+**No CLI writes or removes a `credentials` member in this release**, and `fugaro validate` cannot remove it either: it reads the published node and reports. The refusal names both ways out, and they are:
+
+1. **Edit the node by hand** — remove the `credentials` member from the published policy document in the database, leaving everything else as it is; or
+2. **publish a fresh policy** — `fugaro project policy publish --delete` drops the published policy entirely, and the next ordinary publish writes one without the member.
+
+Take the second only if dropping the policy is what you mean: with the policy gone, project-centric mode is off for the project until a publish puts it back. Editing the node is the narrower fix.
+
+## 9. Turning the service off
+
+This is an **ordered** procedure — re-apply every repository root first, then forget the container, then unset the opt-in and apply — and the order is the part that is easy to get wrong. The bundle container carries `prevent_destroy`, so a plan that drops the opt-in fails whole (`Instance cannot be destroyed`) and applies **nothing** — the service, its account and the grant cannot be removed in that plan either. That is deliberate: it is what keeps a plan from deleting every credential at once.
+
+1. **Re-apply every repository root, first.** In each repository's checkout:
+
+   ```bash
+   fugaro init --repo
+   ```
+
+   The `run.invoker` grants on the service and the model-secret accessors the service displaced live in the **repository** roots, not in the installation. A repository root that is not re-applied keeps declaring a service that step 3 is about to remove, and its own apply then plans an invoker grant on a resource that no longer exists — its apply fails there instead of finishing the opt-out. Do this for every enrolled repository, before the two steps below.
+
+2. **Forget the container** (this deletes nothing in GCP, and leaves every credential in it alone):
+
+   ```bash
+   terraform state rm 'module.installation.google_secret_manager_secret.credentials_bundle[0]'
+   ```
+
+   The address is the installation **root's** state: the resource is inside `module "installation"`, so the module prefix is required — the bare address names nothing in that state and `terraform state rm` refuses it. The single quotes are required too: `[0]` is a glob to zsh, which would refuse the command before Terraform ran.
+
+3. **Unset the opt-in and apply.** With `credentials_service` unset, an ordinary plan and apply removes the service, its account and the grant, and touches no secret:
+
+   ```bash
+   terraform plan
+   terraform apply
+   ```
+
+**The bundle container and its document are left behind by all three steps**, with every credential still in it — that is what step 2 buys. Delete the container yourself, by hand, when you are sure nothing needs it. Rotate or revoke the credentials in it at the providers as well: deleting the container does not un-issue a token that has already leaked.
+
+## 10. The audit log Check 94 reads
+
+Secret Manager `DATA_READ` audit logs are **off by default**, and Fugaro's Terraform manages no audit config, so the live check reads the config back before it reads a log line. Turn them on yourself, the same owner-run way [docs/gcp-setup.md](../gcp-setup.md) records for the runs bucket's `DATA_WRITE`:
+
+```bash
+gcloud projects get-iam-policy <gcp-project> --format=json > policy.json
+# add an auditConfigs entry for secretmanager.googleapis.com with a DATA_READ log type
+gcloud projects set-iam-policy <gcp-project> policy.json
+```
+
+Then read the log back: a bundle read is **one** entry, naming the secret and never a value. With one bundle secret (Q6) the log shows that the service read *the* secret; it does not show which credential inside it was used.

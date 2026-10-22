@@ -279,12 +279,12 @@ func TestDocsUsageLimitSwitchDoesNotApplyToACascadeRun(t *testing.T) {
 	section := docSection(t, "plugin/skills/working/reference/diagnose.md", diagnose, "## 5. A Claude usage limit")
 	flat := flattenDoc(section)
 	for _, want := range []string{
-		"agent.auth is cascade",
+		"`agent.auth` is `cascade`",
 		"the credentials service",
 		"docs/credentials-service/runbook.md",
-		"fugaro accounts ls cannot answer",
-		"--token NAME does not name",
-		"not a run this section switches",
+		"`fugaro accounts ls` cannot answer",
+		"`--token NAME` does not name",
+		"is not a run this section switches",
 	} {
 		if !strings.Contains(flat, want) {
 			t.Errorf("diagnose.md §5 never says %q: a cascade run that ran out of tier A is the service's to answer, and the section's switch does not fit it", want)

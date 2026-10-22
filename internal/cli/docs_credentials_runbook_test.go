@@ -52,6 +52,19 @@ func TestCredentialsRunbookNamesEveryOwnerStep(t *testing.T) {
 			t.Errorf("%s does not name %q: an operator reads this while the service is already refusing", credentialsRunbook, want)
 		}
 	}
+	// The two wrong spellings of the opt-out's first step, which the
+	// installation module's own guard forbids in the plan and which are just
+	// as wrong here: the bare address names nothing in the installation
+	// root's state, and the module-prefixed one unquoted is a glob zsh
+	// refuses before terraform sees it (re-review N1).
+	for _, forbidden := range []string{
+		"terraform state rm google_secret_manager_secret.credentials_bundle[0]",
+		"terraform state rm module.installation.google_secret_manager_secret.credentials_bundle[0]",
+	} {
+		if strings.Contains(flat, forbidden) {
+			t.Errorf("%s spells the opt-out's first step %q, which does not run: the address is the installation root's, module-prefixed and single-quoted", credentialsRunbook, forbidden)
+		}
+	}
 }
 
 // TestCredentialsRunbookIsOwnerRunOnly: every step is the owner's, and the

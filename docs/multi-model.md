@@ -251,3 +251,20 @@ There is no separate "direct" knob: the `providers:` map is the only knob there 
 The account-side settings of §1 (no fallbacks, the data policy) are OpenRouter's own; a vendor's own endpoint has its own account-side settings to review, which are not enumerated here.
 
 **Unverified until Check 33:** that a vendor's own Anthropic-compatible endpoint (DeepSeek's, Moonshot's) accepts the gateway's forwarded request bodies byte for byte and reports usage the way the gateway reads it. Check 25 (§1) settles this for OpenRouter only; Check 33 of [gcp-live-checklist.md](gcp-live-checklist.md) is the equivalent for a vendor's own endpoint, and is optional and user-run.
+
+## The cascade, and the project policy switch
+
+`agent.auth: cascade` is the fourth value of the auth list (§4, and the `agent.auth` refusal in §5), and it is not a route: it is a **credential switch**. A `cascade` workflow holds no model credential of its own; its calls go job → gateway → **the credentials service**, which picks a credential from its own tiers (tier A a Claude subscription token, tier B the project's Anthropic API key, tier C reserved) and attaches it to the call. It routes nothing: it names no model of its own, and the pins are the ones the configuration already answers, exactly as they are for `api-key`.
+
+**A repository asks for it, and only the operator turns it on.** A `cascade` workflow whose project policy does not carry the switch is **refused** at launch, before any model call and before a pin moves: the repository's `fugaro.yaml` is not where that decision lives. The operator writes `routing.claude: {via: cascade}` in the project policy and publishes it:
+
+```yaml
+routing:
+  claude: {via: cascade}
+```
+
+`fugaro project policy publish` is that write. `fugaro validate` refuses the same file on the author's own machine, so a repository author meets the rule before a launch does. The spelling is deliberate: `via: auto` and `via: direct` keep the meanings they had, and a `cascade` workflow under a policy that carries neither is refused rather than guessed at.
+
+**It needs the gateway.** The service is reached *through* the gateway, so a `cascade` workflow needs `budget.mode` `observe` or `enforce`, the same as a provider route (§5), and a `cascade` launch is refused for an installation with no database, for a budget whose mode leaves the gateway off, and for a database whose rules predate the credentials family. It also needs the service deployed: an installation that never ran `fugaro init --provision-credentials` has none, and a `cascade` run is refused at launch there too.
+
+**What it changes for the repository is nothing else.** The pins, the roles, `first_line_review` and the budget rules are the ones §2–§6 already describe, and an `oauth` workflow of the same repository keeps its own mount unchanged. What it changes for the *job* is that no model credential is mounted at all — the service holds them, and its one bundle secret is [SECURITY.md's subject](../SECURITY.md#the-credentials-service). What it changes for a *halted* run is that the account switch of [the working skill's diagnose reference](../plugin/skills/working/reference/diagnose.md) §5 does not apply to it: the cascade picks the credential, not this machine's local config. An operator's side of an outage is [docs/credentials-service/runbook.md](credentials-service/runbook.md).
