@@ -256,6 +256,16 @@ func TestABindingRefusalIsAudited(t *testing.T) {
 	if n := s.up.Count(); n != 0 {
 		t.Errorf("the upstream saw %d requests, want none: the call was refused before it was forwarded", n)
 	}
+	// And the line carries no credential VALUE anywhere in it — not the names
+	// the bundle holds, and not the values behind them. The refusal is answered
+	// before the bundle is read, so there is no value for it to carry, and the
+	// assertion is here so that a later change that reads one before this
+	// refusal cannot put it in the line unnoticed.
+	for _, v := range fixtureValues(t) {
+		if strings.Contains(auditLog.String(), v) {
+			t.Errorf("the binding refusal's audit line carries a credential's value: %s", auditLog.String())
+		}
+	}
 }
 
 // TestARequestShapeRefusalIsAudited: the request-shape refusals
