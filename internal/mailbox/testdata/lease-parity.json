@@ -91,17 +91,6 @@
       }
     },
     {
-      "name": "a state that is not an object is refused",
-      "op": "read",
-      "state": [
-        600000
-      ],
-      "expect": {
-        "ok": false,
-        "code": "bad-type"
-      }
-    },
-    {
       "name": "a state that is null is refused",
       "op": "read",
       "state": null,

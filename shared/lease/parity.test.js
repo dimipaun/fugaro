@@ -24,6 +24,10 @@
 //     one-millisecond neighbour, the ceilings on an instant and a TTL, zero, the
 //     far-future lease that must not block a mailbox for ever, and every refusal
 //     family.
+//   * The corpus asks for a state that is not an object at all as `null`, which
+//     the Go side passes as a nil record. It does **not** ask for the *array*
+//     spelling of "not an object": Go's records are typed, so no Go caller can
+//     hand one to the lease, and the replay says so rather than skipping it.
 //   * **Not** the module's *holder* rules. The holder the Go consumer passes is
 //     a heartbeat's `boot` id, and the merged schema (`shared/mailbox-schema`,
 //     bound by `internal/mailbox/message.go` in T1) already fixes that shape —
@@ -127,7 +131,6 @@ function cases() {
     readCase('a claim that is not a lease is unreadable', state({ holder: A }, ttl)),
     readCase('a state with no claim field is refused', { ttl }),
     readCase('a state with a field the module does not define is refused', { claim: null, ttl, extra: 1 }),
-    readCase('a state that is not an object is refused', [ttl]),
     readCase('a state that is null is refused', null),
     readCase('a zero TTL is refused', state(null, 0)),
     readCase('a TTL past the ceiling is refused', state(null, MAX_TTL + 1)),
