@@ -439,7 +439,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		}
 		wctx, cancelWrite := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
 		defer cancelWrite()
-		if werr := writeRecord(d.Store, wctx, r.rec); werr != nil && err == nil {
+		if werr := writeRecord(d.Store, wctx, r.recordSnapshot()); werr != nil && err == nil {
 			err = fmt.Errorf("writing run record: %w", werr)
 		}
 		rec = r.rec
@@ -538,9 +538,39 @@ func (r *run) save(ctx context.Context) {
 	}
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
 	defer cancel()
-	if err := writeRecord(r.d.Store, wctx, r.rec); err != nil {
+	if err := writeRecord(r.d.Store, wctx, r.recordSnapshot()); err != nil {
 		r.d.Log.Warn("writing run record failed", "err", err)
 	}
+}
+
+// recordSnapshot is the record as a write encodes it: a copy taken under the
+// run's lock, so the encode -- which reads every field of the record -- cannot
+// read a field another goroutine is writing.
+//
+// The record has two writers that are not the goroutine a save runs on: the
+// credentials service's per-call answer, which names the credential the call
+// was served with (recordCredential, C1.19) and logs the switch it made
+// (recordSwitch, C1.16), and nothing else. Both hold r.mu, so a copy taken
+// under it is consistent with them; every other field is written by the run's
+// own goroutine, which is the one that saves, and by the checkpoint poll,
+// which is a goroutine of its own and writes the run branch's tip (C1.10's
+// poll) — the poll's own writes are ordered with its own save, which is what
+// makes the copy enough here rather than a lock held around the write.
+//
+// The copy is shallow, and that is deliberate: the callback goroutines only
+// ever append to the record's slices and set scalars, both under the lock, so
+// what a snapshot's slice header covers cannot be rewritten after it — an
+// append writes past the length the header was copied with. A field a
+// callback goroutine ever comes to mutate in place (a map entry, say) would
+// have to be deep-copied here, and this is the comment that says so.
+func (r *run) recordSnapshot() *runstore.Record {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.rec == nil {
+		return nil
+	}
+	cp := *r.rec
+	return &cp
 }
 
 // createRecord creates result.json if absent, within recordWriteTimeout.
