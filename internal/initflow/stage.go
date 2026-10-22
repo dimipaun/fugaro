@@ -93,9 +93,16 @@ var order = []slot{
 // what goes with them (the state bucket, the Viewer-read removal, the
 // Firestore marks and rules, the image copies that add tags, the local
 // config). Everything else is never covered by it: the project's creation and
-// billing, a secret, the plugin wiring (its own y/N), and within a covered
-// stage the Firestore database's location, a Cloud Build, replacing a
-// registry tag and onboarding an unlisted repository, which stay Typed.
+// billing, a secret, and the plugin wiring (its own y/N).
+//
+// The map answers for WHOLE STAGES, and that is the whole of what it says. A
+// step finer than its stage — the Firestore database's location inside
+// Firebase, a billable image build inside Images, replacing a registry tag and
+// onboarding an unlisted repository inside Repository — is not a row here and
+// cannot be one: whether such a step is covered is the confirmation of the
+// caller that takes it, decided where the step is taken, which is also the
+// only place that knows which front door is running and so which steps that
+// door owns.
 var runCovered = map[string]bool{
 	Installation: true, Firebase: true, Images: true, Installation2: true, Repository: true,
 }

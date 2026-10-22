@@ -16,16 +16,23 @@ import (
 // cloned third-party repository can carry a fugaro.yaml that names this
 // project, and onboarding it would create Terraform resources and offer a
 // Cloud Build of its configuration in this GCP project. So a repository the
-// local config does not list yet is never touched on --yes or
-// --non-interactive. It needs one of:
+// local config does not list yet is never touched by a run that gives no
+// confirmation at all: --non-interactive without --yes, --json, a pipe, a
+// coding agent's session, or a door that does not own the step. It takes one
+// of:
 //
+//   - the run's own confirmation (D12, 2026-10-20): --yes, or the project's
+//     name typed once at the converge's review, which covers onboarding an
+//     unlisted repository in either front door's converge; or
 //   - its own typed confirmation, naming owner/name (from the origin) and the
 //     checkout's path, in the user's own terminal, before the stage's first
-//     cloud call or write; or
+//     cloud call or write — which is what the standalone --repo engine always
+//     asks; or
 //   - --onboard-repo owner/name, the one explicit non-interactive opt-in,
 //     which must equal the origin repository exactly.
 //
-// Without either the stage is needs-you, with the one-line opt-in command.
+// Without any of them the stage is needs-you, with the one-line opt-in
+// command.
 
 type repoAuth int
 
@@ -54,44 +61,64 @@ func (e *initEngine) authState(o originInfo) (repoAuth, error) {
 		// Asked once, at the start of the run, and not typed: the stages say
 		// what to do and are not asked again.
 		return authNeeded, nil
+	case !opts.repo && e.onboardCovered(o):
+		// The converge's onboarding of an unlisted repository is covered by
+		// the run's own confirmation (D12's answer of 2026-10-20): --yes, or
+		// the one confirmation the converge takes at a real terminal, in
+		// either front door. It is still never given by a pipe, --json,
+		// --non-interactive or a coding agent's session (canConfirmTyped).
+		//
+		// The standalone engine (--repo) is not this case: there the gate's
+		// question is the identity of the repository in a checkout the run
+		// was pointed at, which is the one thing --yes cannot answer, and
+		// that path is unchanged (gateRepo).
+		return authOK, nil
 	case !opts.enrolling():
 		// This door does not enrol: the repository is left for the user, with
-		// the line naming the door that does. It is checked before the covered
-		// case below, because what a door does not own it cannot cover (D5,
-		// D12) — an unlisted checkout is not in `update`'s stage set at all.
+		// the line naming the door that does. What a door does not own it
+		// cannot cover (D5), so `update`'s converge reaches this case
+		// whenever --yes did not cover the step — it never has an unlisted
+		// repository in its stage set to onboard otherwise.
 		return authNeeded, nil
-	case e.onboardCovered():
-		// The step is covered by this run's own confirmation (D12's answer of
-		// 2026-10-20): --yes, or the one confirmation the converge took at a
-		// real terminal. Onboarding an unlisted repository is an ordinary
-		// covered row in both front doors where the door enrols, and it is
-		// still never given by a pipe, --json, --non-interactive or a coding
-		// agent's session (canConfirmTyped).
-		return authOK, nil
 	case e.canConfirmRepo():
 		return authAsk, nil
 	}
 	return authNeeded, nil
 }
 
-// onboardCovered reports whether the run's own confirmation covers onboarding
-// this repository now: YesOrTyped's rule, the class D12 gives the step in both
-// front doors, and the run's own confirmation actually given. --yes is one way
+// onboardCovered reports whether the converge's own confirmation covers
+// onboarding this repository now: YesOrTyped's rule, the class D12 gives the
+// step in both front doors, and the run's own confirmation actually given. --yes is one way
 // to give it with no terminal (r.conditions().Yes, which --plan-only turns
 // off); otherwise it is the one confirmation the converge takes at the review,
 // and a person who typed the project's name there has given it. Until the
 // review is taken the typed question is still asked: an ordinary terminal
 // alone is not a confirmation. A coding agent's session, --json, a pipe and
 // --non-interactive give nothing (canConfirmTyped).
-func (e *initEngine) onboardCovered() bool {
+func (e *initEngine) onboardCovered(o originInfo) bool {
 	r := e.r
-	if !canConfirmTyped(initflow.YesOrTyped, r.conditions()) {
+	if o.Rewritten || !o.standardHost() {
+		// The origin's identity is not the one it claims: git config in the
+		// checkout rewrites it, or its host is not a provider's own. The
+		// typed confirmation — which prints the host and asks for it — is the
+		// only route there, --yes and the review included.
 		return false
 	}
-	if r.conditions().Yes {
+	if repoNameListed(e.lc, o) {
+		// The local config knows this name at another host: the origin
+		// contradicts a repository this project does have, which is the
+		// gate's own question rather than a step of the converge's.
+		return false
+	}
+	if r.review != nil && r.review.state == reviewTaken {
+		// The person typed the project's name at the review, which is the
+		// run's confirmation taken (init_review.go). A run in which it cannot
+		// be taken never reaches this state.
 		return true
 	}
-	return r.review != nil && r.review.state == reviewTaken
+	yes := r.conditions()
+	yes.Terminal, yes.NonInteractive, yes.JSON = false, false, false
+	return canConfirmTyped(initflow.YesOrTyped, yes)
 }
 
 // checkoutNote is printed once before the gate when installation-only flags

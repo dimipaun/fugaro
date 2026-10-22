@@ -31,16 +31,31 @@ func neverRun(t *testing.T) func(context.Context) error {
 }
 
 // A freshly cloned third-party repository whose fugaro.yaml names this
-// project is not onboarded, nor wired, on --yes or --non-interactive: both
-// stages are needs-you with the one-line opt-in, nothing is written, and the
-// engine (every cloud call) is never reached.
+// project is not onboarded, nor wired, in the modes that give no confirmation
+// at all — --non-interactive without --yes, --json, and a pipe — whatever the
+// answer waiting on stdin: both stages are needs-you with the one-line opt-in,
+// nothing is written, and the engine (every cloud call) is never reached.
+//
+// --yes is not one of these modes any more: D12's answer of 2026-10-20 makes
+// onboarding an unlisted repository an ordinary covered row in BOTH front
+// doors, so --yes onboards it with no typed question
+// (TestSetupOnboardsUnderYesWithoutATypedConfirmation, and update's own
+// TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne for the door that
+// never enrols). A coding agent's session gives nothing either, and is pinned
+// by the refusal matrix (setup_refusals_test.go).
 func TestHostileCloneNeedsOwnConfirmation(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	yaml := checkoutYAML("github", "oauth", "aurora", "")
 	dir := repoCheckout(t, githubOrigin, yaml)
 	t.Chdir(dir)
-	for _, o := range []*initOptions{{yes: true}, {yes: true, nonInteractive: true, githubAppID: "12345"}} {
-		e, _ := stageEngine(t, "acme/app\n", o) // an answer waiting on stdin is not read
+	for _, c := range []struct {
+		name string
+		o    *initOptions
+	}{
+		{"--non-interactive", &initOptions{nonInteractive: true, githubAppID: "12345"}},
+		{"--json", &initOptions{asJSON: true, githubAppID: "12345"}},
+	} {
+		e, _ := stageEngine(t, "acme/app\n", c.o) // an answer waiting on stdin is not read
 		unknownRepo(e)
 		fakeTerminal(t)
 		rs := newRepositoryStage(e)
@@ -49,11 +64,24 @@ func TestHostileCloneNeedsOwnConfirmation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if stateOf(res, "plugin") != initflow.NeedsYou || stateOf(res, "repository") != initflow.Blocked || len(res.Left) != 1 {
-			t.Fatalf("%+v: stages %+v left %v", o, res.Stages, res.Left)
+		if stateOf(res, "plugin") != initflow.NeedsYou {
+			t.Fatalf("%s: the plugin stage is %+v, want needs-you: a repository nobody opted in is not wired", c.name, res.Stages)
 		}
-		if l := res.Left[0].Text; !strings.HasSuffix(l, "setup --onboard-repo acme/app") || strings.Contains(l, "\n") || strings.Contains(l, "&&") {
-			t.Errorf("the opt-in line: %q", l)
+		// The repository stage's own state is the loop's: needs-you where it
+		// is asked (the plan-only run), blocked behind the plugin where the
+		// run stops at the first stage that needs the user.
+		switch stateOf(res, "repository") {
+		case initflow.NeedsYou, initflow.Blocked:
+		default:
+			t.Fatalf("%s: the repository stage is %+v, want needs-you or blocked", c.name, res.Stages)
+		}
+		if len(res.Left) == 0 {
+			t.Fatalf("%s: nothing was left for the user: %+v", c.name, res)
+		}
+		for _, lf := range res.Left {
+			if lf.Kind != initflow.LeftCommand || !strings.HasSuffix(lf.Text, "setup --onboard-repo acme/app") || strings.Contains(lf.Text, "\n") || strings.Contains(lf.Text, "&&") {
+				t.Errorf("%s: the opt-in line: %q", c.name, lf.Text)
+			}
 		}
 		if !strings.Contains(res.Stages[0].Detail, "repository stage was not reached") {
 			t.Errorf("detail %q", res.Stages[0].Detail)
@@ -63,7 +91,7 @@ func TestHostileCloneNeedsOwnConfirmation(t *testing.T) {
 		}
 	}
 	// The repository stage alone says the same.
-	e, _ := stageEngine(t, "", &initOptions{yes: true})
+	e, _ := stageEngine(t, "", &initOptions{asJSON: true})
 	unknownRepo(e)
 	rs := newRepositoryStage(e)
 	rs.engineStage.run = neverRun(t)

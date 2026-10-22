@@ -1465,20 +1465,25 @@ const (
 )
 
 // stepConfirmation says which of the three this run is at. It is one function
-// because it is one rule: the door's class (stepClass) and the run's
-// conditions (canConfirmTyped), read the same way by the Firestore location,
-// the image build and the registry tag, so a door cannot come to confirm one of
-// them and not another. --non-interactive, --json, a pipe and a coding agent's
-// session confirm nothing of either class; --yes confirms only the class
-// YesOrTyped, which only `update` has.
+// because it is one rule: who is there, and then the door's class (stepClass).
+// The two are read in this order and not the other way round, so that the
+// class cannot widen what a terminal may do: a person who can type the step's
+// own confirmation types it, whatever the door (canConfirmTyped(Typed)), and
+// only a run that is not such a person — no terminal, a pipe, --json,
+// --non-interactive, a coding agent's session, or --yes — falls through to
+// --yes, which confirms the steps of a door whose class is YesOrTyped and
+// nothing else. --plan-only is not such a person either and --yes is not
+// given it (r.conditions().Yes), so it applies nothing whatever it is passed.
 func (r *initRun) stepConfirmation() stepConfirmation {
-	if !canConfirmTyped(r.stepClass(), r.conditions()) {
-		return stepLeave
+	if canConfirmTyped(initflow.Typed, r.conditions()) {
+		return stepTyped
 	}
-	if r.o.yes && !r.o.planOnly {
+	yes := r.conditions()
+	yes.Terminal, yes.NonInteractive, yes.JSON = false, false, false
+	if r.stepClass() == initflow.YesOrTyped && canConfirmTyped(initflow.YesOrTyped, yes) {
 		return stepByYes
 	}
-	return stepTyped
+	return stepLeave
 }
 
 // neverConfirms is the parenthetical that follows "typed at a real terminal" in
