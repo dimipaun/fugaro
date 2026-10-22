@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -71,15 +72,8 @@ func checkAuditShape(t *testing.T, line map[string]any) {
 		}
 	}
 	for k := range line {
-		switch k {
-		case "time", "level", "msg":
-			continue
-		}
-		owned := false
-		for _, f := range auditFields {
-			owned = owned || k == f
-		}
-		if !owned {
+		// time, level and msg are the handler's own.
+		if k != "time" && k != "level" && k != "msg" && !slices.Contains(auditFields, k) {
 			t.Errorf("the audit line carries a field it does not own: %q", k)
 		}
 	}
