@@ -420,3 +420,56 @@ func TestGcloudOutputNeverStored(t *testing.T) {
 		t.Errorf("the second question ran gcloud %d times in all, want 2: the answer is not kept between calls", len(g.calls))
 	}
 }
+
+// TestGcloudChildNeverOffersToEnableAnAPI pins the one setting the fallback's
+// child is run with: `billing accounts list` is a read, and a gcloud that
+// finds an API off must not offer to turn it on — the offer is a change to a
+// project this question was not asked about, and a prompt in a run whose
+// answer is not being read is a hang. It is appended to the environment gcloud
+// is given, so it also wins over the operator's own setting of it.
+func TestGcloudChildNeverOffersToEnableAnAPI(t *testing.T) {
+	const setting = "CLOUDSDK_CORE_SHOULD_PROMPT_TO_ENABLE_API"
+
+	environ := []string{"PATH=/usr/bin", setting + "=true"}
+	got := gcloudEnv(environ)
+	if want := []string{"PATH=/usr/bin", setting + "=true", setting + "=false"}; !slices.Equal(got, want) {
+		t.Errorf("gcloudEnv(%q) = %q, want %q", environ, got, want)
+	}
+	if environ[1] != setting+"=true" {
+		t.Errorf("gcloudEnv changed the slice it was given (%q): it is exec.Cmd's own copy of the environment, and a caller's slice is not its to write", environ)
+	}
+
+	// And the child is run with it: a gcloudEnv nobody calls is a setting
+	// nobody sets. Read out of the file the way this file's own privacy pin
+	// reads it, so a mutation that drops the wiring is not a compile error
+	// nobody notices but a FAIL here.
+	src, err := os.ReadFile("gcloud.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "gcloud.go", src, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parsing gcloud.go: %v", err)
+	}
+	wired := false
+	ast.Inspect(file, func(n ast.Node) bool {
+		as, ok := n.(*ast.AssignStmt)
+		if !ok || len(as.Lhs) != 1 || len(as.Rhs) != 1 {
+			return true
+		}
+		sel, ok := as.Lhs[0].(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "Env" {
+			return true
+		}
+		if call, ok := as.Rhs[0].(*ast.CallExpr); ok {
+			if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "gcloudEnv" {
+				wired = true
+			}
+		}
+		return true
+	})
+	if !wired {
+		t.Errorf("nothing in gcloud.go sets an Env from gcloudEnv: the child runs with the environment it inherits, prompt to enable an API and all")
+	}
+}

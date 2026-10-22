@@ -99,7 +99,7 @@
 //     docs hub to the console page and back, and this derivation only runs under
 //     `FUGARO_DERIVE_BUDGETS=1` — so a round that changes which page it is re-derives there in
 //     the commit that does, and the README's sentence moves with it.
-//   - Whole site: every file in `dist/` — eleven pages, the script, the brand icons, the manifest,
+//   - Whole site: every file in `dist/` — thirteen pages, the script, the brand icons, the manifest,
 //     the two `fugaro watch` assets, and the console's four screenshots and the manifest they
 //     came with — × 1.25, rounded up. It is the build every checkout makes alike, tags or no
 //     tags, since the changelog reads the plugin's version rather than the checkout's tags.
@@ -1056,8 +1056,16 @@ test('the word reader counts what a reader reads, and nothing else', (t) => {
  * above it is 600. D188's own rule is what moves it and not convenience: the number is the
  * ceiling above the page that carries the required blocks, and a page that wants the room has
  * to carry one. website/README.md records every reading beside the words line.
+ *
+ * **900 since the 2026-10-22 brief**, which replaces the four zoom levels with the owner's four
+ * approved design boards (`website/design-ref/zoom-levels/level1.dc.html` … `level4.dc.html`)
+ * redrawn as the site's inline SVG: a board's labels are strings the drawing renders, and a
+ * string the drawing renders is text a reader reads, so the four levels' labels are words on How
+ * It Works the way the slider's `alt` texts are words on the homepage. The page goes 492 → **868
+ * words** — the boards' own labels, word for word, which is the whole of what the brief asks it
+ * to draw — and the smallest round ceiling above it is 900.
  */
-export const D188_WORDS = 600
+export const D188_WORDS = 900
 
 /** The one page the words ceiling is derived from, by its built URL. */
 const WORDS_CEILING_PAGE = '/privacy/'

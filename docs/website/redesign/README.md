@@ -46,7 +46,7 @@ npm install --prefix /tmp/fugaro-pw playwright@1.49.1
 PLAYWRIGHT_PREFIX=/tmp/fugaro-pw node docs/website/redesign/capture-screenshots.mjs docs/website/redesign/current
 ```
 
-It writes 22 JPEGs (eleven routes at 1280 × 900 and 390 × 844) into `current/` and the
+It writes 24 JPEGs (twelve routes at 1280 × 900 and 390 × 844) into `current/` and the
 measurements to `/tmp/website-screenshots.json` (a second argument changes that path). The
 "after" set is the same command with `docs/website/redesign/after` as the argument.
 
@@ -80,7 +80,7 @@ The owner accepted every recommendation of D180 to D192, as written in `reconcil
 - **D183** the JavaScript is one first-party file, `website/public/scripts/site.js`; no inline script, no CSP edit.
 - **D184** the homepage animation shows the README's documented sequence, held to the file at build time, captioned as the documented sequence.
 - **D185** How It Works uses the brief's four steps, each captioned by a quoted line.
-- **D186** a build gate refuses the listed provenance phrases; **D188** the lead is at most 40 words on every page and the whole page at most 250 words (not Docs, Security, Changelog) — amended 2026-10-19: the privacy statement's own ceiling is derived from its own count, and every other page stays at 250 — amended 2026-10-21: the number is 500, the bold redesign's homepage being five blocks and 468 words (the reading below) — amended 2026-10-21 again: the number is **600**, the 2026-10-21 brief's slider being the sixth block on that page, 563 words with the three pictures' `alt` texts it leads with (the reading below).
+- **D186** a build gate refuses the listed provenance phrases; **D188** the lead is at most 40 words on every page and the whole page at most 250 words (not Docs, Security, Changelog) — amended 2026-10-19: the privacy statement's own ceiling is derived from its own count, and every other page stays at 250 — amended 2026-10-21: the number is 500, the bold redesign's homepage being five blocks and 468 words (the reading below) — amended 2026-10-21 again: the number is **600**, the 2026-10-21 brief's slider being the sixth block on that page, 563 words with the three pictures' `alt` texts it leads with (the reading below) — amended 2026-10-22: the number is **900**, the 2026-10-22 brief's four boards replacing the four zoom levels on How It Works, 868 words of the boards' own labels (the reading below).
 - **D187** the fold is checked by the word ceiling plus one owner-run live check (70b).
 - **D189** long-page summaries are rendered from files; **D190** the design lives in the owner's tool, the repository keeps `design.md`, screenshots are regenerated and never committed; **D191** the redesign goes first; **D192** the byte budgets are re-derived in the commit that ships the script.
 
@@ -917,6 +917,20 @@ changes are cited as the feedback's own.
   on the slide its track is showing while its panel is `display: none`, the two step controls read
   through `own()`, and the gates that run the shared slider as the homepage renders it), and the
   three figures are re-derived from that build rather than from the round before it.
+- **D188's ceiling moves again, from 600 to 900, for the 2026-10-22 brief's four boards.** The brief
+  (`docs/website/zoom-diagrams/reconciliation.md` §13) replaces the four zoom levels on
+  `/how-it-works/` with the owner's four approved design boards
+  (`website/design-ref/zoom-levels/level1.dc.html` … `level4.dc.html`) redrawn as the site's inline
+  SVG. The rule is the one above, applied to the same kind of text: a board's labels are strings the
+  drawing renders, and a string the drawing renders is text a reader reads — the reading that made
+  the slider's `alt` texts words on the homepage — so the four levels' labels are words on How It
+  Works. The page goes 492 → **868 words** — the boards' own labels, word for word, which is the
+  whole of what the brief asks it to draw — and the smallest round ceiling above it is **900**. Still
+  a ceiling rather than a target: the highest page that gained nothing from the brief is the privacy
+  statement at 759 words, and a page that wants the extra room has to carry a block its own brief
+  requires for it. The lead ceiling is untouched: the boards are drawn below the page's first `h2`,
+  so the page's lead is the 29 words it already was. The number is read off the built page by
+  `website/test/budget.mjs`'s `wordsCeilingFailures`, which is where every figure here comes from.
 - **The byte figures are not re-derived, and that is the owner's ruling and not an omission.**
   The owner ruled on 2026-10-20 that the three figures `website/README.md` states are re-derived
   **only when the owner asks** — `website/test/budget.mjs` runs D192's exact derivation only with

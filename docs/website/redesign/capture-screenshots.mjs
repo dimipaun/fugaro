@@ -108,8 +108,8 @@ const server = createServer((req, res) => {
 })
 await new Promise((resolve) => server.listen(8099, '127.0.0.1', resolve))
 
-const ROUTES = ['/', '/how-it-works/', '/getting-started/', '/caps-and-costs/', '/console/', '/docs/',
-  '/security/', '/changelog/', '/faq/', '/community/', '/privacy/']
+const ROUTES = ['/', '/how-it-works/', '/why-gcp/', '/getting-started/', '/caps-and-costs/', '/console/',
+  '/docs/', '/security/', '/changelog/', '/faq/', '/community/', '/privacy/']
 const VIEWPORTS = [{ name: 'desktop', width: 1280, height: 900 }, { name: 'mobile', width: 390, height: 844 }]
 
 const browser = await chromium.launch()
@@ -151,8 +151,8 @@ for (const vp of VIEWPORTS) {
         // claim is that the `h1` and the one-line promise are inside a 390 × 844 first
         // screen — on the homepage, where the promise is the first paragraph — that **no**
         // command is on the homepage's first screen, and that Getting Started's first
-        // screen is its first command. `null` where the page shows no command at all (eight
-        // of the eleven routes). Both are measured from the top of the document, so they
+        // screen is its first command. `null` where the page shows no command at all (nine
+        // of the twelve routes). Both are measured from the top of the document, so they
         // are read against the viewport's height the same way `h1Bottom` is.
         leadBottom: q('main p') ? Math.round(box(q('main p')).bottom + window.scrollY) : null,
         // The first command a reader can see, and not simply the first one in the HTML: the

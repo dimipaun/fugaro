@@ -41,6 +41,7 @@ type Runner func(ctx context.Context, args ...string) ([]byte, error)
 // not answer.
 func ExecRunner(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, GcloudBin, args...)
+	cmd.Env = gcloudEnv(cmd.Environ())
 	// A leaked descendant holding the output pipe must not hang us (see
 	// internal/image's runner, which waits the same way).
 	cmd.WaitDelay = 5 * time.Second
@@ -54,6 +55,19 @@ func ExecRunner(ctx context.Context, args ...string) ([]byte, error) {
 		return nil, fmt.Errorf("%s %s: %w", GcloudBin, strings.Join(args, " "), err)
 	}
 	return out, nil
+}
+
+// gcloudEnv is the child's environment: the operator's own — exec.Cmd's own
+// copy of it, so this file still names no package that could store what gcloud
+// answers with (TestGcloudOutputNeverStored) — with gcloud's prompt to enable
+// an API turned off, appended last so it wins over whatever the operator's own
+// environment says. The fallback runs `billing accounts list` and nothing
+// else, and the one thing this question must never do is offer to turn a
+// project's APIs on: that is a change to a project this run was not asked
+// about, and a prompt nobody answers hangs a question that was a read.
+func gcloudEnv(environ []string) []string {
+	out := append([]string{}, environ...)
+	return append(out, "CLOUDSDK_CORE_SHOULD_PROMPT_TO_ENABLE_API=false")
 }
 
 // Gcloud is the fallback's two seams. The zero value is the real gcloud: the
