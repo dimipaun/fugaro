@@ -18,15 +18,18 @@ these:
   file under `$HOME`), because each block is sourced separately. The script holds
   it in one shell and writes no such file; its scratch directory carries a marker
   file the script re-checks before removing it.
-- **The service's state, and the repository's.** Every `gcloud ... describe` in
-  the script distinguishes a resource that is **not there** (gcloud's
-  `NOT_FOUND`) from one whose state **cannot be read** (an expired session, a
-  transient API error, a permission the account lacks). A describe that failed
-  for any other reason is **not** the answer "it is not there": the guard stops
-  rather than adopting a service it did not create, and a run that did create one
-  keeps its ownership record so the Restore still deletes it. The blocks below
-  show the plain `describe` a human runs, where the two cases are told apart by
-  reading the message.
+- **The service's state, and the repository's.** Absence is an **empty list**,
+  never an error string: every existence probe in the script (the service, the
+  repository, the build account) is a `gcloud ... list` filtered to one name,
+  where an empty answer with exit 0 means "not there" and a non-zero exit (an
+  expired session, a transient API error, a permission the account lacks), or an
+  answer that is not the one name asked for, means the state **cannot be read**.
+  The real gcloud says `Cannot find service [NAME]` for a describe of an absent
+  service, with no `NOT_FOUND` in it, so nothing reads that text. A failed list is
+  **not** the answer "it is not there": the guard stops rather than adopting a
+  service it did not create, and a run that did create one keeps its ownership
+  record so the Restore still deletes it. The blocks below do the same with the
+  plain `list` a human runs.
 - **The build's error.** The script keeps `gcloud builds submit`'s stderr and
   puts its last 30 lines in the block as a `build-error` fact, with anything
   credential-shaped replaced by `<redacted>`, because the block is pasted into a
@@ -85,7 +88,9 @@ git rev-parse --show-toplevel >/dev/null 2>&1 \
 # later step.
 # This check deletes what it creates; a service it did not create is not its to
 # adopt or delete.
-if gcloud run services describe "${SVC:?}" --project="${P:?}" --region="${L:?}" >/dev/null 2>&1; then
+svc_there=$(gcloud run services list --project="${P:?}" --region="${L:?}" --filter="metadata.name=${SVC}" --format='value(metadata.name)') \
+  || { echo "Check 91 stopped: whether ${SVC} is already in ${P}/${L} cannot be read (the list failed), and a failed call is not the answer 'it is not there'" >&2; exit 1; }
+if [ -n "$svc_there" ]; then
   [ -f "$CHK91/service-mine" ] \
     || { echo "Check 91 stopped: ${SVC} already exists in ${P}/${L}, and it is not this check's" >&2; exit 1; }
 fi
@@ -119,7 +124,11 @@ IMG=${L}-docker.pkg.dev/${P}/${SVC}/${SVC}:chk91
 
 ```bash
 if [ ! -e "$CHK91/repo-existed" ]; then
-  if gcloud artifacts repositories describe "${SVC:?}" --project="${P:?}" --location="${L:?}" >/dev/null 2>&1; then
+  repo_there=$(gcloud artifacts repositories list --project="${P:?}" --location="${L:?}" --filter="name~/repositories/${SVC}\$" --format='value(name)' 2>"$CHK91/list.err") \
+    || { echo "Check 91 stopped: whether a repository named ${SVC} is already in ${P}/${L} cannot be read (the list failed), and a failed call is not the answer 'it is not there'" >&2; exit 1; }
+  ! grep -q 'Failed to list' "$CHK91/list.err" \
+    || { echo "Check 91 stopped: the repository list printed 'Failed to list repositories' and exited 0 — gcloud swallowed an API error, so its empty answer is not a reading of whether ${SVC} is in ${P}/${L}" >&2; exit 1; }
+  if [ -n "$repo_there" ]; then
     echo "Check 91 stopped: a repository named ${SVC} is already in ${P}/${L}, and it is not this check's. This check never adopts, writes into or deletes a repository it did not create. If it is a leftover of an earlier attempt of this check whose own Restore did not finish, look at it first (gcloud artifacts docker images list ${L}-docker.pkg.dev/${P}/${SVC} --include-tags --project=${P}) and delete it yourself if it holds nothing but that attempt's image; otherwise give this check a different name (SVC in step 1). Then re-run this block." >&2
     exit 1
   fi
@@ -128,7 +137,7 @@ fi
 cat "$CHK91/repo-existed"
 ```
 
-`no` is therefore the only answer this file ever holds, and it means what it says: **the repository the build and the Restore work on is one this check made.** Step 3 is the step that writes into it, and it reads this record back before it writes anything: the build's push happens only when the file says `no` **and** the repository that answered the describe is one step 3 created itself, recorded in `$CHK91/repo-mine` — so a `fugaro-chk91` that appeared after the baseline stopped the check instead of being written into. The Restore reads the same record back before it deletes anything, and stops unless it says `no`. The Restore keeps the file (and the scratch directory with it) unless every one of its three counts is `0`.
+`no` is therefore the only answer this file ever holds, and it means what it says: **the repository the build and the Restore work on is one this check made.** Step 3 is the step that writes into it, and it reads this record back before it writes anything: the build's push happens only when the file says `no` **and** the repository the list found is one step 3 created itself, recorded in `$CHK91/repo-mine` — so a `fugaro-chk91` that appeared after the baseline stopped the check instead of being written into. The Restore reads the same record back before it deletes anything, and stops unless it says `no`. The Restore keeps the file (and the scratch directory with it) unless every one of its three counts is `0`.
 
 **FACT:** `fugaro version`, the two `P`/`L` values, and the baseline's answer — `no`, or the stop, which is recorded and reported rather than worked around.
 
@@ -273,7 +282,11 @@ CMD ["python3", "/relay.py"]
 # record and the create still leaves the Restore a repository it owns).
 [ "$(cat "$CHK91/repo-existed" 2>/dev/null)" = no ] \
   || { echo "Check 91 stopped: $CHK91/repo-existed does not say the repository ${SVC} was absent when this check started, and this check writes only into a repository it created itself. Re-run step 1's block and read the baseline's answer." >&2; exit 1; }
-if gcloud artifacts repositories describe "${SVC:?}" --project="${P:?}" --location="${L:?}" >/dev/null 2>&1; then
+repo_there=$(gcloud artifacts repositories list --project="${P:?}" --location="${L:?}" --filter="name~/repositories/${SVC}\$" --format='value(name)' 2>"$CHK91/list.err") \
+  || { echo "Check 91 stopped: whether a repository named ${SVC} is already in ${P}/${L} cannot be read (the list failed)" >&2; exit 1; }
+! grep -q 'Failed to list' "$CHK91/list.err" \
+  || { echo "Check 91 stopped: the repository list printed 'Failed to list repositories' and exited 0 — gcloud swallowed an API error, so its empty answer is not a reading of whether ${SVC} is in ${P}/${L}" >&2; exit 1; }
+if [ -n "$repo_there" ]; then
   [ -f "$CHK91/repo-mine" ] \
     || { echo "Check 91 stopped: a repository named ${SVC} is in ${P}/${L} and it is not this check's — this check creates its own and never adopts one, so it does not push the image tag into it or delete it. Nothing was written. If it is a leftover of an earlier attempt of this check whose own Restore did not finish, look at it first (gcloud artifacts docker images list ${L}-docker.pkg.dev/${P}/${SVC} --include-tags --project=${P}) and delete it yourself if it holds nothing but that attempt's image; otherwise give this check a different name (SVC in step 1). Then re-run the step 1 block and this one." >&2; exit 1; }
 else
@@ -281,7 +294,7 @@ else
   # between the two — a Ctrl-C, a dropped connection, a kill — has still made a
   # repository, and this record is what tells the Restore it is this check's to
   # delete. A create that FAILED and really made nothing takes it back again
-  # (ask the project with the describe above; a repository that IS there keeps
+  # (ask the project with the list above; a repository that IS there keeps
   # its record and the Restore deletes it).
   : > "$CHK91/repo-mine"                    # hard stop 5 tolerates this repository from here on
   gcloud artifacts repositories create "${SVC:?}" --project="${P:?}" --location="${L:?}" \
@@ -289,7 +302,7 @@ else
     --description="throwaway: Check 91's image repository (fugaro-chk91), deleted by its own Restore" --quiet \
     || { echo "Check 91 stopped: the repository create failed — see above whether ${SVC} is there now; if it is, the record above stands and step 7's Restore deletes it" >&2; exit 1; }
 fi
-gcloud artifacts repositories describe "${SVC:?}" --project="${P:?}" --location="${L:?}" >/dev/null \
+[ -n "$(gcloud artifacts repositories list --project="${P:?}" --location="${L:?}" --filter="name~/repositories/${SVC}\$" --format='value(name)')" ] \
   || { echo "Check 91 stopped: no registry repository ${SVC} in ${P}/${L} for the image tag ${IMG} to build into" >&2; exit 1; }
 gcloud builds submit --project="${P:?}" --config="$CHK91/cloudbuild.yaml" \
   --service-account="projects/${P}/serviceAccounts/${BUILD_SA:?}" "$CHK91"
@@ -308,7 +321,7 @@ gcloud auth print-identity-token >/dev/null || { echo "Check 91 stopped: no iden
 
 **FACT:** that the service is `--no-allow-unauthenticated` (an unauthenticated `curl` must be refused), its `--timeout`, its min/max instances, and the image digest Cloud Run reports. **The identity token is never pasted**, only used — and every request below mints its own (the guard's `idt`), because one minted here expires inside the hour.
 
-**The repository in this step is hard stop 5's, and it is the only thing the push can land in.** The baseline wrote `no` because nothing of this name was in the project when the check started, and this step re-reads that record before the build: if it says anything else the step stops, and if a `fugaro-chk91` is there that this step did not create itself — the check records its own in `$CHK91/repo-mine` before the create — the step stops rather than pushing into it. That is what keeps the `describe || create` from adopting a repository the installation made between the baseline and here. Record the stop and report it: nothing of this step's runs after it.
+**The repository in this step is hard stop 5's, and it is the only thing the push can land in.** The baseline wrote `no` because nothing of this name was in the project when the check started, and this step re-reads that record before the build: if it says anything else the step stops, and if a `fugaro-chk91` is there that this step did not create itself — the check records its own in `$CHK91/repo-mine` before the create — the step stops rather than pushing into it. That is what keeps the `list || create` from adopting a repository the installation made between the baseline and here. Record the stop and report it: nothing of this step's runs after it.
 
 **`gcloud builds submit` can offer to create something, and the check does not accept.** Cloud Build stages the source in the project's own staging bucket, `gs://<project>_cloudbuild`, and it creates that bucket if it is not there; on a project whose infrastructure is Terraform-managed it may also offer to enable an API. **Both of those are the installation's, not this check's, and neither is in the Terraform that manages this project** — so if `gcloud builds submit` asks to create the `<project>_cloudbuild` bucket, to enable an API, or to grant anything, **say no, stop the check here and report it**: do not accept on the owner's behalf. Record what it asked for, verbatim, and nothing further in this step runs. An already-present staging bucket needs nothing from you — but the tarball the upload leaves in it is this check's litter, so the build is pointed at a prefix of this run's own inside that bucket and step 7's Restore deletes exactly that prefix:
 
@@ -422,7 +435,15 @@ Then the assertion, **every count of which must read `0`** — and the scratch d
 ```bash
 SVC_LEFT=$(gcloud run services list --project="${P:?}" --region="${L:?}" --filter="metadata.name=${SVC}" --format='value(metadata.name)' | wc -l)
 IMG_LEFT=$(gcloud artifacts docker images list "${L}-docker.pkg.dev/${P}/${SVC}" --project="${P:?}" --include-tags --format='value(image)' 2>/dev/null | wc -l)
-REPO_LEFT=$(gcloud artifacts repositories list --project="${P:?}" --location="${L:?}" --filter="name:${SVC}" --format='value(name)' | wc -l)
+REPO_LEFT=$(gcloud artifacts repositories list --project="${P:?}" --location="${L:?}" --filter="name~/repositories/${SVC}\$" --format='value(name)' 2>"$CHK91/repo-count.err" | wc -l)
+# The repository list SWALLOWS a server error: `WARNING: Failed to list repositories ...` on
+# stderr, nothing on stdout, exit 0 — which `wc -l` would read as 0. That line means the
+# count was not read: the block stops and keeps $CHK91, exactly as for a count that is not 0.
+if grep -q 'Failed to list' "$CHK91/repo-count.err"; then
+  cat "$CHK91/repo-count.err" >&2
+  echo "Check 91 stopped: the repository list printed 'Failed to list repositories' and exited 0 — gcloud swallowed an API error, so the repository count was NOT read (an empty answer here is not a 0). $CHK91 is KEPT. Run the list again by hand until it answers without that line." >&2
+  exit 1
+fi
 echo "services:   $SVC_LEFT"
 echo "images:     $IMG_LEFT"
 echo "repository: $REPO_LEFT"
