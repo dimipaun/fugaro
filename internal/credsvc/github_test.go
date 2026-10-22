@@ -923,6 +923,33 @@ func TestMintIsStoppedByTheKillSwitch(t *testing.T) {
 	if n := gh.count(); n != 0 {
 		t.Errorf("GitHub saw %d requests with the kill switch on, want none", n)
 	}
+	// And the refusal is recorded as what the run asked for: one line, purpose
+	// "mint". The stop switches are read before the route is branched on
+	// (server.go), so a purpose taken from the branch would be "forward" here
+	// and the audit would tell an operator that a model call was refused when
+	// the run asked for an installation token.
+	lines := auditLines(t, s.audit)
+	if len(lines) != 1 {
+		t.Fatalf("the stopped mint wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+	}
+	line := lines[0]
+	checkAuditShape(t, line)
+	for field, want := range map[string]any{
+		"purpose":    PurposeMint,
+		"status":     ErrorStateUnavailable,
+		"run":        s.run,
+		"repository": s.slug,
+		"job":        s.job,
+		"caller":     testJobSA,
+		// No credential is named: the stop switch is read before the bundle,
+		// so the App key was never read and there is no name to write.
+		"credential": "",
+		"tier":       "",
+	} {
+		if got := line[field]; got != want {
+			t.Errorf("the stopped mint's audit line %s = %v, want %q", field, got, want)
+		}
+	}
 }
 
 // TestMintRefusesARepositoryThatIsNotGitHubs: the repository comes from the

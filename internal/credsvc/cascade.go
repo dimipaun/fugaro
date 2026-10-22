@@ -191,13 +191,13 @@ func unsent(cands []creds.Credential, sent map[string]bool) []creds.Credential {
 	return out
 }
 
-// auditForward writes the answer path's one line for one call (C1.13): the
-// issuance a credential answered, or the refusal this service answered in its
-// place. The event is completed from the identity the service verified
-// (Identity.Audit — the run, the repository slug, the job the run reported and
-// the account that called, and none of them from anything a caller typed) and
-// carries the credential's NAME and the tier it is of, never a value: an
-// AuditEvent has no field a value could be written into (audit.go).
+// auditCall writes this service's one line for one call (C1.13): the issuance
+// a credential answered, or the refusal this service answered in its place. The
+// event is completed from the identity the service verified (Identity.Audit —
+// the run, the repository slug, the job the run reported and the account that
+// called, and none of them from anything a caller typed) and carries the
+// credential's NAME and the tier it is of, never a value: an AuditEvent has no
+// field a value could be written into (audit.go).
 //
 // It is written through the auditor the SERVICE built — NewServer's
 // NewProbeAuditor over the bundle loader, the one the probe writes through too
@@ -207,6 +207,14 @@ func unsent(cands []creds.Credential, sent map[string]bool) []creds.Credential {
 // The arming is therefore a fact of the service's construction and not
 // something a caller can forget (WithAuditScrub, NewAuditor's refusal).
 //
+// purpose is what the call asked for and not what the helper writes: the two
+// routes this service serves are two acts — a proxied model call (C1.11) and a
+// mint (C2.1) — and a refusal taken before the route could be served (the
+// operator's stop switch, a stop switch that could not be read) is still a
+// refusal of one of them. A line that said "forward" for a mint would be the
+// audit telling an operator that a model call was refused when the run asked
+// for an installation token.
+//
 // status is the wire's own vocabulary: StatusOK for an issuance, and one of
 // the contract's error types for a refusal. The credential and the tier are
 // passed together or not at all — an issuance and a refusal that names the
@@ -214,26 +222,26 @@ func unsent(cands []creds.Credential, sent map[string]bool) []creds.Credential {
 // was chosen carries neither (the auditor refuses a line that names one
 // without the other: a reader that guessed the missing half would be reading
 // an answer this service did not give).
-func (s *Server) auditForward(ctx context.Context, id Identity, credential, tier, status string) error {
+func (s *Server) auditCall(ctx context.Context, id Identity, purpose, credential, tier, status string) error {
 	return s.audit.Write(ctx, id.Audit(AuditEvent{
 		Credential: credential,
 		Tier:       tier,
-		Purpose:    PurposeForward,
+		Purpose:    purpose,
 		Status:     status,
 	}))
 }
 
-// refuseForward answers one refusal and records it: one typed refusal to the
-// run, one line to the operator, and the run's answer is the same whether or
-// not the line lands — an act this service will not record is not made, and a
-// call it refuses is not made either way (D143, the rule refuseMint already
-// keeps for the refusal half of the mint). A line that could not be written is
-// the service's own log line, which is where an operator reads it.
+// refuseCall answers one refusal and records it: one typed refusal to the run,
+// one line to the operator, and the run's answer is the same whether or not the
+// line lands — an act this service will not record is not made, and a call it
+// refuses is not made either way (D143, the rule refuseMint already keeps for
+// the refusal half of the mint). A line that could not be written is the
+// service's own log line, which is where an operator reads it.
 //
 // The audit status is the refusal's own wire error type, so the run's halt
 // message and the operator's line read the same word for the same refusal.
-func (s *Server) refuseForward(ctx context.Context, w http.ResponseWriter, id Identity, credential, tier string, status int, typ, message string) {
-	if err := s.auditForward(ctx, id, credential, tier, typ); err != nil {
+func (s *Server) refuseCall(ctx context.Context, w http.ResponseWriter, id Identity, purpose, credential, tier string, status int, typ, message string) {
+	if err := s.auditCall(ctx, id, purpose, credential, tier, typ); err != nil {
 		s.log.Error("credsvc: a refused call could not be audited", "error", err)
 	}
 	s.refuse(w, status, typ, message)
@@ -287,7 +295,7 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			// already spent: the line carries it, because the audit exists so
 			// that an operator can read what the service did with which
 			// credential — and what it did with this one is send to it twice.
-			s.refuseForward(ctx, w, id, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
+			s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
 				"no credential is usable now and none of the ones this call used may be tried again")
 			return
 		}
@@ -296,7 +304,7 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			// Unreachable: the candidates came from this bundle. A refusal
 			// rather than a panic, because the alternative is a service that
 			// crashes on a state it cannot name.
-			s.refuseForward(ctx, w, id, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
+			s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
 				"the selected credential is not in the bundle")
 			return
 		}
@@ -305,7 +313,7 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 		}
 		ans, err := s.send(ctx, cl, e)
 		if err != nil {
-			s.refuseForward(ctx, w, id, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable, err.Error())
+			s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable, err.Error())
 			return
 		}
 
@@ -318,7 +326,7 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			// the wrong reason.
 			ans.resp.Body.Close()
 			if _, err := sel.Broken(ctx, c.Name); err != nil {
-				s.refuseForward(ctx, w, id, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable, markRefusal)
+				s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable, markRefusal)
 				return
 			}
 			tried = append(tried, Tried{Name: c.Name, Tier: wireTier(c.Tier), Reason: ReasonBroken})
@@ -332,7 +340,7 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			reset := usageLimitReset(ans.resp.Header, s.now())
 			ans.resp.Body.Close()
 			if _, err := sel.Exhausted(ctx, c.Name, c.Tier, reset); err != nil {
-				s.refuseForward(ctx, w, id, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable, markRefusal)
+				s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable, markRefusal)
 				return
 			}
 			tried = append(tried, Tried{Name: c.Name, Tier: wireTier(c.Tier), Reason: ReasonExhausted})
@@ -432,13 +440,13 @@ func (s *Server) answer(ctx context.Context, w http.ResponseWriter, id Identity,
 	hdr := http.Header{}
 	copyAnswerHeaders(hdr, ans.resp.Header, ans.credential)
 	if err := SetCredentialHeaders(hdr, wireTier(c.Tier), c.Name); err != nil {
-		s.refuseForward(ctx, w, id, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
+		s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
 			"the answer could not carry the credential that served it")
 		return
 	}
 	if sw != nil {
 		if err := SetSwitchHeader(hdr, *sw); err != nil {
-			s.refuseForward(ctx, w, id, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
+			s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
 				"the answer could not carry the switch that served it")
 			return
 		}
@@ -451,7 +459,7 @@ func (s *Server) answer(ctx context.Context, w http.ResponseWriter, id Identity,
 		// answer that hid the probes it was served after is a run paying for
 		// calls its ledger never saw.
 		if err := SetProbeHeader(hdr, cl.probed); err != nil {
-			s.refuseForward(ctx, w, id, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
+			s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
 				"the answer could not carry the probes this call made")
 			return
 		}
@@ -459,7 +467,7 @@ func (s *Server) answer(ctx context.Context, w http.ResponseWriter, id Identity,
 	// The issuance's own line (C1.13), written here and not after the answer:
 	// an issuance this service cannot audit is not made, and the credential is
 	// spent by now — what is withheld is the answer.
-	if err := s.auditForward(ctx, id, c.Name, wireTier(c.Tier), StatusOK); err != nil {
+	if err := s.auditCall(ctx, id, PurposeForward, c.Name, wireTier(c.Tier), StatusOK); err != nil {
 		s.log.Error("credsvc: the issuance's audit line was not written", "error", err)
 		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, answerUnaudited)
 		return
@@ -567,13 +575,13 @@ func (s *Server) refuseSelection(ctx context.Context, w http.ResponseWriter, id 
 			// the loop is bounded by the floor rather than by the state.
 			reset = now.Add(waitFloor)
 		}
-		if aerr := s.auditForward(ctx, id, "", "", ErrorExhaustedUntil); aerr != nil {
+		if aerr := s.auditCall(ctx, id, PurposeForward, "", "", ErrorExhaustedUntil); aerr != nil {
 			s.log.Error("credsvc: a refused call could not be audited", "error", aerr)
 		}
 		WriteExhaustedUntil(w, ExhaustedUntil{ResetAt: reset, Tried: tried}, now)
 		return
 	}
-	if aerr := s.auditForward(ctx, id, "", "", ErrorStateUnavailable); aerr != nil {
+	if aerr := s.auditCall(ctx, id, PurposeForward, "", "", ErrorStateUnavailable); aerr != nil {
 		s.log.Error("credsvc: a refused call could not be audited", "error", aerr)
 	}
 	WriteWireError(w, StatusUnavailable, WireError{

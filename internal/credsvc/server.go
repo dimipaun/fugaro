@@ -407,6 +407,12 @@ func NewServer(cfg Config) (*Server, error) {
 // — and the audit line's status is the wire's vocabulary (audit.go's
 // ValidStatus), which has no word for them. Writing one would need a status this
 // service invented.
+//
+// A line carries the purpose of the ROUTE the call asked for and not the
+// branch it was answered in, which is why the two refusals above the mint's
+// branch (the stop switches) read it off the URL: a stopped service mints
+// nothing and proxies nothing, and which of the two was asked for is the one
+// thing those refusals know.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	if r.Method != http.MethodPost || (r.URL.Path != MessagesPath && r.URL.Path != CountTokensPath && r.URL.Path != MintPath) {
@@ -441,11 +447,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"the run identity is not a run of the calling job's repository")
 		return
 	}
+	// The purpose the call asks for, and what every refusal below is recorded
+	// as (C1.13): the route decides it, and it is read here because the two
+	// refusals that follow — the stop switches and an unreadable switch — are
+	// answered before the route is branched on. A refusal of a mint recorded as
+	// "forward" would be the audit telling an operator that a model call was
+	// refused when the run asked for an installation token.
+	purpose := PurposeForward
+	if r.URL.Path == MintPath {
+		purpose = PurposeMint
+	}
 	on, which, err := s.cfg.Kills.Stop(ctx, id.Slug)
 	if err != nil {
 		// An unreadable switch is not an off switch (budget's own rule), so
 		// the call is refused rather than served.
-		s.refuseForward(ctx, w, id, "", "", StatusUnavailable, ErrorStateUnavailable, "the operator's stop switches could not be read")
+		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, "the operator's stop switches could not be read")
 		return
 	}
 	if on {
@@ -454,7 +470,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// issues no credential at all and answers a refusal the run halts on.
 		// It is read before the bundle, so a stopped service reads no
 		// credential at all.
-		s.refuseForward(ctx, w, id, "", "", StatusUnavailable, ErrorStateUnavailable,
+		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable,
 			"the credentials service is stopped by the "+which+" kill switch")
 		return
 	}
@@ -476,12 +492,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// before the one document that holds every credential is read at all.
 	shared, found, err := s.cfg.Policy.Shared(ctx)
 	if err != nil || !found {
-		s.refuseForward(ctx, w, id, "", "", StatusUnavailable, ErrorStateUnavailable, "the project's policy could not be read")
+		s.refuseCall(ctx, w, id, PurposeForward, "", "", StatusUnavailable, ErrorStateUnavailable, "the project's policy could not be read")
 		return
 	}
 	cl, err := readCall(r, []string{req.RunIDToken, req.JobIDToken})
 	if err != nil {
-		s.refuseForward(ctx, w, id, "", "", StatusUnavailable, ErrorStateUnavailable, err.Error())
+		s.refuseCall(ctx, w, id, PurposeForward, "", "", StatusUnavailable, ErrorStateUnavailable, err.Error())
 		return
 	}
 	if r.URL.Path == MessagesPath {
@@ -507,7 +523,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			// The project's own prices could not be read: a state the caller
 			// cannot fix, and never a refusal of what it sent.
-			s.refuseForward(ctx, w, id, "", "", StatusUnavailable, ErrorStateUnavailable, "the project's model prices could not be read")
+			s.refuseCall(ctx, w, id, PurposeForward, "", "", StatusUnavailable, ErrorStateUnavailable, "the project's model prices could not be read")
 			return
 		}
 		if refusal != "" {
@@ -527,12 +543,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// carrying a value, a key or another package's text (BundleRefusal):
 		// the loader's own error carries the key it is about for the operator,
 		// and the run reading this refusal is not the operator.
-		s.refuseForward(ctx, w, id, "", "", StatusUnavailable, ErrorStateUnavailable, BundleRefusal(err))
+		s.refuseCall(ctx, w, id, PurposeForward, "", "", StatusUnavailable, ErrorStateUnavailable, BundleRefusal(err))
 		return
 	}
 	cands, notAdmitted, err := s.candidates(ctx, id.Slug, ja.Repo, b)
 	if err != nil {
-		s.refuseForward(ctx, w, id, "", "", StatusUnavailable, ErrorStateUnavailable, "the repository's admissions could not be read")
+		s.refuseCall(ctx, w, id, PurposeForward, "", "", StatusUnavailable, ErrorStateUnavailable, "the repository's admissions could not be read")
 		return
 	}
 	sel := &creds.Selector{Store: s.cfg.State, Settings: settingsOf(shared), Now: s.now}
