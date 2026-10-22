@@ -82,15 +82,30 @@ func TestCredentialsImageRunsTheServeCommand(t *testing.T) {
 		t.Errorf("the final stage's entrypoint is not the fugaro binary: %v", stage)
 	}
 	// The subcommand the CMD names is the one internal/cli registers and
-	// hides (TestCredentialsServeHidden is the same check from the CLI's own
-	// side); a CMD naming a command that was never registered would fail only
-	// inside the deployed revision.
-	if b, err := os.ReadFile("../internal/cli/credentials_serve.go"); err != nil {
+	// hides: the two `Use:` strings internal/cli/credentials_serve.go declares,
+	// in order (the group, then the subcommand it adds). A CMD that drifted to
+	// `version`, or that named a command the CLI never registers, would deploy
+	// a revision that answers nothing while looking healthy, and it would fail
+	// only inside that revision -- so the comparison is against the strings the
+	// registrations carry, not against words that merely appear in the file
+	// (its own doc comment names both). TestCredentialsServeHidden is the same
+	// claim from the CLI's own side: it walks the tree cobra builds.
+	src, err := os.ReadFile("../internal/cli/credentials_serve.go")
+	if err != nil {
 		t.Fatal(err)
-	} else if !strings.Contains(string(b), `"credentials"`) || !strings.Contains(string(b), `"serve"`) {
-		t.Error("the CMD names a subcommand internal/cli/credentials_serve.go does not register")
+	}
+	var uses []string
+	for _, m := range credentialUseRE.FindAllSubmatch(src, -1) {
+		uses = append(uses, string(m[1]))
+	}
+	if want := `["` + strings.Join(uses, `", "`) + `"]`; want != cmd {
+		t.Errorf("CMD = %s, but internal/cli/credentials_serve.go registers %v: a CMD naming a subcommand the CLI does not register fails only inside the deployed revision", cmd, uses)
 	}
 }
+
+// credentialUseRE matches a cobra command's registered name in
+// internal/cli/credentials_serve.go: `Use: "credentials"`, `Use: "serve"`.
+var credentialUseRE = regexp.MustCompile(`(?m)^\s*Use:\s*"([^"]+)"\s*,`)
 
 func containsLine(lines []string, want string) bool {
 	for _, l := range lines {
