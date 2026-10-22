@@ -96,7 +96,7 @@
 // impossible.
 //
 // **The cap's sentence is the callout's now, and it says whose cap it is.** The
-// redesign gave the per-run cap a card of its own ("Our per-run cap", `$10.00`)
+// redesign gave the per-run cap a card of its own ("Our per-run cap", `$5.00`)
 // instead of a clause in the window line, because `--per-run` defaults to 0, which
 // sets no cap, and an enforcing project with no per-run cap anywhere refuses every
 // lease: the figure is Fugaro's installation's and not something `fugaro` ships — the
@@ -104,7 +104,20 @@
 // carry. The case holds the callout to the file's own figure. The refusals the
 // figures' reader owes are `layout.mjs`'s subject rather than this file's: they are
 // shapes of the data file, and that file is where they are planted. The page's word
-// count is 264 of D188's 949 and its lead is 25 of the 40 the same decision allows.
+// count is 288 of D188's 600 — 264 before the owner's feedback of 2026-10-22 added the
+// sentence that keeps the two caps apart — and its lead is 25 of the 40 the same
+// decision allows.
+//
+// **The owner's feedback of 2026-10-22 split the one cap into two figures, and the
+// case follows the file rather than the page.** The cap was $10 when the runs in the
+// window were measured; the owner lowered it to $5 on 2026-10-21 because the cap is
+// only the safety net under a looping run, so the page must not print today's cap as
+// the one these figures ran under. The file therefore carries `per_run_cap_usd: 5`
+// with `per_run_cap_since: 2026-10-21` and `measured_under_cap_usd: 10`, the bars are
+// drawn against the measured-under cap (every mark inside its track — two of the
+// owner's own figures are above today's $5 cap), and the window line states both.
+// This case holds the callout to today's cap and the window line to the measured-under
+// one and its date, so the two cannot be collapsed back into one sentence.
 //
 // **The second review's finding, and the red step behind the change it made.** The page
 // prints a figure to the cent with `toFixed(2)`, the loader accepted any finite number,
@@ -333,7 +346,7 @@ function splitPage(page) {
  * file renames is a field the case below stops finding.
  */
 function readTypicalCosts() {
-  const out = { window: {}, jobs: [], perRunCap: null }
+  const out = { window: {}, jobs: [], perRunCap: null, perRunCapSince: null, measuredUnderCap: null }
   let job = null
   for (const line of repoFile('website/data/typical-costs.yaml').split('\n')) {
     if (line.trim() === '' || line.trim().startsWith('#')) continue
@@ -342,10 +355,14 @@ function readTypicalCosts() {
     else if ((match = /^ {2}- id: (\S+)$/.exec(line))) out.jobs.push((job = { id: match[1] }))
     else if ((match = /^ {4}([a-z_]+): (.+)$/.exec(line))) job[match[1]] = match[2].trim()
     else if ((match = /^per_run_cap_usd: (\S+)$/.exec(line))) out.perRunCap = match[1]
+    else if ((match = /^per_run_cap_since: (\S+)$/.exec(line))) out.perRunCapSince = match[1]
+    else if ((match = /^measured_under_cap_usd: (\S+)$/.exec(line))) out.measuredUnderCap = match[1]
   }
   assert.ok(out.jobs.length > 0, 'website/data/typical-costs.yaml carries no job for the page to render')
   assert.ok(out.window.from && out.window.to && out.window.runs, 'website/data/typical-costs.yaml carries no window for the page to print')
   assert.ok(out.perRunCap !== null, 'website/data/typical-costs.yaml carries no per-run cap for the page to print')
+  assert.ok(out.measuredUnderCap !== null, 'website/data/typical-costs.yaml carries no measured-under cap for the page to draw its bars against')
+  assert.ok(out.perRunCapSince !== null, 'website/data/typical-costs.yaml carries no date for the cap it prints')
   return out
 }
 
@@ -388,6 +405,11 @@ function figuresOf(file) {
   const allow = (text) => numbersIn(text).forEach((number) => allowed.add(number))
   for (const value of [file.window.from, file.window.to, file.window.runs]) allow(value)
   allow(`${file.perRunCap} ${money(file.perRunCap)}`)
+  // The cap the figures were measured under and the day the cap in force today took effect: the
+  // window line states both, and they are the file's own figures rather than the page's (the
+  // owner's feedback of 2026-10-22). A page that wrote a cap of its own here would be printing
+  // one the file does not carry.
+  allow(`${file.measuredUnderCap} ${money(file.measuredUnderCap)} ${file.perRunCapSince}`)
   for (const job of file.jobs) {
     allow(`${job.runs} ${money(job.median_usd)} ${money(job.nine_in_ten_under_usd)}`)
     if (job.middle_half_usd !== undefined) allow(middleHalf(job.middle_half_usd))
@@ -497,6 +519,19 @@ test('the page renders exactly website/data/typical-costs.yaml, in the field eac
     collapse(textOf(cap[1])).includes(money(file.perRunCap)),
     `the page's cap callout does not state ${money(file.perRunCap)}, which website/data/typical-costs.yaml carries`,
   )
+
+  // And the two caps the page has to keep apart (the owner's feedback of 2026-10-22: the cap is
+  // $5 now, and the figures were measured under the $10 cap the owner lowered on 2026-10-21).
+  // The window line is where the page says so, and it is held to both the cap the figures were
+  // measured under and the day today's cap took effect: a page that printed today's cap as the
+  // one these runs ran under would claim a measurement under a cap that did not exist yet, which
+  // is the claim the feedback asked the page not to make.
+  for (const value of [money(file.measuredUnderCap), file.perRunCapSince]) {
+    assert.ok(
+      window.includes(value),
+      `the page's window line does not state ${value}, which website/data/typical-costs.yaml carries: the figures were measured under the earlier per-run cap, and the page says which cap that was and when the cap in force today took effect`,
+    )
+  }
 
   // And no figure in the band is one the file does not carry — the direction that makes a
   // refresh an edit to the file. The labels come off first: a `<dt>` names the statistic ("9 in

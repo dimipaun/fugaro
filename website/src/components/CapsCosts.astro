@@ -15,7 +15,14 @@
  *      render (Global Constraint 6, D96, D97). Each card also draws its figures against the
  *      per-run cap as a bar, and **the bar's geometry is the file's figures divided by the
  *      file's cap** — the board's own arithmetic, computed here rather than drawn by hand, so
- *      a refreshed figure moves its own mark and a mark nothing supports cannot be drawn.
+ *      a refreshed figure moves its own mark and a mark nothing supports cannot be drawn. The
+ *      cap the bars are drawn against is the one these runs were **measured under**, which the
+ *      file carries beside the one in force today (the owner's feedback of 2026-10-22: the cap
+ *      was $10 when the figures were taken and the owner lowered it to $5 on 2026-10-21). Two
+ *      figures rather than one, because a bar scaled by today's cap would draw two of the
+ *      owner's own measured runs past the end of its track, and a page that said these runs
+ *      ran under today's cap would be claiming a measurement under a cap that did not exist
+ *      when they ran.
  *   2. **How to set the caps.** The commands are the detail and they sit below the figures, as
  *      one card each: the whole of `fugaro budget` is on the page, always visible. Every card
  *      is a `Usage:` line and a one-line description read out of
@@ -48,8 +55,11 @@
  * not the product's: `fugaro budget set --per-run N` is what sets a per-run cap, the flag's
  * default is 0, which sets none, and an enforcing project with no per-run cap on any of the
  * three scopes refuses every lease (`internal/cli/budget.go`, and "Set caps" in
- * `docs/gcp-setup.md`). So the figure is Fugaro's own installation's cap, the one these runs
- * ran under, and the callout says whose it is rather than reading as something `fugaro` ships.
+ * `docs/gcp-setup.md`). So the figure is Fugaro's own installation's cap, and the callout says
+ * whose it is rather than reading as something `fugaro` ships. **It is today's cap, and the
+ * page says so**: the window line carries the cap these figures were measured under and the
+ * day the cap changed, so a reader never takes a figure taken under the older cap for one
+ * taken under this one.
  *
  * **The board's own new lines** — the pill, the two calls to action, the bar legend and the
  * callout's label — are listed in the pull request for the owner to veto. Everything else a
@@ -176,13 +186,17 @@ function money(value: number): string {
 }
 
 /**
- * A figure's position along its bar, as a percentage of the per-run cap: **the board's own
- * arithmetic** (each bar runs from nothing to the cap), computed from the file's figures
- * rather than drawn by hand, so a refreshed figure moves its own mark and a mark nothing
- * supports cannot be drawn. The viewBox is `0 0 100 22`, so a percentage is a coordinate.
+ * A figure's position along its bar, as a percentage of the per-run cap the runs behind it were
+ * measured under: **the board's own arithmetic** (each bar runs from nothing to the cap),
+ * computed from the file's figures rather than drawn by hand, so a refreshed figure moves its
+ * own mark and a mark nothing supports cannot be drawn. The viewBox is `0 0 100 22`, so a
+ * percentage is a coordinate — and the cap this divides by is the *measured-under* cap rather
+ * than the one in force today, which is what keeps every mark inside its track: a measured run
+ * above today's cap would be drawn past the end of the drawing by a bar scaled to that cap,
+ * where a reader cannot see it at all.
  */
 function along(value: number): number {
-  return Number(((value / typical.perRunCapUSD) * 100).toFixed(2))
+  return Number(((value / typical.measuredUnderCapUSD) * 100).toFixed(2))
 }
 
 /** A dash where the file carries no figure: an absent figure is not a figure of zero. */
@@ -218,7 +232,7 @@ const JOBS = typical.jobs.map((job) => {
     nineInTen: { text: money(job.nineInTenUnderUSD), at: along(job.nineInTenUnderUSD) },
     worst: job.worstUSD === null ? null : { text: money(job.worstUSD), at: along(job.worstUSD) },
     medianAt: along(job.medianUSD),
-    label: `${job.name} against our per-run cap: ${marks.slice(0, -1).join(', ')} and ${marks.at(-1)}.`,
+    label: `${job.name} against the ${money(typical.measuredUnderCapUSD)} per-run cap these runs ran under: ${marks.slice(0, -1).join(', ')} and ${marks.at(-1)}.`,
   }
 })
 
@@ -306,6 +320,8 @@ const MODES = [
     <h2 class="display-lg caps-band-title" id="caps-costs-title">What a job costs</h2>
     <p class="caps-window">
       Fugaro's own runs, {typical.from} to {typical.to}: {typical.runs} finished, model plus compute, an estimate.
+      Every figure here was measured under the {money(typical.measuredUnderCapUSD)} per-run cap in
+      force then; the cap is {money(typical.perRunCapUSD)} since {typical.perRunCapSince}.
     </p>
   </div>
 
@@ -372,7 +388,7 @@ const MODES = [
 
   <div class="caps-key-row">
     <div class="card caps-key">
-      <p class="caps-key-title">Each bar runs to our per-run cap</p>
+      <p class="caps-key-title">Each bar runs to the {money(typical.measuredUnderCapUSD)} per-run cap these runs ran under</p>
       <dl class="caps-key-items">
         {
           LEGEND.map((item) => (

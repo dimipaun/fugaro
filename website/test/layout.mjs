@@ -341,9 +341,18 @@ test('the build refuses every shape of the owner\'s measurement its reader does 
     ['middle_half_usd: [0.15, 0.68]\n', 'middle_half_usd: [0.15]\n', /carries 1 figures/, 'a middle half that is not two figures'],
     ['middle_half_usd: [0.17, 0.59]\n', 'middle_half_usd: [0.59, 0.17]\n', /the lower bound is above the upper one/, 'a middle half that descends'],
     ['  - id: review\n', '  - id: task\n', /two rows carry the id "task"/, 'two rows under one id'],
-    ['per_run_cap_usd: 10\n', 'per_run_cap_usd: 0\n', /per_run_cap_usd is 0/, 'a cap of nothing'],
+    ['per_run_cap_usd: 5\n', 'per_run_cap_usd: 0\n', /per_run_cap_usd is 0/, 'a cap of nothing'],
     ['    median_usd: 0.36\n', '    median_usd: 0.365\n', /median_usd is 0\.365, which is not a whole number of cents/, "a figure the page prints to the cent and would have to round"],
-    ['per_run_cap_usd: 10\n', 'per_run_cap_usd: 9.999\n', /per_run_cap_usd is 9\.999, which is not a whole number of cents/, 'a cap the page prints to the cent and would have to round'],
+    ['per_run_cap_usd: 5\n', 'per_run_cap_usd: 4.999\n', /per_run_cap_usd is 4\.999, which is not a whole number of cents/, 'a cap the page prints to the cent and would have to round'],
+    // The cap the figures were measured under is a figure of its own since the owner's feedback
+    // of 2026-10-22 (the cap is $5 now; the runs behind the figures finished under $10), and the
+    // bars are scaled by it: a cap of nothing, or a cap the page would have to round, is refused
+    // the same way the cap in force today is.
+    ['measured_under_cap_usd: 10\n', 'measured_under_cap_usd: 0\n', /measured_under_cap_usd is 0/, 'a measured-under cap of nothing'],
+    ['measured_under_cap_usd: 10\n', 'measured_under_cap_usd: 9.999\n', /measured_under_cap_usd is 9\.999, which is not a whole number of cents/, 'a measured-under cap the page would have to round'],
+    // And the date the cap in force today took effect: the page prints it beside the two caps, so
+    // a file that dropped it is refused rather than rendered with a cap of no date.
+    ['per_run_cap_since: 2026-10-21\n', '', /per_run_cap_since/, 'a cap with no date'],
   ]
   for (const [from, to, expected, what] of cases) {
     const built = buildWithData(t, 'typical-costs.yaml', from, to)
