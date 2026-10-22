@@ -968,6 +968,55 @@ added or removed without this sentence moving fails there:
     route that has left its group, and `test/nav-hover.mjs` reads the two lists the menu
     draws; `base.css`'s phone cut is left at the width the four-item row was measured at.
 
+  - **The phone app's page** (the owner's brief of 2026-10-21, the zoom-diagrams plan's Part 3;
+    D239, D240, D241, D242) adds one page and moves nothing else: **the site figure moves by
+    24,795 bytes** — the new `dist/mobile/index.html` (24,377) and **38 bytes onto each of the
+    11 pages that existed**, which is the menu's one new item, inlined into every page — and no
+    file is removed, so the count of files in `dist/` goes 28 → **29** and the count of pages
+    11 → **12**. **The script did not move at all** — `dist/scripts/site.js` is 70,008 bytes in
+    both builds — and that is the shape this page has: it is a badge and a list, with no
+    behaviour and no picture. The page weight does not move either, and that is the check worth
+    keeping: the heaviest page is still the homepage, which renders none of this, and the phone
+    page's own weight is 116,936 bytes (HTML 24,377, of which 17,529 is the stylesheet Astro
+    inlines into it, and the 92,559 it fetches — the script, the logo and the icons, which every
+    page fetches). The page's words are 139 and its lead 26, inside D188's 600 and the 40-word
+    lead, so no ceiling moved.
+    What the page is, and the four answers that decide it: a **preview badge** over the headline
+    (D240's third condition), **every bullet marked** shipped or planned, the two states rendered
+    as two lists with their own headings and the mark repeated on each card (D240's second
+    condition, D241's answer — *shipped* is status and spend, *planned* is the roster, switching
+    by name, the wake word, QR pairing and the three roles), the **wake word's row saying where
+    the listening and the recognition happen** (D242: on the phone, and the page names no speech
+    service and no cloud, because the local/remote switch is design only and not built), and
+    **no date anywhere** (D240's first condition) and **no waitlist** (D239: no form, no
+    `mailto:`, no third party — the page asks a reader for nothing). The claims are
+    `data/mobile-claims.yaml`'s rows, rendered one for one, and the page refuses to build with
+    either state's list empty: a heading over nothing reads as an app with nothing left to
+    build. **No screenshot is added** (D251: the owner's captures arrive as files, and no agent
+    commits one), so `data/mobile-screens.yaml` ships with no row and the page renders **no
+    slider at all** — no section, no frame and no picture-shaped hole, the console page's own
+    empty-list case; the file is handed to the same shared component the console page and the
+    homepage render, so a row is a slider with this page's own slot and id prefix and nothing in
+    the page or the component moves. The menu gains **one item, Mobile, as *Product*'s fifth**,
+    so the two groups stay two and no third group is added.
+    `test/mobile.mjs` is the page's own gate, and it reads the **built** page: the claims against
+    the data file's rows (with plants that move a planned row into the shipped list and a shipped
+    row into the planned one), the badge (absent, reworded, or below the headline), a four-digit
+    year and every month name in the page's own text, its title and its description (`in 2027`
+    and `March` are the plan's two plants), the voice row and the speech services it may not
+    name, the roster printed among the shipped claims **while `mobile/src/feed/paths.js` denies
+    the phone the `agents` family** (the one reading pinned to a repository file, derived from
+    that file at both ends, so a grant that names the family turns the reading off rather than
+    leaving it stale), and the form, the `mailto:` and the third-party link D239 refuses. Its
+    fixture builds are the other end of each branch — a row in the screenshots file renders the
+    slider with `mobile-screen-` ids and the console's ids do not leak onto the page, and the two
+    refusals the data file itself carries (a state that is neither of the two, a file with no
+    planned row) stop the build naming the file. The page's words, its lead and its links are
+    held by `budget.mjs`, `linkcheck.mjs` and `a11y.mjs` like any other page's, rather than by a
+    second rule here. **The three budget figures below are left where they are**, by the same
+    owner's ruling of 2026-10-20 as the round above, and the page's drawings are the owner's to
+    read: that is **Check 113** in `docs/gcp-live-checklist.md`.
+
   - **JavaScript per page:** 262,560 bytes. Three times 87,520: the one script the site ships,
     `public/scripts/site.js` (70,016 bytes), plus 25 %. What the file carries is the copy
     control, the menu, the consent gate and **both of the site's sliders** — the console page's,
@@ -1848,6 +1897,8 @@ website/
   data/release-summaries.yaml      # each release's product summary, pinned by test/changelog-page.mjs
   data/typical-costs.yaml          # the owner's own measurement of what a job costs, pinned by test/caps-and-costs.mjs
   data/console-screens.yaml        # the console page's slides: hand-written, one row per screenshot
+  data/mobile-claims.yaml          # the phone app's page: one row per claim, with the state the page marks it with (D240, D241)
+  data/mobile-screens.yaml         # the phone page's slides: the same rows as the console's, empty until the owner's captures land (D251)
   data/zoom-levels.yaml            # the four zoom levels' names, captions and labels, each with its document
   data/console-sha256sums.txt      # the console release's own sums file, copied verbatim
   content/                         # generated, do not edit (see the table above)
