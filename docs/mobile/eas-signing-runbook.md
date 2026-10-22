@@ -42,10 +42,14 @@ otherwise take:**
   [mobile/README.md](../../mobile/README.md), "What is not verified here").
 
 **Where this page disagrees with a file on the tree, the file wins.** The five
-places the refresh found a mismatch — four settled, one still open — are
-recorded under [Recorded tensions, and how each was
-settled](#14-recorded-tensions-and-how-each-was-settled) rather than smoothed
-over here.
+places the refresh found a mismatch are recorded under [Recorded tensions, and
+how each was settled](#14-recorded-tensions-and-how-each-was-settled) rather
+than smoothed over here: **three are settled and this page follows the ruling**
+(Tensions 1–3); **Tension 4 is a numbering mismatch, still open on the
+register's own text**; and **Tension 5 is recorded without being settled** —
+the plan's D120 sentence says CI at most builds a test artifact and never
+submits, and the owner's own staged workflow does more than that, by the
+owner's later ruling of 2026-10-19/20.
 
 **The plan already says where this work sits, and this page does not move it.**
 P4.4's own line reads *"**Files.** `mobile/eas.json` … and `mobile/app.config.js`
@@ -412,7 +416,7 @@ a stylistic preference:
 | **Android upload key (keystore)** | **EAS-managed** (EAS generates and stores it) or owner-held (a `.jks`/`.keystore` on your machine) | EAS's build servers, or your machine | **never in this repository**, never in CI, never in an agent's environment |
 | **Android app signing key** | **Play app signing** — **Google's**, not yours, and not something you can export | Google | nowhere: there is no copy of it to place. This is the one credential whose location is not a choice |
 | **App Store Connect API key** (a `.p8` file, a key id and an issuer id) | **owner-held**, on your machine, or in your password manager as the file | you, and `eas submit` reading it | **never in this repository**, **never in CI** for this check, never pasted |
-| **Play service account** (the JSON key) | **owner-held**, on your machine at the path `mobile/eas.json` names — `serviceAccountKeyPath` | you, and `eas submit` reading that path | **never in this repository** (the file Check 89's step 5 looks for is `google-play-service-account.json`), never in CI. Its **contents** are never read by Check 89 |
+| **Play service account** (the JSON key) | **owner-held**, on your machine — and **not at a path this repository names**: `mobile/eas.json` carries **no** `serviceAccountKeyPath` and no other credential path, and its own test (`mobile/src/eas-config.test.js`) refuses a key whose name suggests one. You give EAS the file when it asks (the first `eas submit` after P4.4 does), or let the EAS project hold it as a credential | you, and `eas submit`, which reads the file wherever you keep it | **never in this repository** (the file Check 89's step 5 looks for is `google-play-service-account.json`), never in CI. Its **contents** are never read by Check 89 |
 | **Expo access token** (the one name CI may hold) | your Expo account's access tokens, on `https://expo.dev/`, under the account's own settings; stored as the **environment secret `EXPO_TOKEN`** **on the `mobile-release` environment** (§9), which is where the staged `mobile-release.yml` reads it — **never a repository secret** | you, and the job that names `environment: mobile-release` and no other job in the repository, after your approval | **never in this repository**, never on a build machine that does not need it, never as a repository secret |
 
 **The secret *names* the staged workflow would read, and nothing else.** This
@@ -440,8 +444,10 @@ console's own Apple material and no store credential at all.
 
 **FACT for §7 (owner):** whether each credential is EAS-managed or owner-held —
 which is the same question Check 89's step 2 records as the build's **credentials
-source**; the **names** of any credential files the profiles reference, e.g. the
-value of `serviceAccountKeyPath`; and the secret **names** CI holds. **Never
+source**; the **names** of any credential files the profiles reference — today
+**none**, and a `serviceAccountKeyPath`, an `ascApiKeyPath` or a `keystorePath`
+appearing in `mobile/eas.json` is itself the finding, because that file's own
+test refuses one; and the secret **names** CI holds. **Never
 paste a signing key, a provisioning profile's contents, an App Store Connect API
 key, a Play service-account JSON, a password, an Expo token, or any credential
 value.**
@@ -551,7 +557,8 @@ reaches a store:
 
 **FACT for §8 (owner):** the `internal` profile's `distribution`; its submit
 track; whether an `ios` submit entry exists; and the **names** of any credential
-files the profiles reference (`serviceAccountKeyPath`). **Never their contents.**
+files the profiles reference — today **none** (`mobile/eas.json` names no path,
+and a path added to it is a finding, not a setting). **Never their contents.**
 The two identity values are public, and they are still not pasted back: §11's
 list is Check 89's, and it asks for the profile's values, not the identity's.
 
@@ -863,8 +870,9 @@ that have since been ruled — how. The rulings are not this runbook's: **the
 owner rules**, and these were settled by P4.4's own files (**PR #675**, **#745**,
 **#759**), by P4.2a's amendment of the register's Check 89, and by the owner's
 rulings of 2026-10-19/20 that the staged release workflow (**#777**) carries.
-**Tension 4 is still open** and says so; the settled ones say what changed on
-this page because of them.**
+**Tension 4 is still open** and **Tension 5 is recorded without being settled** —
+both say so below, and each names the amendable text and whose it is; the three
+settled ones say what changed on this page because of them.**
 
 **Tension 1 — the bundle identifier and the Android package: SETTLED (PR #675),
 and this page follows the ruling.** It was one file with two things asked of it.
