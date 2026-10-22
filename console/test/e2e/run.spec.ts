@@ -239,6 +239,9 @@ interface Screen {
   readonly prRepo: string
   readonly prNumber: string
   readonly prUrl: string
+  /** prLine is the pull-request line's cells in drawing order: the three facts
+   * and the separator between them. */
+  readonly prLine: readonly string[]
   readonly prReason: string
   readonly logLines: number
   readonly logMessages: readonly string[]
@@ -290,6 +293,7 @@ function screen(page: Page): Promise<Screen> {
       prRepo: text('.run-pr-repo'),
       prNumber: text('.run-pr-number'),
       prUrl: text('.run-pr-url'),
+      prLine: texts('.run-pr > .run-pr-repo, .run-pr > .run-pr-number, .run-pr > .run-pr-sep, .run-pr > .run-pr-url'),
       prReason: text('.run-pr-reason'),
       logLines: all('.run-log-line').length,
       logMessages: texts('.run-log-message'),
@@ -534,10 +538,23 @@ test.describe('the Run detail screen', () => {
     // rebuilt from the repository and the number would name a repository this
     // run does not use -- `example-owner/example-repo` is Bitbucket, and a
     // `github.com` URL for it would pass this console's own host allow-list.
+    // The reason is design section 5.1 rule 2's own sentence, drawn whole.
     expect(drawn.prRepo).toBe('example-owner/example-repo')
     expect(drawn.prNumber).toBe('#42')
     expect(drawn.prUrl).toBe('https://bitbucket.org/example-owner/example-repo/pull-requests/42')
-    expect(drawn.prReason).toContain('no document names the provider')
+    expect(drawn.prReason).toBe(
+      'this CLI does not say which provider this run’s repository is on, so the console will not build a link from it',
+    )
+    // The three facts are one line and the cells between them are theirs, so
+    // they are drawn apart (`acme/platform-core#412https://...` was the defect
+    // the owner reported on 2026-10-21).
+    expect(drawn.prLine).toEqual([
+      'example-owner/example-repo',
+      ' · ',
+      '#42',
+      ' · ',
+      'https://bitbucket.org/example-owner/example-repo/pull-requests/42',
+    ])
     // Nothing in the pull request panel is a link or a destination.
     expect(drawn.text).not.toContain('github.com')
   })
