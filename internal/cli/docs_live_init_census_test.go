@@ -18,8 +18,9 @@ package cli
 // Two tests read the two halves:
 //
 //   - TestLiveInitCensusMatchesTheFrozenList walks the live roots, collects
-//     every file naming `fugaro init` or `init --repo`, and asserts the set is
-//     empty and that `pendingRename` is. While the rename was in flight it
+//     every file naming `fugaro init` or the bare `init --<flag>`, and asserts
+//     the set is empty and that `pendingRename` is. While the rename was in
+//     flight it
 //     asserted the two were *equal*, which fails in both directions and is
 //     what made it a pin rather than a snapshot: a file that started naming
 //     the command and was not listed failed it (the set grew -- a string
@@ -232,18 +233,49 @@ var liveRoots = []string{
 }
 
 // initNameRE is what counts as naming the command: two spellings. The command
-// as prose and as a user-facing string writes it, and the `init --repo` form,
-// which a dozen comment-only mentions use and which `fugaro init` does not
-// match -- the rerun line the retired command prints is
-// `fugaro init --repo . --retire`, and the deprecation warnings name
-// `init --repo` on its own.
+// as prose and as a user-facing string writes it -- `fugaro init` -- and the
+// bare `init --<flag>` form, which every comment-only mention uses and which
+// `fugaro init` does not match: the rerun line the retired command prints is
+// `fugaro init --repo . --retire`, the deprecation warnings name `init --repo`
+// on its own, and the dozens of comments in internal/infra, internal/localcfg
+// and internal/runner name the flag that did the thing (`init
+// --firebase-project`, `init --skip-apis`, `init --print-vars`).
+//
+// **W2.6 wrote the second alternative as `init --repo`, and that was too
+// narrow**: it caught the one flag a live document happened to spell and left
+// every other bare mention reading as a clean file. The flag is the variable,
+// so the pattern takes the flag as one (`--` and a letter) rather than
+// enumerating the retired command's own flags -- which could not be done
+// anyway, because the live `fugaro config init` shares `--yes` with it.
 //
 // It is matched against flattenDoc's output and never against the raw bytes,
 // so a wrapped mention is a mention: a help string's line break inside the
 // two words, and a comment's `//` marker between them, are both whitespace by
 // the time this pattern sees them. The single space in the pattern is the
 // flattened separator, not a promise about the source.
-var initNameRE = regexp.MustCompile(`fugaro init|init --repo`)
+var initNameRE = regexp.MustCompile(`fugaro init|init --[a-z]`)
+
+// otherInitRE is the other command in this tree that writes `init --<flag>`,
+// and the reason initNameRE can be as wide as it is. It is `fugaro config
+// init --yes`, the live subcommand that writes the minimal `fugaro.yaml`
+// (internal/cli/config_cmd.go), whose flag is the retired verb's own -- the
+// overlap that rules out the flag list above, since a list of the retired
+// command's flags would have to carry `--yes` and so would swallow this one.
+//
+// A file that mentions it *beside* a real mention must not be read as clean,
+// so the exclusion is not a second pattern that exempts the file: the match is
+// removed from the flattened text and initNameRE reads what is left. `fugaro
+// config init --yes` therefore leaves `fugaro`, and a bare `init --repo` in
+// the same file is still found.
+//
+// The list holds what the tree has, not what it might: `git init --bare` is
+// the obvious next entry and is deliberately absent, because no live file
+// names it (both mentions are dated records), and an exemption for a spelling
+// that occurs nowhere is the direction Global Constraint 7 forbids. The day
+// one does, the census fails on that file and the answer is one of the two
+// this file hands every unexpected mention -- rename it, or add the command
+// here with its reason.
+var otherInitRE = regexp.MustCompile(`config init --[a-z]`)
 
 // censusRoot is the repository root as this package's tests reach it.
 const censusRoot = "../.."
@@ -525,7 +557,8 @@ func censusNamesInit(t *testing.T, path string) bool {
 	if err != nil {
 		t.Fatalf("reading %s: %v", path, err)
 	}
-	return initNameRE.MatchString(flattenDoc(string(append(head, rest...))))
+	flat := flattenDoc(string(append(head, rest...)))
+	return initNameRE.MatchString(otherInitRE.ReplaceAllString(flat, " "))
 }
 
 // liveInitCensus walks liveRoots and returns, sorted, every file that names
@@ -612,6 +645,66 @@ func TestCensusNamesInitReadsPastTheHead(t *testing.T) {
 		{"nothing to find, past the head", pad + "\nnothing here\n", false},
 		{"binary head", "MZ\x00\x00fugaro init\n", false},
 		{"NUL past the head", pad + "\x00fugaro init\n", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "candidate.txt")
+			if err := os.WriteFile(path, []byte(tc.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if got := censusNamesInit(t, path); got != tc.want {
+				t.Errorf("censusNamesInit(%s) = %v, want %v", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCensusNamesInitMatchesBothSpellingsAndTheOtherCommand pins the pattern
+// itself, on files written out here for the reason
+// TestCensusNamesInitReadsPastTheHead exists: the tree cannot hold it. A live
+// tree that names the retired command nowhere -- which is the state this file
+// asserts -- says nothing about whether the pattern would have seen it, so
+// every case below is a spelling the walk has to be able to answer for, and a
+// pattern that stopped matching one of them would leave the census reading a
+// clean tree it never looked at.
+//
+// Three halves, and they fail apart:
+//
+//   - the two spellings are caught, and the bare one is caught with *any*
+//     flag, not the one flag a document happens to spell today. W2.6 wrote the
+//     second alternative as `init --repo`, which passed a tree that named
+//     `init --firebase-project`, `init --create-project`, `init --print-vars`
+//     and sixteen more files' worth of the same thing;
+//   - the bare spelling is caught *wrapped*, because a comment wraps it across
+//     its `//` marker (init_firebase_test.go, init_images_test.go,
+//     init_review.go and mirror/ref.go all do), and
+//   - `fugaro config init --yes` is not the retired command, while a file that
+//     names it beside a real mention still is: the exclusion is a redaction of
+//     the flattened text, not an exemption for the file.
+//
+// Mutation (run, restore): narrow initNameRE's second alternative back to
+// `init --repo` -- the bare-flag cases fail; drop the `--[a-z]` and match a
+// bare `init ` -- the "other command alone" case matches and fails; drop
+// otherInitRE's redaction and exempt the whole file instead -- the "beside a
+// real mention" case fails.
+func TestCensusNamesInitMatchesBothSpellingsAndTheOtherCommand(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"the command as prose", "rerun fugaro init in the checkout\n", true},
+		{"the command with a flag", "fugaro init --repo . --retire\n", true},
+		{"a bare flag, the one W2.6 spelled", "rerun `init --repo` in the checkout\n", true},
+		{"a bare flag, firebase-project", "init --firebase-project checks them first\n", true},
+		{"a bare flag, create-project", "the project was created by this run (init --create-project)\n", true},
+		{"a bare flag, print-vars", "printVarsUngatedInstallation is init --print-vars's warning\n", true},
+		{"a bare flag, wrapped across a // marker", "// and a marker above this\n// binary says so. init\n// --firebase-project deploys the rules\n", true},
+		{"a bare flag, skip-apis", "ManageAPIs is false with init --skip-apis\n", true},
+		{"the other command alone", "fugaro config init --yes writes the minimal fugaro.yaml\n", false},
+		{"the other command, with the retired one beside it", "fugaro config init --yes writes it; the old text said init --repo\n", true},
+		{"neither spelling", "fugaro setup --repo and fugaro update --firebase-project\n", false},
+		{"a flag with no init in front", "fugaro setup --create-project\n", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
