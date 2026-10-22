@@ -137,9 +137,13 @@ for (const [state, rows] of [
       label="Screenshots of the phone app. Scroll sideways to see the rest."
     />
 
-    {/* The claims, in the two states D240's second condition requires. Each list is named by
-        its own heading and each card is marked with its own state, so which of the two a
-        bullet is can be read off the group or off the card. The `data-claims` hooks are the
+    {/* The claims, in the two states D240's second condition requires. Each state is its own
+        `<section>` with its own heading, which is the console page's own shape — a section
+        named by the heading over it — and the reason there are two of them here: one section
+        holding both would be a region named "What the app does today" with "What is still to
+        come" inside it, which is a name that describes half of what it holds. Each card is
+        marked with its own state as well as standing in its own list, so which of the two a
+        bullet is can be read off the heading or off the card. The `data-claims` hooks are the
         lists' names for the test that holds every row to the state the data file gives it. */}
     <section id="mobile-claims" aria-labelledby="mobile-claims-heading">
       <h2 id="mobile-claims-heading" class="display-lg">What the app does today</h2>
@@ -153,9 +157,11 @@ for (const [state, rows] of [
           ))
         }
       </ul>
+    </section>
 
+    <section id="mobile-planned" aria-labelledby="mobile-planned-heading">
       <h2 id="mobile-planned-heading" class="display-lg">What is still to come</h2>
-      <ul class="mobile-claims" data-claims="planned" aria-labelledby="mobile-planned-heading">
+      <ul class="mobile-claims" data-claims="planned">
         {
           planned.map((claim) => (
             <li class="card mobile-claim" data-state={claim.state}>

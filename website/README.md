@@ -970,14 +970,14 @@ added or removed without this sentence moving fails there:
 
   - **The phone app's page** (the owner's brief of 2026-10-21, the zoom-diagrams plan's Part 3;
     D239, D240, D241, D242) adds one page and moves nothing else: **the site figure moves by
-    24,795 bytes** — the new `dist/mobile/index.html` (24,377) and **38 bytes onto each of the
+    24,858 bytes** — the new `dist/mobile/index.html` (24,440) and **38 bytes onto each of the
     11 pages that existed**, which is the menu's one new item, inlined into every page — and no
     file is removed, so the count of files in `dist/` goes 28 → **29** and the count of pages
     11 → **12**. **The script did not move at all** — `dist/scripts/site.js` is 70,008 bytes in
     both builds — and that is the shape this page has: it is a badge and a list, with no
     behaviour and no picture. The page weight does not move either, and that is the check worth
     keeping: the heaviest page is still the homepage, which renders none of this, and the phone
-    page's own weight is 116,936 bytes (HTML 24,377, of which 17,529 is the stylesheet Astro
+    page's own weight is 116,999 bytes (HTML 24,440, of which 17,529 is the stylesheet Astro
     inlines into it, and the 92,559 it fetches — the script, the logo and the icons, which every
     page fetches). The page's words are 139 and its lead 26, inside D188's 600 and the 40-word
     lead, so no ceiling moved.
