@@ -7280,8 +7280,8 @@ set -u
 : "${CHK99_OWNER_RUN:?type CHK99_OWNER_RUN=yes at your own terminal and export it: this check launches live sandbox runs and writes marks, a policy member and a test token}"
 [ "$CHK99_OWNER_RUN" = yes ] || { echo "Check 99 stopped: CHK99_OWNER_RUN is '${CHK99_OWNER_RUN}', not 'yes'" >&2; exit 1; }
 : "${CHK99_SANDBOX_REPO:?type CHK99_SANDBOX_REPO=owner/name (the sandbox repository) and export it}"
-: "${CHK99_A1:?type CHK99_A1=<the first admitted test account's name> and export it}"
-: "${CHK99_A2:?type CHK99_A2=<the second admitted test account's name> and export it}"
+: "${CHK99_A1:?type CHK99_A1=<the name of the first admitted test account> and export it}"
+: "${CHK99_A2:?type CHK99_A2=<the name of the second admitted test account> and export it}"
 [ "$CHK99_A1" != "$CHK99_A2" ] || { echo "Check 99 stopped: CHK99_A1 and CHK99_A2 are both '${CHK99_A1}': this check needs two different accounts" >&2; exit 1; }
 [ -r "$C" ] || { echo "Check 99 stopped: no project config at $C" >&2; exit 1; }
 GCP=$(sed -n 's/^ *gcp_project: *//p' "$C" | tr -d "\"'" | head -1)
