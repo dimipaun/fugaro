@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 )
 
@@ -173,10 +174,15 @@ func budgetProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config
 	// The switch, the routes and the reach: validate resolves a route ID the
 	// same way the run does, so a pin that names one is admitted here exactly
 	// when the run would route it (config.CheckAllowed's `allowed`), and which
-	// pins the run has is the switch's reach. The switch is the operator's own —
-	// the policy node is published from it, and this command reads no node
-	// (design §11: offline) — which is the same reading the rest of this
-	// function gives the providers. The routes are the run's own table, the
+	// pins the run has is the switch's reach. The switch read here is the
+	// file's, over the layer cache: the operator's own, since the policy node is
+	// published from it — this resolution reads no node (design §11: offline,
+	// and validate says "unresolved offline" where it cannot see one), which is
+	// the same reading the rest of this function gives the providers. The
+	// command does make one node read, and it is cascadeProblems': the published
+	// policy, for O2's switch alone, which is a refusal of its own where the node
+	// cannot be read (no database, none published, unreadable, or --offline) and
+	// which nothing here waits on. The routes are the run's own table, the
 	// operator's providers filtered by allow_data_to for this repository
 	// (runner.ProvidersFor), the same table routingProblems and providerProblems
 	// read.
@@ -385,6 +391,138 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 	return problems, warnings, notes
 }
 
+// cascadeProblems are the rules a `agent.auth: cascade` workflow is held to
+// here, beyond the file's own (config.Validate's auth list, whose
+// followup.allow_public refusal is the file's own business): the gateway its
+// calls are made by, O2 — the project policy's switch — and the model
+// allow-list the credentials service holds every call it carries to (the
+// owner's ruling of 2026-10-22). The last two are facts about the *published
+// policy node* rather than about the file, and each is judged on every surface
+// the cascade is judged on: here, at the launch (cascadeLaunchRefusal) and in
+// the run's own bootstrap (runner's applyRouting).
+//
+// The mode the gateway rule is judged over is the run's effective one: the
+// ceiling this file's project config builds, the published policy node's mode
+// written over it, and the file merged on top (policy.Merge, the runner's own
+// merge). All three matter. The file's own mode is only a lower bound on the
+// run's — a file that writes no budget under a ceiling that enforces has the
+// gateway on — and the node *is* the ceiling for the mode rather than a layer
+// over it: internal/runner/policy.go's policyCeiling writes pp.Budget.Mode over
+// the environment ceiling's ("the mode is the key this matters most for"), so a
+// node that observes gives every run of the project the gateway even where the
+// project config says off, and one that says off takes it away where the config
+// observes. Judging the rule without the node's mode refused files that every
+// run of them admits, for a reason — "budget.mode is not set" — that is false of
+// the project.
+//
+// The ceiling is this file's project's, and a file that belongs to no selected
+// project config has none: another project's config holds another
+// installation's routes, ceiling and policy, so the gateway rule is judged only
+// where that ceiling can be read at all. Judging it without one reads the
+// file's own mode as the run's, which is a problem no run of the configuration
+// necessarily has. Every such state is refused by O2 below anyway, on the
+// reason that is true of it. Those states are not one sentence: nothing
+// selected and a config that is there and unreadable are told apart (the rest
+// of this file already does, and TestValidateReportsAProjectConfigItCouldNotRead
+// holds it), an installation whose config names no database is told that rather
+// than "published no policy" — a statement about the operator's file, which is
+// what sends them to `fugaro update --firebase-project` — and `--offline`, which is this
+// command's promise to read nothing over the network, says so instead of
+// opening the connection the flag exists to prevent.
+//
+// O2 (the owner's ruling of 2026-10-17, reconciliation.md §4) is the reason
+// this function reads the *published* policy: a repository may ask for the
+// cascade, and only the operator-written project policy — routing.claude's
+// via being exactly `cascade`, O3's spelling — turns it on, so a cascade file
+// whose policy does not carry it is a problem naming what to set and that only
+// the operator can set it. A via of any other value is not the switch: `direct`
+// names the direct path and `auto` keeps today's routing meaning (O3), and
+// neither gives any run a credentials cascade. The read fails closed in every
+// direction — no database to read a policy from, no policy published, a policy
+// this Fugaro cannot read or lists keys it does not know, a routing block
+// absent or written with another via, the flag that forbids the read — each
+// refuses the file rather than letting a cascade workflow through that no run
+// would be admitted with. The launch refuses the same pair again on its own
+// side (plan Task C1.19); this is where the repository's author is told before
+// pushing.
+func cascadeProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config, lcErr error, offline bool) []config.Problem {
+	if cfg.Agent.Auth != config.AuthCascade {
+		return nil
+	}
+	var problems []config.Problem
+	refuse := func(why string) {
+		problems = append(problems, config.Problem{Path: "agent.auth", Message: fmt.Sprintf(
+			"is refused: %s. Set %s in the project policy and publish it (fugaro project policy publish) — a repository asks for the cascade, and only the operator can set it there (O2)",
+			why, "routing.claude: {via: cascade}")})
+	}
+	if lc == nil || lc.Name != cfg.Project {
+		switch {
+		case lcErr != nil:
+			// The config is selected and was refused at load. Its own reason is
+			// the problem the caller prepends for it, printed whole and once.
+			// No project is named here: which project an unreadable config is
+			// for is not a question the file answers.
+			refuse("the project config selected here could not be read (the reason is the problem reported for it above), so the policy this project has published cannot be read either")
+		default:
+			refuse(fmt.Sprintf("no project config for %s is selected here, so the policy this project has published cannot be read", pluginwire.Printable(cfg.Project)))
+		}
+		return problems
+	}
+	if offline {
+		// --offline promises this command reads nothing over the network, and
+		// the published policy is a database read (projectPolicyRead): reading
+		// it here is the connection the flag exists to prevent, and it is the
+		// one a job without Google credentials cannot make anyway. The switch
+		// cannot be seen without it and a cascade file nobody has proven is
+		// enabled is refused, never passed — so this is the refusal, and it
+		// names the flag rather than the network.
+		refuse("--offline was given, so the policy this project has published was not read and whether its switch is set cannot be seen without it")
+		return problems
+	}
+	// The ceiling is readable from here on, so the gateway rule can be judged
+	// over the run's own mode. The node's mode stands in for the ceiling's, as
+	// the runner's policyCeiling does (the doc comment above); the read is the
+	// one O2 needs below in any case, moved up.
+	ceiling := ceilingLayer(lc)
+	p, found, err := projectPolicyRead(ctx, lc)
+	if err == nil && found && p != nil && p.Budget.Mode != "" {
+		ceiling.Mode = p.Budget.Mode
+	}
+	problems = config.CheckCascadeGateway(cfg.Agent, policy.Merge(ceiling, runner.FileLayer(cfg)).Mode)
+	switch {
+	case err != nil:
+		refuse("the project's published policy could not be read (" + oneLineCLI(err.Error()) + ")")
+	case lc.Budget == nil || lc.Budget.RTDBURL == "":
+		// The config names no database, so projectPolicyRead answered "not
+		// found" without a call: "this project has published no policy" would
+		// be a claim about a node nobody can read, and the fix is the
+		// database, not the policy.
+		refuse("this project config names no database, so the policy this project has published cannot be read (fugaro update --firebase-project writes the database's URL into it)")
+	case !found || p == nil:
+		refuse("this project has published no policy")
+	case p.Routing == nil || p.Routing.Claude == nil || p.Routing.Claude.ViaValue() != config.RouteCascade:
+		refuse("this project's published policy does not turn the cascade on")
+	case len(p.Budget.AllowedModels) == 0:
+		// The allow-list the credentials service holds every call it carries to
+		// (the owner's ruling of 2026-10-22, C1.11): the service refuses a
+		// project that publishes none, so no run of this file could make a
+		// call — and the node is the only list the service can read, which is
+		// why this is judged on it and not on the file's own budget block or
+		// the installation's ceiling. It is a case of its own in this switch,
+		// after the switch's: a policy that does not turn the cascade on is
+		// answered with the setting to write, which is the first thing its
+		// author has to fix. The launch refuses the same file before a job
+		// starts (cascadeLaunchRefusal) and the run refuses it in bootstrap
+		// (runner's applyRouting); every other cascade rule is judged on all
+		// three surfaces, and this is the one that tells the author before they
+		// push.
+		problems = append(problems, config.Problem{Path: "agent.auth", Message: fmt.Sprintf(
+			"is refused: this project's published policy (%s) publishes no budget.allowed_models, and the credentials service, which carries every call a cascade run makes, refuses a project that publishes none — so no run of this file could make a call. Add budget.allowed_models to the project policy and publish it (fugaro project policy publish)",
+			projectpolicy.PathShared())})
+	}
+	return problems
+}
+
 // claudePin is one of the run's three pins whose model is a canonical Claude
 // ID: the pins the routing switch applies to, because D1a's list is a list of
 // exactly those IDs.
@@ -483,9 +621,11 @@ func shortPath(path string) string {
 // halts it (the switch check below).
 //
 // The resolution is printed only when the switch is readable, and the switch is
-// the operator's own project config: validate reads no policy node (design §11:
-// offline), which is the same reading budgetProblems and providerProblems give
-// the providers. With no config for this file's project there is nothing to
+// the operator's own project config: this resolution reads no policy node
+// (design §11: offline), which is the same reading budgetProblems and
+// providerProblems give the providers. The command's one node read is
+// cascadeProblems', for O2's switch alone and never for a route, so nothing
+// here waits on it. With no config for this file's project there is nothing to
 // resolve from, and the line says "unresolved offline" — a resolution this
 // command did not resolve is never printed as if it had been (the resolver's
 // own contract, config.RoutingClaudeFor). A model the switch names and cannot
@@ -952,7 +1092,25 @@ func routingInertWhy(why runner.RoutingInert, auth, mode string) string {
 	}
 	switch why {
 	case runner.RoutingInertNoGateway:
+		// The cascade is the one auth whose gateway is not a model API's
+		// credential: a cascade run's calls are carried by the credentials
+		// service (D133, D143). runner.GatewayOn answers true for it (C1.19),
+		// so the only way a cascade run reaches this arm is a budget that is
+		// off — and there the generic sentence below would be false of it: the
+		// cascade's gateway is precisely the one that does not need a
+		// credential of the job's own, and the sentence would read as "the
+		// cascade has no credential for a gateway to carry", the opposite of
+		// what the value asks for. The arm below says what is true instead.
+		if auth == config.AuthCascade {
+			return "no run of this configuration has a gateway (agent.auth is " + config.AuthCascade + " and budget.mode is " + m + ": a cascade run's gateway forwards to the credentials service, which is an observing or enforcing budget's to start)"
+		}
 		return "no run of this configuration has a gateway (agent.auth is " + auth + " and budget.mode is " + m + ": the gateway needs a model API's credential and an observing or enforcing budget)"
+	case runner.RoutingInertCascadeOtherAuth:
+		// via: cascade names no model and routes no call: it is the switch that
+		// puts the credentials service in front of a run, so it acts on the
+		// workflow that asked for it and nothing else (O3, D133). The default
+		// arm's "via: direct" would be a false reading of the same file.
+		return "via: cascade acts only on the workflow that asked for it (agent.auth is " + auth + ", not " + config.AuthCascade + ")"
 	case runner.RoutingInertAutoVertex:
 		return "via: auto does not route a Vertex run (Vertex serves Claude under the project's own credential, and its jobs carry no Anthropic API key)"
 	case runner.RoutingInertNoSwitch:
@@ -1378,7 +1536,27 @@ func newValidateCmd() *cobra.Command {
 			layer, layerWarnings := validateLayerLines(rf)
 			var warnings, notes []config.Problem
 			if cfg != nil {
-				problems = append(config.Check(cfg, filepath.Dir(path)), computeProblems(cfg)...)
+				// Every offline check this file has on this installation's
+				// backend: the file's own, the compute limits, and the Batch
+				// backend's offline checks (plan 2026-10-19-compute-backend.md
+				// Task 8 step 4, design §4.4; computeCheckoutProblems is where
+				// the three are put together, and the comment there is why
+				// they are not two calls). The Batch ones return nothing for
+				// every other project: the backend name they are about is
+				// refused by internal/localcfg until the enable task, so no
+				// installation reaches them today. The recipe they read is the
+				// one this checkout resolves the way a launch would
+				// (agent.recipe, else the default): its mode is what decides
+				// whether a run of this repository produces artifacts, which
+				// is the boundary Global Constraint 13 keeps.
+				//
+				// "Every other project" is two facts and both are in the
+				// helper: the Batch checks return nothing for an installation
+				// that is not on cloud-batch, and all three judge only the
+				// installation of the project THIS file names -- a config
+				// selected for another project is not one they read, the guard
+				// budgetProblems, providerProblems and cascadeProblems carry.
+				problems = append(problems, computeCheckoutProblems(cfg, filepath.Dir(path), lc)...)
 				// The project config, and the two route tables the rules below
 				// read: routes, the run's own — the owner's with the checkout
 				// layer's claude_models merged in (layerRoutes), so a
@@ -1439,6 +1617,7 @@ func newValidateCmd() *cobra.Command {
 				problems, warnings, notes = append(problems, pp...), append(warnings, pw...), append(notes, pn...)
 				rtp, rtn := routingProblems(cmd.Context(), ecfg, lc, routes, lcErr)
 				problems, notes = append(problems, rtp...), append(notes, rtn...)
+				problems = append(problems, cascadeProblems(cmd.Context(), ecfg, lc, lcErr, offline)...)
 				annotateProjectRecipe(filepath.Dir(path), cfg, problems)
 				if lc != nil && lc.Name == cfg.Project && setsPolicy(cfg) {
 					if n := branchNote(cmd.Context(), path); n != "" {
@@ -1496,7 +1675,7 @@ func newValidateCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
 	cmd.Flags().StringVar(&layerFile, "project-layer", "", "resolve against this project layer file instead of the published one (also checks the file; for CI without bucket access, and before fugaro config publish)")
-	cmd.Flags().BoolVar(&offline, "offline", false, "never read the runs bucket: resolve against the cached project layer, if any")
+	cmd.Flags().BoolVar(&offline, "offline", false, "never read the runs bucket or the project's published policy: resolve against the cached project layer, if any; a cascade file is refused, not admitted unproven")
 	return cmd
 }
 

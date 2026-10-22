@@ -26,6 +26,54 @@ func (k *killNode) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// KillGetter is the read the two switches need; *rtdb.Client is one.
+type KillGetter interface {
+	Get(ctx context.Context, path string, out any) (found bool, err error)
+}
+
+// ReadKills reads the two switches a run of slug honours: the global one and
+// the repository's, exactly the pair checkKills reads for a running run.
+//
+// It is exported for the credentials service (C1.11), whose stop flag is this
+// pair — the owner's answer of 2026-10-19 is that an operator stops the
+// service with the switch they already have, `fugaro budget kill`, and not
+// with a new flag, a redeploy or a shell — and it lives here rather than
+// there so the fail-closed decode above is one rule in one place: a switch
+// nobody can read is ON, and a read that fails is an error the caller refuses
+// on rather than reads as "off".
+//
+// found is false for an absent node, which is off.
+func ReadKills(ctx context.Context, db KillGetter, slug string) (Kills, error) {
+	var kg, kr killNode
+	fg, err1 := db.Get(ctx, PathKillGlobal, &kg)
+	fr, err2 := db.Get(ctx, PathKillRepo(slug), &kr)
+	if err := errors.Join(err1, err2); err != nil {
+		return Kills{}, err
+	}
+	var k Kills
+	if fg {
+		k.Global = &kg.Kill
+	}
+	if fr {
+		k.Repo = &kr.Kill
+	}
+	return k, nil
+}
+
+// On reports whether either switch is on, and which one: "global" or "repo",
+// and "" when both are off. It is what a reader that answers a refusal rather
+// than halting a run asks (the credentials service, C1.11): killHalt is the
+// same question for a run, with a halt message attached.
+func (k Kills) On() (bool, string) {
+	if k.Global != nil && k.Global.On {
+		return true, "global"
+	}
+	if k.Repo != nil && k.Repo.On {
+		return true, "repo"
+	}
+	return false, ""
+}
+
 // checkKills reads the two switches this run honours and halts the run if one
 // is on. Its outcome feeds the grace under source.
 func (s *Session) checkKills(ctx context.Context, source string) {

@@ -180,6 +180,8 @@ drift from it.
 | `job` | string | — | **yes** | the Cloud Run job this run is in, from the run's own `launch.json` (`runstore.Launch.Job`) — the same read that produces the queued rows, so a live row has it too. Absent when the reader has no `launch.json` for the run. Under the project-centric model this is the **shared** job of a (profile, provider, account), not one repository's. **Display text, not an authority**: `launch.json` is writable by every launcher and, on a shared job, by every run (SECURITY.md, D4), so the value is what that object says, stripped of control characters — never a name to act on |
 | `profile` / `provider` / `account` | string | — | **yes** | the (profile, provider, account) the job's name was **computed from**, matched against the project's published policy — never parsed back out of the name (R2-5), so a `job` no profile computes gets none of them. `profile` and `provider` are present together or absent together; `account` is present only beside them and only for a job of a named Claude account — a profile that lists `claude_accounts` gets **one job per account** beside its no-account job (`config.ProjectJobAccounts`), so a run on a named account's job carries that account's name, and a run on the profile's no-account job carries none. An absent `account` is **not** "this job mounts no credential": the no-account job holds the default account's token when the profile lists `default` and none otherwise (`config.ProjectJobTokenAccount`), so what is empty is the account axis of the job's name, never a claim about the run's credential. All three are absent for a run on a **per-repository** job (a baked workflow, a Bitbucket repository, an installation that has not migrated), whose name is no project job's. `provider` here is the **profile's** provider, not a general stamp of the repository's: it is the reason the field exists on the two run shapes but does not close §7's gap 7 |
 | `launched_by` | string | — | **yes** | who started the run, from the run's own `launch.json` (`runstore.Launch.LaunchedBy`, **CLI 0.9.0**) — a person's address, or the identity an automated launch runs as (a service account, a CI runner). It is the **full recorded identity**: the text views show the short form a column has room for (`runview.LauncherShort` — the part before an address's `@`, the whole value for anything else). Absent when the record has none — one whose `launch.json` the reader does not have, or a launch built without a launcher (the recovery backfill from `result.json`, a local run with no cloud execution, or the synthetic launch `fugaro logs` builds) — **never a value the CLI invents**. **Display text, not an authority**: `launch.json` is writable by every launcher (SECURITY.md, D4), the value is sanitised and capped like every other bucket-derived string (`safetext.Field`, 512 runes), and no policy, admission or budget rule reads it |
+| `credential` | string | — | **yes** | the **name** — never the value — of the credential the run's cascade is currently spending on (`budget.AgentEntry.Credential`, written by the run itself under the rules of C1.3; the credentials service chooses it). **CLI 0.10.0.** Absent when the run has not reported one, which is **"not recorded", never "no credential"**: a run that has not written the field is one this reader cannot account for, not one spending on nothing. A name a run wrote, so it is sanitised like every other database-derived string here, and **never an authority** — no policy, admission or budget rule reads it. A console that wants to say which account a run is on must not treat the field as proof that the run is on that account now (the run reports it as it switches) |
+| `waiting_until` | string | RFC 3339, UTC | **yes** | when a run waiting for a credential expects to resume at (`budget.AgentEntry.WaitingUntil`, epoch ms, D152's "waiting, expected resume time"). **CLI 0.10.0.** Present **only while the run is still waiting**: presence is the state, so a reader that sees the field knows the run is held up rather than spending, and one that wants a countdown compares it with `now`. The text views show the same fact: the plain table as `waiting for a credential, expected resume T`, and the screen's FLAGS column as `waiting` with the instant on the run's detail lines (its column is 30 columns wide at its widest, and the sentence is 59 — a clip would eat the instant and any flag behind it) |
 
 **A live run carries no PR field at all** — no `pr_url`, no `pr_number`, no
 `pr` (design §4.3 gap 6, §5.1 rule 2). The console renders no link for a live
@@ -380,13 +382,14 @@ reads:
 | `recipe`, `config_sha256` | string | **yes** | |
 | `project_layer` | `*runstore.ProjectLayerRecord` | **yes** | absent before 0.6.0 |
 | `status`, `stage`, `reason` | string | `status` no, other two yes | |
+| `derived` | string | **yes** | **what the read side derived, and not a status of its own** — the CLI's 2026-10-21 ruling. Written only on a row whose record was never finalized and whose Cloud Batch job the platform preempted: `status` stays `failed` (the vocabulary every reader already switches on) and `derived` carries the fact (`preempted`, `runview.DerivedPreempted`), with `reason` saying so in a sentence. Absent for every other row, which is what keeps the shape additive. See **the derived status** below |
 | `halt` | `*runstore.Halt` | **yes** | why a run halted |
 | `batch`, `requested_by` | string | **yes** | `requested_by` is a person's address |
 | `launched_by` | string | **yes** | who started the run, from its `launch.json` (**CLI 0.9.0**); absent when the record has none. The same value `JSONRun`/`JSONFinished` carry, and display text only — see `JSONRun`'s row |
 | `pr_url` | string | **yes** | the URL as the host gave it |
 | `execution`, `log_url` | string | **yes** | `log_url` is what `logs RUN --url` prints |
 | `created` | time.Time | no | RFC 3339 |
-| `cost` | `runstore.Cost` | no | model/compute dollars and the spend basis — *notional* when `ModelBasis == BasisSubscription` |
+| `cost` | `runstore.Cost` | no | model/compute dollars: `model_usd` is the **whole** model figure and `model_notional_usd` the subscription's part of it (C1.16, P12 — a mixed cascade run's `model_basis` is `api-list` for the whole run, so the basis is only the fallback for a row written before the split existed) |
 | `image_age_s` | `*int64` | **yes** | null = unknown |
 | `terminal`, `settled` | bool | no | |
 | `branch`, `outcome` | string | **yes** | |
@@ -401,6 +404,41 @@ reads:
 | `artifact_count` | int | **yes** | what an artifact run's record says it delivered; absent for every run that has none, and the count `runs ls`'s `ARTIFACTS` column shows — its total is `artifact_bytes` |
 | `artifact_bytes` | int64 | **yes** | the recorded total size of those artifacts (a negative recorded size counts as none) |
 | `changed_files` | `*runstore.ChangedFiles` | **yes** | the paths the run changed, as the run itself recorded them (design D27, console v2 plan V2.1.2): `paths`, `total` and `truncated` below. **Absent for a run that recorded none** — every record written before the field existed, and every run that died before finalize — and absence means **"no record of what this run changed"**, never "it changed nothing" (the `-` cell of `runs ls`'s `FILES` column) |
+
+**The derived status (`derived`), and why it is not a status.** A Cloud Batch
+run on a Spot VM can be preempted: the platform reclaims the VM, the job ends
+`FAILED`, and no component ever finalizes the run's record — the budget lease
+expires by its own timeout and the history sweep settles the cost, so there is
+nothing that could write the outcome down. The owner's ruling of 2026-10-21 is
+that **nothing gains a new permission for this**: the read side derives it when
+the run is read (`runview.Join`), from the run's own objects plus the Batch
+job's own report (`statusEvents`, or the task state's reserved preemption exit
+code — `internal/backend/batch`'s `preemptExitCode`), and the derived status is
+**never written back** anywhere.
+
+So the row reads `status: "failed"`, `derived: "preempted"`, and `reason` is
+`runview.ReasonPreempted`. The three properties a reader needs:
+
+* **`status` is unchanged.** `failed` is what a reader switches on, what the
+  Runs screens draw and what `runs ls`'s table column carries; the derivation
+  is a second key beside it. A row is never *only* `derived`: an absent key
+  means nothing was derived, and `derived` is never `""`.
+* **`derived` is drawn beside the status, never instead of it.** `runs ls`'s
+  table and `fugaro diagnose` print the status and the derivation together
+  (`failed (preempted)`), the way a halt already prints its reason
+  (`halted (run_cap)`); the JSON keeps both keys separate so a script never has
+  to parse the decorated cell. The console reads `status` and `reason` today
+  and may render the marker from `derived` when it does.
+* **A finalized record always wins, and an unreadable job never derives.**
+  A run whose record exists is never derived, however its job reads; a job
+  whose state cannot be read, or whose state is not a terminal `FAILED`, stays
+  exactly as recorded — a live run is never made to look failed by a read the
+  reader could not complete.
+
+`derived` is one of the string keys the console does not sanitize: it is an
+enum the CLI writes from its own table, like `status`, `outcome` and `mode`
+(`NON_TEXT_STRING_KEYS`, `console/src/shared/schema.ts`), never text a job
+wrote.
 
 **`changed_files` is the run's own account, and it is bounded.** The runner
 reads the paths of the run's own commits (`origin/<base>...HEAD` for a first
@@ -529,6 +567,22 @@ parseable JSON).
 the CLI worded them — including the "not on the `PATH` the console gives the
 CLI" class of finding the design's §3.4 rule 5 describes.
 
+**Three check ids are new in CLI 0.10.0** (credentials-service C1.21), all
+`severity: "warning"` — so all three fail `--strict` and none is an `ok: false`
+about the installation: **`creds-broken`**, naming every Claude account the
+database's `creds/marks` marks broken (the service saw a 401), with the fix
+`fugaro accounts clear NAME`; **`creds-unknown-state`**, naming every account
+whose mark carries a state this release does not read (a newer release's hold,
+or one written by hand) with that state word — such a mark is held (`Usable`
+fails closed) and `accounts clear` refuses it, so the remedy is
+`fugaro upgrade`; and **`creds-rules`**, when the published policy
+has the cascade switched on (`routing.claude.via: cascade`) and
+`config/limits/credsRules` is missing, unreadable, hand-edited or of another
+generation than the binary's. An unreadable `creds/` is an `info` check
+instead, so "could not read" is never rendered as "nothing is broken"; that
+note covers both of the marks findings, which are answered by one read of the
+subtree.
+
 **Flags** (`newDoctorCmd`): `--dir` (default `.`), `--plugin`, `--strict`,
 `--json`, **`--check-github-app`** — the last of which reads the App's private
 key out of Secret Manager and is therefore unreachable by the console by
@@ -541,11 +595,72 @@ plugin wiring, not the environment the console draws).
 **Command:** `internal/cli/accounts.go` `newAccountsLsCmd`, indented
 (`printAccounts`). **Document:** `accountsListDoc`:
 `repo` string, `accounts` `[]string`, `complete` bool,
-`note`° (why selection failed). **`complete: false` means the project config
+`note`° (why selection failed), `states`° and `state_note`°. **`complete: false` means the project config
 could not be selected — the screen renders `unavailable`, never "no
 accounts"** (the type's own doc comment is the authority). Flags: `--repo`
-(always passed explicitly), `--json`, plus the cloud flags. Local and offline:
-"never calls Secret Manager".
+(always passed explicitly), `--json`, plus the cloud flags. The **names** are
+local and offline — "never calls Secret Manager" — but **the state column is
+not**: when the selected project has a Firebase budget backend, the marks are
+read from that database as the person (ADC, an admin's read of `creds/marks`),
+which is what makes `states` a value rather than an assumption. **That read is
+bounded — five seconds for the whole of it, one attempt per call, no retry**
+(`accountsStateBudget`, CLI 0.10.0) — so a database that is unreachable rather
+than refusing (a laptop offline, a firewall that drops) costs the screen
+seconds, not the per-call timeout twice, and the command answers with the names
+and a `state_note` naming the bound. A project with no backend, by contrast,
+makes no call at all: it stays offline and answers with the names and a
+`state_note` of its own.
+
+**`states` (CLI 0.10.0, credentials-service C1.21)** is every listed account's
+credential state, keyed by account name, and it is **absent exactly when no
+mark could be read** — then `state_note` says why (no Firebase budget backend,
+a database that is down, a read the person's rules refused). The two are one
+answer: a reader must **not** render "every account is available" from an
+absent `states`, because that is a claim about marks this command did not read.
+Each value is `{"state": …}` plus `until`° — the state word
+`internal/creds` stores, spelled as it stores it (`available`, `exhausted`,
+`backed_off`, `broken`; a state a newer release wrote is passed through
+verbatim rather than rounded to `available`), and, for an exhaustion, the
+instant the hold lapses in RFC 3339. An account with no node, one whose node
+says `available` and one whose mark an operator cleared all carry `available`:
+they are the same credential (`creds.Mark`'s own doc). **Names and states only
+— never a token, a secret ID or a prefix of one (F27).**
+
+The text view of the same command is the plan's column — `available`,
+`exhausted until T`, `backed off`, `broken` — and falls back to one bare name
+per line when there is no state to show, which is the shape a console that
+passes `--json` never sees.
+
+### 6.5a `fugaro accounts clear NAME` — the operator's write
+
+**Command:** `internal/cli/accounts.go` `newAccountsClearCmd`. It is the one
+command in this document that **writes the budget database**, and it is the
+reason §9 rule 1's "never" list must stay exhaustive: the console does not
+spawn it. It writes exactly one node, `creds/marks/NAME`, with
+`creds.Cleared()`, acting as the person (ADC, an admin of the database), and
+the write is conditional (`creds.RTDBStore.UpdateMark` → `PutIfMatch`) so a
+mark the service changed at the same moment is re-read rather than
+overwritten: the callback clears the mark only while its state is still the one
+the confirmation named, so a `broken` mark the service recorded while the
+operator was reading the confirmation of an `exhausted` one is refused rather
+than cleared (both are clearable, but they are two different holds). Flags: `--yes` (skips the typed confirmation of the project's
+name), plus the cloud flags. It prints one line naming the account and the
+state it cleared, and **no value of any kind**. A `broken` or `exhausted` mark
+is clearable; a `backed_off` one is refused (a probe clears it, C1.12) and a
+state this Fugaro does not know is refused rather than overwritten. `NAME` must
+be `default`, a `claude_accounts` name of the selected local config, or a name
+the database already carries a mark for; a name with none of the three is
+refused, so a typo cannot leave a mark node behind. The third case is not an
+edge: `claude_accounts` is per-checkout and never published (the shared config
+strips it), while the marks belong to the project, so a mark can name an
+account this checkout does not list — and §6.4's `creds-broken` finding names
+exactly those marks, so its fix has to be runnable for every one of them. The
+config read is the **local** one, never the shared one. The command refuses no
+coding agent's session — it approves nothing and records no owner decision, and
+its neighbours are `fugaro budget set`/`kill`, not `fugaro allow-delete` and
+`fugaro managed flag` — but it does refuse `GODEBUG=http2debug` before it opens
+anything, like every command that opens the cloud.
+
 
 ### 6.6 `fugaro secrets ls --json`
 
@@ -612,23 +727,184 @@ and one entry of `installations`:
 | `region` | string | never | never | `""` when the config could not be read |
 | `shared_merged` | bool | never | never | whether this machine holds the installation's published shared config |
 | `shared_checked_at` | string | never | **yes** | RFC 3339 UTC; null exactly when `shared_merged` is false |
+| `checkouts` | array | **yes** (an older CLI) | never | the repositories of this project this machine remembers a checkout of, one entry per path; `[]` when none is remembered |
+
+and one entry of `installations[].checkouts`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `repository` | string | never | never | `<provider>/<owner>/<name>`, the identity the path was recorded under |
+| `path` | string | never | never | the absolute path, made printable and bounded (control and format characters escaped, at most 200 runes) |
+| `enrolled` | bool | never | never | whether the installation's project config enrolls `repository` in its own `repos:` map — **a local fact**, false when that config could not be read |
+| `valid` | bool | never | never | whether the path is still a checkout of this project and this repository **and that repository is enrolled**, as of this read |
+| `reason` | string | **yes** | never | why it is not, one of `missing`, `not_a_checkout`, `unreadable`, `other_project`, `other_repository`, `not_enrolled`, `not_representable`; **absent exactly when `valid` is true** |
+
+`enrolled` is reported separately from `valid` on purpose: it is the one part of
+the verdict that is a fact of a **local file** rather than of the directory the
+path names, it is the only part that is meaningful when the path itself is gone,
+and a reader that wants to explain "this project does not own this repository"
+must be able to say that without also claiming the directory is not a checkout.
+It is **not** a cloud fact: it is the operator's own `repos:` map in
+`projects/<name>.yaml`, read locally. The published allow-list is the cloud's
+copy of the same decision (project policy publish seeds it from this map) and is
+**not** read here — this command opens no bucket and needs no credentials.
+
+**`checkouts` is what makes the first run zero-configuration** (v1 design D13
+and §3.4 rule 7; console v2 plan V2.1.1): the installation list and the local
+checkouts of each installation arrive in one document, so the picker and the
+checkouts cannot disagree about which installation is which. The rows are
+**local state and nothing else** — the paths are never published to the runs
+bucket, never merged into the shared config, and never printed by any other
+command. They come from a machine-local state file
+(`$XDG_CONFIG_HOME/fugaro/state/checkouts.json`, in a directory of its own
+beside the project configs and not among them: the `state` directory is created
+0700 and the file 0600, and the operator's config home itself is never
+chmodded), written best effort by the commands that resolve a checkout's
+project and are **not** reads the console spawns — `fugaro validate`,
+`fugaro run`, `fugaro update --repo` and the rest — bounded to 20 repositories
+per project and 5 paths per repository, **and to 1000 rows across the whole
+document**. A repository the project config does not enroll is **not
+recorded at all**: an un-enrolled clone must not push a real repository out of
+the per-project bound, and a row for it could only ever be `not_enrolled`. The
+bounds are kept on the write and **applied again on this read**, because the
+state file is one this process did not write: a hand-edited one, or one written
+by a machine that has since cloned far more, is trimmed to the newest rows and
+the trimming is named in `warnings` rather than presented as the whole file. **The reads §5.1 allows never record,
+by the console's hand or the operator's**: `fugaro doctor` and
+`fugaro accounts ls` resolve a checkout too, but a read writes nothing, and
+the CLI cannot tell who spawned it, so the rule is by command path
+(`consoleReadPaths`, `internal/cli/project.go`). A checkout only ever used
+with `fugaro doctor` or `fugaro runs ls` is therefore never remembered, and
+the console's list is shorter than the machine's directories: it is what the
+write path has seen, not an inventory of the disk.
+
+**Every path is re-validated on this read, and the read never writes.** A path
+that has moved or been deleted, that is no longer a git checkout's own root,
+whose `fugaro.yaml` names another project, or whose origin is another
+repository is reported with `valid: false` and its `reason` — never dropped,
+because the write path is what prunes and a directory that comes back is a
+checkout again. A repository the project config does not enroll is
+`not_enrolled`; a path that had to be escaped or truncated for printing, or
+that is not absolute or does not carry a well-formed identity, is
+`not_representable` — **the printed string names a different directory than the
+stored one, so it must never be presented as a path that works**. A state file
+that cannot be read (not JSON, another version, over its size bound, not a
+regular file) is a warning naming it and `checkouts: []` for every
+installation — never a silent "there are none", and never a listing that fails.
+
+**One row carries one reason, and which one it is is fixed.** In order:
+
+1. `not_representable` — decided from the row's own strings, **before anything
+   touches the disk**: the path as printed is not the path as stored, the path
+   is not absolute, or the identity is not a provider and an `owner/name`. A
+   row that fails here is never examined further, so a relative path that
+   happens to exist under the reader's working directory is still
+   `not_representable` and not a valid checkout.
+2. `missing` — the path is not a directory that exists.
+3. `unreadable` — it is there, and its `fugaro.yaml` cannot be read.
+4. `not_a_checkout` — it is not a git checkout's own root.
+5. `other_project` — its `fugaro.yaml` names another project (or none).
+6. `other_repository` — its origin is another repository than the row's, or an
+   origin git config rewrites.
+7. `not_enrolled` — everything above holds and the project does not enroll the
+   repository.
+
+The order is part of the contract because the console renders the reason: a row
+is reported as the *first* thing wrong with it, and `not_enrolled` — the last
+of the seven — is therefore what a row gets when nothing else is.
+
+**What a reader may do with a row — one rule, and the whole rule.** A row
+carrying `valid: true` is a string from this document and the absolute path of
+a git checkout this machine has, of this project and this repository, which the
+project enrolls. The console may use such a path for exactly one thing: **as
+the working directory of a read-only CLI command from §5.1's exact-argv
+allow-list**, spawned with the path as a directory and nothing else. It may
+show it to the operator, and it may offer it as a pre-fill the operator
+confirms. It may **not** join, open, stat, copy, delete or execute anything at
+that path itself, may not pass the string as a flag or an argument to any other
+command, and may not treat it as a working directory for anything that writes.
+**A row with `valid: false` — whatever its `reason` — is never used for
+anything, not even as a working directory**: it is where a checkout was, or a
+path this document cannot spell, not where work can be done. This is §3.4 rule
+7, and it is what the two halves above mean together: the CLI re-validates
+because it, and not the app, is the thing allowed to look at the disk.
+
+**`<provider>` in `repository` is the one the origin's host gives, never the
+one the checkout's own `fugaro.yaml` claims.** A checkout is remembered and
+re-validated under the provider whose host its git origin is on (`github.com` →
+`github`, `bitbucket.org` → `bitbucket`), so a `fugaro.yaml` that says
+`bitbucket` over a `github.com` origin appears as `github/owner/name` — a
+copied config or a re-pointed checkout is not a `bitbucket/...` repository that
+no provider serves. **The file's `git.provider` is never used to name a row,
+not even for a host no provider lives on** — a GitHub Enterprise or
+self-hosted Bitbucket box — because that file is written by the checkout: a
+clone on an arbitrary host (`https://git.evil.example/acme/app.git`, with
+`git.provider: github` and `project: aurora` in its `fugaro.yaml`) would
+otherwise be recorded, and re-validated, as the enrolled `github/acme/app`,
+handing the console a valid path for a repository it does not own. **A host no
+provider lives on is therefore recorded as nothing at all**, and a row an older
+fugaro left for one is reported `other_repository` rather than valid. This is the rule a repository is *known* by (a provider
+knows a repository only when that provider's host is its origin's host), and it
+is what makes the pair safe to build a provider-host link from (design §5.1
+rule 2): a link built from the file's claim would point at the wrong host, on a
+name the operator does not own. The run path holds the two sources to agreement
+and fails the run when they disagree (`docs/git-providers.md`); a checkout is
+remembered best effort, where the origin is the source that decides.
+
+**The rows are strings off this machine's disk**, so every one of them is
+escaped and bounded like the rest of this contract: a repository identity or a
+path carrying a control character, a bidi override or 400 bytes of padding
+arrives escaped and marked. **Such a row is `not_representable` and `valid:
+false`**: the escaping and the truncation are for printing, and the string that
+prints is not the string the checkpoint was recorded at, so it names a
+different directory than the one on disk. A reader renders every row as text
+and nothing else; what it may *use* is the single rule above, and it applies to
+`valid: true` rows only (§3.4 rule 7).
 
 **An installation whose config cannot be read is still listed, by name, with a
 warning** — a picker that offered a name and then failed silently is worse than
-one that says what it could not read.
+one that says what it could not read. **Its `checkouts` are listed anyway, and
+every one of them is `enrolled: false` and `valid: false`** — enrolment is a
+fact of that very file, and a file that cannot be read enrolls nothing — **but
+the `reason` is the row's own, not `not_enrolled`**: the reason is the first
+thing the read finds wrong with the row, in the fixed order above, so a path
+that is gone is `missing` and a row whose path is sound is `not_enrolled`. The
+two fields answer two questions,
+and a reader that wants "this project does not own this repository" reads
+`enrolled: false` — which is true of every row here — rather than the reason.
+Which directory holds this project's checkout is a fact of this machine, not of
+the file that could not be parsed, so the row — the repository and the path —
+is still there to show the operator. The reader fails closed: no row of such an
+installation may be used for anything.
+
+**Two writers racing lose one of the two updates.** The state file is written
+by a load-modify-write that is not locked, under a rename: a reader therefore
+never sees half a file — the file is whole or it is the previous one — but a
+pair of concurrent writes can lose one of them. Nothing is corrupted and
+nothing is corrupted by it: the loser's checkout is recorded again the next
+time a command runs in it. This is why the field is a convenience for the first
+run and not an inventory: **a reader must not treat a missing row as "this
+machine does not have that checkout"**.
 
 **The document is a named set of fields and it is deliberately not a marshalled
 `localcfg.Config`.** That struct carries the operator's providers and their base
 URLs, the named Claude accounts, the reserved project secrets, the Terraform
 block and the whole repository list — none of which the picker needs, and all of
 which would join this document the day a field is added to the struct. A test
-fails if a field outside the five above reaches the output, and if either type
+fails if a field outside the six above reaches the output, and if either type
 ever becomes (or embeds) `localcfg.Config`.
 
 **Version skew.** The command is new, so an older CLI does not have it at all:
 the spawn fails and the console shows its "this CLI cannot list installations"
 state, which is the form D13 accepted for v1. The handshake (§6.7) is what tells
-the console which case it is in.
+the console which case it is in. **`checkouts` is newer than the command**: a
+CLI that lists installations and emits no `checkouts` key at all is a CLI that
+does not know about checkouts, and the console shows the installation without
+them (its checkout directory stays whatever the operator stored in D13's
+form) — an empty array means this CLI knows, and this machine remembers none.
+The two are not the same state and the reader must not conflate them. There is
+no version field to bump: this document is read whole, and the key's absence is
+the signal.
 
 ### 6.9 `fugaro plan graph --json`
 
@@ -771,8 +1047,8 @@ behind **both** `rows` and `totals`; the counts are an embedded `Counts`
 | `succeeded`, `failed`, `halted`, `infra_error` | int | no | the four settled statuses, spelled as `result.json` spells them |
 | `other` | int | no | a record that settled as none of the four: still running, or cancelled |
 | `no_record` | int | no | **no usable `result.json`**: not finalised yet, or the object cannot be read. Its status and its money are unknown — never a measured `0` |
-| `counted_usd` | float64 | no | the group's **model** dollars that count toward the caps (`model_basis` `api-list`/vertex). Compute is attributed to nobody, here or in the budget database's own person view |
-| `notional_usd` | float64 | no | the group's model dollars on a **subscription** (`agent.auth oauth`): **notional**, counted toward no cap and nobody's bill. Kept apart from `counted_usd` by construction and never summed with it |
+| `counted_usd` | float64 | no | the group's **model** dollars that count toward the caps: the money part of a run's model figure, `model_usd` minus `model_notional_usd` (C1.16/P12 — **not** a reading of `model_basis`, which the CLI's own `runs stats` help spells out). Compute is attributed to nobody, here or in the budget database's own person view |
+| `notional_usd` | float64 | no | the part of the group's model figure a **subscription** paid: the whole figure of a run on `agent.auth oauth`, and the tier-A dollars of a cascade run, whose basis is `api-list` like any api-key run's. **Notional** — counted toward no cap and nobody's bill, kept apart from `counted_usd` by construction and never summed with it. The basis is the fallback for a record written before the breakdown existed |
 | `counted_runs` | int | no | the sample `avg_counted_usd` is over: the runs whose record settled a real-dollar cost. Published because an average without its sample is a figure a reader cannot weigh |
 | `avg_counted_usd` | float64 | no | `counted_usd / counted_runs`, rounded to the cent; `0` with `counted_runs` `0`, which is *unavailable* ("no run to average"), not `$0.00 a run` |
 
@@ -799,8 +1075,10 @@ the closing here.
 | 6 | **No PR field on a run that has not finished** | `JSONRun` carries `repo` and no `pr_url`/`pr_number`; they exist only on `JSONFinished`; `runview.Row` spells the pair `pr_url` + `pr` | A live row shows no link; the detail screen takes it from `diagnose RUN --json`'s `row` |
 | 7 | **No provider a console can build a link from** | `runview.Row` and `diagnose`'s row carry no provider, and `doctor --json`'s `doctorOutput` reports none. `JSONRun` and `JSONFinished` now do carry `provider` (phase 3, Task 3.5), and it is the right answer for the runs that have one — a shared project job's profile pins the provider its runs clone from — but it is **absent on every per-repository job**, which in phase 3 is every Bitbucket repository and every baked workflow. The kinds are `github`/`bitbucket`/`fake` (`internal/task/task.go`'s `Slug`, which hashes provider and repository together **one way**, so a slug cannot be inverted) | **No PR link at all** (design §5.1 rule 2): repository, number and `pr_url` shown as text, never handed to `openExternal`. A GitHub-shaped guess is wrong for `edgeappinc/fugarosandbox`, which is Bitbucket — and that run is exactly one of the runs whose `provider` is absent |
 
-**And no shape anywhere has a `repository` field** — the repository is `repo`
-on every one of them. **`watch --json`'s run and finished rows carry a
+**And no shape that describes a run has a `repository` field** — the repository
+is `repo` on every one of them. (§6.8's `checkouts` rows are the one place this
+contract spells the word: there it names a repository identity, not a run's
+repository, and nothing builds a link from it.) **`watch --json`'s run and finished rows carry a
 `provider`; nothing else does, and it is the job profile's, not a stamp for
 every repository.** So a link rebuilt as `https://github.com/<repo>/pull/<n>`
 is still not merely useless but wrong (design §5.1 rule 2), and **gap 7 stays
@@ -846,9 +1124,11 @@ table against the live constructors.
 ## 9. What the console may do with all this
 
 1. **Every document in the console's set is read-only**, and the allow-list is
-   by exact argv (design §5.1 rule 6). The one command this file describes that
-   is a write is `fugaro cancel RUN --json` (§6.3), which is on the design's
-   "never" table and which no v1 console spawns; nothing else here names a
+   by exact argv (design §5.1 rule 6). Two commands this file describes are
+   writes, and neither is in the console's set: `fugaro cancel RUN --json`
+   (§6.3), which is on the design's "never" table and which no v1 console
+   spawns, and `fugaro accounts clear NAME` (§6.5a, credentials-service C1.21),
+   the operator's own write to the cascade's state. Nothing else here names a
    write.
 2. **Exactly two of the commands in the console's set are line-delimited:
    `watch --json` and `logs RUN

@@ -197,6 +197,28 @@ type GitAuth struct {
 	Env      map[string]string // extra agent variables, such as GH_TOKEN
 }
 
+// TokenSource is where a provider's installation tokens come from (C2.2):
+// one token scoped to the run's repository, valid for at least minValid, and
+// its expiry. The GitHub adapter's own mint with the App key is one, and the
+// installation's credentials service is the other (github.ServiceTokens).
+type TokenSource interface {
+	Token(ctx context.Context, minValid time.Duration) (string, time.Time, error)
+}
+
+// ServiceTokenSetter is implemented by a provider whose installation tokens
+// can be taken from the installation's credentials service instead of a
+// credential of the job's own (C2.2, D145): UseServiceTokens installs the
+// source every token then comes from. The runner installs one on every
+// provider of a run whose installation has the service on, because the
+// identities a mint carries are the run's -- the job's Google ID token and
+// the run's own Firebase one -- and not anything a git adapter holds; a
+// provider that does not implement this (Bitbucket's, whose repository access
+// token no service can mint per job, D145/F7) is left exactly as it was, and
+// so is the file-backed test provider.
+type ServiceTokenSetter interface {
+	UseServiceTokens(TokenSource)
+}
+
 // Provider is what the runner needs from the git host.
 type Provider interface {
 	// EnsurePR creates the pull request for spec.Branch or, if one already
@@ -244,8 +266,10 @@ type Provider interface {
 	// reviews and drafts) and reviews with no body are left out.
 	//
 	// Self and SelfKnown say whether a comment was posted as the identity
-	// Fugaro uses, which the adapter looks up (GitHub: the App, GET /app;
-	// Bitbucket: the token's user, GET /user). A lookup the provider
+	// Fugaro uses, which the adapter looks up (GitHub: the App, GET /app
+	// with its JWT when the job holds the App's key, and GET /user with the
+	// run's installation token when the credentials service holds it —
+	// C2.2; Bitbucket: the token's user, GET /user). A lookup the provider
 	// answers definitely (a 4xx other than 408 and 429) leaves SelfKnown
 	// false on every comment, and the answer is kept. A passing failure (a
 	// network error, a 408, 429 or 5xx, a cancelled context) is not kept:

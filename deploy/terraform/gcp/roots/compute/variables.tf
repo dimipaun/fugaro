@@ -13,6 +13,16 @@ variable "region" {
   type = string
 }
 
+# Where the module's Cloud Scheduler jobs live, which is not var.region
+# whenever Cloud Scheduler does not serve that region: us-east5, the
+# documented installation, is one it does not, and a Scheduler job created
+# there fails the apply. fugaro update resolves it (the installation's
+# scheduler_region, or internal/backend/gcp's SchedulerRegion) and writes it
+# here; the module's variables.tf has the whole of why.
+variable "scheduler_region" {
+  type = string
+}
+
 variable "network" {
   type = string
 }
@@ -89,4 +99,9 @@ variable "builder_machine_type" {
 
 variable "build_submitter_role" {
   type = string
+}
+
+variable "reaper_refuse_projects" {
+  type    = list(string)
+  default = []
 }

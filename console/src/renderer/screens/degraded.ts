@@ -119,9 +119,10 @@ export interface DegradedRunRow {
   readonly modelUsd: Reading
   readonly computeUsd: Reading
   readonly totalUsd: Reading
-  /** `model_basis` is `subscription`: the row's model dollars are a
-   * subscription's list-price figure, never billed (`runstore.BasisSubscription`),
-   * and the row is marked so that a reader cannot add it to a billed one. */
+  /** the row's model figure has a subscription's list price in it, wholly or
+   * partly (`model_notional_usd`, C1.16/P12; the basis is the fallback for a
+   * row written before the key): the figure drawn is the **billed** part, and
+   * the row is marked so that a reader never counts the plan's part as billed. */
   readonly notionalModel: boolean
 }
 
@@ -182,22 +183,51 @@ function computeOf(cost: CostView): Reading {
   return cost.computeUsd
 }
 
-/** costReadings is one row's three dollar accounts. A subscription row's model
- * figure is notional -- the one state this screen sets for itself, because
- * `runstore.Cost` has no notional split on a row and `model_basis` is what says
- * the figure was never billed. */
+/** modelReading is this screen's model figure: the row's model dollars as
+ * **money** (C1.16, P12/D140). `model_usd` is the whole model figure -- the
+ * money and the subscription's list price together -- and `model_notional_usd`
+ * is the part of it the plan paid, so the billed dollars are the difference.
+ * The basis alone cannot make that split: a mixed cascade run's basis is
+ * `api-list` for the whole run while part of its figure is the plan's, which is
+ * what this screen used to draw as billed money.
+ *
+ * A row written before C1.16 carries no `model_notional_usd`, and then the
+ * subscription basis is the fallback: such a row's whole figure is the plan's.
+ * The state follows the figure: the money part when the row has one, and
+ * otherwise the notional figure marked notional. */
+function modelReading(cost: CostView): Reading {
+  const model = cost.modelUsd
+  if (model.value === null) return model
+  const plan = cost.modelNotionalUsd.value ?? (cost.modelBasis === 'subscription' ? model.value : 0)
+  const money = Math.max(0, model.value - plan)
+  if (money > 0) return { ...model, value: money }
+  if (plan > 0 || cost.modelBasis === 'subscription') return { ...model, value: plan, state: 'notional' }
+  return model
+}
+
+/** notionalPartOf says whether the row's model figure has the plan's list price
+ * in it at all -- wholly or, for a cascade run's mixed stage, partly. A reader
+ * marking rows so that a notional figure never lands in a billed sum asks this,
+ * not the basis: a mixed run's basis is `api-list` (`runstore.BasisAPIList`)
+ * while part of its figure is the subscription's. */
+function notionalPartOf(cost: CostView): boolean {
+  if (cost.modelNotionalUsd.value !== null) return cost.modelNotionalUsd.value > 0
+  return cost.modelBasis === 'subscription'
+}
+
+/** costReadings is one row's three dollar accounts, and whether the model
+ * figure it draws has a notional part (see `modelReading`, `notionalPartOf`). */
 function costOf(cost: CostView): {
   readonly modelUsd: Reading
   readonly computeUsd: Reading
   readonly totalUsd: Reading
   readonly notionalModel: boolean
 } {
-  const subscription = cost.modelBasis === 'subscription'
   return {
-    modelUsd: subscription ? notionalReading(cost.modelUsd) : cost.modelUsd,
+    modelUsd: modelReading(cost),
     computeUsd: computeOf(cost),
     totalUsd: cost.totalUsd,
-    notionalModel: subscription,
+    notionalModel: notionalPartOf(cost),
   }
 }
 

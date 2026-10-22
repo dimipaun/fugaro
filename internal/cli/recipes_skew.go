@@ -128,47 +128,61 @@ const catalogSince = "0.7.5"
 // docs/release.md's checklist line for catalogSince in that commit too.
 const catalogShipped = false
 
-// managedDeployerShipped is false until the release that ships a managed
-// deployer IAM can actually create: 0.9.6, by the owner's ruling of
-// 2026-10-20, which moved the redesign off 0.9.5 (the ruling of 2026-10-19 had
-// moved it off 0.9.0, where the ruling of 2026-10-18 put it: "Gate it off by
-// default; redesign for 0.9.0"). 0.9.0 and 0.9.5 therefore ship with the
-// scoped role still gated off, as 0.8.6 and 0.8.7 do. The deployer's
-// scoped role is bound under an fmgd- prefix condition that GCP rejects as
-// written (17 logical operators where IAM allows 12, resource.name.contains()
-// is not a supported function, and resource.name is not supported for most of
-// the resource types it names), so the installation module creates that role
-// and its binding only with managed_deployer_scoped, which nothing sets
-// (deploy/terraform/gcp/modules/installation/deployer.tf). While it is false,
-// every command that would create a managed project or act as its deployer
-// (fugaro setup --create-project --managed, fugaro managed apply and fugaro
-// restore) refuses with managedDisabled before any cloud call, rather than
-// failing later at the apply or the impersonation.
+// managedDeployerShipped is true as of 0.10.0, the release the owner's ruling
+// of 2026-10-22 ships the managed deployer in: managed projects ship enabled.
+// Until then it was false, because the deployer's scoped half could not be
+// created — first as the 0.8.6 shape GCP rejected as written (one role, 17
+// logical operators where IAM allows 12, resource.name.contains(), which is
+// not a supported function, and resource.name on resource types that do not
+// support it), and then because the redesign that replaced it had not been
+// measured live. 0.8.6, 0.8.7, 0.9.0 and 0.9.5 shipped with the scoped half
+// gated off; the ruling of 2026-10-18 ("Gate it off by default; redesign for
+// 0.9.0") is why it was ever closed, and the rulings of 2026-10-19 and
+// 2026-10-20 moved the redesign off 0.9.0 and off 0.9.5 (the latter placing it
+// in 0.9.6 and then renumbering that release to 0.10.0 — one placement under
+// two numbers, not two placements; cascadeSince's comment in this file and
+// docs/release.md's bullet for it record the same renumbering, and 0.9.5 is
+// the last release tagged, so no 0.9.6 was ever cut).
 //
-// Flip it to true only in the release whose deployer fence has been
-// redesigned and measured live, and in that same change set
-// infra.InstallOptions.ManagedDeployerScoped for the installations that opt
-// in; docs/release.md's "Before you tag" checklist verifies it.
-const managedDeployerShipped = false
-
-// managedDeployerOpen is managedDeployerShipped. It is a variable only so the
-// tests of the managed paths themselves can run them with the gate open
-// (TestMain opens it); the refusal tests reset it to the constant, and no
-// production code assigns it.
-var managedDeployerOpen = managedDeployerShipped
-
-// managedDisabled is the one refusal every managed entry point gives while
-// managedDeployerShipped is false.
-const managedDisabled = "managed projects are disabled in this release: the managed deployer's scoped role and its binding are not created yet (docs/design/managed-projects.md); a project created without --managed is unaffected"
-
-// refuseManagedNotShipped is managedDisabled as an error, nil once the
-// managed deployer ships.
-func refuseManagedNotShipped() error {
-	if managedDeployerOpen {
-		return nil
-	}
-	return userErr("%s", managedDisabled)
-}
+// WHAT THE FLIP DOES NOT SETTLE, and what a reader of this constant must not
+// take it as: the fence has not been measured. The deployer's scoped half is
+// seven per-service custom roles, each bound exactly once under its own
+// condition (deploy/terraform/gcp/modules/installation/deployer.tf,
+// docs/design/managed-deployer-fence.md), and no test can ask Google whether
+// IAM accepts those seven bindings or honours resource.name per type — that is
+// what Check 68 (docs/gcp-live-checklist.md) measures, and it is owner-run
+// AFTER this release, by the same ruling. So 0.10.0 ships a fence it cannot
+// yet prove: if IAM rejects a binding, the installation apply that creates it
+// fails partway through; if IAM accepts one and does not honour resource.name,
+// that role grants nothing (fail-closed, and no fence). The caveat is stated
+// in the release note's "Known limits" and in docs/release.md's bullet for
+// this constant, and Check 68's pass is what settles it.
+//
+// The installation module creates those roles and their bindings only with
+// managed_deployer_scoped, and an installation that uses managed projects sets
+// it: installRoot reads the project's creation fact — the same read init's
+// guard refusal makes, and the one that survives a run that did not create the
+// project — and writes the module's variable from it
+// (infra.InstallOptions.ManagedDeployerScoped). So a run that creates a
+// managed project (--create-project --managed) writes the scoped half, and
+// every later run that reaches installRoot — `fugaro setup` and `fugaro
+// update`, the two doors that plan and apply the installation root — writes it
+// again from the same fact, so the variable cannot be dropped by a later run
+// against the project. An installation that never asked for managed writes the
+// same tfvars as before the variable existed.
+//
+// The owner's `fugaro managed flag` is deliberately not in that list: it
+// writes the fact itself (the marker object and the project label) and applies
+// no Terraform, so a project flagged after its installation was stood up gets
+// the fence at the next `fugaro setup` or `fugaro update` of that
+// installation, not in the flagging run.
+//
+// There is deliberately no managedDeployerOpen, no managedDisabled and no
+// refuseManagedNotShipped beside it: an open gate nothing closes and a refusal
+// nothing can reach are names a later reader re-opens, which is exactly what
+// the pair existed to prevent (batchProvisionShipped below went the same way in
+// 0.9.5).
+const managedDeployerShipped = true
 
 // batchProvisionShipped is true as of 0.9.5, the release that fixed the
 // compute module the stage behind it applies. Until then it was false because
@@ -183,8 +197,9 @@ func refuseManagedNotShipped() error {
 // There is deliberately no batchProvisionOpen, no batchProvisionDisabled and
 // no refuseBatchProvisionNotShipped beside it: an open gate nothing closes and
 // a refusal nothing can reach are names a later reader re-opens, which is
-// exactly what the pair existed to prevent. The managed gate above keeps its
-// pair because it is still closed.
+// exactly what the pair existed to prevent. The managed gate above kept its
+// pair until 0.10.0, and 0.10.0 took it the same way: both gates are open now,
+// and neither has a refusal left to name.
 const batchProvisionShipped = true
 
 // artifactsSince is the first fugaro release whose runner implements a
@@ -283,6 +298,42 @@ var sealRunnerIntroduced = time.Date(2026, 10, 17, 17, 45, 33, 0, time.UTC)
 // (artifactsSince); a launch with no --title writes no such field and is
 // never gated.
 const titlesSince = "0.8.5"
+
+// cascadeSince is the first fugaro release whose config reader accepts
+// fugaro.yaml's agent.auth: cascade (docs/credentials-service, D133): before
+// it the value is not one of config.AgentAuths, so a job built from an older
+// base image refuses the file at bootstrap ("agent.auth: must be one of
+// vertex, api-key, oauth") and the run dies before the agent starts.
+//
+// The judge is the installation's base image — the ref a job of the
+// repository is built from (lc.BaseImage, config.BaseKind) — because that is
+// where the reader lives: unlike the recipe and artifact gates there is no
+// per-workflow build record for a checkout: clone or a derived image that
+// could answer differently, and this value is read by the same config reader
+// either way (refuseCascadeSkew). docs/release.md ("Before you tag") has the
+// checklist verify it equals the release that ships the value.
+//
+// It names 0.10.0, which is not tagged yet, and that is the ruling rather than
+// a slip: the owner's ruling of 2026-10-20 places the whole credentials
+// service — this value included — in the next release, which is 0.10.0 (the
+// line named 0.9.6 while the release was expected to ship as 0.9.6, and the
+// owner renumbered it), so 0.10.0 is the release this value ships in and the
+// one whose config reader accepts it. An installation whose base image is
+// 0.9.5 or older is therefore refused, which is right: that
+// runner's config.Validate does not know the value, so a cascade repository
+// deployed against it would die at bootstrap, and `fugaro update --base base`
+// — run by a binary of the release that carries the value — is the fix that
+// clears the refusal. No `cascadeShipped`-style boolean belongs beside this
+// constant, the shape catalogSince has: that one gates a value read by a
+// release *later* than the binary that writes it, so no base image of any age
+// could read it and the age check would be vacuous, while here the reader is
+// this release's own config reader and the age check is the whole rule.
+//
+// TestCascadeSinceIsTheReleaseTheDocsAndSchemasName holds it to the number
+// docs/release.md's bullet and the two schemas' agent.auth descriptions state,
+// and TestCascadeSinceIsTheReleaseTheCredentialsServiceShipsIn holds it to the
+// release the service ships in, so the constant cannot move without them.
+const cascadeSince = "0.10.0"
 
 // needsRecipeImage reports whether a launch needs a runner that knows
 // recipes: the task carries one, or the checkout's fugaro.yaml sets
@@ -543,6 +594,63 @@ func switchProviders(providers map[string]config.ModelProvider, repo string) []s
 		}
 	}
 	return names
+}
+
+// refuseCascadeSkew refuses fugaro update --repo, before any cloud effect, when
+// the cascade is in effect and the installation's base image predates the
+// release whose config reader accepts the value: the job would be deployed,
+// then die at bootstrap on a file the image refuses.
+//
+// auth is the resolved agent.auth, src the layer it came from
+// (config.Resolution.SourceOf("agent.auth"), which is what the subject names:
+// see cascadeSubject), and ref is the installation's base image
+// (lc.BaseImage(config.BaseKind)); anything but cascade passes — this is the
+// one auth the value is new for, and every other one is read by every release.
+// A ref that is not a release base image is only warned about (nothing can
+// tell what such a runner knows), and no base image at all passes, since the
+// job is then built from this release's own image, which reads it — both the
+// reading checkCloneImageSince gives the same states.
+func refuseCascadeSkew(repo, auth, src, ref string, warn io.Writer) error {
+	if auth != config.AuthCascade {
+		return nil
+	}
+	subject := cascadeSubject(repo, src)
+	switch rel, ok := releaseOf(ref); {
+	case ref == "":
+		return nil
+	case !ok:
+		fmt.Fprintf(warn, "warning: %s cannot be judged: the installation's base image is %s, which is not a release base image, so whether its runner reads the value is not checked\n",
+			subject, pluginwire.Printable(ref))
+	case imagePredates(rel, cascadeSince):
+		return userErr("%s needs a job image whose runner reads it (fugaro %s or later), but the installation's base image is %s, release %s: an older runner refuses the file at bootstrap, because %s is not one of the agent.auth values it knows. Run fugaro update --base base in your own terminal window to move the installation's base image to a current release, or run this repository with agent.auth: api-key",
+			subject, cascadeSince, pluginwire.Printable(ref), rel, config.AuthCascade)
+	}
+	return nil
+}
+
+// cascadeSubject names, for the two messages above, what put the cascade in
+// effect: the repository's own fugaro.yaml, or the project layer's defaults.
+// The resolved value is not proof that the file asked for it — agent.auth
+// resolves like every other key, the repository's value else the workflow's
+// profile's else the layer's defaults (config.Resolve) — so a subject that
+// always said "fugaro.yaml's" would tell the operator of a layered
+// installation to edit a line their file does not have, and the fix differs:
+// the layer's default is what has to change, or an agent.auth line the
+// repository adds, which wins over it. The same care annotate() takes with a
+// problem's path and doctor's oauth-token-allowed check takes with the auth
+// it names.
+//
+// src is Resolution.SourceOf("agent.auth"). A source this cannot name is
+// named rather than guessed at, so a value that reaches the config some new
+// way is still never attributed to a file that does not carry it.
+func cascadeSubject(repo, src string) string {
+	switch src {
+	case config.SourceRepo:
+		return "fugaro.yaml's agent.auth: " + config.AuthCascade + " of " + repo
+	case config.SourceProject:
+		return "the project layer's defaults.agent.auth: " + config.AuthCascade + " of " + repo
+	}
+	return repo + "'s agent.auth: " + config.AuthCascade + " (set by " + pluginwire.Printable(src) + ")"
 }
 
 // refuseCatalogSwitches refuses fugaro update --repo, before any cloud effect,

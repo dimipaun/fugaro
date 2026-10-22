@@ -452,7 +452,8 @@ type Batch struct {
 	// here too.
 	Image string `yaml:"image,omitempty"`
 	// MachineType is the Compute Engine machine type a run's VM is. Empty
-	// means the backend's own default (e2-standard-4); it must be one the
+	// means the backend's own default (e2-standard-8, the smallest type whose
+	// task share carries the config's default 4 CPU/8Gi); it must be one the
 	// price table carries, which the backend checks.
 	MachineType string `yaml:"machine_type,omitempty"`
 	// BootImage is the preloaded boot image a run's VM boots, as the family
@@ -493,6 +494,15 @@ type Batch struct {
 	// who wants the jobs bounded more tightly writes it here. The workflow's
 	// own timeouts.total is where this value comes from once the enable task
 	// reads it per workflow (internal/cli's batchTimeouts).
+	//
+	// It is also REFUSED above that ceiling (validateBatch): the reaper's
+	// deadline is max(the longest configured timeout, backend.MaxRunTime), and
+	// the reaper that runs from its own Cloud Run job's environment has no
+	// project config to read the first of those from, so it derives the base
+	// from the ceiling alone (internal/cli/reaper.go). A configured timeout
+	// above the ceiling makes the two disagree, in the one direction that ends
+	// a live run: the sweeper's bound would be shorter than the config's, and
+	// a job that is legitimately running would read as stuck.
 	TaskTimeout config.Duration `yaml:"task_timeout,omitempty"`
 }
 
@@ -547,6 +557,17 @@ func validateBatch(bad func(string, ...any), c *Config) {
 		// omitted key means.
 		bad("batch.task_timeout %v: it must be more than 0, or left out for the default (%v)", b.TaskTimeout.Duration, backend.MaxRunTime)
 	}
+	if b.TaskTimeout.Set && b.TaskTimeout.Duration > backend.MaxRunTime {
+		// The ceiling, and this refusal is the reaper's requirement rather
+		// than a cap for its own sake: no run may be given more than
+		// backend.MaxRunTime (--total-timeout is capped there), so a job sized
+		// past it is headroom no run can use -- while the reaper that runs
+		// from its own Cloud Run job's environment has no config to read this
+		// number from and derives its base from the ceiling
+		// (internal/cli/reaper.go). The two sources would disagree about when
+		// a live run has ended, and that disagreement deletes a running job.
+		bad("batch.task_timeout %v is longer than %v, the longest a run may be given (--total-timeout is capped there): a job sized past it is headroom no run can use, and the reaper of an installation whose config it cannot read derives its own bound from that ceiling, so the two would disagree about when a live run has ended", b.TaskTimeout.Duration, backend.MaxRunTime)
+	}
 	// Each entry is named by its position in the sorted map, and never by its
 	// key: neither side of the map is printed, because **either** side can hold
 	// a secret's value. The value slot is the one a value is usually written
@@ -591,6 +612,15 @@ type Endpoints struct {
 	// Engine root is not a CLI client's endpoint, it is the reaper job's
 	// (internal/backend/batch/reap.go's Endpoints).
 	Batch string `yaml:"batch,omitempty"`
+	// Compute is the Compute Engine API root, read by `fugaro doctor`'s
+	// checks for an installation that carries a batch block (the preload
+	// image family, and the network and subnetwork a run's VMs are placed
+	// in: design compute-backend.md §4.4). Empty is the real endpoint, as
+	// for every other field here. It is not the reaper's root: the reaper
+	// runs as its own job with its own env (internal/backend/batch's
+	// Endpoints), and this one is a client the operator's own doctor run
+	// reads with.
+	Compute string `yaml:"compute,omitempty"`
 	// The APIs only fugaro update calls: bucket and IAM policy reads and
 	// writes, service accounts, registries, the project's number, and the
 	// enable of Cloud Resource Manager.
@@ -1119,6 +1149,12 @@ func (c *Config) validate() error {
 		// Every sibling is refused here for that reason, and this one is no
 		// different.
 		{"batch", c.Endpoints.Batch},
+		// The Compute Engine root `fugaro doctor` reads a Batch
+		// installation's own facts through (the preload image family, the
+		// network, the subnetwork). Same kind of value as `batch` above and
+		// refused for the same reason: doctor attaches the operator's ADC to
+		// it.
+		{"compute", c.Endpoints.Compute},
 	} {
 		if ep.url == "" {
 			continue

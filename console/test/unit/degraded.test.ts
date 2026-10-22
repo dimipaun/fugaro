@@ -45,7 +45,7 @@ import { githubToken } from '../support/fakeSecrets'
 import { ESTIMATED_MARK, UNAVAILABLE_MARK, estimated, formatReading, measured, unavailable } from '../../src/shared/availability'
 import { sanitizeRefusal, sanitizeText, TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
 import { decodeDocument } from '../../src/shared/schema'
-import type { DegradedDocument, LiveDocument } from '../../src/shared/schema'
+import type { CostView, DegradedDocument, LiveDocument } from '../../src/shared/schema'
 import { LIVE_BURN_MAX_SAMPLES, LIVE_STALE_AFTER_SECONDS, BurnHistory, buildLiveModel, renderLive } from '../../src/renderer/screens/live'
 import type { FeedHealth, LiveTheme, ScreenElement, ScreenFactory } from '../../src/renderer/screens/live'
 import {
@@ -56,7 +56,7 @@ import {
   renderNoFirebase,
   renderUnavailable,
 } from '../../src/renderer/screens/degraded'
-import type { NoBinaryState, RefusedState } from '../../src/renderer/screens/degraded'
+import type { DegradedRunRow, NoBinaryState, RefusedState } from '../../src/renderer/screens/degraded'
 
 const consoleDir = join(__dirname, '..', '..')
 const fixturePath = join(consoleDir, 'test', 'fixtures', 'degraded.ndjson')
@@ -319,6 +319,56 @@ describe('the no-Firebase screen', () => {
     const notionalRows = walk(tree).filter((node) => node.getAttribute('data-notional-model') === 'true')
     expect(notionalRows).toHaveLength(1)
     expect(notionalRows[0]?.getAttribute('data-notional-model')).toBe('true')
+  })
+
+  it('splits a run\'s model figure on `model_notional_usd`, never on the basis', () => {
+    // C1.16 (P12/D140): `model_usd` is the **whole** model figure and
+    // `model_notional_usd` the part of it the subscription paid, so the billed
+    // dollars are the difference. A mixed cascade run's `model_basis` is
+    // `api-list` for the whole run, and this screen read the whole figure as
+    // money -- while the notional split only existed on a sum, which is what the
+    // comment here used to say. The key is what says it now, and the basis is
+    // the fallback for a row written before it.
+    const document = theDegradedDocument()
+    const template = document.runs[0]
+    if (template === undefined) throw new Error('the fixture has no runs')
+    const missing = unavailable('cost.model_notional_usd')
+    const withCost = (cost: Partial<CostView>): DegradedDocument => ({
+      ...document,
+      runs: [
+        {
+          ...template,
+          cost: {
+            modelUsd: measured(3.2),
+            modelNotionalUsd: missing,
+            computeUsd: measured(0.5),
+            computeEstimated: true,
+            totalUsd: measured(1.7),
+            modelBasis: 'api-list',
+            ...cost,
+          },
+        },
+      ],
+    })
+    const row = (cost: Partial<CostView>): DegradedRunRow | undefined => buildNoFirebaseModel(withCost(cost)).runs[0]
+    // Mixed: the ledger draws the billed part, and the row is still marked as
+    // one that carries the plan's list price.
+    const mixed = row({ modelNotionalUsd: measured(2) })
+    expect(mixed?.modelUsd.value).toBeCloseTo(1.2)
+    expect(mixed?.modelUsd.state).toBe('measured')
+    expect(mixed?.notionalModel).toBe(true)
+    // All notional: the plan's figure, marked notional -- with the key (C1.16)
+    // and without it (a row written before the split, which the basis decides).
+    expect(row({ modelNotionalUsd: measured(3.2) })?.modelUsd.state).toBe('notional')
+    const before = row({ modelBasis: 'subscription' })
+    expect(before?.modelUsd.value).toBeCloseTo(3.2)
+    expect(before?.modelUsd.state).toBe('notional')
+    expect(before?.notionalModel).toBe(true)
+    // All billed: no notional part at all.
+    const billed = row({})
+    expect(billed?.modelUsd.value).toBeCloseTo(3.2)
+    expect(billed?.modelUsd.state).toBe('measured')
+    expect(billed?.notionalModel).toBe(false)
   })
 
   it('does not price a run whose compute was not estimated at zero', () => {

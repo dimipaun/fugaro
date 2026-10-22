@@ -100,11 +100,11 @@ func states(r *Result) map[string]State {
 
 func TestStageOrderMatchesDependencies(t *testing.T) {
 	names := Names()
-	// Ten stages of the installation's own plus the compute backend's
-	// provisioning, which the design puts last (compute-backend §8.1
-	// task 6).
-	if len(names) != 11 {
-		t.Fatalf("the design has eleven stages, got %v", names)
+	// Ten stages of the installation's own plus the credentials service's
+	// owner-run apply (C1.20) and the compute backend's provisioning, which
+	// the design puts last (compute-backend §8.1 task 6).
+	if len(names) != 12 {
+		t.Fatalf("the design has twelve stages, got %v", names)
 	}
 	pos := map[string]int{}
 	for i, n := range names {
@@ -119,7 +119,7 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 		}
 	}
 	// The order the dogfooding run found by hand.
-	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Repository, Compute}
+	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Credentials, Repository, Compute}
 	if !slices.Equal(names, want) {
 		t.Errorf("order = %v, want %v", names, want)
 	}

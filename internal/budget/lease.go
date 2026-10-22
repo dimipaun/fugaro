@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/gateway"
@@ -254,12 +255,14 @@ type pending struct {
 	tokens   int64
 	overrun  Micros
 	byModel  map[string]Micros   // gateway runs: settled spend by serving model
-	notional Micros              // oauth runs: Claude Code's own figure
+	byTier   map[string]Micros   // cascade runs: settled money by the tier that paid for it (C1.16)
+	notional Micros              // a subscription's figure: Claude Code's own, or the gateway's tier A (C1.16)
 	nby      map[string]ModelUse // oauth runs: usage by model
 }
 
 func (p pending) empty() bool {
-	return p.calls == 0 && p.tokens == 0 && p.overrun == 0 && len(p.byModel) == 0 && p.notional == 0 && len(p.nby) == 0
+	return p.calls == 0 && p.tokens == 0 && p.overrun == 0 && len(p.byModel) == 0 &&
+		len(p.byTier) == 0 && p.notional == 0 && len(p.nby) == 0
 }
 
 func (p pending) clone() pending {
@@ -268,11 +271,33 @@ func (p pending) clone() pending {
 	for k, v := range p.byModel {
 		q.byModel[k] = v
 	}
+	q.byTier = map[string]Micros{}
+	for k, v := range p.byTier {
+		q.byTier[k] = v
+	}
 	q.nby = map[string]ModelUse{}
 	for k, v := range p.nby {
 		q.nby[k] = v
 	}
 	return q
+}
+
+// tierKey maps the tier a stage report carries to the database's spelling:
+// the credentials service's answer says "B" and "C" (the gateway's TierB and
+// TierC, C1.15) and the rules' byTier node says "b" and "c". ok is false for
+// anything else, and the split drops such a tier rather than guessing at it.
+//
+// It is the untrusted-input end of the same rule the path builders enforce by
+// panicking (a tier they have no leaf for) and planByTier enforces by asking
+// for b and c and nothing else. Two things make the check worth its line: a
+// tier that is not the contract must never become a key the database is asked
+// to hold, and a key nothing ever writes would sit in the run's pending
+// figures for the rest of the run, keeping it from ever reporting itself
+// settled (empty) -- reads for a row that can never be written. The money is
+// in the totals either way: only the display split loses a row.
+func tierKey(tier string) (string, bool) {
+	k := strings.ToLower(tier)
+	return k, k == TierB || k == TierC
 }
 
 // modelName makes a model name usable as a key.
@@ -298,6 +323,27 @@ func (s *Session) report(ctx context.Context, rep gateway.StageReport) error {
 	for m, v := range rep.ByModel {
 		s.pend.byModel[modelName(m)] = add(s.pend.byModel[modelName(m)], v)
 	}
+	// The split of the settled money by the tier that paid for it (C1.16,
+	// D140). Only a call that went through the credentials service carries a
+	// tier, so only a cascade run reports one and no other run writes a
+	// byTier leaf: that is what "written only by a cascade run" means here.
+	for t, v := range rep.ByTier {
+		k, ok := tierKey(t)
+		if !ok || v <= 0 {
+			continue
+		}
+		if s.pend.byTier == nil {
+			s.pend.byTier = map[string]Micros{}
+		}
+		s.pend.byTier[k] = add(s.pend.byTier[k], v)
+	}
+	// A tier-A call is the run's subscription, not money (D140): it settles
+	// as notional, which is the figure an oauth stage's own total_cost_usd
+	// settles as (AddNotional), so it lands on the same leaves and feeds no
+	// cap. notionalTotal is not raised here: it is what the registry shows a
+	// run whose spend nobody else reports, and a gateway run's entry shows
+	// the gateway's own settled figure instead (snapshotEntry).
+	s.pend.notional = add(s.pend.notional, rep.Notional)
 	s.mu.Unlock()
 	return s.flush(ctx, nil, "report")
 }
@@ -338,7 +384,7 @@ func (s *Session) plan(ctx context.Context) (upd map[string]any, took pending, m
 	}
 	s.mu.Unlock()
 	upd = map[string]any{}
-	took = pending{byModel: map[string]Micros{}, nby: map[string]ModelUse{}}
+	took = pending{byModel: map[string]Micros{}, byTier: map[string]Micros{}, nby: map[string]ModelUse{}}
 	// The per-write bound of every amount is the largest single lease. An
 	// oauth run is admitted without one, so it is needed only to report.
 	var maxRes Micros
@@ -359,13 +405,12 @@ func (s *Session) plan(ctx context.Context) (upd map[string]any, took pending, m
 	today := Day(s.now())
 	slug, run := s.cfg.Slug, s.cfg.Run
 
-	type counters struct{ repo, global Counters }
-	cache := map[int64]*counters{}
-	counterAt := func(day int64) (*counters, error) {
+	cache := map[int64]*dayCounters{}
+	counterAt := func(day int64) (*dayCounters, error) {
 		if c, ok := cache[day]; ok {
 			return c, nil
 		}
-		c := &counters{}
+		c := &dayCounters{}
 		if _, err := s.db.Get(ctx, PathSpendRepo(day, slug), &c.repo); err != nil {
 			return nil, err
 		}
@@ -511,7 +556,264 @@ func (s *Session) plan(ctx context.Context) (upd map[string]any, took pending, m
 			more = more || n != u
 		}
 	}
+	if len(p.byTier) > 0 {
+		if err := getLedger(); err != nil {
+			return nil, took, false, err
+		}
+	}
+	if err := s.planByTier(ctx, p, ledger, leased, today, maxRes, maxErr, counterAt, upd, &took, &more); err != nil {
+		return nil, took, false, err
+	}
 	return upd, took, more, nil
+}
+
+// dayCounters are one day's repository and project counters, which every
+// usage write reads together.
+type dayCounters struct{ repo, global Counters }
+
+// byTierIn is the path segment every by-tier leaf shares, which is what an
+// update is asked about and stripped by.
+const byTierIn = "/byTier/"
+
+// isByTierLeaf reports whether key names one of the split's leaves.
+func isByTierLeaf(key string) bool { return strings.Contains(key, byTierIn) }
+
+func carriesByTier(upd map[string]any) bool {
+	for k := range upd {
+		if isByTierLeaf(k) {
+			return true
+		}
+	}
+	return false
+}
+
+// without copies upd without the keys drop refuses.
+func without(upd map[string]any, drop func(string) bool) map[string]any {
+	out := make(map[string]any, len(upd))
+	for k, v := range upd {
+		if !drop(k) {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// underAny reports whether key is a leaf under one of prefixes.
+func underAny(key string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(key, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// tierProbe is what one run of probeByTierKeys learned about the deployed
+// rules and the by-tier split.
+type tierProbe int
+
+const (
+	// tierProbeUnavailable: the writes settled nothing -- refused both ways,
+	// an outage, a write there was nothing to send. The flush's own stale
+	// retry has it.
+	tierProbeUnavailable tierProbe = iota
+	// tierProbeRace: a write carrying the split's leaves under the run's own
+	// nodes was taken, so the rules know the split, and the refusal that
+	// summoned the probe was another cascade run's settlement of the shared
+	// day counters between this run's read and its patch. The run retries it;
+	// a race is not a redeploy (C1.17).
+	tierProbeRace
+	// tierProbeSplitRefused: refused with the run's own by-tier leaves in the
+	// write and accepted without them, so they are what the deployed document
+	// does not know -- C1.3's `credsRules` marker cannot catch that, because
+	// an older Fugaro redeploying its own document leaves the marker at a
+	// generation it does not know.
+	tierProbeSplitRefused
+)
+
+// probeByTierKeys is checkCascadeKeys's twin for the by-tier split (C1.16),
+// and it runs only when an update carrying the split was refused with a
+// permission error: it asks the deployed rules, with two writes of its own,
+// which of the split's leaves they do not know.
+//
+// The two questions are asked in the order that tells a race from a redeploy,
+// and the first is the one that decides a healthy run:
+//
+//  1. The same update without the two shared day leaves -- the repository's
+//     and the project's rows under `spend/$day` -- which leaves in the write
+//     only the split's leaves under the run's own nodes: the run's lifetime
+//     counter and its share of the day. Every cascade run in the repository
+//     writes the shared counters, so a refusal of one of them is as often
+//     another run's settlement landing between this run's read and its patch
+//     as it is an absent leaf: what this run planned to write was an increase
+//     on the value it read and is a decrease on the value the rules now see.
+//     The run's own leaves have this session as their only writer (s.wmu
+//     serializes every write of them), so a rule that takes a write onto them
+//     is a rule that knows the split. Taken: the refusal was that race, and
+//     the answer is tierProbeRace.
+//  2. Refused there too, the same update with no by-tier leaf at all. Taken,
+//     the run's own by-tier leaves are what the rules refuse -- nothing else
+//     can refuse them -- and the answer is tierProbeSplitRefused: the run
+//     halts named (C1.17) rather than dropping the split silently, because a
+//     run whose real spend is accounted for under no tier is a run nobody can
+//     attribute spend to, which is the one thing the split exists for. The
+//     write that landed is the run's own usage without the split, so the run
+//     keeps its totals and loses only the by-tier rows: that is the fail-safe
+//     direction, and it is why this probe may write at all.
+//
+// Anything else -- refused both ways (the stale race the flush already
+// retries), a failure that is not a permission refusal (an outage, a read
+// that failed) -- says nothing about the split, and no answer is cached: the
+// next refusal asks again, exactly as the registry probe does (M11).
+//
+// The first question's write lands the rest of the round -- its totals, its
+// counts, and its leaves under the run's own nodes -- without the two shared
+// rows, so the flush takes that round off its pending figures: retrying a
+// round the probe already wrote would count its increments twice. The two
+// shared rows of that round are what the probe could not write, and nothing
+// re-derives them afterwards. That is the cost of not halting a healthy run
+// over another run's write: the split is a display figure nothing decides on
+// (C1.3), the money is in `spent` in every case, and the race it costs a row
+// to is the other run's.
+func (s *Session) probeByTierKeys(ctx context.Context, upd map[string]any) tierProbe {
+	slug := s.cfg.Slug
+	today := Day(s.now())
+	// The two shared day counters, on both days a run may split onto: the
+	// repository's and the project's by-tier rows. A key under one of these
+	// is the part of the update no run can prove anything with.
+	shared := []string{
+		PathSpendRepo(today, slug) + "/byTier/",
+		PathSpendGlobal(today) + "/byTier/",
+		PathSpendRepo(today-1, slug) + "/byTier/",
+		PathSpendGlobal(today-1) + "/byTier/",
+	}
+	if own := without(upd, func(k string) bool { return underAny(k, shared) }); len(own) > 0 {
+		switch err := s.db.Patch(ctx, "", own); {
+		case err == nil:
+			s.dbOK()
+			return tierProbeRace
+		case !errors.Is(err, rtdb.ErrPermission):
+			return tierProbeUnavailable
+		}
+	}
+	plain := without(upd, isByTierLeaf)
+	if len(plain) == 0 {
+		// The split was all there was: a write of nothing proves nothing
+		// about the rules, and an empty patch is a no-op either way.
+		return tierProbeUnavailable
+	}
+	switch err := s.db.Patch(ctx, "", plain); {
+	case err == nil:
+		s.dbOK()
+		return tierProbeSplitRefused
+	default:
+		return tierProbeUnavailable
+	}
+}
+
+// planByTier adds the by-tier split of the run's settled money to the update
+// (C1.16, D140): the same quantity `spent` is, on the run's lifetime ledger,
+// the run's share of each day it holds a lease on, and the repository's and
+// the project's day counters. It is written only by a run whose calls
+// carried a tier -- a cascade run -- and every other run calls it with
+// nothing pending and leaves all four leaves alone.
+//
+// Each leaf is validated on its own (C1.3's rules): increase-only, whole
+// micro-dollars, and, on the two leaves under the run's own nodes, inside
+// that node's reservation -- the lifetime one against the run's whole
+// reservation, the day one against that day's. The two shared counters
+// bound one write by limits.maxReserveMicros. So the amount one tier moves
+// in a round is the smallest of the run's lifetime room and that bound, and
+// each day leaf then takes what its own day's room allows: the run's room
+// bounds the round, the days' rooms only say how much of it lands where. A
+// tier with no room keeps its amount pending and the round says more, and
+// the split is never tied to the total it splits: nothing decides anything
+// on it (admissions, switches and kill switches read spent and notional), so
+// b + c above spent is a latitude this code does not create and does not
+// have to repair.
+func (s *Session) planByTier(ctx context.Context, p pending, ledger RunLedger, leased map[int64]bool, today int64, maxRes Micros, maxErr error, counterAt func(int64) (*dayCounters, error), upd map[string]any, took *pending, more *bool) error {
+	if len(p.byTier) == 0 {
+		return nil
+	}
+	if maxErr != nil {
+		return maxErr
+	}
+	slug, run := s.cfg.Slug, s.cfg.Run
+	// The days this run may split onto: today always, and yesterday only
+	// while it holds a lease there, oldest first (the same rule, order and
+	// reason the totals settle by). Each day is read once, and only when a
+	// tier actually reaches it.
+	days := []int64{today - 1, today}
+	shares := map[int64]RunLedger{}
+	shareAt := func(day int64) (RunLedger, error) {
+		if dr, ok := shares[day]; ok {
+			return dr, nil
+		}
+		var dr RunLedger
+		if _, err := s.db.Get(ctx, PathSpendRun(day, slug, run), &dr); err != nil {
+			return dr, err
+		}
+		shares[day] = dr
+		return dr, nil
+	}
+	for _, tier := range []string{TierB, TierC} {
+		want := p.byTier[tier]
+		if want <= 0 {
+			continue
+		}
+		cur := ledger.ByTier[tier].Spent
+		// The run's lifetime leaf is bounded by the run's own room, and by
+		// that room only. A day's room is not a bound on it and must not be
+		// one: a spent day has none left for the rest of the run (its
+		// byTier leaf reaches reserved - released as it is spent, and
+		// released rises only at Close), so bounding the round by every
+		// candidate day's room would stop the split for good after the first
+		// day is spent -- silently, while spent kept landing, and with
+		// yesterday unable to receive anything either, today being first.
+		// What the days bound is the per-day leaves, each on its own below.
+		n := min(want, maxRes, ledger.Reserved-ledger.Released-cur)
+		if n <= 0 {
+			// Nothing to move onto this round: the run's own reservation is
+			// what the split waits for, and a lease that raises it (or the
+			// day turning) unblocks it. The money itself is unaffected.
+			*more = true
+			continue
+		}
+		left := n
+		for _, day := range days {
+			if left <= 0 {
+				break
+			}
+			if day != today && !leased[day] {
+				continue
+			}
+			dr, err := shareAt(day)
+			if err != nil {
+				return err
+			}
+			take := min(left, dr.Reserved-dr.Released-dr.ByTier[tier].Spent)
+			if take <= 0 {
+				continue
+			}
+			c, err := counterAt(day)
+			if err != nil {
+				return err
+			}
+			upd[PathSpendRunByTier(day, slug, run, tier)+"/spent"] = add(dr.ByTier[tier].Spent, take)
+			upd[PathSpendRepoByTier(day, slug, tier)+"/spent"] = add(c.repo.ByTier[tier].Spent, take)
+			upd[PathSpendGlobalByTier(day, tier)+"/spent"] = add(c.global.ByTier[tier].Spent, take)
+			left -= take
+		}
+		// The run's leaf moves the whole round's amount even when no day
+		// could take a part of it (a lease older than yesterday has room on
+		// the run's lifetime ledger and none on any day this run may write
+		// to): the run leaf's own rule asks only for the run's reservation,
+		// and the day leaves are validated apart from it.
+		upd[PathRunByTier(slug, run, tier)+"/spent"] = add(cur, n)
+		took.byTier[tier] = n
+		*more = *more || n < want
+	}
+	return nil
 }
 
 // commit takes what an update carried off the pending figures.
@@ -526,6 +828,11 @@ func (s *Session) commit(took pending) {
 	for m, v := range took.byModel {
 		if p.byModel[m] -= v; p.byModel[m] <= 0 {
 			delete(p.byModel, m)
+		}
+	}
+	for tier, v := range took.byTier {
+		if p.byTier[tier] -= v; p.byTier[tier] <= 0 {
+			delete(p.byTier, tier)
 		}
 	}
 	for m, u := range took.nby {
@@ -547,6 +854,7 @@ func (s *Session) flush(ctx context.Context, extra map[string]any, source string
 	s.wmu.Lock()
 	defer s.wmu.Unlock()
 	stale := 0
+	probed := false
 	for rounds := 0; rounds < 20; {
 		upd, took, more, err := s.plan(ctx)
 		if err != nil {
@@ -574,6 +882,38 @@ func (s *Session) flush(ctx context.Context, extra map[string]any, source string
 				return nil
 			}
 		case errors.Is(err, rtdb.ErrPermission):
+			if !probed && carriesByTier(merged) {
+				// This update carried the by-tier split into the refusal:
+				// ask the rules, with writes of its own, which of the
+				// split's leaves they do not know (C1.16). The probe is not
+				// repeated in this flush: a refusal that is not the split's
+				// is the stale race the loop already retries.
+				probed = true
+				switch out := s.probeByTierKeys(ctx, merged); out {
+				case tierProbeSplitRefused:
+					// The rules do not know the split. The write the probe
+					// landed was this round's own without its by-tier
+					// leaves: the totals are written, the split is not
+					// retried, and the run ends named -- the redeploy is the
+					// fix, and it is what the detail names.
+					s.halt(Halt{Reason: ReasonCredsRulesDenied, Scope: ScopeRun, Detail: byTierDeniedDetail})
+					s.commit(took)
+					return s.observe(source, fmt.Errorf("%w: %s", rtdb.ErrPermission, byTierDeniedDetail))
+				case tierProbeRace:
+					// The rules know the split, and the refusal was another
+					// cascade run's write to a shared day counter between
+					// this round's read and its patch. The probe's write was
+					// this round's update without those two shared leaves,
+					// so the round is on the database -- its run-own split
+					// included -- and is taken off the pending figures:
+					// retrying a round the probe already wrote would count
+					// its increments twice (probeByTierKeys).
+					s.commit(took)
+					extra = nil
+					rounds++
+					continue
+				}
+			}
 			stale++
 			if stale >= maxStale {
 				werr := fmt.Errorf("budget: %d usage writes in a row were denied", stale)

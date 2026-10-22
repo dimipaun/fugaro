@@ -642,8 +642,10 @@ func TestDocsWindowsConsoleClaimsAboutOtherFilesAreTrue(t *testing.T) {
 	// because this file cannot fix the order the owner applies the three in.
 	staging := flattenDoc(consoleReadmeSection(t, readDoc(t, "docs/pending-workflows/README.md"), "## `console-windows.yml`"))
 	for _, want := range []string{
-		"**One file is pending: `shared-tests.yml`**",
-		"**Three files are pending: `shared-tests.yml`**",
+		// One more than the console's own count in each: the credentials
+		// service's staged images.yml (Task C1.14) is pending beside them.
+		"**Two files are pending: `shared-tests.yml`**",
+		"**Four files are pending: `shared-tests.yml`**",
 		"the Linux pair has already been copied in",
 	} {
 		if !strings.Contains(staging, want) {

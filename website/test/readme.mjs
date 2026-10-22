@@ -615,9 +615,9 @@ test('the README claims about docs/pending-workflows/, firebase.json and the dep
   // The owner copied the website's two manual workflows (#566) into .github/workflows/ and removed
   // the staged copies, so none of them is pending and the real files exist.
   const flat = text.replace(/\s+/g, ' ')
-  const words = { no: 0, one: 1, two: 2, three: 3, four: 4, five: 5 }
-  const said = flat.match(/now holds (no|one|two|three|four|five) pending workflows?/)
-  assert.ok(said, 'the README no longer says how many workflows docs/pending-workflows/ holds, as "now holds <no|one|two|three|four|five> pending workflow(s)"')
+  const words = { no: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6 }
+  const said = flat.match(/now holds (no|one|two|three|four|five|six) pending workflows?/)
+  assert.ok(said, 'the README no longer says how many workflows docs/pending-workflows/ holds, as "now holds <no|one|two|three|four|five|six> pending workflow(s)"')
   // The console's two workflows are the one exception, and it is not a pending one: the owner copied
   // both into .github/workflows/ and their staged copies are kept on purpose (the Go docs tests assert
   // byte-identity), so each staged file must be exactly the one that runs.

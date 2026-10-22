@@ -370,6 +370,28 @@ func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
 			add(at+".secret", "starts with %q: that is the beginning of an API key, not a secret's name; .secret is the NAME of the secret in Secret Manager that holds the key", keyPrefix)
 		case reservedSecretName(p.Secret):
 			add(at+".secret", "%q is a secret Fugaro already uses: give the provider key its own name", p.Secret)
+		case p.Secret == CredentialsBundleSecret:
+			// The credentials service's own bundle container (C1.11's review
+			// finding n2), refused here for the reason the other two surfaces
+			// refuse it and one more of its own. It is deliberately NOT in
+			// ReservedSecrets — nothing mounts it, and its value is not a plain
+			// secret a job's environment may carry — so the case above does not
+			// catch it, and the name is the platform's just the same: the one
+			// document in that container is every model credential the
+			// installation holds, the service is its only reader and
+			// `fugaro creds set NAME` (C1.25) its only writer.
+			//
+			// The case is not only about a confusing name. A provider's .secret
+			// resolves to a container through internal/infra's
+			// projectSecretContainers, which is gcp.ProjectSecretID of the
+			// logical name — the same derivation as gcp.CredsBundleSecretID —
+			// so this name resolves to the bundle's own container, and a job of
+			// every repository the provider allows would mount that document as
+			// the provider's key. The value cannot be written by
+			// `fugaro secrets set` (that path refuses the name), but it is
+			// written by the service's own writer, so the mount would carry
+			// every credential the installation holds.
+			add(at+".secret", "%q is the credentials service's own bundle container (the platform's): that one document holds every model credential the installation has, and no provider's key may be read from it", p.Secret)
 		case HarnessOAuthSecret(p.Secret):
 			// A harness's OAuth credential name, bare or in a named
 			// namespace: a person's subscription token belongs there
@@ -475,6 +497,92 @@ func ProviderKeyEnv(secret string) string {
 // IsProviderKeyEnv reports whether name is a provider key's variable.
 func IsProviderKeyEnv(name string) bool {
 	return strings.HasPrefix(strings.ToUpper(name), ProviderKeyEnvPrefix)
+}
+
+// ModelSecretEnvs are the job variables a model credential is mounted as
+// (D145): the Claude OAuth token's and the Anthropic key's, each the value
+// ReservedSecrets maps its logical name to. A provider's key is the third —
+// IsProviderKeyEnv's namespace, which ReservedEnvPrefixes keeps out of every
+// workflow secret's reach — so IsModelSecretEnv is the whole predicate.
+//
+// The git credential's two variables are deliberately not here: neither is a
+// model credential, and which of the two the credentials service holds is a
+// different question (ServiceHeldSecretNames, IsServiceHeldSecretEnv).
+var ModelSecretEnvs = []string{ReservedSecrets[ClaudeOAuthToken], ReservedSecrets[AnthropicSecret]}
+
+// IsModelSecretEnv reports whether the job variable name carries a model
+// credential: one of ModelSecretEnvs, or a provider key's variable.
+//
+// It is the model half of the credentials service's rule (D146): once an
+// installation opts in, a job's account keeps no secretAccessor on these
+// (modules/workflow/sa.tf) because the service holds them (C1.11), and C1.20
+// drops the mount. IsServiceHeldSecretEnv is the whole rule. Terraform cannot
+// ask Go, so the same three names are literals in that module's locals, held
+// to this function by deploy/terraform's
+// TestServiceHeldSecretsMatchTheCredentialsService.
+func IsModelSecretEnv(name string) bool {
+	return slices.Contains(ModelSecretEnvs, name) || IsProviderKeyEnv(name)
+}
+
+// GitHubAppKeySecret is the logical name of the GitHub App's private key: the
+// key ReservedSecrets maps to the mount variable, and the one git credential
+// D145 moves into the credentials service (C2.1 mints the run's installation
+// tokens from it, C2.2 stops the job reading it, and C2.3 takes the job's
+// accessor and its mount). It is the name ServiceHeldSecretNames gains in
+// C2.2's release, which is what turns C2.3's drop on (review finding F1).
+const GitHubAppKeySecret = "github-app-key"
+
+// ServiceHeldSecretNames are the logical secret names whose credential the
+// credentials service holds once an installation opts in AND the job's own
+// account has given its own copy up (D145): today, none of them.
+//
+// The GitHub App's private key is the one name that belongs here, and C2.3's
+// drop is written for it — the job's secretAccessor on it
+// (modules/workflow/sa.tf), the mount (internal/infra's Readiness, the module's
+// job.tf) and the mirror of both (RepoSpec.Addresses) — and is inert while this
+// list is empty. It stays empty until the job stops READING the key: C2.1 gives
+// the service the key (it mints the run's installation tokens) and C2.2 is what
+// makes the runner fetch one instead of reading
+// FUGARO_GITHUB_APP_PRIVATE_KEY. A job that lost its accessor on a key its
+// container still mounted is a job Cloud Run refuses to create, so every GitHub
+// run of an installation that opted in would fail — review finding F1 of
+// 2026-10-21, and the reason C2.2 and C2.3 ship in one release.
+//
+// **C2.2's release adds GitHubAppKeySecret here, and that one name is the whole
+// switch**: the accessor goes in Terraform and in the mirror held to it
+// (deploy/terraform's TestServiceHeldSecretsMatchTheCredentialsService fails if
+// only one side moves), and the mount goes with it. Nothing else changes.
+//
+// The model credentials are not here because a provider's key has no fixed
+// logical name — it is whatever the owner's local config calls it — so they are
+// identified by their variables (ModelSecretEnvs, IsProviderKeyEnv) and the
+// whole question needs both halves. Their half is C1.18's and is already
+// landed; the plan sequences their mount drop (C1.20) before the owner turns
+// the opt-in on (C1.24), which is what keeps the grant and the mount together
+// for them (see the note in modules/workflow/sa.tf).
+//
+// The Bitbucket token is deliberately absent: D145 leaves it alone, because a
+// Bitbucket credential is a repository access token, issued for one repository
+// and usable for no other, which no service can mint per job (F7).
+var ServiceHeldSecretNames = []string{}
+
+// IsServiceHeldSecretEnv reports whether a job mounting the logical secret
+// name under the variable env carries a credential the credentials service
+// holds once an installation opts in, and which the job's own account has
+// therefore given up (D145, D146): a model credential, or a name in
+// ServiceHeldSecretNames. Bitbucket's token and every workflow's own secret
+// are false, whatever they are mounted as — and so is the GitHub App's private
+// key until C2.2's release fills that list (review finding F1).
+//
+// This is the rule modules/workflow/sa.tf's job_secret_names is written from
+// and internal/infra's mountsServiceHeldSecret mirrors: a credential that is
+// true here loses the job's secretAccessor when the opt-in is on, because the
+// service holds it (C1.11's bundle, C2.1's mint) and the job's mount follows
+// (C1.20, C2.2). Terraform cannot ask Go, so the same names are literals in
+// that module's locals, held to this function by deploy/terraform's
+// TestServiceHeldSecretsMatchTheCredentialsService.
+func IsServiceHeldSecretEnv(env, name string) bool {
+	return IsModelSecretEnv(env) || slices.Contains(ServiceHeldSecretNames, name)
 }
 
 // ProviderBySecret is the provider whose key is the secret named secret.
@@ -752,6 +860,15 @@ func checkProviderURL(s string) error {
 // agent.auth api-key. oauth is a subscription credential that cannot leave
 // Anthropic, and vertex is Claude on Vertex; neither can carry a provider
 // key, and a run does not mix credentials.
+//
+// cascade is refused a provider pin for oauth's reason, from the other side: a
+// cascade run's calls are carried by whatever credential the cascade chose, and
+// its tier A is a shared subscription OAuth token (docs/credentials-service, D133)
+// — such a token is never sent to another provider. Config time cannot know
+// which credential a run will be on (tier A is chosen from the repository's
+// admitted accounts, which live in the published policy and not in this file),
+// so a pin a provider serves is refused outright rather than assumed to land on
+// tier B: the run that names a provider model is an api-key run.
 func CheckProviderAuth(a Agent, providers map[string]ModelProvider) []Problem {
 	var ps []Problem
 	if a.Auth == "api-key" {
@@ -767,8 +884,11 @@ func CheckProviderAuth(a Agent, providers map[string]ModelProvider) []Problem {
 			continue
 		}
 		why := "vertex serves Claude only and a run does not mix credentials"
-		if a.Auth == "oauth" {
+		switch a.Auth {
+		case "oauth":
 			why = "an oauth token is a Claude subscription credential and is never sent to another provider"
+		case AuthCascade:
+			why = "a cascade run's tier A is a shared subscription OAuth token, and such a token is never sent to another provider"
 		}
 		ps = append(ps, Problem{Path: r.path, Message: fmt.Sprintf("%s is served by provider %s, which needs agent.auth: api-key (agent.auth is %s: %s)", CodeSpan(r.model), name, a.Auth, why)})
 	}

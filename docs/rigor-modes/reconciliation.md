@@ -616,13 +616,13 @@ field. The tree records two ways of adding one: `Recipe`'s, where
 `ErrPermissionDenied`, warns that the database's rules predate it and tells the
 operator to run `fugaro init --firebase-project`, and remembers for the session
 (`noRecipe`); and the creds family's, where `internal/budget/rules/marker.go`
-records a marker and the run is to halt on a downgrade — **planned, not built**:
-`HaltCredsRulesDenied` is named in that file's comment, in
-`internal/budget/model.go` and in `internal/projectpolicy/version.go`, and as plan
-task C1.17 of `docs/credentials-service/implementation-plan.md`, and
-`internal/runstore`'s `HaltReason` vocabulary has no such entry, so the second
-precedent is a shape this work may follow rather than one it can read back
-today. Consequence: showing the mode in `fugaro watch` costs a
+records a marker and the run halts on a downgrade — planned when this finding
+was first written, and **built since** on `integration-0.9.6` (plan task C1.17 of
+`docs/credentials-service/implementation-plan.md`): `HaltCredsRulesDenied` is now
+an entry of `internal/runstore`'s `HaltReason` vocabulary (`creds_rules_denied`),
+beside its mentions in that file's comment, in `internal/budget/model.go` and in
+`internal/projectpolicy/version.go`, so the second precedent is one this work can
+read back as well as follow. Consequence: showing the mode in `fugaro watch` costs a
 rules regeneration (and its golden file), a deploy the owner runs, and one of
 those two paths. The other surfaces are free by comparison: `fugaro runs ls`,
 `fugaro diagnose` and the console read the record through `internal/runview`'s
@@ -700,9 +700,9 @@ stale has found a merge that did not.
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 3 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 11 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 12 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 54 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 63 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 3 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -ci repo` |

@@ -1068,22 +1068,40 @@ profiles:
 }
 
 // TestNoSecretValueReadUnderInternal: no code under internal/ reads a secret
-// *value* except the GitHub App key's pre-check, which signs a JWT in memory
-// to ask GitHub what the App grants (internal/backend/gcp's Secrets.Access and
-// its one caller, internal/cli/githubapp.go). The Claude OAuth token reaches a
-// run by the platform's own mount and never through Fugaro: the deployer names
-// the secret, the module mounts it, and no Fugaro process ever holds the value
-// — which is the property the credentials service will keep when it replaces
-// the mount, and the one a read added on this path would break.
+// *value* except two places, each named below with what it is. The Claude
+// OAuth token reaches a run by the platform's own mount and never through
+// Fugaro's deployer or launcher: the deployer names the secret, the module
+// mounts it, and neither of those two ever holds the value.
+//
+// The credentials service's bundle loader is the second exception and it is a
+// different kind of thing: the service's whole job is to hold the credential
+// and attach it to a call the run makes (C1.11, Slice 2 of the
+// credentials-service plan — the service replaces the mount), so it reads ONE
+// container's values and it is the only Fugaro process that does. What this
+// test keeps is that the read stays there: a read added on the deployer's or
+// the launcher's path — the path this package owns — is the failure it is for,
+// and `internal/credsvc/bundle.go` is on the list so that a second reader in
+// that package has to be added deliberately.
+//
+// The third is the same container again, read by the other end of the
+// credentials service: `fugaro creds set` is the bundle's only writer, and a
+// read-modify-write cannot be written without the read (C1.25 of the same
+// plan: it reads the `latest` version, sets one entry, writes a new version,
+// and re-reads to catch a concurrent writer). It is owner-run, refused in a
+// coding agent's session and in a run's process, and its value never leaves
+// the process — but it is a read, so it is on the list by name rather than
+// left to be discovered.
 //
 // Mutation (run, restore): read the account's token in the deployer or the
-// launcher (any `sm.Access(...)` outside the two files below) — the scan fails
+// launcher (any `sm.Access(...)` outside the files below) — the scan fails
 // with the file that did it.
 func TestNoSecretValueReadUnderInternal(t *testing.T) {
 	// The files allowed to name a secret-value read, and what each one is.
 	allowed := map[string]string{
 		"backend/gcp/secrets.go": "the Secret Manager client: Access is the GitHub App key pre-check's one read, Set writes values",
+		"cli/creds.go":           "C1.25's owner-run `fugaro creds set`/`creds ls` over the same ONE bundle container (Q6): set reads the document it is about to rewrite",
 		"cli/githubapp.go":       "the GitHub App key pre-check of init and doctor",
+		"credsvc/bundle.go":      "the credentials service's ONE bundle container (Q6): the service attaches the credential upstream, and it is the only Fugaro process that ever holds a model credential's value",
 	}
 	// The reads, by the API each one is spelled with: the google-api client's
 	// Versions.Access, the cloud.google.com/go client's AccessSecretVersion,

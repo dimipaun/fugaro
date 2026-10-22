@@ -26,13 +26,14 @@ Flags:
 Subcommands:
 
 - `fugaro accounts` -- List the named Claude accounts a repository may use
-- `fugaro allow-delete` -- Record the Terraform addresses a run may delete or replace (the project's owner)
+- `fugaro allow-delete` -- Record the objects a run may delete or replace, by address (the project's owner)
 - `fugaro artifacts` -- List and download what an artifact run delivered
 - `fugaro backends` -- List the compute backends an installation can run its jobs on
 - `fugaro budget` -- Show and change the project's model-spend caps and kill switches
 - `fugaro cancel` -- Cancel a run, letting the runner open a draft PR first
 - `fugaro completion` -- Generate the autocompletion script for the specified shell
 - `fugaro config` -- Work with fugaro.yaml
+- `fugaro creds` -- Set and list the credentials service's one bundle secret (the owner)
 - `fugaro diagnose` -- Explain how a run went: status, tests, review findings, the agent's last word, logs
 - `fugaro doctor` -- Check that Fugaro is set up and ready, without changing anything
 - `fugaro help` -- Help about any command
@@ -41,6 +42,7 @@ Subcommands:
 - `fugaro managed` -- Act on a managed project (a project created by fugaro with the coding agent's refusal removed)
 - `fugaro plan` -- Read a plan's graph artifact
 - `fugaro project` -- The project's policy, its allow-list and the repositories enrolled
+- `fugaro reaper` -- Sweep the Batch jobs and VMs a run has leaked
 - `fugaro recipes` -- List, show, validate and publish recipes, the task loop a run follows after implement
 - `fugaro report` -- Report what the project spent, by day, week, month, year, repository, model or person
 - `fugaro restore` -- Rebuild a managed project from zero, into a new GCP project ID, and print what is not restored
@@ -71,7 +73,72 @@ Flags:
 
 Subcommands:
 
+- `fugaro accounts clear` -- Clear one account's broken or exhausted credential mark, after replacing its token
 - `fugaro accounts ls` -- List the named Claude accounts (claude_accounts in the local config) a repository may use with fugaro run --token
+
+## `fugaro accounts clear`
+
+Clear one account's broken or exhausted credential mark, after replacing its token
+
+Clear one Claude account's credential mark, so the cascade may route work to it
+again. This is an operator's command: it writes the project's own database,
+acting as you (ADC), and it is the only thing that ends a broken mark.
+
+Only the two states an operator's action is what ends may be cleared:
+
+  broken     the service saw a 401 (D139) and nothing clears it on its own.
+             Replace the token first, then clear the mark here.
+  exhausted  the account reported a usage limit and holds until its reset time.
+
+A backed-off mark is refused: a probe is what clears it (C1.12), and clearing it
+by hand would route real work to a credential that has not answered since it was
+held. A state this Fugaro does not know is refused too, because clearing it
+could take off a hold a newer release placed.
+
+The write is one node — creds/marks/NAME, in this installation's own database —
+and it is conditional on the value read (PutIfMatch), so a mark the service
+changed at the same moment is not lost: the write re-reads the mark and clears
+it only while its state is still the one the confirmation named, so a 401 the
+service recorded while you were reading is left for its own decision rather
+than taken off with the hold you confirmed.
+
+NAME is "default" (the repository's own unnamed claude-oauth-token secret), a
+claude_accounts name of the selected project config, or an account the database
+already carries a mark for — a mark is the account existing, and a name with
+none of the three is refused rather than written, so a typo cannot leave a mark
+node for a credential that does not exist. (A mark whose name this checkout's
+claude_accounts does not list is the ordinary case for a project several
+checkouts share: claude_accounts is per-checkout and never published, while the
+marks are the project's own. fugaro doctor names such marks, so its fix has
+to work here.) Nothing reads or prints a token value, a secret ID or a prefix
+of one: names and states only.
+
+This command is run by a person in the sense that it acts as you, with your own
+credentials, on your own installation's database — but it is not one of the
+commands that refuse a coding agent's session. It records no owner decision and
+approves nothing: it takes off a hold the service placed, on a credential you
+have already replaced the token for, and the service marks it broken again if
+the token is still refused. fugaro budget set and fugaro budget kill — the
+same kind of write to the same database, with the same credentials — refuse no
+agent either, and fugaro allow-delete and fugaro managed flag, which do, are
+commands whose own output is an approval of a later cloud change.
+
+Usage: `fugaro accounts clear NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for clear |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--yes` | bool | `false` | no | skip the typed confirmation (read what it does first) |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro accounts ls`
 
@@ -83,10 +150,26 @@ claude-oauth-token secret, always allowed) first, then every claude_accounts
 name in the local config whose allow_data_to lists the repository, sorted
 (config.AllowedClaudeAccounts, the one place that decides the question).
 
-This is a local, read-only lookup, offline whenever a project config is
-already selected on this machine: it reads the local config file the CLI
-would otherwise select for a cloud command, and never calls Secret Manager,
-never reads or prints a token value, only names.
+The names are a local, read-only lookup, offline whenever a project config is
+already selected on this machine: it reads the local config file the CLI would
+otherwise select for a cloud command, and never calls Secret Manager, never
+reads or prints a token value, only names.
+
+The state column is not local. When the selected project has a Firebase budget
+backend (budget.rtdb_url, which fugaro update --firebase-project writes), each account's
+credential state is read from that database as you, with your Application
+Default Credentials — the creds/marks subtree the credentials service writes,
+which an admin's rules grant the read of — and printed beside the name as
+available, exhausted until T, backed off or broken. A project with no backend,
+and a machine where no project config could be selected, answer with the names
+alone and a note saying why: the command never turns "could not read" into
+"every account is available".
+
+That read is bounded: five seconds for the whole of it (the token source, the
+project check and the marks), one attempt per call, and no retry. A database
+that is unreachable rather than refusing — a laptop offline, a firewall that
+drops — therefore costs this command seconds, not the per-call timeout twice,
+and the names are printed with a note saying the states could not be read.
 
 --json's "complete" is false when no project config could be selected for a
 reason other than an explicit --config/--project/$FUGARO_CONFIG/$FUGARO_PROJECT
@@ -114,24 +197,91 @@ This command has no subcommands.
 
 ## `fugaro allow-delete`
 
-Record the Terraform addresses a run may delete or replace (the project's owner)
+Record the objects a run may delete or replace, by address (the project's owner)
 
 Record which Terraform addresses the project's owner approves for deletion or
-replacement, in a managed project's fugaro/allow-delete.json at the root of
-the runs bucket. An approval lives in that object and nowhere else: this
-command is Fugaro's only writer of it, with the operator's own credentials.
+replacement, and which object at each address is approved, in a managed
+project's fugaro/allow-delete.json at the root of the runs bucket. An approval
+lives in that object and nowhere else: this command is Fugaro's only writer of
+it, with the operator's own credentials.
 
-An address is the Terraform address a plan reports, as in
-google_cloud_run_v2_job.web or module.web.google_storage_bucket.data, and
-nothing else is recorded — no note and no reason: the object's own version
-history is the record of who approved what and when.
+An argument is an address and the identity of the object approved there,
+written as ADDRESS=IDENTITY: the Terraform address a plan reports, as in
+google_cloud_run_v2_job.web or module.web.google_storage_bucket.data,
+followed by the identity a refused managed apply printed for the object that
+address removes, as in
+
+  fugaro allow-delete 'module.web.google_storage_bucket.data=type=google_storage_bucket project=proj-1234 name=data id=data-bucket instance=2026-01-02T03:04:05.678Z'
+
+An approval is of one object and not of the address: the same address carrying
+another object later — another name, a renamed or replaced resource, one moved
+in from elsewhere — is not approved by it, so an entry an earlier apply already
+used admits nothing more. The identity is compared character for character with
+the one the plan's before view shows, so copy it from the refusal rather than
+retyping it. A refusal prints it inside a sentence of its own, so copy the
+identity up to and not including the ')' that closes that sentence's
+parenthetical — pasting that bracket as well is forgiven, once, since the
+sentence put it there; one matched pair of double quotes is stripped the same
+way, because a shell or a message may have added them (a quote at one end only
+is a character of the identity, and is kept). What is not forgiven is any other
+parenthesis: an identity holds none — a value's '(' and ')' are escaped with
+everything else this program's printers would touch — so an argument that still
+holds one is refused rather than recorded as an entry that would match no
+removal. The two ends agree byte for byte because the identity is written in an
+escaped form — a space in a value as \x20, a backslash as \\, a parenthesis as
+\x28 and \x29, any other byte with no printable form as \xHH, and every byte a
+shell reads in a way of its own — a separator, a pipe, a redirection, a
+substitution, a quote, a glob, an expansion — as \xHH as well, so that what a
+refusal prints holds no byte that can begin, end or continue a command, and is
+exactly what a plan shows. Two bytes a shell rewrites are in it all the same,
+because the form needs them: the single space between two parts, and the
+backslash that introduces an escape. A paste that does not keep those two whole
+arrives here as several arguments and is refused rather than recorded — nothing
+is written, and no entry is made that would match no removal — but the identity
+has to reach this command as one argument, byte for byte as the plan shows it,
+for the loop to close. An identity longer than 8192
+characters is refused here and by the plan: no refusal prints one, and the plan
+refuses the removal rather than matching a printed part of it, so recording it
+would be an approval that deletes nothing.
+
+What the identity tells apart, and what it does not, said here rather than left
+to be discovered. For the seven managed types whose state carries a value the
+provider mints once per instance — a bucket's time_created, a secret's or an
+artifact repository's create_time, a Cloud Run job's or an API key's uid, a
+service account's unique_id, a bucket object's generation — the identity
+carries that value, so an object of one of those types deleted and then created
+again under the same name at the same address carries a DIFFERENT identity and
+this entry no longer approves its removal. It does not for the seven types that
+have no such value: a Cloud Scheduler job, a project service, and the five
+*_iam_member types, whose whole state is the grant they carry. For those the
+identity is the named object, and a re-creation under the same name at the same
+address is approved by the entry that named it. The provider's own id is not
+one of the instance values: for every managed type it is derived from the
+configured name (an API key's id is projects/P/locations/global/keys/NAME).
+If the difference matters for a resource of the second kind, review the list
+rather than rely on the entry having been used up.
+
+Nothing else is recorded — no note and no reason: the object's own version
+history is the record of who approved what and when, and the identity is what
+the approved delete is identified by.
 
 Run it in your own terminal, as an operator, with your own credentials. Pass
-the addresses to approve, and they replace the list: an invocation that leaves
-an address out removes that approval, so the command names the entries it
-would drop and asks for the project's name before writing such a list. With no
-addresses the command prints the list and writes nothing; it never empties the
-list, because an empty list is what an absent one already means.
+the entries to approve, and they replace the list: an invocation that leaves an
+entry out removes that approval, so the command names the entries it would drop
+and asks for the project's name before writing such a list. With no arguments
+the command prints the list — each entry in the same ADDRESS=IDENTITY form —
+and writes nothing; it never empties the list, because an empty list is what an
+absent one already means. A printed line is one you can paste back as far as its
+IDENTITY half goes: the command that recorded the entry escaped it, so the
+printers leave it alone and a line inside the listing's own bound carries it
+back byte for byte. The address half is the plan's own — not escaped here and
+not bounded here — so an address holding a tab, a run of spaces or a byte
+outside printable ASCII is printed as the printers rewrite it: that line is not
+the entry, and pasting it back records an entry about an address no plan has,
+which the plan refuses rather than deleting anything. A line longer than twice
+the identity's own bound is printed through the bounded sanitiser instead, cut
+and marked as cut: what you read there is visibly a text and not an entry. The
+entry itself is unchanged in the object either way.
 
 What the object is for: a run's own credentials cannot write it, and the
 deployer account a managed apply impersonates will not be able to (D75, Task
@@ -151,14 +301,19 @@ check below is that the bucket is the project's own runs bucket, which every
 installation has, not that the project is Fugaro-managed.
 
 The list is read fail-closed: an absent object, an empty one, one naming
-another project, one whose fields are not exactly the three this command
-writes, or one this package cannot read is no addresses — and no addresses
-refuses every delete and replacement rather than permitting them. The write
-is fail-closed too: if the current list cannot be read, nothing is written,
-and the write is conditioned on the object being unchanged since that read,
-so a concurrent write is never silently overwritten (run the command again).
+another project, one written by an older Fugaro (its addresses carry no
+identities, so nothing in it says which object was approved), one whose
+identities are an earlier build's (an entry that names the object without the
+per-instance value its type has matches no removal the gate identifies, so it
+approves nothing — re-approve it from a current refusal), one whose fields
+are not exactly the ones this command writes, or one this package cannot read
+is no entries — and no entries refuses every delete and replacement rather
+than permitting them. The write is fail-closed too: if the current list cannot
+be read, nothing is written, and the write is conditioned on the object being
+unchanged since that read, so a concurrent write is never silently overwritten
+(run the command again).
 
-Usage: `fugaro allow-delete [ADDRESS...]`
+Usage: `fugaro allow-delete [ADDRESS=IDENTITY...]`
 
 Flags:
 
@@ -884,8 +1039,23 @@ This command has no subcommands.
 List the Fugaro installations this machine has
 
 List the project configs under $XDG_CONFIG_HOME/fugaro/projects (else
-~/.config/fugaro/projects), with the GCP project and region of each and what
-is known about its published shared config.
+~/.config/fugaro/projects), with the GCP project and region of each, what
+is known about its published shared config, and the checkouts of its
+repositories this machine remembers.
+
+The checkouts are remembered by the commands that run in one and are
+not reads the desktop console spawns (fugaro update --repo, fugaro run,
+fugaro validate, fugaro backends and the rest of them), in a machine-local
+state file beside the project configs. The commands the console's spawn
+allow-list covers never record: fugaro doctor and fugaro accounts ls
+resolve a checkout too, but a read writes nothing, whoever runs it — the
+command cannot tell who spawned it. Every path is re-validated on this
+read: a path that
+was moved or deleted, that is no longer a git checkout, or whose
+fugaro.yaml no longer names this project and this repository is reported
+with "valid": false and a reason, and is never silently dropped. The
+paths are local state: they are never published to the runs bucket, to
+the shared config or to any log.
 
 This is a local read: it opens no bucket and needs no project selected, so it
 works outside a checkout and with no config at all (an empty list).
@@ -939,6 +1109,145 @@ Flags:
 | `--offline` | bool | `false` | no | never read the runs bucket: resolve against the cached project layer, if any |
 | `--project-layer` | string | "" | no | resolve against this project layer file instead of the published one |
 | `--workflow` | string | "" | no | show only this workflow's keys besides the top-level ones |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro creds`
+
+Set and list the credentials service's one bundle secret (the owner)
+
+Usage: `fugaro creds`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for creds |
+
+Subcommands:
+
+- `fugaro creds ls` -- List the credentials the bundle secret holds: names and metadata, never a value (the owner)
+- `fugaro creds set` -- Set or replace one credential in the credentials service's bundle secret (the owner)
+
+## `fugaro creds ls`
+
+List the credentials the bundle secret holds: names and metadata, never a value (the owner)
+
+List the credentials the credentials service's bundle secret holds: one row
+per credential in the document, with its NAME, whether it is PRESENT, and the
+document's last-changed time (the container's newest version metadata).
+
+NAME is the name in the document's own spelling — the name fugaro creds set
+takes. A named Claude account's row is claude-oauth-token-<account>, where <account>
+is the account the policy's accounts block speaks.
+
+Nothing else is printed: never a value, never a prefix of one, never a length
+that would narrow a guess. --json carries the same shape.
+
+The listing needs the container to exist, and it needs its newest version to be
+one the service could read: an absent container, a container with no version, an
+unreadable payload, a document the service's own loader refuses, and a version
+that is DISABLED are each a named failure, never an empty list — a listing that
+answered nothing for any of them would read as "the bundle holds no credential"
+while the service is in fact issuing from one this command could not read.
+
+It is refused from a coding agent's session and from a run's process, before
+anything is read.
+
+Usage: `fugaro creds ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro creds set`
+
+Set or replace one credential in the credentials service's bundle secret (the owner)
+
+Set or replace one credential in the credentials service's bundle, the ONE
+Secret Manager secret the service reads (Q6). The bundle is a YAML document
+whose keys are credential names and whose values are the credentials; this
+command reads it, sets or replaces the entry NAME and writes it back as a new
+version, and then disables the version it replaced.
+
+NAME is a credential the service can issue, in the document's own spelling:
+
+  claude-oauth-token                    the default Claude account's OAuth token (tier A)
+  claude-oauth-token-<account>       a named Claude account's OAuth token (tier A)
+  anthropic-api-key                the project's Anthropic API key (tier B)
+  github-app-key                  the GitHub App's private key (no tier: the mint signs with it)
+
+The value is read only from stdin: pipe or redirect it in
+(fugaro creds set claude-oauth-token < token-file), or, when stdin is a terminal, paste it
+at a hidden prompt. It is never taken from an argument, a flag or the
+environment, and never printed. One trailing newline (\n or \r\n) is dropped,
+and the command says so. A value must be 4 bytes to 8192, on one line, with
+no whitespace at either end; a longer value is a document the service's loader
+would refuse, so it is refused here instead.
+
+github-app-key is the ONE multi-line entry: it is an RSA private key in a PEM,
+so it has to come in on stdin, from the key file the App's page downloads
+(fugaro creds set github-app-key < PATH-TO-THE-KEY-FILE) — the hidden prompt reads one
+line and cannot take a paste of a whole key, so it refuses this name and says
+so. The value must be exactly one PEM block, its -----BEGIN line to its
+matching -----END line and nothing else, and it must be a key the service's
+mint can parse (internal/gitprov/github's ParsePrivateKey: PKCS#1 "RSA PRIVATE
+KEY" or PKCS#8 "PRIVATE KEY", RSA). A single line of anything, a PEM with a
+line of text around it, and a key the mint cannot use are each refused before
+the write, and no refusal repeats a byte of the value.
+
+The write is a read-modify-write of one document: the other entries keep their
+bytes, and the whole document is parsed with the service's own loader
+(internal/credsvc) before it is written, so what this command stores is what
+the service accepts. After the write the bundle is read back and compared: if
+it is not the document this command wrote, another write landed underneath and
+this one lost it, which is said plainly and exits non-zero. Nothing is retried
+silently.
+
+A verified write then DISABLES the version it replaced, which the output names:
+a rotated-away bundle that stays enabled keeps every superseded credential
+readable by anyone who can read the container, which is the one thing a
+rotation is for. Terraform cannot do this (it creates the container and manages
+no version), so the command that writes a version retires the one before it. A
+disable that fails is reported on stderr and does not fail the command: the new
+credential is live either way.
+
+The command needs the container to exist — the installation's Terraform creates
+it (Task C1.18) and no command of ours does — and it works with the owner's own
+project IAM (Project Owner or Editor: secretmanager.versions.get, .add and
+.disable). There is no service account, no actAs and no operator grant on this
+container: a secretVersionAdder on it is the ability to read every credential
+in the bundle at once.
+
+It is refused from a coding agent's session and from a run's process, before
+anything is read, and it is never covered by --yes: there is no non-interactive
+form.
+
+Usage: `fugaro creds set NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
@@ -1785,6 +2094,49 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro reaper`
+
+Sweep the Batch jobs and VMs a run has leaked
+
+One pass of the reaper (docs/design/compute-backend.md §3.4): delete the Batch jobs
+that are stuck or queued past their deadline, and the Compute Engine instances of runs
+no Batch job accounts for, in this project and region.
+
+The reaper holds five permissions and creates nothing (SECURITY.md). Every deletion
+rests on a label check of its own, and anything it cannot explain it refuses to touch --
+naming it in the report, which is what this command prints and what its own Cloud Run
+job logs.
+
+Run it as the installation's reaper account. --dry-run prints the same report and
+deletes nothing.
+
+Where no project config is selected the pass reads the reaper job's own environment
+(FUGARO_GCP_PROJECT and FUGARO_REGION, which Terraform sets on the job), and deletes
+only inside the Cloud Run job that also sets FUGARO_REAPER_JOB: anywhere else that
+environment is a dry run, so an operator's shell never sweeps their project.
+
+Two GCP projects are refused by name wherever they are named from, and an installation
+may add its own to the list with FUGARO_REAPER_REFUSE_PROJECTS (comma-separated project
+ids): the pass refuses those before it opens a client, so nothing is read and nothing
+deleted.
+
+Usage: `fugaro reaper`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--dry-run` | bool | `false` | no | print what would be deleted, and delete nothing |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for reaper |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro recipes`
 
 List, show, validate and publish recipes, the task loop a run follows after implement
@@ -2167,11 +2519,15 @@ Attribution, as the records themselves state it:
     with runs ls.
 
 The money is model dollars, counted the way the budget screens count them. COUNTED
-$ is the model spend that counts toward the caps (a run on an API key or Vertex),
-and NOTIONAL $ the model spend of a run on a subscription (agent.auth oauth),
-which counts toward the plan's limits and is no one's bill: they are separate
-columns and are never summed. Compute is not attributed to a person: no run's
-compute is, and the budget database's own person view leaves it out too. AVG
+$ is the model spend that counts toward the caps: the money part of a run's model
+figure (model_usd minus model_notional_usd, C1.16/P12). NOTIONAL $ is the part of
+that figure a subscription paid -- a run on agent.auth oauth whole, and a cascade
+run's tier-A calls, whose run is otherwise an api-key one -- which counts toward
+the plan's limits and is no one's bill. The spend basis decides only a record
+written before that breakdown existed, which is what says a figure was never
+billed. They are separate columns and are never summed. Compute is not attributed
+to a person: no run's compute is, and the budget database's own person view
+leaves it out too. AVG
 $/RUN is COUNTED $ over COUNTED RUNS, the runs that settled a real-dollar cost;
 a notional run, a run with no readable record and a record from before the cost
 breakdown existed are none of them averaged in as a run that cost nothing.
@@ -2685,6 +3041,7 @@ Flags:
 | `--print-vars` | bool | `false` | no | print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--provision-batch` | bool | `false` | no | after the installation's ordinary steps, provision the Batch compute backend into a state of its own (design docs/design/compute-backend.md §8.1 task 6): the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router, and a preloaded boot image rebuilt on a schedule. It is money (a billable build, a NAT's hours) and permanent, so --yes never covers it and it is typed at a real terminal; nothing runs it by default, and no run can use the backend until the enable task. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor) |
+| `--provision-credentials` | bool | `false` | no | after the installation's ordinary steps, turn ON the credentials service in the installation root (docs/credentials-service, D146): a Cloud Run service (its own account, one Secret Manager bundle secret) running this release's image pinned by digest through the installation's remote repository. It is the identity the REPOSITORY jobs' model credentials move to: every workflow job of every repository root re-applied after this drops its model credential — in every agent.auth mode, oauth and api-key as much as cascade — and its account's accessor on it, and gets an invoker grant on the service instead. It does NOT reach the shared project jobs, which keep mounting their provider keys and CLAUDE_CODE_OAUTH_TOKEN with their grants (C3.9 moves those). And the part that gives a run a credential from the service instead is not in this release yet, so until it lands no re-applied repository job has a model credential to use: this is the owner's step of a service that is not finished. It needs the installation's Firebase rules (fugaro setup --firebase-project) at the credentials generation first. --yes never covers it and it is typed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor), and it does NOT exclude --provision-batch: they are two applies of different roots, each with its own typed confirmation, and naming both means both |
 | `--publish-config` | bool | `false` | no | publish the shared config to the runs bucket and stop (setup does it after it writes the local config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--registry-cleanup` | string | "" | no | Artifact Registry cleanup: dry-run (the default), on or off |
@@ -2848,6 +3205,7 @@ Flags:
 | `--plan-only` | bool | `false` | no | stop after showing the plan (never takes --yes: it creates nothing on a flag's word) |
 | `--print-vars` | bool | `false` | no | print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--provision-credentials` | bool | `false` | no | after the installation's ordinary steps, turn ON the credentials service in the installation root (docs/credentials-service, D146): a Cloud Run service (its own account, one Secret Manager bundle secret) running this release's image pinned by digest through the installation's remote repository. It is the identity the REPOSITORY jobs' model credentials move to: every workflow job of every repository root re-applied after this drops its model credential — in every agent.auth mode, oauth and api-key as much as cascade — and its account's accessor on it, and gets an invoker grant on the service instead. It does NOT reach the shared project jobs, which keep mounting their provider keys and CLAUDE_CODE_OAUTH_TOKEN with their grants (C3.9 moves those). And the part that gives a run a credential from the service instead is not in this release yet, so until it lands no re-applied repository job has a model credential to use: this is the owner's step of a service that is not finished. It needs the installation's Firebase rules (fugaro update --firebase-project) at the credentials generation first. --yes never covers it and it is typed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor), and it does NOT exclude --provision-batch: they are two applies of different roots, each with its own typed confirmation, and naming both means both |
 | `--publish-config` | bool | `false` | no | publish the shared config to the runs bucket and stop (update does it after it writes the local config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--registry-cleanup` | string | "" | no | Artifact Registry cleanup: dry-run (the default), on or off |
@@ -2991,7 +3349,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for validate |
 | `--json` | bool | `false` | no | print machine-readable output |
-| `--offline` | bool | `false` | no | never read the runs bucket: resolve against the cached project layer, if any |
+| `--offline` | bool | `false` | no | never read the runs bucket or the project's published policy: resolve against the cached project layer, if any; a cascade file is refused, not admitted unproven |
 | `--project-layer` | string | "" | no | resolve against this project layer file instead of the published one (also checks the file; for CI without bucket access, and before fugaro config publish) |
 
 Subcommands:

@@ -51,6 +51,22 @@ const (
 	HaltTokenCap           HaltReason = "token_cap"
 	HaltBudgetUnavailable  HaltReason = "budget_unavailable"
 	HaltBudgetTokenExpired HaltReason = "budget_token_expired"
+	// HaltNoCredential is a credentials-cascade run that ran out of job: the
+	// service answered a typed "exhausted until T" (C1.10) and T is not
+	// inside what is left of the job's own timeout, so the run can wait for
+	// no credential before it must be over (C1.17). The wait-or-switch
+	// decision itself is the service's; this reason only says the reset it
+	// named fits in no job like this one.
+	HaltNoCredential HaltReason = "no_credential"
+	// HaltCredsRulesDenied is a cascade run whose write was refused by the
+	// deployed rules: the `credential` or `waiting_until` child of its own
+	// registry entry, or a by-tier counter (C1.3). It is the known gap of a
+	// rules downgrade — an older Fugaro running `fugaro update --firebase-project`
+	// redeployed a document without the cascade's children — so the message
+	// names the redeploy and the write is never retried (C1.17): silently
+	// dropping it would hide the run's credential from the dashboard, and
+	// retrying it forever would fill the log instead of the operator's queue.
+	HaltCredsRulesDenied HaltReason = "creds_rules_denied"
 )
 
 // Halt is why and when a run was halted.
@@ -138,6 +154,41 @@ type StageTiming struct {
 	// what the upstream served, and a stage may also have called the
 	// background model: Model does not account for ModelUSD on its own.
 	Model string `json:"model,omitempty"`
+	// ModelNotionalUSD is the part of this stage's ModelUSD that was
+	// notional: what the calls a subscription paid for would have cost at
+	// list rates (D140, P12) -- Claude Code's own figure when the stage ran
+	// on oauth, and, in a cascade run, the tier-A calls' share of what the
+	// gateway settled. The stage's own split is the only place it exists:
+	// one stage of a cascade run can hold both, so Cost.ModelNotionalUSD
+	// says how much of the run's figure was notional and this says where.
+	ModelNotionalUSD float64 `json:"model_notional_usd,omitempty"`
+}
+
+// Switch is one entry of a run's switch log (D140, C1.16): the run's cascade
+// moved its calls from one credential to another, and the credentials
+// service said why. From, To and Reason are the service's own record
+// (credsvc.Switch, C1.15) as the gateway read it off the answer; everything
+// here is a name or a word of that contract, never a credential value.
+type Switch struct {
+	// From is the credential the call was on, empty when the call started on
+	// the credential that answered it (the service's own meaning for an
+	// empty from), which is why it is not required.
+	From string `json:"from,omitempty"`
+	// To is the credential that answered.
+	To string `json:"to"`
+	// Reason is why the cascade moved, one of the service's closed set of
+	// reason words (credsvc.ValidReason), never free text.
+	Reason string `json:"reason"`
+	// CacheMissUSD is the estimated cost of re-reading what the previous
+	// call had cached, priced at the answering tier's input rate less its
+	// cache-read rate (F24, C1.16). It is an estimate for a reader and it
+	// is charged to nothing: the ledger settles the calls themselves.
+	CacheMissUSD float64 `json:"cache_miss_usd,omitempty"`
+	// CacheMissUnmeasured is true when the answering tier's cache behaviour
+	// is not measured (a Claude model on tier C's OpenRouter route, F24,
+	// Checks 46 and 50). Then the miss is unknown rather than free, and
+	// CacheMissUSD is 0 because there is no figure -- not because it is one.
+	CacheMissUnmeasured bool `json:"cache_miss_unmeasured,omitempty"`
 }
 
 // Record is result.json, the run record (design §4.6).
@@ -190,9 +241,18 @@ type Record struct {
 	CostUSD       float64         `json:"cost_usd"` // the model spend (design §4.6)
 	Cost          *Cost           `json:"cost,omitempty"`
 	Stages        []StageTiming   `json:"stages,omitempty"`
-	StartedAt     time.Time       `json:"started_at"`
-	Deadline      *time.Time      `json:"deadline,omitempty"`
-	FinishedAt    *time.Time      `json:"finished_at,omitempty"`
+	// Switches is the run's switch log (D140, C1.16): every credential
+	// switch the credentials service reported on one of this run's calls,
+	// in the order the gateway settled the answers that carried them, each
+	// beside the cache-miss estimate only the gateway can compute (F24). It
+	// is the service's record and the estimate, nothing else: no credential
+	// value is in it, and nothing reads it to decide anything. Absent for a
+	// run that never switched, and in records from before this field
+	// existed.
+	Switches   []Switch   `json:"switches,omitempty"`
+	StartedAt  time.Time  `json:"started_at"`
+	Deadline   *time.Time `json:"deadline,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
 	// FinalizeReserveS is the workflow's timeouts.finalize_reserve at the
 	// task's ref, overrides applied, in seconds; read it with
 	// FinalizeReserve. Absent until bootstrap has read fugaro.yaml.
