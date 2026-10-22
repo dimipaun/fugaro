@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/spf13/cobra"
 )
@@ -337,8 +339,14 @@ type wizardQuestion struct {
 // question added without a flag, or with a flag nobody can pass, fails there
 // rather than in a user's terminal.
 //
-// The wizard's later questions are later tasks': the two-phase ask (W3.5) adds
-// its row here. The repository question (W3.4) is not a row of this table: it is
+// The table is the phase's own list, in the plan's sense (W3.5): wizardStages
+// below is the one stage that asks these questions, and it asks them in this
+// order, none of them twice, all of them before anything is applied. A question
+// the phase asks prints its row's label, so the row and the prompt cannot
+// drift apart (the ID, region and project answers) — and the rows a later task
+// adds are asked by the same stage, in the position they are listed in.
+//
+// The repository question (W3.4) is not a row of this table: it is
 // about the checkout, so it is asked where the checkout is read — at the start
 // of the converge, by the gate (init_repo_gate.go's asksOnboard) — and a first
 // run with no checkout would have no label to print and no flag to answer it.
@@ -369,6 +377,38 @@ var setupQuestions = []wizardQuestion{
 		flag:    "--name",
 		missing: "--name <name>",
 	},
+}
+
+// questionFor is the table's row for a question's flag: the label the prompt
+// shows, and the name a run that cannot ask is refused with. The wizard's
+// questions ask their label through this (wizard_stage.go), so the prompt a
+// person answers and the row TestEveryWizardQuestionHasAFlag holds the run to
+// are one string. A flag with no row is a programming error and not a run's:
+// the zero row's label is the flag itself, which is a label a person can still
+// read, and the test above fails on it.
+func questionFor(flag string) wizardQuestion {
+	for _, q := range setupQuestions {
+		if q.flag == flag {
+			return q
+		}
+	}
+	return wizardQuestion{what: "the question " + flag + " answers", label: flag, flag: flag}
+}
+
+// wizardStages is the wizard's input phase: the stage list one initflow.Run is
+// given, and there is exactly one stage in it (wizard_stage.go). It is
+// registered here, with the questions it asks (setupQuestions above) and the
+// answer the run takes itself (askProjectAnswer below), because this file is
+// the wizard's — and it is the first thing a run does, which is what the
+// stage's name says (the first slot of the canonical order).
+//
+// It is deliberately not part of initStages() (init_stages.go): that list is
+// the apply phase's, one stage per canonical slot, and the two phases are two
+// runs of the loop. A stage under the input phase's name in the apply phase's
+// run would be a duplicate name, which initflow.Validate refuses — and would
+// ask the questions between applies, which is the shape this task removes.
+func wizardStages(ctx context.Context, r *initRun) []initflow.Stage {
+	return []initflow.Stage{newWizardStage(ctx, r)}
 }
 
 // asksProjectAnswer is the whole of the question's own condition: the door this
