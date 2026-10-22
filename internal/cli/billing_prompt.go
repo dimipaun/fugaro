@@ -2,11 +2,16 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"os/exec"
 	"strconv"
+	"strings"
 
 	"github.com/dimipaun/fugaro/internal/billing"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // billing_prompt.go is the wizard's billing question (task W4.3 of
@@ -35,11 +40,46 @@ import (
 // (askBilling): an owner who asked for the list and got silence cannot tell it
 // from a run with no picker at all, and Check 111 records which source
 // answered — here, neither.
+//
+// W4.4 is the other half of that line: what the run does when the API's own
+// answer is that cloudbilling.googleapis.com is off on the credentials' quota
+// project (D3's answer of 2026-10-20, and the one place in the whole wizard
+// where an API's state may change). The API names that project, and the answer
+// splits on whether it is the project this run is setting up:
+//
+//   - it is, so the run may offer to turn the API on there — behind a typed
+//     confirmation that --yes never covers, naming the project and the API —
+//     and then ask the list once more;
+//   - it is not, so the run refuses: it names the exact line to run on that
+//     project and who to ask, and enables nothing anywhere. An API turned on
+//     on a project none of the run's answers named is precisely the surprise
+//     F8's refusals exist to prevent.
+//
+// Either way the fallback (W4.2) and the project stage's guided line are still
+// what the operator has: this is an addition to that path, never a
+// replacement (F6). The offer is made only where the list could not be read at
+// all — the API's disabled answer is read from the error the fallback already
+// carried up (ErrNoSource.Unwrap), so the API is asked once, and a fallback
+// that answered has left nothing for the offer to fix.
 
 // billingNoAccount is the answer that links nothing now. A list can hold an
 // account the operator does not want to use yet, and a question with no way
 // out of it is a question that gets a wrong answer.
 const billingNoAccount = "none"
+
+// billingAPIService is the API the account list needs, as Google spells it: the
+// one thing W4.4 may turn on, and the name both the offer and the refusal print.
+// internal/billing names the same service in the enable line it carries
+// (ErrDisabled.EnableCommand), and the tests compare the two spellings.
+const billingAPIService = "cloudbilling.googleapis.com"
+
+// billingEnableArgs is that line in argv form: gcloud runs without a shell, so
+// the project is passed as it is — and a project ID never needs quoting
+// (infra.ValidProjectID). It is the command the line names, and only the
+// operator's typed answer runs it.
+func billingEnableArgs(project string) []string {
+	return []string{"services", "enable", billingAPIService, "--project", project}
+}
 
 // billingConsole is where an account that does not exist yet is created. The
 // wizard names it rather than a command: creating a billing account is not
@@ -94,13 +134,21 @@ func (r *initRun) askBilling(ctx context.Context) error {
 	opts.Project = project
 	accounts, source, err := billing.ListWithFallback(ctx, opts)
 	if err != nil {
-		// Neither source answered. Nothing is offered and nothing is recorded,
-		// and the one line below is all this says about it: the refusal itself
-		// is not printed — it is the API's own words about a list this run did
-		// not need, and it can name a project, a permission or an account —
-		// and the project stage prints the guided line for an account it does
-		// not know. Without the line, a run that could not read the list is
-		// indistinguishable from a run with no picker at all, and Check 111
+		// Neither source answered. Where the API's own answer is that it is off
+		// on the credentials' quota project, the run says the one thing D3 lets
+		// it do about that (billingAPIOff: an offer, or a refusal) — and it may
+		// come back with a list, the second time the API is asked. Everything
+		// else is the line below and nothing more.
+		accounts, source, err = r.billingAPIOff(ctx, opts, err)
+	}
+	if err != nil {
+		// Neither source answered, and nothing was offered or enabled. Nothing
+		// is recorded, and the one line below is all this says about it: the
+		// refusal itself is not printed — it is the API's own words about a list
+		// this run did not need, and it can name a project, a permission or an
+		// account — and the project stage prints the guided line for an account
+		// it does not know. Without the line, a run that could not read the list
+		// is indistinguishable from a run with no picker at all, and Check 111
 		// records which source answered: neither.
 		fmt.Fprintf(r.w, "Billing accounts could not be listed (neither the Cloud Billing API nor %s answered).\n", billing.GcloudBin)
 		return nil
@@ -156,4 +204,112 @@ func (r *initRun) askBilling(ctx context.Context) error {
 func (r *initRun) billingLeft(project string) {
 	fmt.Fprintf(r.w, "This run links no billing account. Create one in the Google Cloud console (%s), then run:\n  %s\n",
 		billingConsole, billing.Guided(project))
+}
+
+// billingAPIOff is W4.4 (D3): the one place in the wizard where the state of an
+// API may change, and it exists only where the API's own answer is that it is
+// off on the credentials' quota project. err is what ListWithFallback carried
+// up, and that answer is inside it — *ErrNoSource hands the API's own
+// *ErrDisabled back (Unwrap) — so the API is asked once and nothing here can
+// fire on a list the fallback answered. Every other error (a missing
+// permission, a refusal, no gcloud on PATH) leaves as it came: the caller's one
+// line is all the run says, and the project stage's guided line is what the
+// operator has (F6).
+//
+// It returns the list of a second read, which is only ever made after an enable
+// this run ran. It is reached once per run: the offer is made on the error of
+// the run's own list, and the second list is the last the question asks.
+func (r *initRun) billingAPIOff(ctx context.Context, opts billing.Options, err error) ([]billing.Account, billing.Source, error) {
+	var off *billing.ErrDisabled
+	if !errors.As(err, &off) {
+		return nil, billing.SourceNone, err
+	}
+	quota, project := pluginwire.Printable(off.QuotaProject), pluginwire.Printable(opts.Project)
+	if off.QuotaProject != opts.Project {
+		// D3's second case: the API is off on the credentials' own quota
+		// project, and that is not the project this run is setting up. The run
+		// refuses — it names the exact line to run there, and who to ask, and
+		// enables nothing anywhere. Turning an API on in a project none of the
+		// run's answers named is precisely the surprise F8's refusals exist to
+		// prevent, and this run has no idea what else that project holds.
+		fmt.Fprintf(r.w, "The Cloud Billing API (%s) is disabled on %s, the quota project of your credentials, which is not the project this run is setting up (%s). This run enables nothing there: ask an owner of %s to run:\n  %s\n",
+			billingAPIService, quota, project, quota, off.EnableCommand)
+		return nil, billing.SourceNone, err
+	}
+	// D3's first case: the API is off on the project this run is setting up, so
+	// this run may offer to turn it on there — behind a typed confirmation, the
+	// one the wizard's other state-changing steps ask for, naming the project
+	// and the API. --yes never covers it: a --yes run is a run that asked for no
+	// question, so asksBilling is false there and this is not reached at all.
+	//
+	// Nothing about the offer is taken for an answer: only the project's own ID
+	// typed on the line enables anything, and every other answer — Enter, a
+	// stray word, the end of input — leaves the project exactly as it was and
+	// hands the operator the line to run by hand.
+	fmt.Fprintf(r.w, "⚠ CONFIRM: ENABLE the Cloud Billing API (%s) in GCP project %s, the project this run is setting up: it is disabled there, and it is what the billing accounts this run can link are listed with (free, and nothing fugaro does disables it again)\n",
+		billingAPIService, project)
+	fmt.Fprintf(r.w, "Type %s to enable it, or press Enter to link an account by hand instead: ", project)
+	line, rerr := r.in.ReadString('\n')
+	if rerr != nil && !errors.Is(rerr, io.EOF) {
+		return nil, billing.SourceNone, userErr("reading the confirmation: %v", rerr)
+	}
+	fmt.Fprintln(r.w)
+	if strings.TrimSpace(line) != opts.Project {
+		r.billingEnableLeft(off)
+		return nil, billing.SourceNone, err
+	}
+	if !r.enableBillingAPI(ctx, opts, off) {
+		return nil, billing.SourceNone, err
+	}
+	// The API's own answer is the only thing that said it was off, so it is
+	// asked once more: what the enable turned on is what makes the list
+	// readable, and the second answer is the run's own (an account list that
+	// arrives here is a list the question was answered with).
+	return billing.ListWithFallback(ctx, opts)
+}
+
+// billingEnableLeft is the line the offer leaves behind when it was not taken,
+// or was taken and could not be run: the exact command internal/billing carries
+// (ErrDisabled.EnableCommand), which needs no API of this run's and is the same
+// one the refusal prints for another project. The guided `gcloud billing
+// projects link` line is the project stage's to print, and it prints it.
+func (r *initRun) billingEnableLeft(off *billing.ErrDisabled) {
+	fmt.Fprintf(r.w, "This run enables nothing. Run:\n  %s\nthen run this again, or link an account you already have.\n", off.EnableCommand)
+}
+
+// enableBillingAPI runs the enable line through gcloud, the same injected seam
+// the fallback uses (billing.Options.Gcloud), and reports whether it ran. It is
+// reached only after the operator typed the project's ID, and it is the only
+// command this question ever runs that changes anything: what it does not do is
+// touch Service Usage directly, so what the operator would have run by hand and
+// what the wizard runs are the same line, in the same project.
+//
+// A gcloud that is not on PATH, or an enable that fails, is not the run's
+// failure: it says what happened, prints the line, and the operator keeps
+// everything they had (the fallback, and the project stage's guided line).
+func (r *initRun) enableBillingAPI(ctx context.Context, opts billing.Options, off *billing.ErrDisabled) bool {
+	look := opts.Gcloud.LookPath
+	if look == nil {
+		look = exec.LookPath
+	}
+	if _, err := look(billing.GcloudBin); err != nil {
+		fmt.Fprintf(r.w, "%s is not on PATH, so this run cannot enable %s in %s itself.\n", billing.GcloudBin, billingAPIService, pluginwire.Printable(opts.Project))
+		r.billingEnableLeft(off)
+		return false
+	}
+	run := opts.Gcloud.Run
+	if run == nil {
+		run = billing.ExecRunner
+	}
+	if _, err := run(ctx, billingEnableArgs(opts.Project)...); err != nil {
+		// The command's own words: internal/billing's runner carries gcloud's
+		// stderr, and this is the one line of it the operator needs to see. It
+		// is not repeated anywhere else (nothing is written or logged).
+		fmt.Fprintf(r.w, "Enabling %s in %s failed: %s\n", billingAPIService, pluginwire.Printable(opts.Project), safetext.OneLine(err.Error()))
+		r.billingEnableLeft(off)
+		return false
+	}
+	r.res.Enabled = append(r.res.Enabled, billingAPIService)
+	fmt.Fprintf(r.w, "enabled %s in %s\n", billingAPIService, pluginwire.Printable(opts.Project))
+	return true
 }

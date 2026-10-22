@@ -22,13 +22,27 @@ const serviceCloudBilling = "cloudbilling.googleapis.com"
 // checks an existing one, named by the caller, and this is where that
 // surfaces); otherwise it reports whether project itself has a linked
 // billing account.
+//
+// The disabled answer is reported in D3's two cases (W4.4): where the quota
+// project is the project being checked, the fix is this project's own to
+// enable and the line says so; where it is another project, the fix names that
+// project and who to ask, because turning an API on in a project nobody named
+// is not this reader's to do — the same distinction the wizard's billing
+// question draws (internal/cli/billing_prompt.go).
 func Billing(ctx context.Context, c *billing.APIService, project string) []Check {
 	bi, err := c.Projects.GetBillingInfo("projects/" + project).Context(ctx).Do()
 	if quota, ok := quotaProjectIfDisabled(err); ok {
+		if quota == project {
+			return []Check{{
+				ID:      "billing-api",
+				Problem: "the Cloud Billing API is disabled on " + project + ", the quota project of your credentials — this project",
+				Fix:     "gcloud services enable cloudbilling.googleapis.com --project " + shellword.Quote(quota),
+			}}
+		}
 		return []Check{{
 			ID:      "billing-api",
-			Problem: "the Cloud Billing API is disabled on " + quota + ", the quota project of your credentials",
-			Fix:     "gcloud services enable cloudbilling.googleapis.com --project " + shellword.Quote(quota),
+			Problem: "the Cloud Billing API is disabled on " + quota + ", the quota project of your credentials, which is not " + project,
+			Fix:     "gcloud services enable cloudbilling.googleapis.com --project " + shellword.Quote(quota) + " (on that project: ask an owner of it)",
 		}}
 	}
 	var ge *googleapi.Error

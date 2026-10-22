@@ -55,8 +55,46 @@ func TestBillingAPIDisabledOnQuotaProject(t *testing.T) {
 	if strings.Contains(c.Fix, "\n") {
 		t.Fatalf("fix is not one line: %q", c.Fix)
 	}
+	// D3's second case (W4.4): the quota project is not the project being
+	// checked, so the fix sends the reader to that project's owner rather than
+	// telling them to go and enable an API in a project nobody named.
+	if !strings.Contains(strings.ToLower(c.Fix), "ask an owner") {
+		t.Fatalf("fix %q does not say who to ask about another project", c.Fix)
+	}
 	if len(f.Requests()) == 0 {
 		t.Fatal("the check never read billing info")
+	}
+}
+
+// TestBillingAPIDisabledOnTheProjectItself is D3's first case, and the half of
+// the distinction the check above does not cover: the credentials' quota
+// project is the project being checked, so the line to run is this reader's own
+// and there is nobody to ask. The two wordings must differ — a reader sent to
+// ask an owner about their own project is a reader told nothing — and neither
+// may suggest that the project being checked is the quota project when it is
+// not.
+func TestBillingAPIDisabledOnTheProjectItself(t *testing.T) {
+	f, svc := newBilling(t)
+	su := gcpfake.NewServiceUsage(t)
+	su.Consumer = "projects/proj-1234"
+	su.Disable("cloudbilling.googleapis.com", f.Server)
+
+	cs := Billing(context.Background(), svc, "proj-1234")
+	if len(cs) != 1 {
+		t.Fatalf("checks = %+v", cs)
+	}
+	c := cs[0]
+	if c.ID != "billing-api" || c.OK {
+		t.Fatalf("got %+v", c)
+	}
+	if !strings.Contains(c.Problem, "proj-1234") || !strings.Contains(c.Fix, "cloudbilling.googleapis.com") {
+		t.Fatalf("problem %q fix %q didn't name the project and the API", c.Problem, c.Fix)
+	}
+	if want := "gcloud services enable cloudbilling.googleapis.com --project proj-1234"; c.Fix != want {
+		t.Fatalf("fix = %q, want %q: the quota project is this one, so the line is this project's", c.Fix, want)
+	}
+	if strings.Contains(strings.ToLower(c.Fix), "ask an owner") {
+		t.Fatalf("fix %q sends the reader to an owner for their own project", c.Fix)
 	}
 }
 
