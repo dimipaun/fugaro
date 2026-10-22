@@ -345,8 +345,15 @@ func TestCredsSetRefusesUnknownKeyAndOversizeDoc(t *testing.T) {
 	// refused there.
 	big := strings.Repeat("a", credsvc.MaxBundleValueBytes+1)
 	_, _, err := executeStdin(t, big+"\n", "creds", "set", config.ClaudeOAuthToken)
-	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "nothing was written") {
+	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("an oversize value = %v, want a refusal", err)
+	}
+	// The refusal names the bound the VALUE broke, not the document's: the two
+	// are different limits, and the one an operator has to be told about is the
+	// one their value is over (the document bound is the same code path's
+	// answer for a document, below).
+	if !strings.Contains(err.Error(), "per-credential limit") {
+		t.Errorf("the refusal does not name the per-credential bound: %v", err)
 	}
 	if n := f.writes(); n != 0 {
 		t.Fatalf("%d version(s) written for an oversize value", n)
@@ -649,18 +656,22 @@ func TestCredsLsRefusesAnUnreadableBundle(t *testing.T) {
 	f.seed(t, []byte(config.ClaudeOAuthToken+": "+value+"\n"))
 	f.DisableVersions(f.id)
 	out, errOut, err = execute(t, "creds", "ls")
-	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "DISABLED") {
-		t.Fatalf("a disabled bundle = %v, want a named refusal", err)
+	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "nothing was read") ||
+		!strings.Contains(err.Error(), "gcloud secrets versions enable") {
+		t.Fatalf("a disabled bundle = %v, want the named refusal", err)
 	}
 	assertNoValue(t, out+errOut+err.Error(), value)
 
 	// And `creds set` refuses it too, rather than editing a document it could
 	// not read: a write on top of an unseen document would drop every
-	// credential in it.
+	// credential in it. The refusal is the named one — it says nothing was
+	// written and names the owner's way back in — and not merely any error that
+	// happens to contain the word DISABLED.
 	writes := f.writes()
 	out, errOut, err = executeStdin(t, credsValue(t, "ours")+"\n", "creds", "set", config.ClaudeOAuthToken)
-	if err == nil || !strings.Contains(err.Error(), "DISABLED") {
-		t.Fatalf("creds set on a disabled bundle = %v, want a named refusal", err)
+	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "nothing was written") ||
+		!strings.Contains(err.Error(), "gcloud secrets versions enable") {
+		t.Fatalf("creds set on a disabled bundle = %v, want the named refusal", err)
 	}
 	assertNoValue(t, out+errOut+err.Error(), value)
 	if n := f.writes(); n != writes {
