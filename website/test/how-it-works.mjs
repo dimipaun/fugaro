@@ -2962,7 +2962,7 @@ function zoomRun(html, { at = 1000, viewport = 800, ...options } = {}) {
  * every reading is taken from the state the script wrote on the built page's own markup.
  */
 function zoomScriptFailures(run) {
-  const { html, page, at, viewport, options, travel } = run
+  const { html, page, at, viewport, options, travel, levels } = run
   const out = []
   const fail = (line) => out.push(line)
   const sections = page.find('[data-zoom]')
@@ -3035,12 +3035,35 @@ function zoomScriptFailures(run) {
   if (calm.page.find('[data-zoom-marker]').some((marker) => marker.getAttribute('aria-current') !== null)) {
     fail('a page whose reader has asked for less motion has a marker carrying aria-current, and the section is not pinned at all: the marks are the reading\'s, and there is no reading to mark (D105, Part 5)')
   }
+  // The same reader, opened on a level's own fragment: the fragment is the browser's own jump in
+  // the stills, where each level is where the browser looks for it, so the section is not pinned
+  // on the way in and does not move the page. The move is what this reads rather than the pinned
+  // state, because the state is stood down again by the very scroll the move causes: a section
+  // that answered the fragment and then handed the page back would pass a reading of the
+  // attributes and still have taken the reader somewhere they did not ask to go.
+  const calmDeep = zoomRun(html, { at, viewport, ...options, reduce: true, hash: panels[last].getAttribute('id') })
+  if (calmDeep.page.pageScrolls.length > 0) {
+    fail(`a page whose reader has asked for less motion was moved to a level when it was opened on that level's own fragment, and the fragment is the browser's own jump in the stills: the section neither pins nor moves the page for a reader who has asked for less motion (D105, Part 5)`)
+  }
+  if (calmDeep.page.find('[data-zoom-shown]').length > 0) {
+    fail('a page whose reader has asked for less motion has a level marked data-zoom-shown when it is opened on that level\'s own fragment, and the stills are all four levels visible in order (D105, Part 5)')
+  }
   page.setReduce(true)
   if (section.hasAttribute('data-zoom-ready')) {
     fail('the section is still pinned after the reader asked for less motion under a running page, and the answer is watched rather than sampled once: a reader who turns the preference on is given the stills (D105, Part 5)')
   }
   if (page.find('[data-zoom-shown]').length > 0) fail('a level is still marked data-zoom-shown after the reader asked for less motion under a running page: the section stands down to the stills (D105, Part 5)')
   if (marks().some((mark) => mark !== 'false')) fail(`the markers read ${JSON.stringify(marks())} after the reader asked for less motion under a running page, and none of them is current once the section is the stills (D105, Part 5)`)
+  // And a press under that reader: the marker is an anchor in a column of stills, so the jump it
+  // asks for is the browser's own and the script leaves the press alone rather than pinning the
+  // section for the reader who asked it not to be.
+  const stillPress = markers[last].dispatch('click')
+  if (stillPress.defaultPrevented) {
+    fail('a marker press was answered by the script for a reader who has asked for less motion, and in the stills each level stands at its own place in the column: the press is left to the anchor\'s own jump (D105, Part 5)')
+  }
+  if (section.hasAttribute('data-zoom-ready')) {
+    fail('a marker press pinned the section for a reader who has asked for less motion, and the reduced-motion path is the four stills (D105, Part 5)')
+  }
   page.setReduce(false)
   if (!section.hasAttribute('data-zoom-ready')) {
     fail('the section does not come back when the reader lets less motion go under a running page: the preference is an answer the page follows in both directions (D105, Part 5)')
@@ -3058,6 +3081,28 @@ function zoomScriptFailures(run) {
   const deep = zoomRun(html, { at, viewport, ...options, hash: panels[last].getAttribute('id') })
   if (deep.page.find('[data-zoom-panel]').findIndex((panel) => panel.hasAttribute('data-zoom-shown')) !== last) {
     fail(`a page opened on #${panels[last].getAttribute('id')} opens on level ${deep.page.find('[data-zoom-panel]').findIndex((panel) => panel.hasAttribute('data-zoom-shown'))}, and a reader who followed a level's own link is put on that level (Part 5)`)
+  }
+
+  // A reader the page opens *inside* the section: a reload halfway down it, or a scroll the
+  // browser restored. The two geometries are the two the section really has — the four stills
+  // stacked, which is what the markup is before the script writes anything, and one viewport of
+  // scroll per level, which is what the stylesheet gives the runway once it has — and the level is
+  // read from the second, because that is the section the reader is then looking at. The stills'
+  // own height is a stand-in for four drawings and their captions stacked; the reading is the
+  // pinned one's, which is the number the stylesheet states.
+  const midway = zoomRun(html, {
+    at,
+    viewport,
+    ...options,
+    pageScroll: at + travel / 2,
+    rects: {
+      '[data-zoom-ready] [data-zoom-runway]': { top: at, height: viewport * levels },
+      '[data-zoom-runway]': { top: at, height: viewport * 2 },
+    },
+  })
+  const midwayShown = midway.page.find('[data-zoom-panel]').findIndex((panel) => panel.hasAttribute('data-zoom-shown'))
+  if (midwayShown !== 2) {
+    fail(`a page opened halfway down the section's runway shows level ${midwayShown}, and the pinned runway puts the reader halfway through level 2 at that scroll position: the reading is taken from the runway the reader is looking at rather than from the four stills' own height (Part 5)`)
   }
   return out
 }
@@ -3232,7 +3277,7 @@ test('the pinned section follows the reader\'s own scroll, level by level, and a
 })
 
 test('the pinned section is refused plant by plant, in the script itself', () => {
-  // The other half of the reading above: the script's own text, edited five ways, each of which is
+  // The other half of the reading above: the script's own text, edited eight ways, each of which is
   // a way the section stops being the section. Every plant is one string in the file the build
   // copies into `dist/` verbatim, so no plant needs a rebuild.
   const html = howItWorks().html
@@ -3278,6 +3323,23 @@ test('the pinned section is refused plant by plant, in the script itself', () =>
           "    if (!motion && typeof window.matchMedia === 'function') motion = window.matchMedia(LESS_MOTION)\n    if (!motion) motion = { matches: false }",
         ),
       wants: /no matchMedia is pinned anyway/,
+    },
+    {
+      what: 'a level read off the stills rather than off the pinned runway',
+      // The reading's own line, and not the same call in `offset`: the plant leaves the state
+      // written, so the section is pinned and only the level the reader is put on is wrong.
+      plant: (src) => src.replace('    function level() {\n      var box = pinned()', '    function level() {\n      var box = runway.getBoundingClientRect()'),
+      wants: /taken from the runway the reader is looking at rather than from the four stills/,
+    },
+    {
+      what: 'a reader who asked for less motion moved by the fragment they arrived on',
+      plant: (src) => src.replace("if (!calm() && window.location && window.location.hash) hash", 'if (window.location && window.location.hash) hash'),
+      wants: /was moved to a level when it was opened on that level's own fragment/,
+    },
+    {
+      what: 'a reader who asked for less motion pinned by the marker they pressed',
+      plant: (src) => src.replace("          if (calm()) return\n          var index = levelFor(marker)", '          var index = levelFor(marker)'),
+      wants: /a marker press was answered by the script for a reader who has asked for less motion/,
     },
   ]
   for (const { what, plant, wants } of defects) {

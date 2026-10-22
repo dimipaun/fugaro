@@ -1364,13 +1364,26 @@
     var markers = section.querySelectorAll(ZOOM_MARKER)
     var shown = -1
 
+    /** The runway as the reader has it, with the section's pinned state on: the state goes on
+     *  **before** the geometry is read rather than with the drawing, because the runway is one
+     *  viewport of scroll per level only while it is on. Read off the stills' own height instead,
+     *  a reader who reloads halfway down the section — or whose browser restores the scroll they
+     *  left — is given the level the four stacked pictures put them on rather than the level the
+     *  pinned runway does, and the section is showing it before the next scroll event corrects
+     *  it. Both of this file's readings go through here, so neither can be taken from the wrong
+     *  geometry; the write is a no-op on every reading but the first. */
+    function pinned() {
+      section.setAttribute(ZOOM_READY, '')
+      return runway.getBoundingClientRect()
+    }
+
     /** The level the reader is on, off the runway's own position: how far the runway's top has
      *  travelled past the top of the window, over the whole travel, times the number of levels.
      *  A runway the page is not laying out — one inside a `display: none` subtree, or a browser
      *  that has laid nothing out yet — has no travel to cut up, and the first level is where a
      *  reader who has not reached the section is. */
     function level() {
-      var box = runway.getBoundingClientRect()
+      var box = pinned()
       var height = box && typeof box.height === 'number' ? box.height : 0
       var travel = height - window.innerHeight
       if (!(travel > 0)) return 0
@@ -1386,18 +1399,17 @@
      *  because the two are the same number and a browser that answers neither is not one this
      *  moves. */
     function offset(index) {
-      var box = runway.getBoundingClientRect()
+      var box = pinned()
       var height = box && typeof box.height === 'number' ? box.height : 0
       var page = window.pageYOffset || window.scrollY || 0
       return page + (box.top || 0) + ((height - window.innerHeight) * index) / panels.length
     }
 
-    /** Draw the reading: the section's own state, the level on screen, and the mark on the
-     *  marker that jumps to it. Every marker is written rather than added and taken off —
-     *  `false` is a value the attribute has — which is the same rule the sliders' dots are
-     *  marked with. */
+    /** Draw the reading: the level on screen, and the mark on the marker that jumps to it. Every
+     *  marker is written rather than added and taken off — `false` is a value the attribute has —
+     *  which is the same rule the sliders' dots are marked with. The section's own state is not
+     *  this function's: it is `pinned`'s, written by whichever reading came first. */
     function paint() {
-      section.setAttribute(ZOOM_READY, '')
       for (var i = 0; i < panels.length; i++) {
         if (i === shown) panels[i].setAttribute(ZOOM_SHOWN, '')
         else if (panels[i].hasAttribute(ZOOM_SHOWN)) panels[i].removeAttribute(ZOOM_SHOWN)
@@ -1460,6 +1472,11 @@
     for (var k = 0; k < markers.length; k++) {
       ;(function (marker) {
         marker.addEventListener('click', function (event) {
+          // A reader who has asked for less motion is in the stills, where each level stands at
+          // its own place in the column and the browser's own jump to the fragment is the right
+          // move: the press is left to the anchor rather than answered with a section this file
+          // may not pin (D105).
+          if (calm()) return
           var index = levelFor(marker)
           if (index < 0) return
           if (event && event.preventDefault) event.preventDefault()
@@ -1479,10 +1496,14 @@
     // links, and a link whose fragment is a level's own id is a link to that level — is put on
     // it rather than on the first, which is where the browser's own jump lands once the four
     // panels stand in one sticky box. A reader who arrived on the page is put on the level the
-    // runway is already at, which is the first one while the section is still below them. The
-    // address is read defensively, the way the homepage's slider reads its own: a stub DOM that
-    // has no `location` is not one this throws in.
-    var hash = window.location && window.location.hash ? window.location.hash.slice(1) : ''
+    // runway is already at, which is the first one while the section is still below them. A
+    // reader who has asked for less motion is put on no level at all, fragment or not: the
+    // stills are the four levels in order with each one where the browser looks for it, so the
+    // jump is the browser's and `settle` below is what stands the section down. The address is
+    // read defensively, the way the homepage's slider reads its own: a stub DOM that has no
+    // `location` is not one this throws in.
+    var hash = ''
+    if (!calm() && window.location && window.location.hash) hash = window.location.hash.slice(1)
     if (hash) {
       for (var h = 0; h < panels.length; h++) {
         if (panels[h].getAttribute('id') === hash) {
