@@ -51,11 +51,14 @@ var pipeIntoPythonHeredocRE = regexp.MustCompile(`\|\s*python3?\s[^\n]*<<`)
 //     App key and mints in the job today. A check that read "the mint is the
 //     service's" as the state of this tree would be false, and this is the check
 //     the owner runs after that release.
-//   - The service cannot be configured from its own deployment: the
-//     installation module puts three names on its container and
-//     credentialsServiceConfig refuses by name, so no mint can be made at all
-//     on this tree. The check has to say so, and it has to keep saying so for
-//     exactly as long as internal/cli/credentials_serve.go still refuses.
+//   - The service refuses every call on this tree: its deployment configures it
+//     now — the seven names credentials.tf sets are what C1.14's builder reads,
+//     so a revision starts and serves — and its account holds exactly one grant,
+//     the bundle's accessor (Q6), and no role on the installation's database, so
+//     the first read a call makes (the operator's stop switches) is denied and
+//     the call is answered `state_unavailable` rather than served. The check has
+//     to say so, and it has to keep saying so for exactly as long as
+//     credentials.tf grants that account no `firebasedatabase` role.
 //
 // One more thing is held to the code rather than to the prose: step 4's pass
 // condition. The pairing refusal is made in ServeHTTP, before the mint handler
@@ -67,10 +70,13 @@ var pipeIntoPythonHeredocRE = regexp.MustCompile(`\|\s*python3?\s[^\n]*<<`)
 // nothing here is a claim that it works.**" deleted → FAIL (a check whose steps
 // read as carried out); "**on this tree that list is empty**" rewritten to
 // "**this list is populated**" while ServiceHeldSecretNames is still empty →
-// FAIL (the check would claim the job holds no key); "**The service cannot be
-// configured from its own deployment.**" flattened while
-// credentialsServiceConfig still refuses → FAIL (the check would let a reader
-// take steps 2 to 5 as runnable); a repository field added to
+// FAIL (the check would claim the job holds no key); "**The service is
+// configured from its own deployment now, and refuses every call.**" flattened
+// while credentials.tf grants the service's account no database role → FAIL
+// (the check would leave a reader taking step 3's mint as one this tree can
+// make); a `roles/firebasedatabase.*` grant added to credentials.tf while the
+// check still says every call is refused → FAIL in the other direction (the
+// service can serve and the check did not notice); a repository field added to
 // credsvc.MintRequest → FAIL (the check's strongest claim is that the
 // repository is the service's to decide, and that is exactly this absent
 // field); the pairing clause in credsvc's admission changed from
@@ -201,18 +207,40 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 		}
 	}
 
-	// The second, likewise held to the code: the command refuses to configure a
-	// service, so no mint can be made, and the check records that as the blocker
-	// it is rather than pretending a step below could run.
-	const blocker = "**The service cannot be configured from its own deployment.**"
-	if strings.Contains(readDoc(t, "internal/cli/credentials_serve.go"), "cannot be configured from this deployment") {
-		if !strings.Contains(check, blocker) {
-			t.Errorf("internal/cli/credentials_serve.go still refuses to configure the credentials service (`credentialsServiceConfig`), so no mint can be made on this tree, and Check 96 does not say so: steps 2 to 5 cannot run until that changes, and the check is written to be run AFTER the release the owner runs it with")
+	// The third, likewise held to the code, and in the direction the fact moved:
+	// the deployment DOES configure the service now — the seven names
+	// credentials.tf sets are exactly what C1.14's builder reads, and
+	// TestCredentialsServiceEnvIsTheDeploymentsOwn is what holds that pair — and
+	// what still stops it serving is that its account holds no role on the
+	// installation's database. The first read a call makes is the operator's stop
+	// switches, so the call is refused `state_unavailable` rather than served, and
+	// the check has to say that instead of the refusal that was lifted.
+	//
+	// The claim is read against the module's own role lines, so the day the
+	// credentials account is granted a database role the sentence is the one that
+	// has to go. It reads credentials.tf, the file that creates the account and
+	// its one grant; a database role added to the account from another module
+	// would not be seen by this line, and that is a review question rather than
+	// something a string match can answer.
+	const cannotServe = "**The service is configured from its own deployment now, and refuses every call.**"
+	if credentialsDatabaseRoleRE.MatchString(readDoc(t, "deploy/terraform/gcp/modules/installation/credentials.tf")) {
+		if strings.Contains(check, cannotServe) {
+			t.Errorf("deploy/terraform/gcp/modules/installation/credentials.tf now grants a database role to the credentials service's account — the service can serve — and Check 96 still says every call is refused: the gap was closed and this check did not notice")
 		}
-	} else if strings.Contains(check, blocker) {
-		t.Errorf("internal/cli/credentials_serve.go no longer refuses to configure the credentials service — the service can be configured from its deployment — and Check 96 still calls that the blocker: the gap was closed and this check did not notice")
+	} else if !strings.Contains(check, cannotServe) {
+		t.Errorf("deploy/terraform/gcp/modules/installation/credentials.tf grants the credentials service's account no role on the installation's database (its one grant is the bundle's accessor, Q6), so the first read a call makes — the operator's stop switches — is denied and the call is refused `state_unavailable` rather than served, and Check 96 does not say so: that is what decides whether the mint of step 3 can be made at all")
+	}
+	// And the half of the same sentence that names the configuration: the check
+	// states it as the deployment's own seven names, so the list it names has to
+	// be there.
+	if !strings.Contains(readDoc(t, "internal/cli/credentials_serve.go"), "credentialsServiceEnvNames") {
+		t.Errorf("Check 96 states the service's configuration as the seven names its deployment sets (`credentialsServiceEnvNames`), and internal/cli/credentials_serve.go no longer has that list")
 	}
 }
+
+// credentialsDatabaseRoleRE matches a role grant of the installation's database
+// in a Terraform module: the shape the guard above reads credentials.tf for.
+var credentialsDatabaseRoleRE = regexp.MustCompile(`role\s+= "roles/firebasedatabase`)
 
 // check96FuncBody returns one function's body out of a source file the test
 // already read: from the signature to the next top-level `func `, so a call
