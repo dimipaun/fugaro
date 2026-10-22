@@ -181,7 +181,7 @@ func probeSvc(t *testing.T, mutate func(*svc, *Config)) (*svc, *logBuf) {
 func testPolicyDocBackoff(initial, cap string) string {
 	return `{
 		"version": 3,
-		"budget": {"mode": "enforce", "per_run_usd": 5},
+		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
 		"accounts": {
 			"default": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]},

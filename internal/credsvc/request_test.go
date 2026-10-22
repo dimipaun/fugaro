@@ -245,93 +245,109 @@ func TestServiceRefusesAMalformedBody(t *testing.T) {
 	}
 }
 
-// TestServiceWithNoAllowListPinsNoModel: a project that publishes no
-// allow-list sets no model rule — the ceiling is then the job's own
-// configuration (H1), which this service cannot read — so a model the
-// published policy does not name is forwarded. It is the documented limit of
-// this check, and the shape rules apply either way.
-func TestServiceWithNoAllowListPinsNoModel(t *testing.T) {
-	s := newSvc(t)
-	p, found, err := s.policy.Shared(context.Background())
-	if err != nil || !found {
-		t.Fatalf("the fixture's own policy could not be read: %v, %v", found, err)
-	}
-	if p.Budget.AllowedModels != nil {
-		t.Fatalf("the fixture's policy carries an allow-list (%v): this test needs one that does not", p.Budget.AllowedModels)
-	}
-	resp, body := s.call(t, `{"model":"claude-opus-5-5","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("the call is answered %d, want 200: %s", resp.StatusCode, body)
-	}
+// TestServiceRefusesAProjectWithNoAllowList: a project that publishes no
+// budget.allowed_models is REFUSED, fail closed, rather than served under no
+// model rule at all (the owner's ruling of 2026-10-22).
+//
+// The pin is the project's published allow-list and nothing else (request.go),
+// and a policy that publishes none leaves this service with no model rule: the
+// ceiling the run is held to instead is the job's own configuration, which the
+// service cannot read. Forwarding under no pin is what lets an agent holding
+// the job's own ID token reach any Anthropic model on the shared token or the
+// paid key by calling the service directly, so the call is refused instead —
+// with the same typed 400 as the check's own refusals, before the bundle is
+// read, and with a sentence that names the way out.
+//
+// The second subtest is the other half of the rule and the reason the two
+// refusals are asserted apart: a project that DOES publish a list keeps the
+// gateway's own sentence for a model the list does not name, so a service that
+// answered the way-out sentence for every refusal — or swallowed the check's
+// refusals behind this one — is red here. A model the list names still forwards
+// (TestServiceForwardsARequestTheGatewayAccepts), and the shape, server-tool
+// and max_tokens rules still apply to a project that publishes a list
+// (TestServiceRefusesARequestTheGatewayWouldRefuse).
+//
+// Mutation (run, restore): drop the requestNoAllowListRefusal call from
+// ServeHTTP's Messages path, and the no-allow-list subtest is red — the call is
+// forwarded under no model rule — while the other one stays green.
+func TestServiceRefusesAProjectWithNoAllowList(t *testing.T) {
+	t.Run("no allow-list at all", func(t *testing.T) {
+		src := &unreadBundleSource{}
+		s := newSvcWith(t, func(s *svc, cfg *Config) {
+			s.policy.shared = decodeTestPolicy(t, testPolicyDocNoAllowList())
+			cfg.Bundles = &BundleLoader{Source: src, Now: func() time.Time { return s.fixture.now }}
+		})
+		p, found, err := s.policy.Shared(context.Background())
+		if err != nil || !found {
+			t.Fatalf("the fixture's own policy could not be read: %v, %v", found, err)
+		}
+		if p.Budget.AllowedModels != nil {
+			t.Fatalf("the fixture's policy carries an allow-list (%v): this test needs one that does not", p.Budget.AllowedModels)
+		}
+		resp, body := s.call(t, callBody("no-allow-list"))
+		if resp.StatusCode != StatusRequestRefused {
+			t.Fatalf("the call is answered %d, want %d: %s", resp.StatusCode, StatusRequestRefused, body)
+		}
+		e := refusal(t, resp.StatusCode, body)
+		if e.Error != ErrorRequestRefused {
+			t.Errorf("the refusal's type is %q, want %q", e.Error, ErrorRequestRefused)
+		}
+		const want = "the project publishes no budget.allowed_models; add the allow-list to the project layer"
+		if !strings.Contains(e.Message, want) {
+			t.Errorf("the refusal is %q, want %q in it", e.Message, want)
+		}
+		if !strings.Contains(e.Message, "before any credential is read") {
+			t.Errorf("the refusal is %q, and it must say that it was refused before any credential was read", e.Message)
+		}
+		if n := s.up.Count(); n != 0 {
+			t.Errorf("the upstream saw %d requests, want 0: a refused call is not forwarded", n)
+		}
+		if n := atomic.LoadInt32(&src.reads); n != 0 {
+			t.Errorf("the bundle was read %d times, want 0: the refusal must come before the bundle", n)
+		}
+	})
+	t.Run("an allow-list that does not name the model", func(t *testing.T) {
+		s := allowedPolicy(t, testModel)
+		resp, body := s.call(t, `{"model":"claude-opus-5-5","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`)
+		if resp.StatusCode != StatusRequestRefused {
+			t.Fatalf("the call is answered %d, want %d: %s", resp.StatusCode, StatusRequestRefused, body)
+		}
+		e := refusal(t, resp.StatusCode, body)
+		if e.Error != ErrorRequestRefused {
+			t.Errorf("the refusal's type is %q, want %q", e.Error, ErrorRequestRefused)
+		}
+		if !strings.Contains(e.Message, "model claude-opus-5-5 is not pinned for the project's model allow-list") {
+			t.Errorf("the refusal is %q, want the gateway's own pin sentence in it", e.Message)
+		}
+		if strings.Contains(e.Message, "publishes no budget.allowed_models") {
+			t.Errorf("the refusal is %q: this project DOES publish an allow-list, so the way-out sentence is the wrong one", e.Message)
+		}
+	})
 }
 
-// TestServiceWithoutAnAllowListStillRefusesAShape: no allow-list means no
-// *model* rule, and nothing more — the server-tool refusal, the shape refusal
-// and the model's own max_tokens bound apply either way (request.go). That is
-// the case that matters most, because a project that publishes no allow-list is
-// the default, and for it this check is the only control between an agent
-// holding the job's own ID token and a credential.
+// TestServiceWithoutAnAllowListReadsNoBody: the refusal above is the project's
+// and not the request's, so it does not depend on what the body says — and it
+// comes before the price table the check builds, so a project whose prices are
+// unreadable is still refused for the reason it can fix.
 //
-// The sentences are the exported check's own, asked for the same bodies with an
-// empty pin, so a service that skipped the rest of the check along with the
-// model rule would answer something this test does not accept. The upstream and
-// the bundle are asserted untouched for the same reason as in the pinned cases.
-//
-// Mutation (run, restore): make requestRefusal return "" when the pin names no
-// model — the hole this file exists to close, for the projects where the check
-// is the only control — and every subtest here is red while the rest of this
-// file stays green.
-func TestServiceWithoutAnAllowListStillRefusesAShape(t *testing.T) {
-	cases := []struct {
-		name string
-		body string
-	}{
-		{
-			name: "a server tool",
-			body: `{"model":"` + testModel + `","max_tokens":16,"messages":[{"role":"user","content":"hi"}],` +
-				`"tools":[{"type":"web_search_20260209","name":"web_search"}]}`,
-		},
-		{
-			name: "a shape the budget cannot bound",
-			body: `{"model":"` + testModel + `","max_tokens":16,"messages":[{"role":"user","content":"hi"}],` +
-				`"mcp_servers":[{"type":"url","url":"https://mcp.example.invalid","name":"mcp"}]}`,
-		},
-	}
-	s := newSvc(t)
-	p, found, err := s.policy.Shared(context.Background())
-	if err != nil || !found {
-		t.Fatalf("the fixture's own policy could not be read: %v, %v", found, err)
-	}
-	if p.Budget.AllowedModels != nil {
-		t.Fatalf("the fixture's policy carries an allow-list (%v): this test needs one that does not", p.Budget.AllowedModels)
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			want, err := gateway.RequestRefusal([]byte(tc.body), "", gateway.RequestPin{}, pricing.Embedded(), nil)
-			if err != nil {
-				t.Fatalf("the gateway cannot read the test's own body: %v", err)
-			}
-			if want == "" {
-				t.Fatal("the gateway accepts the test's own body: this case tests nothing")
-			}
-			before := s.up.Count()
-			resp, body := s.call(t, tc.body)
-			if resp.StatusCode != StatusRequestRefused {
-				t.Fatalf("the call is answered %d, want %d: %s", resp.StatusCode, StatusRequestRefused, body)
-			}
-			e := refusal(t, resp.StatusCode, body)
-			if e.Error != ErrorRequestRefused {
-				t.Errorf("the refusal's type is %q, want %q", e.Error, ErrorRequestRefused)
-			}
-			if !strings.Contains(e.Message, want) {
-				t.Errorf("the refusal is %q, want the gateway's own sentence %q in it", e.Message, want)
-			}
-			if n := s.up.Count(); n != before {
-				t.Errorf("the upstream saw %d requests, want the %d it had: a refused call is not forwarded", n, before)
-			}
-			if n := s.src.readCount(); n != 0 {
-				t.Errorf("the bundle was read %d times, want 0: a refused request must not touch a credential", n)
-			}
+// The two bodies are the ones the check would have refused and accepted; both
+// are answered the way-out sentence, because neither can be judged without the
+// list this service does not have.
+func TestServiceWithoutAnAllowListReadsNoBody(t *testing.T) {
+	for _, body := range []string{
+		callBody("no-allow-list"),
+		`{"model":"` + testModel + `","messages":[{"role":"user","content":"hi"}]}`,
+	} {
+		s := newSvcWith(t, func(s *svc, _ *Config) {
+			s.policy.shared = decodeTestPolicy(t, testPolicyDocNoAllowList())
 		})
+		resp, answer := s.call(t, body)
+		if resp.StatusCode != StatusRequestRefused {
+			t.Fatalf("the call is answered %d, want %d: %s", resp.StatusCode, StatusRequestRefused, answer)
+		}
+		e := refusal(t, resp.StatusCode, answer)
+		if !strings.Contains(e.Message, "the project publishes no budget.allowed_models") {
+			t.Errorf("the refusal is %q, want the way-out sentence in it", e.Message)
+		}
 	}
 }

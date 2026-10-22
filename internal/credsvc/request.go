@@ -17,10 +17,15 @@ package credsvc
 // never reach this service; the ceiling the run's pins are themselves held to
 // is the project's published policy (budget.allowed_models, config.CheckAllowed
 // — H1), and that is what a call is pinned to here. A project that publishes no
-// allow-list sets no model rule, and this service then applies no model rule
-// either: the ceiling is the job's own configuration, which is not a thing this
-// service can read. Everything else in the check — the server-tool refusal, the
-// shape refusal, the model's own max_tokens bound — applies either way.
+// allow-list leaves this service no model rule at all, and the ceiling the run
+// is then held to is the job's own configuration — which this service cannot
+// read — so the call is REFUSED rather than pinned to nothing (the owner's
+// ruling of 2026-10-22): the service fails closed, and the refusal names the
+// way out. Everything else in the check — the server-tool refusal, the shape
+// refusal, the model's own max_tokens bound — applies either way. The gateway's
+// own behaviour for an empty list is unchanged: its path pins a call to the
+// stage's models, and reading the project's policy is this service's job and
+// not the gateway's.
 
 import (
 	"time"
@@ -35,6 +40,39 @@ import (
 // sentence with this service's list in it: "model X is not pinned for the
 // project's model allow-list".
 const requestPinWhere = "the project's model allow-list"
+
+// requestNoAllowList is the refusal a project that publishes no model
+// allow-list gets (the owner's ruling of 2026-10-22): this service has no model
+// rule to pin the call to, and it will not forward under none, so it refuses —
+// fail closed — and says the one thing the caller can act on, which is where
+// the allow-list belongs. The project layer is the only layer that publishes
+// it (docs/project-layer.md: `budget.allowed_models` is policy, and the
+// repository may only tighten it), so naming it is naming the way out.
+//
+// It is a sentence and not a value: nothing of the request and no credential
+// value is in it.
+const requestNoAllowList = "the project publishes no budget.allowed_models; add the allow-list to the project layer"
+
+// requestNoAllowListRefusal is the model rule this service applies when the
+// project's published policy carries none: the refusal above, and "" when the
+// policy does publish a list.
+//
+// It is the service's own rule and not the gateway's: the gateway's check takes
+// an empty pin as "no model rule" (gateway.RequestPin) and that reading is
+// unchanged, because the gateway's path has the stage's own pins and never the
+// project's. This service has only the project's, so an empty list here is not
+// a caller that pins nothing — it is a ceiling nobody published, which is
+// exactly the call an agent holding the job's own ID token could make past the
+// in-runner gateway.
+//
+// The list is read the one way requestPin reads it, so the refusal and the pin
+// can never disagree about which projects publish a model rule.
+func requestNoAllowListRefusal(p *projectpolicy.Policy) string {
+	if len(requestModels(p)) > 0 {
+		return ""
+	}
+	return requestNoAllowList
+}
 
 // requestRefusal is the gateway's own request check over this call's body:
 // the model pin, the server-tool refusal, the shape refusal, the variant
@@ -78,18 +116,26 @@ func (s *Server) requestRefusal(shared *projectpolicy.Policy, body []byte) (stri
 //
 // The list is the policy's own, as the operator wrote it, and the gateway's
 // comparison reads it the way the gateway reads a stage's pins (sameModel: the
-// same ID, or two spellings the price table resolves to one model). An empty
-// list is no model rule, which is what a policy that publishes none means: the
-// run's ceiling is then the job's own configuration (H1) and this service
-// cannot read it. Nothing here narrows or widens the list — a rule invented
-// here would be a second allow-list, which is the thing this file exists to
-// avoid.
+// same ID, or two spellings the price table resolves to one model). Nothing
+// here narrows or widens the list — a rule invented here would be a second
+// allow-list, which is the thing this file exists to avoid.
+//
+// It is only ever built for a policy that publishes a list:
+// requestNoAllowListRefusal refuses the call before this pin is used, so the
+// empty list the gateway reads as "no model rule" is never handed to it from
+// here.
 func requestPin(p *projectpolicy.Policy) gateway.RequestPin {
-	var models []string
-	if p != nil {
-		models = p.Budget.AllowedModels
+	return gateway.RequestPin{Models: requestModels(p), Where: requestPinWhere}
+}
+
+// requestModels is the project's published model allow-list, and nil for a
+// policy that publishes none. It is the one reader of the field, so the pin and
+// the refusal above are about the same list.
+func requestModels(p *projectpolicy.Policy) []string {
+	if p == nil {
+		return nil
 	}
-	return gateway.RequestPin{Models: models, Where: requestPinWhere}
+	return p.Budget.AllowedModels
 }
 
 // requestPriceTable is the price table the check reads a model's own bounds

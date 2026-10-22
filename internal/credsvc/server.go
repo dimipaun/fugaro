@@ -472,6 +472,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// is not a Messages body — it carries no max_tokens — and the gateway
 		// does not hold it to them either (its own forwardFree), so a check
 		// applied to it would refuse calls the gateway forwards.
+		//
+		// The project's own allow-list is read first, and a project that
+		// publishes none is refused here: with no list this service has no
+		// model rule to pin the call to, and the ceiling the run is held to
+		// instead is the job's own configuration, which the service cannot read
+		// (the owner's ruling of 2026-10-22 — fail closed, never "no rule").
+		// The refusal is the same typed 400 as the check's own, and like it,
+		// it is answered before the bundle is read: the sentence names the way
+		// out and no credential value is anywhere in it, because none was
+		// touched.
+		if noAllowList := requestNoAllowListRefusal(shared); noAllowList != "" {
+			s.refuse(w, StatusRequestRefused, ErrorRequestRefused, requestRefused+noAllowList)
+			return
+		}
 		refusal, err := s.requestRefusal(shared, cl.body)
 		if err != nil {
 			// The project's own prices could not be read: a state the caller
