@@ -159,6 +159,12 @@ func initStages(e *initEngine) []initflow.Stage {
 
 // converge runs the converge's default and --firebase-project modes through the
 // loop and maps its result to what init returns.
+//
+// This is the apply phase (W3.5, reconciliation F12): the wizard's questions
+// were the input phase, one run of the loop over wizard_stage.go's stage, and
+// they are all answered by the time runInit gets here. What this run's order
+// decides is what is applied and in what order — the canonical one
+// (initflow.Names), not the order the questions were asked in.
 func (e *initEngine) converge(ctx context.Context) error {
 	e.announceAlreadySetUp()
 	stages := initStages(e)

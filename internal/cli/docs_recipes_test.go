@@ -37,7 +37,7 @@ func TestRecipesGuideMatchesTheCLI(t *testing.T) {
 			t.Errorf("docs/recipes.md never names the catalog's %s", name)
 		}
 	}
-	for _, want := range []string{"fugaro run --recipe", "agent.recipe", ".fugaro/recipes/", "fugaro/recipes/", "16 KiB", "0.5.0", "fugaro init",
+	for _, want := range []string{"fugaro run --recipe", "agent.recipe", ".fugaro/recipes/", "fugaro/recipes/", "16 KiB", "0.5.0", "fugaro update",
 		"use_when", "0.7.0", "commands.lint"} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("docs/recipes.md never says %q", want)
@@ -72,7 +72,7 @@ func TestRecipesGuideMatchesTheCLI(t *testing.T) {
 			t.Errorf("fugaro %s has no --%s", strings.Join(want.path, " "), want.flag)
 		}
 	}
-	for _, c := range []string{"fugaro validate", "fugaro watch", "fugaro runs ls", "fugaro image build", "fugaro init"} {
+	for _, c := range []string{"fugaro validate", "fugaro watch", "fugaro runs ls", "fugaro image build", "fugaro update"} {
 		if !strings.Contains(doc, c) {
 			continue
 		}

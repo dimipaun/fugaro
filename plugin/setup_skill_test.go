@@ -68,6 +68,38 @@ func TestSetupSkillMentionsDoctorFirst(t *testing.T) {
 	}
 }
 
+// TestSetupSkillOpensBySayingWhichCommandItIs: this skill runs AFTER the
+// wizard, and its opening line has to say so — a reader who has not run the
+// first half must learn it here, in one sentence: the cloud side is already
+// done, and this skill writes `fugaro.yaml` and opens the pull request.
+//
+// The line says "the wizard did it" and writes the word the user typed as a
+// bare `setup` span, never as a command line, and the last assertion is why:
+// the plugin lint (skills_lint_test.go, ownerViolation) rejects an applying
+// `fugaro setup` or `fugaro update` anywhere outside a user-runs block, prose
+// and "never" sentences included, so the command appears in the introduction
+// only as `fugaro doctor --json` (step 1's read-only check) and the door the
+// user already ran is named rather than quoted.
+//
+// Mutation (run, restore): delete the opening sentence -- "which command it
+// is" fails; change "the wizard did it" to name the command line instead --
+// "the introduction gives a fugaro command" fails.
+func TestSetupSkillOpensBySayingWhichCommandItIs(t *testing.T) {
+	text := setupFiles(t)["skills/setup/SKILL.md"]
+	intro, _, ok := strings.Cut(text, "\nGround rules:")
+	if !ok {
+		t.Fatal("SKILL.md has no `Ground rules:` list: this test reads the introduction above it")
+	}
+	for _, want := range []string{"cloud side is already done", "wizard", "writes `fugaro.yaml`", "opens the pull request"} {
+		if !strings.Contains(intro, want) {
+			t.Errorf("SKILL.md's introduction never says %q: the skill runs after the wizard, and its opening line has to say which of the two commands it is", want)
+		}
+	}
+	if m := regexp.MustCompile("`fugaro [a-z]").FindString(intro); m != "" {
+		t.Errorf("SKILL.md's introduction gives a fugaro command (%q): the agent's first fugaro command is `fugaro doctor --json` in step 1, and the door the user already ran is named, not quoted, because the plugin lint refuses an applying door outside a user-runs block", m)
+	}
+}
+
 // TestSetupSkillNeverApplies: `fugaro setup` and `fugaro update` appear only
 // as a plan (--plan-only, --print-vars, --help) outside a user-runs block,
 // never with a flag that confirms for the user, and the user-runs blocks name
@@ -769,8 +801,8 @@ func TestSetupSkillOffersClone(t *testing.T) {
 	// gate is open — the state a reader has to be able to check against the
 	// constant. It does not name the two commands the gate used to refuse:
 	// the plugin lint (skills_lint_test.go, ownerViolation) rejects an
-	// applying `fugaro init` in skill prose, and the claim is the gate's
-	// state, not the command line it is read on.
+	// applying `fugaro setup` or `fugaro update` in skill prose, and the
+	// claim is the gate's state, not the command line it is read on.
 	for _, want := range []string{"cloneShipped", "internal/cli/recipes_skew.go", "is open"} {
 		if !strings.Contains(topic, want) {
 			t.Errorf("decisions.md's checkout topic never says %q", want)

@@ -242,125 +242,50 @@ func (r *initRun) canAsk() bool {
 
 // gatherInputs completes --name, --gcp-project and --region for a first run:
 // it asks for what is missing in a terminal, and otherwise refuses, naming
-// every missing flag (the GitHub App's ID too, when the checkout's
-// repository needs it) in one error.
+// every missing flag (the GitHub App's ID too, when the checkout's repository
+// needs it) in one error.
 //
-// The wizard's project question is not one of those three. It is asked
-// whenever the run can answer it, whether or not the other inputs came from
-// flags, because no flag is required for it: a run that cannot ask takes its
-// answer itself rather than demanding one (askProjectAnswer), so the question
-// cannot be a row `missing` holds. With a project config nothing is asked.
+// It is the caller of the wizard's input phase and nothing else (W3.5): the
+// questions are wizard_stage.go's stage, one run of the loop, which asks them
+// all before the project config is loaded and before anything is applied. What
+// is left here is the mapping from that run's outcome back to the one error
+// this function has always returned, so that every mode — a person at a
+// terminal, a pipe, --json, --yes, --non-interactive — prints exactly what it
+// printed before the questions moved behind the loop.
+//
+// The wizard's project question is not one of the flags `missing` names. It is
+// asked whenever the run can answer it, whether or not the other inputs came
+// from flags, because no flag is required for it: a run that cannot ask takes
+// its answer itself rather than demanding one (askProjectAnswer), so the
+// question cannot be a row `missing` holds. With a project config nothing is
+// asked at all.
 func (r *initRun) gatherInputs(ctx context.Context) error {
-	name, fromCheckout, missing, creating := r.firstRunMissing(ctx)
-	if !creating {
-		return nil
-	}
-	if len(missing) > 0 && !r.canAsk() {
-		flags := make([]string, len(missing))
-		for i, m := range missing {
-			flags[i] = m.String()
-		}
-		if r.o.githubAppID == "" {
-			if t, _ := resolveRepoTarget(ctx, name); t != nil && t.needsAppID(nil, r.o) && sameRepo(r.o.onboardRepo, t.repo) {
-				flags = append(flags, appIDFlag)
-			}
-		}
-		if r.o.nonInteractive {
-			return userErr("%v", &initflow.MissingInputsError{Flags: flags})
-		}
-		return userErr("there is no project config yet: pass %s to create one", strings.Join(flags, ", "))
-	}
-	o := r.o
-	// The banner goes with any question this run is about to ask. `missing`
-	// cannot answer whether there is one: it names every question but the
-	// project's, so a run whose other inputs all came from flags has an empty
-	// `missing` and still has that question to ask — it is the wizard's first
-	// (D11), and a run whose inputs are all flags is still a first run at a
-	// terminal.
-	if len(missing) > 0 || r.asksProjectAnswer() {
-		fmt.Fprintln(r.w, "fugaro setup: this is the first run here; each answer has a suggestion, press Enter to accept it.")
-	}
-	if o.cloud.gcpProject == "" {
-		def, alt, why := projectIDSuggestions(ctx, name, fromCheckout)
-		v, err := r.promptChoice("GCP project ID", def, alt, why, func(s string) error {
-			if !infra.ValidProjectID(s) {
-				return errors.New("a project ID is 6 to 30 of a-z, 0-9 and '-', starting with a letter")
-			}
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-		o.cloud.gcpProject = v
-	}
-	if o.cloud.region == "" {
-		v, err := r.prompt("Region", defaultRegion, func(s string) error {
-			if !regionRE.MatchString(s) {
-				return errors.New("a region looks like us-east5 or europe-west4")
-			}
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-		o.cloud.region = v
-	}
-	// An installation may already be there (a teammate's, or one this machine
-	// has no project config for): `setup` keeps it, and converges as `fugaro
-	// update` does rather than offering to create a second one (D11). What
-	// this settles is the name — the installation's own, so it is not asked —
-	// and the run returns here, so the project question below is not asked
-	// either: the answer this path takes is adoption. The one answer it never
-	// overrides is one
-	// the run was told: --create-project is a scripted run saying what it
-	// wants, and it stays what the project stage acts on, which is also where
-	// --link-billing (the documented way to link billing to a project this
-	// run did not create) reaches a project. The installation stage adopts it
-	// and says which roles to ask an owner for.
-	if name == "" && !o.configOnly {
-		if installed := installationName(ctx, o.cloud.gcpProject, o.cloud.region, o.runsBucket); installed != "" {
-			o.name = installed
-			fmt.Fprintf(r.w, "%s%s: keeping project %s, and converging as %s does\n",
-				o.programPrefix(), setupAlreadySetUp, pluginwire.Printable(installed), "fugaro "+updateDoor.name)
-			return nil
-		}
-	}
-	// The project (D11): create one, or adopt one that already exists. The
-	// answer is what the project stage acts on; a run that cannot ask takes
-	// adoption (setup.go's askProjectAnswer says why).
-	if err := r.askProjectAnswer(); err != nil {
+	res, err := initflow.Run(ctx, wizardStages(ctx, r), r.wizardOptions())
+	if err != nil {
+		// The loop's own refusal, before a stage ran: --non-interactive's one
+		// error naming every flag this run cannot answer for itself. It is the
+		// error gatherInputs has always produced, from the same list
+		// (wizardStage.Missing).
 		return err
 	}
-	if name == "" && !o.configOnly {
-		def, label := suggestName(ctx), "Fugaro project name (permanent"
-		switch _, _, ok := originOwner(ctx); {
-		case fromCheckout != "":
-			// No default: the file may be a clone's, so the name is typed.
-			def, label = "", label+"; this checkout's fugaro.yaml says "+pluginwire.Printable(fromCheckout)+", but a cloned repository's file can say anything: type the name you want"
-		case ok:
-			label += "; suggested from the origin's owner"
-		case def != "":
-			label += "; suggested from this directory's name"
+	if f := res.Failed; f != nil {
+		// A question's own refusal: the creation checks the answer runs, the
+		// billing question's failures, a prompt that could not be read. The
+		// stage's error is the one this run would have returned, with its
+		// wording and its exit code (res.Cause, loop.go).
+		if res.Cause == nil {
+			return userErr("%s", f.Error)
 		}
-		label += ")"
-		v, err := r.prompt(label, def, func(s string) error {
-			if !config.ProjectNameRE.MatchString(s) {
-				return errors.New("a project name is 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")
-			}
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-		o.name = v
+		return res.Cause
 	}
-	// The billing question is the last of the wizard's questions (W4.3): it is
-	// about the GCP project the answers above settled, and it is asked only
-	// where the answer is one this run acts on (asksBilling, billing_prompt.go)
-	// — which includes the second answer to the question above, adoption, where
-	// the project stage skips before it reads anything and a billing answer
-	// would be read by nobody.
-	return r.askBilling(ctx)
+	if len(res.Left) > 0 {
+		// The run is waiting for a person: either it cannot ask at all, and the
+		// Left names the flags that answer, or its input ended at a question
+		// and the Left is that question. Both are the one-line user error they
+		// have always been.
+		return userErr("%v", res.Left[0].Text)
+	}
+	return nil
 }
 
 // installationName is the name of the installation that already exists in the
@@ -400,6 +325,32 @@ func readInstallationName(ctx context.Context, lc *localcfg.Config) string {
 	return m.Name
 }
 
+// noAnswerError is a prompt that got no answer: the input ended, or three
+// unusable answers were typed. It is not a refusal — the question is still
+// open, and a rerun resumes at it — so the wizard's input phase reports it as
+// the question it stopped at (wizardStage.answer, wizard_stage.go) rather than
+// as a failure of the run.
+//
+// It wraps the user error it has always been, so a caller that keeps it as an
+// error rather than reading it as a question (every prompt outside the phase)
+// gets the same message, the same exit code and the same errors.As it got
+// before: the type is added to what the value already was, not put in its
+// place.
+type noAnswerError struct {
+	msg  string
+	user error
+}
+
+func (e *noAnswerError) Error() string { return e.msg }
+func (e *noAnswerError) Unwrap() error { return e.user }
+
+// noAnswer builds one: the user error is the message's one definition, and msg
+// is that error's own text.
+func noAnswer(format string, args ...any) error {
+	e := userErr(format, args...)
+	return &noAnswerError{msg: e.Error(), user: e}
+}
+
 // prompt asks label with def as the suggestion and returns the validated
 // answer. Three unusable answers, or the end of input, refuse the run. It is
 // promptChoice with no second suggestion, and the questions that offer one
@@ -431,7 +382,7 @@ func (r *initRun) promptChoice(label, def, alt, why string, valid func(string) e
 		}
 		v := cmp.Or(strings.TrimSpace(line), def)
 		if errors.Is(err, io.EOF) && strings.TrimSpace(line) == "" {
-			return "", userErr("no answer for %q (the input ended)", label)
+			return "", noAnswer("no answer for %q (the input ended)", label)
 		}
 		if v == "" {
 			fmt.Fprintln(r.w, "  a value is needed")
@@ -443,5 +394,5 @@ func (r *initRun) promptChoice(label, def, alt, why string, valid func(string) e
 		}
 		return v, nil
 	}
-	return "", userErr("no usable answer for %q after 3 tries", label)
+	return "", noAnswer("no usable answer for %q after 3 tries", label)
 }

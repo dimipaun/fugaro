@@ -41,11 +41,10 @@ func TestDocsCheckoutCommandsExist(t *testing.T) {
 			continue
 		}
 		found++
-		// The doc's own spelling, for the messages below, and the door that
-		// carries the flags today, for the lookup: `fugaro init` is the
-		// retired word these docs still use for `fugaro setup`.
+		// The doc's own spelling, for the messages below: docs/checkout.md
+		// names the doors W1.2 retired the old word into, and this test
+		// resolves each line against the command the doc actually spells.
 		named := strings.Join(path, " ")
-		path = docCommandWords(path)
 		c, _, err := root.Find(path)
 		if err != nil || c.Name() != path[len(path)-1] {
 			t.Errorf("docs/checkout.md names %q, which is not a command", m[1])
