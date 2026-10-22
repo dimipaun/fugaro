@@ -38,13 +38,13 @@
 #     behind the backend seam, which is the part that makes it GCP-bound whatever runs a job
 #     (ZF20; `docs/backends.md:11`).
 #   - "so there is no extra setup" is false (ZF18): the same-project services come with the
-#     project, and `fugaro setup` is what provisions them. The command is written under the
-#     name the site's own live files use (`website/data/install.yaml`,
+#     project, and `fugaro setup` is what provisions them. The command is named as the site's
+#     own live files name it (`website/data/install.yaml`,
 #     `website/src/pages/getting-started.astro`): the setup-wizard rename
 #     (`docs/setup-wizard/implementation-plan.md`) is taking the retired name out of the tree,
-#     so this file does not write it -- a live file that names it is one the census in
-#     `internal/cli/docs_live_init_census_test.go` holds until W2.6, and a new one has no
-#     business joining that list.
+#     so a new live file writes the new one -- a file that still names the old one is one the
+#     census in `internal/cli/docs_live_init_census_test.go` holds until W2.6, and this file is
+#     not one of them.
 #   - "Fugaro gets its own isolated, Fugaro-managed project" is not true in the present tense
 #     (ZF17): managed projects are gated off. What is true is the narrow sentence ZF16 states
 #     -- a managed project is a new project that holds only Fugaro's resources.

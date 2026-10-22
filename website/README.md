@@ -974,8 +974,8 @@ added or removed without this sentence moving fails there:
     the menu is inlined into every page, so it is **40 bytes onto each of the eleven pages that
     were already there**; the new route's page, `dist/why-gcp/index.html`, is **23,651 bytes**;
     and the FAQ page is **753 heavier** — the same 40, plus the 713 of the seventh answer it
-    renders — so the site figure moves 1,463,812 → **1,488,616** (+24,804) and the artifact
-    goes **28 → 29 files**, **11 → 12 pages**. **The script does not move a byte** (70,008
+    renders — so the build's whole-site size moves 1,463,812 → **1,488,616** (+24,804) and the
+    artifact goes **28 → 29 files**, **11 → 12 pages**. **The script does not move a byte** (70,008
     before and after): the page is claims and their sources in markup, and what holds them is
     the suite rather than the browser. The page's claims live in `website/data/why-gcp.yaml` —
     one row per claim, each with the file in this repository that proves it and the day it was
