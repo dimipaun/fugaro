@@ -1213,7 +1213,7 @@ Also: delete the sandbox repository's App and decline any PRs the runs opened (d
 
 ### Results of the seventh live run (M11, check 27) — the record of the commands this section has renamed
 
-Run 2026-10-04 and 2026-10-05 by the maintainer, with the `0.2.0` release binary (Homebrew cask), Claude Code 2.1.289, on a throwaway project `fugaro-live-20261005` (created by `fugaro setup`), a private sandbox repository and its own GitHub App. Everything below is from that run; "pass" means it behaved as designed, and every defect found is listed under "Findings".
+Run 2026-10-04 and 2026-10-05 by the maintainer, with the `0.2.0` release binary (Homebrew cask), Claude Code 2.1.289, on a throwaway project `fugaro-live-20261005` (created by `init`), a private sandbox repository and its own GitHub App. Everything below is from that run; "pass" means it behaved as designed, and every defect found is listed under "Findings".
 
 **Read this table as the record of the retired command's spellings** — its own name, its creating flags and `--firebase` — **the lines the steps above rename to `fugaro setup`, `fugaro update` and `--firebase-project`**. It is the evidence for every probe the rewrite **kept** (the spikes, the mirror, the hidden prompts, the hostile-clone gate, `doctor`, the teammate's adopt run, `/fugaro:setup`, the injection probe), and it is **not** evidence for anything the rewrite added: no wizard question order, no billing picker, no `fugaro update` run.
 
