@@ -123,7 +123,7 @@ func newCascade(t *testing.T, cfg string, svc *cascadeService) *bk {
 	g := &gw{harness: h, fake: fake, logs: logs}
 	// The switch is what makes the calls go through the service at all (O2):
 	// without it the run does not start.
-	b := publishPolicy(t, g, fmt.Sprintf(`{"version":%d,"allow_repos":["*"],"routing":{"claude":{"via":"cascade"}}}`, projectpolicy.RulesVersion))
+	b := publishPolicy(t, g, fmt.Sprintf(`{"version":%d,"allow_repos":["*"],"routing":{"claude":{"via":"cascade"}},"budget":{"mode":"enforce","allowed_models":["claude-haiku-4-5","claude-sonnet-5-5"]}}`, projectpolicy.RulesVersion))
 	return b
 }
 
