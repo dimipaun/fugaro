@@ -17,10 +17,13 @@
 //     and a confirmation that arrives late or about a moved target is refused
 //     with the machine's own code carried through unchanged;
 //   * **and the one thing it does not do**: a confirmed action is **not sent as
-//     text**. D169's rule is that a typed action is an action record and not
-//     text to the agent, and the merged client has no action write (P6.9 may
-//     not add one -- `src/mailbox/` is P3.6's and P6.10's file). So the test
-//     asserts the store is untouched by a confirmation, and that the answer
+//     text**, and here it is not sent at all. D169's rule is that a typed action
+//     is an action record and not text to the agent; the record P6.2's machine
+//     builds is returned, and the store stays untouched. The client's action
+//     write exists (`send(text, { action })`, landed with P6.10) but nothing
+//     under `src/text/` calls it -- the wiring is the screens' (P6.9's
+//     remaining half, P6.12 for voice), and `input.js`'s header says why. So the
+//     test asserts the store is untouched by a confirmation, and that the answer
 //     says so in a named code rather than in silence. That clause is the pull
 //     request's "what could not be verified" made executable.
 //
@@ -407,9 +410,12 @@ test('the typed phrase confirms once, produces P6.3\'s action record, and sends 
     confirmation: { id: answer.confirmationId, at: T0 },
   });
 
-  // **And it is not sent.** D169: a typed action is an action record, and the
-  // merged client writes text messages only, so the record is returned with
-  // the reason it is not in the database.
+  // **And it is not sent.** The client CAN carry this record -- `send(text,
+  // { action })` landed with P6.10 and is what P6.10's "an action record is
+  // never queued" is about -- but nothing in `src/text/` calls it: the wiring
+  // is the screens' (P6.9's remaining half, P6.12 for the voice path) and
+  // `input.js`'s header says so. So the record is returned, with the reason it
+  // is not in the database, and that reason is still true.
   assert.equal(answer.delivered, false);
   assert.equal(answer.code, INPUT_CODES.NO_ACTION_WRITE);
   assert.equal(h.inbox().length, 0, 'the confirmation wrote nothing at all');
