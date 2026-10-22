@@ -106,7 +106,7 @@ func onboardLabel(o originInfo) string {
 // config lists or that --onboard-repo opted in is not asked about, and one
 // already answered for this run is not asked again.
 func (e *initEngine) asksOnboard(o originInfo) bool {
-	if e.r.o.door != setupDoor.name || !e.canConfirmRepo() {
+	if !e.theSetupDoor() || !e.canConfirmRepo() {
 		return false
 	}
 	a, err := e.authState(o)
@@ -194,8 +194,14 @@ func (e *initEngine) gateEarly(ctx context.Context) {
 // --non-interactive, a pipe, a coding agent) prints nothing: it was not asked
 // for a repository and a line about one would be noise in its output.
 func (e *initEngine) asksEnrolNote() bool {
-	return e.r.o.door == setupDoor.name && e.canConfirmRepo() && strings.HasPrefix(e.repo.st.Detail, notInACheckout)
+	return e.theSetupDoor() && e.canConfirmRepo() && strings.HasPrefix(e.repo.st.Detail, notInACheckout)
 }
+
+// theSetupDoor is whether this run is the wizard's own door: the question and
+// the line about enrolling later are the wizard's, and `fugaro update` asks
+// neither. The field itself is compared, not doorName(): a caller that built
+// the converge's parts without naming a door is not a run of either door.
+func (e *initEngine) theSetupDoor() bool { return e.r.o.door == setupDoor.name }
 
 // canConfirmRepo: a typed confirmation needs the user's own terminal, as the
 // secrets stage does: never with --yes, --non-interactive or --json, nor
