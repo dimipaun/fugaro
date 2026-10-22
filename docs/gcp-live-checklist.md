@@ -599,7 +599,7 @@ probe account carries predefined grants only).
 | 91 | Cloud Run streaming through a throwaway service (same plan, its Check 91 and D151; **settles U5's request timeout, cold start, SSE delivery and HTTP/1.1 request-body limit — U5's end-to-end HTTP/2 half stays UNVERIFIED**): whether SSE reaches the caller unbuffered through the front end, the request-body limit on HTTP/1.1 and what the front end does with an HTTP/2 request above it, and the cold start — measured with one long call through `fugaro-chk91`, a service relaying a fake upstream that emits SSE for N minutes | See "Check 91" below; **you** run `bash scripts/live-checks/check91.sh`, on installation `fugaro` (never `belong`), sandbox only — its guards run once, before anything is created (the project `fugaro-dev` and the region are hard-coded and every `gcloud` call names them, so no step can be pointed at another installation; the guards are not re-run between steps), and it stops before the build when `gs://fugaro-dev_cloudbuild/` cannot be listed, because `gcloud builds submit` would **create** that bucket for it and a bucket is the installation's rather than this check's — and **no agent runs any step** | One throwaway Cloud Run service, the registry repository this check creates *and* its image, and the build's staged source — whose per-run prefix in the installation's staging bucket the same Restore removes — all deleted by the check's own Restore, whose three counts must each read `0` (and whose scratch directory it removes only once they do) — the check stopping at its baseline if a repository of that name is already there, because it never adopts what it did not create. **USER-RUN, NOT RUN.** |
 | 92 | The rules deployed ([`docs/credentials-service/`](credentials-service/implementation-plan.md), its Check 92, D146/D147 and F33, tasks C1.3, C1.4 and C1.5; **the credentials document and its own marker, with `projectpolicy.RulesVersion` unchanged**): `fugaro init --firebase <id>` puts this release's generated rules on the database — the deploy check 82 reads, whose document now also carries the **`creds`** subtree, denied to every run token (read and write), the registry entry's two new validated children (`credential`, the current credential's **name** and never a value, a string of at most 200 characters — the rules cannot tell a name from a value, so every reader that displays it sanitises it; and `waiting_until`, a timestamp for the `oauth-only` "waiting, expected resume time" view), and the **by-tier split** of real spend (tier B and tier C leaves under `runs/$slug/$run` and `spend/$day/…`, validated like today's `spent`; tier A stays on the existing `notional` nodes) — and records its own generation `config/limits/credsRules = 1` **beside** `config/limits/policyRules`, which stays `3` (this change does **not** bump `RulesVersion`: a bump would make `projectpolicy.Read` drop every published policy — caps, `allow_repos`, routing, prices — on any installation that has not redeployed these rules, so the credentials children get a marker of their own); then, in the same release, **`TestLiveCredsRules`** proves on the live database, with a real sandbox run identity minted and exchanged the way a launcher does, that a run's own token reads and writes **nothing** under `/creds` (permission denied, on a subtree the check seeds as the owner first, so an empty read cannot be mistaken for a denial), that the run's own well-formed `credential`, `waiting_until` and by-tier writes are **accepted** and everything else is refused (another repository's slug, another run of this repository, another launcher's `rb`, a non-string, an over-long name, a negative or fractional or out-of-bound timestamp, a counter above the run's reservation or above `config/limits/maxReserveMicros`, a falling counter, a past day), that the five other identities the rules know (another repository's run, another run of this repository, a phone, a consumer, a pairing session) are refused exactly as it is while each still reaches the family the rules do grant it, and that the launcher's `rb` ties the entry's children to the launcher the entry names rather than to the run | See "Check 92" below; **you** run it, on installation `fugaro` (never `belong`), project `fugaro-dev`, at your own terminal: the deploy with **`fugaro init --firebase <id>`** — `--firebase` takes the Firebase project's **ID** (it is not a switch), and its guard reads that ID out of the installation's own config and stops unless it is `fugaro-dev` — whose confirmation **you** type (a coding agent's session cannot: `askOrdinary` raises `initflow.AgentError` before anything is shown), and then the helper, `FUGARO_LIVE_CREDS_RULES_OK=1 … go test -tags live -run TestLiveCredsRules -v ./internal/e2e/`, which **refuses** an aimed run from a coding agent's session (`agentenv.Marker`), any installation but `fugaro`, any database host but the sandbox project's (`rtdb.ValidateURL`, so the owner's credential cannot be sent to a look-alike) and any signer that is not a service account of `fugaro-dev`, and **skips** when nothing aims it. **No agent applies rules, and no agent runs any step of it** | One rules deploy of about 58 KB under the database step's own confirmation, and at most the two marker writes beside it; the helper costs nothing else — no model call, no image, no bucket, no Terraform. It writes only throwaway nodes under a scratch repository of its own (`live92-<hex>/rules` and its slug, two `live92-<hex>-run*` run ids, three `live92-<hex>-a*` credential names) plus one device-allowlist node for a scratch phone uid, all deleted as the owner, read back absent, and gone from `fugaro budget show --all` — and the Firebase Auth users its exchanges create are deleted too, with the project's user list read back. **USER-RUN, NOT RUN.** |
 | 94 | The credentials service deployed ([`docs/credentials-service/`](credentials-service/implementation-plan.md), its Check 94, D146/D147 and Q6, tasks C1.14, C1.18, C1.20 and C1.23; **NOT RUNNABLE past its step 4 on this tree — the service does not serve yet**): the owner-run init stage `fugaro init --provision-credentials` applies the installation root's service — a Cloud Run service whose revision is **pinned by digest**, its own service account, and **one** Secret Manager container for the bundle (`fugaro-project-<project>-creds-bundle-<hash>`, the logical name `creds-bundle`, `prevent_destroy`) — and a repository root re-applied afterwards (`fugaro init --repo` in the sandbox checkout) moves the repository's half: every workflow job stops mounting a model credential and loses its `secretmanager.secretAccessor`, and gains `roles/run.invoker` on that one service; the reads are the point — the bundle container's policy holds **exactly one** member (the service's account, `roles/secretmanager.secretAccessor`) and **no `condition`**, no model secret's policy names a job account any more, the service's own IAM policy holds the installation's job accounts with `roles/run.invoker` and no `allUsers`/`allAuthenticatedUsers`, and the service's account holds **no other** secret (Q6, Global Constraint 12); then Secret Manager `DATA_READ` audit logs, which are **off by default and managed by no Terraform** (the owner-run `gcloud … get-iam-policy` → `auditConfigs` → `set-iam-policy` step `docs/gcp-setup.md` records for `DATA_WRITE`, m3): the check reads the config back **before** it reads a log line, and the line it then reads is the bundle's own read — the entry names the secret and carries **no value**; and the operator stop flag read back (`fugaro budget kill --all`, the service refusing with a typed answer, then `fugaro budget resume --all`). **What is NOT true on this tree, and why steps 5 and 6 cannot pass today:** `fugaro credentials serve` **refuses to start** — the installation module puts three names on the container (`FUGARO_PROJECT`, `FUGARO_GCP_PROJECT`, `FUGARO_REGION`, `internal/infra/tf`'s `credentialsServiceEnv` allow-list) and a `credsvc.Config` needs four facts of the installation that are not among them (the database URL, the Firebase project, the service's own URL as the audience, the job-account table), so the deployed revision cannot serve and **nothing reads the bundle**; the run that wires them (the container's environment, the allow-list and the config builder together) is **queued**, and until it lands the audit log's entry and the stop flag's typed refusal are recorded as **not observable**, never as a failure. **No agent runs any step** | See "Check 94" below; **you** run it, on installation `fugaro` (GCP project `fugaro-dev`, never `belong`), at your own terminal: both init stages ask for the project's name typed at a real terminal, a coding agent's session is refused before anything is planned, and `--yes` covers neither | One installation-root apply (one Cloud Run service whose revision **does not start today**, one service account, one Secret Manager container, one accessor grant, one invoker grant per workflow variant) and one repository-root re-apply (the model mounts and accessors dropped); nothing billable — no model call, no image build. The container keeps `prevent_destroy`, so a plan that drops the opt-in fails whole rather than deleting it. **USER-RUN, NOT RUN.** |
-| 95 | A run through the service ([`docs/credentials-service/`](credentials-service/implementation-plan.md), its Check 95, D134/D135/D143 and Global Constraint 8, tasks C1.14, C1.15, C1.17, C1.19 and C1.23; **NOT RUNNABLE on this tree — the service does not serve yet**): a sandbox run's Claude calls go gateway → service → Anthropic, and the four things that must hold around that path are what the check reads: the runner's `/proc` holds **no model credential** (the job's mount is gone and the tier-A token is never in the job — the step scans every process's environment inside the container and prints, per process, only **which** of the credential variables is *set*, never a value), a run whose **write-once outcome is already on the database** is refused rather than served (the identity's liveness, D134), the service made **unreachable** (scaled to zero instances) halts the run `budget_unavailable` and **never falls back** to a key in the job (D143), and the run's own record carries the credential's **name** and the tier answer (`fugaro logs RUN`, `fugaro diagnose RUN`). **What is NOT true on this tree:** `fugaro credentials serve` refuses to start (Check 94's own note: the installation module's three environment names are not the four facts a `credsvc.Config` needs), so a cascade run's calls **cannot be forwarded today** and the launch halves of steps 2–4 are recorded as **not observable**; the run that wires the container's environment is **queued**. **No agent runs any step** | See "Check 95" below; **you** run it, on installation `fugaro` (never `belong`), a sandbox repository only, at your own terminal — the check picks one throwaway run id so its outcome can be written **before** the launch, launches one run against a zero-instance service, and deletes every throwaway node in its Restore, whose counts must read `0` | Two throwaway sandbox runs (each ends before any real work: one refused by the service's liveness check, one by the front end) and one `gcloud run services update` to zero instances and back; no model call settles, so nothing is billed. **USER-RUN, NOT RUN.** |
+| 95 | A run through the service ([`docs/credentials-service/`](credentials-service/implementation-plan.md), its Check 95, D134/D135/D143 and Global Constraint 8, tasks C1.14, C1.15, C1.17, C1.19 and C1.23; **NOT RUNNABLE on this tree — the service does not serve yet**): a sandbox run's Claude calls go gateway → service → Anthropic, and the four things that must hold around that path are what the check reads: the runner's `/proc` holds **no model credential** (the job's mount is gone and the tier-A token is never in the job — the step scans every process's environment inside the container and prints, per process, only **which** of the credential variables is *set*, never a value), a run whose **write-once outcome is already on the database** is refused rather than served (the identity's liveness, D134), the service made **unreachable** (scaled to zero instances) halts the run `budget_unavailable` and **never falls back** to a key in the job (D143), and the run's own record carries the credential's **name** and the tier answer (`fugaro logs RUN`, `fugaro diagnose RUN`). **What is NOT true on this tree:** `fugaro credentials serve` refuses to start (Check 94's own note: the installation module's three environment names are not the four facts a `credsvc.Config` needs), so a cascade run's calls **cannot be forwarded today** and the launch halves of steps 2–4 are recorded as **not observable**; the run that wires the container's environment is **queued**. **No agent runs any step** | See "Check 95" below; **you** run it, on installation `fugaro` (never `belong`), a sandbox repository only, at your own terminal — the check picks one throwaway run id so its outcome can be written **before** the launch, launches one run against a zero-instance service, and deletes every throwaway node in its Restore, whose counts must read `0` | Three throwaway sandbox runs of the sandbox repository — one whose agent runs a single `/proc` inspection command (a handful of small model calls, tier A and notional, D140) and two that are refused before any call is served — plus one `gcloud run services update` of the deployed service and its restore. **USER-RUN, NOT RUN.** |
 | 99 | The cascade end to end through the service ([`docs/credentials-service/`](credentials-service/implementation-plan.md), its Check 99, D133/D136/D140/D152/D153, tasks C1.6, C1.10–C1.12, C1.16, C1.17, C1.19, C1.21 and C1.23; **NOT RUNNABLE on this tree — the service does not serve yet**): two admitted test accounts (A1, A2) and the sandbox API key (B): a **forced exhaustion** of A1 (the operator's own mark) switches the next call to A2 and, with A2 exhausted too, to B; the **probe** clears a backed-off mark; a wait the service answered under the threshold ends the stage without failing it and **resumes it with `--resume`**; the same two marks with `credentials.fallback: oauth-only` published instead show the run **waiting** with its expected resume time rather than spending on B; a **revoked** test token is marked `broken` and shown by `fugaro watch`, `fugaro accounts ls` and `fugaro doctor`, and the operator's `fugaro accounts clear` puts it back; and the run's own record carries the **per-call tiers** and the **switch log** (D140). **What is NOT true on this tree, and why no step of this check can pass today:** the service does not serve (Check 94's note), so no call is forwarded and none of the marks this check writes can be met by a run; **and** the service's **issuance audit line on the answer path is not wired** — `internal/credsvc` audits the probe and the GitHub mint (`probe.go`, `github.go`) but nothing on the forward path calls `audit.Write`, so no step of this check may look for an issuance audit entry (that run is **queued**; when it lands it adds its line to this row, never a new check number). **No agent runs any step** | See "Check 99" below; **you** run it, on installation `fugaro` (never `belong`), a sandbox repository only, at your own terminal: the marks, the policy node and the revoked token are yours by hand (no CLI writes a mark except `fugaro accounts clear`), the run is `fugaro run --run-id …`, the views are `fugaro watch`, `fugaro accounts ls` and `fugaro doctor`, and the Restore re-publishes the recorded policy, clears every mark and ends in the all-`0` assertion | One policy published and restored, four hand-written marks and their clears, two throwaway sandbox runs whose calls the cascade's own refusals end early, one `fugaro creds set` for the revoked-then-replaced test token. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
@@ -7055,3 +7055,194 @@ print(len(b), len(b[0]["members"]) if b else 0, sum(1 for x in b if x.get("condi
 - **The audit config.** It is the point of m3 and it **stays** — but say so in the paste-back if you turned it on and then decided against it, because undoing it is another read-modify-write of the project policy (`gcloud projects get-iam-policy` → drop the `secretmanager.googleapis.com` entry → `gcloud projects set-iam-policy`, with the same etag caveat), and leaving it on costs logging volume on every bundle read.
 - **Nothing else.** No throwaway node, no run, no rule, no secret version, no bucket object: this check's whole footprint is the opt-in and the audit config.
 - **A step failed before the stage.** The installation is exactly as step 1 found it, and nothing is half-applied: the stage writes its one tfvars key and then plans, and a plan that fails leaves the key set with nothing created, which the next stage run converges. **A bundle container that exists with no version is the expected state, not a mess.**
+
+## Check 95: a run through the service — the job holds no model credential, an ended run is refused, and an unreachable service halts instead of falling back (`fugaro-dev` only, sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by Task C1.23 of [credentials-service/implementation-plan.md](credentials-service/implementation-plan.md) (its Check 95, D134, D135, D143 and Global Constraint 8); **no step of it has been run, and nothing here is a claim that it works.** It is the check of the **path**: a sandbox run's Claude calls go **gateway → service → Anthropic**, the job's own environment holds **no model credential**, a run whose **write-once outcome is already on the database** is refused rather than served, and the service made **unreachable** halts the run instead of falling back to a key in the job.
+
+**⚠ What is NOT true on this tree, and why steps 2, 3, 4 and 5 cannot observe anything today.** `fugaro credentials serve` **refuses to start** (Check 94's note: the installation module puts three environment names on the container and a `credsvc.Config` needs four facts that are not among them), so **no call is forwarded**, and on this tree a cascade run's first model call ends the run with the gateway's `budget_unavailable` halt for an unreachable service. Steps 2–5 therefore record **not observable** — with the halt's own text as the evidence — rather than a failure, and step 1 (the job holds no model credential read out of its own spec) and step 6 (nothing of the check's own survives) are what this check proves today. The run that wires the container's environment is **queued**; when it lands, these steps become pass/fail and nothing in their text changes. **`belong` is never touched by any step** (D147), and the sandbox repository — never an EdgeAppInc production checkout — is the only repository any step names.
+
+**Method.** All of it is yours, at your own terminal, in one shell you keep for the check: `bash chk95.sh`, never `. chk95.sh`, so a step's `exit 1` ends the script and leaves the message where you can read it. **Three things are yours to type and export** — `export CHK95_OWNER_RUN=yes` (the check refuses without it, before it reads anything), `CHK95_SANDBOX_REPO=owner/name` (the sandbox repository: no step names any other), and, only if this repository has no run yet to read the slug from, `CHK95_SLUG=<repo-slug>` (step 1 prints how to read it). The run ids are the check's own and are **persisted in its workdir** (`$W/rid1`, `$W/rid2`, `$W/rid3`), not re-derived per step: a run id is a UTC launch stamp, and re-deriving one mid-check would aim the check at a run that does not exist. **No agent runs any step**: the launches and the Cloud Run update below are live cloud actions, and the whole check is yours.
+
+**Guard block — re-run this before every step.** The project, the region and the Firebase project are read out of the installation's own config, never from `gcloud`'s ambient configuration, and the installation is pinned by name.
+
+```bash
+# === Check 95: setup + guard. RE-RUN THIS BLOCK BEFORE EVERY STEP. ===
+I=fugaro
+C=$HOME/.config/fugaro/projects/fugaro.yaml
+set -u
+: "${CHK95_OWNER_RUN:?type CHK95_OWNER_RUN=yes at your own terminal and export it: this check launches live sandbox runs and updates the deployed service}"
+[ "$CHK95_OWNER_RUN" = yes ] || { echo "Check 95 stopped: CHK95_OWNER_RUN is '${CHK95_OWNER_RUN}', not 'yes'" >&2; exit 1; }
+: "${CHK95_SANDBOX_REPO:?type CHK95_SANDBOX_REPO=owner/name (the sandbox repository) and export it}"
+[ -r "$C" ] || { echo "Check 95 stopped: no project config at $C" >&2; exit 1; }
+GCP=$(sed -n 's/^ *gcp_project: *//p' "$C" | tr -d "\"'" | head -1)
+L=$(sed -n 's/^ *region: *//p' "$C" | tr -d "\"'" | head -1)
+DBHOST=$(sed -n 's|^ *rtdb_url: *||p' "$C" | tr -d "\"'" | sed -e 's|^https://||' -e 's|/*$||' | head -1)
+case "$GCP" in
+  fugaro-dev) ;;
+  *belong*|*Belong*|fugaro-prod|*prod*) echo "Check 95 stopped: '$GCP' is a belong or production project (D147)" >&2; exit 1 ;;
+  *) echo "Check 95 stopped: the installation's GCP project is '$GCP', not fugaro-dev" >&2; exit 1 ;;
+esac
+case "$CHK95_SANDBOX_REPO" in
+  *edgeappinc*) echo "Check 95 stopped: the repository names EdgeAppInc; no step of this check may touch a production checkout" >&2; exit 1 ;;
+esac
+command -v fugaro >/dev/null && command -v gcloud >/dev/null || { echo "Check 95 stopped: fugaro or gcloud is not on PATH" >&2; exit 1; }
+fugaro doctor --project "$I" 2>/dev/null | grep -q "^project: .*(GCP $GCP," || {
+  echo "Check 95 stopped: installation '$I' is not the $GCP installation on this machine" >&2; exit 1; }
+export FUGARO_PROJECT="$I"
+W=/tmp/chk95; mkdir -p "$W"
+SVC=fugaro-credentials
+[ -n "$L" ] && [ -n "$DBHOST" ] || { echo "Check 95 stopped: config carries region='$L' rtdb_url='$DBHOST'" >&2; exit 1; }
+# The repository's slug: read from any run of it, else typed. It is the first path segment of
+# the run rows (`fugaro runs ls --json` -> runs[].run = "<slug>/<run-id>").
+SLUG=$(fugaro runs ls --repo "$CHK95_SANDBOX_REPO" --since 0 --json 2>/dev/null \
+       | python3 -c 'import json,sys
+r=json.load(sys.stdin).get("runs",[])
+print(r[0]["run"].split("/")[0] if r else "")' 2>/dev/null || echo "")
+[ -n "$SLUG" ] || SLUG="${CHK95_SLUG:-}"
+[ -n "$SLUG" ] || { echo "Check 95 stopped: no run of $CHK95_SANDBOX_REPO to read the slug from. Read one with 'fugaro runs ls --repo $CHK95_SANDBOX_REPO --since 0', then export CHK95_SLUG=<slug>" >&2; exit 1; }
+# One run id per case, minted once and kept: the shape is task.ValidRunID, and the day an outcome
+# carries is derived from its head, so a re-derived id would aim the check elsewhere.
+mint() { [ -s "$W/$1" ] && cat "$W/$1" || { R=$(date -u +%Y%m%d-%H%M%S)-$2; echo "$R" > "$W/$1"; echo "$R"; }; }
+RID_PROC=$(mint rid1 95a1); RID_ENDED=$(mint rid2 95a2); RID_DOWN=$(mint rid3 95a3)
+# The readable part of the slug: the job and service-account names carry this and NOT the slug's
+# 16-hex tail (`gcp.readableSlug` strips it, so the full slug matches no job name).
+READABLE=$(printf '%s' "$SLUG" | sed -E 's/-[0-9a-f]{16}$//')
+[ -n "$READABLE" ] || { echo "Check 95 stopped: could not read the readable part of slug '$SLUG'" >&2; exit 1; }
+echo "Check 95 ready: installation=$I gcp=$GCP region=$L db=$DBHOST repo=$CHK95_SANDBOX_REPO slug=$SLUG"
+echo "  run ids: proc=$RID_PROC ended=$RID_ENDED down=$RID_DOWN readable=$READABLE"
+fugaro version
+```
+
+1. **The before-state, read-only.** *(Guard block.)* The three things the check depends on, read before anything is launched: the switch that makes a run use the service at all, the job that carries no model credential, and the slug step 3 needs.
+
+   ```bash
+   echo "--- the published policy: is the cascade the route, and what is the fallback? ---"
+   fugaro project policy show --json | python3 -c 'import json,sys
+   p=json.load(sys.stdin)
+   print("routing.claude.via:", json.dumps(p.get("routing",{}).get("claude",{}).get("via")))
+   print("credentials:", json.dumps(p.get("credentials")))'
+   echo "--- the sandbox job: what it mounts, and what it is given ---"
+   for J in $(gcloud run jobs list --project="${GCP:?}" --region="${L:?}" --format='value(metadata.name)' \
+              | grep -- "${READABLE:?}" | head -3); do
+     echo "== $J"
+     gcloud run jobs describe "$J" --project="${GCP:?}" --region="${L:?}" \
+       --format='yaml(spec.template.spec.template.spec.containers[0].env)' | grep -i 'name:\|secret' || echo "   (no env: describe by hand)"
+   done
+   fugaro runs ls --repo "$CHK95_SANDBOX_REPO" --since 0 | head -5
+   ```
+   **FACT:** the policy's `routing.claude.via` (**`cascade`**, or the check has nothing to observe and says so) and its `credentials` block verbatim; per job, the env lines — **no `valueFrom.secretKeyRef` for `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` or any model credential**, and (when the gateway runs) `ANTHROPIC_BASE_URL` pointing at the gateway rather than at Anthropic — and the last runs listing, which step 3 reads the slug from. **A model credential still mounted in the job is a failure of this check's first claim**, and it is also why step 2's inspection matters: the mount is the thing that must be gone.
+
+2. **⚠ CONFIRM — the run that inspects its own `/proc`.** *(Guard block.)* One sandbox run, whose task is one command: **the inspection happens inside the job and is read out of the run's own log**, which is the only place it can happen — the job's container exists for the length of the run. The task text is written to be harmless: it changes no file, pushes nothing, opens no pull request of its own, and prints **which** credential variables are *set* per process, never a value.
+
+   ```bash
+   fugaro run --repo "$CHK95_SANDBOX_REPO" --run-id "$RID_PROC" --title "check 95: /proc inspection" --task-file - <<'TASK'
+   Do not change any file and do not open a pull request. Run exactly this and paste its output verbatim:
+
+   for p in /proc/[0-9]*; do
+     [ -r "$p/environ" ] || continue
+     n=$(tr '\0' '\n' < "$p/environ" 2>/dev/null | sed -n 's/^\(CLAUDE_CODE_OAUTH_TOKEN\|ANTHROPIC_API_KEY\|ANTHROPIC_AUTH_TOKEN\|ANTHROPIC_BASE_URL\|GOOGLE_APPLICATION_CREDENTIALS\|FUGARO_[A-Z_]*\)=.*/\1/p' | sort -u | tr '\n' ' ')
+     [ -n "$n" ] && echo "proc $(basename "$p") sets: $n"
+   done
+   # and, for the gateway's own token only, whether its value has an Anthropic key's shape --
+   # a yes/no, never the value itself:
+   tr '\0' '\n' < /proc/self/environ | grep -c '^ANTHROPIC_API_KEY=sk-ant-' || true
+   TASK
+   fugaro logs "$SLUG/$RID_PROC"
+   fugaro diagnose "$SLUG/$RID_PROC" | head -40
+   ```
+   **FACT:** the `proc <pid> sets: …` lines **verbatim** (and the count line for the key's shape), then the run's own outcome. **What must hold:** **no process sets `CLAUDE_CODE_OAUTH_TOKEN`** — the tier-A token is not in the job at all — and **no process carries a model credential's value**: with the gateway on, `ANTHROPIC_API_KEY` is the gateway's own **per-run** token (`internal/agent/env.go`), and the shape line above is how that is told apart from a real key **without ever printing one**; `ANTHROPIC_BASE_URL` points at the gateway, not at `api.anthropic.com`. **⚠ On this tree the run cannot get a call served** (the note at the top), so expect the run to end with the gateway's halt rather than with the inspection — record *not observable*, with the halt text, and do not read the absence of the inspection as a pass.
+   **This is the one step that costs anything:** a handful of small model calls, tier A and notional (`ModelNotionalUSD`, D140). The other two runs below are refused before any call is served and cost nothing.
+
+3. **The ended run is refused — the write-once outcome, written by you first.** *(Guard block.)* The service admits a run only while the run **has not ended**, and it reads that from `outcomes/<day>/<slug>/<run>` — never from the registry entry, because a run's own token may rewrite that one (D134). So the check writes the outcome itself, **as you, with your own credentials** (IAM bypasses the rules, so this is a hand-write of exactly the node the run's own end would write), and then launches a run with that id: its first call must be refused.
+
+   ```bash
+   DAY=$(( $(date -u +%s) / 86400 ))     # budget.DayKey: the UTC epoch day the rules' TODAY computes
+   AT=$(gcloud auth print-access-token)  # never printed, never pasted
+   curl -fsS -X PUT -H "Authorization: Bearer $AT" -H 'Content-Type: application/json' \
+     -d '{"status":"succeeded","requestedBy":"check95"}' \
+     "https://${DBHOST:?}/outcomes/$DAY/$SLUG/$RID_ENDED.json"
+   echo                                   # a write of one node; the read-back below is the fact
+   curl -fsS -H "Authorization: Bearer $AT" "https://${DBHOST:?}/outcomes/$DAY/$SLUG/$RID_ENDED.json"; echo
+   # ⚠ CONFIRM: the launch whose first call must be refused
+   fugaro run --repo "$CHK95_SANDBOX_REPO" --run-id "$RID_ENDED" --title "check 95: ended run" --task-file - <<'TASK'
+   Do not change any file. Reply with one line and stop.
+   TASK
+   fugaro diagnose "$SLUG/$RID_ENDED" | head -30
+   ```
+   **FACT:** the read-back of the outcome node — the JSON you wrote, `{"status":"succeeded",…}` — and then the run's own end. **What must hold:** the run's calls are **refused** because it has already ended (the service's `RunEnded`, D134) and the run **halts** rather than being served; on this tree the halt is the unreachable-service one, so record **not observable** with its text, and record the outcome node you wrote as the check's own state to delete (step 6). **The node is written for today only**, which is what the service's scan covers: it walks `today+1` down to `launch-1`, where the launch day is the run id's own UTC day, so one hand-written node on the launch day is the whole of the evidence the service reads.
+
+4. **The unreachable service halts the run, and never falls back.** *(Guard block.)* *(Global Constraint 8, D143: no code path mounts a model key in the job when the service is down.)* Make the service unable to serve, launch a run, and read what ended it — then put the service back **before anything else**.
+
+   ```bash
+   # ⚠ CONFIRM: the primary route, the plan's own words -- the service at zero instances.
+   # This container's gcloud documents `--max-instances=MAX_INSTANCES` as a count of instances and
+   # 'default' to remove the override, so a zero value is written here as it is stated and the API
+   # may refuse it: record the refusal verbatim if it comes, and take the route below instead.
+   gcloud run services update "$SVC" --project="${GCP:?}" --region="${L:?}" --max-instances=0
+   # The route that reaches the SAME halt by the same code path, if the API refuses 0: the front
+   # end answers 403 before the container, which is `stateDetailUnadmitted` -- a halt, D143:
+   #   JOB=$(gcloud run jobs list --project="$GCP" --region="$L" --format='value(metadata.name)' \
+   #         | grep -- "$READABLE" | head -1)
+   #   JOB_SA=$(gcloud run jobs describe "$JOB" --project="$GCP" --region="$L" \
+   #            --format='value(spec.template.spec.serviceAccountName)')
+   #   gcloud run services remove-iam-policy-binding "$SVC" --project="$GCP" --region="$L" \
+   #     --member="serviceAccount:$JOB_SA" --role=roles/run.invoker
+   # ⚠ CONFIRM: the launch
+   fugaro run --repo "$CHK95_SANDBOX_REPO" --run-id "$RID_DOWN" --title "check 95: service down" --task-file - <<'TASK'
+   Do not change any file. Reply with one line and stop.
+   TASK
+   fugaro runs ls --repo "$CHK95_SANDBOX_REPO" --since 1h | head -5
+   fugaro diagnose "$SLUG/$RID_DOWN" | head -40
+   fugaro logs "$SLUG/$RID_DOWN" | tail -20
+   # RESTORE IMMEDIATELY, before reading anything else:
+   gcloud run services update "$SVC" --project="${GCP:?}" --region="${L:?}" --max-instances=default
+   #   ... or, on the binding route:  gcloud run services add-iam-policy-binding "$SVC" \
+   #     --project="$GCP" --region="$L" --member="serviceAccount:$JOB_SA" --role=roles/run.invoker
+   gcloud run services get-iam-policy "$SVC" --project="${GCP:?}" --region="${L:?}" --format=json \
+     | python3 -c 'import json,sys
+   for x in json.load(sys.stdin).get("bindings",[]):
+       if x["role"]=="roles/run.invoker": print("invoker ->", ", ".join(x["members"]))'
+   ```
+   **FACT:** the halt the run recorded — its `reason` **`budget_unavailable`** (`runstore.HaltBudgetUnavailable`) and the detail the gateway writes: **`the credentials service could not be reached`** for the zero-instance route, or **`the credentials service refused this job's call (check the job's invoker grant on the service)`** for the binding route — read from `fugaro diagnose` / `fugaro runs ls`, verbatim. **What must hold:** the run **halts** and **no call is answered from a credential of the job's own** — which is also what step 2's inspection already proved is not in the job at all — and the service is **back** (the invoker listing printed above, or `--max-instances` back to its value). **A run that kept working with the service down would be the failure this step exists for.** Note that a `run` whose job is still starting takes a couple of minutes to reach its first call; `fugaro runs ls` is where its status appears.
+
+5. **What the run's own record carries.** *(Guard block, read-only.)* Once the service serves, the run's record is where D140's per-call accounting shows: the **credential's name** and the tiers.
+
+   ```bash
+   fugaro diagnose "$SLUG/$RID_PROC" | sed -n '/credential/,+6p'
+   fugaro runs ls --repo "$CHK95_SANDBOX_REPO" --since 0 | head -10
+   ```
+   **FACT:** the credential's **name** (never a value) and the tier lines the record carries — `byTier.b` / `byTier.c` real spend under `runs/$slug/$run` and `spend/$day/…`, with tier A on the `notional` nodes (D140, Check 92's own children). **⚠ Not observable on this tree** (no call is served): record it as such.
+
+6. **What survives: nothing of the check's own — the final assertion.** *(Guard block.)* Three runs, their task objects, and one hand-written outcome node are everything this check creates.
+
+   ```bash
+   DAY=$(( $(date -u +%s) / 86400 ))
+   AT=$(gcloud auth print-access-token)   # never printed, never pasted
+   for R in "$RID_ENDED" "$RID_DOWN" "$RID_PROC"; do
+     curl -fsS -X DELETE -H "Authorization: Bearer $AT" "https://${DBHOST:?}/runs/$SLUG/$R.json" >/dev/null 2>&1
+     curl -fsS -H "Authorization: Bearer $AT" "https://${DBHOST:?}/runs/$SLUG/$R.json"; echo "   # want null ($R)"
+   done
+   for D in $DAY $((DAY - 1)); do
+     curl -fsS -X DELETE -H "Authorization: Bearer $AT" "https://${DBHOST:?}/outcomes/$D/$SLUG/$RID_ENDED.json" >/dev/null 2>&1
+   done
+   curl -fsS -H "Authorization: Bearer $AT" "https://${DBHOST:?}/outcomes/$DAY/$SLUG/$RID_ENDED.json"; echo "   # want null"
+   fugaro runs ls --repo "$CHK95_SANDBOX_REPO" --since 0 --json \
+     | grep -c -e "$RID_PROC" -e "$RID_ENDED" -e "$RID_DOWN"     # 0
+   gcloud run services describe "$SVC" --project="${GCP:?}" --region="${L:?}" \
+     --format='value(spec.template.spec.serviceAccountName)'      # the credentials account, unchanged
+   ```
+   **FACT:** each read-back — **`null`** for the three run nodes and the outcome node (both the day you wrote and the day below it are deleted, because the service scans both) — the run-listing count **`0`**, and the service's account line unchanged. **The `0` is the assertion this register's checks all end on**: a `grep -c` that finds nothing of the check's own.
+
+**Passes when:** the guard's ready line names `fugaro` on `fugaro-dev`, the sandbox repository and the three run ids; step 1 shows `routing.claude.via: cascade` and no job mounting a model credential; step 2's log (once the service serves) shows **no `CLAUDE_CODE_OAUTH_TOKEN` in any process**, `ANTHROPIC_BASE_URL` at the gateway, and no process carrying an Anthropic-shaped key; step 3's run is refused because its outcome is already written; step 4's run halts with reason **`budget_unavailable`** and the unreachable/unadmitted detail, and the service is restored; step 5 shows the credential's name and the tier lines in the record; step 6 reads **`null`** and **`0`**.
+
+**Fails when:** a job still mounts a model credential (step 1), or a process inside the run sets `CLAUDE_CODE_OAUTH_TOKEN` or carries an Anthropic-shaped `ANTHROPIC_API_KEY` (step 2); the ended run is **served** rather than refused (step 3); the run keeps working with the service unreachable, or is answered from a key of the job's own (step 4) — **that is the Global-Constraint-8 failure**; or a run node or the outcome node is left behind (step 6).
+
+**Paste back:** the guard's ready line, the two typed variables **names** (never a value), and `fugaro version`; step 1's policy lines, the jobs' env lines and the runs listing; step 2's `proc <pid> sets:` lines verbatim and the key-shape count, with the run's own end; step 3's outcome read-back and the refusal; step 4's `gcloud` output (including a verbatim refusal if the API refused `--max-instances=0`), the halt's reason and detail from `diagnose`, and the restored invoker listing; step 5's credential/tier lines or the record that they were not observable; step 6's three `null`s and the `0`. **Names, principals and counts — never a token, a key, an environment value or a secret's payload.**
+
+**Restore.** The state this check leaves is the state later checks expect, with exactly one exception — the service must be **serving again**:
+
+- **The service.** Put it back the moment step 4 is read: `--max-instances=default` (which removes the override, the shape the installation's Terraform leaves), or re-add the `roles/run.invoker` binding for the job account. **Do not leave it unreachable**: Checks 96 and 99 both launch sandbox runs, and every one of them would halt exactly as step 4's did.
+- **The three runs and the outcome node.** Step 6 deletes them and reads them back `null`; if you stopped before it, do it by hand — `runs/<slug>/<rid>` for the three ids (the task objects a launch wrote) and `outcomes/<day>/<slug>/<RID_ENDED>` on **both** the day you wrote and the day below it. A delete is an owner write (IAM), which is what makes it possible at all: no run token may write either node.
+- **Nothing else.** No rules, no policy, no mark, no credential: this check writes no cascade state, reads no value, and never opens the bundle. The one thing it reads that is not its own is the run's own log, which Cloud Logging keeps on its own schedule.
+- **The audit config Check 94 turned on** stays on; nothing here touches it.
