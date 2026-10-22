@@ -108,8 +108,8 @@ const server = createServer((req, res) => {
 })
 await new Promise((resolve) => server.listen(8099, '127.0.0.1', resolve))
 
-const ROUTES = ['/', '/how-it-works/', '/getting-started/', '/caps-and-costs/', '/console/', '/docs/',
-  '/security/', '/changelog/', '/faq/', '/community/', '/privacy/']
+const ROUTES = ['/', '/how-it-works/', '/why-gcp/', '/getting-started/', '/caps-and-costs/', '/console/',
+  '/docs/', '/security/', '/changelog/', '/faq/', '/community/', '/privacy/']
 const VIEWPORTS = [{ name: 'desktop', width: 1280, height: 900 }, { name: 'mobile', width: 390, height: 844 }]
 
 const browser = await chromium.launch()
@@ -147,15 +147,27 @@ for (const vp of VIEWPORTS) {
         h1: h1?.innerText ?? null,
         h1Bottom: h1 ? Math.round(box(h1).bottom + window.scrollY) : null,
         // The two numbers P5's fold claim is about, beside the `h1`'s: the bottom of the
-        // page's lead paragraph and the bottom of the first command it prints. The claim is
-        // that the `h1`, the one-line promise and the first command are inside a 390 × 844
-        // first screen — on the homepage, where the promise is the first paragraph and the
-        // first command is the first `pre` — and that Getting Started's first screen is its
-        // first command. `null` where the page prints no command at all (eight of the
-        // eleven routes). Both are measured from the top of the document, so they are read
-        // against the viewport's height the same way `h1Bottom` is.
+        // page's lead paragraph and the bottom of the first command a reader can see. The
+        // claim is that the `h1` and the one-line promise are inside a 390 × 844 first
+        // screen — on the homepage, where the promise is the first paragraph — that **no**
+        // command is on the homepage's first screen, and that Getting Started's first
+        // screen is its first command. `null` where the page shows no command at all (nine
+        // of the twelve routes). Both are measured from the top of the document, so they
+        // are read against the viewport's height the same way `h1Bottom` is.
         leadBottom: q('main p') ? Math.round(box(q('main p')).bottom + window.scrollY) : null,
-        firstCommandBottom: q('main pre') ? Math.round(box(q('main pre')).bottom + window.scrollY) : null,
+        // The first command a reader can see, and not simply the first one in the HTML: the
+        // homepage's slider keeps all three of its panels in the HTML and hides every one
+        // the address does not name, and the page's first `pre` in document order is the
+        // `fugaro watch` block inside the hidden "See it" panel. A reading taken from
+        // `document.querySelector('main pre')` alone is that element's, and an element with
+        // `display: none` has no rectangle, so the number would be 0 and would mean nothing.
+        // The reading is the first `pre` under `main` that has a rectangle of its own —
+        // which on the homepage is the install command in the page's last section, the
+        // command a reader meets without choosing a tab.
+        firstCommandBottom: (() => {
+          const shown = [...document.querySelectorAll('main pre')].find((el) => el.getClientRects().length > 0)
+          return shown ? Math.round(box(shown).bottom + window.scrollY) : null
+        })(),
         words: (q('main')?.innerText ?? '').trim().split(/\s+/).filter(Boolean).length,
         preCount: document.querySelectorAll('pre').length,
         copyButtons: document.querySelectorAll('[data-copy], .copy-button, button.copy').length,

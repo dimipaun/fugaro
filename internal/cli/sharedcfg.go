@@ -182,7 +182,7 @@ var sharedForbidden = []string{"terraform", "user", "endpoints", "bucket_url", "
 // ParseShared validates a published shared config against its anchor and
 // returns it (docs/design/shared-config.md §5). Anyone holding objectAdmin
 // on the runs bucket can write the file, so it refuses, and never repairs,
-// anything fugaro init would not have written or that points outside the
+// anything the converge would not have written or that points outside the
 // anchor's GCP project: another name, GCP project or bucket, a registry,
 // base image or log view elsewhere, a budget block whose Firebase project
 // is not the anchor's GCP project or whose database or signer is not its
@@ -191,10 +191,10 @@ var sharedForbidden = []string{"terraform", "user", "endpoints", "bucket_url", "
 // anchors, aliases, merge keys, explicit
 // tags, repeated keys or documents, and anything over
 // localcfg.SharedMaxBytes. Every refusal names the field and says to have
-// fugaro init run again.
+// fugaro update run again.
 func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 	refuse := func(format string, args ...any) (*localcfg.Config, error) {
-		return nil, fmt.Errorf("the shared config "+format+"; ask an operator to run fugaro init again", args...)
+		return nil, fmt.Errorf("the shared config "+format+"; ask an operator to run fugaro update again", args...)
 	}
 	bad := func(field, why string, args ...any) (*localcfg.Config, error) {
 		return refuse("has a bad "+field+": "+why, args...)
@@ -213,7 +213,7 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 	// that decodes to its zero value cannot hide.
 	for _, k := range sharedForbidden {
 		if _, ok := top[k]; ok {
-			return refuse("carries %s:, which is never published; it was not written by fugaro init", k)
+			return refuse("carries %s:, which is never published; it was not written by the converge", k)
 		}
 	}
 	// The identity first, so a file of another installation is named as
@@ -234,7 +234,7 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 		return refuse("is not valid: %s", strconv.Quote(strings.ReplaceAll(err.Error(), "local config: ", "")))
 	}
 	for _, k := range dropped {
-		c.AddWarning(fmt.Sprintf("the project's shared config still lists base_images.%q, a base removed in 0.7.0; ignored (the next fugaro init or fugaro image refresh republishes the shared config)", k))
+		c.AddWarning(fmt.Sprintf("the project's shared config still lists base_images.%q, a base removed in 0.7.0; ignored (the next fugaro update or fugaro image refresh republishes the shared config)", k))
 	}
 	// Again on the decoded values, which are what the commands use.
 	switch {
@@ -260,7 +260,7 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 	switch {
 	case c.ImageSource == "" || c.ImageSource == mirror.DefaultSources[0] || c.ImageSource == a.ImageSource:
 	default:
-		return bad("image_source", "%q is not %s, and this machine's local config does not record it: a base pin through the remote repository is checked against the owner recorded there, so record %s first (fugaro init --base base --image-source %s), then publish",
+		return bad("image_source", "%q is not %s, and this machine's local config does not record it: a base pin through the remote repository is checked against the owner recorded there, so record %s first (fugaro update --base base --image-source %s), then publish",
 			c.ImageSource, mirror.DefaultSources[0], c.ImageSource, c.ImageSource)
 	}
 	// The owner every remote-repository entry must name: the published
@@ -277,7 +277,7 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 				ref, c.RegistryHost, infra.BaseRegistry, c.RegistryHost, infra.GhcrRegistry, owner, kind)
 		}
 		if c.ImageSource == "" && strings.HasPrefix(ref, c.RegistryHost+"/"+infra.GhcrRegistry+"/") {
-			return bad("base_images."+kind, "%q is a pin through the remote repository, which is checked against the owner image_source records, and this config records none: rerun fugaro init --base %s there to record one, or remove the entry", ref, kind)
+			return bad("base_images."+kind, "%q is a pin through the remote repository, which is checked against the owner image_source records, and this config records none: rerun fugaro update --base %s there to record one, or remove the entry", ref, kind)
 		}
 	}
 	if c.Build.ServiceAccount != "" {
@@ -404,7 +404,7 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 		// checks below. An installation with a separate Firebase project
 		// can't be anchored by the checkout, so it is never used from here.
 		if b.FirebaseProject != a.GCPProject {
-			return nil, fmt.Errorf("the shared config's budget.firebase_project %q is not gcp_project %s: this installation uses a separate Firebase project, so the shared config cannot be used automatically; run fugaro init (adopt) to configure it", b.FirebaseProject, a.GCPProject)
+			return nil, fmt.Errorf("the shared config's budget.firebase_project %q is not gcp_project %s: this installation uses a separate Firebase project, so the shared config cannot be used automatically; run fugaro update (adopt) to configure it", b.FirebaseProject, a.GCPProject)
 		}
 		o := infra.FirebaseOutputs{RTDBURL: b.RTDBURL, FirebaseAPIKey: b.FirebaseAPIKey, TokenSigner: b.TokenSigner, FirebaseProject: b.FirebaseProject}
 		if err := infra.CheckFirebaseOutputsFor(o, "", false); err != nil {
@@ -510,7 +510,7 @@ var (
 // Docker rejects the reference the reader accepted. A reference the tool
 // cannot pull is never this installation's job image, so it is refused here,
 // before the repository is read: the value is one the writer wrote, and the
-// shapes above are not what fugaro init writes.
+// shapes above are not what the converge writes.
 var batchImageRE = regexp.MustCompile(`^[a-z][a-z0-9-]*-docker\.pkg\.dev/[a-z][a-z0-9-]{4,28}[a-z0-9]/` +
 	imageComponent + `(?:/` + imageComponent + `)+` + `(?::` + imageTag + `)?(?:@` + imageDigest + `)?$`)
 
@@ -539,7 +539,7 @@ func baseImageRE(host, kind, owner string) *regexp.Regexp {
 		`:` + releaseVersionRE + `@` + imageDigest + `$`)
 }
 
-// sharedTopLevel checks the YAML's shape, which fugaro init's Marshal
+// sharedTopLevel checks the YAML's shape, which the converge's Marshal
 // fixes: one document holding a mapping, with no anchor, alias, merge key,
 // explicit tag or repeated key anywhere (an alias or merge key could carry
 // a value past the key checks; a tag could make a key read differently
@@ -574,10 +574,10 @@ func sharedTopLevel(data []byte) (map[string]string, error) {
 
 func checkSharedNode(n *yaml.Node) error {
 	if n.Kind == yaml.AliasNode || n.Anchor != "" {
-		return fmt.Errorf("uses a YAML anchor or alias (line %d), which fugaro init never writes", n.Line)
+		return fmt.Errorf("uses a YAML anchor or alias (line %d), which the converge never writes", n.Line)
 	}
 	if n.Style&yaml.TaggedStyle != 0 {
-		return fmt.Errorf("uses an explicit YAML tag %q (line %d), which fugaro init never writes", n.Tag, n.Line)
+		return fmt.Errorf("uses an explicit YAML tag %q (line %d), which the converge never writes", n.Tag, n.Line)
 	}
 	if n.Kind == yaml.MappingNode {
 		seen := map[string]bool{}
@@ -587,7 +587,7 @@ func checkSharedNode(n *yaml.Node) error {
 			case k.Kind != yaml.ScalarNode:
 				return fmt.Errorf("has a key that is not a plain value (line %d)", k.Line)
 			case k.Value == "<<" || k.Tag == "!!merge":
-				return fmt.Errorf("uses a YAML merge key << (line %d), which fugaro init never writes", k.Line)
+				return fmt.Errorf("uses a YAML merge key << (line %d), which the converge never writes", k.Line)
 			case seen[k.Value]:
 				return fmt.Errorf("repeats the key %q (line %d)", k.Value, k.Line)
 			}
@@ -708,20 +708,20 @@ func readSharedFromBucket(ctx context.Context, a SharedAnchor) (*localcfg.Config
 	}
 	var m infra.ProjectMarker
 	if data == nil || json.Unmarshal(data, &m) != nil || m.Version != 1 || !config.ProjectNameRE.MatchString(m.Name) {
-		return nil, 0, nil, gone(userErr("%s in %s is not a version 1 project marker; ask an operator to run fugaro init", infra.ProjectMarkerObject, url))
+		return nil, 0, nil, gone(userErr("%s in %s is not a version 1 project marker; ask an operator to run fugaro update", infra.ProjectMarkerObject, url))
 	}
 	switch {
 	case m.Name != a.Name:
 		return nil, 0, nil, gone(userErr("the installation at %s is project %s, not %s (%s says so): check project and gcp_project in the checkout's fugaro.yaml", url, m.Name, a.Name, infra.ProjectMarkerObject))
 	case m.GCPProject != a.GCPProject:
-		return nil, 0, nil, gone(userErr("%s in %s says gcp_project %q, not %s; ask an operator to run fugaro init", infra.ProjectMarkerObject, url, m.GCPProject, a.GCPProject))
+		return nil, 0, nil, gone(userErr("%s in %s says gcp_project %q, not %s; ask an operator to run fugaro update", infra.ProjectMarkerObject, url, m.GCPProject, a.GCPProject))
 	}
 	data, gen, err := b.ReadMaxStrict(ctx, infra.SharedConfigObject, localcfg.SharedMaxBytes)
 	switch {
 	case errors.Is(err, blobx.ErrNotExist):
-		return nil, 0, nil, gone(userErr("project %s has not published a shared config; ask an operator to run fugaro init (it writes %s to %s)", a.Name, infra.SharedConfigObject, url))
+		return nil, 0, nil, gone(userErr("project %s has not published a shared config; ask an operator to run fugaro update (it writes %s to %s)", a.Name, infra.SharedConfigObject, url))
 	case errors.Is(err, blobx.ErrTooLarge):
-		return nil, 0, nil, gone(userErr("%s in %s is over the 64 KiB limit; ask an operator to run fugaro init again", infra.SharedConfigObject, url))
+		return nil, 0, nil, gone(userErr("%s in %s is over the 64 KiB limit; ask an operator to run fugaro update again", infra.SharedConfigObject, url))
 	case err != nil:
 		return nil, 0, nil, bucketErr(url, "reading "+infra.SharedConfigObject, err)
 	}

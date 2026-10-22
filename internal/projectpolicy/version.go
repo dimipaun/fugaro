@@ -174,7 +174,7 @@ const PolicyRulesVersion = 1
 // is by hand over IAM; every mailbox writer that does not send a `mac` (no code in this
 // repository writes the mailbox yet, so this reaches a hand-written consumer
 // or script only) is refused; and a 0.8.5 CLI
-// (generation 2) refuses `fugaro init --firebase` against the generation-3
+// (generation 2) refuses `fugaro update --firebase-project` against the generation-3
 // marker rather than deploying its older rules over it, and its doctor warns.
 //
 // Generation 3 also carries the credentials children, and they deliberately
@@ -203,7 +203,7 @@ const PolicyRulesVersion = 1
 // the direction the redeploy comes from: a release in *this* line that predates
 // the credentials children is generation 3 as well, so its `fugaro doctor` sees
 // the deployed document differ from the one it generates, warns
-// `policy-rules-skew` and prescribes "re-run `fugaro init --firebase`" — the
+// `policy-rules-skew` and prescribes "re-run `fugaro update --firebase-project`" — the
 // redeploy that takes the children away. It cannot be told otherwise from
 // where it stands: the marker reads 3, which is its own generation, and it
 // knows nothing of `config/limits/credsRules`. The "upgrade instead if the
@@ -265,11 +265,11 @@ const (
 //     here can read it and the release that wrote the node is newer than the
 //     one calling this. `fugaro upgrade` is the whole remedy (for the image,
 //     "refresh the runner image" — it is not the CLI's binary), and neither of
-//     the other moves is one: `fugaro init --firebase` deploys this release's
+//     the other moves is one: `fugaro update --firebase-project` deploys this release's
 //     rules and marker, and the deploy's own plan refuses to put them over a
 //     newer Fugaro's (internal/infra's DB.Plan: a marker above this binary's
 //     RulesVersion stops the plan there — "the rules this database runs under
-//     came from a newer Fugaro, and 'fugaro init --firebase' would deploy this
+//     came from a newer Fugaro, and 'fugaro update --firebase-project' would deploy this
 //     binary's older rules over them. Upgrade Fugaro first" — which doctor's
 //     policy-rules-skew reports with the upgrade as its fix too, and which
 //     requirePolicyRules does *not* refuse: it reads a marker at or above
@@ -286,8 +286,8 @@ const (
 //     (internal/cli's publishedPolicyOf, which words the same refusal, and
 //     docs/project-layer.md and `fugaro doctor` carry it too), so the older
 //     node goes first, with `fugaro project policy publish --delete`, and the
-//     publish that follows writes a shape the reader understands. `fugaro init
-//     --firebase` is deliberately not named in either: it deploys this
+//     publish that follows writes a shape the reader understands. `fugaro update
+//     --firebase-project` is deliberately not named in either: it deploys this
 //     release's rules template and marker and never writes
 //     config/policy/shared, so an operator sent to re-run it would come back to
 //     the same refusal. A hand-written node, or one a release before this shape

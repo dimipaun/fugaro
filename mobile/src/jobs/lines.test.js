@@ -268,6 +268,28 @@ test('an age the phone cannot state is not printed as one', () => {
   for (const list of [skewed, ahead]) {
     assert.equal(/-\d+s| ago/.test(text(list)), false, 'no duration the phone cannot state');
   }
+
+  // ... and an age that is not a number at all. `jobList` refuses one
+  // (`heartbeatRow`), so this is not a reading the wiring can produce -- it
+  // arrives at the screen's edge, which asks only that the list be one
+  // `jobList` **shaped**. The sign rule alone does not stop it: `NaN < 0` is
+  // false, `'3s' < 0` is false, so both fall through to the arithmetic and the
+  // line reads `live (NaNs ago)` -- a duration, on a screen, out of a value
+  // that is not one.
+  for (const ageMs of [NaN, Infinity, -Infinity, '3s']) {
+    const hand = {
+      ok: true,
+      project: 'fugaro',
+      day: '2026-10-19',
+      broken: false,
+      connection: 'live',
+      note: null,
+      row: jobList({ snapshot: snapshotOf(documentOf()) }).row,
+      heartbeat: { state: 'live', verified: true, reason: 'fresh', ageMs },
+    };
+    assert.equal(lineText(hand, 'Heartbeat'), 'live', `${String(ageMs)} is not a duration`);
+    assert.equal(text(hand).includes('NaN'), false, `${String(ageMs)} is printed as an age`);
+  }
 });
 
 test('the feed\'s notice is the only sentence the feed can put on the screen', () => {

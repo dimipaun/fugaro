@@ -5,7 +5,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
 // ackPrune is how long an acknowledgement is kept: past this it is dropped
@@ -110,16 +113,32 @@ func (a *Acks) save() error {
 	return nil
 }
 
-// AckPath is the default acknowledgements file: $XDG_STATE_HOME's
-// fugaro/watch-acks.json, or ~/.local/state's when XDG_STATE_HOME is unset.
+// AckPath is the default acknowledgements file: localcfg's state directory and
+// fugaro/watch-acks.json under it — $XDG_STATE_HOME where it is set and
+// absolute, else %LOCALAPPDATA% on Windows, else ~/.local/state.
+//
+// The directory rule is localcfg's (DirState), not this package's. This file
+// used to read XDG_STATE_HOME and ~/.local/state itself, through
+// os.UserHomeDir, which is a second copy of the rule F5 removed everywhere
+// else — and on Windows the wrong one: the acks would have landed in
+// %USERPROFILE%\.local\state while the terraform workdirs, the rest of the
+// state, went to %LOCALAPPDATA% through localcfg.UserDir. One rule, one place.
+//
+// A machine that names no state directory at all still gets ".": acks are best
+// effort and a watch that cannot place them must start anyway, which is the
+// fallback this file had before.
 func AckPath(getenv func(string) string) string {
-	base := getenv("XDG_STATE_HOME")
-	if base == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			home = "."
-		}
-		base = filepath.Join(home, ".local", "state")
+	return ackPath(getenv, runtime.GOOS)
+}
+
+// ackPath is AckPath with the platform as a parameter, so the Windows rule is
+// testable from a Linux checkout — the same reason localcfg.UserDir takes goos
+// rather than reading runtime.GOOS. So `filepath.Join` below is this platform's
+// spelling, which is what the tests run against.
+func ackPath(getenv func(string) string, goos string) string {
+	base, err := localcfg.UserDir(getenv, goos, localcfg.DirState)
+	if err != nil {
+		base = "."
 	}
 	return filepath.Join(base, "fugaro", "watch-acks.json")
 }

@@ -109,15 +109,15 @@ func TestAdoptModeNamesMissingRole(t *testing.T) {
 	}
 	for _, want := range []string{
 		"launcher role, held by: group:eng@example.com",
-		"ask an owner to run: fugaro init --launcher group:eng@example.com --launcher user:<your-email>",
+		"ask an owner to run: fugaro setup --launcher group:eng@example.com --launcher user:<your-email>",
 		"operator role, held by: nobody",
-		"ask an owner to run: fugaro init --operator user:<your-email>",
+		"ask an owner to run: fugaro setup --operator user:<your-email>",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("the output lacks %q:\n%s", want, out.String())
 		}
 	}
-	for _, line := range adoptNotes(infra.InstallationOutputs{}) {
+	for _, line := range adoptNotes(infra.InstallationOutputs{}, "setup") {
 		if strings.Contains(line, "\n") || strings.Contains(line, "\\") {
 			t.Errorf("not one line: %q", line)
 		}
@@ -212,7 +212,7 @@ func TestNothingIsAppliedAfterAnAdoptInTheSameRun(t *testing.T) {
 }
 
 // firebaseState puts the Firebase root's state object in the rig's state
-// bucket: someone's init --firebase has applied it.
+// bucket: someone's update --firebase-project has applied it.
 func (r *initRig) firebaseState(t *testing.T) {
 	t.Helper()
 	w, err := r.gcs.Bucket(t, initStateBucket).NewWriter(context.Background(), infra.StatePrefixFirebase+"/default.tfstate", nil)

@@ -3,7 +3,7 @@ package pricing
 // The embedded table's source and the day it was last checked against it.
 const (
 	source    = "https://platform.claude.com/docs/en/about-claude/pricing"
-	checkedAt = "2026-09-30"
+	checkedAt = "2026-10-20"
 )
 
 // Limits shared by the rows below, from the models overview
@@ -50,8 +50,8 @@ func Embedded() *Table {
 		{ID: "claude-opus-5-5", ContextTokens: context1M, MaxOutputTokens: output128k, ImageTokens: imageHighRes, Rates: rates(4, 20, 0.05)},
 		// Claude Opus 5: $5 / $25; cache hits $0.50 (0.1x). Pricing page, model pricing table.
 		{ID: "claude-opus-5", ContextTokens: context1M, MaxOutputTokens: output128k, ImageTokens: imageHighRes, Rates: rates(5, 25, 0.1)},
-		// Claude Sonnet 5.5: $2 / $10; cache hits $0.20 (0.1x). Pricing page, model pricing table.
-		{ID: "claude-sonnet-5-5", ContextTokens: context1M, MaxOutputTokens: output128k, ImageTokens: imageHighRes, Rates: rates(2, 10, 0.1)},
+		// Claude Sonnet 5.5: $2 / $10; cache hits $0.10 (0.05x). Pricing page, model pricing table, footnote 2.
+		{ID: "claude-sonnet-5-5", ContextTokens: context1M, MaxOutputTokens: output128k, ImageTokens: imageHighRes, Rates: rates(2, 10, 0.05)},
 		// Claude Sonnet 5: $2 / $10 (the introductory price made standard, footnote 3); cache hits $0.20 (0.1x). Pricing page, model pricing table.
 		{ID: "claude-sonnet-5", ContextTokens: context1M, MaxOutputTokens: output128k, ImageTokens: imageHighRes, Rates: rates(2, 10, 0.1)},
 		// Claude Haiku 4.5: $1 / $5; cache hits $0.10 (0.1x). Pricing page, model pricing table.

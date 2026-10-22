@@ -1,4 +1,4 @@
-# What fugaro init reads back: the names a Batch job's definition needs (the
+# What fugaro update reads back: the names a Batch job's definition needs (the
 # preloaded boot image) and the ones an operator or the doctor check looks
 # for (the accounts, the router and NAT).
 
@@ -50,7 +50,7 @@ output "preload_scheduler_job" {
 # an installation by hand (`gcloud run jobs execute <this>`), or to check that
 # the schedule exists, would otherwise have to read the module to learn them.
 # They are the module's own locals and not inputs, because nothing outside the
-# module creates them -- unlike the names in `var.names`, which fugaro init
+# module creates them -- unlike the names in `var.names`, which fugaro update
 # computes because two sides write them.
 #
 # They travel the whole way out: this file, the root's outputs.tf and

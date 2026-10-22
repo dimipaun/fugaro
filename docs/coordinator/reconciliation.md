@@ -13,7 +13,7 @@ questions the owner had to answer, and the owner's answers to them, then what co
 verified.
 
 **Nothing here is implemented, and nothing here is approved.** No Go, no TypeScript, no
-Terraform, no rules change, no live action follows from this document. It allocates no decision number (see [README.md](README.md)): the findings that needed the owner were numbered **Q1–Q16**, and **the owner answered all sixteen on 2026-10-19** (§3), each by taking option (A), the recommended one.
+Terraform, no rules change, no live action follows from this document. The findings that needed the owner were numbered **Q1–Q16**, and **the owner answered all sixteen on 2026-10-19** (§3), each by taking option (A), the recommended one — **an answer picks an option; it allocates nothing.** Planning the work afterwards found five things the answers do not settle, and those are decisions rather than questions, so they are numbered **D193–D197** and written in **§6**, each **recommendation first**. They are taken from the **D193 onward** block the owner's register records as free ([README.md](README.md)); **the owner answered all five on 2026-10-21** — four as recommended, **D196 against it** — and the plan that follows is written to those answers ([implementation-plan.md](implementation-plan.md)).
 
 ---
 
@@ -47,7 +47,7 @@ not exist. Recording them here so the next reader does not repeat them.
 | --- | --- |
 | A **Fugaro project** (§2, §4) | Defined: *"one GCP project, plus (from M9) one Firebase project … its repositories; its people lists …; one local config"* (`docs/design/v1.md`). The spec's "one coordinator per Fugaro project, deployed into that project's Firebase/GCP project" is therefore well-formed — and it is the same object the repo calls an **installation** (`docs/design/v1.md`). |
 | **Cloud Run service, scale-to-zero** (§4) | **No Cloud Run *service* exists anywhere.** Every workload is `google_cloud_run_v2_job` (history `modules/installation/history.tf:70`; project jobs `modules/project/job.tf:10`; workflow jobs `modules/workflow/job.tf:4`; repo check `modules/repo/check.tf:16`). The type is not even in the plan allowlist (`internal/infra/tf/cover.go:22`). See **#2**. |
-| **Provisioning: "part of project init's existing Terraform"** (§4) | `fugaro init` applies the **installation** root (`internal/cli/init.go:1704 installRoot`), behind one interactive confirmation that covers a plan only if every resource type is allowlisted (`internal/infra/tf/cover.go:22 allowedTypes`, `:89 grantRules`) and every grant is in `grantRules`; anything else gets its own typed confirmation (`internal/cli/init_review.go:77 runCovers`, `:127 notCovered`). See **#3**. |
+| **Provisioning: "part of project init's existing Terraform"** (§4) | `fugaro init` applies the **installation** root (`internal/cli/init.go:1828 installRoot`), behind one interactive confirmation that covers a plan only if every resource type is allowlisted (`internal/infra/tf/cover.go:22 allowedTypes`, `:89 grantRules`) and every grant is in `grantRules`; anything else gets its own typed confirmation (`internal/cli/init_review.go:77 runCovers`, `:127 notCovered`). See **#3**. |
 | **Access: "whoever can reach the project's coordinator is in the project; no extra permission model in v1"** (§4) | The opposite is the standing design: the compute module **refuses** `allUsers`, `allAuthenticatedUsers` and `domain:` members (`deploy/terraform/gcp/modules/compute/variables.tf:122,144`), launchers are per-person IAM members on one job (`modules/project/iam.tf:7`), and `SECURITY.md:40` puts the trust boundary at the repository and the task source, never at network reach. See **#4**. |
 | **Store: Firestore; "Firestore and RTDB are already available"** (§5) | True, both exist — and they are **two different stores with two different jobs**. RTDB is the budget/policy/kill/registry/mailbox store (`internal/budget/model.go:1-2`); Firestore holds `spendDaily` history only (`internal/firestore/client.go` package doc, `internal/budget/rollover.go:48 SpendCollection`). See **#6**. |
 | **"Firestore's real-time listeners drive live updates in the console"** (§5) | Wrong twice: the Firestore client has no listeners (hand-written REST: `Get`, `Patch`, `Delete`, `Query`, `GetDatabase`, `CreateDatabase`), and the console renderer's CSP is `connect-src 'none'` (`console/src/main/protocol.ts:132`) — it never talks to the network at all. See **#7**. |
@@ -116,8 +116,8 @@ Cloud Run's own. A timeout exists as a job's *task* timeout
 request timeout. A concurrency setting has no precedent anywhere. → **Q1**.
 
 **#3 — "Part of project init's existing Terraform" is the right shape with the wrong noun, and the plan gate is an allowlist that a new service breaks. — Wrong (the noun) / Rule (the gate).**
-`fugaro init` applies the **installation** root (`internal/cli/init.go:1704 installRoot`,
-`:1798 t.Plan`, `:1832 t.Apply`). There is a Terraform module called `project`
+`fugaro init` applies the **installation** root (`internal/cli/init.go:1828 installRoot`,
+`:1929 t.Plan`, `:1963 t.Apply`). There is a Terraform module called `project`
 (`deploy/terraform/gcp/modules/project/`) — but it is the *shared project jobs* module: it
 creates one Cloud Run job and one job service account per (profile, provider, account)
 (`modules/project/job.tf:10`, `modules/project/sa.tf:5`) and nothing else. It creates no
@@ -219,7 +219,7 @@ coordinator stores, the console sees it only if a `fugaro` command can read it. 
 
 **#8 — There is no MCP server, no MCP dependency, and one loopback HTTP server in the whole repository. — Gap.**
 `internal/gateway/gateway.go:1-7` is the only HTTP server: *"a loopback proxy between
-Claude Code and the model API"*, started at `:222 Start`, bound at `:232` to
+Claude Code and the model API"*, started at `:259 Start`, bound at `:269` to
 `127.0.0.1:0`. Its routes are `HEAD /api/hello`, `POST /v1/messages`,
 `POST /v1/messages/count_tokens`. Nothing else in the tree serves a request.
 The spec's own claims about the protocol also need care: **MCP authorization is
@@ -540,9 +540,9 @@ operation and a new ruling. → **Q8**.
 `docs/design/desktop-console.md` §5.1 rule 7 — *"Job-written text is text"* — and the code
 follows it: `console/src/renderer/app.ts` writes through `element.textContent`
 (`:124,138,159,174`), never `innerHTML`; the sanitizers are
-`console/src/shared/sanitize.ts` (`sanitizeText:2208`, `sanitizeRefusal:2445`,
-`safeUrl:2477`); navigation and window-open are denied
-(`console/src/main/window.ts:198 denyNavigation`, `:209 denyWindowOpen`), and there is
+`console/src/shared/sanitize.ts` (`sanitizeText:2251`, `sanitizeRefusal:2488`,
+`safeUrl:2520`); navigation and window-open are denied
+(`console/src/main/window.ts:231 denyNavigation`, `:242 denyWindowOpen`), and there is
 exactly one validated `shell.openExternal`.
 A coordinator answering *"what's holding up the payments release?"* produces free text that
 a model wrote from untrusted inputs. If that text were rendered as markdown with live links,
@@ -592,14 +592,16 @@ repository. → **Q12**.
 ## 3. The owner's answers (Q1–Q16)
 
 Sixteen questions. Each names what it changes in [spec.md](spec.md). They were questions, not
-decisions: this work allocates no D-number, and no task starts on the strength of an answer
-alone.
+decisions: an answer picks an option and allocates nothing, and no task starts on the strength
+of an answer alone. (The five decisions the planning afterwards found are not these: they are
+**D193–D197**, and they are in **§6**.)
 
 **The owner answered all sixteen on 2026-10-19, each by taking option (A) — the recommendation — and an answer is not an approval.** The answer is recorded under each question
 below, in the owner's own choice of option; the wording of every option and of every
 "Consequence" line is this document's, written before the answer, and is left as it was so
-that the answer can be read against what it was choosing between. **Nothing here has been
-accepted, approved or given a decision number**, no plan exists, and the answers choose a
+that the answer can be read against what it was choosing between. **None of the sixteen has
+been accepted, approved or given a decision number** — they are questions, and §6's five
+decisions are the separate, numbered ones — and the answers choose a
 direction rather than approving work: they are the owner's decision to proceed on that
 option, and the plan that follows is a separate document with its own gate. A reader who finds
 one of these answers described elsewhere as an approved plan, or as a D-number, should treat
@@ -612,8 +614,11 @@ not lost:
   `pull_requests: read`; whether the App has actually been granted that on GitHub is
   configured in GitHub's UI and could not be read from this container (§4, U2). The answer is
   contingent on it.
-- **U6 and U7 are still drafts**, not merged: Q10's answer (A) is one resident service per
+- **U6 and U7 are still drafts**, not merged: Q10's answer (A) was one resident service per
   installation, and the sibling design in PR #632 is where that service is specified (§4).
+  **D196's answer of 2026-10-21 leaves U6 and U7 exactly where they were**: the coordinator is
+  not tied to that design, so what PR #632 finally rules no longer decides this work's front
+  door — the amendment under Q10 records what changed and what did not.
 - **The findings in §2 are unchanged.** An answer decides the question it belongs to; it does
   not re-classify a finding, and none of the "Wrong" findings becomes "Exists" because the
   owner chose an option. §0, §1, §4 and §5 are likewise untouched.
@@ -708,6 +713,15 @@ not lost:
 
 **Answered 2026-10-19: option (A)** — one resident service per installation, with the coordinator as a role it plays, which means **Q4 (A)** for v1 and the model credential arriving only when the credentials service does.
 
+**Amended 2026-10-21** — the owner answered **D196** (§6) **option (B)**, against that decision's
+recommendation and against this answer's reading: the coordinator is **not** tied to the central
+orchestrator, because *"there can be multiple central orchestrators in the near future"* — **the
+owner's words of 2026-10-21**, written down in this folder and nowhere else, because the answer
+arrived as a ruling rather than as a document — so it gets its own resident service and the plan
+builds it. The answer above is the owner's, given on 2026-10-19, and it is **left as it was
+given** — this note is what records what the later decision changed, and the plan's P7 and P8 are
+rewritten to it rather than to the answer above.
+
 ### Q11 — How is the coordinator's spend capped, and charged to the project?
 **Changes spec §9.**
 - **(A) Recommended — no cap needed in v1, because there is no model credential in v1 (Q4 A), and the deterministic half costs nothing per event.** This is the only option that requires no new budget mechanism, and it defers the question to the release that has something to cap.
@@ -797,3 +811,159 @@ the README and for whatever plan follows.
 | **Run** | One execution of a coding agent in a fresh Cloud Run container, ending in a pull request. | `internal/runstore/`, `internal/backend/`. The unit every budget cap is keyed to. |
 | **Launcher / operator / budget admin** | The three people lists. Launchers start runs; operators hold the run bucket and the preload account; budget admins may write the database. | `internal/infra/firebase.go:117-120`; `internal/localcfg/localcfg.go:360-365`. Q2's answer is that callers are per-person IAM members on the coordinator, as a launcher is granted today, so the access list has to be said explicitly. |
 | **Project job** | A **shared** Cloud Run job one repository's workflow can run in another's name, created by the `project` Terraform module. | `deploy/terraform/gcp/modules/project/job.tf:10`; `SECURITY.md:93`. **Not** the coordinator, and **not** "the project's job". |
+
+---
+
+## 6. The decisions planning found: D193–D197
+
+Added on **2026-10-21**, when [implementation-plan.md](implementation-plan.md) was written, and
+re-read against `main` at `1e0953b7`. §3's answers of 2026-10-19 settle **what the coordinator
+is**; they do not settle five things **how it is built** turns on, and each of those is a choice
+between real alternatives with a security consequence rather than a detail. They are therefore
+**decisions, not questions**, and they are numbered in the owner's global block: the README's
+numbers table records **D193 onward as free**, and a folder-local `D1` here would be a fifth
+meaning for one number beside the four folders that already use one.
+
+**Taking this block makes other works' readings of it stale**, and [README.md](README.md) records
+that drift site by site — three other folders read **D193 onward as free** at their own base
+commits, and one of them offers "move this work to D193–D218" as a live alternative that now
+overlaps **D193–D197**. Those documents are deliberately not edited from here.
+
+**Each is written recommendation first.** The plan is written to the recommendation; a part whose
+decision is answered the other way is rewritten before it starts, not after.
+**The owner answered all five on 2026-10-21** — four by taking the recommendation, and **D196
+against it** — and each answer is recorded under its decision below, with what it means for the
+plan. The wording of every recommendation, alternative and "Where it lands" line is this
+document's, written before the answer, and is left as it was so that the answer can be read
+against what it was choosing between.
+
+Every path and symbol named below was read at `1e0953b7`; none is a line number.
+
+### D193 — How far does one coordinator's GitHub credential reach?
+
+**Recommendation — (A): one read-only installation token per repository, minted through
+`MintInstallationToken` and cached per repository for the token's life.** The mechanism is
+already in production: `internal/gitprov/github/apptoken.go`'s `buildTokenPermissions` is the
+read-only set, `BuildTokenPermissions()` exports it, and two callers mint it today
+(`internal/cli/gitcred.go`, `internal/cli/imagecheck.go`). What the tree **cannot** do today is
+one token for several repositories: `tokenSource.Token` posts one repository, always
+(`"repositories": []string{s.repo}`), and that is **U3** — whether GitHub accepts the field
+omitted is unverified. Option (A) needs no new mechanism, mints nothing the tree does not mint
+already, and mints a token that a leak makes worthless for every repository but one.
+
+**Alternative — (B): one token for the whole project, once U3 is settled.** One mint instead of
+N per sweep, and a simpler cache; the cost is that one leak reads every repository the App can
+see, and it depends on an unverified API behaviour. It also widens Q3's answer from "the project's
+repositories" to "everything the App is installed on", which the answer does not say.
+
+**Where it lands.** The plan's **P2**, and the credential Q3(A) chose. **U2 stays open either
+way**: the App must already be granted `pull_requests: read`, and only the owner can read that.
+
+**Answered 2026-10-21: option (A)** — one read-only installation token per repository, minted
+through `MintInstallationToken` and cached per repository for the token's life, with the
+project-wide token waiting until **U3** is settled. *Why:* it is the smallest step of the two
+that are buildable — the tree mints this token today and mints nothing else — and a leak is
+worthless for every repository but one.
+
+### D194 — Who is the database's writer?
+
+**Recommendation — (A): the aggregation job's own service account holds
+`roles/firebasedatabase.admin`, beside the history account's, and the rules change is a read
+grant only.** This is the house precedent, not an invention: the history job in
+`deploy/terraform/gcp/modules/firebase/iam.tf` holds exactly this role, with the comment that
+records its blast radius — the role bypasses the rules, so only the code keeps the writer to its
+own subtree — and an `#trivy:ignore:AVD-GCP-0007` beside it. A second account of the same shape
+means the rules are widened by a **read** and by nothing else (Q15 A), and that a compromised
+coordinator cannot write a node it was never meant to write only because the account cannot be
+made narrower. **The comment that says "only this account (and no job account) holds one on the
+FP" stops being true in this part and is amended with it** — a claim like that left standing is
+how the next reader gets the blast radius wrong.
+
+**Alternative — (B): a rules-mediated write, under a new non-run macro.** The rules would keep
+the writer to `coordinator/**` by construction, which is strictly stronger. The cost is that it
+is a **new authorization macro in the rules the whole installation runs on** — a wider change to
+a security-sensitive file than the read grant the answer asked for, and one whose failure mode
+(a macro that matches more than intended) is worse than the failure mode of (A).
+
+**Where it lands.** The plan's **P3** and **P5**. **U5** — whether the rules can express the read
+grant — is answered by P3, by writing it.
+
+**Answered 2026-10-21: option (A)** — the aggregation job's own service account holds
+`roles/firebasedatabase.admin` beside the history account's, the rules change is the **read**
+grant only, and the comment that records the history account as the only account holding such a
+role is **amended with the part**. *Why:* it is the house precedent rather than an invention —
+the history job holds exactly this role, with its blast radius written beside it — and it keeps
+the rules change a read.
+
+### D195 — Where does the coordinator's state live?
+
+**Recommendation — (A): a new top-level `coordinator/` subtree, `coordinator/project/` and
+`coordinator/repos/<slug>/`, with deterministic document IDs and `internal/rtdb/client.go`'s
+`GetETag` + `PutIfMatch`.** It is a separate tree from `config/`, which is the policy every run
+reads, so a bug in the coordinator cannot move a policy node; the layout makes the read grant of
+Q15(A) one prefix rather than a list; and the write idiom is the tree's own (finding #16/#17) —
+no new lock and no new concurrency mechanism.
+
+**Alternative — (B): under `config/coordinator/**`.** One fewer top-level key, and the read grant
+reuses the `config/` shape. The cost is material: `config/` is the subtree the rules' `USER` and
+`RUN` macros are built around, so the coordinator's nodes would sit inside the tree the policies
+are authorized on, and every future widening of `config/` would silently reach the coordinator's
+state as well.
+
+**Where it lands.** The plan's **P3**, **P4** and **P5**.
+
+**Answered 2026-10-21: option (A)** — a new top-level `coordinator/` subtree, `coordinator/project/`
+and `coordinator/repos/<slug>/`, every document keyed by a deterministic ID and written with
+`GetETag` + `PutIfMatch`. *Why:* it is a separate tree from `config/`, which is the policy every
+run reads, so a bug in the coordinator cannot move a policy node — and the read grant becomes one
+prefix rather than a list.
+
+### D196 — Which service is the coordinator's front door?
+
+**Recommendation — (A): the resident service the central orchestrator plan builds is the one; the
+coordinator is a role it plays.** Q10(A) already rules that there is **one resident service per
+installation**, and the sibling plan's **P4** is where that service is built; its **P9** records
+the coordinator's half as blocked on this folder's plan existing. So this work admits
+`google_cloud_run_v2_service` to the allow-list, mints the ID token and grants the per-person
+invoker — and **builds no second service**, because two would be two identities, two scale-to-zero
+configurations and two things to keep in step.
+
+**Alternative — (B): a second service, built here.** The coordinator ships without waiting for an
+unapproved sibling plan, which is the whole of the argument for it. The cost is the opposite of
+Q10's answer: two resident services per installation, and a front door whose lifecycle is decided
+in this folder while the one next door decides when it is deployed.
+
+**Where it lands.** The plan's **P7** and **P8**. **It is the one decision that allocates work
+between two documents**, and shipping either plan without it decides the other's question.
+
+**Answered 2026-10-21: option (B), against the recommendation** — the coordinator is **not** tied
+to the central orchestrator, because *"there can be multiple central orchestrators in the near
+future"* — **the owner's words of 2026-10-21**, recorded in this folder and nowhere else, because
+the answer arrived as a ruling rather than as a document: it gets **its own resident service**, built in this work, with its own identity, its own
+scale-to-zero configuration and its own ID-token front door. **P7 and P8 no longer wait on the
+central orchestrator plan's P4 and P5**, and the allow-list admission of
+`google_cloud_run_v2_service` is shared with that plan's **P1** — **whichever part lands first
+admits it and the other cites it**. *Why:* the owner ruled the two services independent, and a
+front door that waits on an unapproved sibling plan is a front door that may never be built.
+
+### D197 — How much of the override log is kept?
+
+**Recommendation — (A): the last 200 per project, newest first, with no expiry in v1.** The log
+is the one node whose content is written by whoever can call the front door (Q14 A), so its size
+is the size of the text an attacker can make the coordinator store; 200 is small enough to read
+and to bound, and it is a cap in one place. No expiry, because expiry needs the sweep to delete
+and a deletion path is a second thing that can go wrong in v1.
+
+**Alternative — (B): keep everything.** The history is complete, and a coordinator with no model
+(Q4 A) never spends a token on it. The cost is an unbounded, attacker-writable node in the
+project's own database, with no reader that can use all of it.
+
+**Alternative — (C): keep with an expiry.** Bounded storage without a silent loss of the oldest
+entries. The cost is that it is the only option that needs the sweep to delete, in v1.
+
+**Where it lands.** The plan's **P8**, and the read the console and the CLI show.
+
+**Answered 2026-10-21: option (A)** — the last **200** overrides per project, newest first, with
+**no expiry in v1**. *Why:* the log is the one node whose content is written by whoever can call
+the front door, so its size is the size of the text an attacker can make the coordinator store —
+and 200 is a cap in one place, with no deletion path to go wrong.

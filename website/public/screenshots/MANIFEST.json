@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "window": {
+    "width": 1280,
+    "height": 800,
+    "deviceScaleFactor": 2,
+    "theme": "dark",
+    "titleBar": "excluded"
+  },
+  "screens": [
+    {
+      "file": "console-live.png",
+      "width": 2560,
+      "height": 1600,
+      "sha256": "98f2a10bb8ece65ed0f4a5410c3f02bab4823a3d770b96bc244d6d1803c466f2",
+      "alt": "The console's Live screen for a fictional acme-platform installation: three runs -- one in its second round, in review with its verification passed; one in review with the near deadline flag; one queued -- two repositories, and the day's spend at 34.85% of a $120 daily cap."
+    },
+    {
+      "file": "console-run.png",
+      "width": 2560,
+      "height": 1600,
+      "sha256": "f05c130e7a07e56608c8b8a753b9d046e9c990ff5f9fdf571d48a29c1fa4e25e",
+      "alt": "The run-detail screen for run 20261020-103045-aa01 (acme/platform-core): its stage ledger, its build, test and lint verification, three findings and the tail of its log."
+    },
+    {
+      "file": "console-spend.png",
+      "width": 2560,
+      "height": 1600,
+      "sha256": "9afe70820cc9fd4fc3266591638c873bf35c9929f0a920f34670a2c93608ef68",
+      "alt": "The Spend screen for a fictional acme-platform installation: thirty days of daily spend, the account totals, and the per-repository and default daily and per-run caps."
+    },
+    {
+      "file": "console-installations.png",
+      "width": 2560,
+      "height": 1600,
+      "sha256": "5e71f4124adee4d94c7b47ccdb0109b29fe0070ed15d71fb0a1c9ba17ec62ed6",
+      "alt": "The installation picker on a console that has three installations -- acme-platform, acme-web and acme-data -- each naming the fixture CLI binary this run installed in its own temporary directory; its status line reads \"acme-platform is the installation this console is showing (ok).\" and the other two rows have not been read."
+    }
+  ],
+  "omitted": [
+    {
+      "file": "console-first-run.png",
+      "because": "the no-installation onboarding page is #751, which is not on main: there is no onboarding screen in this console to capture, and the first-run picture this run does take is the installation picker D13 opens."
+    }
+  ]
+}

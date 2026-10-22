@@ -599,19 +599,19 @@ func TestPricesOfflineAndStaleWarning(t *testing.T) {
 	old := budgetNow
 	t.Cleanup(func() { budgetNow = old })
 
-	budgetNow = func() time.Time { return time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC) }
+	budgetNow = func() time.Time { return time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC) }
 	out, errOut, err := execute(t, "budget", "prices")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "claude-sonnet-5-5") || !strings.Contains(out, "2026-09-30") || !strings.Contains(out, "pricing") {
+	if !strings.Contains(out, "claude-sonnet-5-5") || !strings.Contains(out, "2026-10-20") || !strings.Contains(out, "pricing") {
 		t.Fatalf("table:\n%s", out)
 	}
 	if strings.Contains(errOut, "older") {
 		t.Fatalf("a fresh table was called stale: %q", errOut)
 	}
 
-	budgetNow = func() time.Time { return time.Date(2027, 1, 15, 0, 0, 0, 0, time.UTC) }
+	budgetNow = func() time.Time { return time.Date(2027, 1, 25, 0, 0, 0, 0, time.UTC) }
 	_, errOut, err = execute(t, "budget", "prices")
 	if err != nil || !strings.Contains(errOut, "older than 90 days") {
 		t.Fatalf("err = %v, stderr = %q", err, errOut)
@@ -629,7 +629,7 @@ func TestPricesOfflineAndStaleWarning(t *testing.T) {
 			OutputPerM float64 `json:"output_per_m"`
 		} `json:"models"`
 	}
-	if err := json.Unmarshal([]byte(js), &doc); err != nil || doc.CheckedAt != "2026-09-30" || !doc.Stale || len(doc.Models) < 3 {
+	if err := json.Unmarshal([]byte(js), &doc); err != nil || doc.CheckedAt != "2026-10-20" || !doc.Stale || len(doc.Models) < 3 {
 		t.Fatalf("err = %v, doc = %+v", err, doc)
 	}
 }
@@ -656,13 +656,13 @@ func TestBudgetRefusesWithoutFirebaseConfig(t *testing.T) {
 	newBudgetFixture(t, "budget: { mode: observe, per_run_usd: 5 }\n")
 	for _, args := range [][]string{{"show"}, {"set", "--global", "--daily", "1", "--yes"}, {"kill", "--all", "--yes"}, {"resume", "--all", "--yes"}} {
 		_, _, err := execute(t, append([]string{"budget"}, args...)...)
-		if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "init --firebase") {
+		if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "update --firebase-project") {
 			t.Errorf("%v: err = %v", args, err)
 		}
 	}
 	// No budget block at all.
 	newBudgetFixture(t, " \n")
-	if _, _, err := execute(t, "budget", "show"); err == nil || !strings.Contains(err.Error(), "init --firebase") {
+	if _, _, err := execute(t, "budget", "show"); err == nil || !strings.Contains(err.Error(), "update --firebase-project") {
 		t.Errorf("err = %v", err)
 	}
 }

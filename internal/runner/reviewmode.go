@@ -39,6 +39,13 @@ var reviewStageDoneSeam func()
 type reviewHead struct {
 	Number int
 	SHA    string
+	// Base is the branch the pull request targets now, as the provider
+	// reported it at bootstrap (gitprov.PRHead.Base): the diff under review
+	// is `origin/<Base>...<SHA>`, so a retargeted pull request is reviewed
+	// against the branch it actually targets (diffbase.go, reviewBase).
+	// "" when the provider reported none, which falls back to the run's own
+	// ref.
+	Base string
 }
 
 // checkReviewPRs resolves and validates every pull request r.spec.ReviewPRs
@@ -88,7 +95,7 @@ func (r *run) checkReviewPRs(ctx context.Context) error {
 			// shell command actually ran.
 			return fmt.Errorf("PR #%d's head commit %s is not a full commit hash", n, safetext.OneLine(h.SHA))
 		}
-		heads = append(heads, reviewHead{Number: n, SHA: h.SHA})
+		heads = append(heads, reviewHead{Number: n, SHA: h.SHA, Base: h.Base})
 	}
 	r.reviewHeads = heads
 	return nil
@@ -290,10 +297,14 @@ func stripClaudeConfig(dir string) error {
 // asked to resolve /name from the reviewed checkout itself. Passing "" for
 // that argument is what makes ReviewPrompt/PickPrompt fall through to the
 // promptFile branch instead of the leading-slash one.
-func (r *run) reviewModePrompt() string {
+func (r *run) reviewModePrompt(ctx context.Context) string {
 	var p string
 	if len(r.reviewHeads) == 1 {
-		p = ReviewPrompt("", r.reviewFile, r.cfg.Git.BaseBranch)
+		// The base the reviewed pull request targets now, read from the
+		// provider at bootstrap (checkReviewPRs), never the run's own --ref
+		// assumed to be it: a pull request retargeted at an integration
+		// branch must be reviewed against that branch (diffbase.go).
+		p = ReviewPrompt("", r.reviewFile, r.reviewPromptBase(), r.reviewDiffSize(ctx), r.baseUnreadable())
 	} else {
 		nums := make([]int, len(r.reviewHeads))
 		dirs := make([]string, len(r.reviewHeads))
@@ -420,7 +431,17 @@ func (r *run) reviewMode(ctx context.Context) {
 		r.failReviewInfra(ctx, err)
 		return
 	}
-	req := agent.Request{Prompt: r.reviewModePrompt(), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
+	// The built input is the reviewed pull request's own diff, read from the
+	// checkout reviewMode's line above put its head in (reviewinput.go). A
+	// pick run gets none: its attempts are worktrees beside the main
+	// checkout, which no head has been checked out into, so there is no range
+	// to build a diff from — PickPrompt carries the rule about binary files
+	// instead.
+	prompt := r.reviewModePrompt(ctx)
+	if len(r.reviewHeads) == 1 {
+		prompt = r.reviewPromptWithInput(ctx, prompt)
+	}
+	req := agent.Request{Prompt: prompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
 	res, ok, _ := r.stage(ctx, "review", req, stageOpts{})
 	r.countTokens(res)
 	if !ok {

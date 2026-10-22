@@ -309,12 +309,12 @@ func (e *RefusedError) Error() string {
 func (e *RefusedError) Unwrap() error { return ErrRefused }
 
 // DeleteAdvice is the one sentence a managed apply's deletion refusal ends
-// with: what to do, and who can do it. It is not a managed `fugaro init`'s
-// sentence — init's guard is tf.Guard over its own `--allow-delete` addresses,
+// with: what to do, and who can do it. It is not a managed `fugaro setup`'s
+// sentence — setup's guard is tf.Guard over its own `--allow-delete` addresses,
 // fugaro's own roots, and its refusal ends with internal/cli's
 // initManagedDeleteAdvice, which does not point at this list at all: the list
 // approves deletes in the project's agent-authored root, which is what a
-// managed apply applies, and nothing init plans.
+// managed apply applies, and nothing setup or update plans.
 // The owner's own object is named by its whole address, the command that writes
 // it is named, and no address of an applying command's own is accepted — so the
 // loop a refusal starts is refusal → the owner copies the entry the refusal's

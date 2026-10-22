@@ -1,8 +1,14 @@
 # Brand assets
 
 `fugaro-logo.png` is the Fugaro logo: a blue wing, gear and cloud around a terminal
-prompt, 1024x1024 RGBA on a transparent background. It is the **source of truth**, kept
+prompt, 2048x2048 RGBA on a transparent background. It is the **source of truth**, kept
 as the original bytes; every other icon is derived from it and is never edited by hand.
+
+The owner replaced the source with this 2048 px one on 2026-10-20 (it was 1024x1024
+before, and the artwork on it was 548x371 px, so the 1024 px app icon was a 1.5x upscale
+of it). The new canvas carries the same picture at twice the real pixels — the artwork's
+alpha bounding box is now 1089x738 — so the app-icon master renders it *down*, and
+`console/README.md` has the measured figures and what they mean for the packager.
 
 ## Regenerating the derived files
 
@@ -21,9 +27,15 @@ writes (deterministically, for a given Pillow version):
 | `website/public/android-chrome-maskable-512x512.png` | opaque, artwork inside the maskable safe zone |
 | `website/public/logo.png` | the site header logo, 2x its 32 px display height |
 | `website/public/site.webmanifest` | the web app manifest |
-| `brand/app-icon-1024.png` | opaque master for the iOS app icon (future mobile app, docs/mobile) |
+| `brand/app-icon-1024.png` | opaque master for the app icon — the iOS one (future mobile app, docs/mobile) and, since the owner's brief of 2026-10-19, the **console's**: `console/build/icon.png` is a byte copy of this file, converted to the bundle's `.icns` by `build.mac.icon` at pack time |
 | `brand/app-icon-android-foreground-1024.png` | transparent Android adaptive-icon foreground, artwork inside its safe zone |
 
 The opaque background, and the manifest's theme and background colours, are the `--ground`
 colour of the palette the website imports (`website/src/styles/tokens.css`), so re-run the
 script after a palette change. Commit the outputs; `website/test/brand.mjs` checks them.
+
+**The console's copy is not written by the script** (that runner has no Pillow, and the
+packaged app's icon is a build input rather than a build output), so a regeneration has to
+refresh it in the same commit — `cp brand/app-icon-1024.png console/build/icon.png`, which
+is the whole sync. `console/test/unit/icon.test.ts` fails on the bytes if it is forgotten,
+and `console/README.md` has the paragraph.

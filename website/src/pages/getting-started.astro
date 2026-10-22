@@ -1,7 +1,9 @@
 ---
 /**
  * website/src/pages/getting-started.astro — getting started (website plan, Task W1.5;
- * website redesign, parts P4 and P5; the owner's brief of 2026-10-19).
+ * website redesign, parts P4 and P5; the owner's approved board
+ * `website/design-ref/GettingStartedV4.dc.html`, 2026-10-20, which supersedes the draft
+ * "Getting started, draft 2 (OS icons)", 2026-10-19).
  *
  * Every sentence a reader acts on here is **rendered, not written**: the commands come
  * from `website/data/install.yaml` (W0.1), whose Go test pins each one to the file its
@@ -11,69 +13,83 @@
  * of the install instructions to exist in this repository and the one most likely to be
  * read, so it is the copy that must not be a copy (finding 21, Global Constraint 6).
  *
- * **The page in three bands (the owner's feedback of 2026-10-19).** A reader who arrives
- * here wants one thing first: the command. So the page is ordered the way that reader
- * reads it, and each band answers one question.
+ * **The page in three bands, in the bold look.** The board draws the page as one long
+ * document: a display headline with the install above the fold, a grid of the systems it
+ * installs on, the setup as numbered steps, and the paths the cards do not carry. The three
+ * bands are the ones the page already had, and each still answers one question:
  *
- *   1. **Above the fold: the install command and the console.** `#install` opens with the
- *      one-line path `install.yaml` carries first — the Homebrew cask, whose command is
- *      `brew install dimipaun/tap/fugaro` — with its copy control, beside the desktop
- *      console's own option. Nothing else is up there: no sentence about the page, no
- *      paragraph about where its words come from (D186). `website/test/fold.mjs` holds the
- *      ordering the claim rests on, and Check 70b is the owner's measurement of the fold
- *      itself (D187).
- *   2. **"Set up your installation": what a real installation needs, in order.** The
- *      install command gets the CLI onto the machine; it does not create a project, a
- *      GitHub App or a secret. The steps below are `docs/gcp-setup.md`'s preconditions and
- *      its short path, in the order that document puts them, one line each, and each names
- *      the document that carries the detail rather than repeating it. No secret value is
- *      named, and no step is invented: every one of them is a precondition or a step of
- *      that runbook or of the plugin's `setup` skill, and the links are the only place the
- *      detail lives.
- *   3. **"Details": everything else, where it was.** The other install paths — the release
- *      archive, cosign, `go install`, the plugin — keep the shape P4 gave them, with their
- *      own notes and citations, and the platform list keeps D94's statuses. A reader who
- *      wants the archive scrolls to it; a reader who wants the command never had to.
+ *   1. **`#install`: the command, and the systems it runs on.** The band opens with the
+ *      page's headline and one line under it, then `#install` draws a box for every platform
+ *      `install.yaml` describes — a card for every system it marks `supported`, each with the
+ *      path the file offers that system first, its command and its copy control, and a note
+ *      for the system it marks `untested`, which is a status and never an offer (D94). The
+ *      console's downloads sit in the macOS card, because the console ships for macOS. No
+ *      sentence of the band's own precedes its first command: `website/test/fold.mjs` holds
+ *      that ordering, and Check 70b is the owner's measurement of the fold itself (D187).
+ *   2. **`#setup`: what a real installation needs, in order.** The install command gets the
+ *      CLI onto the machine; it does not create a project, repository access or a secret. The three
+ *      steps below are `docs/gcp-setup.md`'s preconditions and its short path, in the order
+ *      that document puts them, one line each, and each names the document that carries the
+ *      detail rather than repeating it. No secret value is named, and no step is invented.
+ *      **`fugaro setup` asks, so the page does not list what it asks**: the GCP project, the
+ *      region, whether to create it or adopt one and the installation's name are the wizard's
+ *      own prompts (the four questions `internal/cli/setup.go` asks on a first run, with
+ *      `--gcp-project`, `--region`, `--create-project` and `--name` as their flags), and the
+ *      billing link, the API enabling and the secrets are confirmations it takes, not steps a
+ *      reader does first. The two commands the steps name are rendered from `install.yaml`'s
+ *      plugin path, so a rename there moves the steps with it.
+ *   3. **`#details`: everything else, where it was.** The paths the cards do not carry —
+ *      cosign, `go install`, the plugin — keep their own notes, citations and commands.
  *
- * **The quick path is the file's first path.** `install.yaml`'s header says so, and the
- * page takes `paths[0]` rather than naming an id of its own: a file that reordered its
- * paths would put a different path above the fold, and `fold.mjs` — which refuses an
- * `#install` with no command in it — is what fails if that path is not one a reader can
- * run. One source of truth per fact (Global Constraint 6).
+ * **What the board added, and what it did not.** The headline ("Install Fugaro. One line."),
+ * the band's labels ("Pick your platform", "Other install paths") and the setup's one-line
+ * lead are the board's own words: no document of this repository writes them, and they are
+ * listed in the pull request for the owner to veto. **Every fact under them is the page's
+ * own**, rendered from `install.yaml`, `website/content/downloads.json` and the documents the
+ * steps link to. Where the board writes a fact this repository does not carry — that the
+ * shared budget's Firebase project can be the Cloud project itself, or a download button for
+ * an unreleased console — the page keeps the file's own sentence instead.
+ *
+ * **The cards are derived from the file, and no card is named here.** A card is a platform
+ * `install.yaml` marks `supported`, in the file's own order, and the path under it is the
+ * first path whose own `platforms:` list carries that system's goos. A system the file marks
+ * supported with no path under it, or a system with no glyph in this file, stops the build
+ * naming the file rather than rendering a card with nothing to run — and
+ * `website/test/os-cards.mjs` holds the built cards to the file from outside. One source of
+ * truth per fact (Global Constraint 6).
+ *
+ * **Windows is untested, and is drawn as a note rather than a card** (D94, finding 20): a card
+ * is an offer, and this repository builds no Windows binary. The band draws the platform the
+ * file marks `untested` in the same grid, in a box that carries no command, no link and the
+ * file's own note, and it carries the status attribute the platform list used to carry so
+ * that the page still states what the file states. The page carries no support promise the
+ * release build does not make.
+ *
+ * **The console is offered with the system it ships for.** Its downloads come from
+ * `src/lib/console-downloads.mjs`, the one reader both pages use, and the card that renders
+ * them is the one whose platform the console's own data file names on its assets. The join
+ * is by the reader-facing name `install.yaml` carries, and a console whose assets name a
+ * system this page draws no card for is a build error naming both files rather than a
+ * download offered under the wrong system. While the console is unreleased the block renders
+ * the data file's own sentence and no link but the one to `/console/`.
  *
  * Three things this page is written to say, and not to say:
  *
- *   - **The plugin path is a first-class path**, in Details rather than beside the cask:
- *     `fugaro init`, `/fugaro:setup` and `fugaro upgrade --local` are rendered with their
- *     own note, and the setup steps above them are where a reader meets the first two as
- *     steps (finding 22).
- *   - **The cosign verification is inline**, with the archive: the verification block is
- *     the release process' own text, and a reader who downloads an archive is one scroll
- *     from the commands that check it (finding 19).
- *   - **Windows is untested, and stated as untested** (D94, finding 20): the platform list
- *     renders the status `install.yaml` carries, and the Windows entry's own note — this
- *     repository builds no Windows binary — is a note rather than a platform a reader is
- *     offered. The page carries no support promise the release build does not make.
- *
- * **Two ways to install, side by side (the owner's changes spec of 2026-10-18, item 6).**
- * The install section is two options rather than one list: the **CLI** — the install paths
- * `install.yaml` carries, the Homebrew cask first, each command with its copy control — and
- * the **desktop console**, whose downloads are offered here so that a reader who wants the
- * console installs it without leaving the page. The console option is
- * `src/components/ConsoleOption.astro`, it renders from the same facts the console page's
- * Downloads section does (`src/lib/console-downloads.mjs`, one reader for
- * `website/content/downloads.json`), and while the console is unreleased it renders the data
- * file's own sentence, no link but the one to `/console/`. The two options stack in document
- * order — CLI first — until the grid has room for two columns, so the page is the same page
- * at 390 px, where the first install command is still what the section opens with (P5).
+ *   - **The plugin path is a first-class path**, in `#details` rather than in a box: `fugaro
+ *     setup`, `/fugaro:setup` and `fugaro upgrade --local` are rendered with their own note,
+ *     and the setup steps above them are where a reader meets the first two as steps
+ *     (finding 22).
+ *   - **The cosign verification is the archive's own facts, and it is a path in `#details`**
+ *     (finding 19): the verification block is the release process' own text, and it sits
+ *     with the paths no card carries.
+ *   - **The cards are the systems the file supports**, and the systems it does not are not
+ *     offered: the page says nothing about a system it has no artifact for.
  *
  * **What the redesign took out (P4).** The page used to open with a paragraph about where
- * its commands come from — `install.yaml`, the Go test, the three files that test holds it
- * to — and every path carried "Commands as printed in <file>" and "Platforms: …" beside
- * its commands. A reader who wants to install Fugaro needs none of that: each note says
- * what the path is for, and the file named in the source line under each block is the whole
- * of the citation (D186: a page must not explain why its own text exists). The facts are
- * unchanged and still rendered from `install.yaml`; only the words around them went.
+ * its commands come from, and every path carried "Commands as printed in <file>" and
+ * "Platforms: …" beside its commands. A reader who wants to install Fugaro needs none of
+ * that: each note says what the path is for, and the file named in the source line under each
+ * block is the whole of the citation (D186).
  *
  * Nothing here fetches: the page is built from the files in this repository, and the only
  * links it prints are the Releases page `install.yaml` names, the console's own published
@@ -91,9 +107,9 @@ import { loadConsoleDownloads } from '../lib/console-downloads.mjs'
 const site = loadSite()
 const install = site.install
 
-// The console's own facts, from the one reader both pages use: this page renders the
+// The console's own facts, from the one reader both pages use: the page renders the
 // unreleased sentence from them while the console has no release, and the release's own
-// published assets once it has — never a URL of its own (see the console option below).
+// published assets once it has — never a URL of its own.
 const consoleFacts = loadConsoleDownloads(
   SITE_ROOT,
   site.facts.features.consoleDownloads,
@@ -103,14 +119,8 @@ const consoleFacts = loadConsoleDownloads(
 // The reader-facing name of a platform a path names. A path's own `platforms:` list names
 // the **goos** a build produces — `darwin`, `linux` — while the platform list above carries
 // the name a reader reads (`macOS`) for each of them, so the page translates through that
-// list rather than printing an operating system's internal name at a reader. A path that
-// named a goos the file does not describe renders the goos rather than inventing a name for
-// it, so the mismatch is visible rather than papered over.
+// list rather than printing an operating system's internal name at a reader.
 const platformNames = new Map(install.platforms.map((platform) => [platform.goos, platform.name]))
-
-// What the repository builds for, and what it merely notes. `status` is the file's own
-// word — `supported` or `untested` — and it is rendered as written (D94).
-const platforms = install.platforms
 
 const nameOf = (id: string): string => platformNames.get(id) ?? id
 
@@ -118,61 +128,242 @@ const nameOf = (id: string): string => platformNames.get(id) ?? id
 // short enough to sit beside the citation rather than under it.
 const platformsOf = (ids: string[]): string => ids.map(nameOf).join(', ')
 
-// The paths, in the file's own order and split where the page's bands meet: the first path
-// is the one-line install a reader runs first (`install.yaml`'s header says so), and the
-// rest are the paths a reader chooses between once they know what they are choosing.
-const [quickPath, ...otherPaths] = install.paths
+// What the repository builds for, and what it merely notes (D94). `status` is the file's own
+// word — `supported` or `untested` — and it is rendered as written.
+const platforms = install.platforms
+
+// The platforms a card is drawn for: the ones `install.yaml` marks `supported`, in the file's
+// own order. `untested` is not a card — a card is an offer a reader can act on.
+const cardPlatforms = platforms.filter((platform) => platform.status === 'supported')
+
+// And the ones the file marks otherwise, which the band draws as notes: the same grid, a box
+// with no command and no link, and the file's own note. Today that is Windows alone.
+const notePlatforms = platforms.filter((platform) => platform.status !== 'supported')
+
+// One card per supported system: the system, and the path the file offers it first. A system
+// the file marks supported and carries no path for is a build error rather than a card with an
+// empty body.
+const cards = cardPlatforms.map((platform) => {
+  const path = install.paths.find((candidate) => candidate.platforms.includes(platform.goos))
+  if (path === undefined) {
+    throw new Error(
+      `website/data/install.yaml marks ${platform.name} (${platform.goos}) supported and carries no install path for it: Getting Started draws a card per supported platform and each card carries the path the file offers that system first, so a supported system with no path is a card with nothing a reader can run`,
+    )
+  }
+  return { platform, path }
+})
+
+// The paths the cards do not carry, in the file's own order: `#details` renders these, and a
+// path a card already carries is not printed a second time.
+const cardPaths = new Set(cards.map((card) => card.path.id))
+const otherPaths = install.paths.filter((path) => !cardPaths.has(path.id))
 
 // The two commands the setup steps name, read from the path that owns them rather than typed
-// into a step: `fugaro init` and `/fugaro:setup` are the plugin path's own commands, and a step
+// into a step: `fugaro setup` and `/fugaro:setup` are the plugin path's own commands, and a step
 // that printed its own spelling of either would be the fourth copy of the install instructions
 // this page's header refuses. A file that stopped carrying them stops the build here, where the
 // failure names the file, rather than rendering a step about a command that is not in it.
 const pluginPath = install.paths.find((path) => path.id === 'plugin')
 if (pluginPath === undefined || pluginPath.commands.length < 2) {
   throw new Error(
-    "website/data/install.yaml carries no `plugin` path with its two commands (`fugaro init` and `/fugaro:setup`), which the page's setup steps render",
+    "website/data/install.yaml carries no `plugin` path with its two commands (`fugaro setup` and `/fugaro:setup`), which the page's setup steps render",
   )
 }
-const [initCommand, setupCommand] = pluginPath.commands
+const [installCommand, agentCommand] = pluginPath.commands
+
+// The glyph a box is drawn with, keyed by the platform's own id in `install.yaml`, and one per
+// path in `#details`: a laptop for macOS, a terminal for Linux and a window for Windows, then a
+// shield for the cosign path, a wrench for `go install` and brackets for the plugin. **No
+// vendor's mark is reproduced here**: a system's icon is this page's own drawing, and a logo is
+// not something this repository may copy. The shapes are inline markup and nothing else: no icon
+// font, no image file, no third party, no `style` attribute, and nothing that names another
+// document, so a page of this site draws its own picture and fetches nothing for it (Global
+// Constraints 4 and 8).
+const GLYPHS: Record<string, string> = {
+  /* A laptop: the screen and the base it stands on. */
+  macos: '<rect x="4" y="4.5" width="16" height="11" rx="1.5" /><path d="M1.5 19.5h21" />',
+  /* A terminal: a window with a prompt and the line after it. */
+  linux:
+    '<rect x="3" y="4" width="18" height="16" rx="2" /><path d="M7.5 9.5 11 13l-3.5 3.5" /><path d="M13 16.5h3.5" />',
+  /* A window split down the middle, which is the system this repository builds nothing for. */
+  windows:
+    '<rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18" /><path d="M12 9v11" />',
+  /* A shield with a check: the archive that was verified rather than trusted. */
+  cosign: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z" /><path d="M8.5 12l2.5 2.5 4.5-5" />',
+  /* A wrench: the path for somebody working on Fugaro rather than on their own project. */
+  'go-install':
+    '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z" />',
+  /* Brackets: the agent's skills, wired into the checkout. */
+  plugin: '<path d="M8 6l-6 6 6 6" /><path d="M16 6l6 6-6 6" />',
+}
+
+/** The shapes a glyph is drawn with: what has to be in an entry for it to draw anything. */
+const GLYPH_SHAPES = /<(?:path|circle|ellipse|rect|line|polyline|polygon)\b/
+
+{
+  // Every card has a glyph, and it draws something. A supported platform the map does not carry,
+  // or an entry with no shape in it, is an empty `<svg>` — a card whose icon is a blank box,
+  // which is the defect a reader sees and no other gate can name. This is the guard the page
+  // carried for the cards before the band grew a note box, and it is worded as it was:
+  // `website/test/os-cards.mjs` builds this file with a supported system the page has no glyph
+  // for and holds the failure to that sentence.
+  for (const { platform } of cards) {
+    const glyph = GLYPHS[platform.id]
+    if (glyph === undefined || !GLYPH_SHAPES.test(glyph)) {
+      throw new Error(
+        `website/src/pages/getting-started.astro: the card for ${platform.name} (${platform.id}, which website/data/install.yaml marks supported) is drawn with ${glyph === undefined ? 'no glyph' : JSON.stringify(glyph)}, and every card is drawn with one glyph that holds a shape: an entry this page does not carry, or one with nothing to draw in it, is a card with an empty icon`,
+      )
+    }
+  }
+  // The note boxes are drawn the same way and are held to the same rule: a system the file marks
+  // untested is drawn in the band with a picture of its own, and one the map does not carry is a
+  // blank frame beside a name rather than a note about a system.
+  for (const platform of notePlatforms) {
+    const glyph = GLYPHS[platform.id]
+    if (glyph === undefined || !GLYPH_SHAPES.test(glyph)) {
+      throw new Error(
+        `website/src/pages/getting-started.astro: the note box for ${platform.name} (${platform.id}, which website/data/install.yaml marks ${platform.status}) is drawn with ${glyph === undefined ? 'no glyph' : JSON.stringify(glyph)}, and every box in the band is drawn with one glyph that holds a shape`,
+      )
+    }
+  }
+  // One distinct drawing per box: two systems drawn with the same picture are one icon used
+  // twice, and the picture then says nothing about the system under it.
+  const drawings = new Set(platforms.map((platform) => GLYPHS[platform.id]))
+  if (drawings.size !== platforms.length) {
+    throw new Error(
+      `website/src/pages/getting-started.astro: the ${platforms.length} boxes are drawn with ${drawings.size} distinct glyph(s): each system's box carries a picture of its own, and two boxes drawn alike are one icon used twice`,
+    )
+  }
+  // The paths' own glyphs are a map keyed by the file's ids, and a path with no entry draws
+  // nothing under its name: the head is rendered only where the map has one, so a path the
+  // file gains is a card without a picture rather than a card with a broken one.
+  for (const path of otherPaths) {
+    const glyph = GLYPHS[path.id]
+    if (glyph !== undefined && !GLYPH_SHAPES.test(glyph)) {
+      throw new Error(
+        `website/src/pages/getting-started.astro: the glyph for the install path ${JSON.stringify(path.id)} (${JSON.stringify(glyph)}) holds no shape, so the path would draw an empty frame beside its name`,
+      )
+    }
+  }
+}
+
+// The system the console is offered with: the platform its own data file names on the downloads
+// the card itself lists — the console ships for macOS, so its block sits in macOS's card. **The
+// assets an optional per-platform block names are not part of that join**, and they are filtered
+// out here exactly as `ConsoleOption` filters them out of the list it renders: a block is a
+// second system's facts, rendered under its own sentence inside this same card (D10, the owner's
+// ruling of 2026-10-20), so a data file that gains a Linux AppImage is a Linux sentence in the
+// console's block and still one card for the console to sit in. Reading the whole list instead
+// would make every Linux asset turn the join into "two platforms, and the page would have to
+// decide which" — a build that stops the day the console is published for a second system.
+const consoleBlockIds = new Set((consoleFacts.linux?.downloads ?? []).map((download) => download.id))
+const consoleReleases = consoleFacts.downloads.filter((download) => !consoleBlockIds.has(download.id))
+
+// Both ways of failing to make the join are build errors naming the files.
+const consolePlatformNames = [...new Set(consoleReleases.map((download) => download.platform))]
+if (consolePlatformNames.length !== 1) {
+  throw new Error(
+    `website/content/downloads.json names ${consolePlatformNames.length} platform(s) on its downloads (${consolePlatformNames.join(', ') || 'none'}), and Getting Started offers the console in the card of the one system it ships for: with no platform named there is no card to put the download in, and with two the page would have to decide which`,
+  )
+}
+const consoleCard = cards.find((card) => card.platform.name === consolePlatformNames[0])
+if (consoleCard === undefined) {
+  throw new Error(
+    `website/content/downloads.json publishes the console for ${consolePlatformNames[0]}, and website/data/install.yaml marks no supported platform by that name: Getting Started offers the console in that system's card, and a system this page draws no card for has no card to offer the download in`,
+  )
+}
 
 // The steps a real installation needs, in the order `docs/gcp-setup.md` puts them. Each one
 // is a precondition or a step of that runbook or of the plugin's `setup` skill, said in one
 // line, with the link carrying the detail: the page states what to do and the document
 // states how. `repo` is the repository `site.yaml` names, so a link into this repository is
-// built from the site's own facts rather than typed here, and `href` is a heading of the
-// document it points at (`website/test/linkcheck.mjs` refuses a fragment that is not one).
+// built from the site's own facts rather than typed here, and the fragment is a heading of
+// the document it points at (`website/test/linkcheck.mjs` refuses a fragment that is not one).
 const doc = (path: string, fragment: string): string =>
   `${site.facts.repository}/blob/HEAD/${path}#${fragment}`
 ---
 
 <Base title="Getting started">
-  <h1>Getting started</h1>
-
-  <p>Install Fugaro on macOS or Linux.</p>
-
   <section id="install">
-    <h2>Install</h2>
+    {/* The board's background: two soft glows behind the first screen. It is decoration and
+        says so (`aria-hidden`), and it paints no text — the pattern is `base.css`'s
+        `.hero-glow`, written once for the site rather than here. */}
+    <div class="hero-glow" aria-hidden="true"></div>
 
-    {/* The section opens with the paths themselves (P5): under the heading comes the CLI
-        option and, at the top of it, the quick path's own command — a reader who came for
-        the command they run meets it on the first screen rather than under a sentence about
-        the page, in the two-column layout and in the stacked one alike. The one sentence the
-        section carries moves with the order and closes the section, after the options it is
-        about: it is the way on to the steps below.
+    {/* The headline block. It is a `div` and not the section's own prose: the band opens with
+        the paths themselves, and the sentence about them closes it (`website/test/fold.mjs`'s
+        rule 2 reads the section's direct paragraphs). */}
+    <div class="gs-hero">
+      {/* The page's own name as the board's eyebrow pill: the label a reader navigates by, drawn
+          above the headline the way the board draws it. It is a `div` and not a `<p>`, and the
+          element is the whole of that choice: the owner's Check 70b reads the lead of a page as
+          `main`'s **first paragraph** (`docs/gcp-live-checklist.md`, step 1), and a paragraph
+          above the `h1` would make that measurement this label's bottom rather than the lead's —
+          on the one page whose above-the-fold claim the check is for. The label is not prose, so
+          nothing is lost by it, and the page's first paragraph stays the sentence under the
+          headline. `pill` is on it because the board's eyebrow is a pill: `base.css`'s `.eyebrow`
+          is the type and `.pill` the box (the rule below is what puts the accent back on a label
+          the pill would otherwise mute). */}
+      <div class="eyebrow pill gs-eyebrow">Getting started</div>
 
-        The two options are one grid, in document order: the CLI first, the console second,
-        which is the order the stacked layout renders at 390 px. */}
-    <div class="install-options">
-      <div class="install-option" data-option="cli">
-        <h3>CLI</h3>
+      <h1 class="display-xl gs-title">
+        Install Fugaro. <span class="gradient-text">One line.</span>
+      </h1>
 
-        <article data-path={quickPath.id}>
-          <h4>{quickPath.name}</h4>
+      {/* The facts of the install, in one line: the systems `install.yaml` marks supported,
+          in the file's own words for them. */}
+      <p class="gs-lead">Install Fugaro on macOS or Linux.</p>
+    </div>
 
-          {quickPath.note !== '' && <p>{quickPath.note}</p>}
+    {/* The board's label for the grid under the headline. It is a heading and not an eyebrow,
+        because the boxes under it are sections of the page: it is the `h2` Check 70b reads
+        above the first command block, and `website/test/a11y.mjs` holds the levels under it. */}
+    <h2 class="gs-band-title">Pick your platform</h2>
 
-          {quickPath.commands.map((command) => (
+    {/* One box per system `install.yaml` describes, in the file's own order: a card per
+        supported platform, each carrying the path the file offers that system first — the
+        macOS card carries the first command on the page — and a note for the platform the
+        file marks untested. */}
+    <div class="install-cards">
+      {cards.map(({ platform, path }) => (
+        <article
+          class="card install-card"
+          data-platform={platform.id}
+          data-status={platform.status}
+          data-path={path.id}
+        >
+          <div class="os-head">
+            {/* The system's glyph: inline, decorative, and drawn with the accent by the rule
+                below (`stroke: currentColor` reads the `color` that rule sets). The drawing is
+                the map's, not a branch here, so a box cannot be out of step with the map by one
+                word and render an empty `<svg>` with nothing to see. */}
+            <span class="os-icon-box">
+              <svg
+                class="os-icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.75"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <Fragment set:html={GLYPHS[platform.id]} />
+              </svg>
+            </span>
+
+            {/* The file's own word for the system's state, and the same word the box carries
+                as an attribute: the platform list this replaced said it in a list of its own,
+                and the page states what `install.yaml` states wherever it draws it (D94). */}
+            <span class="pill os-status" data-status={platform.status}>{platform.status}</span>
+          </div>
+
+          <h3 class="os-name">{platform.name}</h3>
+
+          {path.note !== '' && <p class="os-note">{path.note}</p>}
+
+          {path.commands.map((command) => (
             <div class="command-block" data-copy>
               <Fragment set:html={copyControlHTML('Copy the install command')} />
               <pre><code>{command}</code></pre>
@@ -181,98 +372,175 @@ const doc = (path: string, fragment: string): string =>
 
           {/* The line and the blocks above it are one fact: a path with no commands of its
               own — the release archive, whose facts are a page and a name template rather
-              than a command line — renders neither, because "from README.md" over an empty
-              list tells a reader to read something that is not there. install.yaml is
-              allowed to carry a path with no commands, so the page has to render that shape
-              as well as the other one. It follows the block it cites, so the command is the
-              first thing under the path's name. */}
-          {quickPath.commands.length > 0 && (
+              than a command line — renders neither, and offers the release page instead. */}
+          {path.commands.length > 0 && (
             <p class="source">
-              From <code>{quickPath.source}</code> · {platformsOf(quickPath.platforms)}
+              From <code>{path.source}</code> · {platformsOf(path.platforms)}
             </p>
           )}
 
-          {quickPath.releasePage !== '' && (
+          {path.releasePage !== '' && (
             <p class="release">
-              <a href={quickPath.releasePage} rel="noopener">{quickPath.releasePage}</a>
+              <a class="os-download" href={path.releasePage} rel="noopener">{path.releasePage}</a>
             </p>
+          )}
+
+          {/* The console, offered in the card of the system it ships for and nowhere else:
+              its own heading, its downloads once it has a release, and the link to the page
+              that says what it is. It is the last thing in the card, because the block is read
+              from its heading to the end of the card. */}
+          {platform.id === consoleCard.platform.id && (
+            <ConsoleOption
+              available={consoleFacts.available}
+              note={consoleFacts.notReleased.short}
+              downloads={consoleFacts.downloads}
+              linux={consoleFacts.linux}
+            />
           )}
         </article>
-      </div>
+      ))}
 
-      <div class="install-option" data-option="console">
-        {/* The console, offered beside the CLI: its own heading, its downloads once it has a
-            release, and the link to the page that says what it is. While it is unreleased the
-            component renders the data file's sentence and no download at all — the same rule
-            the console page's Downloads section keeps, from the same facts. */}
-        <ConsoleOption
-          available={consoleFacts.available}
-          note={consoleFacts.notReleased.short}
-          downloads={consoleFacts.downloads}
-        />
-      </div>
+      {notePlatforms.map((platform) => (
+        <article
+          class="os-note-card"
+          data-platform={platform.id}
+          data-status={platform.status}
+        >
+          <div class="os-head">
+            <span class="os-icon-box">
+              <svg
+                class="os-icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.75"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <Fragment set:html={GLYPHS[platform.id]} />
+              </svg>
+            </span>
+
+            <span class="pill os-status" data-status={platform.status}>{platform.status}</span>
+          </div>
+
+          <h3 class="os-name">{platform.name}</h3>
+
+          {platform.note !== '' && <p class="os-note">{platform.note}</p>}
+        </article>
+      ))}
     </div>
 
-    <p>Then set up your installation.</p>
+    <p class="gs-next">Then set up your installation.</p>
   </section>
 
   {/* What the command does not do. A reader who runs `brew install` has a binary and no
-      installation: the project, the credentials, the App and the secrets are theirs to make,
-      and `docs/gcp-setup.md` is the runbook that walks them through it. The steps below are
+      installation: the credentials, the repository access and the secrets are theirs to make, and
+      `docs/gcp-setup.md` is the runbook that walks them through it. The three steps below are
       that runbook's own preconditions and short path in its own order, one line each, and
       every one of them links to the document that carries it — the page states what to do
-      and the document states how, so the two cannot drift. The two commands the last steps
-      name are rendered from `install.yaml`'s plugin path rather than typed here, so those
-      steps move with the file too. No secret is named here, and no value is anywhere on this
-      site. */}
+      and the document states how, so the two cannot drift. **The project, the region and the
+      installation's name are not steps here**, because `fugaro setup` asks for them and
+      confirms the rest: a page that listed them would be a fourth copy of questions the
+      command the step names answers. The two commands the steps name are rendered from
+      `install.yaml`'s plugin path rather than typed here. No secret is named here, and no
+      value is anywhere on this site. */}
   <section id="setup">
-    <h2>Set up your installation</h2>
+    <div class="gs-setup-head">
+      <h2 class="display-lg gs-setup-title">Set up your installation</h2>
+      <p class="gs-setup-lead">
+        Three steps, once. The install gets you the CLI; these get you an installation.
+      </p>
+    </div>
 
-    <ol>
-      <li>
-        <a href={doc('docs/gcp-setup.md', 'preconditions')}>A Google Cloud project</a>, billing linked, the Service
-        Usage API on.
+    {/* Numbered, because it is a sequence a reader works through rather than a list of
+        options. The numeral is `aria-hidden`: the `ol` already says the position, and a
+        screen reader told both reads the number twice. Each step's own link is the document
+        that carries its detail, which is what `website/test/fold.mjs` holds this band to. */}
+    <ol class="gs-steps">
+      <li class="card gs-step">
+        <span class="gs-step-number" aria-hidden="true">01</span>
+        <div class="gs-step-body">
+          <h3 class="gs-step-name">gcloud, Terraform and repository access</h3>
+          <p class="gs-step-line">
+            gcloud credentials with a quota project, Terraform 1.9+, and{' '}
+            <a href={doc('docs/git-providers.md', 'credentials')}>repository access</a>: a GitHub
+            App with four repository permissions on GitHub, or a repository access token on
+            Bitbucket.
+          </p>
+        </div>
+        <a class="gs-step-link" href={doc('docs/gcp-setup.md', 'preconditions')}>Preconditions</a>
       </li>
-      <li>
-        <a href={doc('docs/gcp-setup.md', 'preconditions')}>gcloud credentials</a> with a quota project, and
-        Terraform 1.9+.
+
+      <li class="card gs-step" data-state="run">
+        <span class="gs-step-number" aria-hidden="true">02</span>
+        <div class="gs-step-body">
+          <h3 class="gs-step-name">Run <code>{installCommand}</code></h3>
+          <p class="gs-step-line">
+            In your own terminal. It asks for the GCP project, the region, whether to create it or
+            adopt one, and the name; the rest is a confirmation you type, and secrets come at
+            hidden prompts.{' '}
+            <a href={doc('docs/gcp-setup.md', 'turning-the-shared-budget-on-m9b')}>The shared budget</a>{' '}
+            is optional.
+          </p>
+        </div>
+        <a
+          class="gs-step-link"
+          href={doc('docs/gcp-setup.md', 'the-short-path-fugaro-setup-then-fugarosetup')}
+        >
+          The short path
+        </a>
       </li>
-      <li>
-        <a href={doc('docs/git-providers.md', 'github')}>A GitHub App</a> with four repository permissions.
-      </li>
-      <li>
-        <a href={doc('docs/gcp-setup.md', 'turning-the-shared-budget-on-m9b')}>A Firebase project</a>, if you want
-        the shared budget.
-      </li>
-      <li>
-        <a href={doc('docs/gcp-setup.md', 'the-short-path-fugaro-init-then-fugarosetup')}>Run <code>{initCommand}</code></a> in your own terminal.
-      </li>
-      <li>
-        <a href={doc('docs/gcp-setup.md', '4-a-repository')}>Store the secrets</a> the runs mount, at hidden
-        prompts.
-      </li>
-      <li>
-        <a href={doc('docs/gcp-setup.md', 'the-short-path-fugaro-init-then-fugarosetup')}>Run <code>{setupCommand}</code></a>,
-        merge, run <code>{initCommand}</code> again.
+
+      <li class="card gs-step" data-state="run">
+        <span class="gs-step-number" aria-hidden="true">03</span>
+        <div class="gs-step-body">
+          <h3 class="gs-step-name">Run <code>{agentCommand}</code></h3>
+          <p class="gs-step-line">
+            In your coding agent. Merge the pull request, then run <code>{installCommand}</code> again.
+          </p>
+        </div>
+        <a
+          class="gs-step-link"
+          href={doc('docs/gcp-setup.md', 'the-short-path-fugaro-setup-then-fugarosetup')}
+        >
+          The short path
+        </a>
       </li>
     </ol>
   </section>
 
-  {/* Everything else, where it was: the paths a reader chooses between, each with its own
-      note, its own citation and its own commands, and the platform list D94 settles. It is
-      below the steps rather than beside them because the steps are what every reader needs
-      and these are what a reader picks from. */}
+  {/* Everything else, where it was: the paths the cards do not carry, each with its own note,
+      its own citation and its own commands. It is below the steps rather than beside them
+      because the steps are what every reader needs and these are what a reader picks from. */}
   <section id="details">
-    <h2>Details</h2>
+    <h2 class="display-md gs-details-title">Other install paths</h2>
 
-    <h3>Other install paths</h3>
-
-    <div class="install-option">
+    <div class="path-list">
       {otherPaths.map((installPath) => (
-        <article data-path={installPath.id}>
-          <h4>{installPath.name}</h4>
+        <article class="card path-card" data-path={installPath.id}>
+          <div class="path-head">
+            {GLYPHS[installPath.id] !== undefined && (
+              <svg
+                class="path-icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.9"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <Fragment set:html={GLYPHS[installPath.id]} />
+              </svg>
+            )}
+            <h3 class="path-name">{installPath.name}</h3>
+          </div>
 
-          {installPath.note !== '' && <p>{installPath.note}</p>}
+          {installPath.note !== '' && <p class="path-note">{installPath.note}</p>}
 
           {installPath.commands.map((command) => (
             <div class="command-block" data-copy>
@@ -289,105 +557,375 @@ const doc = (path: string, fragment: string): string =>
 
           {installPath.releasePage !== '' && (
             <p class="release">
-              <a href={installPath.releasePage} rel="noopener">{installPath.releasePage}</a>
+              <a class="os-download" href={installPath.releasePage} rel="noopener">{installPath.releasePage}</a>
             </p>
           )}
         </article>
       ))}
     </div>
-
-    <h3>Platforms</h3>
-
-    <ul>
-      {platforms.map((platform) => (
-        <li data-platform={platform.id} data-status={platform.status}>
-          <strong>{platform.name}</strong> — {platform.status}
-          {platform.note !== '' && <p class="note">{platform.note}</p>}
-        </li>
-      ))}
-    </ul>
   </section>
 
   <style>
-    /* The page's own box, and nothing else: the design is W1.2's, and every space, radius
-       and colour below is a token from `src/styles/tokens.css` — never a value written
-       here, and never a colour literal (D104, D105). Column widths are measured in `ch`
-       rather than px because the measure is a typographic fact, not a device one. */
-    section {
-      margin-block: var(--space-xl);
-      max-width: var(--measure);
+    /* The page's own box, and nothing else: the look is the shared one — the display scale,
+       the eyebrow, the pill, the card and the command block are `src/styles/base.css`'s — and
+       every space, radius, size and colour below is a token from `src/styles/tokens.css`,
+       never a value of this page's own and never a colour literal (D104, D105). What is here
+       is the layout the board gives this page and no other. */
+
+    /* The band the headline and the paths sit in: the glow needs a box of its own to be
+       drawn against, and it is the section rather than the page because the pattern is the
+       first screen's. The room above the headline is one step: this is the page a reader
+       arrives on with one question, and the board's taller opening is the desktop's. */
+    #install {
+      position: relative;
+      overflow: hidden;
+      padding-block: var(--space-xl);
     }
 
-    /* The install section is the one section here that is wider than a measure: two options
-       side by side need the width, and the commands inside them are not prose. The one
-       sentence the section carries is prose, and it keeps the measure. */
-    #install,
-    #details {
-      max-width: none;
-    }
-
-    #install > p {
-      max-width: var(--measure);
-    }
-
-    /* The steps are prose, one line each, and they keep the measure. */
-    #setup ol {
-      max-width: var(--measure);
-    }
-
-    #setup li + li {
-      margin-top: var(--space-xs);
-    }
-
-    /* The two options, one column until the viewport has room for two: at 390 px this is the
-       CLI first and the console under it, which is the page P5's fold claim is about. */
-    .install-options {
-      display: grid;
-      align-items: start;
-      gap: var(--space-md);
+    /* The headline block, and the room under it. One step on a phone and the board's two on
+       a wide screen: the first command of the band is inside a 390 × 844 first screen
+       (D187's claim, the owner's Check 70b at the preview), and the space between the lead
+       and the grid is what the fold gives back — the board draws the wide-screen gap, and a
+       phone that carried it would push the command below the fold it exists to be in. */
+    .gs-hero {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-sm);
+      margin-bottom: var(--space-lg);
     }
 
     @media (min-width: 48rem) {
-      .install-options {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+      .gs-hero {
+        margin-bottom: var(--space-2xl);
       }
     }
 
-    /* One option, one card: the CLI's path and the console's own contents are cards of the
-       same shape, so the two read as two ways to install rather than as a list and a note
-       beside it. The details section's card holds the other paths and is the same box. */
-    .install-option {
+    /* The board's eyebrow pill: the page's own name, above the headline. `base.css`'s
+       `.eyebrow` is the type and `.pill` the box — both classes are on the element in the
+       markup, which is what makes this rule match it and what keeps the pill's own muted
+       colour off the label: the accent is put back here, and it is the pair a reader reads
+       the label in (`--accent-on-dark` on the pill's `--panel`, a body-text pair in every
+       palette). The tracking and the upper case are `.eyebrow`'s and are not repeated. */
+    .pill.gs-eyebrow {
+      align-self: flex-start;
+      margin: 0;
+      color: var(--accent-on-dark);
+    }
+
+    .gs-title {
+      margin: 0;
+      max-width: var(--measure);
+    }
+
+    .gs-lead {
+      margin: 0;
+      max-width: var(--measure);
+      color: var(--text-muted);
+      font-size: var(--font-size-lg);
+      line-height: var(--leading-normal);
+    }
+
+    /* The label over the grid: the board sets it as a tracked, quiet line rather than as a
+       second headline, because the boxes under it are what a reader reads. It is one step up
+       from the eyebrow so that the outline reads as two levels and not as one. */
+    .gs-band-title {
+      margin: 0 0 var(--space-md);
+      color: var(--text-muted);
+      font-family: var(--font-sans);
+      font-size: var(--font-size-xl);
+      font-weight: var(--weight-black);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* The grid of systems: one column on a phone and up to three across on a wide screen,
+       by the same `auto-fit` the site's other grids use. */
+    .install-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+      gap: var(--space-md);
+      align-items: start;
+    }
+
+    /* One system, one box. The card is `base.css`'s `.card` — the padding, the hairline, the
+       radius and the surface tone — and what is the page's is the stack its contents are laid
+       in. */
+    .install-card,
+    .os-note-card {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-xs);
+    }
+
+    /* The system the file marks untested is drawn in the same grid and is visibly not an
+       offer: a dashed edge, nothing to run, and nothing to click. */
+    .os-note-card {
+      padding: var(--space-lg);
+      border: var(--border-width) dashed var(--border);
+      border-radius: var(--radius-xl);
+      background: var(--panel);
+    }
+
+    .os-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-sm);
+    }
+
+    /* The glyph's own box: the tinted square the board draws the system's picture in. */
+    .os-icon-box {
+      display: flex;
+      flex: none;
+      align-items: center;
+      justify-content: center;
+      width: var(--space-xl);
+      height: var(--space-xl);
+      border-radius: var(--radius-lg);
+      background: var(--panel);
+    }
+
+    /* The accent is the stroke: `--accent-on-dark` on `--panel` is a pair `a11y.mjs` computes
+       at 4.5:1 in every palette, which is what a mark of this size asks for. */
+    .os-icon {
+      width: var(--space-md);
+      height: var(--space-md);
+      color: var(--accent-on-dark);
+    }
+
+    /* The file's own word for a system's state. The pill is `base.css`'s and this rule says
+       which state it is: the accent for a system the file supports, the warn tone for one it
+       does not — both on the panel, which is the pair the card is drawn on. */
+    .pill.os-status {
+      margin: 0;
+      font-size: var(--font-size-xs);
+      font-weight: var(--weight-black);
+    }
+
+    .pill.os-status[data-status='supported'] {
+      border-color: var(--accent);
+      color: var(--accent-on-dark);
+    }
+
+    .pill.os-status[data-status='untested'] {
+      border-color: var(--warn);
+      color: var(--warn);
+    }
+
+    .os-name {
+      margin: 0;
+      color: var(--text);
+      font-family: var(--font-sans);
+      font-size: var(--font-size-2xl);
+      font-weight: var(--weight-black);
+      letter-spacing: var(--tracking-tight);
+    }
+
+    .os-note,
+    .path-note {
+      margin: 0;
+      color: var(--text-muted);
+    }
+
+    /* A command sits on the ground inside the card it belongs to, which is what a reader
+       copies: the bar is `base.css`'s `.command-block` and the wrapping is that rule's own. */
+    .install-card pre,
+    .os-note-card pre,
+    .path-card pre {
+      margin: 0;
+      border-color: var(--border);
+      background: var(--ground);
+    }
+
+    .source {
+      margin: 0;
+      color: var(--text-muted);
+      font-size: var(--font-size-sm);
+    }
+
+    /* The release page, as a control a reader taps rather than a line of running text: the
+       card's own way to the artifacts, and the pair the site's other quiet controls use. */
+    .os-download {
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
+      padding: 0 var(--space-sm);
+      border: var(--border-width) solid var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--panel);
+      color: var(--accent-on-dark);
+      font-size: var(--font-size-sm);
+      font-weight: var(--weight-semibold);
+      text-decoration: none;
+    }
+
+    /* The band's closing sentence, which is the way on to the steps below it. */
+    .gs-next {
+      margin: var(--space-lg) 0 0;
+      color: var(--text-muted);
+    }
+
+    /* ---- the setup steps ---- */
+
+    /* The band's own room above the first step, and the room below the last: `main`'s padding
+       is the page's, and this is the page's own rhythm between two bands. */
+    #setup {
+      margin-top: var(--space-3xl);
+    }
+
+    .gs-setup-head {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-xs);
+      margin-bottom: var(--space-lg);
+    }
+
+    .gs-setup-title {
+      margin: 0;
+    }
+
+    .gs-setup-lead {
+      margin: 0;
+      max-width: var(--measure);
+      color: var(--text-muted);
+      font-size: var(--font-size-lg);
+      line-height: var(--leading-normal);
+    }
+
+    .gs-steps {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-sm);
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    /* One step, one card: the numeral, the line and the link. It wraps rather than shrinking,
+       so a phone gets the numeral above the text and a wide screen gets the three in one row. */
+    .gs-step {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--space-sm) var(--space-md);
+      padding: var(--space-lg);
+    }
+
+    /* The board's numeral: the display weight at a size of its own, in the accent. It is a
+       mark rather than text, and it is `aria-hidden` — the `ol` is what says the position. */
+    .gs-step-number {
+      flex: none;
+      color: var(--accent);
+      font-family: var(--font-sans);
+      font-size: var(--font-size-4xl);
+      font-weight: var(--weight-black);
+      letter-spacing: var(--tracking-display);
+      line-height: 1;
+    }
+
+    /* The two steps that are a command a reader runs are the green ones — the tone the site
+       uses for "this is the one that finishes it" — and the one before them is the accent. */
+    .gs-step[data-state='run'] .gs-step-number {
+      color: var(--ok);
+    }
+
+    .gs-step-body {
+      flex: 1 1 16rem;
+    }
+
+    .gs-step-name {
+      margin: 0 0 var(--space-2xs);
+      color: var(--text);
+      font-family: var(--font-sans);
+      font-size: var(--font-size-2xl);
+      font-weight: var(--weight-black);
+      letter-spacing: var(--tracking-tight);
+    }
+
+    /* A command inside a step is the file's own text, drawn as the board draws it: a chip in
+       the accent, on the ground, inside the step that tells a reader to run it. */
+    .gs-step-name code,
+    .gs-step-line code {
+      padding: 0 var(--space-2xs);
       border: var(--border-width) solid var(--border);
       border-radius: var(--radius-md);
-      padding: var(--space-md);
+      background: var(--ground);
+      color: var(--accent-on-dark);
+      font-size: 0.85em;
     }
 
-    /* And inside the card the paths are sections of it rather than cards in a card: the
-       rule between two of them is the whole of the separation they need. */
-    .install-option article {
-      border: 0;
-      border-top: var(--border-width) solid var(--border);
-      border-radius: 0;
-      padding: var(--space-md) 0 0;
-      margin: var(--space-md) 0 0;
-    }
-
-    .install-option article:first-of-type {
-      border-top: 0;
-      padding-top: 0;
-      margin-top: 0;
-    }
-
-    pre {
-      background: var(--surface);
-      overflow-x: auto;
-      padding: var(--space-sm);
-      border-radius: var(--radius-sm);
-    }
-
-    .note,
-    .source {
+    .gs-step-line {
+      margin: 0;
       color: var(--text-muted);
+    }
+
+    /* The step's own link to the document that carries the detail. It is a control rather
+       than a word in the step's line, so it is at least the 44 px a reader taps. */
+    .gs-step-link {
+      display: inline-flex;
+      flex: none;
+      align-items: center;
+      min-height: 44px;
+      margin-left: auto;
+      color: var(--accent-on-dark);
+      font-weight: var(--weight-semibold);
+    }
+
+    /* ---- the paths the cards do not carry ---- */
+
+    #details {
+      margin-top: var(--space-3xl);
+    }
+
+    .gs-details-title {
+      margin: 0 0 var(--space-lg);
+    }
+
+    /* The board puts the long path — cosign, whose block is five commands — beside the two
+       short ones: one column until there is room for the two, and the first card takes the
+       wide one when there is. */
+    .path-list {
+      display: grid;
+      gap: var(--space-md);
+      align-items: start;
+    }
+
+    @media (min-width: 60rem) {
+      .path-list {
+        grid-template-columns: 2fr 1fr;
+      }
+
+      .path-card:first-of-type {
+        grid-row: span 2;
+      }
+    }
+
+    .path-card {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-xs);
+    }
+
+    .path-head {
+      display: flex;
+      align-items: center;
+      gap: var(--space-xs);
+    }
+
+    .path-icon {
+      flex: none;
+      width: var(--space-md);
+      height: var(--space-md);
+      color: var(--accent-on-dark);
+    }
+
+    .path-name {
+      margin: 0;
+      color: var(--text);
+      font-family: var(--font-sans);
+      font-size: var(--font-size-xl);
+      font-weight: var(--weight-black);
+      letter-spacing: var(--tracking-tight);
     }
   </style>
 </Base>

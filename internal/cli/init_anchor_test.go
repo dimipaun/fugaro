@@ -22,7 +22,7 @@ import (
 // bucket. Its line in fugaro.yaml:
 const anchorRigLine = "gcp_project: proj-1234"
 
-// anchorModeRig is fugaro init --anchor's rig: the init rig's local config
+// anchorModeRig is fugaro update --anchor's rig: the init rig's local config
 // (a fake terraform on PATH, whose calls are logged) with acme/app onboarded,
 // a checkout of acme/app as the working directory, a fake runs bucket for the
 // build records and a file:// bucket the shared config would be published to.
@@ -56,7 +56,7 @@ func newAnchorModeRig(t *testing.T, yaml string, onboarded bool) *anchorModeRig 
 	return r
 }
 
-// anchorExec runs fugaro init with stdin, without the rig's own warning that
+// anchorExec runs the converge with stdin, without the rig's own warning that
 // its XDG directories are temporary.
 func anchorExec(t *testing.T, stdin string, args ...string) (string, string, error) {
 	t.Helper()
@@ -129,7 +129,7 @@ func TestInitAnchorWritesAfterTheChecks(t *testing.T) {
 	r := newAnchorModeRig(t, anchorModeYAML(), true)
 	putWorkflowRecord("app", "0.4.0")
 	fakeTerminal(t)
-	out, _, err := anchorExec(t, "y\n", "init", "--anchor")
+	out, _, err := anchorExec(t, "y\n", "setup", "--anchor")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -146,12 +146,12 @@ func failText(msg string) string { return "FAIL: " + msg + "\n" }
 func TestInitAnchorOldRecordFails(t *testing.T) {
 	r := newAnchorModeRig(t, anchorModeYAML(), true)
 	putWorkflowRecord("app", "0.3.1")
-	out, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
+	out, _, err := anchorExec(t, "", "setup", "--anchor", "--yes")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	want := wantFail("app", "base", r.cfg, false, reasonRecordVersionOld("0.3.1"))
-	for _, s := range []string{"fugaro 0.3.1", "In order: (1) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it verifies this release's base base image and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image), (2) fugaro init --anchor"} {
+	for _, s := range []string{"fugaro 0.3.1", "In order: (1) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it verifies this release's base base image and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image), (2) fugaro update --anchor"} {
 		if !strings.Contains(want, s) {
 			t.Errorf("message lacks %q: %s", s, want)
 		}
@@ -165,7 +165,7 @@ func TestInitAnchorOldRecordFails(t *testing.T) {
 // (c) No build record: the same fix.
 func TestInitAnchorMissingRecordFails(t *testing.T) {
 	r := newAnchorModeRig(t, anchorModeYAML(), true)
-	out, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
+	out, _, err := anchorExec(t, "", "setup", "--anchor", "--yes")
 	if ExitCode(err) != ExitUserError || out != wantFail("app", "base", r.cfg, false, reasonNoRecord()) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
@@ -180,7 +180,7 @@ func TestInitAnchorDevRecordFails(t *testing.T) {
 	for _, v := range []string{"dev", "0.4.0-3-gabcdef"} {
 		r := newAnchorModeRig(t, anchorModeYAML(), true)
 		putWorkflowRecord("app", v)
-		out, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
+		out, _, err := anchorExec(t, "", "setup", "--anchor", "--yes")
 		if ExitCode(err) != ExitUserError || out != wantFail("app", "base", r.cfg, false, reasonDevCLI(v)) || !strings.Contains(out, "built by a development CLI") {
 			t.Fatalf("%s: exit %d, err %v\n%s", v, ExitCode(err), err, out)
 		}
@@ -196,7 +196,7 @@ func TestInitAnchorRecordBuiltFromAnOldBaseFails(t *testing.T) {
 	r.appendConfig(t, "base_images:\n  base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.4.0\n")
 	const from = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.3.1"
 	putWorkflowRecordFrom("app", "0.4.0", from+"@sha256:"+strings.Repeat("a", 64))
-	out, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
+	out, _, err := anchorExec(t, "", "setup", "--anchor", "--yes")
 	if ExitCode(err) != ExitUserError || out != wantFail("app", "base", r.cfg, false, reasonBaseRefOld(from+"@sha256:"+strings.Repeat("a", 64), "0.3.1")) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
@@ -212,7 +212,7 @@ func TestInitAnchorRecordBuiltFromADevBaseFails(t *testing.T) {
 	r := newAnchorModeRig(t, anchorModeYAML(), true)
 	const from = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-8fe2647"
 	putWorkflowRecordFrom("app", "0.4.0", from)
-	out, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
+	out, _, err := anchorExec(t, "", "setup", "--anchor", "--yes")
 	if ExitCode(err) != ExitUserError || out != wantFail("app", "base", r.cfg, false, reasonBaseRefDev(from)) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
@@ -224,7 +224,7 @@ func TestInitAnchorRecordBuiltFromADevBaseFails(t *testing.T) {
 func TestInitAnchorRecordWithoutBaseRefFails(t *testing.T) {
 	r := newAnchorModeRig(t, anchorModeYAML(), true)
 	putWorkflowRecordFrom("app", "0.4.0", "")
-	out, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
+	out, _, err := anchorExec(t, "", "setup", "--anchor", "--yes")
 	if ExitCode(err) != ExitUserError || out != wantFail("app", "base", r.cfg, false, reasonNoBaseRef()) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
@@ -240,7 +240,7 @@ func TestInitAnchorRecordBuiltFromAReleaseBasePasses(t *testing.T) {
 	for _, from := range []string{"us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.4.0", "ghcr.io/acme/fugaro-base:v0.5.1", releaseBase} {
 		r := newAnchorModeRig(t, anchorModeYAML(), true)
 		putWorkflowRecordFrom("app", "0.4.0", from)
-		if out, _, err := anchorExec(t, "", "init", "--anchor", "--yes"); err != nil {
+		if out, _, err := anchorExec(t, "", "setup", "--anchor", "--yes"); err != nil {
 			t.Fatalf("%s: %v\n%s", from, err, out)
 		}
 		r.check(t, withRigAnchor(r.yaml))
@@ -256,13 +256,13 @@ func TestInitAnchorCustomBaseFails(t *testing.T) {
 	const ref = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-8fe2647"
 	r.appendConfig(t, "base_images:\n  base: "+ref+"\n")
 	putWorkflowRecordFrom("app", "0.4.0", "ghcr.io/dimipaun/fugaro-base:0.4.0")
-	out, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
+	out, _, err := anchorExec(t, "", "setup", "--anchor", "--yes")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	want := wantFail("app", "base", r.cfg, true, reasonConfigBaseCustom(ref, "base"))
-	for _, s := range []string{"the local config's base image " + ref + " for kind base is not a release >= 0.4.0", "is never replaced by fugaro init --base or fugaro image refresh",
-		"(1) remove base_images.base from " + quoteWord(r.cfg) + " (keep a backup), (2) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it verifies this release's base base image and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image), (3) fugaro init --anchor"} {
+	for _, s := range []string{"the local config's base image " + ref + " for kind base is not a release >= 0.4.0", "is never replaced by fugaro update --base or fugaro image refresh",
+		"(1) remove base_images.base from " + quoteWord(r.cfg) + " (keep a backup), (2) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it verifies this release's base base image and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image), (3) fugaro update --anchor"} {
 		if !strings.Contains(want, s) {
 			t.Errorf("message lacks %q: %s", s, want)
 		}
@@ -287,7 +287,7 @@ func TestInitAnchorOldManagedBaseFails(t *testing.T) {
 	const ref = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.3.1"
 	r.appendConfig(t, "base_images:\n  base: "+ref+"\n")
 	putWorkflowRecord("app", "0.4.0")
-	out, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
+	out, _, err := anchorExec(t, "", "setup", "--anchor", "--yes")
 	if ExitCode(err) != ExitUserError || out != wantFail("app", "base", r.cfg, false, reasonConfigBaseOld(ref, "base", "0.3.1")) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
@@ -296,7 +296,7 @@ func TestInitAnchorOldManagedBaseFails(t *testing.T) {
 	r = newAnchorModeRig(t, anchorModeYAML(), true)
 	r.appendConfig(t, "base_images:\n  base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.4.0\n")
 	putWorkflowRecord("app", "0.4.0")
-	if out, _, err := anchorExec(t, "", "init", "--anchor", "--yes"); err != nil {
+	if out, _, err := anchorExec(t, "", "setup", "--anchor", "--yes"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	r.check(t, withRigAnchor(r.yaml))
@@ -326,7 +326,7 @@ func TestInitAnchorTwoWorkflowsOneStale(t *testing.T) {
 	r.appendConfig(t, "  acme/app: { provider: github, workflows: [api, app] }\n")
 	putWorkflowRecord("app", "0.4.0")
 	putWorkflowRecord("api", "0.3.1")
-	out, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
+	out, _, err := anchorExec(t, "", "setup", "--anchor", "--yes")
 	if ExitCode(err) != ExitUserError || out != wantFail("api", "base", r.cfg, false, reasonRecordVersionOld("0.3.1")) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
@@ -340,7 +340,7 @@ func TestInitAnchorAlreadyPresent(t *testing.T) {
 	yaml := withRigAnchor(anchorModeYAML())
 	r := newAnchorModeRig(t, yaml, true)
 	putWorkflowRecord("app", "0.4.0")
-	out, _, err := anchorExec(t, "", "init", "--anchor")
+	out, _, err := anchorExec(t, "", "setup", "--anchor")
 	if err != nil || out != r.path+" already has "+anchorRigLine+"; nothing to write\n" {
 		t.Fatalf("err %v\n%s", err, out)
 	}
@@ -348,7 +348,7 @@ func TestInitAnchorAlreadyPresent(t *testing.T) {
 
 	r = newAnchorModeRig(t, yaml, true)
 	putWorkflowRecord("app", "0.3.1")
-	out, _, err = anchorExec(t, "", "init", "--anchor")
+	out, _, err = anchorExec(t, "", "setup", "--anchor")
 	if ExitCode(err) != ExitUserError || out != r.path+" already has "+anchorRigLine+"; nothing to write\n"+wantFail("app", "base", r.cfg, false, reasonRecordVersionOld("0.3.1")) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
@@ -380,7 +380,7 @@ func TestInitAnchorResolvesTheLayerForTheSelectedProject(t *testing.T) {
 	layerBucketOpener = func(ctx context.Context, _ string) (*blobx.Bucket, error) { return blobx.Open(ctx, "file://"+runs) }
 	t.Cleanup(func() { layerBucketOpener = old })
 	putWorkflowRecord("default", "0.4.0") // config.ImplicitWorkflow: the layer's default_profile svc names base base
-	out, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
+	out, _, err := anchorExec(t, "", "setup", "--anchor", "--yes")
 	if err != nil || !strings.Contains(out, "already has "+anchorRigLine+"; nothing to write") {
 		t.Fatalf("err %v\n%s", err, out)
 	}
@@ -398,7 +398,7 @@ func TestInitAnchorCustomBucket(t *testing.T) {
 		t.Fatal(err)
 	}
 	putWorkflowRecord("app", "0.4.0")
-	out, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
+	out, _, err := anchorExec(t, "", "setup", "--anchor", "--yes")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
@@ -411,18 +411,49 @@ func TestInitAnchorCustomBucket(t *testing.T) {
 // (j) Outside a checkout, and in a checkout of a repository the project does
 // not list: clear refusals.
 func TestInitAnchorRefusals(t *testing.T) {
-	r := newAnchorModeRig(t, anchorModeYAML(), false)
-	_, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "acme/app is not one of project aurora's repositories") || !strings.Contains(err.Error(), "run fugaro init in this checkout to onboard it") {
-		t.Errorf("not onboarded: exit %d, err %v", ExitCode(err), err)
+	// Both doors: --anchor is neither door's own (it is in neither foreign
+	// list), and the refusal tells the reader to onboard with the door they
+	// are at — a `setup --anchor` run is sent to `setup --repo`, not to the
+	// other door's command (task W2.1).
+	for _, door := range []string{"setup", "update"} {
+		r := newAnchorModeRig(t, anchorModeYAML(), false)
+		_, _, err := anchorExec(t, "", door, "--anchor", "--yes")
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "acme/app is not one of project aurora's repositories") || !strings.Contains(err.Error(), "run fugaro "+door+" --repo in this checkout to onboard it") {
+			t.Errorf("%s --anchor, not onboarded: exit %d, err %v", door, ExitCode(err), err)
+		}
+		r.check(t, r.yaml)
 	}
-	r.check(t, r.yaml)
 
 	newAnchorModeRig(t, anchorModeYAML(), true)
 	t.Chdir(t.TempDir())
-	_, _, err = anchorExec(t, "", "init", "--anchor", "--yes")
+	_, _, err := anchorExec(t, "", "setup", "--anchor", "--yes")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "not in a git checkout") {
 		t.Errorf("no checkout: exit %d, err %v", ExitCode(err), err)
+	}
+}
+
+// The --anchor and --repo refusal names the door the reader is at, for the
+// same reason the gate's typed route does: --anchor is accepted by both doors
+// and runs through one door-independent path (runAnchor, before any
+// door-specific step), so a `fugaro setup --repo --anchor` run is sent to
+// `setup --anchor`, not to the other door's command (task W2.1).
+func TestTheAnchorAndRepoRefusalNamesTheReadersDoor(t *testing.T) {
+	for _, door := range []string{"setup", "update"} {
+		t.Run(door, func(t *testing.T) {
+			err := (&initOptions{door: door, anchor: true}).checkRepo()
+			if err == nil {
+				t.Fatal("--anchor with --repo was accepted")
+			}
+			got := err.Error()
+			for _, want := range []string{"run fugaro " + door + " --anchor there", " " + door + " --repo does not write it"} {
+				if !strings.Contains(got, want) {
+					t.Errorf("the refusal does not say %q:\n%s", want, got)
+				}
+			}
+			if strings.Contains(got, otherDoorName(door)) {
+				t.Errorf("the refusal names the other door:\n%s", got)
+			}
+		})
 	}
 }
 
@@ -431,7 +462,7 @@ func TestInitAnchorRefusals(t *testing.T) {
 func TestInitAnchorConfirmation(t *testing.T) {
 	r := newAnchorModeRig(t, anchorModeYAML(), true)
 	putWorkflowRecord("app", "0.4.0")
-	out, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
+	out, _, err := anchorExec(t, "", "setup", "--anchor", "--yes")
 	if err != nil || out != rigDiff(r.path)+"  confirmed by --yes\n"+rigUpdated(r.path) {
 		t.Fatalf("--yes: err %v\n%s", err, out)
 	}
@@ -439,7 +470,7 @@ func TestInitAnchorConfirmation(t *testing.T) {
 
 	r = newAnchorModeRig(t, anchorModeYAML(), true)
 	putWorkflowRecord("app", "0.4.0")
-	out, _, err = anchorExec(t, "", "init", "--anchor")
+	out, _, err = anchorExec(t, "", "setup", "--anchor")
 	if ExitCode(err) != ExitUserError || out != rigDiff(r.path)+rigAddLine(r.path) {
 		t.Fatalf("no terminal: exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
@@ -448,7 +479,7 @@ func TestInitAnchorConfirmation(t *testing.T) {
 	r = newAnchorModeRig(t, anchorModeYAML(), true)
 	putWorkflowRecord("app", "0.4.0")
 	fakeTerminal(t)
-	out, _, err = anchorExec(t, "n\n", "init", "--anchor")
+	out, _, err = anchorExec(t, "n\n", "setup", "--anchor")
 	if ExitCode(err) != ExitUserError || out != rigDiff(r.path)+"Write this to "+r.path+"? [y/N]: "+rigAddLine(r.path) {
 		t.Fatalf("n: exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
@@ -459,9 +490,16 @@ func TestInitAnchorConfirmation(t *testing.T) {
 func TestInitAnchorExcludesTheOtherModes(t *testing.T) {
 	newAnchorModeRig(t, anchorModeYAML(), true)
 	for _, other := range [][]string{{"--plan-only"}, {"--print-vars"}, {"--config-only"}, {"--forget"}, {"--publish-config"}, {"--repo"},
-		{"--firebase", "fugaro-fb-1234"}, {"--base", "go"}, {"--image-source", "ghcr.io/acme"}, {"--runs-bucket", "x-runs"},
+		{"--firebase-project", "fugaro-fb-1234"}, {"--base", "go"}, {"--image-source", "ghcr.io/acme"}, {"--runs-bucket", "x-runs"},
 		{"--onboard-repo", "acme/app"}, {"--github-app-id", "123"}, {"--budget", "5", "--budget-currency", "USD", "--billing-account", "0123AB-4567CD-89EF01"}} {
-		_, _, err := anchorExec(t, "", append([]string{"init", "--anchor"}, other...)...)
+		// --forget is the update door's flag (W1.2): setup refuses it before
+		// the run's own mode checks, so the row that pairs it with --anchor
+		// runs the door that takes it.
+		door := "setup"
+		if other[0] == "--forget" {
+			door = "update"
+		}
+		_, _, err := anchorExec(t, "", append([]string{door, "--anchor"}, other...)...)
 		if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "--anchor") || !strings.Contains(err.Error(), other[0]) {
 			t.Errorf("%s: exit %d, err %v", other, ExitCode(err), err)
 		}
@@ -472,7 +510,7 @@ func TestInitAnchorExcludesTheOtherModes(t *testing.T) {
 func TestInitAnchorJSON(t *testing.T) {
 	r := newAnchorModeRig(t, anchorModeYAML(), true)
 	putWorkflowRecord("app", "0.4.0")
-	out, _, err := anchorExec(t, "", "init", "--anchor", "--yes", "--json")
+	out, _, err := anchorExec(t, "", "setup", "--anchor", "--yes", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -484,7 +522,7 @@ func TestInitAnchorJSON(t *testing.T) {
 
 	r = newAnchorModeRig(t, anchorModeYAML(), true)
 	putWorkflowRecord("app", "0.3.1")
-	out, _, err = anchorExec(t, "", "init", "--anchor", "--yes", "--json")
+	out, _, err = anchorExec(t, "", "setup", "--anchor", "--yes", "--json")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, %v", ExitCode(err), err)
 	}
@@ -500,7 +538,7 @@ func TestInitAnchorJSON(t *testing.T) {
 func TestInitAnchorRecordReadFailureIsRemote(t *testing.T) {
 	r := newAnchorModeRig(t, anchorModeYAML(), true)
 	openRecordBucket = func(context.Context, string) (*blobx.Bucket, error) { return nil, errors.New("boom") }
-	out, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
+	out, _, err := anchorExec(t, "", "setup", "--anchor", "--yes")
 	if ExitCode(err) != ExitRemoteError || out != wantFail("app", "base", r.cfg, false, reasonUnreadable("boom")) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
@@ -512,7 +550,7 @@ func TestInitAnchorUnsafeShape(t *testing.T) {
 	yaml := strings.Replace(anchorModeYAML(), "project: aurora\n", "\"project\": aurora\n", 1)
 	r := newAnchorModeRig(t, yaml, true)
 	putWorkflowRecord("app", "0.4.0")
-	out, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
+	out, _, err := anchorExec(t, "", "setup", "--anchor", "--yes")
 	want := "note: the project: line is not a simple one-line value; fugaro.yaml is not edited: add this line to it by hand, at the top level: " + anchorRigLine + "\n"
 	if ExitCode(err) != ExitUserError || out != want {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
@@ -520,7 +558,7 @@ func TestInitAnchorUnsafeShape(t *testing.T) {
 	r.check(t, yaml)
 }
 
-// init --repo ends with one note pointing at --anchor while the checkout of
+// update --repo ends with one note pointing at --anchor while the checkout of
 // a listed repository lacks the line of a convention-bucket installation;
 // never otherwise, and never twice.
 func TestInitRepoNotesTheAnchor(t *testing.T) {
@@ -635,7 +673,7 @@ func TestBaseRefReason(t *testing.T) {
 }
 
 // repoReady is an applied installation of aurora with a base image for
-// base, and a repository plan with nothing to change: init --repo of the
+// base, and a repository plan with nothing to change: update --repo of the
 // listed acme/sandbox runs to its end.
 func (r *initRig) repoReady(t *testing.T) {
 	t.Helper()
@@ -647,7 +685,7 @@ func (r *initRig) repoReady(t *testing.T) {
 	r.save(t)
 }
 
-// End to end through the init rig: init --repo in the checkout of a listed
+// End to end through the init rig: update --repo in the checkout of a listed
 // repository without the line ends with the note, once, on stderr under
 // --json; never with --plan-only.
 func TestInitRepoEndToEndNotesTheAnchor(t *testing.T) {
@@ -659,7 +697,7 @@ func TestInitRepoEndToEndNotesTheAnchor(t *testing.T) {
 		r.repoReady(t)
 		dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", checkoutYAML("bitbucket", "oauth", "aurora", ""))
 		t.Chdir(dir)
-		out, errOut, err := executeStdin(t, "", append([]string{"init", "--repo"}, c.args...)...)
+		out, errOut, err := executeStdin(t, "", append([]string{"setup", "--repo"}, c.args...)...)
 		if err != nil {
 			t.Fatalf("%v: %v\n%s\n%s", c.args, err, out, errOut)
 		}
@@ -674,7 +712,7 @@ func TestInitRepoEndToEndNotesTheAnchor(t *testing.T) {
 // kind), so the fix is fugaro image build for the workflow, then --anchor.
 func TestAnchorProblemTextKindUnknownNamesImageBuild(t *testing.T) {
 	got := anchorProblemText("acme/app", "app", "", "", []string{"x"}, false)
-	want := "In order: (1) fugaro image build --repo acme/app --workflow app, (2) fugaro init --anchor, before you merge"
+	want := "In order: (1) fugaro image build --repo acme/app --workflow app, (2) fugaro update --anchor, before you merge"
 	if !strings.Contains(got, want) || strings.Contains(got, "image refresh") {
 		t.Errorf("%s\nwant it to contain %q and no image refresh", got, want)
 	}
@@ -683,11 +721,15 @@ func TestAnchorProblemTextKindUnknownNamesImageBuild(t *testing.T) {
 // The --anchor help names fugaro image refresh as the fix, not the old
 // multi-step sequence.
 func TestInitHelpAnchorFixIsImageRefresh(t *testing.T) {
-	long := strings.Join(strings.Fields(newInitCmd().Long), " ")
+	long := strings.Join(strings.Fields(newSetupCmd().Long), " ")
 	if !strings.Contains(long, "fugaro image refresh --repo <owner/name> --workflow <name> in the checkout") {
 		t.Errorf("init help does not name fugaro image refresh: %q", long)
 	}
-	for _, old := range []string{"fugaro init --base <kind> from outside the checkout", "fugaro init --repo in the checkout", "fugaro image build --repo"} {
+	// Respelled with the door this help belongs to (W1.2 renamed the command):
+	// the point is that the old multi-step sequence — the base image built from
+	// outside the checkout, then --repo in it — does not come back, and a
+	// string no door can contain any more guards nothing at all.
+	for _, old := range []string{"fugaro setup --base <kind> from outside the checkout", "fugaro setup --repo in the checkout", "fugaro image build --repo"} {
 		if strings.Contains(long, old) {
 			t.Errorf("init help still lists the old step %q", old)
 		}

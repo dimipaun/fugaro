@@ -367,7 +367,7 @@ func TestDoctorBatchReportsBothLauncherConditions(t *testing.T) {
 // the installation's operators never receive it -- they hold actAs on the
 // preload account there and nothing else (design §8.1 task 6). So an
 // installation whose operator is not also one of its launchers is not a
-// finding: warning about it would name a Fix -- run fugaro init -- that leaves
+// finding: warning about it would name a Fix -- run fugaro update -- that leaves
 // the member in exactly the state the warning complains about.
 //
 // Mutation (read lc.Terraform.Launchers and lc.Terraform.Operators together, as
@@ -529,7 +529,7 @@ func TestDoctorBatchSkipsAreNeverPasses(t *testing.T) {
 // name the boundary an artifact-producing run meets on this backend, and this
 // is the check that does it. Informational, never a warning: it describes the
 // plan's own decision (docs/design/artifact-runs.md §8.5 and D11), not a fault
-// an installation can fix, and a warning no run of fugaro init could clear
+// an installation can fix, and a warning no run of fugaro update could clear
 // would make Task 10's gate unsatisfiable -- which is why the severity matters
 // here and not only the text.
 //

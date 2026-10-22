@@ -84,7 +84,7 @@ func doctorChecksByID(t *testing.T) map[string]doctorCheck {
 // refuses the node), policy-vs-jobs (warning), allow-list-empty (warning) and
 // policy-rules-skew
 // (warning, in all three of the states it exists for: the fixture an older
-// CLI's init --firebase leaves — the marker at RulesVersion and the deployed
+// CLI's update --firebase-project leaves — the marker at RulesVersion and the deployed
 // rules from before the policy nodes — a marker present but below
 // RulesVersion, and a marker above it, which means the deployed rules come
 // from a *newer* Fugaro and this binary must not redeploy its own template
@@ -128,7 +128,7 @@ func doctorChecksByID(t *testing.T) map[string]doctorCheck {
 // shares with the deploy (verified, run and restored): replace infra.SameJSON
 // in doctorRulesSkew with `string(live) == string(want)` — "the deployed rules
 // differ only in formatting" fails, the check warning about the generated rules
-// re-indented, which `fugaro init --firebase` itself (infra.Plan, the same
+// re-indented, which `fugaro update --firebase-project` itself (infra.Plan, the same
 // SameJSON) would leave alone. Mutation for the unknown-key check (verified,
 // run and restored): drop the `len(p.UnknownKeys) > 0` branch from
 // doctorPolicyChecks — "a policy node with a key this Fugaro does not know"
@@ -235,7 +235,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !strings.Contains(c.Problem, "governs nothing") {
 			t.Errorf("doctor reported a node no run reads as the policy in force: %+v", c)
 		}
-		if !strings.Contains(c.Fix, "fugaro init --firebase") {
+		if !strings.Contains(c.Fix, "fugaro update --firebase-project") {
 			t.Errorf("the line does not name what makes the node govern: %+v", c)
 		}
 	})
@@ -334,7 +334,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 	})
 
 	t.Run("rules older than the marker", func(t *testing.T) {
-		// The state an older CLI's `fugaro init --firebase` leaves: it
+		// The state an older CLI's `fugaro update --firebase-project` leaves: it
 		// redeploys rules from before the policy nodes and the marker stays,
 		// so a published policy becomes unreadable and every budget-on run
 		// halts.
@@ -345,10 +345,10 @@ func TestDoctorPolicyChecks(t *testing.T) {
 			t.Fatalf("policy-rules-skew = %+v (present %v), want a warning", c, ok)
 		}
 		if !strings.Contains(c.Problem, "the deployed rules are older than the marker "+projectpolicy.PathRulesMarker()) ||
-			!strings.Contains(c.Problem, "re-run 'fugaro init --firebase' with fugaro >= "+policySince) {
+			!strings.Contains(c.Problem, "re-run 'fugaro update --firebase-project' with fugaro >= "+policySince) {
 			t.Errorf("the check does not print the halt's own sentence: %+v", c)
 		}
-		if !strings.Contains(c.Fix, "fugaro init --firebase") {
+		if !strings.Contains(c.Fix, "fugaro update --firebase-project") {
 			t.Errorf("the check does not name the owner's fix: %+v", c)
 		}
 		if !strings.Contains(c.Fix, "newer Fugaro") {
@@ -362,7 +362,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 	t.Run("the deployed rules differ only in formatting", func(t *testing.T) {
 		// The check must ask the question the deploy asks. The deployed document
 		// comes back as the database holds it, and a document is not a skew for
-		// being spelled with different whitespace: `fugaro init --firebase`
+		// being spelled with different whitespace: `fugaro update --firebase-project`
 		// considers the rules current whenever infra.SameJSON does, so a check
 		// comparing bytes would warn about an installation the deploy itself
 		// leaves alone — and the operator's remedy for this warning is that very
@@ -454,7 +454,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		// The other direction, and the review of PR #402's point: a marker above
 		// this binary's RulesVersion was written by a *newer* Fugaro, so the
 		// deployed rules are a generation this binary does not know. Meeting that
-		// state with "rules older than the marker: re-run init --firebase" sends
+		// state with "rules older than the marker: re-run update --firebase-project" sends
 		// the operator to redeploy this release's template over newer rules — a
 		// downgrade of the rules the policy nodes are protected by.
 		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
@@ -483,7 +483,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !strings.Contains(c.Fix, "upgrade Fugaro") {
 			t.Errorf("the check does not name the fix that does not downgrade: %+v", c)
 		}
-		if strings.Contains(c.Fix, "re-run 'fugaro init --firebase' with fugaro") {
+		if strings.Contains(c.Fix, "re-run 'fugaro update --firebase-project' with fugaro") {
 			t.Errorf("the fix tells this binary to redeploy its own template over newer rules: %+v", c)
 		}
 		// The deploy path refuses this state itself (internal/infra's DB.Plan,
@@ -491,7 +491,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		// does now — refuses — rather than warn about a redeploy the operator
 		// would have to avoid by reading a warning.
 		if !strings.Contains(c.Fix, "refuses this state rather than redeploying generation") {
-			t.Errorf("the fix does not say that init --firebase refuses this state: %+v", c)
+			t.Errorf("the fix does not say that update --firebase-project refuses this state: %+v", c)
 		}
 	})
 
@@ -514,7 +514,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !strings.Contains(c.Problem, "below the generation") || !strings.Contains(c.Problem, "publishing one is refused") {
 			t.Errorf("the check does not say the marker is below the generation a policy is read under: %+v", c)
 		}
-		if !strings.Contains(c.Fix, "fugaro init --firebase") {
+		if !strings.Contains(c.Fix, "fugaro update --firebase-project") {
 			t.Errorf("the check does not name the owner's fix: %+v", c)
 		}
 		// The sentence must not be the other state's. "the deployed rules are
@@ -564,7 +564,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !strings.Contains(c.Problem, "a published policy is read and enforced") {
 			t.Errorf("the between-generations body does not say the policy still governs: %+v", c)
 		}
-		if !strings.Contains(c.Fix, "fugaro init --firebase") {
+		if !strings.Contains(c.Fix, "fugaro update --firebase-project") {
 			t.Errorf("the check does not name the owner's fix: %+v", c)
 		}
 		// Generation 3's new conjunct is a *lockout* for any phone account with
@@ -592,7 +592,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		// predate the policy nodes — while projectpolicy.Read reads the same
 		// node as the hand edit it is (a MarkerError; a launcher's -1 would
 		// otherwise take a published policy out of every run's reach). The
-		// operator told "re-run init --firebase" would redeploy rules that are
+		// operator told "re-run update --firebase-project" would redeploy rules that are
 		// not what is wrong and come back to the same marker, and doctor's own
 		// report would contradict the publish refusal on the very same node
 		// (the review finding on this change). One predicate
@@ -614,7 +614,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if strings.Contains(c.Problem, "older than the marker") {
 			t.Errorf("the hand-edited-marker body reuses the document state's sentence: %+v", c)
 		}
-		if !strings.Contains(c.Fix, "fugaro init --firebase") {
+		if !strings.Contains(c.Fix, "fugaro update --firebase-project") {
 			t.Errorf("the check does not name the fix that writes the marker: %+v", c)
 		}
 		// A model-level fix: the rules and the marker are the model's, so the
@@ -1089,7 +1089,7 @@ func doctorSwitchTo(via string) func(*projectpolicy.Policy) {
 // it" — the opposite of what every run does.
 //
 // The mode the check answers the node's silence with is the job's own: this
-// machine's config, whose ceiling init --repo deploys into the environment, the
+// machine's config, whose ceiling update --repo deploys into the environment, the
 // same reading the drift note compares the deployed job with. Both sides are
 // exercised here, so the check is pinned to that reading rather than to the
 // string "off" happening to be wrong.
@@ -1448,7 +1448,7 @@ func TestDoctorReportsTheCascadeWithoutTheCredsMarker(t *testing.T) {
 	if c.Severity != "warning" {
 		t.Errorf("severity = %q, want warning", c.Severity)
 	}
-	for _, want := range []string{rules.PathCredsRulesMarker(), "init --firebase"} {
+	for _, want := range []string{rules.PathCredsRulesMarker(), "update --firebase-project"} {
 		if !strings.Contains(c.Problem+c.Fix, want) {
 			t.Errorf("the check does not name %q: %q / %q", want, c.Problem, c.Fix)
 		}
@@ -1475,7 +1475,7 @@ func TestDoctorReportsTheCascadeWithoutTheCredsMarker(t *testing.T) {
 	// says, and only a negative one is "cannot be told apart".
 	db.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion-1)
 	c, ok = doctorChecksByID(t)["creds-rules"]
-	if !ok || c.Severity != "warning" || !strings.Contains(c.Fix, "init --firebase") {
+	if !ok || c.Severity != "warning" || !strings.Contains(c.Fix, "update --firebase-project") {
 		t.Fatalf("a marker below this release's generation: %+v (ok=%v), want a warning whose fix is to re-run init", c, ok)
 	}
 	if strings.Contains(c.Fix, "upgrade") {

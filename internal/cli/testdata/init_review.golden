@@ -8,7 +8,7 @@ Will do, each step printing its own exact plan first:
 Fixed, announced and free, so they need no plan: the Terraform state bucket (cents a month) and the Cloud Resource Manager API when missing, the local config (its diff is shown first).
 IAM changes announced: removes project Viewers' read access to the runs bucket gs://fugaro-runs-proj-1234 and the state bucket gs://fugaro-tfstate-proj-1234 when they have it.
 Who gets access (the effective lists; a plan that grants anyone else stops and asks its own typed confirmation):
-  launchers:      user:me@example.com (default: you); launch runs; also mint run tokens when --firebase's token signer is applied
+  launchers:      user:me@example.com (default: you); launch runs; also mint run tokens when --firebase-project's token signer is applied
   operators:      group:ops@example.com (from the local config); onboard repositories and submit builds
   budget admins:  user:ba@example.com, user:owner@example.com (from a flag); plus the GCP project's owners and editors who are users or groups, read now
   budget viewers: user:me@example.com, group:ops@example.com (the launchers and operators)

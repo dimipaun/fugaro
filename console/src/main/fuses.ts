@@ -254,14 +254,48 @@ export function fuseConfig(): FuseConfig {
  * AfterPackContext is the part of electron-builder's `AfterPackContext` this
  * hook reads, written out structurally rather than imported: the packer is a
  * devDependency, but its types live in app-builder-lib (a transitive package
- * this one does not declare), and the hook reads three fields. The shape is the packer's own --
- * `electronPlatformName`, `appOutDir` and `packager.appInfo.productFilename`.
+ * this one does not declare), and the hook reads five fields. The shape is the
+ * packer's own -- `electronPlatformName`, `appOutDir`, `packager.appInfo`'s
+ * `productFilename` and `sanitizedName`, and `packager.executableName`.
+ *
+ * The last two are the Linux half, and neither is on the base packager:
+ * `LinuxPackager` declares `executableName` and is the only class that assigns
+ * it -- to `sanitizeFileName(linux.executableName)` when the configuration sets
+ * that key, and to `appInfo.sanitizedName` (`sanitizeFileName(package.json name)`
+ * lowercased) when it does not. `PlatformPackager` is where an executable name
+ * is read for the other platforms, and it guards those reads with
+ * `this instanceof LinuxPackager`, falling back to `appInfo.productFilename`;
+ * that is why this field is optional here and why it is read on linux alone.
+ * Both are optional because neither is a field this file may require: on darwin
+ * the bundle is named by `productFilename` and neither is read.
  */
 export interface AfterPackContext {
   readonly electronPlatformName: string
   readonly appOutDir: string
-  readonly packager: { readonly appInfo: { readonly productFilename: string } }
+  readonly packager: {
+    readonly appInfo: {
+      readonly productFilename: string
+      readonly sanitizedName?: string
+    }
+    readonly executableName?: string
+  }
 }
+
+/**
+ * SUPPORTED_PLATFORMS is the set of `electronPlatformName`s this build produces
+ * a binary for, and so the set the fuse hook flips. It is one list, and the
+ * hook's refusal is its complement: a platform that is not in it is a hard
+ * failure rather than a skip.
+ *
+ * `win32` is deliberately absent. The owner's ruling of 2026-10-20 is "yes,
+ * Linux for 0.10.0, unsigned"; Windows stays out of this release (design D10:
+ * the CLI has no Windows build, and signing there is a certificate the owner
+ * would have to buy and hold). A Windows leg would need its own executable
+ * resolution (`<appOutDir>/<productFilename>.exe`) and its own signing story,
+ * and neither is decided yet -- so the hook refuses it rather than flipping a
+ * path it has never been run against.
+ */
+export const SUPPORTED_PLATFORMS: readonly string[] = Object.freeze(['darwin', 'linux'])
 
 /** FuseTools is the two `@electron/fuses` calls this hook makes, as an
  * injectable pair so the suite can drive `afterPack` with a fake -- including a
@@ -299,6 +333,65 @@ export function macExecutable(context: AfterPackContext): string {
   return join(context.appOutDir, `${name}.app`, 'Contents', 'MacOS', name)
 }
 
+/**
+ * linuxExecutable is the path `@electron/fuses` is given on Linux:
+ * `<appOutDir>/<executableName>` -- there is no bundle, no `.app` and no
+ * `Contents/MacOS`, just the one ELF the packer wrote into `linux-unpacked`.
+ *
+ * It mirrors electron-builder's resolution exactly. In app-builder-lib,
+ * `LinuxPackager`'s constructor sets `executableName` to `sanitizeFileName` of
+ * the configured `linux.executableName`, or to
+ * `appInfo.sanitizedName.toLowerCase()` when none is configured; and
+ * `addElectronFuses` joins `appOutDir` to it with an empty extension on linux
+ * (`{ darwin: '.app', mas: '.app', win32: '.exe', linux: '' }`), which is the
+ * same convention electron-builder's own fuse support uses when
+ * `build.electronFuses` is set -- a setting this build deliberately does not
+ * use, so that there is one flipper and it is this file.
+ *
+ * The build sets `linux.executableName` to `fugaro-console`, so the fallback
+ * below is not what names the shipped binary; it is here so that a
+ * configuration edit that dropped the key flips the file the packer actually
+ * wrote rather than a path this hook made up. A context that carries neither
+ * name is refused rather than guessed at: `join(appOutDir, '')` is a directory,
+ * and `flipFuses` on a directory is not a flip.
+ */
+export function linuxExecutable(context: AfterPackContext): string {
+  const name = context.packager.executableName ?? context.packager.appInfo.sanitizedName?.toLowerCase()
+  if (name === undefined || name === '') {
+    throw new Error(
+      'electron-builder handed the fuse hook a linux context with no executable name ' +
+        '(neither packager.executableName nor packager.appInfo.sanitizedName): the hook has ' +
+        'no file to flip, and a build that flipped nothing while reporting success is the ' +
+        'one outcome it must not produce',
+    )
+  }
+  return join(context.appOutDir, name)
+}
+
+/**
+ * fuseTarget is the executable the fuses are written into, resolved per
+ * platform **in one place**: `afterPack` calls this and nothing else, so there
+ * is one table of "where the binary is on this platform" rather than one per
+ * call site. A platform that is not in `SUPPORTED_PLATFORMS` is refused here,
+ * naming the platform and the ones that are packaged -- not skipped, because a
+ * skipped flip is a binary that ships with the fuses unset.
+ */
+export function fuseTarget(context: AfterPackContext): string {
+  switch (context.electronPlatformName) {
+    case 'darwin':
+      return macExecutable(context)
+    case 'linux':
+      return linuxExecutable(context)
+    default:
+      throw new Error(
+        `the Fugaro console is packaged for ${SUPPORTED_PLATFORMS.join(' and ')}, and the fuse ` +
+          `hook was called for ${context.electronPlatformName}: this build produces no binary on ` +
+          'that platform to flip, and shipping one with the fuses unset is not an option this ' +
+          'build may take',
+      )
+  }
+}
+
 /** wireState spells a wire byte the way a failure message should read. */
 function wireState(state: FuseState | undefined): string {
   if (state === FuseState.ENABLE) return 'enabled'
@@ -319,11 +412,22 @@ function wireState(state: FuseState | undefined): string {
  * back on its own, and the merged binary is flipped again (`flipFuses` writes
  * every slice of a fat binary) and read back before the packer signs it.
  *
- * A platform that is not darwin is a hard failure rather than a skip. The
- * console is a macOS application (design D4, and this MVP ships no other
- * platform): a build here would produce no `Contents/MacOS` binary to flip, and
- * the one outcome that must not be possible is a bundle that ships with the
- * fuses unset because the hook decided to do nothing.
+ * **The same six fuses, on both platforms this build packages.** macOS
+ * (`darwin`) and Linux are the two, and the set is a property of the
+ * *application* rather than of the platform, so the configuration below is
+ * identical on both and there is no per-platform fuse table. On darwin the
+ * library resolves the file it writes from `Contents/MacOS/<name>` to the
+ * Electron Framework binary inside the bundle; on Linux the path is the
+ * executable itself, because that is the ELF the fuse bytes live in. One of the
+ * six -- `EnableEmbeddedAsarIntegrityValidation` -- is enforced by Electron on
+ * macOS only; it is set on Linux anyway, because a fuse set that differed by
+ * platform would be a second policy to keep in step, and because an
+ * unenforced-but-set fuse is the state a later Electron that starts enforcing
+ * it needs.
+ *
+ * A platform that is not packaged is a hard failure rather than a skip (see
+ * `fuseTarget`): the one outcome that must not be possible is a binary that
+ * ships with the fuses unset because the hook decided to do nothing.
  *
  * Nothing is logged on success. The hook's output is the packer's log at pack
  * time, and a "flipped the fuses" line in it would be a claim rather than the
@@ -333,14 +437,7 @@ export async function afterPack(
   context: AfterPackContext,
   fuses: FuseTools = ELECTRON_FUSES,
 ): Promise<void> {
-  if (context.electronPlatformName !== 'darwin') {
-    throw new Error(
-      `the Fugaro console is a macOS (darwin) application, and the fuse hook was called for ` +
-        `${context.electronPlatformName}: no app bundle was produced to flip, and shipping ` +
-        'one with the fuses unset is not an option this build may take',
-    )
-  }
-  const executable = macExecutable(context)
+  const executable = fuseTarget(context)
   await fuses.flipFuses(executable, fuseConfig())
   const wire = await fuses.getCurrentFuseWire(executable)
   for (const fuse of FLIPPED_FUSES) {

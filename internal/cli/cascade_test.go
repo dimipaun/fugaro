@@ -319,7 +319,7 @@ func TestValidateRefusesCascadeWithoutPolicySwitch(t *testing.T) {
 		// than "this project has published no policy", which is false of an
 		// installation whose config names no database — the second is a
 		// statement about the node, the first about the operator's file, and
-		// only the first sends them to `fugaro init --firebase`.
+		// only the first sends them to `fugaro update --firebase-project`.
 		path := budgetProject(t, "budget: { mode: observe, per_run_usd: 5 }\n", "  auth: cascade")
 		out, _, err := execute(t, "validate", path)
 		if ExitCode(err) != ExitUserError {
@@ -709,7 +709,7 @@ func TestShiftReleaseMovesThePatchFirst(t *testing.T) {
 
 // TestInitRepoRefusesCascadeOnOlderBaseImage is Task C1.1's skew gate: a
 // fugaro.yaml value is a version-skew break in a strictly decoded config, so
-// `fugaro init --repo` refuses to deploy a cascade repository against an
+// `fugaro update --repo` refuses to deploy a cascade repository against an
 // installation whose base image predates the release that reads the value —
 // before any cloud effect. cascadeSince is the release that ships it: an image
 // at it (or past it) passes, a ref that is not a release image is only warned
@@ -753,7 +753,7 @@ func TestInitRepoRefusesCascadeOnOlderBaseImage(t *testing.T) {
 	for _, want := range []string{
 		"fugaro " + cascadeSince + " or later",
 		older + ", release " + below,
-		"fugaro init --base base",
+		"fugaro update --base base",
 		"agent.auth: cascade",
 		// The subject names where this row's value came from (SourceRepo):
 		// the same gate under a layer's default says so instead (see
@@ -988,7 +988,7 @@ func TestRepoEngineRefusesCascadeOnAnOlderBaseImage(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit = %d, err = %v: want the cascade refused on this installation's base image", ExitCode(err), err)
 	}
-	for _, want := range []string{cascadeSince, below, "fugaro init --base base", "agent.auth: cascade", "fugaro.yaml's agent.auth: cascade"} {
+	for _, want := range []string{cascadeSince, below, "fugaro update --base base", "agent.auth: cascade", "fugaro.yaml's agent.auth: cascade"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("%v lacks %q", err, want)
 		}
@@ -1039,7 +1039,7 @@ func TestRepoEngineNamesTheProjectLayerThatAsksForTheCascade(t *testing.T) {
 		t.Fatalf("exit = %d, err = %v: want the layer's cascade refused on this installation's base image", ExitCode(err), err)
 	}
 	got := err.Error()
-	for _, want := range []string{cascadeSince, "fugaro init --base base", "agent.auth: cascade", "the project layer's defaults.agent.auth: cascade"} {
+	for _, want := range []string{cascadeSince, "fugaro update --base base", "agent.auth: cascade", "the project layer's defaults.agent.auth: cascade"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("%v lacks %q", err, want)
 		}
@@ -1122,7 +1122,7 @@ func TestCascadeRefusedWithoutCredsRulesMarker(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("a cascade launch without the rules marker: err = %v, want a refusal", err)
 	}
-	for _, want := range []string{"credsRules", "init --firebase", "halt"} {
+	for _, want := range []string{"credsRules", "update --firebase-project", "halt"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %q: %v", want, err)
 		}
@@ -1164,7 +1164,7 @@ func TestCascadeRefusedWithoutCredsRulesMarker(t *testing.T) {
 		{
 			what:  "below this Fugaro's",
 			gen:   rules.CredsRulesVersion - 1,
-			wants: []string{"init --firebase", "in your own terminal from this Fugaro", "below"},
+			wants: []string{"update --firebase-project", "in your own terminal from this Fugaro", "below"},
 		},
 		{
 			what:    "above this Fugaro's",

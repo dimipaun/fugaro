@@ -84,7 +84,23 @@ func TestProjectPathsAndLoad(t *testing.T) {
 	if _, err := ProjectsDir(func(string) string { return "" }); err == nil {
 		t.Fatal("no HOME, no XDG_CONFIG_HOME: ProjectsDir succeeded")
 	}
-	if _, _, err := LoadProject(get, "aurora"); !errors.Is(err, ErrMissing) || !strings.Contains(err.Error(), "fugaro init") {
+	// A Windows shell sets USERPROFILE and no HOME. Before UserDir that was
+	// "neither XDG_CONFIG_HOME nor HOME is set", i.e. no config directory at
+	// all for a Windows user (F5); the profile is the fallback that decides
+	// the path, and the %APPDATA% rule above it is pinned by
+	// TestConfigDirFollowsThePlatform, which runs the Windows rule here.
+	profile := t.TempDir()
+	onlyProfile := func(k string) string {
+		if k == "USERPROFILE" {
+			return profile
+		}
+		return ""
+	}
+	got, err := ProjectsDir(onlyProfile)
+	if err != nil || got != filepath.Join(profile, ".config", "fugaro", "projects") {
+		t.Fatalf("ProjectsDir with only USERPROFILE = %q, %v", got, err)
+	}
+	if _, _, err := LoadProject(get, "aurora"); !errors.Is(err, ErrMissing) || !strings.Contains(err.Error(), "fugaro setup") {
 		t.Fatalf("missing file: %v", err)
 	}
 	writeFile(t, p, sample)
@@ -236,7 +252,7 @@ func TestParseEndpoints(t *testing.T) {
 			t.Errorf("%s: err = %v", bad, err)
 		}
 	}
-	// The endpoints only fugaro init uses, and endpoints.batch and
+	// The endpoints only fugaro update uses, and endpoints.batch and
 	// endpoints.compute -- the Batch API root the opener hands to
 	// internal/backend/batch, whose clientOptions attaches that same token to
 	// it (internal/cli/cloud.go's cloudOpeners), and the Compute Engine root
@@ -338,7 +354,7 @@ func TestBuildServiceAccountDeprecated(t *testing.T) {
 }
 
 // vertex records that a repository's agent authenticates through Vertex
-// AI, so fugaro init enables the API.
+// AI, so fugaro update enables the API.
 func TestRepoVertex(t *testing.T) {
 	c, err := Parse([]byte(sample + "  acme/api: { provider: github, vertex: true, workflows: [web] }\n"))
 	if err != nil || !c.Repos["acme/api"].Vertex {
@@ -415,7 +431,7 @@ func TestBackendDefaultsToCloudRun(t *testing.T) {
 // reaper that stops a leaked one -- come after the owner's Check 57a
 // measurement (design §9). So `backend: cloud-batch` stays refused, and this
 // is the single place that refuses it: every command that reads a project
-// config, `fugaro init` included, goes through Parse.
+// config, `fugaro update` included, goes through Parse.
 func TestCloudBatchIsRefused(t *testing.T) {
 	if backend.CloudBatch != "cloud-batch" {
 		t.Fatalf("backend.CloudBatch = %q: the constant and the config value must not drift", backend.CloudBatch)
@@ -670,7 +686,7 @@ func TestBatchSectionDoesNotEnableTheBackend(t *testing.T) {
 	}
 }
 
-// The other fields fugaro init records: each is checked for shape.
+// The other fields fugaro update records: each is checked for shape.
 func TestM5FieldsValidation(t *testing.T) {
 	const good = "terraform:\n  state_bucket: fugaro-tfstate-my-project\n  alert_email: ops@example.com\n" +
 		"  launchers: [\"user:a@example.com\", \"group:devs@example.com\"]\n  operators: [\"serviceAccount:ci@my-project.iam.gserviceaccount.com\", \"domain:example.com\"]\n" +
@@ -728,7 +744,7 @@ func TestM4ConfigMarshalsWithoutM5Fields(t *testing.T) {
 
 // Image builds record in the runs bucket, the only bucket a build account
 // may write, whatever bucket_url says; with no runs_bucket, a gs://
-// bucket_url names it, as fugaro init reads it.
+// bucket_url names it, as fugaro update reads it.
 func TestRecordBucketURL(t *testing.T) {
 	for _, c := range []struct{ runs, bucketURL, want string }{
 		{"fugaro-runs-x", "", "gs://fugaro-runs-x"},
@@ -1028,7 +1044,7 @@ func TestProviderDecodeStrict(t *testing.T) {
 }
 
 // TestProviderAllowDataToWrittenEmpty: through the operator's own door
-// (`fugaro validate`, `fugaro init`): a provider whose allow_data_to was
+// (`fugaro validate`, `fugaro update`): a provider whose allow_data_to was
 // written with nothing under it -- an emptied block, a bare key, a `~`, or
 // an explicit [] -- is refused at config-load time, because a null key
 // decodes to the same nil slice as an absent one, which means every

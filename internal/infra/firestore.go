@@ -119,7 +119,7 @@ func (s *FirestoreStep) CreatesDatabase() bool { return s.createDB }
 
 func fsErr(what string, err error) error {
 	if errors.Is(err, firestore.ErrPermission) {
-		return fmt.Errorf("%w: %s: %v (the Firestore API is enabled by the Firebase root, and init needs a project owner, editor or budget admin; role changes take a few minutes to apply)", ErrFirestoreUnreadable, what, err)
+		return fmt.Errorf("%w: %s: %v (the Firestore API is enabled by the Firebase root, and fugaro needs a project owner, editor or budget admin; role changes take a few minutes to apply)", ErrFirestoreUnreadable, what, err)
 	}
 	return fmt.Errorf("%s: %w", what, err)
 }
@@ -133,7 +133,7 @@ func (s *FirestoreStep) Plan(ctx context.Context) (lines, warnings []string, err
 	switch {
 	case errors.Is(err, firestore.ErrNotFound):
 		s.createDB, s.writeMark = true, true
-		lines = append(lines, fmt.Sprintf("Cloud Firestore database: CREATE the (default) database in %s (native mode, delete protection on). The location is PERMANENT: a Firestore database can never be moved, and init never recreates one", FirestoreLocation))
+		lines = append(lines, fmt.Sprintf("Cloud Firestore database: CREATE the (default) database in %s (native mode, delete protection on). The location is PERMANENT: a Firestore database can never be moved, and fugaro never recreates one", FirestoreLocation))
 	case err != nil:
 		return nil, nil, fsErr("reading the Firestore database of "+s.FP, err)
 	default:
@@ -141,7 +141,7 @@ func (s *FirestoreStep) Plan(ctx context.Context) (lines, warnings []string, err
 			return nil, nil, err
 		}
 		if db.DeleteProtection != "DELETE_PROTECTION_ENABLED" {
-			warnings = append(warnings, fmt.Sprintf("the Firestore database of %s has delete protection %s: init leaves it as it is", s.FP, strings.ToLower(db.DeleteProtection)))
+			warnings = append(warnings, fmt.Sprintf("the Firestore database of %s has delete protection %s: fugaro leaves it as it is", s.FP, strings.ToLower(db.DeleteProtection)))
 		}
 		lines = append(lines, fmt.Sprintf("Cloud Firestore database: exists in %s, adopted as it is", db.LocationID))
 		marked, err := s.adoptable(ctx)
@@ -173,7 +173,7 @@ func (s *FirestoreStep) Plan(ctx context.Context) (lines, warnings []string, err
 
 func (s *FirestoreStep) checkExisting(db *firestore.Database) error {
 	if db.LocationID != FirestoreLocation || db.Type != "FIRESTORE_NATIVE" {
-		return userErr("the Firebase project %s already has a Firestore database in location %q (type %s), and init creates one in %s only: a location is permanent, so init neither adopts, moves nor recreates this one. Use a Firebase project without a Firestore database, or delete this one yourself if it is empty and unwanted, then rerun", s.FP, db.LocationID, db.Type, FirestoreLocation)
+		return userErr("the Firebase project %s already has a Firestore database in location %q (type %s), and fugaro creates one in %s only: a location is permanent, so fugaro neither adopts, moves nor recreates this one. Use a Firebase project without a Firestore database, or delete this one yourself if it is empty and unwanted, then run it again", s.FP, db.LocationID, db.Type, FirestoreLocation)
 	}
 	return nil
 }
@@ -189,7 +189,7 @@ func (s *FirestoreStep) readMark(ctx context.Context) (marked bool, err error) {
 		return false, fsErr("reading "+FirestoreMetaCollection+"/"+FirestoreMarkDoc, err)
 	}
 	if why := s.mark().mismatch(d.Fields); why != "" {
-		return false, userErr("the Firestore database of %s carries a Fugaro mark that is not ours: it names %s, not project %s in GCP project %s with Firebase project %s (one Firebase project serves one installation, design D3). init changes no mark", s.FP, why, s.Project, s.GCPProject, s.FP)
+		return false, userErr("the Firestore database of %s carries a Fugaro mark that is not ours: it names %s, not project %s in GCP project %s with Firebase project %s (one Firebase project serves one installation, design D3). Fugaro changes no mark", s.FP, why, s.Project, s.GCPProject, s.FP)
 	}
 	if v, _ := d.Fields["version"].(int64); v > s.mark().Version {
 		s.warnings = append(s.warnings, fmt.Sprintf("the Firestore mark of %s has version %d, newer than this fugaro knows (%d): left as it is", s.FP, v, s.mark().Version))
@@ -213,7 +213,7 @@ func (s *FirestoreStep) adoptable(ctx context.Context) (marked bool, err error) 
 		if len(ids) > 5 {
 			ids = append(ids[:5:5], "...")
 		}
-		return false, userErr("the Firestore database of %s holds data (collections: %s) and no Fugaro mark (%s/%s): it is not ours, and init adopts a database only when it is empty or carries our mark. init changed nothing there", s.FP, strings.Join(ids, ", "), FirestoreMetaCollection, FirestoreMarkDoc)
+		return false, userErr("the Firestore database of %s holds data (collections: %s) and no Fugaro mark (%s/%s): it is not ours, and fugaro adopts a database only when it is empty or carries our mark; nothing there was changed", s.FP, strings.Join(ids, ", "), FirestoreMetaCollection, FirestoreMarkDoc)
 	}
 	return false, nil
 }
@@ -390,7 +390,7 @@ func (c *RulesClient) release(ctx context.Context) (source string, exists bool, 
 	case errors.As(err, &re) && re.code == http.StatusNotFound:
 		return "", false, nil
 	case errors.As(err, &re) && (re.code == http.StatusForbidden || re.code == http.StatusUnauthorized):
-		return "", false, fmt.Errorf("%w: %v (the Firebase Rules API is enabled by the Firebase root, and init needs a project owner, editor or budget admin)", ErrFirestoreUnreadable, err)
+		return "", false, fmt.Errorf("%w: %v (the Firebase Rules API is enabled by the Firebase root, and fugaro needs a project owner, editor or budget admin)", ErrFirestoreUnreadable, err)
 	case err != nil:
 		return "", false, err
 	}
@@ -471,8 +471,8 @@ func normalizeRules(s string) string {
 
 // inspect reads the Firestore release. No release is rulesMissing; one whose
 // rules equal want (apart from comments and whitespace) is rulesSame; any
-// other is refused: init never loosens, replaces or tightens rules that are
-// there.
+// other is refused: 'fugaro update --firebase-project' never loosens, replaces
+// or tightens rules that are there.
 func (c *RulesClient) inspect(ctx context.Context, want string) (rulesState, error) {
 	src, exists, err := c.release(ctx)
 	switch {
@@ -481,7 +481,7 @@ func (c *RulesClient) inspect(ctx context.Context, want string) (rulesState, err
 	case !exists:
 		return rulesMissing, nil
 	case normalizeRules(src) != normalizeRules(want):
-		return 0, userErr("the Firebase project %s already has Firestore security rules that are not deny-all, and init never replaces rules that are there (they could be looser or tighter than you want). Read them (Firebase console, Firestore, Rules), and either deploy deny-all yourself (allow read, write: if false; for every document) or delete the release, then rerun init", c.Project)
+		return 0, userErr("the Firebase project %s already has Firestore security rules that are not deny-all, and 'fugaro update --firebase-project' never replaces rules that are there (they could be looser or tighter than you want). Read them (Firebase console, Firestore, Rules), and either deploy deny-all yourself (allow read, write: if false; for every document) or delete the release, then run 'fugaro update --firebase-project' again", c.Project)
 	}
 	return rulesSame, nil
 }

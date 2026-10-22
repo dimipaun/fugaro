@@ -1181,7 +1181,7 @@ func TestInitSecretsStageThroughTheCommand(t *testing.T) {
 		cmd.SetIn(spy)
 		cmd.SetOut(&out)
 		cmd.SetErr(&errOut)
-		cmd.SetArgs(append([]string{"init", "--json"}, flags...))
+		cmd.SetArgs(append([]string{"setup", "--json"}, flags...))
 		err := cmd.Execute()
 		if ExitCode(err) != ExitUserError {
 			t.Fatalf("%v: exit %d, err %v\n%s", flags, ExitCode(err), err, errOut.String())
@@ -1219,7 +1219,7 @@ func TestInitSecretsStageThroughTheCommand(t *testing.T) {
 		return map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelSecret: name}
 	}
 	r.sm.Seed(gcp.SecretID(sandbox, "bitbucket-token"), labels("bitbucket-token"), []byte(tokenValue))
-	out, _, err := executeStdin(t, "", "init", "--yes", "--json")
+	out, _, err := executeStdin(t, "", "setup", "--yes", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}

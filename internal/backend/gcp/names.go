@@ -33,7 +33,7 @@ import (
 // readable prefix: 12 hex for jobs, 8 for service accounts (only 30
 // characters), 16 for secrets and images. A hash stops accidental
 // collisions; the control against a chosen one is the ownership check
-// fugaro init makes before adopting a job, service account or secret.
+// fugaro update makes before adopting a job, service account or secret.
 const (
 	maxJobName  = 49
 	maxSAID     = 30

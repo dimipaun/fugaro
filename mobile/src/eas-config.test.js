@@ -38,7 +38,16 @@
 //     reverse-DNS string: a value committed here would be a value every copy
 //     of the app built from this tree ships, and the identity is the owner's
 //     (D125's release path, which Check 89 is owner-run; `app-config.test.js`
-//     holds the same fence on `app.json`).
+//     holds the same fence on `app.json`). **One key of the iOS submit section
+//     is an exception, and it is the app's, not an identity and not a
+//     credential**: `ascAppId`, the number App Store Connect gives the app's
+//     own record there (EAS printed it -- `ASC App ID: 6824584935` -- when the
+//     owner's first submission of 2026-10-20 created that record, and EAS never
+//     asks for it again). It reaches exactly one field of the config the
+//     submission is made from, it is public the way the project id is, and the
+//     section may carry **that key and no other**: the identities stay in the
+//     environment, and the Apple ID, the team id, an App Store Connect API key
+//     and every path to one stay out of this repository entirely.
 //   * **each profile names the EAS environment it builds with.** A profile
 //     that does not is resolved against EAS's default environment, and the
 //     variable the profile needs may not be there: `development`'s dev-client
@@ -95,6 +104,46 @@ function credentialPaths(value, path = '$', found = []) {
       if (typeof nested === 'string' && (names || points)) found.push(`${path}.${key}`);
       credentialPaths(nested, `${path}.${key}`, found);
     }
+  }
+  return found;
+}
+
+/**
+ * The one key the iOS submit section may carry, and the shape its value must
+ * have: **the digits** App Store Connect's app record carries. EAS reads the
+ * field as a string (`ascAppId` is spelled as a string in its own schema), so a
+ * string of digits is what is admitted and a bare JSON number is not -- and the
+ * digit fence is doing real work at the value as well as at the key: a bundle
+ * identifier, an Android package, an Apple team id and an App Store Connect API
+ * key id are all **not** digits, so a value pasted into this key is refused
+ * here rather than at the store, which is what makes it safe to commit a number
+ * that reaches a submission.
+ */
+const ASC_APP_ID = /^[0-9]+$/;
+
+/**
+ * Every setting of the iOS submit section this file refuses, as the path it was
+ * found at. The section is the one place a submission of the app names
+ * something on the other end, so it is an **allow-list** and not a list of
+ * forbidden names: `ascAppId` (with a digit value) is the only entry that may
+ * be here, and everything else -- the bundle identifier and the package name
+ * (which come from the EAS environment, above), the Apple account and the team
+ * id (which are the owner's), an App Store Connect API key, its issuer id or a
+ * path to one (which is a credential and lives on the EAS project or the
+ * owner's machine) -- is a finding, whatever it is called: a name-based list
+ * would admit the next spelling of the same thing, and this section's whole
+ * content is "which keys may reach a store submission".
+ *
+ * A section that is not an object is the same finding (there is nothing to
+ * allow-list), so a caller who wrote a string where the profile goes gets a
+ * path back rather than a silent pass.
+ */
+function iosSubmitFindings(value, path = '$.submit.internal.ios') {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return [path];
+  const found = [];
+  for (const [key, nested] of Object.entries(value)) {
+    if (key !== 'ascAppId') found.push(`${path}.${key}`);
+    else if (typeof nested !== 'string' || !ASC_APP_ID.test(nested)) found.push(`${path}.ascAppId`);
   }
   return found;
 }
@@ -190,11 +239,16 @@ test('a profile a store is submitted from increments its remote build number', (
 test('the submit profile lands on the internal track, which is C8', () => {
   // The one value Check 89 step 1 reads with `jq '.submit.internal.android.track'`.
   assert.equal(EAS.submit.internal.android?.track, 'internal');
-  // The iOS side is left to EAS's own prompts: an entry exists, and it names
-  // no key, no key path and no App Store Connect id -- all of which are the
-  // owner's, and all of which Check 89 step 5 greps the tree for.
-  assert.deepEqual(Object.keys(EAS.submit.internal.ios ?? {}), [], 'no ios submit key path, and no ascAppId');
-  for (const forbidden of ['ascAppId', 'ascApiKeyId', 'ascApiKeyIssuerId']) {
+  // The iOS side carries the app's own record on the other end and nothing
+  // else: `ascAppId` is what EAS prints when it creates that record and what it
+  // would otherwise ask for on every submission afterwards, and it is the one
+  // key here (the allow-list above is the fence; this is the value of it).
+  assert.deepEqual(iosSubmitFindings(EAS.submit.internal.ios), []);
+  assert.deepEqual(Object.keys(EAS.submit.internal.ios), ['ascAppId'], 'the App Store Connect app id, and nothing beside it');
+  assert.match(EAS.submit.internal.ios.ascAppId, ASC_APP_ID, 'the digits App Store Connect gave the app record');
+  // No credential and no credential path: the API key, its issuer id and any
+  // path to one are the owner's, and Check 89 step 5 greps the tree for them.
+  for (const forbidden of ['ascApiKeyId', 'ascApiKeyIssuerId', 'ascApiKeyPath']) {
     assert.equal(RAW.includes(forbidden), false, forbidden);
   }
   // No submit entry names a public track. (`production` is the name of the
@@ -203,6 +257,59 @@ test('the submit profile lands on the internal track, which is C8', () => {
   for (const [path, value] of stringsIn(EAS.submit)) {
     assert.equal(['production', 'beta', 'alpha'].includes(value), false, `${path} names the ${value} track`);
   }
+});
+
+test('the iOS submit section admits the app record’s id, and refuses every other entry', () => {
+  // The positive control: the one key, with the digits Apple's record carries,
+  // is admitted -- so a green run below means the fence can refuse, rather than
+  // meaning it refuses everything. (An empty section is admitted too: it is the
+  // state this key replaced, and a fence that refused it would be a fence
+  // against reverting.)
+  assert.deepEqual(iosSubmitFindings({ ascAppId: '6824584935' }), []);
+  assert.deepEqual(iosSubmitFindings({}), []);
+
+  // The boundary, one planted entry at a time -- each of these is a value that
+  // would otherwise reach a store submission from this repository, and each is
+  // the mutation this test exists to catch. The three below the ids are the
+  // same finding under the one key that IS allowed: the fence is on the value
+  // as well as on the name, which is what keeps `ascAppId` from becoming a
+  // place to put an identity.
+  const planted = [
+    ['the iOS identity', { bundleIdentifier: 'com.example.app' }],
+    ['the Android package', { package: 'com.example.app' }],
+    ['the Apple account', { appleId: 'owner@example.com' }],
+    ['the Apple team id', { appleTeamId: 'AB12XYZ34S' }],
+    ['an App Store Connect API key id', { ascApiKeyId: '2X9R4HXF34' }],
+    ['its issuer id', { ascApiKeyIssuerId: '69a6de70-05c2-47e3-8f5f-4c3b2a1d0e9f' }],
+    ['a path to an API key', { ascApiKeyPath: './asc-api-key.p8' }],
+    ['an identity pasted into the allowed key', { ascAppId: 'com.example.app' }],
+    ['a team id pasted into it', { ascAppId: 'AB12XYZ34S' }],
+    ['a bare JSON number, which is not the string EAS reads', { ascAppId: 6824584935 }],
+    ['a section that is not an object at all', 'com.example.app'],
+  ];
+  for (const [what, section] of planted) {
+    const expected = typeof section === 'object' && !Array.isArray(section)
+      ? [`$.submit.internal.ios.${Object.keys(section)[0]}`]
+      : ['$.submit.internal.ios'];
+    assert.deepEqual(iosSubmitFindings(section), expected, `${what} must be refused in the iOS submit section`);
+  }
+  // ... and the same walk over what the file actually carries, so a section
+  // that grew a second key is this test's failure too and not only the
+  // allow-list assertion above.
+  assert.deepEqual(iosSubmitFindings({ ...EAS.submit.internal.ios, appleId: 'owner@example.com' }), [
+    '$.submit.internal.ios.appleId',
+  ]);
+
+  // The README tells the owner what this key is and what it replaced: the iOS
+  // submit side is no longer left to EAS's prompt, and a README that still says
+  // so sends the owner looking for a question nobody asks any more.
+  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+  assert.equal(
+    readme.includes('The iOS submit side names nothing at all'),
+    false,
+    'the README still says the iOS submit side names nothing: it names the App Store Connect app id now',
+  );
+  assert.match(readme, /`ascAppId`/, 'the README says which key carries the app id, where the owner reads the profiles');
 });
 
 test('no credential path, no credential-shaped name and no credential-shaped value', () => {

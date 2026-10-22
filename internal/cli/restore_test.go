@@ -400,7 +400,7 @@ func TestRestoreBudgetComesFromTheOldProjectsFact(t *testing.T) {
 }
 
 // TestRestoreMovesTheConfigByNameAndNeverGuesses: the local config names the
-// GCP project everywhere it appears, and fugaro init refuses a --gcp-project
+// GCP project everywhere it appears, and the converge refuses a --gcp-project
 // that is not the selected config's (localcfg.Config.Override) — which is why
 // the move is the restore's own step, before the creating path runs. What
 // moves is decided and what does not is refused by name: a field naming the
@@ -543,7 +543,7 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 				t.Errorf("the stranded base kinds are not named (%q missing): %v", kind, left)
 			}
 		}
-		if !strings.Contains(joined, "fugaro init --base") || !strings.Contains(joined, initProject) {
+		if !strings.Contains(joined, "fugaro update --base") || !strings.Contains(joined, initProject) {
 			t.Errorf("the stranded base images are not named with the old project and the step that pins them again: %v", left)
 		}
 
@@ -622,7 +622,7 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 	// The budget backend is the one thing that cannot move on its own: its
 	// RTDB, its Firestore database, its restricted key and its signer are the
 	// old project's, and where they live next is the operator's decision
-	// (fugaro init --firebase), not the restore's. The operator's own
+	// (fugaro update --firebase-project), not the restore's. The operator's own
 	// settings stay, the four that name the old project go, and the step that
 	// builds them again is named.
 	t.Run("the budget backend's project-naming fields go, and are named", func(t *testing.T) {
@@ -645,7 +645,7 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 		if next.Budget.RTDBURL != "" || next.Budget.FirebaseProject != "" || next.Budget.FirebaseAPIKey != "" || next.Budget.TokenSigner != "" {
 			t.Errorf("the budget section still names the old project: %+v", *next.Budget)
 		}
-		if joined := strings.Join(left, "\n"); !strings.Contains(joined, "fugaro init --firebase") {
+		if joined := strings.Join(left, "\n"); !strings.Contains(joined, "fugaro update --firebase-project") {
 			t.Errorf("the stranded budget backend is not named with the step that builds it again: %v", left)
 		}
 	})
@@ -707,7 +707,7 @@ func TestRestoreConfirmWantsTheNameTyped(t *testing.T) {
 
 // TestRestoreCreatingPathRemarksTheProjectAndRebuildsTheDeployer is the
 // guard test for the step the restore delegates: fugaro restore creates the
-// project through the same path `fugaro init --create-project --managed`
+// project through the same path `fugaro setup --create-project --managed`
 // uses, and that path is also what (a) writes the creation fact with the
 // amount Task 4.2 requires and (b) sets up D77's state bucket and binds the
 // deployer to it (Task 1.5). A restore needs no step of its own for either —
@@ -720,7 +720,7 @@ func TestRestoreConfirmWantsTheNameTyped(t *testing.T) {
 // this test exists for as much as the marker is: stdinIsTerminal in
 // production is a type assertion on an *os.File, so a restore that handed the
 // child a *bufio.Reader would leave every typed step of the creation for the
-// user ("fugaro init is not finished: 1 step(s) left for you") after it had
+// user ("fugaro setup is not finished: 1 step(s) left for you") after it had
 // already moved the operator's project config. A constant-true seam cannot
 // see that, which is why this test does not use one.
 func TestRestoreCreatingPathRemarksTheProjectAndRebuildsTheDeployer(t *testing.T) {
@@ -1082,7 +1082,7 @@ func TestRestoreRefusesAProjectConfigItDoesNotHold(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
 	}
-	for _, want := range []string{"fugaro init --name " + initProjectName, initRunsBucket, "shared config"} {
+	for _, want := range []string{"fugaro setup --name " + initProjectName, initRunsBucket, "shared config"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %q: %v", want, err)
 		}
@@ -1407,6 +1407,53 @@ func TestRestoreEndsInTheSharedManagedApply(t *testing.T) {
 			t.Error("an agent's session changed the project config")
 		}
 	})
+}
+
+// TestRestorePrintsTheChildCommandLine pins the line the creating path prints
+// before it delegates. The review of W1.2 found it unpinned: that commit
+// reworded it — the child used to be named by the retired word — and no test
+// read it, so nothing would have noticed either the old wording coming back or
+// the line going away.
+//
+// Both halves are held, because both are the operator's: the sentence names
+// the door that carries the creating flags, and the argv printed after it is
+// the argv the child is handed — the config this run just wrote, the new
+// project, the billing account, and the managed and budget flags the child's
+// own confirmations hang off. The line alone is read, not the run's whole
+// transcript: D66's list quotes the retired word elsewhere in it, and that
+// string is W2.1's.
+//
+// Mutations (run, restore): naming the child with the retired word fails on
+// the sentence; deleting the Fprintf fails on it too.
+func TestRestorePrintsTheChildCommandLine(t *testing.T) {
+	r, _ := newRestoreRig(t)
+	restoreManagedOld(r)
+	recordRestoreApply(t, r)
+	_, root := restoreCheckout(t)
+	out, err := restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
+	if err != nil {
+		t.Fatalf("the restore: %v\n%s", err, out)
+	}
+	const sentence = "fugaro: creating the project through the same path fugaro setup --create-project --managed uses: fugaro setup --create-project"
+	i := strings.Index(out, sentence)
+	if i < 0 {
+		t.Fatalf("the creating path does not print the child command line:\nwant %q in:\n%s", sentence, out)
+	}
+	line := out[i:]
+	if j := strings.IndexByte(line, '\n'); j >= 0 {
+		line = line[:j]
+	}
+	for _, want := range []string{
+		"--config ", "--gcp-project " + newProj, "--link-billing " + billingAcc,
+		"--managed", "--budget ", "--budget-currency", "--billing-account " + billingAcc,
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the printed child command line does not carry %q:\n%s", want, line)
+		}
+	}
+	if strings.Contains(line, "fugaro init") {
+		t.Errorf("the printed child command line names the retired command:\n%s", line)
+	}
 }
 
 // TestRestoreNeverAdoptsAnExistingProject is MEDIUM 1: a NEW_PROJECT_ID that
@@ -1746,7 +1793,7 @@ func TestRestoreStopsWhenTheNewProjectsMarkerHasNoValidBudget(t *testing.T) {
 			calls := recordRestoreApply(t, r)
 			old := restoreInitCmd
 			restoreInitCmd = func(o *initOptions) *cobra.Command {
-				c := newInitCmdWith(o)
+				c := newSetupCmdWith(o)
 				inner := c.RunE
 				c.RunE = func(cmd *cobra.Command, args []string) error {
 					err := inner(cmd, args)
@@ -2026,7 +2073,7 @@ func TestRestorePutBackThatFailsSaysSo(t *testing.T) {
 func TestRestoreSeamsAreProductionsFunctions(t *testing.T) {
 	for name, pair := range map[string][2]any{
 		"restoreManagedApply": {restoreManagedApply, managedApply},
-		"restoreInitCmd":      {restoreInitCmd, newInitCmdWith},
+		"restoreInitCmd":      {restoreInitCmd, newSetupCmdWith},
 	} {
 		if reflect.ValueOf(pair[0]).Pointer() != reflect.ValueOf(pair[1]).Pointer() {
 			t.Errorf("%s is not its production function", name)

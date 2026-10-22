@@ -1,4 +1,4 @@
-# fugaro init reads these with terraform output -json: the preloaded boot
+# fugaro update reads these with terraform output -json: the preloaded boot
 # image a Batch job's definition names, and the accounts and network the
 # stage reports (design §8.1 task 6).
 

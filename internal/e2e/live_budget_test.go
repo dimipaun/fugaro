@@ -212,7 +212,7 @@ func lbConnect(t *testing.T, ctx context.Context, env *lbEnv) {
 		t.Fatalf("A2: the database refused the person's ADC token: %v", err)
 	}
 	if !found || project == "" {
-		t.Fatalf("/fugaro/project is not set: the database was not initialised by fugaro init --firebase")
+		t.Fatalf("/fugaro/project is not set: the database was not initialised by fugaro update --firebase-project")
 	}
 	env.project = project
 	t.Logf("FACT: A2 the RTDB REST API accepted the person's Application Default Credentials (scopes %v); /fugaro/project = %q", lbScopes, project)

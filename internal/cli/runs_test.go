@@ -450,7 +450,7 @@ func TestLsWarnsRebuildFailed(t *testing.T) {
 }
 
 // addCheckJob installs the repository's check job, checking workflows, as
-// fugaro init --repo does: ls reads which workflows it checks when there is
+// fugaro update --repo does: ls reads which workflows it checks when there is
 // no checkout to read fugaro.yaml from.
 func (f *cloudFixture) addCheckJob(t *testing.T, workflows ...string) {
 	t.Helper()

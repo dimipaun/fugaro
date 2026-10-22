@@ -535,7 +535,7 @@ func TestDeniedCascadeWriteHaltsNamed(t *testing.T) {
 	if rec.Status != runstore.StatusHalted || rec.Halt == nil || rec.Halt.Reason != runstore.HaltCredsRulesDenied || rec.Halt.Scope != "run" {
 		t.Fatalf("rec = %+v, halt = %+v; want a halted run with reason %q", rec, rec.Halt, runstore.HaltCredsRulesDenied)
 	}
-	if !strings.Contains(rec.Halt.Detail, "fugaro init --firebase") {
+	if !strings.Contains(rec.Halt.Detail, "fugaro update --firebase-project") {
 		t.Errorf("the halt's detail does not name the redeploy: %q", rec.Halt.Detail)
 	}
 	if out := b.outcome(); out == nil || out["status"] != "halted" {

@@ -74,7 +74,7 @@ resource "google_service_account" "credentials" {
 # service answers a named refusal rather than an empty credential set.
 #
 # The labels are `fugaro=managed` and the installation's name, and
-# deliberately NOT fugaro_secret: that label is what `fugaro init`'s discovery
+# deliberately NOT fugaro_secret: that label is what `fugaro update`'s discovery
 # and `fugaro secrets ls --project-wide` read to decide which *logical secret*
 # of the project's secret set a container holds (internal/infra/discover.go's
 # liveProjectSecrets, internal/cli/doctor.go), and this container is not one of

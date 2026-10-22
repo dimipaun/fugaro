@@ -5,10 +5,10 @@
     "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
-     "completion": "0.000001152",
+     "completion": "0.000000136",
      "discount": 0,
-     "input_cache_read": "0.0000000117",
-     "prompt": "0.00000003276"
+     "input_cache_read": "0.0000000104",
+     "prompt": "0.00000001328"
     },
     "tag": "open-inference/fp4"
    },
@@ -16,32 +16,21 @@
     "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
-     "completion": "0.00000128",
+     "completion": "0.00000045",
      "discount": 0,
-     "input_cache_read": "0.0000000364",
-     "prompt": "0.0000000364"
+     "input_cache_read": "0.0000000166",
+     "prompt": "0.0000000166"
     },
     "tag": "relace/fp4"
-   },
-   {
-    "context_length": 1048576,
-    "max_completion_tokens": 131072,
-    "pricing": {
-     "completion": "0.00000007672",
-     "discount": 0.726,
-     "input_cache_read": "0.000000007672",
-     "prompt": "0.00000003836"
-    },
-    "tag": "baidu/fp8"
    },
    {
     "context_length": 1024000,
     "max_completion_tokens": 384000,
     "pricing": {
-     "completion": "0.00000014",
-     "discount": 0.5,
-     "input_cache_read": "0.000000014",
-     "prompt": "0.00000007"
+     "completion": "0.0000001652",
+     "discount": 0.41,
+     "input_cache_read": "0.00000001652",
+     "prompt": "0.0000000826"
     },
     "tag": "streamlake/fp8"
    },
@@ -102,6 +91,17 @@
    },
    {
     "context_length": 1048576,
+    "max_completion_tokens": 131072,
+    "pricing": {
+     "completion": "0.00000028",
+     "discount": 0,
+     "input_cache_read": "0.000000028",
+     "prompt": "0.00000014"
+    },
+    "tag": "baidu/fp8"
+   },
+   {
+    "context_length": 1048576,
     "max_completion_tokens": 393216,
     "pricing": {
      "completion": "0.00000028",
@@ -155,17 +155,6 @@
     "tag": "azure/us"
    },
    {
-    "context_length": 1048576,
-    "max_completion_tokens": 943718,
-    "pricing": {
-     "completion": "0.00000017",
-     "discount": 0,
-     "input_cache_read": "0.000000013",
-     "prompt": "0.00000033"
-    },
-    "tag": "wafer"
-   },
-   {
     "context_length": 384000,
     "max_completion_tokens": 345600,
     "pricing": {
@@ -175,6 +164,17 @@
      "prompt": "0.00000044"
     },
     "tag": "cloudflare"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.00000017",
+     "discount": 0,
+     "input_cache_read": "0.000000013",
+     "prompt": "0.0000007"
+    },
+    "tag": "wafer/mxfp4"
    }
   ]
  }

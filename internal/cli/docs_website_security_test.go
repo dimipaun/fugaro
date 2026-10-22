@@ -13,8 +13,10 @@ package cli
 // is exactly where the softening happens.
 //
 // The owner's brief of 2026-10-19 changed what the page RENDERS of this
-// document -- /security/ now carries a short model summary, the document's own
-// "Reporting a vulnerability" section and a link to the policy
+// document -- /security/ now carries the document's own "In short" section,
+// its own "Reporting a vulnerability" section and a link to the policy, and
+// the owner's brief of 2026-10-20 put a boundary diagram of the trust
+// boundaries above them, drawn in the document's own words
 // (website/src/pages/security.astro, held to that shape by
 // website/test/security.mjs) -- but not the generated file these tests read:
 // it is still SECURITY.md byte for byte, and the pipeline still validates it.

@@ -362,7 +362,7 @@ func TestDocsMultiModelDocumentsTheCascadeSwitch(t *testing.T) {
 		"docs/credentials-service/runbook.md",
 		// What the launch actually refuses on. The section first said the
 		// service's absence is what refuses a launch ("an installation that
-		// never ran `fugaro init --provision-credentials` has none, and a
+		// never ran `fugaro update --provision-credentials` has none, and a
 		// `cascade` run is refused at launch there too"), and the launch gate
 		// reads no such thing: cascadeLaunchRefusal (internal/cli/run.go)
 		// judges the published switch, the gateway's mode and the rules

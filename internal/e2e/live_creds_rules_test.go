@@ -243,7 +243,7 @@ func TestLiveCredsRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	if credsMarker != rules.CredsRulesVersion {
-		t.Fatalf("%s reads %d, want %d: the credentials rules are not deployed on this installation, so nothing below would be about them (run `fugaro init --firebase` from a release that deploys them)", rules.PathCredsRulesMarker(), credsMarker, rules.CredsRulesVersion)
+		t.Fatalf("%s reads %d, want %d: the credentials rules are not deployed on this installation, so nothing below would be about them (run `fugaro update --firebase-project` from a release that deploys them)", rules.PathCredsRulesMarker(), credsMarker, rules.CredsRulesVersion)
 	}
 	policyMarker, err := crMarker(ctx, facts, owner, projectpolicy.PathRulesMarker())
 	if err != nil {
@@ -347,7 +347,7 @@ func TestLiveCredsRules(t *testing.T) {
 
 // crOwner is the client the owner's own credentials give: Application Default
 // Credentials with the Firebase database and userinfo scopes, over IAM, which
-// bypasses the rules exactly as it does for `fugaro init`.
+// bypasses the rules exactly as it does for `fugaro update`.
 func crOwner(ctx context.Context, target crTarget) (*rtdb.Client, error) {
 	ts, err := google.DefaultTokenSource(ctx, crScopes...)
 	if err != nil {
@@ -455,7 +455,7 @@ func crInstall(ctx context.Context, facts *crFacts, owner *rtdb.Client) (string,
 		return "", fmt.Errorf("reading %s as the owner: %s", budget.PathProject, facts.errText(err))
 	}
 	if !found || install == "" {
-		return "", fmt.Errorf("%s is not set: the database was not initialised by `fugaro init --firebase`", budget.PathProject)
+		return "", fmt.Errorf("%s is not set: the database was not initialised by `fugaro update --firebase-project`", budget.PathProject)
 	}
 	if strings.EqualFold(install, "belong") {
 		return "", fmt.Errorf("%s names the 'belong' installation: this check never touches it (D147, F33)", budget.PathProject)
@@ -478,7 +478,7 @@ func crMarker(ctx context.Context, facts *crFacts, c *rtdb.Client, path string) 
 
 // crMaxReserve reads the largest lease the counter leaves are bounded by, with
 // the run's own identity: it is under config/limits, which every run token of
-// the project reads. It has to be there: every installation `fugaro init
+// the project reads. It has to be there: every installation `fugaro update
 // --firebase` writes it, and the leaves the check writes a positive amount to
 // are bounded by it, so its absence would turn those writes into refusals for
 // a reason that is not what this check is about.
@@ -489,7 +489,7 @@ func crMaxReserve(ctx context.Context, facts *crFacts, run *rtdb.Client) (int64,
 		return 0, fmt.Errorf("reading %s/maxReserveMicros as the run: %s", budget.PathLimits, facts.errText(err))
 	}
 	if !found {
-		return 0, fmt.Errorf("%s/maxReserveMicros is not set: the counter leaves are bounded by it, and an installation without it can lease nothing (an operator runs `fugaro init --firebase` again)", budget.PathLimits)
+		return 0, fmt.Errorf("%s/maxReserveMicros is not set: the counter leaves are bounded by it, and an installation without it can lease nothing (an operator runs `fugaro update --firebase-project` again)", budget.PathLimits)
 	}
 	return v, nil
 }

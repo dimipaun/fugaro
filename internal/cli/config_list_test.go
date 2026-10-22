@@ -865,7 +865,7 @@ func TestConfigListWithNoInstallations(t *testing.T) {
 		t.Errorf("an empty listing is not two empty arrays (never a null):\n%s", out)
 	}
 	text, _, err := execute(t, "config", "list")
-	if err != nil || !strings.Contains(text, "fugaro init") {
+	if err != nil || !strings.Contains(text, "fugaro setup") {
 		t.Errorf("text %q, %v", text, err)
 	}
 }

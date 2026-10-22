@@ -82,8 +82,9 @@ func (o *secretsOptions) addFlags(cmd *cobra.Command) {
 }
 
 // NormalizeRepoArgs is argv with a bare --repo (no "=value" and no token
-// after it) rewritten to --repo=, whose empty value resolveSecretRepo already
-// reads as "this checkout's origin".
+// after it) rewritten to --repo=, whose empty value the commands that take it
+// read as "the repository this checkout belongs to": resolveSecretRepo for
+// secrets set/ls, and namedRepo for budget set/kill/resume.
 //
 // --repo takes an optional value, which pflag has no way to declare: the flag
 // itself is an ordinary string flag (no NoOptDefVal of its own), so cobra
@@ -96,15 +97,20 @@ func (o *secretsOptions) addFlags(cmd *cobra.Command) {
 // cmd/fugaro/main.go and the tests' execute helpers call this before cobra
 // parses anything. A token after `--` is a positional argument, never a flag,
 // and is left alone.
-// It rewrites nothing outside `secrets set` and `secrets ls`: init's --repo
-// is a bool (the repository-scoped init), so `fugaro init --repo` must keep
-// parsing as the flag it is, and no other command's --repo takes an optional
-// value.
+//
+// It rewrites nothing outside the verbs optionalRepoVerbs lists: init's --repo
+// is a bool (the repository-scoped init), so `fugaro update --repo` must keep
+// parsing as the flag it is; `budget show`'s empty --repo means no repository
+// filter rather than this checkout, so `budget show --repo` stays the flag
+// error it is today rather than quietly meaning something else; `budget
+// preview` needs no rewrite, because it already reads an absent --repo as this
+// checkout's origin (runBudgetPreview, budget_preview.go); and no other
+// command's --repo takes an optional value.
 func NormalizeRepoArgs(args []string) []string {
 	out := slices.Clone(args)
-	// Everything before the secrets subcommand -- the global flags and their
-	// values -- is left exactly as it came in.
-	verbAt, ok := secretsVerb(args)
+	// Everything before the verb -- the global flags and their values -- is
+	// left exactly as it came in.
+	verbAt, ok := optionalRepoVerb(args)
 	if !ok {
 		return out
 	}
@@ -122,6 +128,20 @@ func NormalizeRepoArgs(args []string) []string {
 		out[i] = "--repo="
 	}
 	return out
+}
+
+// optionalRepoVerbs are the (command, verb) pairs whose --repo takes an
+// optional value, and so the only places NormalizeRepoArgs rewrites. The first
+// positional argument is the command and the second its verb (verbOf): the
+// pair has to be one of these, or there is nothing to rewrite.
+//
+// The bare form means the same thing in both families -- the repository this
+// checkout belongs to -- because both are asked the same question ("which
+// repository is this command about?") from a checkout that answers it.
+var optionalRepoVerbs = map[string]map[string]bool{
+	"secrets": {"set": true, "ls": true},
+	"secret":  {"set": true, "ls": true}, // secrets' alias
+	"budget":  {"set": true, "kill": true, "resume": true},
 }
 
 // secretsBoolFlags are the secrets commands' boolean flags, written as the
@@ -153,14 +173,32 @@ func NormalizeRepoArgs(args []string) []string {
 // invariant the doc above claims and the one a future flag addition breaks.
 var secretsBoolFlags = map[string]bool{"--json": true, "--project-wide": true, "--help": true}
 
-// secretsVerb returns the index of the `set` or `ls` that follows the secrets
-// command, and whether there is one. The argv is scanned into its positional
-// arguments the way cobra's own command scan does it (stripFlags), because
-// that is what decides which token cobra reads as the command: a flag's *value*
-// is not a command name. Searching the slice for the first token that spells
-// "secrets" answers a different question — `fugaro --config secrets secrets set
-// npm-token --repo` has one as a flag's value — and answering that one leaves
-// the bare --repo of the real subcommand unrewritten.
+// budgetBoolFlags is the same list for the budget commands whose --repo takes
+// an optional value (optionalRepoVerbs), and it exists for the same reason:
+// the scan must read `fugaro budget --yes set --repo` the way pflag does, or
+// it finds no verb and leaves the bare --repo unrewritten.
+//
+// It is not the three commands' own flags alone: the walk in
+// TestBudgetBoolFlagsMatchTheFlags covers the whole budget tree, because a
+// NoOptDefVal flag anywhere under `budget` is a token the scan can meet. The
+// entries --json and --help are in secretsBoolFlags too; the scan consults
+// both maps, so a name in either is enough.
+var budgetBoolFlags = map[string]bool{
+	"--global": true, "--defaults": true, "--clear": true, "--yes": true,
+	"--all": true, "--json": true,
+	// budget history's own, and the --help cobra adds at Execute time.
+	"--sweep": true, "--rollover": true, "--force": true, "--help": true,
+}
+
+// optionalRepoVerb returns the index of the verb (set, kill, resume, ls) that
+// follows a command whose --repo takes an optional value, and whether there is
+// one. The argv is scanned into its positional arguments the way cobra's own
+// command scan does it (stripFlags), because that is what decides which token
+// cobra reads as the command: a flag's *value* is not a command name. Searching
+// the slice for the first token that spells "secrets" answers a different
+// question — `fugaro --config secrets secrets set npm-token --repo` has one as
+// a flag's value — and answering that one leaves the bare --repo of the real
+// subcommand unrewritten.
 //
 // The scan, over args without the program name:
 //
@@ -169,19 +207,21 @@ var secretsBoolFlags = map[string]bool{"--json": true, "--project-wide": true, "
 //   - a long flag with no "=value" ("--config", "--repo") consumes the next
 //     token as its value, if there is one, and so does a one-letter short flag
 //     ("-c"): pflag has no other reading for them;
-//   - a long flag in secretsBoolFlags ("--json", "--project-wide", "--help")
-//     consumes nothing: pflag gives it a NoOptDefVal, so the token after it is
-//     the next flag or positional and not its value, and cobra's own command
-//     scan asks the flag set the same question. TestSecretsBoolFlagsMatchTheFlags
-//     pins the list to the flags the commands declare;
+//   - a long flag in secretsBoolFlags or budgetBoolFlags ("--json",
+//     "--project-wide", "--help") consumes nothing: pflag gives it a
+//     NoOptDefVal, so the token after it is the next flag or positional and not
+//     its value, and cobra's own command scan asks the flag set the same
+//     question. TestSecretsBoolFlagsMatchTheFlags and
+//     TestBudgetBoolFlagsMatchTheFlags pin each list to the flags its commands
+//     declare;
 //   - a flag written with "=" ("--config=x", "-c=x") and a bundled short flag
 //     ("-qv") take no separate token;
 //   - anything left that is not "-" is a positional argument, in order.
 //
 // The first positional argument is the command, the second is the subcommand:
-// the pair has to be `secrets`/`secret` then `set`/`ls`, or there is nothing
-// here to rewrite.
-func secretsVerb(args []string) (at int, ok bool) {
+// the pair has to be in optionalRepoVerbs, or there is nothing here to
+// rewrite.
+func optionalRepoVerb(args []string) (at int, ok bool) {
 	var positionals []int
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -189,7 +229,7 @@ func secretsVerb(args []string) (at int, ok bool) {
 		case a == "--":
 			return verbOf(args, positionals)
 		case strings.HasPrefix(a, "--") && !strings.Contains(a, "="):
-			if secretsBoolFlags[a] {
+			if secretsBoolFlags[a] || budgetBoolFlags[a] {
 				break // NoOptDefVal: no value of its own
 			}
 			i++ // its value, when the next token is one
@@ -204,16 +244,16 @@ func secretsVerb(args []string) (at int, ok bool) {
 	return verbOf(args, positionals)
 }
 
-// verbOf reads the secrets subcommand out of the positional arguments the scan
-// found — the first is the command, the second the verb — and returns the
-// index of the verb (where the rewrite starts) and whether the pair names it
-// at all.
+// verbOf reads the subcommand out of the positional arguments the scan found —
+// the first is the command, the second the verb — and returns the index of the
+// verb (where the rewrite starts) and whether the pair is one whose --repo
+// takes an optional value at all.
 func verbOf(args []string, positionals []int) (at int, ok bool) {
 	if len(positionals) < 2 {
 		return 0, false
 	}
 	cmd, verb := args[positionals[0]], args[positionals[1]]
-	if (cmd != "secrets" && cmd != "secret") || (verb != "set" && verb != "ls") {
+	if !optionalRepoVerbs[cmd][verb] {
 		return 0, false
 	}
 	return positionals[1], true

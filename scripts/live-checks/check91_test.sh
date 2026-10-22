@@ -1342,7 +1342,7 @@ test_unreadable_staging_bucket_stops_before_the_build() {
   # create a project-level resource the installation's Terraform owns.
   expect_contains "$err" "gcloud storage buckets add-iam-policy-binding gs://fugaro-dev_cloudbuild --member=user:" "unreadable staging bucket: the stop names the real grant for the owner"
   expect_contains "$err" "gcloud storage buckets create gs://fugaro-dev_cloudbuild" "unreadable staging bucket: and the create, for a bucket that is not there"
-  expect_absent "$err" "fugaro init'" "unreadable staging bucket: init gives no grant, so it is not offered as the remedy"
+  expect_absent "$err" "fugaro update'" "unreadable staging bucket: init gives no grant, so it is not offered as the remedy"
   local calls
   calls=$(cat "$dir/logs/gcloud.calls")
   expect_absent "$calls" "builds submit" "unreadable staging bucket: nothing is built"

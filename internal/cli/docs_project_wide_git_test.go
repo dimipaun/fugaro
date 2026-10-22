@@ -142,7 +142,7 @@ func TestSecurityMdStatesTheProjectScopeDefault(t *testing.T) {
 // step 3): D2 changed where `fugaro secrets set` puts a value, so every page
 // a person meets the command on has to say the default and what it changes —
 // the project layer (the scope table's "outside this table" paragraph), the
-// multi-model guide (which keys a job mounts, and when a re-run of init
+// multi-model guide (which keys a job mounts, and when a re-run of update
 // --repo is what changes that), the dogfooding page (whose own installation
 // enrolls three repositories), and the setup skill, where the changed prompt
 // wording and doctor's own scope listing are what a person reads before
@@ -162,7 +162,7 @@ func TestDocsStateTheProjectScopeDefaultWhereASecretIsStored(t *testing.T) {
 		{"../../docs/multi-model.md", []string{
 			"One key for the whole project, and it is the default.",
 			"`--project-wide` is still accepted as a synonym",
-			"a project-scope copy created or deleted after a job's apply changes what that job mounts only on the next `fugaro init --repo`",
+			"a project-scope copy created or deleted after a job's apply changes what that job mounts only on the next `fugaro update --repo`",
 		}},
 		{"../../docs/dogfooding.md", []string{
 			"Both are stored once for the project",
@@ -189,10 +189,12 @@ func TestDocsStateTheProjectScopeDefaultWhereASecretIsStored(t *testing.T) {
 
 // TestDocsSayTheInitPromptHasNoRepoFlagAndBitbucketIsPerRepository: the two
 // sentences the code review of this PR found wrong (item 1), corrected once
-// more in the second review round. `fugaro init --repo`'s secrets stage has no
+// more in the second review round. `fugaro update --repo`'s secrets stage has no
 // --repo of its own to pass (internal/cli/initsecrets.go, the prompt's own
 // "press Ctrl-C here" text is the way out), so a page that tells a reader to
-// pass one at the prompt describes a flag that does not exist; and
+// pass one at the prompt describes a flag that does not exist; the resume line
+// names the door it resumes, `fugaro update --repo`, because "the run" already
+// means an artifact run (internal/runner/halt.go's "start the run again"); and
 // `bitbucket-token` is a PerRepositorySecret, which is *not* the same as never
 // project-wide (internal/config/project_secrets.go): D2's sweep skips it, so it
 // is per-repository by default, but `AllowedForProjectSecret` is asked before
@@ -206,10 +208,10 @@ func TestDocsSayTheInitPromptHasNoRepoFlagAndBitbucketIsPerRepository(t *testing
 		want []string
 	}{
 		{"../../plugin/skills/setup/SKILL.md", []string{
-			"Init's prompts (step 9) have no `--repo` to pass",
+			"Setup's prompts (step 9) have no `--repo` to pass",
 			"except a per-repository one (`bitbucket-token`, project-wide only through an explicit `project_secrets` allow-list entry)",
 			"per-repository by default; project-wide only through that same entry",
-			"press Ctrl-C at the prompt and run the command it printed in your own terminal, then start init again",
+			"press Ctrl-C at the prompt and run the command it printed in your own terminal, then start setup again",
 			"a covered name is not asked for",
 		}},
 		{"../../plugin/skills/setup/reference/decisions.md", []string{
@@ -217,7 +219,7 @@ func TestDocsSayTheInitPromptHasNoRepoFlagAndBitbucketIsPerRepository(t *testing
 		}},
 		{"../../docs/multi-model.md", []string{
 			"the prompt has no `--repo` to pass",
-			"press Ctrl-C at it, run the command it printed (`fugaro secrets set <name> --repo <owner>/<name>`) in your own terminal, and start init again",
+			"press Ctrl-C at it, run the command it printed (`fugaro secrets set <name> --repo <owner>/<name>`) in your own terminal, and start `fugaro update --repo` again",
 			"`bitbucket-token` excepted: a repository access token serves one repository, so it is stored per repository by default and the prompt offers it project-wide only through an explicit `project_secrets` allow-list entry",
 		}},
 	}
@@ -233,7 +235,7 @@ func TestDocsSayTheInitPromptHasNoRepoFlagAndBitbucketIsPerRepository(t *testing
 			}
 		}
 		// The wrong sentences, in every spelling this PR gave them: the
-		// first two told a reader the init prompt takes `--repo`, the third
+		// first two told a reader the update prompt takes `--repo`, the third
 		// said bitbucket-token is never project-wide.
 		for _, wrong := range []string{
 			"store project-wide unless `--repo` is passed",
@@ -242,7 +244,7 @@ func TestDocsSayTheInitPromptHasNoRepoFlagAndBitbucketIsPerRepository(t *testing
 			"no prompt ever offers it project-wide",
 		} {
 			if strings.Contains(doc, wrong) {
-				t.Errorf("%s still tells a reader the init prompt takes `--repo`: %q", tc.path, wrong)
+				t.Errorf("%s still tells a reader the update prompt takes `--repo`: %q", tc.path, wrong)
 			}
 		}
 	}

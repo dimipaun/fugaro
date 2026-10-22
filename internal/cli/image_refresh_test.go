@@ -590,7 +590,7 @@ func TestRefreshStopsSayWhatFinished(t *testing.T) {
 				if got := strings.Join(*ran, ","); got != st.ran {
 					t.Errorf("ran %s, want %s: a step after the stop ran, or one before it did not", got, st.ran)
 				}
-				if strings.Contains(out, "is done") || strings.Contains(out, "next: run fugaro init --anchor") {
+				if strings.Contains(out, "is done") || strings.Contains(out, "next: run fugaro update --anchor") {
 					t.Errorf("a stopped run ended like a finished one:\n%s", out)
 				}
 				if !strings.Contains(out, "4. builds:") || strings.Index(out, "fugaro image refresh of acme/app") > strings.Index(out, "step 2, base:") {
@@ -646,7 +646,7 @@ func TestRefreshPreflightStopTexts(t *testing.T) {
 		useVersion(t, "dev")
 		newAnchorModeRig(t, refreshYAML, true)
 		_, _, err := executeStdin(t, "", "image", "refresh")
-		want := "fugaro image refresh pins this release's base images through the remote repository, and this is a development build (dev) with none published: use a release build, or build a base from a checkout and point at it with fugaro init --base-image KIND=<tag>"
+		want := "fugaro image refresh pins this release's base images through the remote repository, and this is a development build (dev) with none published: use a release build, or build a base from a checkout and point at it with fugaro update --base-image KIND=<tag>"
 		if ExitCode(err) != ExitUserError || err.Error() != want {
 			t.Fatalf("exit %d, err %q, want %q", ExitCode(err), err, want)
 		}
@@ -776,7 +776,7 @@ func TestRefreshConfirmationsNeedTheTypedName(t *testing.T) {
 	})
 }
 
-// D10: the end note names fugaro init --anchor only when the checkout
+// D10: the end note names fugaro update --anchor only when the checkout
 // lacks gcp_project:, and fugaro.yaml is never written either way (item 7:
 // no Terraform, no live cloud, through the whole command).
 func TestRefreshEndsWithTheAnchorNote(t *testing.T) {
@@ -797,7 +797,7 @@ func TestRefreshEndsWithTheAnchorNote(t *testing.T) {
 		if strings.Join(*ran, ",") != "base,check job,builds" || !strings.Contains(out, "fugaro image refresh of acme/app is done") {
 			t.Fatalf("ran %v\n%s", *ran, out)
 		}
-		if got := strings.Contains(out, "next: run fugaro init --anchor in this checkout"); got != tc.note {
+		if got := strings.Contains(out, "next: run fugaro update --anchor in this checkout"); got != tc.note {
 			t.Errorf("anchor note %v, want %v:\n%s", got, tc.note, out)
 		}
 		r.check(t, tc.yaml) // fugaro.yaml is never written; no terraform, no Artifact Registry call
@@ -861,7 +861,7 @@ func TestRefreshFinalSummaryRepeatsMissingCheckJob(t *testing.T) {
 				return &refreshTarget{lc: p.lc, cfg: p.cfg}, nil
 			},
 			checkJob: func(_ context.Context, t *refreshTarget) error {
-				fmt.Fprintln(r.w, "  the daily image check job was not found, though this repository's spec has one: run fugaro init --repo in the checkout to deploy it (nothing was updated)")
+				fmt.Fprintln(r.w, "  the daily image check job was not found, though this repository's spec has one: run fugaro update --repo in the checkout to deploy it (nothing was updated)")
 				t.checkJobMissing = true
 				return nil
 			},

@@ -32,11 +32,8 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 
-const STYLES_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'styles')
 const TOKENS_FILE = 'tokens.css'
 
 // The palette files this check reads: D104's three candidates, which the owner chose
@@ -58,6 +55,7 @@ export const PALETTE_IN_FORCE = 'palette-logo.css'
 // requires every one of them.
 const COLOUR_TOKENS = [
   'ground',
+  'panel',
   'surface',
   'text',
   'text-muted',
@@ -65,6 +63,7 @@ const COLOUR_TOKENS = [
   'accent-on-dark',
   'border',
   'warn',
+  'ok',
   'gradient-from',
   'gradient-to',
 ]
@@ -95,41 +94,27 @@ const REQUIRED_SEMANTIC_TOKENS = [
   'duration-base',
 ]
 
-// ---- reading the stylesheets -----------------------------------------------------------
+// ---- reading the stylesheets, the palette and the colour arithmetic ----------------------
+//
+// The readers and the arithmetic are `website/test/lib/colour.mjs`: `website/test/how-it-works.mjs`
+// holds the run drawing's own labels to the surface they are drawn on, and the two gates
+// compute a ratio the same way (`docs/design/console-styling.md` §3.4's rule, one
+// implementation rather than two). They are re-exported here, where the cases below and the
+// console's design read them from.
 
-// Comments are stripped before anything is parsed, and that is load-bearing in both
-// directions: a palette's header explains the values and may quote them, and a colour
-// mentioned in prose is not a colour the page paints. The rule this file enforces is about
-// declarations.
-export function stripComments(css) {
-  return css.replace(/\/\*[\s\S]*?\*\//g, '')
-}
+import {
+  contrastRatio,
+  declarations,
+  luminance,
+  paletteTokens,
+  parseColour,
+  readStyleFile,
+  stripComments,
+} from './lib/colour.mjs'
 
-// The custom properties a stylesheet declares, as a Map of name (without the leading `--`)
-// to value. A tiny declaration reader rather than a CSS parser: the token files are flat
-// `:root` blocks of `--name: value;` and nothing else, and the checks below are about which
-// names exist and what they hold.
-export function declarations(css) {
-  const out = new Map()
-  for (const [, name, value] of stripComments(css).matchAll(/--([a-zA-Z0-9-]+)\s*:\s*([^;{}]+);/g)) {
-    out.set(name, value.trim())
-  }
-  return out
-}
+export { contrastRatio, declarations, luminance, paletteTokens, parseColour, readStyleFile, stripComments }
 
-function readStyleFile(fileName) {
-  const file = path.join(STYLES_DIR, fileName)
-  assert.ok(
-    existsSync(file),
-    `${fileName} is missing: the site's design tokens live in website/src/styles/ and this check reads them from the repository, not from a build output`,
-  )
-  return readFileSync(file, 'utf8')
-}
-
-export function paletteTokens(fileName) {
-  return declarations(readStyleFile(fileName))
-}
-
+/** The token layer itself, which is where the palette in force is named. */
 function tokensCss() {
   return readStyleFile(TOKENS_FILE)
 }
@@ -137,45 +122,6 @@ function tokensCss() {
 // The stylesheets a palette import names, in order, as written in the file.
 function importedFiles(css) {
   return [...stripComments(css).matchAll(/@import\s+["']([^"']+)["']/g)].map((m) => m[1])
-}
-
-// ---- colour arithmetic -----------------------------------------------------------------
-
-// A palette value has to be an opaque hex literal, and a value that is not is refused
-// rather than skipped: a colour function, an alpha channel or a `var()` indirection is a
-// pair this check cannot compute, and a pair it cannot compute is exactly the pair a
-// contrast regression would hide in.
-export function parseColour(value, name) {
-  assert.equal(
-    typeof value,
-    'string',
-    `${name} is not declared: every palette is a complete value set, and a token that is missing from one of them cannot be checked`,
-  )
-  const hex = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(value.trim())
-  assert.ok(
-    hex,
-    `${name}: ${JSON.stringify(value)} is not an opaque hex colour. The contrast check computes every pair from these literals, so a colour function, an alpha channel or a var() here would be a pair it cannot see`,
-  )
-  const digits = hex[1].length === 3 ? [...hex[1]].map((c) => c + c).join('') : hex[1]
-  return [0, 2, 4].map((i) => parseInt(digits.slice(i, i + 2), 16))
-}
-
-// WCAG 2.1 relative luminance, and the contrast ratio built from it.
-function channelLuminance(channel) {
-  const c = channel / 255
-  return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
-}
-
-export function luminance(rgb) {
-  const [r, g, b] = rgb.map(channelLuminance)
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b
-}
-
-export function contrastRatio(fg, bg) {
-  const a = luminance(fg)
-  const b = luminance(bg)
-  const [hi, lo] = a >= b ? [a, b] : [b, a]
-  return (hi + 0.05) / (lo + 0.05)
 }
 
 // ---- the pairs the site paints ---------------------------------------------------------
@@ -196,38 +142,52 @@ const LARGE_OR_UI = 3
 // largest type sits, so exempting it would be exempting the one place a contrast failure is
 // most visible.
 export const PAIRS = [
-  // Body copy on the ground, on a card, and on each stop of the hero's gradient.
+  // Body copy on the ground, on a card, on the panel a card is drawn on, and on each stop of
+  // the hero's gradient.
   ['--text', '--ground', BODY_TEXT],
+  ['--text', '--panel', BODY_TEXT],
   ['--text', '--surface', BODY_TEXT],
   ['--text', '--gradient-from', BODY_TEXT],
   ['--text', '--gradient-to', BODY_TEXT],
 
   // The quieter tone beside it, which is still prose and still has to be readable.
   ['--text-muted', '--ground', BODY_TEXT],
+  ['--text-muted', '--panel', BODY_TEXT],
   ['--text-muted', '--surface', BODY_TEXT],
   ['--text-muted', '--gradient-from', BODY_TEXT],
   ['--text-muted', '--gradient-to', BODY_TEXT],
 
-  // The accent as text: every link, and every heading that carries the accent. This is the
-  // token whose whole job is to be the legible form of `--accent`.
+  // The accent as text: every link, every heading that carries the accent, and the eyebrow the
+  // redesign sets above a section — which is small text on the ground or on a panel.
   ['--accent-on-dark', '--ground', BODY_TEXT],
+  ['--accent-on-dark', '--panel', BODY_TEXT],
   ['--accent-on-dark', '--surface', BODY_TEXT],
   ['--accent-on-dark', '--gradient-from', BODY_TEXT],
   ['--accent-on-dark', '--gradient-to', BODY_TEXT],
 
-  // Warnings and cost figures, which are text on both grounds and on the hero — the
-  // caps-and-costs teaser sits over the gradient, which is why `--warn` is a pair there and
-  // not only on the flat grounds — and the dark label on a filled warning chip.
+  // Warnings and cost figures, which are text on both grounds, on the hero and on the panel —
+  // the caps-and-costs teaser sits over the gradient, which is why `--warn` is a pair there and
+  // not only on the flat grounds, and the hero illustration's status line is the warn tone on a
+  // panel — and the dark label on a filled warning chip.
   ['--warn', '--ground', BODY_TEXT],
+  ['--warn', '--panel', BODY_TEXT],
   ['--warn', '--surface', BODY_TEXT],
   ['--warn', '--gradient-from', BODY_TEXT],
   ['--warn', '--gradient-to', BODY_TEXT],
   ['--ground', '--warn', BODY_TEXT],
 
+  // The success tone, which the redesign made a token: it is the last step of a run — the
+  // ground as a label on its fill — and a mark on the ground, on a panel and on the surface.
+  ['--ground', '--ok', BODY_TEXT],
+  ['--ok', '--ground', LARGE_OR_UI],
+  ['--ok', '--panel', LARGE_OR_UI],
+  ['--ok', '--surface', LARGE_OR_UI],
+
   // The accent as a fill and as structure: a filled button's label is text on the accent,
   // and the accent itself is a focus ring and a rule against the ground and the surface.
   ['--ground', '--accent', BODY_TEXT],
   ['--accent', '--ground', LARGE_OR_UI],
+  ['--accent', '--panel', LARGE_OR_UI],
   ['--accent', '--surface', LARGE_OR_UI],
   ['--accent', '--gradient-from', LARGE_OR_UI],
   ['--accent', '--gradient-to', LARGE_OR_UI],
@@ -255,6 +215,13 @@ export const BASE_PAIRS = [
   // The focus ring, the current page's underline and the blockquote rule, as UI colours.
   ['--accent', '--ground', LARGE_OR_UI],
   ['--accent', '--surface', LARGE_OR_UI],
+  // The redesign's own panel, which the card, the pill and the command bar are drawn on: body
+  // copy inside a card, the quieter tone of a pill's label, and the eyebrow the accent sets.
+  ['--text', '--panel', BODY_TEXT],
+  ['--text-muted', '--panel', BODY_TEXT],
+  ['--accent-on-dark', '--panel', BODY_TEXT],
+  // The success tone as a step's fill, with the ground as its label.
+  ['--ground', '--ok', BODY_TEXT],
 ]
 
 // The pairs of a palette that are below their ratio, as the lines a reader sees. Exported
@@ -822,143 +789,236 @@ test('every built page meets the accessibility contract: landmarks, headings, na
   assert.deepEqual(failures, [], `the built site breaks the accessibility contract (D105):\n  ${failures.join('\n  ')}`)
 })
 
-// ---- the flow (P8, D185) ------------------------------------------------------------------
+// ---- the slider and the run's picture: what the retired flow's a11y gate reads now ---------
 //
-// The flow on How It Works and on the homepage is four steps and three arrows. Its text is
-// the whole content — a screen reader reads the steps, in order — and its arrows are
-// decoration, which is a claim only this file can hold it to: the generic contract above
-// refuses a *focusable* element hidden with aria-hidden, and says nothing about art that
-// should have been hidden and was not, nor about a flow whose own words are hidden and so
-// never reach a reader at all. The motion path is the generic one (every animation in a
-// built page's CSS has to be gated or neutralised, D105), so it is not repeated here.
+// The owner's ruling of 2026-10-20 retires the four-step flow and asks for the gates that read
+// it to be replaced, one for one, by gates that read what the pages show now. The flow's a11y
+// gate was the one reading in this file that only this file can make: the generic contract
+// above refuses a *focusable* element hidden with `aria-hidden`, and says nothing about art
+// that should have been hidden and was not, nor about a list whose own words are hidden and so
+// never reach a reader at all. The two blocks that took the flow's place are read the same way
+// here: the homepage's slider — an ordered list of three steps, each a heading with its line,
+// drawn with an inline icon, shown one panel at a time — and the run's picture, which is one
+// drawing announced as one image rather than a hundred text nodes read out in whatever order
+// they were written.
+//
+// The motion path stays the generic one (every animation in a built page's CSS has to be gated
+// or neutralised, D105), which is now the whole of the motion these pages carry.
 
 /** The classes on an element, as a list. */
 function classList(el) {
   return (el.attrs.get('class') ?? '').split(/\s+/)
 }
 
-/** Every flow step of a page, in the order the list gives them. */
-export function flowStepsOf(html) {
+/** Whether an element or anything above it is hidden from assistive technology. */
+function hiddenFromAT(el) {
+  for (let node = el; node; node = node.parent) if (node.attrs?.get('aria-hidden') === 'true') return true
+  return false
+}
+
+/** Every step of the homepage's slider, in the order its list gives them. */
+export function sliderStepsOf(html) {
   const doc = parse(html)
-  const flows = findAll(doc, (el) => el.name === 'ol' && classList(el).includes('flow-steps'))
-  return flows.flatMap((flow) => [...walk(flow)].filter((el) => el.name === 'li' && classList(el).includes('flow-step')))
+  const lists = findAll(doc, (el) => el.name === 'ol' && classList(el).includes('easy-steps'))
+  return lists.flatMap((list) => [...walk(list)].filter((el) => el.name === 'li' && classList(el).includes('easy-step')))
+}
+
+/** Every drawing of a page's run picture, in the order the figure gives them. */
+export function runDrawingsOf(html) {
+  const doc = parse(html)
+  const figures = findAll(doc, (el) => el.name === 'figure' && classList(el).includes('run-diagram'))
+  return figures.flatMap((figure) => [...walk(figure)].filter((el) => el.name === 'svg' && classList(el).includes('run-svg')))
 }
 
 /**
- * What a screen reader would get wrong in a page's flow, as the lines a reader sees: a step
- * that is not a list item of the flow's own list, a step whose caption is outside it (so the
- * list reads the step names and then, somewhere else, their captions), a step's text hidden
- * from assistive technology, or art inside the flow that is not hidden from one.
+ * What a screen reader would get wrong about the two blocks that replaced the retired flow, as
+ * the lines a reader sees: a step that is not an item of its own list (so the steps are read in
+ * whatever order the markup happens to give), a step with no heading, a step whose line is
+ * outside it, a step's icon that is not marked as decoration, a number announced before every
+ * name it already counts, or a slider whose words are hidden from assistive technology — and, on
+ * the run's picture, a figure with no name, a drawing that is neither announced as one image nor
+ * hidden (so a reader is told the whole run twice, once text node by text node), and a run in
+ * words hidden from the reader who has nothing else.
  *
- * The hidden-text half is why this check exists rather than a generic one: the contract above
- * refuses a *focusable* element inside `aria-hidden`, and says nothing about a `<figure>` or
- * an `<ol>` that hides the flow's own words — the one thing the flow is for.
+ * The whole of it is the retired flow gate's subject: the flow's four steps were an ordered list
+ * whose steps had to be readable in order and whose arrows were decoration, and both claims are
+ * made here of the list and the art in their places.
  */
-export function flowA11yFailures(html) {
+export function pictureA11yFailures(html) {
   const out = []
   const doc = parse(html)
-  const flows = findAll(doc, (el) => el.name === 'ol' && classList(el).includes('flow-steps'))
-  /** Whether an element or anything above it is hidden from assistive technology. */
-  const hidden = (el) => {
-    for (let node = el; node; node = node.parent) if (node.attrs?.get('aria-hidden') === 'true') return true
-    return false
-  }
-  for (const flow of flows) {
-    if (hidden(flow)) {
+
+  for (const list of findAll(doc, (el) => el.name === 'ol' && classList(el).includes('easy-steps'))) {
+    if (hiddenFromAT(list)) {
       out.push(
-        'the flow is hidden from assistive technology (aria-hidden="true" on the list or on something above it): the steps are the whole content of the picture, and a reader left with an empty figure is exactly what this case is for',
+        'the slider\'s steps are hidden from assistive technology (aria-hidden="true" on the list or on something above it): the three steps are the whole content of the panel, and a reader left with an empty panel is exactly what this reading is for',
       )
     }
-    // The figure is the flow's one name: a figure with neither a figcaption nor an aria-label
-    // is a list of four steps announced as nothing in particular.
-    const figure = (() => {
-      for (let node = flow.parent; node; node = node.parent) if (node.name === 'figure') return node
-      return null
-    })()
-    const named = figure && (figure.attrs.get('aria-label') || figure.attrs.get('aria-labelledby') || findAll(figure, (el) => el.name === 'figcaption').length > 0)
-    if (!named) {
-      out.push('the flow has no accessible name (its <figure> carries no <figcaption>, aria-label or aria-labelledby): the list of steps is the text alternative, and it needs a name a screen reader announces it by')
-    }
-    const direct = flow.children.filter((child) => child.name === 'li' && classList(child).includes('flow-step'))
-    for (const step of [...walk(flow)].filter((el) => el.name === 'li' && classList(el).includes('flow-step'))) {
+    const direct = list.children.filter((child) => child.name === 'li' && classList(child).includes('easy-step'))
+    for (const step of [...walk(list)].filter((el) => el.name === 'li' && classList(el).includes('easy-step'))) {
       const name = step.attrs.get('data-step') ?? '(a step with no data-step)'
       if (!direct.includes(step)) {
-        out.push(`the ${name} step is not an item of the flow's list: the flow is an ordered list, and a step nested anywhere else is read in whatever order the markup happens to give`)
+        out.push(`the ${name} step is not an item of the slider's list: the steps are a numbered list, and a step nested anywhere else is read in whatever order the markup happens to give`)
       }
-      if (hidden(step)) {
-        out.push(`the ${name} step is hidden from assistive technology (aria-hidden="true" on the step or on something above it): the step is what the flow says happens, and hiding it hides a step of the run`)
+      if (hiddenFromAT(step)) {
+        out.push(`the ${name} step is hidden from assistive technology (aria-hidden="true" on the step or on something above it): the step is what the reader is told happens, and hiding it hides a step of the product`)
       }
       const heading = [...walk(step)].find((el) => /^h[1-6]$/.test(el.name))
-      const caption = [...walk(step)].find((el) => classList(el).includes('step-caption'))
+      const line = [...walk(step)].find((el) => classList(el).includes('step-line'))
       if (!heading) out.push(`the ${name} step has no heading: a screen reader lists the steps by their headings`)
-      if (!caption) out.push(`the ${name} step carries no caption inside it: the caption is what the step says, and a caption outside the step is read apart from the step it belongs to`)
+      if (!line) out.push(`the ${name} step carries no line inside it: the line is what the step says, and a line outside the step is read apart from the step it belongs to`)
       for (const el of walk(step)) {
         if (el.name !== 'svg') continue
         if (el.attrs.get('aria-hidden') !== 'true' || el.attrs.get('focusable') !== 'false') {
-          out.push(`a <svg> in the ${name} step is not marked as decoration (aria-hidden="true" focusable="false"): the arrows draw the flow and add nothing a screen reader should have to read`)
+          out.push(`a <svg> in the ${name} step is not marked as decoration (aria-hidden="true" focusable="false"): the icon says nothing the step's name and line do not, and a reader made to hear it is told a picture`)
         }
       }
+      // The number is drawn beside the step's name in a list that already counts: exposed, a
+      // screen reader reads "1" and then the name, and the count arrives twice per step.
+      for (const el of [...walk(step)].filter((child) => classList(child).includes('step-number'))) {
+        if (el.attrs.get('aria-hidden') !== 'true') {
+          out.push(`the ${name} step's number is not marked as decoration (aria-hidden="true"): the steps are an ordered list, so the number is a second telling of the order the list already carries`)
+        }
+      }
+    }
+  }
+
+  for (const figure of findAll(doc, (el) => el.name === 'figure' && classList(el).includes('run-diagram'))) {
+    const drawings = [...walk(figure)].filter((el) => el.name === 'svg')
+    // The figure's own name, or the name the picture inside it announces: the site draws no
+    // `<figcaption>` and names each drawing instead, so a figure that carried neither would be
+    // announced as "figure" with nothing after it.
+    const named =
+      figure.attrs.get('aria-label') ||
+      figure.attrs.get('aria-labelledby') ||
+      findAll(figure, (el) => el.name === 'figcaption').length > 0 ||
+      drawings.some((drawing) => drawing.attrs.get('role') === 'img' && (drawing.attrs.get('aria-label') ?? '').trim() !== '')
+    if (!named) {
+      out.push(
+        'the run\'s figure is announced as nothing: neither it nor any drawing in it carries a name (no <figcaption>, aria-label or aria-labelledby), and a figure is announced by its name — the drawing the page draws spells the run out in text nodes instead',
+      )
+    }
+    if (hiddenFromAT(figure)) {
+      out.push('the run\'s figure is hidden from assistive technology (aria-hidden="true" on the figure or on something above it): what the page says about a run is what this picture and the words under it say, and a reader given neither has been given nothing')
+    }
+    for (const drawing of drawings) {
+      // The drawing is inline SVG full of `<text>`: either it is one image with a name, or it is
+      // hidden and the run in words under it is the telling. A drawing that is neither exposes
+      // every text node to the reader, in markup order, after the list has already said it.
+      const oneImage = drawing.attrs.get('role') === 'img' && (drawing.attrs.get('aria-label') ?? '').trim() !== ''
+      if (hiddenFromAT(drawing)) continue
+      if (!oneImage) {
+        out.push(
+          `a drawing of the run is role=${JSON.stringify(drawing.attrs.get('role') ?? '')} with aria-label=${JSON.stringify(drawing.attrs.get('aria-label') ?? '')}, and the drawing is inline SVG full of <text>: it is one image the page names, or it is hidden — a drawing that is neither is every label read out in markup order, a second time and in no order that means anything`,
+        )
+      }
+    }
+  }
+
+  for (const words of findAll(doc, (el) => el.name === 'section' && classList(el).includes('run-words'))) {
+    if (hiddenFromAT(words)) {
+      out.push('the run in words under the picture is hidden from assistive technology (aria-hidden="true" on the section or on something above it): it is the telling a reader who has no picture is given, and hiding it leaves the page with nothing to read')
     }
   }
   return out
 }
 
-test('the flow is an ordered list a screen reader reads in order, and its arrows are decoration', () => {
-  // Both pages carry the flow (D185 places it on the homepage too), so both are checked —
-  // and the two are held to four steps each, or a page that rendered no flow at all would
-  // pass a check that read nothing.
+test('the slider is an ordered list a screen reader reads in order, and the run is one named picture', () => {
+  // The homepage is the page the slider is on, and the run's picture is on the page about how a
+  // run works: each page is held to the steps it carries, or a page that rendered no list at all
+  // would pass a reading that found nothing (the retired gate's count of the flow's four steps,
+  // told of the blocks in their places).
   for (const page of builtPages()) {
-    const steps = flowStepsOf(page.html)
-    const failures = flowA11yFailures(page.html)
-    assert.deepEqual(failures, [], `${page.rel}: the flow is not readable in order:\n  ${failures.join('\n  ')}`)
-    if (page.rel === 'index.html' || page.rel === 'how-it-works/index.html') {
-      assert.equal(steps.length, 4, `${page.rel} carries ${steps.length} flow steps, and D185's flow is the brief's four (P8)`)
+    const steps = sliderStepsOf(page.html)
+    const failures = pictureA11yFailures(page.html)
+    assert.deepEqual(failures, [], `${page.rel}: the slider and the run's picture are not readable in order:\n  ${failures.join('\n  ')}`)
+    if (page.rel === 'index.html') {
+      assert.equal(steps.length, 3, `${page.rel} carries ${steps.length} slider steps, and the owner's approved draft of 2026-10-19 is three: you tell your agent, Fugaro runs it in your cloud, you get a draft pull request`)
     } else {
-      assert.equal(steps.length, 0, `${page.rel} carries a flow, and D185 places it on How It Works and on the homepage`)
+      assert.equal(steps.length, 0, `${page.rel} carries the slider's steps, and the slider is the homepage's own block (the owner's approved draft of 2026-10-19)`)
+    }
+    if (page.rel === 'how-it-works/index.html') {
+      assert.equal(runDrawingsOf(page.html).length, 2, `${page.rel} draws the run ${runDrawingsOf(page.html).length} times, and it draws it twice — the wide drawing and the phone one (the owner's draft of 2026-10-19)`)
+    } else {
+      assert.equal(runDrawingsOf(page.html).length, 0, `${page.rel} draws the run, and the drawing is How It Works' own picture (the owner's draft of 2026-10-19)`)
     }
   }
 })
 
-test('the flow refusals fire on the defect each one names', () => {
-  // A page carrying the flow in the shape the component writes it, which passes; each
-  // fixture below breaks one thing in it, so the check above cannot pass by reading nothing.
-  const flow = ({ captionOutside = false, arrowHidden = true, hiddenAt = '', unnamed = false } = {}) => {
-    const arrow = arrowHidden
-      ? '<svg class="step-arrow" aria-hidden="true" focusable="false"><path d="M1 1"></path></svg>'
-      : '<svg class="step-arrow"><path d="M1 1"></path></svg>'
-    // The arrow is the component's own placement: inside the step, after its card.
-    const step = (n, body, svg = '', extra = '') => `<li class="flow-step"${extra} data-step="step ${n}"><div class="step-card">${body}</div>${svg}</li>`
-    return [
-      '<!DOCTYPE html><html lang="en"><head><title>T</title></head><body><main id="main"><h1>T</h1>',
-      `<figure class="flow"${hiddenAt === 'figure' ? ' aria-hidden="true"' : ''}>${unnamed ? '' : '<figcaption>Flow</figcaption>'}<ol class="flow-steps"${hiddenAt === 'list' ? ' aria-hidden="true"' : ''}>`,
-      step(1, '<h2>One</h2><p class="step-caption">first</p>', arrow, hiddenAt === 'step' ? ' aria-hidden="true"' : ''),
-      step(2, captionOutside ? '<h2>Two</h2>' : '<h2>Two</h2><p class="step-caption">second</p>'),
-      captionOutside ? '<p class="step-caption">second</p>' : '',
-      '</ol></figure></main></body></html>',
-    ].join('')
+test('the slider and the picture refusals fire on the defect each one names', () => {
+  // A page carrying both blocks in the shape the components write them, which passes; each
+  // fixture below breaks one thing in it, so the reading above cannot pass by reading nothing.
+  const slider = ({ lineOutside = false, iconHidden = true, numberHidden = true, hiddenAt = '', nested = false, headingless = false } = {}) => {
+    const icon = iconHidden
+      ? '<svg class="step-icon" aria-hidden="true" focusable="false"><path d="M1 1"></path></svg>'
+      : '<svg class="step-icon"><path d="M1 1"></path></svg>'
+    const step = (name, extra = '') =>
+      `<li class="easy-step" data-step="${name}"${extra}><span class="step-number"${numberHidden ? ' aria-hidden="true"' : ''}>1</span>${icon}${headingless ? '' : `<h3 class="step-name">${name}</h3>`}${lineOutside ? '' : `<p class="step-line">a line of the repository</p>`}</li>`
+    const list = `<ol class="easy-steps"${hiddenAt === 'list' ? ' aria-hidden="true"' : ''}>${step('one')}${nested ? `<div>${step('two')}</div>` : step('two')}${step('three')}</ol>`
+    return `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>t</h1><div class="panel" id="home-panel-easy"${hiddenAt === 'panel' ? ' aria-hidden="true"' : ''}>${list}${lineOutside ? '<p class="step-line">a line of the repository</p>' : ''}</div></main></body></html>`
+  }
+  const picture = ({ unnamed = false, drawing = 'named', wordsHidden = false, figureHidden = false } = {}) => {
+    const svg =
+      drawing === 'named'
+        ? '<svg class="run-svg run-wide" role="img" aria-label="How a task becomes a pull request"><text>Your agent</text></svg>'
+        : drawing === 'hidden'
+          ? '<svg class="run-svg run-wide" aria-hidden="true"><text>Your agent</text></svg>'
+          : '<svg class="run-svg run-wide"><text>Your agent</text></svg>'
+    return `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>t</h1><figure class="run-diagram"${figureHidden ? ' aria-hidden="true"' : ''}${unnamed ? '' : ' aria-label="How a task becomes a pull request"'} data-source="docs/website/redesign/changes-spec-2026-10-18.md">${svg}</figure><section class="run-words"${wordsHidden ? ' aria-hidden="true"' : ''}><p>the same, in words</p></section></main></body></html>`
   }
 
-  assert.deepEqual(flowA11yFailures(flow()), [], 'the fixture page does not pass the check it is the control for')
+  assert.deepEqual(pictureA11yFailures(slider()), [], 'the slider fixture does not pass the check it is the control for')
+  assert.deepEqual(pictureA11yFailures(picture()), [], 'the picture fixture does not pass the check it is the control for')
+
   assert.ok(
-    flowA11yFailures(flow({ captionOutside: true })).some((line) => /carries no caption inside it/.test(line)),
-    'a caption outside its step passes: the list would read the step names and, apart from them, their captions',
+    pictureA11yFailures(slider({ lineOutside: true })).some((line) => /carries no line inside it/.test(line)),
+    'a line outside its step passes: the list would read the step names and, apart from them, their lines',
   )
   assert.ok(
-    flowA11yFailures(flow({ arrowHidden: false })).some((line) => /is not marked as decoration/.test(line)),
-    'an arrow that is not aria-hidden passes: a screen reader would read the picture the steps already say',
+    pictureA11yFailures(slider({ iconHidden: false })).some((line) => /is not marked as decoration/.test(line)),
+    'an icon that is not aria-hidden passes: a screen reader would read the picture the step already says',
   )
   assert.ok(
-    flowA11yFailures(flow({ unnamed: true })).some((line) => /no accessible name/.test(line)),
-    'a flow whose figure has no figcaption or aria-label passes: the list would be announced with no name',
+    pictureA11yFailures(slider({ numberHidden: false })).some((line) => /number is not marked as decoration/.test(line)),
+    'a step number read out passes: the list already carries the order, and the number is the count said twice',
   )
-  // The flow's words are the flow: hidden at the list or at the figure above it, the page is
-  // a picture with nothing behind it, and every other gate in this file still passes.
-  for (const at of ['list', 'figure', 'step']) {
+  assert.ok(
+    pictureA11yFailures(slider({ headingless: true })).some((line) => /has no heading/.test(line)),
+    'a step with no heading passes: a screen reader lists the steps by their headings, and a step with none is not in that list',
+  )
+  assert.ok(
+    pictureA11yFailures(slider({ nested: true })).some((line) => /is not an item of the slider's list/.test(line)),
+    "a step nested in a wrapper inside the list passes: the ordered list is what gives the reader the order, and a step outside it has none",
+  )
+  // The slider's words are the slider: hidden at the list or at the panel above it, the reader
+  // is shown an empty block, and every other gate in this file still passes.
+  for (const at of ['list', 'panel']) {
     assert.ok(
-      flowA11yFailures(flow({ hiddenAt: at })).some((line) => /is hidden from assistive technology/.test(line)),
-      `a flow hidden with aria-hidden="true" at the ${at} passes: the steps are the whole content, and a reader given an empty figure has been given nothing`,
+      pictureA11yFailures(slider({ hiddenAt: at })).some((line) => /is hidden from assistive technology/.test(line)),
+      `a slider hidden with aria-hidden="true" at the ${at} passes: the three steps are the whole content, and a reader given an empty panel has been given nothing`,
     )
   }
+  assert.ok(
+    pictureA11yFailures(picture({ unnamed: true, drawing: 'bare' })).some((line) => /figure is announced as nothing/.test(line)),
+    'a picture whose figure and drawings carry no name passes: a figure is announced by its name, and one with none is announced as nothing in particular',
+  )
+  assert.ok(
+    pictureA11yFailures(picture({ figureHidden: true })).some((line) => /figure is hidden from assistive technology/.test(line)),
+    'a picture hidden at its figure passes: the run is what this page is about, and a reader given neither the drawing nor the words is given nothing',
+  )
+  assert.ok(
+    pictureA11yFailures(picture({ drawing: 'bare' })).some((line) => /it is one image the page names, or it is hidden/.test(line)),
+    'a drawing that is neither an image nor hidden passes: every <text> of it is exposed, and the run in words under it says the same thing a second time',
+  )
+  assert.deepEqual(
+    pictureA11yFailures(picture({ drawing: 'hidden' })),
+    [],
+    'a drawing hidden from assistive technology is refused, and it is the page\'s other telling that a reader is given',
+  )
+  assert.ok(
+    pictureA11yFailures(picture({ wordsHidden: true })).some((line) => /run in words under the picture is hidden/.test(line)),
+    'the run in words hidden passes: it is what a reader who has no picture is given',
+  )
 })
 
 test('the recorded heading-order defect on the docs page is still real, so its exception is still needed', () => {
@@ -1027,4 +1087,27 @@ test('motion gated on no-preference, or neutralised by its own reduce rule, pass
   const bare = GOOD_CSS.replace(/@media[\s\S]*$/, '')
   assert.deepEqual(motionFailures(bare + '@supports (animation-timeline:view()){@media (prefers-reduced-motion:no-preference){.s{animation:in linear both}}}'), [])
   assert.deepEqual(motionFailures(bare + '.t{animation:spin 1s}@media (prefers-reduced-motion:reduce){.t{animation:none}}'), [])
+})
+
+test('the four levels are four named anchors a keyboard reaches in order, each with a named picture', () => {
+  const page = builtPages().find((entry) => entry.rel === 'how-it-works/index.html')
+  assert.ok(page, 'the built site has no How It Works page, and the four levels are a section of it (D237)')
+  const doc = parse(page.html)
+  const nav = findAll(doc, (el) => el.name === 'nav' && classList(el).includes('zoom-nav'))
+  assert.equal(nav.length, 1, 'the zoom section carries one level <nav>')
+  assert.ok((nav[0].attrs.get('aria-label') || '') !== '', 'the zoom <nav> carries no name')
+  const markers = findAll(nav[0], (el) => el.name === 'a')
+  assert.deepEqual(markers.map((marker) => marker.attrs.get('href')), ['#level-1', '#level-2', '#level-3', '#level-4'], 'the markers do not point at the four anchors, in order (D245)')
+  for (const marker of markers) {
+    assert.ok(/^Level [1-4] /.test(marker.attrs.get('aria-label') || ''), 'a marker\'s name says which level it jumps to')
+    assert.ok(!(marker.attrs.get('tabindex') > 0), 'a marker carries a positive tabindex')
+  }
+  const figures = findAll(doc, (el) => el.name === 'figure' && classList(el).includes('zoom-figure'))
+  assert.equal(figures.length, 4, 'the page draws four levels')
+  for (const figure of figures) {
+    const images = findAll(figure, (el) => el.name === 'img')
+    assert.equal(images.length, 1, 'a level is one picture')
+    assert.ok((images[0].attrs.get('alt') || '').length > 40, 'a level\'s picture has no alt text')
+    assert.equal(findAll(figure, (el) => el.name === 'figcaption').length, 1, 'a level is named by one <figcaption>')
+  }
 })

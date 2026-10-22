@@ -16,7 +16,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"syscall"
 
 	"github.com/dimipaun/fugaro/images"
 	"github.com/dimipaun/fugaro/internal/agent"
@@ -561,13 +560,13 @@ func checkManagedSettingsDir(dir string, uid, gid uint32, add func(string, bool,
 		add(name, false, "%s is not a directory", dir)
 		return
 	}
-	st, ok := fi.Sys().(*syscall.Stat_t)
+	fileUID, fileGID, ok := ownerOf(fi)
 	if !ok {
 		add(name, false, "cannot read the owner of %s on this platform", dir)
 		return
 	}
-	if !dirWritableBy(fi, st, uid, gid) {
-		add(name, false, "%s (owner %d:%d, mode %04o) is not writable by uid %d; the base image must create it owned by the fugaro user", dir, st.Uid, st.Gid, fi.Mode().Perm(), uid)
+	if !dirWritableBy(fi, fileUID, fileGID, uid, gid) {
+		add(name, false, "%s (owner %d:%d, mode %04o) is not writable by uid %d; the base image must create it owned by the fugaro user", dir, fileUID, fileGID, fi.Mode().Perm(), uid)
 		return
 	}
 	entries, err := os.ReadDir(dir)
@@ -585,27 +584,6 @@ func checkManagedSettingsDir(dir string, uid, gid uint32, add func(string, bool,
 		return
 	}
 	add(name, true, "%s is an empty directory writable by uid %d", dir, uid)
-}
-
-// dirWritableBy reports whether the directory fi, owned as st records, is
-// writable and searchable by the user uid in group gid: the owner, group
-// and mode bits decide, and writing an entry in a directory needs both the
-// write and the search bit. It reads the bits rather than writing for the
-// callers that are not that user: checkManagedSettingsDir always (the
-// runner writes there, not the selftest) and checkMiseCacheDir when the
-// selftest runs as anyone but the directory's owner, such as root in the
-// second scan container, for whom every directory is writable.
-func dirWritableBy(fi os.FileInfo, st *syscall.Stat_t, uid, gid uint32) bool {
-	var bits os.FileMode
-	switch {
-	case st.Uid == uid:
-		bits = fi.Mode().Perm() >> 6 & 0o7
-	case st.Gid == gid:
-		bits = fi.Mode().Perm() >> 3 & 0o7
-	default:
-		bits = fi.Mode().Perm() & 0o7
-	}
-	return bits&0o3 == 0o3
 }
 
 // checkMiseCacheDir reports the "mise-cache-dir" check: dir (normally
@@ -636,13 +614,13 @@ func checkMiseCacheDir(dir string, uid, gid uint32, add func(string, bool, strin
 		add(name, false, "%s is not a directory", dir)
 		return
 	}
-	st, ok := fi.Sys().(*syscall.Stat_t)
+	fileUID, fileGID, ok := ownerOf(fi)
 	if !ok {
 		add(name, false, "cannot read the owner of %s on this platform", dir)
 		return
 	}
-	if st.Uid != uid {
-		add(name, false, "%s is owned by uid %d (mode %04o), not the fugaro user's uid %d; a derived build's mise cache mount would leave it root-owned, and the run's mise could not write its cache", dir, st.Uid, fi.Mode().Perm(), uid)
+	if fileUID != uid {
+		add(name, false, "%s is owned by uid %d (mode %04o), not the fugaro user's uid %d; a derived build's mise cache mount would leave it root-owned, and the run's mise could not write its cache", dir, fileUID, fi.Mode().Perm(), uid)
 		return
 	}
 	// When the selftest runs as the user that must write (the fugaro user,
@@ -653,11 +631,11 @@ func checkMiseCacheDir(dir string, uid, gid uint32, add func(string, bool, strin
 	// decide (see dirWritableBy).
 	if os.Geteuid() == int(uid) {
 		if err := miseCacheProbe(dir); err != nil {
-			add(name, false, "%s (owner %d:%d, mode %04o) is not writable by uid %d: creating and removing a file in it failed: %v", dir, st.Uid, st.Gid, fi.Mode().Perm(), uid, err)
+			add(name, false, "%s (owner %d:%d, mode %04o) is not writable by uid %d: creating and removing a file in it failed: %v", dir, fileUID, fileGID, fi.Mode().Perm(), uid, err)
 			return
 		}
-	} else if !dirWritableBy(fi, st, uid, gid) {
-		add(name, false, "%s (owner %d:%d, mode %04o) is not writable by uid %d", dir, st.Uid, st.Gid, fi.Mode().Perm(), uid)
+	} else if !dirWritableBy(fi, fileUID, fileGID, uid, gid) {
+		add(name, false, "%s (owner %d:%d, mode %04o) is not writable by uid %d", dir, fileUID, fileGID, fi.Mode().Perm(), uid)
 		return
 	}
 	add(name, true, "%s is a directory owned by uid %d and writable by it", dir, uid)

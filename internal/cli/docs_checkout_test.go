@@ -41,6 +41,10 @@ func TestDocsCheckoutCommandsExist(t *testing.T) {
 			continue
 		}
 		found++
+		// The doc's own spelling, for the messages below: docs/checkout.md
+		// names the doors W1.2 retired the old word into, and this test
+		// resolves each line against the command the doc actually spells.
+		named := strings.Join(path, " ")
 		c, _, err := root.Find(path)
 		if err != nil || c.Name() != path[len(path)-1] {
 			t.Errorf("docs/checkout.md names %q, which is not a command", m[1])
@@ -48,7 +52,7 @@ func TestDocsCheckoutCommandsExist(t *testing.T) {
 		}
 		for _, fm := range flagRE.FindAllStringSubmatch(m[1], -1) {
 			if !cmdHasFlag(c, fm[1]) {
-				t.Errorf("docs/checkout.md's %q names --%s, which fugaro %s has no such flag", m[1], fm[1], strings.Join(path, " "))
+				t.Errorf("docs/checkout.md's %q names --%s, which fugaro %s has no such flag", m[1], fm[1], named)
 			}
 		}
 	}

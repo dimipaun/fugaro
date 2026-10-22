@@ -74,6 +74,7 @@ func TestCliReferenceDocumentsCobraDefaults(t *testing.T) {
 		"## `fugaro completion bash`",
 		"## `fugaro help`",
 		"| `-h`, `--help` | bool | `false` | no | help for fugaro |",
+		"| `-v`, `--version` | bool | `false` | no | version for fugaro |",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("the reference does not carry %q, which `fugaro --help` lists:\n%s", want, doc)

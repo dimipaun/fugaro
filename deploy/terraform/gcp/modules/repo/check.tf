@@ -5,7 +5,7 @@
 # workflow has rebuild.check: off.
 #
 # The job mounts the provider credential at latest, which Cloud Run checks
-# when it creates the job, so fugaro init --repo deploys it (with its
+# when it creates the job, so fugaro update deploys it (with its
 # invoker grant and Scheduler job) only once the credential has a version,
 # or when the job already exists: check.deploy_job is that gate.
 
@@ -86,11 +86,11 @@ resource "google_cloud_run_v2_job" "check" {
     # fails the plan; a check block would only warn.
     precondition {
       condition     = lookup(var.repo.check.env, "FUGARO_PROJECT", "") == var.fugaro_project
-      error_message = "the job's FUGARO_PROJECT must be the Fugaro project ${var.fugaro_project}; run fugaro init --repo"
+      error_message = "the job's FUGARO_PROJECT must be the Fugaro project ${var.fugaro_project}; run fugaro update"
     }
     precondition {
       condition     = lookup(var.repo.check.env, "FUGARO_GCP_PROJECT", "") == var.project
-      error_message = "the job's FUGARO_GCP_PROJECT must be the GCP project ${var.project}; run fugaro init --repo"
+      error_message = "the job's FUGARO_GCP_PROJECT must be the GCP project ${var.project}; run fugaro update"
     }
   }
 

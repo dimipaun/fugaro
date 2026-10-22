@@ -51,7 +51,7 @@ func envProvider() config.ModelProvider {
 
 // TestProvidersEnvOmitsDefaultSwitchKeys pins plan P4 and Review Focus 6: a
 // provider that sets neither of the catalog's switches writes neither key, so
-// the job's value is byte-identical to what a pre-catalog init --repo wrote
+// the job's value is byte-identical to what a pre-catalog fugaro update wrote
 // and an older base image — which decodes this strictly — still starts. A
 // non-default value is written, because the run has to see it.
 func TestProvidersEnvOmitsDefaultSwitchKeys(t *testing.T) {

@@ -51,9 +51,9 @@ func jsonKeys(t *testing.T, data []byte) []string {
 	return slices.Sorted(maps.Keys(doc))
 }
 
-// The tfvars fugaro init writes are exactly the root's variables: a key
+// The tfvars fugaro update writes are exactly the root's variables: a key
 // the root lacks fails the plan, and a required variable without a key
-// fails it too. The outputs fugaro init reads are exactly the root's.
+// fails it too. The outputs fugaro update reads are exactly the root's.
 func TestInstallationVarsMatchModule(t *testing.T) {
 	vars := rootVariables(t)
 	spec := installationSpec(t)
@@ -148,7 +148,7 @@ func TestInstallationLogIsolation(t *testing.T) {
 
 // TestInstallationCredentialsServiceVars is the installation root's side of
 // the opt-in (docs/credentials-service, D146, D147; C1.20): an installation
-// credentialsLC is m4LocalConfig plus the budget backend `fugaro init
+// credentialsLC is m4LocalConfig plus the budget backend `fugaro update
 // --firebase` writes: the Firebase project and the database the credentials
 // service's own environment carries, and the repository its job table is
 // derived from. The two facts are required (infra.Credentials refuses an
@@ -520,7 +520,7 @@ func TestDeleteHintsAPIs(t *testing.T) {
 	if len(hints) != 1 {
 		t.Fatalf("hints = %q, want one about the APIs", hints)
 	}
-	for _, want := range []string{"Vertex AI", "repos.<repo>.vertex", "fugaro init --repo", "--budget"} {
+	for _, want := range []string{"Vertex AI", "repos.<repo>.vertex", "fugaro update", "--budget"} {
 		if !strings.Contains(hints[0], want) {
 			t.Errorf("the APIs' hint lacks %q: %q", want, hints[0])
 		}

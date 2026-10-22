@@ -283,7 +283,7 @@ func TestCascadeRunHaltsWhenRulesRefuseTheByTierCounters(t *testing.T) {
 	if h.Reason != budget.ReasonCredsRulesDenied || h.Scope != budget.ScopeRun {
 		t.Fatalf("halt = %+v, want %s/%s", h, budget.ReasonCredsRulesDenied, budget.ScopeRun)
 	}
-	if !contains(h.Detail, "fugaro init --firebase") {
+	if !contains(h.Detail, "fugaro update --firebase-project") {
 		t.Errorf("the halt's detail does not name the redeploy: %q", h.Detail)
 	}
 	// The totals of the refused update landed without the split.

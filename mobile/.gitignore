@@ -5,10 +5,12 @@
 # package-lock.json pins the tree `npm ci` installs, so neither that tree nor
 # the build output is a source file.
 #
-# There is nothing to ignore yet -- the manifest declares no runtime dependency
-# (a test in src/skeleton/index.test.js keeps it that way until the Expo
-# toolchain is pinned) -- but the entries are here before the first install, not
-# after it.
+# The manifest declares the app's runtime dependencies now (Expo SDK 58; see
+# README.md, "Building for internal testing"), so the entries below are
+# directories a run really writes and not names waiting for their first one:
+# `npm install` writes `node_modules/` and `npx expo export` writes `dist/`, and
+# neither is a source file. src/dependencies.test.js is what keeps the manifest
+# and the imports in step, from the committed files alone.
 
 # The dependency tree `npm ci` writes.
 node_modules/

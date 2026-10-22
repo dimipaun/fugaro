@@ -34,7 +34,7 @@ type SelectInput struct {
 	Checkout   *Checkout // nil outside a checkout (no git toplevel, or no fugaro.yaml there)
 	EnvProject string    // $FUGARO_PROJECT
 	EnvConfig  string    // $FUGARO_CONFIG
-	// Name is fugaro init's --name: where nothing else selects one of
+	// Name is fugaro setup's --name: where nothing else selects one of
 	// several project configs it is the project's name, which has a config or
 	// is to be created. Only with Creating.
 	Name string
@@ -42,7 +42,7 @@ type SelectInput struct {
 	// where nothing else selects one of several project configs, the one
 	// project that lists it is selected. Called only then.
 	Origin func() (host, repo string)
-	// Creating is fugaro init, which writes the project config: a missing
+	// Creating is fugaro setup, which writes the project config: a missing
 	// one is not refused (the selection then has no config), but the
 	// checkout's project still has to agree.
 	Creating bool
@@ -89,7 +89,7 @@ func (e *SelectError) Error() string { return e.Msg }
 //  3. the checkout's fugaro.yaml project:;
 //  4. $FUGARO_PROJECT;
 //  5. $FUGARO_CONFIG;
-//  6. exactly one project config (unless fugaro init's --name names another
+//  6. exactly one project config (unless fugaro setup's --name names another
 //     project: that project's first run).
 //
 // Two selectors naming different projects are refused (the checkout
@@ -176,7 +176,7 @@ func (s *selector) run() (Selection, *Config, error) {
 	if in.Config != "" {
 		c, err := Load(in.Config)
 		if errors.Is(err, ErrMissing) && in.Creating {
-			// fugaro init creates it, for the project the other
+			// fugaro setup creates it, for the project the other
 			// selectors name, which the checkout already agreed with.
 			name := in.Project
 			if co != nil {
@@ -225,7 +225,7 @@ func (s *selector) run() (Selection, *Config, error) {
 	}
 	switch len(names) {
 	case 1:
-		// --name (fugaro init) for another project than the only one is a
+		// --name (fugaro setup) for another project than the only one is a
 		// first run of that project, as with several configs. Renaming the
 		// installation is refused later, by the installation's own name.
 		if in.Creating && in.Name != "" && in.Name != names[0] {
@@ -240,7 +240,7 @@ func (s *selector) run() (Selection, *Config, error) {
 		if in.Creating {
 			return Selection{}, nil, nil
 		}
-		msg := "no project config; see `fugaro init --config-only`"
+		msg := "no project config; see `fugaro setup --config-only`"
 		if p := legacyPath(in.Getenv); p != "" {
 			if _, err := os.Stat(p); err == nil {
 				msg += fmt.Sprintf(" (the old %s isn't read any more: see docs/design/m9-budget-and-dashboard.md §13.1)", p)
@@ -248,7 +248,7 @@ func (s *selector) run() (Selection, *Config, error) {
 		}
 		return Selection{}, nil, s.refuse("%s", msg)
 	default:
-		// --name (fugaro init) names the project, for a first run too.
+		// --name (fugaro setup) names the project, for a first run too.
 		if in.Creating && in.Name != "" {
 			return s.named(in.Name, "--name")
 		}
@@ -293,9 +293,9 @@ func (s *selector) named(name, from string) (Selection, *Config, error) {
 			return sel, c, serr
 		}
 		if in.Shared != nil {
-			return Selection{}, nil, s.refuse("this checkout belongs to project %s; there is no project config for %s: add `gcp_project: <id>` next to `project:` in fugaro.yaml (whoever onboarded the repository can run fugaro init --anchor in the checkout to add it), or run `fugaro init --config-only --gcp-project <id>`", name, name)
+			return Selection{}, nil, s.refuse("this checkout belongs to project %s; there is no project config for %s: add `gcp_project: <id>` next to `project:` in fugaro.yaml (whoever onboarded the repository can run fugaro update --anchor in the checkout to add it), or run `fugaro setup --config-only --gcp-project <id>`", name, name)
 		}
-		return Selection{}, nil, s.refuse("this checkout belongs to project %s; there is no project config for %s (run `fugaro init --config-only --gcp-project <id>`)", name, name)
+		return Selection{}, nil, s.refuse("this checkout belongs to project %s; there is no project config for %s (run `fugaro setup --config-only --gcp-project <id>`)", name, name)
 	case errors.Is(err, ErrMissing):
 		if sel, c, ok, serr := s.shared(name, from); ok {
 			return sel, c, serr

@@ -1,6 +1,12 @@
 package gcpfake
 
-import "testing"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"reflect"
+	"strings"
+	"testing"
+)
 
 func TestBillingInfo(t *testing.T) {
 	f := NewBilling(t)
@@ -16,6 +22,57 @@ func TestBillingInfo(t *testing.T) {
 	}
 	if code, _ = getJSON(t, f.URL+"/v1/projects/unknown/billingInfo"); code != 403 {
 		t.Errorf("unknown project: %d (the real API does not say a project is missing)", code)
+	}
+}
+
+// billingAccountID is a billing account ID built at run time from the test's
+// name and tag, so that no literal in this file is an account's.
+func billingAccountID(t *testing.T, tag string) string {
+	t.Helper()
+	sum := sha256.Sum256([]byte(t.Name() + "/" + tag))
+	h := strings.ToUpper(hex.EncodeToString(sum[:]))
+	return h[0:6] + "-" + h[6:12] + "-" + h[12:18]
+}
+
+func TestBillingAccountsList(t *testing.T) {
+	f := NewBilling(t)
+	open, closed := billingAccountID(t, "open"), billingAccountID(t, "closed")
+	f.AddAccountNamed(open, "an open account", true)
+	f.AddAccount(closed, false)
+
+	// Every account is answered, the closed one too: dropping it is the
+	// client's rule. The order is by ID, so a page is a page of a stable list.
+	code, body := getJSON(t, f.URL+"/v1/billingAccounts")
+	accounts, _ := body["billingAccounts"].([]any)
+	if code != 200 || len(accounts) != 2 || body["nextPageToken"] != nil {
+		t.Fatalf("the list: %d %v", code, body)
+	}
+	got := map[string]any{}
+	for _, a := range accounts {
+		m, _ := a.(map[string]any)
+		name, _ := m["name"].(string)
+		got[name] = m["open"]
+		if name == "billingAccounts/"+open && m["displayName"] != "an open account" {
+			t.Errorf("the open account's display name: %v", m)
+		}
+	}
+	want := map[string]any{"billingAccounts/" + open: true, "billingAccounts/" + closed: false}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("the accounts: %v, want %v", got, want)
+	}
+
+	// A page size and a token, as the API's own paging works.
+	_, page := getJSON(t, f.URL+"/v1/billingAccounts?pageSize=1")
+	if p, _ := page["billingAccounts"].([]any); len(p) != 1 {
+		t.Fatalf("a page of one: %v", page)
+	}
+	token, _ := page["nextPageToken"].(string)
+	if token == "" {
+		t.Fatalf("a page of one of two accounts carries no token: %v", page)
+	}
+	_, last := getJSON(t, f.URL+"/v1/billingAccounts?pageSize=1&pageToken="+token)
+	if p, _ := last["billingAccounts"].([]any); len(p) != 1 || last["nextPageToken"] != nil {
+		t.Errorf("the last page: %v", last)
 	}
 }
 

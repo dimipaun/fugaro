@@ -88,7 +88,7 @@ func doctorBatchChecks(ctx context.Context, lc *localcfg.Config, c *crm.Service)
 // Informational, never a warning: the state it describes is the plan's own
 // decision (docs/design/artifact-runs.md §8.5 and D11 — a Batch run's account
 // is not per-repository), not a fault this installation can fix, and a warning
-// no run of `fugaro init` could clear is the shape this file refuses for the
+// no run of `fugaro update` could clear is the shape this file refuses for the
 // launcher grant's operator case. Task 10's doctor gate is what makes that
 // matter: every check has to pass before the enable, and an info check never
 // fails doctor, so naming the boundary costs that gate nothing.
@@ -149,7 +149,7 @@ func doctorBatchAPIs(ctx context.Context, lc *localcfg.Config) []doctorCheck {
 	if len(disabled) > 0 {
 		return []doctorCheck{{ID: "batch-apis", Severity: "warning",
 			Problem: "a Batch run needs both APIs enabled in " + lc.GCPProject + ", and " + strings.Join(disabled, ", ") + ": the installation module enables them, so this project's apply has not run since they were added (design compute-backend.md §4.4)",
-			Fix:     "run fugaro init in " + lc.GCPProject + ", which applies the installation root"}}
+			Fix:     "run fugaro update in " + lc.GCPProject + ", which applies the installation root"}}
 	}
 	return []doctorCheck{{ID: "batch-apis", OK: true}}
 }
@@ -177,7 +177,7 @@ func doctorBatchJobDefinition(lc *localcfg.Config) doctorCheck {
 	if err := batch.CheckOptions(&o); err != nil {
 		return doctorCheck{ID: "batch-job-definition", Severity: "warning",
 			Problem: "a Batch run's job definition is one this build refuses, so no run on this installation can start: " + oneLineCLI(err.Error()),
-			Fix:     "fix the batch block of this installation's local config (fugaro init writes it; the fields are documented in docs/gcp-setup.md)"}
+			Fix:     "fix the batch block of this installation's local config (fugaro update writes it; the fields are documented in docs/gcp-setup.md)"}
 	}
 	return doctorCheck{ID: "batch-job-definition", OK: true}
 }
@@ -214,7 +214,7 @@ func doctorBatchImageFamily(ctx context.Context, lc *localcfg.Config) doctorChec
 	case isNotFound(err):
 		return doctorCheck{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("the preload image family projects/%s/global/images/family/%s does not exist in %s: a run's bootDisk.image names the family (not one of its generations), so this installation's VMs have nothing to boot until the preload build has published a generation (design compute-backend.md §1.2, §4.4)", project, family, project),
-			Fix:     "run the preload rebuild (fugaro init --provision-batch in " + project + ", or the fugaro-preload-rebuild Scheduler job), then rerun fugaro doctor"}
+			Fix:     "run the preload rebuild (fugaro setup --provision-batch in " + project + ", or the fugaro-preload-rebuild Scheduler job), then rerun fugaro doctor"}
 	default:
 		return batchUnchecked(id, "the preload image family "+family+" in "+project, batchReadFix, err)
 	}
@@ -249,7 +249,7 @@ func doctorBatchNetwork(ctx context.Context, lc *localcfg.Config) []doctorCheck 
 		} else {
 			out = append(out, doctorCheck{ID: "batch-network", Severity: "warning",
 				Problem: "the network " + network + " that the batch block names is not in " + netProject + ": a run's VMs are placed in it explicitly, because Batch refuses a no-external-IP job unless the network and the subnetwork are named (design compute-backend.md §1.7)",
-				Fix:     "check batch.network in the local config, or run fugaro init --provision-batch in " + netProject + " which creates the installation's own network"})
+				Fix:     "check batch.network in the local config, or run fugaro setup --provision-batch in " + netProject + " which creates the installation's own network"})
 		}
 	} else {
 		out = append(out, doctorCheck{ID: "batch-network", OK: true})
@@ -269,7 +269,7 @@ func doctorBatchSubnetwork(ctx context.Context, svc *compute.Service, lc *localc
 		}
 		return []doctorCheck{{ID: "batch-subnetwork", Severity: "warning",
 			Problem: "the subnetwork " + subnetwork + " that the batch block names is not in " + subProject + ": the VMs are placed in it explicitly (Batch refuses a no-external-IP job unless both are named, design compute-backend.md §1.7), and the subnetwork is where a run's VMs are, so one in a second project or region is a run this installation cannot see",
-			Fix:     "check batch.subnetwork in the local config, or run fugaro init --provision-batch in " + subProject + " which creates the installation's own subnetwork"}}
+			Fix:     "check batch.subnetwork in the local config, or run fugaro setup --provision-batch in " + subProject + " which creates the installation's own subnetwork"}}
 	}
 	return []doctorCheck{{ID: "batch-subnetwork", OK: true}}
 }
@@ -313,7 +313,7 @@ func doctorBatchLogSink(ctx context.Context, lc *localcfg.Config) doctorCheck {
 	case isNotFound(err):
 		return doctorCheck{ID: id, Severity: "warning",
 			Problem: "the log sink " + infra.LogSink + " is not in " + lc.GCPProject + ", so a Batch run's task lines are not routed into the installation's log bucket: they sit in _Default, where every project viewer reads them (design compute-backend.md §1.5). The log isolation is installation Terraform, so an installation whose apply predates the Batch arm still has the sink and routes only Cloud Run's lines",
-			Fix:     "run fugaro init in " + lc.GCPProject + ", which applies the installation root's logging"}
+			Fix:     "run fugaro update in " + lc.GCPProject + ", which applies the installation root's logging"}
 	case err != nil:
 		return batchUnchecked(id, "the log sink "+infra.LogSink+" and its filter", batchReadFix, err)
 	}
@@ -324,12 +324,12 @@ func doctorBatchLogSink(ctx context.Context, lc *localcfg.Config) doctorCheck {
 		// this config wrote).
 		return doctorCheck{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("the log sink %s routes to %s, not to this installation's log bucket %s (design compute-backend.md §1.5)", infra.LogSink, oneLineCLI(sink.Destination), want),
-			Fix:     "run fugaro init in " + lc.GCPProject + ", which applies the installation root's logging"}
+			Fix:     "run fugaro update in " + lc.GCPProject + ", which applies the installation root's logging"}
 	}
 	if !strings.Contains(sink.Filter, batchSinkArm) {
 		return doctorCheck{ID: id, Severity: "warning",
 			Problem: "the log sink " + infra.LogSink + "'s filter has no Batch arm (" + batchSinkArm + "), so a Batch job's lines are not routed into the installation's log bucket and `fugaro logs` would find nothing in the view (design compute-backend.md §1.5): the installation has not been applied since that arm was added",
-			Fix:     "run fugaro init in " + lc.GCPProject + " (or fugaro doctor after the owner applies the installation root)"}
+			Fix:     "run fugaro update in " + lc.GCPProject + " (or fugaro doctor after the owner applies the installation root)"}
 	}
 	return doctorCheck{ID: id, OK: true}
 }
@@ -378,7 +378,7 @@ func doctorBatchLauncherIAM(ctx context.Context, lc *localcfg.Config, c *crm.Ser
 	// launchersWithOperators into their own tfvars because an operator
 	// launches too (infra.tfvars.go); the Batch grant is not widened the same
 	// way. Reading the union here would therefore warn about a member the
-	// module deliberately does not grant, and no run of `fugaro init` could
+	// module deliberately does not grant, and no run of `fugaro update` could
 	// clear that warning: the Fix it prints is the state the installation is
 	// already in.
 	launchers := slices.Clone(lc.Terraform.Launchers)
@@ -425,15 +425,15 @@ func doctorBatchLauncherIAM(ctx context.Context, lc *localcfg.Config, c *crm.Ser
 		// read from.
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("%s hold roles/batch.jobsEditor in %s without the compute module's condition (%s): the grant is conditioned on Fugaro-shaped job names in this project and region, and an unconditioned one may start any job in the project. And %s do not hold a roles/batch.jobsEditor grant there with that condition at all, so they cannot start a Batch run (design compute-backend.md §3.7, §4.4)", strings.Join(misconditioned, ", "), lc.GCPProject, want, strings.Join(missing, ", ")),
-			Fix:     "run fugaro init in " + lc.GCPProject + ", which writes the conditioned grant for every launcher (or, if a grant was just written, rerun fugaro doctor once it propagates)"}}
+			Fix:     "run fugaro update in " + lc.GCPProject + ", which writes the conditioned grant for every launcher (or, if a grant was just written, rerun fugaro doctor once it propagates)"}}
 	case len(misconditioned) > 0:
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("%s hold roles/batch.jobsEditor in %s without the compute module's condition (%s): the grant is conditioned on Fugaro-shaped job names in this project and region, and an unconditioned one may start any job in the project (design compute-backend.md §3.7)", strings.Join(misconditioned, ", "), lc.GCPProject, want),
-			Fix:     "run fugaro init in " + lc.GCPProject + ", which writes the conditioned grant"}}
+			Fix:     "run fugaro update in " + lc.GCPProject + ", which writes the conditioned grant"}}
 	case len(missing) > 0:
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("%s do not hold a roles/batch.jobsEditor grant in %s with the compute module's condition (%s), so they cannot start a Batch run. A grant that was just made may not be visible to this read yet -- on a freshly created project Check 57a found the same, which is why this is a warning and not a missing grant (design compute-backend.md §4.4)", strings.Join(missing, ", "), lc.GCPProject, want),
-			Fix:     "run fugaro init in " + lc.GCPProject + " (or, if the grant was just written, rerun fugaro doctor once it propagates)"}}
+			Fix:     "run fugaro update in " + lc.GCPProject + " (or, if the grant was just written, rerun fugaro doctor once it propagates)"}}
 	}
 	return []doctorCheck{{ID: id, OK: true}}
 }
