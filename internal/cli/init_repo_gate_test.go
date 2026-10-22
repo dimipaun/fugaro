@@ -276,8 +276,9 @@ func gateOrigin() string { return "https://github.com/" + gateRepo + ".git" }
 // The question is the wizard's and it authorizes nothing: it is asked in
 // front of the gate, not instead of it. An answer of yes goes on to the same
 // typed owner/name confirmation an unlisted repository always needed, and an
-// answer of no onboards nothing, leaves nothing for the user to do, and says
-// how to enrol the repository later.
+// answer of no onboards nothing, skips the repository stage — nothing about
+// the repository is left for the user, they answered — and says how to enrol
+// it later.
 func TestSetupAsksToOnboardTheCheckoutsRepository(t *testing.T) {
 	// Yes, the answer Enter takes: the question is asked first, the typed
 	// owner/name behind it is unchanged, and the repository is opted in.
@@ -325,27 +326,52 @@ func TestSetupAsksToOnboardTheCheckoutsRepository(t *testing.T) {
 
 // TestSetupOutsideACheckoutSaysHowToEnrol: outside a checkout there is no
 // repository to ask about, so the question is skipped and the run says in one
-// line how to enrol one later, naming `fugaro setup` (W3.4, D5).
+// line how to enrol one later, naming `fugaro setup` (W3.4, D5). A run that
+// cannot ask — --yes, --json, a pipe — prints nothing: it was not asked for a
+// repository, and a line about one is noise in a script's output. The update
+// door is not the wizard and says nothing either.
 func TestSetupOutsideACheckoutSaysHowToEnrol(t *testing.T) {
 	old := selfCommand
 	selfCommand = func() string { return "fugaro" }
 	t.Cleanup(func() { selfCommand = old })
-	firstRunEnv(t) // outside any checkout
-	fakeTerminal(t)
-	out := &strings.Builder{}
-	run := &initRun{o: &initOptions{door: setupDoor.name}, w: out, in: bufio.NewReader(strings.NewReader("")), cmd: NewRootCmd()}
-	e := &initEngine{r: run, lc: &localcfg.Config{Name: "aurora"}}
-	e.repo = newRepositoryStage(e)
-	e.gateEarly(t.Context())
-	line := strings.TrimSpace(out.String())
-	if line == "" {
-		t.Fatal("a run outside a checkout says nothing about the repository it cannot onboard")
-	}
-	if strings.Contains(line, "\n") {
-		t.Errorf("the run printed more than one line about it:\n%s", out)
-	}
-	if !strings.Contains(line, "fugaro setup") || !strings.Contains(line, "--repo") {
-		t.Errorf("the line does not say how to enrol a repository later, naming fugaro setup:\n%s", out)
+	for name, tc := range map[string]struct {
+		o        *initOptions
+		terminal bool
+		want     bool
+	}{
+		"setup at a terminal": {o: &initOptions{door: setupDoor.name}, terminal: true, want: true},
+		"--yes":               {o: &initOptions{door: setupDoor.name, yes: true}, terminal: true},
+		"--json":              {o: &initOptions{door: setupDoor.name, asJSON: true}, terminal: true},
+		"a pipe":              {o: &initOptions{door: setupDoor.name}},
+		"the update door":     {o: &initOptions{door: updateDoor.name}, terminal: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			firstRunEnv(t) // outside any checkout
+			if tc.terminal {
+				fakeTerminal(t)
+			}
+			out := &strings.Builder{}
+			run := &initRun{o: tc.o, w: out, in: bufio.NewReader(strings.NewReader("")), cmd: NewRootCmd()}
+			e := &initEngine{r: run, lc: &localcfg.Config{Name: "aurora"}}
+			e.repo = newRepositoryStage(e)
+			e.gateEarly(t.Context())
+			line := strings.TrimSpace(out.String())
+			if !tc.want {
+				if line != "" {
+					t.Errorf("the run said something about a repository it was not asked for:\n%s", out)
+				}
+				return
+			}
+			if line == "" {
+				t.Fatal("a run outside a checkout says nothing about the repository it cannot onboard")
+			}
+			if strings.Contains(line, "\n") {
+				t.Errorf("the run printed more than one line about it:\n%s", out)
+			}
+			if !strings.Contains(line, "fugaro setup") || !strings.Contains(line, "--repo") {
+				t.Errorf("the line does not say how to enrol a repository later, naming fugaro setup:\n%s", out)
+			}
+		})
 	}
 }
 

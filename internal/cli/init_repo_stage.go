@@ -27,8 +27,10 @@ type repositoryStage struct {
 	st     initflow.Status
 	warned bool
 	// notOnboarding is the wizard's first-repository question answered no at
-	// the start of the run (W3.4): the repository is left as it is, so the
-	// stage has nothing to do and nothing to ask for. Nothing else sets it.
+	// the start of the run (W3.4): this repository is left as it is, so this
+	// stage has nothing to do and nothing to ask for. Only this stage reads
+	// it: the plugin wiring is a different write with a confirmation of its
+	// own, and the question does not answer for it.
 	notOnboarding bool
 }
 
