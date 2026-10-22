@@ -6853,3 +6853,205 @@ fugaro version    # the release the deploy is run from: read-only
 - **A step failed before the deploy.** The installation is exactly as step 1 found it: the database step writes nothing until it is confirmed and stops at its first failed write, leaving no `credsRules` marker (`DB.Plan` orders it after the deploy, beside the policy marker; `Apply` stops there). Re-run the check from step 1.
 - **The helper was killed.** Its cleanup runs on the way out of the test and is idempotent, but a `SIGKILL` skips it: delete the nodes step 6 names — the repository `live92-<hex>/rules`, its two runs' entries and children, the `/creds` nodes and the device node — as the owner, and delete the Firebase Auth uids it lists, then re-run the check, which starts under fresh names. Nothing else of the helper's is anywhere.
 - **The deploy has to be undone.** Rolling the rules back is the same command from a checkout of the older release, run by you, in your terminal, against this installation (`docs/gcp-setup.md`: "rolling back is the same command from a checkout of the older version"), and it should be recorded as a **generation downgrade**: an older binary leaves `config/limits/credsRules` where it is — it does not know the node — so the marker keeps naming a generation whose children are no longer deployed, and a cascade launch passes the gate and halts at its first refused write (`creds_rules_denied`). The honest undo of the *marker* is a hand delete of `config/limits/credsRules` by the owner when the document goes back, and it is a state this release's `doctor` reports. Never `terraform destroy` the Firebase root for it.
+
+## Check 94: the credentials service deployed — one bundle secret, one accessor grant, and the `DATA_READ` log read back after its config is read back (`fugaro-dev` only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by Task C1.23 of [credentials-service/implementation-plan.md](credentials-service/implementation-plan.md) (its Check 94, D146, D147, Q6 and m3); **no step of it has been run, and nothing here is a claim that it works.** It is the check of the **opt-in itself**: what `fugaro init --provision-credentials` applies in the installation root, what a repository root re-applied afterwards does with the model credentials, and — the half m3 asks for — that Secret Manager **`DATA_READ` audit logs are turned on by the owner's own hand, read back from the config, before any log line is read at all**.
+
+**⚠ What is NOT true on this tree, and why parts of steps 5 and 6 cannot pass today.** The service is **deployed but cannot serve**: `fugaro credentials serve` refuses to start, because the installation module puts exactly three names on the container (`FUGARO_PROJECT`, `FUGARO_GCP_PROJECT`, `FUGARO_REGION`, `internal/infra/tf`'s `credentialsServiceEnv` allow-list) while a `credsvc.Config` needs four facts of the installation that are not among them — the database URL, the Firebase project, the service's own URL as the audience, and the job-account table. **The run that wires them is queued** (the container's environment, that allow-list and the config builder, together), and until it lands: (a) **nothing reads the bundle**, so the audit log this check turns on has **no entry to show**, and step 5 records *no entry observed* — **which is not a failure**; and (b) the service answers **no** typed refusal, so step 6 records the flag read back from the database and the refusal as **not observable**. Steps 1–4 and the audit-config half of step 5 are runnable, and they are what this check proves today. **`belong` is never touched by any step** (D147): the guard below refuses any GCP project that is not `fugaro-dev`, by name, including every `belong` spelling.
+
+**What the opt-in applies, and what it must read back.** `fugaro init --provision-credentials` is the owner-run stage C1.20 added (`internal/cli/init_credentials.go`): after the installation root's ordinary steps, it turns on `credentials_service` in that root's tfvars and applies **four resources** (`deploy/terraform/gcp/modules/installation/credentials.tf`): the Cloud Run service `fugaro-credentials`, its own service account `fugaro-credentials`, **one** Secret Manager container (the project-wide container of the logical name `creds-bundle`, `gcp.CredsBundleSecretID`), and **one** grant — `roles/secretmanager.secretAccessor` to that account on **that one secret and no other**, with **no `condition`** (Q6, Global Constraint 12). The container is created and never written: `fugaro creds set NAME` (C1.25) is its only writer, and Terraform holds no version of it (`TestNoSecretVersionsInTerraform`). The service requires IAM (`invoker_iam_disabled = false`) and nothing in the file grants `allUsers` or `allAuthenticatedUsers`. Then `fugaro init --repo` in the sandbox checkout moves the repository's half: **every workflow job stops mounting its model credential and loses its `secretmanager.secretAccessor` on it, and gains `roles/run.invoker` on the service** — one member per job account, on that one service (`modules/workflow/sa.tf`). This check reads grants, never values: **no step prints, pastes or stores a credential, a secret version's payload, or anything derived from one — names, roles and principals only** (F27).
+
+**Guard block — re-run this before every step.** The GCP project and the region are read out of the installation's own config rather than from memory or from `gcloud`'s ambient configuration, and both the installation and its project are pinned by name.
+
+```bash
+# === Check 94: setup + guard. RE-RUN THIS BLOCK BEFORE EVERY STEP. ===
+I=fugaro                                        # the installation, by name
+C=$HOME/.config/fugaro/projects/fugaro.yaml
+set -u
+[ -r "$C" ] || { echo "Check 94 stopped: no project config at $C" >&2; exit 1; }
+GCP=$(sed -n 's/^ *gcp_project: *//p' "$C" | tr -d "\"'" | head -1)
+FP=$(sed -n 's/^ *firebase_project: *//p' "$C" | tr -d "\"'" | head -1)
+L=$(sed -n 's/^ *region: *//p' "$C" | tr -d "\"'" | head -1)
+case "$GCP" in
+  fugaro-dev) ;;
+  *belong*|*Belong*|fugaro-prod|*prod*) echo "Check 94 stopped: '$GCP' is a belong or production project; this check runs on fugaro-dev only (D147)" >&2; exit 1 ;;
+  *) echo "Check 94 stopped: the installation's GCP project is '$GCP', not fugaro-dev" >&2; exit 1 ;;
+esac
+command -v fugaro >/dev/null || { echo "Check 94 stopped: no fugaro on PATH" >&2; exit 1; }
+command -v gcloud >/dev/null || { echo "Check 94 stopped: no gcloud on PATH" >&2; exit 1; }
+fugaro doctor --project "$I" 2>/dev/null | grep -q "^project: .*(GCP $GCP," || {
+  echo "Check 94 stopped: installation '$I' is not the $GCP installation on this machine" >&2; exit 1; }
+export FUGARO_PROJECT="$I"                      # every later fugaro command is pinned to it
+W=/tmp/chk94; mkdir -p "$W"
+SVC=fugaro-credentials                          # infra.CredentialsServiceName
+SA=fugaro-credentials@$GCP.iam.gserviceaccount.com   # infra.CredentialsAccountID
+[ -n "$L" ] && [ "$FP" = fugaro-dev ] || { echo "Check 94 stopped: config carries region='$L' firebase_project='$FP'" >&2; exit 1; }
+echo "Check 94 ready: installation=$I gcp=$GCP region=$L firebase=$FP — names and principals only, never a value"
+fugaro version    # the release the stage and the reads are run from: read-only
+```
+
+1. **The before-state, read-only.** *(Guard block.)* What the project holds now, so step 2's effect is a difference rather than an impression. The two model credentials of the sandbox repository are the containers carrying the `fugaro_secret` label, which is the logical name they hold (`claude-oauth-token`, `anthropic-api-key`); the point of the check is that **those policies still name the repository's job account now and must not after step 4**.
+
+   ```bash
+   fugaro doctor --project "$I" | sed -n '/credentials/,+6p'      # whatever it says today: quote it
+   echo "--- the service (absent before the stage) ---"
+   gcloud run services list --project="${GCP:?}" --region="${L:?}" \
+     --filter="metadata.name=$SVC" --format='value(metadata.name)' ; echo "exit=$?"
+   echo "--- the bundle container (absent before the stage) ---"
+   gcloud secrets list --project="${GCP:?}" --filter='labels.fugaro=managed' \
+     --format='value(name)' | grep -- '-creds-bundle-' ; echo "exit=$?"
+   echo "--- the model credentials, and who may read them now ---"
+   for LG in claude-oauth-token anthropic-api-key; do
+     for S in $(gcloud secrets list --project="${GCP:?}" --filter="labels.fugaro_secret=$LG" --format='value(name)'); do
+       echo "== $LG $S"
+       gcloud secrets get-iam-policy "$S" --project="${GCP:?}" --format=json > "$W/before.$LG.json"
+       python3 -c 'import json,sys
+p=json.load(open(sys.argv[1]))
+for x in p.get("bindings",[]):
+    print("   ", x["role"], "->", ", ".join(x["members"]), "(condition)" if x.get("condition") else "")' "$W/before.$LG.json"
+     done
+   done
+   ```
+   **FACT:** the service and the container listing (both expected **absent**: no line, non-zero exit) and, per model credential, its **role → members** lines verbatim, with the job account among them — the state the opt-in is supposed to end, and step 4 reads the same lines again. **Nothing here prints a value:** a secret's IAM policy carries names and roles, never a version's payload.
+
+2. **⚠ CONFIRM — the opt-in stage.** *(Guard block.)* **`fugaro init --provision-credentials`** in your own terminal, from a checkout of this release. It requires the installation's **credentials rules marker** (`config/limits/credsRules`, Check 92's) and, being a live apply, it asks for the project's name **typed** at a real terminal: a coding agent's session is refused before anything is planned (`initflow.AgentError`), and **`--yes` does not cover it**. Read the plan before you confirm. The stage prints:
+
+   ```
+   the credentials service is on: <fugaro-credentials> runs in <region> with <image@sha256:…>; every repository root re-applied after this drops its jobs' model-secret accessors and grants them an invoker on it
+   ```
+   (a converged installation instead prints `No changes: the installation's credentials service matches the plan.`). It writes **one key** of the installation root's tfvars, `credentials_service` = `{account_id, service, image, bundle_secret}` (`infra.SetCredentialsService`) — a read-modify-write of that one key, never a rebuild of the document.
+   **FACT:** the sentence you confirmed, the act lines or the `No changes` line **verbatim**, the image reference **pinned by digest** (`…@sha256:` and 64 lower-case hex digits — a tag is refused at plan time, because an operator can push a tag and this account reads every credential), and the stage's own count of what the apply created or found.
+
+3. **The four resources, read back.** *(Guard block, read-only.)* The grant is the security claim, so it is asserted rather than eyeballed: **one member on the one container, no `condition` anywhere, and the account reachable nowhere else.**
+
+   ```bash
+   BS=$(gcloud secrets list --project="${GCP:?}" --filter='labels.fugaro=managed' \
+        --format='value(name)' | grep -- '-creds-bundle-' | head -1 | sed 's|.*/||')
+   [ -n "$BS" ] || { echo "no creds-bundle container: the stage did not apply (do not read on)"; exit 1; }
+   echo "bundle container: $BS"
+   gcloud secrets describe "$BS" --project="${GCP:?}" --format='value(labels)'    # fugaro=managed, fugaro_project=fugaro
+   echo "versions: $(gcloud secrets versions list "$BS" --project="${GCP:?}" --format='value(name)' | wc -l)"   # 0, until a creds set
+   gcloud secrets get-iam-policy "$BS" --project="${GCP:?}" --format=json > "$W/bundle.iam.json"
+   python3 -c 'import json,sys
+b=json.load(open(sys.argv[1])).get("bindings",[])
+bad=[]
+if len(b)!=1: bad.append("bindings=%d (want exactly 1)"%len(b))
+for x in b:
+    if x["role"]!="roles/secretmanager.secretAccessor": bad.append("role="+x["role"])
+    if x.get("members")!=["serviceAccount:"+sys.argv[2]]: bad.append("members=%r"%x.get("members"))
+    if x.get("condition"): bad.append("CONDITION PRESENT (Q6 forbids one)")
+print("BINDINGS:", json.dumps(b, indent=2))
+sys.exit("REFUSED: "+"; ".join(bad) if bad else 0)' "$W/bundle.iam.json" "$SA"
+   echo "--- the service, its account, its image, its timeout ---"
+   gcloud run services describe "$SVC" --project="${GCP:?}" --region="${L:?}" \
+     --format='value(spec.template.spec.serviceAccountName,spec.template.spec.containers[0].image,spec.template.spec.timeoutSeconds)'
+   gcloud run services get-iam-policy "$SVC" --project="${GCP:?}" --region="${L:?}" --format=json > "$W/svc.iam.json"
+   python3 -c 'import json,sys
+b=json.load(open(sys.argv[1])).get("bindings",[])
+for x in b:
+    print(x["role"], "->", ", ".join(x["members"]), "(condition)" if x.get("condition") else "")
+    for m in x["members"]:
+        assert not m.startswith(("allUsers","allAuthenticatedUsers")), "the service is open to everyone"
+assert b, "no invoker binding: no job can call the service"' "$W/svc.iam.json"
+   echo "--- the account, and where else it appears ---"
+   gcloud projects get-iam-policy "${GCP:?}" --flatten='bindings[].members' \
+     --filter="bindings.members:serviceAccount:$SA" --format='value(bindings.role)' ; echo "(want: no line)"
+   for S in $(gcloud secrets list --project="${GCP:?}" --format='value(name)'); do
+     gcloud secrets get-iam-policy "$S" --project="${GCP:?}" --format=json \
+       | grep -q "serviceAccount:$SA" && echo "ALSO GRANTED: $S" ; done ; echo "(want: the bundle container only)"
+   ```
+   **FACT:** the container's labels; its **version count — expected `0`** while `fugaro creds set` has not been run (record it as it is: this check writes no version either way); the bundle's binding JSON and the `REFUSED`-or-nothing exit of the assertion; the service's `serviceAccountName` = **`$SA`**, its image **ending in `@sha256:`**, its `timeoutSeconds` **3600**; the service's invoker bindings, **each a job account and never `allUsers`**; the project-policy lines for `$SA` (**expected none**) and the `ALSO GRANTED` listing (**expected: the bundle container only**). **A `condition` anywhere in the bundle's policy, a second member, or a second secret granting the account, is a failure of the security claim this check exists for — stop and record it, do not tidy it away.**
+
+4. **The repository root re-applied — the model credentials move out of the jobs.** *(Guard block.)* In the **sandbox checkout**, at your terminal: **`fugaro init --repo`**, which asks for the project's name typed as well. Then read the two policies again, and the service's invoker members after the re-apply.
+
+   ```bash
+   # in the sandbox checkout, as the owner:  fugaro init --repo
+   for LG in claude-oauth-token anthropic-api-key; do
+     for S in $(gcloud secrets list --project="${GCP:?}" --filter="labels.fugaro_secret=$LG" --format='value(name)'); do
+       echo "== $LG $S"
+       gcloud secrets get-iam-policy "$S" --project="${GCP:?}" --format=json > "$W/after.$LG.json"
+       python3 -c 'import json,sys
+for x in json.load(open(sys.argv[1])).get("bindings",[]):
+    print("   ", x["role"], "->", ", ".join(x["members"]), "(condition)" if x.get("condition") else "")' "$W/after.$LG.json"
+     done
+   done
+   gcloud run services get-iam-policy "$SVC" --project="${GCP:?}" --region="${L:?}" --format=json > "$W/svc.iam.after.json"
+   python3 -c 'import json,sys
+for x in json.load(open(sys.argv[1])).get("bindings",[]):
+    if x["role"]=="roles/run.invoker":
+        print("invoker ->", ", ".join(x["members"]))' "$W/svc.iam.after.json"
+   ```
+   **FACT:** the two policies' lines **after** the re-apply — a job account that was on them in step 1 and is gone now is the change this step proves — and the service's `roles/run.invoker` members, which now include the sandbox repository's job account(s). **A model secret still naming a job account is a failure**: that job would still hold a model credential, which is what the service exists to end. **A job account with no invoker grant is a failure too**: it has no way to reach a credential at all. Nothing here prints a value; every read is a policy.
+
+5. **⚠ CONFIRM — the `DATA_READ` audit config, then the log.** *(Guard block.)* Secret Manager audit logs are **off by default** and **no Terraform of Fugaro's manages an audit config** (m3; the same owner-run step `docs/gcp-setup.md` records for `DATA_WRITE` on the runs bucket). The order is the point: **read the config back first**, and only then look for a log line — a log that is quiet because its config was never applied must never be read as "the service read nothing".
+
+   ```bash
+   # 1. Read — keep the etag, so a project policy changed under you is refused rather than overwritten.
+   gcloud projects get-iam-policy "${GCP:?}" --format=json > "$W/project.policy.json"
+   cp "$W/project.policy.json" "$W/project.policy.before.json"
+   # 2. ⚠ CONFIRM: turn Secret Manager DATA_READ logs on. Edit the file, then set it back.
+   python3 -c 'import json,sys
+p=json.load(open(sys.argv[1]))
+acs=p.setdefault("auditConfigs",[])
+ac=next((a for a in acs if a.get("service")=="secretmanager.googleapis.com"), None)
+if ac is None:
+    ac={"service":"secretmanager.googleapis.com"}; acs.append(ac)
+logs=ac.setdefault("auditLogConfigs",[])
+if not any(l.get("logType")=="DATA_READ" for l in logs):
+    logs.append({"logType":"DATA_READ"})
+json.dump(p, open(sys.argv[1],"w"), indent=2)
+print("DATA_READ for secretmanager.googleapis.com: on")' "$W/project.policy.json"
+   gcloud projects set-iam-policy "${GCP:?}" "$W/project.policy.json" --format='value(etag)' >/dev/null && echo "policy written back"
+   # 3. Read the config BACK — this, and not the write's exit code, is the fact.
+   gcloud projects get-iam-policy "${GCP:?}" --format=json | python3 -c 'import json,sys
+for ac in json.load(sys.stdin).get("auditConfigs",[]):
+    if ac.get("service")=="secretmanager.googleapis.com":
+        print("service:", ac["service"], "logTypes:", [l.get("logType") for l in ac.get("auditLogConfigs",[])],
+              "exempted:", ac.get("exemptedMembers",[]))'
+   # 4. Now, and only now, the log itself: names and principals, never a payload.
+   gcloud logging read \
+     'protoPayload.methodName="google.cloud.secretmanager.v1.SecretManagerService.AccessSecretVersion" AND protoPayload.resourceName:"'"$BS"'"' \
+     --project="${GCP:?}" --freshness=1d --limit=10 \
+     --format='value(timestamp,protoPayload.authenticationInfo.principalEmail,protoPayload.resourceName)'
+   ```
+   **FACT:** the read-back line — `service: secretmanager.googleapis.com` with **`DATA_READ`** among its log types, and (record it) whether `exempted` names anyone — and then the log's own lines: each **timestamp, principal, secret resource name**. **⚠ On this tree the log read is expected to print nothing: the service cannot serve (the note at the top), so no revision reads the bundle and there is no entry to find. Record *no entry observed* — that is the honest fact, and it is not a failure of the audit config, which steps 2–3 of this step prove independently. Do not paste a whole `--format=json` entry:** an entry carries the secret's resource name, the caller's principal and the request metadata, never the document — the rule of this task is names, never values.
+
+6. **The operator stop flag, read back.** *(Guard block.)* `fugaro budget kill --all` is the operator's own halt (D142): it asks you to type a confirmation, records who set it, and makes new runs refuse.
+
+   ```bash
+   fugaro budget kill --all                       # ⚠ CONFIRM: asks you to type
+   fugaro budget show --all | grep -n 'kill switch' | head -5
+   # The service's typed answer to a call under the flag -- NOT OBSERVABLE TODAY (the note at the top):
+   #   gcloud logging read 'logName:"run.googleapis.com%2Frequests" AND resource.labels.service_name="'"$SVC"'"' \
+   #     --project="${GCP:?}" --freshness=10m --limit=5 --format='value(timestamp,httpRequest.status)'
+   fugaro budget resume --all                     # clear it again, and record that you did
+   fugaro budget show --all | grep -n 'kill switch' | head -5
+   ```
+   **FACT:** the `kill switch:` line of `fugaro budget show --all` **with the flag on** (it names the switch and who set it), the same line **after the resume** (off), and the record that the service's refusal was **not observed**, for the reason at the top of this check: a service that does not serve refuses nothing. **Leaving the project-wide kill switch on is how this check breaks the next one:** `resume --all` is not optional.
+
+7. **What survives: nothing of the check's own — the final assertion.** *(Guard block.)* This check writes no throwaway node, no run and no rule; what it leaves behind is the **opt-in** (which later checks read) and the **audit config** (what m3 asked for). So the assertion is that the two things it changed temporarily are back, and that the security claim still reads exactly one member.
+
+   ```bash
+   fugaro budget show --all | grep -c 'kill switch: on'                          # 0
+   python3 -c 'import json,sys
+b=json.load(open(sys.argv[1])).get("bindings",[])
+print(len(b), len(b[0]["members"]) if b else 0, sum(1 for x in b if x.get("condition")))' "$W/bundle.iam.json"   # 1 1 0
+   for S in $(gcloud secrets list --project="${GCP:?}" --format='value(name)'); do
+     gcloud secrets get-iam-policy "$S" --project="${GCP:?}" --format=json \
+       | grep -q "serviceAccount:$SA" && echo "ALSO GRANTED: $S" ; done ; echo "(want: the bundle container only)"
+   ```
+   **FACT:** the count of `kill switch: on` lines — **`0`** — the bundle's `bindings / members / conditions` triple — **`1 1 0`** — and the `ALSO GRANTED` listing, which must name **no secret but the bundle**. (A `grep -c 'live94-'` here would be `0` trivially: this check creates no such name, and that is a statement about the check, not a proof of cleanliness — the three reads above are the proof.)
+
+**Passes when:** the guard block's ready line names `fugaro` on `fugaro-dev`; step 2's stage reports the service on (or `No changes`) with an image pinned by digest, the credentials rules marker present; step 3 shows the bundle container carrying **exactly one** binding — `roles/secretmanager.secretAccessor` to `fugaro-credentials@fugaro-dev.iam.gserviceaccount.com` — **with no `condition`**, the service running as that account with a `@sha256:`-pinned image and `timeoutSeconds` 3600, its policy naming job accounts and never `allUsers`/`allAuthenticatedUsers`, and the account holding no project role and no other secret; step 4 shows the two model credentials' policies **no longer naming the repository's job account** and that account carrying `roles/run.invoker` on the service; step 5 shows `DATA_READ` for `secretmanager.googleapis.com` **read back from the config** (whether or not the log then shows an entry — on this tree it does not, and that is recorded, not passed off as a pass); step 6 shows the kill-switch line on and then off; step 7 reads **`0`** kill switches on, **`1 1 0`** for the bundle, and no second secret granting the account.
+
+**Fails when:** any `condition` appears in the bundle's policy, or a second member, or the account is granted on another secret or holds a project role — **that is the Q6 / Global-Constraint-12 failure this check exists for**; the image is a tag rather than a digest; the service's `serviceAccountName` is not the credentials account; a model secret still names a job account after step 4, or a job account has no invoker grant; `DATA_READ` is **not** read back from the config (a log read without the config read back proves nothing); the kill switch is left on; or a step's own stop fired — record its message and stop, and see the Restore.
+
+**Paste back:** the `fugaro version` line and the guard block's ready line; step 1's before-state (the service and container absent, both model policies' role → members lines); step 2's confirmed sentence and act lines (or `No changes`); step 3's whole assertion output — the bundle binding JSON, the assertion's exit, the service's account/image/timeout line, the invoker bindings, the project-role lines for the account, the `ALSO GRANTED` listing, and the bundle's version count; step 4's two policies after the re-apply and the invoker members; step 5's read-back line and the log's lines (or `no entry observed`); step 6's two kill-switch lines; step 7's three reads. **Names, principals, roles and counts — never a value, never a secret's payload, never a whole log body.**
+
+**Restore.** The opt-in **stays on**: it is the state every later credentials check reads (Checks 95 and 99 both depend on it), and undoing it is the two owner steps `credentials.tf` states — `terraform state rm` of the container **then** an apply with the opt-in unset, with every repository root re-applied **before** both. What this check itself must put back:
+
+- **The kill switch.** `fugaro budget resume --all` if step 6 was reached and the resume did not run, or if you stopped the check between the kill and the resume. This is the one thing that breaks other work if it is left.
+- **The audit config.** It is the point of m3 and it **stays** — but say so in the paste-back if you turned it on and then decided against it, because undoing it is another read-modify-write of the project policy (`gcloud projects get-iam-policy` → drop the `secretmanager.googleapis.com` entry → `gcloud projects set-iam-policy`, with the same etag caveat), and leaving it on costs logging volume on every bundle read.
+- **Nothing else.** No throwaway node, no run, no rule, no secret version, no bucket object: this check's whole footprint is the opt-in and the audit config.
+- **A step failed before the stage.** The installation is exactly as step 1 found it, and nothing is half-applied: the stage writes its one tfvars key and then plans, and a plan that fails leaves the key set with nothing created, which the next stage run converges. **A bundle container that exists with no version is the expected state, not a mess.**
