@@ -372,6 +372,20 @@ func TestDocsMultiModelDocumentsTheCascadeSwitch(t *testing.T) {
 		"reads neither the service nor its bundle",
 		"halts",
 		"budget_unavailable",
+		// What the opt-in does to the job's mounts. The section said an
+		// `oauth` workflow of the same repository "keeps its own mount
+		// unchanged", which is false once the installation opts in:
+		// dropModelMounts (internal/infra/spec.go, internal/infra/readiness.go)
+		// deletes every mount config.IsModelSecretEnv names —
+		// CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY and each provider key —
+		// for every workflow of a per-repository job, whatever agent.auth is
+		// (code review of C1.22, and it contradicted the next clause of the
+		// same sentence and SECURITY.md's own guarded claim).
+		"dropModelMounts",
+		"IsModelSecretEnv",
+		"does **not** keep its own mount",
+		"shared project job",
+		"C3.9",
 	} {
 		if !strings.Contains(flat, want) {
 			t.Errorf("%s's cascade section never says %q", path, want)
@@ -380,9 +394,12 @@ func TestDocsMultiModelDocumentsTheCascadeSwitch(t *testing.T) {
 	for _, banned := range []string{
 		// The claim that the service's absence is what refuses the launch.
 		"is refused at launch there too",
+		// The claim that an `oauth` workflow keeps its model mount: the
+		// opt-in drops it, per-repository and in every auth mode.
+		"keeps its own mount unchanged",
 	} {
 		if strings.Contains(flat, banned) {
-			t.Errorf("%s's cascade section says %q: the launch reads the policy switch, not the service", path, banned)
+			t.Errorf("%s's cascade section says %q: the launch reads the policy switch, not the service, and the opt-in drops every per-repository job's model mounts", path, banned)
 		}
 	}
 }
