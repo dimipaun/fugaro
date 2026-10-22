@@ -117,7 +117,7 @@ func (s *pluginStage) plan1(ctx context.Context) (*pluginwire.Change, *initflow.
 		return status(initflow.NeedsYou, unknownDetailNotEnrolled(e.lc.Name, repo, e.r.o.doorName()), &lf)
 	case a == authNeeded:
 		lf := onboardLeft(repo, e.r.o.doorName())
-		return status(initflow.NeedsYou, unknownDetail(e.lc.Name, repo), &lf)
+		return status(initflow.NeedsYou, unknownDetail(e.lc.Name, repo, convergeOptIn(repo)), &lf)
 	case a == authAsk:
 		s.origin, s.root, s.ask = repo, loc.Root, true
 	}

@@ -271,7 +271,7 @@ func TestOnboardRepoRefusedInAnAgentSession(t *testing.T) {
 func TestHostileOriginIsTruncatedInDetail(t *testing.T) {
 	long := strings.Repeat("x", 5000)
 	oi := originInfo{Repo: "acme/" + long, Host: "evil.example", Raw: "https://evil.example/" + long, Effective: "https://github.com/" + long, Rewritten: true}
-	d := unknownDetail("aurora", oi)
+	d := unknownDetail("aurora", oi, convergeOptIn(oi))
 	if len(d) > 1500 || !strings.Contains(d, "(truncated)") {
 		t.Errorf("%d bytes: %.80q", len(d), d)
 	}

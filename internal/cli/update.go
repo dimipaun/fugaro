@@ -41,10 +41,14 @@ destroying nothing else.
 
 Everything else is setup's help word for word, because it is the same
 converge: the review screen and the one typed project name in a project Fugaro
-owns; the steps that keep their own typed confirmation (a project's creation
-and the billing link are setup's, and here they cannot arise at all, but the
-Firestore database's permanent location, a billable first image build,
-replacing a registry tag, an unlisted repository and the secrets are not); the
+owns; the steps that keep their own typed confirmation — a project's creation
+and the billing link are setup's, and here they cannot arise at all, and a
+secret is a value, typed in a hidden prompt, which --yes cannot supply — against
+the steps --yes covers, which by D12's answer of 2026-10-20 is every ordinary
+step this door owns: the Firestore database's permanent location, a billable
+first image build, replacing a registry tag and onboarding an unlisted
+repository on a provider's own host with an origin git config that does not
+rewrite it (the build, the tag and the repository are covered in setup too); the
 secrets stage's hidden prompts and the one line of fugaro secrets set commands
 it leaves instead; the plugin wiring; --anchor, which writes the checkout's
 gcp_project line and nothing else; --plan-only, --print-vars, --config-only and
