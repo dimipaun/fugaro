@@ -141,7 +141,7 @@ task that needs one of these edited is a finding, not an edit.
       ".write": false
     }
   }
-}
+},
 ```
 
 Four consequences, each load-bearing below.
