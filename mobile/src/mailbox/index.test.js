@@ -15,22 +15,27 @@ import test from 'node:test';
 
 import * as mailbox from './index.js';
 
-test('the door exports the client, the paths, the codes and the two fakes', () => {
+test('the door exports the client, the paths, the codes and the three fakes', () => {
   assert.deepEqual(Object.keys(mailbox).sort(), [
     'CLIENT_CODES',
     'EXPIRED',
+    'GATE_CODES',
     'MAC_KEY_ITEM',
     'MAILBOX_ROOT',
     'MAILBOX_TTL_MS',
+    'MemoryConnection',
     'MemoryMailboxStore',
     'MemorySpeaker',
+    'OFFLINE_SPEECH',
     'PRESENCE_REASON',
     'REDACT_CODES',
     'SPEAK_CODES',
     'STORE_CODES',
     'createMailboxClient',
+    'evaluateGate',
     'isDatabaseKey',
     'mailboxPaths',
+    'offlineSpeech',
     'outboundRedactor',
     'toPresenceHeartbeat',
   ]);
@@ -59,6 +64,7 @@ test('the client the door builds is the one the tests in this directory build', 
     },
     keys: { use: async (id, item, fn) => ({ ok: true, result: await fn('synthetic-key') }) },
     store: new mailbox.MemoryMailboxStore(),
+    connection: new mailbox.MemoryConnection(),
     speaker: new mailbox.MemorySpeaker(),
     now: () => 1_700_000_000_000,
     newId: () => 'm-1',
