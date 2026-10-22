@@ -347,3 +347,34 @@ func TestCheckWorkflowProviderSecrets(t *testing.T) {
 		}
 	}
 }
+
+// TestValidateModelProvidersRefusesTheBundleContainerName: a provider's key may
+// not be stored under the credentials service's own bundle container name
+// (config.CredentialsBundleSecret, C1.11's review finding n2). The name is the
+// platform's and the container is the service's: every model credential the
+// installation holds lives in that one document, the service is its only
+// reader and `fugaro creds set NAME` (C1.25) its only writer.
+//
+// The other two surfaces already refuse it — a workflow's secrets[].name
+// (internal/config's Validate) and `fugaro secrets set` (internal/cli) — and
+// this is the third, because the container a provider's .secret resolves to is
+// not the per-repository one: internal/infra's projectSecretContainers maps
+// lc.Providers[name].Secret through gcp.ProjectSecretID, which is exactly
+// gcp.CredsBundleSecretID's derivation, so the name would resolve to the
+// bundle's container and a job would mount that document as the provider's key.
+func TestValidateModelProvidersRefusesTheBundleContainerName(t *testing.T) {
+	p := okProvider()
+	p.Secret = CredentialsBundleSecret
+	ps := ValidateModelProviders(map[string]ModelProvider{"openrouter": p})
+	if !hasProblem(ps, "providers.openrouter.secret", "credentials service's own bundle container", 0) {
+		t.Errorf("secret %q: problems = %s", CredentialsBundleSecret, problemsText(ps))
+	}
+
+	// The name is refused for a provider's key and nowhere else: it is
+	// deliberately not a member of ReservedSecrets (nothing mounts it), so a
+	// test that read the refusal off that map would be reading a rule that
+	// does not hold it.
+	if _, ok := ReservedSecrets[CredentialsBundleSecret]; ok {
+		t.Fatalf("%q is in ReservedSecrets: nothing mounts the bundle, and the provider refusal must not depend on it", CredentialsBundleSecret)
+	}
+}

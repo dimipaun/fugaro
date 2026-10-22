@@ -4376,7 +4376,7 @@ DEPLOYER="fugaro-deployer@${P:?}.iam.gserviceaccount.com"   # the account D75 cr
 # of the file rather than out of the environment, where they would be another
 # installation's values typed by hand.
 C=$HOME/.config/fugaro/projects/${I:?}.yaml
-W="${XDG_STATE_HOME:-$HOME/.local/state}/fugaro/terraform/${I:?}/installation"
+W="${XDG_STATE_HOME:-$HOME/.local/state}/fugaro/terraform/${P:?}/installation"   # keyed by the GCP project id (infra.InstallationWorkdir), NOT by the installation name
 # The state bucket the sandbox installation's root was applied with: the
 # config's `terraform.state_bucket` when its `terraform:` block names one, else
 # `fugaro init`'s default `fugaro-tfstate-<gcp-project>`
