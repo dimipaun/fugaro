@@ -111,8 +111,10 @@ func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
 
 // GatewayOn reports whether a configuration routes its calls through the
 // gateway: the budget is on (observe or enforce; "" and off are off) and the
-// credential is a model API's — api-key or vertex, since an oauth run's own
-// token never goes through it. It is run.gatewayOn, the run's own predicate,
+// credential is one the gateway can carry — api-key or vertex, and the cascade
+// too, whose calls the gateway forwards to the credentials service (C1.19).
+// An oauth run's own token never goes through it. It is run.gatewayOn, the
+// run's own predicate,
 // spelled for the readers that hold a mode and an auth rather than a run
 // (validate, doctor): the gateway is what decides whether the switch has
 // anything to act on at all (design §6.2, D11).

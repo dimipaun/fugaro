@@ -254,6 +254,11 @@ func TestRoutingInertReasonIsTheLadderTheRunWalks(t *testing.T) {
 		{"no gateway (the budget is off), whatever the via", sw(config.RouteAuto), "api-key", false, false, RoutingInertNoGateway},
 		{"no gateway (the credential is not a model API's)", sw(config.RouteOpenRouter), "oauth", false, false, RoutingInertNoGateway},
 		{"no switch at all", nil, "api-key", true, false, RoutingInertNoSwitch},
+		// The cascade acts only on the workflow that asked for it (C1.19, O2):
+		// every other credential of the same project keeps what it had.
+		{"via: cascade in an api-key run", sw(config.RouteCascade), "api-key", true, false, RoutingInertCascadeOtherAuth},
+		{"via: cascade in a Vertex run", sw(config.RouteCascade), "vertex", true, false, RoutingInertCascadeOtherAuth},
+		{"via: cascade in a cascade run", sw(config.RouteCascade), config.AuthCascade, true, false, RoutingActs},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := RoutingInertReason(tc.sw, tc.auth, tc.gatewayOn, tc.anthropicKeyStrd); got != tc.want {
@@ -453,4 +458,117 @@ func TestRoutingAutoFollowsTheAnthropicKey(t *testing.T) {
 // shipped tables do not price.
 func overridesFor(id string) pricing.Overrides {
 	return pricing.Overrides{id: {InputPerM: 1, OutputPerM: 2, CacheRead: 0.1, CacheWrite5m: 1.25, CacheWrite1h: 2}}
+}
+
+// TestGatewayOnForCascade (C1.19): a cascade run's calls go through the
+// gateway, which is what carries them to the credentials service — so the
+// budget's mode decides it exactly as it does for the other two credentials.
+// The mutation: leaving cascade out of GatewayOn's list, which would leave a
+// cascade run with no gateway to attach a credential and no way to spend.
+func TestGatewayOnForCascade(t *testing.T) {
+	for _, tc := range []struct {
+		mode string
+		want bool
+	}{
+		{policy.ModeObserve, true},
+		{policy.ModeEnforce, true},
+		{"", false},
+		{"off", false},
+	} {
+		if got := GatewayOn(config.AuthCascade, tc.mode); got != tc.want {
+			t.Errorf("GatewayOn(cascade, %q) = %v, want %v", tc.mode, got, tc.want)
+		}
+	}
+	// run.gatewayOn is the same answer for a run that holds the mode.
+	r := cascadeRun(t, nil)
+	for _, mode := range []string{policy.ModeObserve, policy.ModeEnforce} {
+		r.spend.Mode = mode
+		if !r.gatewayOn() {
+			t.Errorf("a cascade run with the budget %s does not route through the gateway", mode)
+		}
+	}
+	r.spend.Mode = "off"
+	if r.gatewayOn() {
+		t.Error("a cascade run with the budget off routes through the gateway")
+	}
+}
+
+// cascadeRun is the minimal cascade run: agent.auth cascade, the gateway on,
+// and whatever switch the case hands it through the policy node.
+func cascadeRun(t *testing.T, sw *config.RoutingClaude) *run {
+	t.Helper()
+	r := routedRun(t, sw, "claude-sonnet-5-5", "claude-opus-5")
+	r.cfg.Agent.Auth = config.AuthCascade
+	return r
+}
+
+// TestCascadeRefusedWithoutPolicySwitch (O2, C1.19): a repository asks for the
+// cascade and only the operator's published policy turns it on. A cascade run
+// whose policy carries no switch, another via, or no policy at all is refused
+// before it opens anything — and the refusal names the setting to write and
+// where, so the operator can act on it.
+//
+// Hand mutations this fails on: acting on the switch without checking it (the
+// run proceeds and its calls are forwarded to a service the operator never
+// enabled); accepting via: auto (a spelling O3 rejected, which would read as
+// "follow the credential" for a run that has none of its own); refusing an
+// absent policy node with a message that does not name the setting.
+func TestCascadeRefusedWithoutPolicySwitch(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		sw   *config.RoutingClaude
+	}{
+		{"no policy node at all", nil},
+		{"a switch with no via", &config.RoutingClaude{Models: []string{"claude-sonnet-5-5"}}},
+		{"via: direct", &config.RoutingClaude{Via: config.RouteDirect}},
+		{"via: auto", &config.RoutingClaude{Via: config.RouteAuto}},
+		{"an openrouter switch", &config.RoutingClaude{Via: config.RouteOpenRouter, Models: []string{"claude-sonnet-5-5"}}},
+	} {
+		r := cascadeRun(t, tc.sw)
+		err := r.applyRouting(r.projPolicy.policy, tc.sw != nil)
+		if err == nil {
+			t.Fatalf("%s: a cascade run ran with no cascade switch", tc.name)
+		}
+		for _, want := range []string{config.AuthCascade, "routing.claude", config.RouteCascade, "project policy publish"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: refusal does not name %q: %v", tc.name, want, err)
+			}
+		}
+	}
+	// The refusal happens whatever the budget mode is: it is the policy that
+	// enables the cascade, not the gateway.
+	r := cascadeRun(t, nil)
+	r.spend.Mode = "off"
+	if err := r.applyRouting(r.projPolicy.policy, false); err == nil {
+		t.Error("a cascade run with the budget off ran with no cascade switch")
+	}
+	// With via: cascade the run proceeds — and the switch routes nothing of
+	// its own: the cascade names a credential, not a model, so every pin keeps
+	// Claude's own ID (D133, D150).
+	sw := &config.RoutingClaude{Via: config.RouteCascade}
+	r = cascadeRun(t, sw)
+	if err := r.applyRouting(r.projPolicy.policy, true); err != nil {
+		t.Fatalf("a cascade run with the switch: %v", err)
+	}
+	cascadePins := r.stagePins("implement")
+	if cascadePins["CLAUDE_CODE_SUBAGENT_MODEL"] != "claude-sonnet-5-5" {
+		t.Errorf("cascade pins = %+v, want the canonical ID: the cascade routes no model", cascadePins)
+	}
+	if _, ok := cascadePins["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"]; ok {
+		t.Error("a cascade stage carries a provider route's variables")
+	}
+	// The switch is inert for every other credential: an installation writes
+	// it once, for its cascade workflows, and its api-key runs are untouched.
+	// oauth is not in this list: its calls never go through the gateway, so
+	// its stages carry no pins at all (RoutingInertNoGateway).
+	for _, auth := range []string{"api-key", "vertex"} {
+		r := cascadeRun(t, sw)
+		r.cfg.Agent.Auth = auth
+		if err := r.applyRouting(r.projPolicy.policy, true); err != nil {
+			t.Errorf("%s: applyRouting: %v", auth, err)
+		}
+		if pins := r.stagePins("implement"); pins["CLAUDE_CODE_SUBAGENT_MODEL"] != "claude-sonnet-5-5" {
+			t.Errorf("%s: pins = %+v, want the canonical ID: via: cascade is inert for it", auth, pins)
+		}
+	}
 }
