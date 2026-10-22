@@ -166,6 +166,13 @@ type Config struct {
 	Policy PolicyReader
 	// State is the cascade's shared state under creds/.
 	State creds.Store
+	// Audit is C1.13's auditor: the one writer of the service's audit lines,
+	// and the seam the service's own redaction is armed at (WithAuditScrub).
+	// Every act of this service that touches a credential is recorded through
+	// it — a mint (C2.1) writes its line here — and an act that cannot be
+	// audited is not made (D143), so NewServer refuses a service without one
+	// rather than building one whose mints could only refuse.
+	Audit *Auditor
 	// Kills reads the operator's two stop switches.
 	Kills KillReader
 	// DB is the one database write the service makes outside the cascade: the
@@ -285,6 +292,13 @@ func NewServer(cfg Config) (*Server, error) {
 	if cfg.Kills == nil {
 		return nil, errors.New("credsvc: the service cannot read the stop switches")
 	}
+	if cfg.Audit == nil {
+		// C1.13: an issuance that cannot be audited is not made. A service with
+		// no auditor is a service whose every mint would refuse, so it is
+		// refused here — where an operator sees it at startup — rather than
+		// discovered as a run that halts.
+		return nil, errors.New("credsvc: the service has no auditor, so an issuance it made could not be audited")
+	}
 	if cfg.DB == nil {
 		return nil, errors.New("credsvc: the service cannot remove an ended run's placement")
 	}
@@ -332,13 +346,19 @@ func NewServer(cfg Config) (*Server, error) {
 // credential ever being read. The policy is read first because the check needs
 // it: it is a policy read, not a credential, and a policy that cannot be read
 // refuses the call either way.
+//
+// Two routes share that order, and the mint leaves it after the stop flag: the
+// mint's whole admission is the two identities, the binding and the switch
+// (C2.1, D145), and the policy, the cascade and the shape of a model call are
+// none of its business.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	if r.Method != http.MethodPost || (r.URL.Path != MessagesPath && r.URL.Path != CountTokensPath) {
+	if r.Method != http.MethodPost || (r.URL.Path != MessagesPath && r.URL.Path != CountTokensPath && r.URL.Path != MintPath) {
 		// There is no other route, and in particular no admin route: D143's
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
-		s.refuse(w, http.StatusNotFound, "not_found", "this service serves POST "+MessagesPath+" and "+CountTokensPath)
+		s.refuse(w, http.StatusNotFound, "not_found",
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+" and "+MintPath)
 		return
 	}
 	req, err := RequestFromHTTP(r)
@@ -380,6 +400,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// credential at all.
 		s.refuse(w, StatusUnavailable, ErrorStateUnavailable,
 			"the credentials service is stopped by the "+which+" kill switch")
+		return
+	}
+	if r.URL.Path == MintPath {
+		// The mint (C2.1, D145). Everything above it is its admission and
+		// nothing below it is: the run identity and the job's own token have
+		// been verified, the binding between them has been made — which is what
+		// fixes the repository the token is scoped to — and the operator's stop
+		// flag has been read, so a stopped service mints nothing. It reads the
+		// bundle itself, because the App key is in it, and it reads no policy
+		// and consults no cascade: an installation token is not a model
+		// credential and no tier or admission has anything to say about it.
+		s.mint(ctx, w, r, id, ja)
 		return
 	}
 	// The project's policy, and the request itself, are read before the bundle:
