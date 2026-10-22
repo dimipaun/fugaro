@@ -12,6 +12,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The installation's singletons. The installation module checks their
@@ -172,6 +174,45 @@ type CredentialsServiceSpec struct {
 	// container under this ID and grants the account on it, and the service
 	// reads it back by its own derivation, so the two never drift.
 	BundleSecret string `json:"bundle_secret"`
+	// FirebaseProject and RTDBURL are the installation's Firebase project —
+	// the one a run's identity is verified against — and the Realtime
+	// Database it reads (C1.14's FUGARO_FIREBASE_PROJECT and FUGARO_RTDB_URL).
+	// Both are the local config's own budget block, written by `fugaro init
+	// --firebase` from the Firebase root's outputs, so the service and every
+	// run's launcher name the same database.
+	FirebaseProject string `json:"firebase_project"`
+	RTDBURL         string `json:"rtdb_url"`
+	// JobAccounts are the installation's per-repository jobs (CredentialsJob),
+	// the triples the service derives the job service accounts it binds a run
+	// to from (credsvc.JobAccountsFor over task.Slug and gcp.ServiceAccountID).
+	// Emails are deliberately not carried: an account's name and a
+	// repository's slug are both hashes of these three fields, so a list of
+	// emails here would be a second derivation that can drift from the
+	// accounts the deployer creates.
+	JobAccounts []CredentialsJob `json:"job_accounts"`
+	// URL is the service's OWN URL, the audience its callers' Google ID
+	// tokens are minted for. It is empty on the apply that CREATES the
+	// service: Cloud Run assigns the URL, nothing in the module may read the
+	// service's own uri from inside its resource (Terraform refuses a
+	// self-referential block), and the revision then carries the module's
+	// unassigned placeholder instead. The init stage reads the real URL back
+	// from the module's own output (infra.CredentialsService.URL) and writes
+	// it here in a second apply, which is why it is optional and why an
+	// ordinary run of init carries it forward rather than dropping it
+	// (CredentialsServiceURLOf).
+	URL string `json:"url,omitempty"`
+}
+
+// CredentialsJob is one job of the installation as the credentials service
+// names it: the git provider, the repository and the workflow, where
+// workflow is the JOB's own name — a repository that runs one workflow under
+// a named Claude account has two jobs of it, the plain workflow and the
+// account's variant (gcp.WorkflowVariant), and each has its own service
+// account and so its own row here.
+type CredentialsJob struct {
+	Provider string `json:"provider"`
+	Repo     string `json:"repo"`
+	Workflow string `json:"workflow"`
 }
 
 // The credentials service's singletons. The account is what reads the bundle,
@@ -205,21 +246,156 @@ const (
 var credsImageRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/@:-]*@sha256:[0-9a-f]{64}$`)
 
 // Credentials is the credentials service's spec for lc: the names the module
-// uses, the bundle container the loader also derives, and the image the
-// caller verified. The image must be pinned by digest (credsImageRE) — this
-// is the check the stage's own test walks the tag form through, and it is the
-// same rule the Terraform variable states, so a tfvars this function returns
-// is never one the plan refuses for its image.
+// uses, the bundle container the loader also derives, the image the caller
+// verified, and the four facts the process is configured with (C1.14) — the
+// Firebase project, the database, the job table and, once it is known, the
+// service's own URL (which the stage fills on the apply after the one that
+// creates the service; it is left empty here).
+//
+// The image must be pinned by digest (credsImageRE) — this is the check the
+// stage's own test walks the tag form through, and it is the same rule the
+// Terraform variable states, so a tfvars this function returns is never one
+// the plan refuses for its image.
+//
+// The Firebase facts come from the local config's budget block, which `fugaro
+// init --firebase` wrote from the Firebase root's outputs: the service reads
+// the installation's own database, so an installation whose config names none
+// cannot be configured at all — the stage's marker gate (requireCredsRules)
+// reads that same database, and a service with no database in its environment
+// refuses to bind a port. Both halves are refused here by name rather than
+// written empty, which is what the revision would refuse by.
 func Credentials(lc *localcfg.Config, image string) (CredentialsServiceSpec, error) {
 	if !credsImageRE.MatchString(image) {
 		return CredentialsServiceSpec{}, userErr("the credentials service's image %q must be pinned by digest (ending in @sha256: and 64 lower-case hex digits): a tag is mutable, and this service reads every model credential the installation holds", image)
 	}
+	b := lc.Budget
+	if b == nil || b.FirebaseProject == "" || b.RTDBURL == "" {
+		return CredentialsServiceSpec{}, userErr("the credentials service reads the installation's Firebase database, and project %s's config names no Firebase project and database (budget.firebase_project and budget.rtdb_url): run 'fugaro init --firebase <firebase-project-id>' first, which writes both from the Firebase root's outputs", lc.Name)
+	}
+	if err := rtdb.ValidateURL(b.RTDBURL, true); err != nil {
+		return CredentialsServiceSpec{}, userErr("budget.rtdb_url is not a Firebase Realtime Database URL: it must be https://<database>.firebaseio.com or https://<database>.<region>.firebasedatabase.app, with no credentials, path, query or fragment (a loopback address, which is the emulator, is admitted here). Run 'fugaro init --firebase <firebase-project-id>' to write it from the Firebase root's outputs")
+	}
+	jobs, err := CredentialsJobAccounts(lc)
+	if err != nil {
+		return CredentialsServiceSpec{}, err
+	}
 	return CredentialsServiceSpec{
-		AccountID:    CredentialsAccountID,
-		Service:      CredentialsServiceName,
-		Image:        image,
-		BundleSecret: gcp.ProjectSecretID(lc.Name, CredentialsBundleName),
+		AccountID:       CredentialsAccountID,
+		Service:         CredentialsServiceName,
+		Image:           image,
+		BundleSecret:    gcp.ProjectSecretID(lc.Name, CredentialsBundleName),
+		FirebaseProject: b.FirebaseProject,
+		RTDBURL:         b.RTDBURL,
+		JobAccounts:     jobs,
 	}, nil
+}
+
+// CredentialsJobAccounts is every job of the installation that may call the
+// credentials service, as the triples the module's var.credentials_service
+// carries: one row per repository, workflow and Claude account the repository
+// may run it under.
+//
+// It is the same set of accounts the repository roots grant roles/run.invoker
+// to (modules/workflow/sa.tf creates one job account per workflow and per
+// account its own root allows), derived the same way but from the LOCAL
+// config alone: the installation's tfvars are written by the installation
+// stage, which never reads a repository's fugaro.yaml. So the account axis is
+// config.AllowedClaudeAccounts — the accounts a repository's allow_data_to
+// names — which is exactly WorkflowAccounts's list for an oauth repository and
+// a superset of it for one whose agent authenticates with an API key. A
+// superset is the fail-closed direction here: a row for an account a
+// repository does not create binds an account no token is ever minted for,
+// while a MISSING row is a job that holds an invoker grant and is refused by
+// the service (the account is derived from the row, and the row is where the
+// service learns which repository a caller belongs to).
+//
+// A repository whose provider the local config does not name is refused
+// rather than skipped: without it neither the account's name nor the row is
+// derivable, and a table that quietly left that repository's jobs out would
+// deploy a service that refuses every one of their calls. doctor.go's
+// projectSecretAccountOwners skips such a repository, which is right for a
+// check that lists who owns a secret and wrong for the table a running
+// service authenticates against.
+//
+// The rows are sorted (provider, repo, workflow) and carry no duplicates.
+func CredentialsJobAccounts(lc *localcfg.Config) ([]CredentialsJob, error) {
+	var out []CredentialsJob
+	for _, repo := range slices.Sorted(maps.Keys(lc.Repos)) {
+		r := lc.Repos[repo]
+		if _, err := task.Slug(r.Provider, repo); err != nil {
+			return nil, userErr("the credentials service binds a caller to its repository through the git provider and the repository name, and the local config does not say which provider %s is on: add repos.%s.provider to it (or fix the repository's name) and run this stage again", repo, repo)
+		}
+		seen := map[string]bool{}
+		for _, w := range r.Workflows {
+			for _, acct := range config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo) {
+				// The default account IS the workflow's own job: its variant
+				// is the workflow name itself (gcp.WorkflowVariant).
+				v := gcp.WorkflowVariant(w, acct)
+				if seen[v] {
+					continue
+				}
+				seen[v] = true
+				out = append(out, CredentialsJob{Provider: r.Provider, Repo: repo, Workflow: v})
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil, userErr("the installation has no repository job to bind the credentials service to (the local config names no repository with a workflow): the service refuses a table that binds no run to a repository, so an installation with no jobs cannot have it")
+	}
+	slices.SortFunc(out, func(a, b CredentialsJob) int {
+		if c := strings.Compare(a.Provider, b.Provider); c != 0 {
+			return c
+		}
+		if c := strings.Compare(a.Repo, b.Repo); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Workflow, b.Workflow)
+	})
+	return out, nil
+}
+
+// CredentialsServiceURLOf returns the credentials_service.url the installation
+// root's tfvars carry, and "" when they carry none — either because no
+// credentials_service is set at all or because it is the apply that created
+// the service and the URL is not known yet.
+//
+// It is what an ordinary run carries forward (the stage's prepare): the URL is
+// the audience of every caller's ID token, and a run that wrote the service's
+// other facts without it would replace the revision's real audience with the
+// module's unassigned placeholder, which admits nobody.
+func CredentialsServiceURLOf(vars []byte) (string, error) {
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return "", err
+	}
+	svc, _ := doc["credentials_service"].(map[string]any)
+	url, _ := svc["url"].(string)
+	return url, nil
+}
+
+// SetCredentialsServiceURL returns the installation root's tfvars with
+// credentials_service.url set to url and every other entry — the service's own
+// facts included — unchanged. It is the same read-modify-write of one entry
+// SetCredentialsService makes, for the same reason: the document on disk
+// carries the run's discovery, and rebuilding it from a spec would drop it.
+//
+// The URL is the one the module's own output carries back
+// (infra.CredentialsService.URL, outputs.tf's
+// google_cloud_run_v2_service.credentials[0].uri), never a value this package
+// composes: the audience a Cloud Run front end checks a caller's ID token
+// against is the URL it serves the revision on, project number and all.
+func SetCredentialsServiceURL(vars []byte, url string) ([]byte, error) {
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, err
+	}
+	svc, _ := doc["credentials_service"].(map[string]any)
+	if svc == nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json carries no credentials_service to set the service's URL on")
+	}
+	svc["url"] = url
+	doc["credentials_service"] = svc
+	return sortedJSON(doc)
 }
 
 // SetCredentialsService returns the installation root's tfvars vars — as
