@@ -618,3 +618,38 @@ func TestDocsCheck111EveryModeAnswersTheCreateAdoptQuestion(t *testing.T) {
 		}
 	}
 }
+
+// Two sentences in Check 27's subtree are *about* the rename rather than
+// rewritten by it: the register row's parenthetical, which lists what the
+// rewrite renames (`init` → `fugaro setup`, the converge-again steps →
+// `fugaro update`, `--firebase` → `--firebase-project`), and step 4's "the same
+// one the old text made of `init` run a second time". In both, naming the OLD
+// command is the whole point — the row's own next clause says the recorded run
+// "was made with the **old** command lines".
+//
+// The guard above cannot see this: it forbids the retired spelling in rewritten
+// text, and a mechanical rename that overwrote the left of the first arrow
+// writes the *new* spelling, leaving the row asserting that `fugaro setup` was
+// renamed to `fugaro setup`. This test holds the two sides of that arrow apart,
+// and holds the retired name in the two places that speak about it.
+//
+// Mutation (run, restore): put `fugaro setup` back on the left of the first
+// arrow — the self-mapping check fails. Rewrite step 4's clause to name the new
+// door — the last want fails.
+func TestDocsCheck27NamesTheRetiredCommandWhereItSpeaksOfIt(t *testing.T) {
+	flat := flattenDoc(readDoc(t, setupWizardChecklist))
+
+	if strings.Contains(flat, "`fugaro setup` → `fugaro setup`") {
+		t.Errorf("the register's rename parenthetical maps `fugaro setup` to itself: its left side is what the rewrite renames, so the retired command's name belongs there, not the door it became")
+	}
+	for _, want := range []string{
+		"**Kept, with their commands renamed** (`init` → `fugaro setup`",
+		"the converge-again steps → `fugaro update`",
+		"`--firebase` → `--firebase-project`",
+		"the same one the old text made of `init` run a second time",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("Check 27 no longer says %q: the row and step 4 are about what the rewrite renamed, so they name the retired command on the side that describes the old text", want)
+		}
+	}
+}
