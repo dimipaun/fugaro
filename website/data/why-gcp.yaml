@@ -12,13 +12,16 @@
 #
 #   id      the row's anchor on the page, and the name a build error uses. The page renders
 #           it as the row's `id`, so a duplicate is two elements with one name. An `id` is an
-#           attribute value, and `website/test/origins.mjs` refuses the service's name in any
-#           attribute while `analytics.enabled` is false -- the same rule the page's own
-#           `description` is worded around -- so the row about it is named `gcp-project`: the
-#           claim, not the product.
+#           attribute value, and `website/test/origins.mjs` refuses the control plane's own
+#           name in any attribute while `analytics.enabled` is false -- the same rule the
+#           page's `description` is worded around -- so the row about it is named
+#           `gcp-project`: the claim, not the product.
 #   text    the site's own sentence, consistent with `source` and never a copy of it: a page
 #           that repeats a document's sentences is the second copy of it, and the copy that
-#           drifts first (F37, F47).
+#           drifts first (F37, F47). A row's claim is one a reader can check in `source`,
+#           which is why each row is written to the one file it names rather than to the
+#           brief: where the brief's claim needs two files to support it, the row carries the
+#           half its source proves and the other half is its own row.
 #   source  the file the claim is traceable to, relative to the repository root. The page
 #           renders it as a link and fails the build if it is missing.
 #   date    the day the claim was last read against that document, written YYYY-MM-DD. Every
@@ -27,8 +30,8 @@
 #           without a source and a date"; ZF58), and a row's date is what makes the rest of
 #           the file's claims as checkable as that one.
 #
-# **The four points are the brief's, as the tree supports them, and the two the tree refuses
-# are rewritten rather than dropped** (the plan's Part 2; ZF15-ZF22):
+# **The four points are the brief's, as the tree supports them, and the claims the tree
+# refuses are rewritten rather than dropped** (the plan's Part 2; ZF15-ZF22):
 #
 #   - "Firebase is non-negotiable" is too strong (ZF19). Firebase is the budget, dashboard
 #     and history control plane, it is optional -- a run needs none of it -- and it is not
@@ -37,68 +40,80 @@
 #   - "so there is no extra setup" is false (ZF18): the same-project services come with the
 #     project, and `fugaro init` is what provisions them.
 #   - "Fugaro gets its own isolated, Fugaro-managed project" is not true in the present tense
-#     (ZF17): managed projects are gated off. What is true is that Fugaro runs in the project
-#     it is given and that nothing requires that project to be your production one.
+#     (ZF17): managed projects are gated off. What is true is the narrow sentence ZF16 states
+#     -- a managed project is a new project that holds only Fugaro's resources.
 #   - "free and disposable" is the brief's own suggested framing's word and the repository
 #     rejects it (ZF15, ZF22; `docs/design/managed-projects.md:18,211`), so this file does not
-#     carry it and the row that answers the brief's "Safety" point says what is in the project
-#     instead. D248: a managed project is new and holds only Fugaro's resources.
-#   - The AWS paragraph is the repository's position rather than the brief's story about how
-#     the design got here (ZF21): a second cloud is out of scope for 1.0 and wanted from
-#     contributors.
+#     carry it: the row that answers the brief's "Safety" point says what is in the project
+#     instead, and the "free" half is its own row (D248: a managed project is **new** and
+#     holds only Fugaro's resources).
+#   - "we started out wanting a pluggable cloud ... then it became clear" is not the
+#     repository's position (ZF21): a second cloud is out of scope for 1.0 and wanted from
+#     contributors, and the row says that rather than arguing against the repository's own
+#     invitation.
 #
 # The `framing` row is the page's one-sentence answer to the brief's "Suggested framing", and
 # it is the sentence D249 requires the built page to carry: the brief's own version of it
 # carries the word the repository rejects, and the same sentence with "one integrated project"
-# and no "disposable" is what the reconciliation says is supportable (ZF22).
+# and no "disposable" is what the reconciliation says is supportable (ZF22). What supports it
+# is `docs/backends.md`: only compute attaches at the seam, and the control plane a
+# replacement would have to reimplement is Firebase's.
 version: 1
 
 points:
   - id: control-plane
     text: >-
-      Fugaro's control plane is Firebase: the budget's live counters, the dashboard and the
-      run history. A run needs none of it, so it is optional, and it is not behind the
-      backend seam — which is why it stays GCP-bound whatever runs your jobs.
+      Fugaro's control plane is Firebase — the budget, the dashboard and the stats — and it
+      is not behind the backend seam: an AWS or Azure compute backend would still need a
+      Firebase project.
     source: docs/backends.md
     date: 2026-10-22
 
   - id: gcp-project
     text: >-
-      A Firebase project is a Google Cloud project. Cloud Run, Secret Manager, the runs
-      bucket and the database the budget lives in are all services of it, and `fugaro init`
-      is what provisions them.
+      A Firebase project is a Google Cloud project. The runs bucket, the custom roles, the
+      job accounts and the images a run uses are resources of it, and fugaro init is what
+      provisions them.
     source: docs/gcp-setup.md
     date: 2026-10-22
 
   - id: one-brain
     text: >-
-      One Fugaro project is one Google Cloud project holding one Firebase project, its
-      repositories and its people, and the installation's secrets, IAM, billing link and
-      budget all live in that one place rather than being split across two providers.
-    source: docs/design/m9-budget-and-dashboard.md
+      One Fugaro project is one Google Cloud project: the installation's APIs, roles,
+      bucket, log isolation and budget live in it, and so do each repository's secret
+      containers, registries, job accounts and jobs.
+    source: docs/gcp-setup.md
     date: 2026-10-22
 
   - id: fugaro-project
     text: >-
-      A new Google Cloud project costs nothing by itself, and the resources `fugaro init`
-      creates are Fugaro's own: the Terraform state, the spend history and the kill switch
-      all live in the project Fugaro works in, not in your application's.
+      A project created for Fugaro is a new project that holds only Fugaro's resources. The
+      Terraform state it plans with, the spend history and the kill switch all live there
+      rather than in your application's project.
     source: docs/design/managed-projects.md
     date: 2026-10-22
 
 closing:
+  - id: nothing-to-pay
+    text: >-
+      A new project costs nothing by itself. What bills is the resources Fugaro creates in
+      it.
+    source: docs/design/m9-budget-and-dashboard.md
+    date: 2026-10-22
+
   - id: nothing-moves
     text: >-
-      Nothing of yours moves. Fugaro works in the Google Cloud project you give it, a
-      project created for it holds nothing of yours, and where your application runs is not
-      a question this asks.
+      Nothing of yours moves: Fugaro works in the Google Cloud project you give it, one
+      Firebase project serves one installation, and where your application runs is not a
+      question this asks.
     source: docs/gcp-setup.md
     date: 2026-10-22
 
   - id: second-cloud
     text: >-
-      A second cloud is not built and not refused. The backend seam and its conformance
-      suite are in the tree, and an AWS or an Azure backend is wanted from contributors.
+      Only GCP is implemented, and a second cloud is wanted rather than refused: a new cloud
+      is a backend behind the interface plus its provisioning, and AWS and Azure are on the
+      roadmap.
     source: README.md
     date: 2026-10-22
 
