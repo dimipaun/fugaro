@@ -131,11 +131,15 @@ export const MACHINE_CODES = Object.freeze({
  * @typedef {object} SessionState
  * @property {string} state one of `SESSION_STATES`
  * @property {boolean} muted §4's orthogonal flag: it changes no state
- * @property {string|null} pauseReason one of `PAUSE_REASONS`, while paused
+ * @property {string|null} pauseReason one of `PAUSE_REASONS`, while paused --
+ *   and `null` in every state that is not one of §4's two paused states: an
+ *   ending or ended session carries no pause (`over`)
  * @property {string|null} pauseSource the interruption's `source`, while paused
+ *   -- cleared with `pauseReason`
  * @property {string|null} route the last route the machine heard (§6.3)
  * @property {number|null} pausedAt `ctx.now()` when the **interruption** pause
- *   began; §8's timer is measured from it, and a route pause has none
+ *   began; §8's timer is measured from it, a route pause has none, and neither
+ *   has a session that is ending or over
  * @property {number|null} startedAt `ctx.now()` when the session was asked for
  * @property {string|null} endReason one of `END_REASONS`: **why the session is
  *   ending or has ended**, set when the end begins (a hang-up writes `hangup`
@@ -190,13 +194,31 @@ function pausedFor(state, ctx) {
 }
 
 /**
+ * A session on its way out, or already over: **no pause survives it**.
+ *
+ * `pauseReason`/`pauseSource`/`pausedAt` answer "why is it paused *now*" -- §4
+ * has exactly two paused states, and `ending` and `ended` are not among them --
+ * so every transition that ends a session drops them, whichever way it ended: a
+ * hang-up, §8's timeout, §4's `shouldResume: false`, §10's error and §9's
+ * stopped service. Without this, an ended session would still answer "why is it
+ * paused" with the call that is over, and D216's status word would read
+ * "Paused — on a call" about a session that has none.
+ *
+ * @param {SessionState} state
+ * @param {object} changes the fields this ending transition adds
+ */
+function over(state, changes) {
+  return next(state, { pauseReason: null, pauseSource: null, pausedAt: null, ...changes });
+}
+
+/**
  * The session is over, with the first reason it was given (see the header).
  *
  * @param {SessionState} state
  * @param {string} reason one of `END_REASONS`
  */
 function ended(state, reason) {
-  return ok(next(state, { state: 'ended', endReason: state.endReason ?? reason }));
+  return ok(over(state, { state: 'ended', endReason: state.endReason ?? reason }));
 }
 
 /** §10: a revoked permission ends as `permission`; every other error as `error`. */
@@ -231,13 +253,13 @@ function onHangUp(state, event, ctx) {
   // not an error (the Android actions are handled in the service and are
   // idempotent for exactly this reason, VS3.2).
   if (state.state === 'ending' || state.state === 'ended') return ok(state);
-  return ok(next(state, { state: 'ending', endReason: END_REASONS.HANGUP }));
+  return ok(over(state, { state: 'ending', endReason: END_REASONS.HANGUP }));
 }
 
 /** The teardown finished: `ending` → `ended`. */
 function onEnd(state, event) {
   if (state.state !== 'ending') return no(event);
-  return ok(next(state, { state: 'ended' }));
+  return ok(over(state, { state: 'ended' }));
 }
 
 /**
@@ -257,7 +279,7 @@ function onResume(state, event, ctx) {
  */
 function onTick(state, event, ctx) {
   if (state.state === 'paused_interruption' && pausedFor(state, ctx) > ctx.resumeTimeoutMs) {
-    return ok(next(state, { state: 'ended', endReason: END_REASONS.INTERRUPTION_TIMEOUT }));
+    return ok(over(state, { state: 'ended', endReason: END_REASONS.INTERRUPTION_TIMEOUT }));
   }
   if (state.state === 'listening' || state.state === 'speaking') {
     return ok(next(state, { state: listen(ctx) }));
@@ -298,14 +320,14 @@ function onInterruptionBegan(state, event, ctx) {
 function onInterruptionEnded(state, event, ctx) {
   if (state.state !== 'paused_interruption') return no(event);
   if (event.shouldResume === false) {
-    return ok(next(state, { state: 'ended', endReason: END_REASONS.INTERRUPTION_TIMEOUT }));
+    return ok(over(state, { state: 'ended', endReason: END_REASONS.INTERRUPTION_TIMEOUT }));
   }
   // §4's condition is `and elapsed time ≤ resumeTimeoutMs`: an interruption that
   // ends after the limit has passed is not a resume, whether or not a `tick`
   // arrived first. §8: "Never resume talking or listening on our own after the
   // timeout."
   if (pausedFor(state, ctx) > ctx.resumeTimeoutMs) {
-    return ok(next(state, { state: 'ended', endReason: END_REASONS.INTERRUPTION_TIMEOUT }));
+    return ok(over(state, { state: 'ended', endReason: END_REASONS.INTERRUPTION_TIMEOUT }));
   }
   return ok(next(state, { state: listen(ctx), pauseReason: null, pauseSource: null, pausedAt: null }));
 }

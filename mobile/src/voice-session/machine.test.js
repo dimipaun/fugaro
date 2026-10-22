@@ -241,6 +241,44 @@ test('hangUp from every active state → ending → ended', () => {
   assert.equal(moved(moved(ending, EVENT.end), EVENT.hangUp).state, 'ended');
 });
 
+test('a session that ends carries no pause: the pause fields are "while paused"', () => {
+  // `pauseReason`/`pauseSource`/`pausedAt` answer "why is it paused *now*" --
+  // §4 has exactly two paused states and `ending`/`ended` are not among them.
+  // A teardown that kept the pause it left would have the ended session answer
+  // that question with a call that is over, and a screen or a Live Activity
+  // reading the fields would say "Paused — on a call" about a session that has
+  // none.
+  const noPause = (s, where) => {
+    assert.equal(s.pauseReason, null, `${where}: pauseReason`);
+    assert.equal(s.pauseSource, null, `${where}: pauseSource`);
+    assert.equal(s.pausedAt, null, `${where}: pausedAt`);
+  };
+  // Hang up from either pause: the teardown and the end both drop it.
+  for (const [from, changes] of [
+    ['paused_interruption', { pausedAt: 0, pauseReason: PAUSE_REASONS.INTERRUPTION, pauseSource: 'call' }],
+    ['paused_route', { pauseReason: PAUSE_REASONS.ROUTE, route: 'wired' }],
+  ]) {
+    const ending = moved(state(from, changes), EVENT.hangUp);
+    assert.equal(ending.state, 'ending', from);
+    noPause(ending, `${from} → ending`);
+    noPause(moved(ending, EVENT.end), `${from} → ended`);
+  }
+  // ... and every other way a paused session ends: §8's timeout, §4's own
+  // `shouldResume: false`, §10's revoked permission, and §9's service stop.
+  const paused = () => moved(state('listening'), EVENT.interruptionBegan, ctx({ now: 0 }));
+  noPause(moved(paused(), EVENT.tick, ctx({ now: TIMEOUT + 1 })), 'the timeout');
+  noPause(moved(paused(), { type: 'interruptionEnded', shouldResume: false }, ctx({ now: 0 })), 'shouldResume: false');
+  noPause(moved(paused(), EVENT.error, ctx({ now: 0 })), 'error');
+  noPause(moved(paused(), EVENT.serviceStopped, ctx({ now: 0 })), 'serviceStopped');
+  const route = moved(state('listening'), { type: 'routeChanged', route: 'wired', unsafe: true });
+  noPause(moved(route, EVENT.serviceStopped), 'a route pause, ended');
+  // The positive control: the same fields *are* set while the session is
+  // paused, so this test cannot pass by the machine never setting them.
+  assert.equal(paused().pauseReason, PAUSE_REASONS.INTERRUPTION);
+  assert.equal(paused().pauseSource, 'call');
+  assert.equal(paused().pausedAt, 0);
+});
+
 test('mute is orthogonal: it changes no state, and it applies on resume (§10)', () => {
   const active = {
     starting: {},
