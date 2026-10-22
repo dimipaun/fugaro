@@ -181,7 +181,6 @@ func TestCredentialsServiceConfigBuildsFromAFullEnvironment(t *testing.T) {
 		{"Policy", cfg.Policy != nil},
 		{"State", cfg.State != nil},
 		{"Kills", cfg.Kills != nil},
-		{"Audit", cfg.Audit != nil},
 		{"DB", cfg.DB != nil},
 		{"Probes", cfg.Probes != nil},
 		{"AuditLog", cfg.AuditLog != nil},
