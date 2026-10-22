@@ -18,6 +18,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -101,6 +102,41 @@ func testPolicyDocAccounts(fallback, accounts string) string {
 			` + accounts + `
 		},
 		"credentials": {"fallback": "` + fallback + `"}
+	}`
+}
+
+// testPolicyDocNoCredentials is the same document with the `credentials` block
+// left out. That is a policy Decode accepts — the block is optional, and an
+// installation that writes none gets the spec's protective defaults — and it
+// decodes with Policy.Credentials nil, which is the shape settingsOf must read
+// without ever reaching into the block.
+func testPolicyDocNoCredentials() string {
+	return `{
+		"version": 3,
+		"budget": {"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
+		"accounts": {
+			"default": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]},
+			"` + testAccount + `": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]}
+		}
+	}`
+}
+
+// testPolicyDocControls is the same document with D142's two controls written
+// out at their opt-out values, which is the other half of "an absent key is not
+// the written value": false is the written "do not stop after one exhaustion",
+// and 0 is the written "no cap at all" rather than the absent key's one.
+func testPolicyDocControls(fallback string, stops bool, concurrency int) string {
+	return `{
+		"version": 3,
+		"budget": {"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
+		"accounts": {
+			"default": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]},
+			"` + testAccount + `": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]}
+		},
+		"credentials": {"fallback": "` + fallback + `", "stop_after_exhaustion_per_window": ` +
+		strconv.FormatBool(stops) + `, "concurrency_per_token": ` + strconv.Itoa(concurrency) + `}
 	}`
 }
 

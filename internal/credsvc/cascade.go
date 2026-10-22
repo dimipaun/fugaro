@@ -114,10 +114,21 @@ func (s *Server) admittedAccounts(ctx context.Context, slug, canonical string) (
 }
 
 // settingsOf is the published policy as creds.Select enforces it. Every
-// accessor is nil-safe, so an installation that publishes no credentials block
-// reads the protective defaults (oauth-only, the 15-minute threshold, both of
-// D142's controls at their protective values) rather than a zero no comparison
-// matches.
+// member is read through a nil-safe accessor of the policy's own — including
+// D142's two controls, which are pointers and are read through
+// StopsAfterExhaustion and ConcurrencyCap rather than off the block — so an
+// installation that publishes no credentials block reads the protective
+// defaults (oauth-only, the 15-minute threshold, both controls at their
+// protective values) rather than a zero no comparison matches, and a policy
+// whose block is absent does not reach a nil *Credentials at all. That is the
+// case Decode leaves for a document with no `credentials` key, and it is every
+// call's case: an absent block is a policy, not a malformed one.
+//
+// The two controls are handed to creds as pointers to the values the accessors
+// answer, which is what creds' own members mean: nil is the absent key and
+// reads as the same default (stops, concurrency) the accessor answers, so
+// spelling it out cannot change which control is in force — and it keeps the
+// default in one place, the policy's, rather than in a second one here.
 //
 // Window and LeaseTTL are left zero: both are creds' own bounds (the
 // subscription window D142's first control measures, and the lease TTL), they
@@ -131,11 +142,13 @@ func settingsOf(p *projectpolicy.Policy) creds.Settings {
 	if c.FallbackValue() == projectpolicy.FallbackAuto {
 		fallback = creds.Auto
 	}
+	stops := c.StopsAfterExhaustion()
+	concurrency := c.ConcurrencyCap()
 	return creds.Settings{
 		Fallback:                     fallback,
 		WaitThreshold:                c.WaitThresholdDuration(),
-		StopAfterExhaustionPerWindow: c.StopAfterExhaustionPerWindow,
-		ConcurrencyPerToken:          c.ConcurrencyPerToken,
+		StopAfterExhaustionPerWindow: &stops,
+		ConcurrencyPerToken:          &concurrency,
 		BackoffInitial:               c.BackoffInitialDuration(),
 		BackoffCap:                   c.BackoffCapDuration(),
 	}

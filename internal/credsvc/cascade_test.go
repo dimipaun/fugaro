@@ -18,6 +18,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // waitFor polls until f is true, or fails the test having waited long enough.
@@ -349,4 +350,138 @@ func TestCascadeUsesAdmittedAccountsOnly(t *testing.T) {
 	if got := s.policy.readAdmissions(); !slices.Equal(got, []string{s.slug}) {
 		t.Errorf("the admissions read were %v, want just this repository's", got)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// A policy with no credentials block
+// ---------------------------------------------------------------------------
+
+// TestSettingsOfReadsAPolicyWithNoCredentialsBlock: the `credentials` block is
+// optional in a published policy — Decode accepts a document without it and
+// leaves Policy.Credentials nil — and an installation that writes none is an
+// installation whose every call reads the protective defaults. Reading D142's
+// two controls off the block rather than through the policy's own nil-safe
+// accessors was a nil dereference on exactly that call, so this test is the one
+// the function's own doc promised and did not have.
+//
+// The written opt-outs are in the same table deliberately: the fix must not
+// flatten the two pointers into the accessors' answers, because "the operator
+// wrote false" and "the operator wrote nothing" are different states
+// (StopsAfterExhaustion, ConcurrencyCap) and only a table that reads both tells
+// the two apart.
+func TestSettingsOfReadsAPolicyWithNoCredentialsBlock(t *testing.T) {
+	cases := []struct {
+		name        string
+		policy      *projectpolicy.Policy
+		wantFall    creds.Fallback
+		wantStops   bool
+		wantConc    int
+		wantBackoff time.Duration
+	}{
+		{
+			name:        "no policy at all",
+			policy:      nil,
+			wantFall:    creds.OAuthOnly,
+			wantStops:   true,
+			wantConc:    1,
+			wantBackoff: projectpolicy.DefaultBackoffCap,
+		},
+		{
+			name:        "a policy with no credentials block",
+			policy:      decodeTestPolicy(t, testPolicyDocNoCredentials()),
+			wantFall:    creds.OAuthOnly,
+			wantStops:   true,
+			wantConc:    1,
+			wantBackoff: projectpolicy.DefaultBackoffCap,
+		},
+		{
+			name:        "the written opt-outs",
+			policy:      decodeTestPolicy(t, testPolicyDocControls("oauth-only", false, 0)),
+			wantFall:    creds.OAuthOnly,
+			wantStops:   false,
+			wantConc:    0,
+			wantBackoff: projectpolicy.DefaultBackoffCap,
+		},
+		{
+			name:        "the written cascade",
+			policy:      decodeTestPolicy(t, testPolicyDocControls("auto", true, 3)),
+			wantFall:    creds.Auto,
+			wantStops:   true,
+			wantConc:    3,
+			wantBackoff: projectpolicy.DefaultBackoffCap,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := settingsOf(tc.policy)
+			if got.Fallback != tc.wantFall {
+				t.Errorf("Fallback = %v, want %v", got.Fallback, tc.wantFall)
+			}
+			if got.StopAfterExhaustionPerWindow == nil {
+				t.Fatal("StopAfterExhaustionPerWindow is nil: the control in force is not readable")
+			}
+			if *got.StopAfterExhaustionPerWindow != tc.wantStops {
+				t.Errorf("StopAfterExhaustionPerWindow = %v, want %v",
+					*got.StopAfterExhaustionPerWindow, tc.wantStops)
+			}
+			if got.ConcurrencyPerToken == nil {
+				t.Fatal("ConcurrencyPerToken is nil: the control in force is not readable")
+			}
+			if *got.ConcurrencyPerToken != tc.wantConc {
+				t.Errorf("ConcurrencyPerToken = %d, want %d", *got.ConcurrencyPerToken, tc.wantConc)
+			}
+			if got.WaitThreshold != projectpolicy.DefaultWaitThreshold {
+				t.Errorf("WaitThreshold = %v, want the default %v", got.WaitThreshold, projectpolicy.DefaultWaitThreshold)
+			}
+			if got.BackoffCap != tc.wantBackoff {
+				t.Errorf("BackoffCap = %v, want %v", got.BackoffCap, tc.wantBackoff)
+			}
+		})
+	}
+}
+
+// TestServiceServesUnderAPolicyWithNoCredentialsBlock is the same case end to
+// end, because the unit above proves the settings and not the call: settingsOf
+// runs on every call, so an installation whose policy has no credentials block
+// must answer one rather than panic.
+//
+// The second half is what makes the first half worth anything: the defaults are
+// the PROTECTIVE ones, so a held pair of shared tokens under a credentials-less
+// policy is the typed wait and not the project's paid key. `auto` would have
+// reached the key, and only oauth-only — the default — leaves the upstream
+// untouched.
+func TestServiceServesUnderAPolicyWithNoCredentialsBlock(t *testing.T) {
+	t.Run("a call is served", func(t *testing.T) {
+		s := newSvcWith(t, func(s *svc, _ *Config) {
+			s.policy.shared = decodeTestPolicy(t, testPolicyDocNoCredentials())
+		})
+		resp, body := s.call(t, callBody("no-block"))
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the answer is %d, want 200: %s", resp.StatusCode, body)
+		}
+		if got := resp.Header.Get(HeaderTier); got != TierA {
+			t.Errorf("%s = %q, want %q: the default fallback offers the shared tier",
+				HeaderTier, got, TierA)
+		}
+		if n := s.up.Count(); n != 1 {
+			t.Fatalf("the upstream saw %d requests, want 1", n)
+		}
+	})
+
+	t.Run("the defaults are the protective ones", func(t *testing.T) {
+		s := newSvcWith(t, func(s *svc, _ *Config) {
+			s.policy.shared = decodeTestPolicy(t, testPolicyDocNoCredentials())
+		})
+		held := s.now.Add(6 * time.Hour)
+		s.hold("alice", s.now.Add(-time.Minute), held)
+		s.hold("default", s.now.Add(-time.Minute), held)
+		resp, body := s.call(t, callBody("no-block-wait"))
+		if resp.StatusCode != StatusExhaustedUntil {
+			t.Fatalf("the answer is %d, want the typed wait (%d): %s",
+				resp.StatusCode, StatusExhaustedUntil, body)
+		}
+		if n := s.up.Count(); n != 0 {
+			t.Fatalf("the upstream saw %d requests, want none: oauth-only does not reach the paid key", n)
+		}
+	})
 }
