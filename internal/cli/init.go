@@ -225,6 +225,16 @@ func (o *initOptions) doorName() string {
 // spell a whole command line.
 func (o *initOptions) doorProgram() string { return "fugaro " + o.doorName() }
 
+// enrolling is whether this run may enrol a repository the local config does
+// not list. `setup` may, in both of its modes — it owns enrolment (D5) — and
+// `update` may only in its --repo mode, where the user named the checkout to
+// converge. `update`'s converge never enrols: its stage set is the repositories
+// the config already lists, and a checkout whose repository is not one of them
+// is left for the user with the line that names `fugaro setup` (W5.1).
+func (o *initOptions) enrolling() bool {
+	return o.door != updateDoor.name || o.repo
+}
+
 // initCreation is what a run of setup --create-project did, as the run itself
 // knows it (not inferred from the cloud afterwards): the project it created,
 // whether the project was already there when it was read, and how much of the
@@ -1421,6 +1431,88 @@ func (r *initRun) typed(prompt string) (bool, error) {
 	}
 }
 
+// stepClass is the confirmation class of a step this door takes that is money
+// or permanent: initflow.Typed, or initflow.YesOrTyped for `update`, the door
+// D12 makes total over what it owns.
+//
+// The answer of 2026-10-20 (reconciliation §5) is that `update --yes` covers
+// everything update owns — the Firestore database's location, a billable first
+// image build and replacing a registry tag among them — so a CI job that
+// upgrades the CLI and has to rebuild an image gets the build rather than
+// needs-you and exit code 1, while `setup` keeps every one of those steps
+// Typed: it is the door that asks for them as first-time questions. The two
+// steps that may never be relaxed are `setup`'s alone and `update` refuses
+// them by name, so no class here can reach them (init_project.go).
+//
+// A run with no door is a hand-built options value, a test's: it is `setup`
+// (doorName), and its steps stay Typed.
+func (r *initRun) stepClass() initflow.ConfirmClass {
+	if r.o.door == updateDoor.name {
+		return initflow.YesOrTyped
+	}
+	return initflow.Typed
+}
+
+// stepConfirmation is how a money-or-permanent step of this door is confirmed
+// now: nothing here can confirm it, --yes did, or the person types the step's
+// own confirmation.
+type stepConfirmation int
+
+const (
+	stepLeave stepConfirmation = iota // nothing was asked: the caller leaves the step
+	stepByYes                         // --yes confirmed it: show no prompt
+	stepTyped                         // the person types this step's own confirmation
+)
+
+// stepConfirmation says which of the three this run is at. It is one function
+// because it is one rule: the door's class (stepClass) and the run's
+// conditions (canConfirmTyped), read the same way by the Firestore location,
+// the image build and the registry tag, so a door cannot come to confirm one of
+// them and not another. --non-interactive, --json, a pipe and a coding agent's
+// session confirm nothing of either class; --yes confirms only the class
+// YesOrTyped, which only `update` has.
+func (r *initRun) stepConfirmation() stepConfirmation {
+	if !canConfirmTyped(r.stepClass(), r.conditions()) {
+		return stepLeave
+	}
+	if r.o.yes && !r.o.planOnly {
+		return stepByYes
+	}
+	return stepTyped
+}
+
+// neverConfirms is the parenthetical that follows "typed at a real terminal" in
+// the warnings and left-for-yous of a step that could not be confirmed: which
+// ways of running do not give the confirmation. It is the door's own, because
+// D12 makes `update --yes` the way a step update owns is confirmed with no
+// terminal — a line that told an update run "--yes never confirms it" would
+// name the one flag that does.
+func (r *initRun) neverConfirms() string {
+	if r.stepClass() == initflow.YesOrTyped {
+		return "no terminal, --json, a pipe and a coding agent never confirm it, and --yes does"
+	}
+	return "--yes, --non-interactive, --json, a pipe and a coding agent never confirm it"
+}
+
+// askTypedOwned is askTyped for a step of this door's own class (stepClass):
+// `setup`'s are Typed and behave exactly as askTyped does, and `update`'s are
+// YesOrTyped, so --yes confirms them and nothing is typed. Everything else
+// about the step is unchanged: it is money or permanent, it still shows its
+// banner, and a run that cannot confirm it leaves it for the user (reachable
+// false, nothing asked).
+func (r *initRun) askTypedOwned(what string) (confirmed, reachable bool, err error) {
+	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
+	switch r.stepConfirmation() {
+	case stepLeave:
+		return false, false, nil
+	case stepByYes:
+		fmt.Fprintln(r.w, "  confirmed by --yes")
+		return true, true, nil
+	}
+	ok, err := r.typed("Type " + r.projectName + " to confirm: ")
+	return ok, true, err
+}
+
 // askTyped is the confirmation of a step that is money or permanent
 // (initflow.Typed): the project's name typed at a real terminal, never --yes,
 // --non-interactive, --json, a pipe or a coding agent. It shows the banner,
@@ -1657,6 +1749,13 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		return outs, false, initErr(err)
 	}
 	if !exists {
+		// `update` creates nothing, and a state bucket that is not there is no
+		// installation to re-converge: a first installation is `fugaro setup`'s
+		// (D5, D12). Without this the re-converge would create the bucket and
+		// then the whole installation — the one thing the door exists not to do.
+		if r.o.door == updateDoor.name {
+			return outs, false, noInstallationRefusal(spec.StateBucket)
+		}
 		if err := r.confirmOrdinary(fmt.Sprintf("creates gs://%s in %s with versioning, for Terraform state (cents a month)", spec.StateBucket, spec.Region),
 			"nothing was created or applied", ""); err != nil {
 			return outs, false, err
@@ -1916,6 +2015,16 @@ func (r *initRun) configOnly(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 
 // errNoState is a state bucket that doesn't exist yet.
 var errNoState = errors.New("no state bucket")
+
+// noInstallationRefusal is the one refusal of a run that looked for an installation
+// and found none: the sentence names the state bucket it looked for and the
+// door that makes one. It is one function because it is one fact in three
+// places — `update`'s converge (installRoot), `--repo`'s own gate and the
+// converge's, which reaches the same state bucket — and the sentence names
+// `fugaro setup`, the door a first installation is (D5, D12).
+func noInstallationRefusal(stateBucket string) error {
+	return userErr("there is no Terraform state bucket gs://%s, so no installation: run fugaro setup first", stateBucket)
+}
 
 func (r *initRun) readOutputs(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, spec infra.InstallationSpec) (infra.InstallationOutputs, error) {
 	exists, err := infra.CheckStateBucket(ctx, c, spec.Project, spec.StateBucket)
@@ -2520,7 +2629,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	case err != nil:
 		return initErr(err)
 	case !exists:
-		return userErr("there is no Terraform state bucket gs://%s, so no installation: run fugaro setup first", inst.StateBucket)
+		return noInstallationRefusal(inst.StateBucket)
 	}
 	slug, err := task.Slug(cfg.Git.Provider, repo)
 	if err != nil {
@@ -3208,15 +3317,16 @@ func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *con
 				return built, userErr("%v", err)
 			}
 		}
-		// Billable: the typed confirmation of a real terminal, never --yes
-		// (initflow.Typed). A run that cannot take it leaves the build.
-		ok, reachable, err := r.askTyped(cloudBuildBanner(spec.Name, name, lc.Build.MachineType, spec.BuildServiceAccountEmail, spec.RegistryPath))
+		// Billable: the typed confirmation of a real terminal, and --yes for
+		// the door that owns the step (stepClass: `update` covers its own
+		// steps under --yes, D12). A run that cannot take it leaves the build.
+		ok, reachable, err := r.askTypedOwned(cloudBuildBanner(spec.Name, name, lc.Build.MachineType, spec.BuildServiceAccountEmail, spec.RegistryPath))
 		if err != nil {
 			return built, err
 		}
 		if !reachable {
 			r.buildsLeft = append(r.buildsLeft, name)
-			r.warn(fmt.Sprintf("the first image build of %s/%s is billable and was not confirmed: it needs the project's name typed at a real terminal (--yes, --non-interactive, --json, a pipe and a coding agent never confirm it), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks for the project's name too), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
+			r.warn(fmt.Sprintf("the first image build of %s/%s is billable and was not confirmed: it needs the project's name typed at a real terminal ("+r.neverConfirms()+"), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks for the project's name too), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
 			continue
 		}
 		if !ok {

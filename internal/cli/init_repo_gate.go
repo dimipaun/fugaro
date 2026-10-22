@@ -54,10 +54,44 @@ func (e *initEngine) authState(o originInfo) (repoAuth, error) {
 		// Asked once, at the start of the run, and not typed: the stages say
 		// what to do and are not asked again.
 		return authNeeded, nil
+	case !opts.enrolling():
+		// This door does not enrol: the repository is left for the user, with
+		// the line naming the door that does. It is checked before the covered
+		// case below, because what a door does not own it cannot cover (D5,
+		// D12) — an unlisted checkout is not in `update`'s stage set at all.
+		return authNeeded, nil
+	case e.onboardCovered():
+		// The step is covered by this run's own confirmation (D12's answer of
+		// 2026-10-20): --yes, or the one confirmation the converge took at a
+		// real terminal. Onboarding an unlisted repository is an ordinary
+		// covered row in both front doors where the door enrols, and it is
+		// still never given by a pipe, --json, --non-interactive or a coding
+		// agent's session (canConfirmTyped).
+		return authOK, nil
 	case e.canConfirmRepo():
 		return authAsk, nil
 	}
 	return authNeeded, nil
+}
+
+// onboardCovered reports whether the run's own confirmation covers onboarding
+// this repository now: YesOrTyped's rule, the class D12 gives the step in both
+// front doors, and the run's own confirmation actually given. --yes is one way
+// to give it with no terminal (r.conditions().Yes, which --plan-only turns
+// off); otherwise it is the one confirmation the converge takes at the review,
+// and a person who typed the project's name there has given it. Until the
+// review is taken the typed question is still asked: an ordinary terminal
+// alone is not a confirmation. A coding agent's session, --json, a pipe and
+// --non-interactive give nothing (canConfirmTyped).
+func (e *initEngine) onboardCovered() bool {
+	r := e.r
+	if !canConfirmTyped(initflow.YesOrTyped, r.conditions()) {
+		return false
+	}
+	if r.conditions().Yes {
+		return true
+	}
+	return r.review != nil && r.review.state == reviewTaken
 }
 
 // checkoutNote is printed once before the gate when installation-only flags
@@ -126,6 +160,26 @@ func unknownDetail(project string, o originInfo) string {
 		d += " (host " + pluginwire.Printable(o.Host) + " is not a provider's own)"
 	}
 	return d + "; onboarding it creates cloud resources, so it needs your own opt-in (not covered by --yes); the repository stage was not reached"
+}
+
+// enrolLeft is what a door that does not enrol a repository leaves instead of
+// the typed question: one line naming the door that does. `update` re-converges
+// what is enrolled (D5), so a checkout whose repository the local config does
+// not list is a first run's to enrol — and the line is a command, not a prompt,
+// because there is nothing for this run to type.
+func enrolLeft(door string) initflow.Left {
+	return initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftCommand,
+		Text: selfCommand() + " " + setupDoor.name, Commands: []string{selfCommand() + " " + setupDoor.name}}
+}
+
+// unknownDetailNotEnrolled says why a door that does not enrol leaves the
+// repository alone: the same fact unknownDetail states, plus the door that
+// enrols one. It names `fugaro setup` because that is the one line the reader
+// acts on, and it is not covered by --yes: `update` does not own this step, so
+// D12's answer cannot cover it (W5.1).
+func unknownDetailNotEnrolled(project string, o originInfo, door string) string {
+	return "the repository " + pluginwire.Printable(o.typed()) + " is not one of project " + pluginwire.Printable(project) +
+		"'s yet, and " + selfCommand() + " " + door + " never enrols one: " + selfCommand() + " " + setupDoor.name + " does, in the checkout (it asks whether to onboard it)"
 }
 
 // confirmRepo asks, in the terminal, for the repository typed: the one
