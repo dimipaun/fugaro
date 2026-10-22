@@ -110,6 +110,7 @@ const pageDescription = description ?? site.subline
 // `website/test/layout.mjs` holds it to that (step 1).
 const pagePath = Astro.url.pathname.endsWith('/') ? Astro.url.pathname : `${Astro.url.pathname}/`
 const canonicalHref = new URL(pagePath, facts.canonicalURL).href
+const ogImageHref = new URL('/og-image.png', facts.canonicalURL).href
 
 // The sitemap hint, emitted only when the build actually produces a sitemap. No Part 1
 // task adds the integration that writes one, so today this renders nothing: a `<link>` to
@@ -223,15 +224,21 @@ const analyticsEnabled = facts.analytics.enabled
 
     {sitemapHref && <link rel="sitemap" type="application/xml" href={sitemapHref} />}
 
-    {/* OpenGraph and Twitter cards, from the same facts as the tags above. There is no
-        og:image: the site ships no image, and a card that points at a file the build does
-        not produce is a broken pointer rather than a card. */}
+    {/* OpenGraph and Twitter cards, from the same facts as the tags above. The card's
+        picture is public/og-image.png (1200x630: the logo, the tagline and the subline),
+        a file this site ships, named by an absolute URL because a card reader fetches it
+        from outside the page. */}
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content={SITE_NAME} />
     <meta property="og:title" content={pageTitle} />
     <meta property="og:description" content={pageDescription} />
     <meta property="og:url" content={canonicalHref} />
-    <meta name="twitter:card" content="summary" />
+    <meta property="og:image" content={ogImageHref} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content={`${SITE_NAME}: ${site.tagline}`} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content={ogImageHref} />
 
     {/* The icons and the manifest, all derived from brand/fugaro-logo.png by
         scripts/gen-brand-icons.py and served from public/, so no icon is fetched from

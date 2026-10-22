@@ -1327,7 +1327,11 @@ test('the homepage names the promise in its title, its description and its cards
   assert.equal(content(/<meta name="description" content="([^"]*)"/, 'meta description'), subline)
   assert.equal(content(/<meta property="og:title" content="([^"]*)"/, '`og:title`'), `Fugaro — ${tagline}`)
   assert.equal(content(/<meta property="og:description" content="([^"]*)"/, '`og:description`'), subline)
-  assert.equal(content(/<meta name="twitter:card" content="([^"]*)"/, 'Twitter card'), 'summary')
+  assert.equal(content(/<meta name="twitter:card" content="([^"]*)"/, 'Twitter card'), 'summary_large_image')
+  // The card carries a picture this site ships, by an absolute URL.
+  assert.match(content(/<meta property="og:image" content="([^"]*)"/, '`og:image`'), /^https:\/\/[^/]+\/og-image\.png$/)
+  assert.equal(content(/<meta property="og:image:width" content="([^"]*)"/, '`og:image:width`'), '1200')
+  assert.equal(content(/<meta property="og:image:height" content="([^"]*)"/, '`og:image:height`'), '630')
   // The card's description is the OG description: Astro's layout emits one `twitter:card`
   // and no second description tag, and `layout.mjs` owns the head's tag list.
   assert.equal((page.match(/<meta name="twitter:description"/g) ?? []).length, 0)
