@@ -20,7 +20,14 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { sanitizeRefusal, sanitizeText } from '../../src/shared/sanitize'
+import {
+  MAX_SPLIT_SCAN,
+  MAX_TEXT_INPUT_LENGTH,
+  resetScanWork,
+  sanitizeRefusal,
+  sanitizeText,
+  scanWorkDone,
+} from '../../src/shared/sanitize'
 import { createRedactor } from '../../src/source/redact'
 import { realisticSecrets } from '../support/fakeSecrets'
 
@@ -166,11 +173,42 @@ describe('the url class reads every reading', () => {
 })
 
 describe('the split readings stay bounded', () => {
-  // The same bound and the same timer as the escape-sequence suites: generous
-  // because the machines these run on are shared. Measured on an idle-ish Mac
-  // (review round 3 of PR 540): about 45 ms for the first, about 25-50 ms for
-  // the rest, each door.
-  const BOUND_MS = 250
+  // The bound is the work, not the clock. A wall clock measures the machine,
+  // not the code: the 250 ms these inputs were held to (about 45 ms on an
+  // idle-ish Mac when the bound was chosen, review round 3 of PR 540) measured
+  // 435 ms on a loaded macOS runner, which failed the 0.9.6 and 0.9.7 release
+  // gates over a runner that was merely busy. `scanWorkDone` counts what the
+  // code chose to do -- the characters `traceCredentials` runs the tracked
+  // rules over, summed across every reading (`resolveReadings`) -- and it is
+  // the same number on every machine and in every run.
+  //
+  // The bound is the resolver's own. `MAX_SPLIT_SCAN` (sanitize.ts) is what one
+  // pass of split readings may cost, readings times characters, and the reading
+  // of the prepared form itself -- which every value pays whatever its places
+  // are -- is at most `MAX_TEXT_INPUT_LENGTH`. A run whose combinations would
+  // cost more than the budget allows is masked whole rather than read
+  // (`MAX_SPLIT_PLACES`, `MAX_SPLIT_SCAN`), so this work cannot grow with the
+  // number of places in the value: that is what makes these five pathological
+  // inputs cost a bounded amount rather than the super-linear amount a reading
+  // per run -- instead of a reading per combination across the runs, the
+  // side-by-side reading `traceSplits` does -- would cost. What is NOT counted
+  // here is each door's own, linear pass over the text (its rule list,
+  // `applyRules`), which is why the bound is stated in the resolver's own terms
+  // rather than as a multiple of the input.
+  //
+  // Mutations (verified, run and restored), both in traceSplits:
+  //
+  //  - drop `count > budget` from the masking test, so a run is read in every
+  //    combination whatever the budget: "four places per word" costs 838,784
+  //    (2.6x the bound) and "six places per word" 3,295,424 (10x), and both
+  //    fail;
+  //  - make `readings` the sum of the runs' combinations rather than their
+  //    maximum -- one reading per run, the quadratic shape, where the
+  //    side-by-side reading is one per combination across all of them: on the
+  //    same five inputs shortened to 8 KiB (a full 64 KiB run would take
+  //    minutes) "four places per word" costs 81,837,756, 250x the bound, and
+  //    fails.
+  const WORK_BOUND = MAX_SPLIT_SCAN + MAX_TEXT_INPUT_LENGTH
   const fill = (unit: string): string => unit.repeat(Math.floor(65_536 / unit.length))
   const inputs: readonly (readonly [string, string])[] = [
     ['a zero-width space inside every word', fill('ab​cd ')],
@@ -179,21 +217,21 @@ describe('the split readings stay bounded', () => {
     ['six places per word', fill('a​b​c​d​e​f​g ')],
     ['an SGR between every pair of letters', fill('\u001b[1mab')],
   ]
-  function timed(run: () => unknown): number {
-    const start = performance.now()
-    run()
-    return performance.now() - start
+  /** work is what `run` cost, in the characters the readings scanned: the
+   * resolver's counter, read after one call and reset before the next. */
+  function work(run: () => unknown): number {
+    resetScanWork()
+    try {
+      run()
+    } catch {
+      // A refusal is an answer, and the work it took is still the work.
+    }
+    return scanWorkDone()
   }
   it.each(inputs)('%s', (_name, input) => {
     const redactor = createRedactor()
-    // One untimed pass over a short slice, so the timing is the work and not
-    // the first compilation of the rules in this worker.
-    const warm = input.slice(0, 2_048)
-    sanitizeText(warm, 'sentence')
-    sanitizeRefusal(warm)
-    redactor.redactText(warm)
-    expect(timed(() => sanitizeText(input, 'sentence'))).toBeLessThan(BOUND_MS)
-    expect(timed(() => sanitizeRefusal(input))).toBeLessThan(BOUND_MS)
-    expect(timed(() => redactor.redactText(input))).toBeLessThan(BOUND_MS)
+    expect(work(() => sanitizeText(input, 'sentence')), 'sentence').toBeLessThanOrEqual(WORK_BOUND)
+    expect(work(() => sanitizeRefusal(input)), 'refusal').toBeLessThanOrEqual(WORK_BOUND)
+    expect(work(() => redactor.redactText(input)), 'recorder').toBeLessThanOrEqual(WORK_BOUND)
   })
 })

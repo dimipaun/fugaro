@@ -1302,6 +1302,35 @@ function applyTracked(state: Traced, rule: TrackedRule, nested: boolean, covered
   return { text: parts.join(''), origin }
 }
 
+/**
+ * scanWork counts the work every reading costs, in characters scanned: each
+ * `traceCredentials` call adds the length of the reading it runs the tracked
+ * rules over, so the total is the quantity `MAX_AMBIGUOUS_SCAN` and
+ * `MAX_SPLIT_SCAN` bound -- readings times characters. The split readings are
+ * where a pathological input could cost more than linear work (one reading per
+ * combination of split places, per whitespace-free run), so this is what
+ * `split-secrets.test.ts` asserts against instead of a wall clock: a wall
+ * clock measures the machine (a loaded runner turned a 45 ms pass into the
+ * 435 ms that failed the 0.9.6 and 0.9.7 release gates), where this counts the
+ * work the code chose to do, the same on every machine and every run.
+ *
+ * Nothing reads it at runtime -- the renderer loads this module and never
+ * calls these two -- and the one write per reading cannot change what any
+ * layer draws.
+ */
+let scanWork = 0
+
+/** resetScanWork zeroes `scanWork`, so a test measures one call's own work. */
+export function resetScanWork(): void {
+  scanWork = 0
+}
+
+/** scanWorkDone is the characters every reading has been scanned over since
+ * `resetScanWork` (the module's own counter: see `scanWork`). */
+export function scanWorkDone(): number {
+  return scanWork
+}
+
 /** traceCredentials runs every tracked rule over one reading, in order. */
 function traceCredentials(
   reading: Traced,
@@ -1309,6 +1338,7 @@ function traceCredentials(
   covered: Uint8Array,
   rules: readonly TrackedRule[] = TRACKED_RULES,
 ): Traced {
+  scanWork += reading.text.length
   let state = reading
   for (const rule of rules) state = applyTracked(state, rule, nested, covered)
   return state
