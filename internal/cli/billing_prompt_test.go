@@ -1026,8 +1026,17 @@ func TestNothingIsEnabledWithoutAnAnswer(t *testing.T) {
 		if len(pickerEnables(ran)) != 0 {
 			t.Errorf("an empty answer enabled the API: %v", pickerEnables(ran))
 		}
+		// Read before the line below, which asks internal/billing for the
+		// enable line itself (one more read of the same fake): this counts what
+		// the run asked for. Nothing was enabled, so there is nothing new to
+		// read — a second read after a decline would be a second read of an
+		// answer that has not changed.
+		asked := billingListCalls(f)
 		if !strings.Contains(out.String(), pickerEnableLine(t, f)) {
 			t.Errorf("the decline left no line to run instead:\n%s", out)
+		}
+		if asked != 1 {
+			t.Errorf("the run asked for the account list %d time(s) after a decline, want once", asked)
 		}
 	})
 
@@ -1096,6 +1105,13 @@ func TestNothingIsEnabledWithoutAnAnswer(t *testing.T) {
 		}
 		if !strings.Contains(out.String(), "PERMISSION_DENIED") {
 			t.Errorf("the failed enable is not reported:\n%s", out)
+		}
+		// The enable did not answer, so the API's state is unknown: the list is
+		// asked for once (the read that found the API off), and the operator
+		// keeps the line to run by hand rather than a second read of the same
+		// answer.
+		if n := billingListCalls(f); n != 1 {
+			t.Errorf("the account list was asked for %d time(s) after a failed enable, want once", n)
 		}
 	})
 }
