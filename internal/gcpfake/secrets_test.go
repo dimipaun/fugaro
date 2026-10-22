@@ -69,6 +69,36 @@ func TestSecretsFakeRecordsWhatADeleteAndADestroyTake(t *testing.T) {
 	}
 }
 
+// A version a disable took is recorded, reported DISABLED by the version
+// list, and its value is no longer readable — as real Secret Manager refuses
+// a DISABLED version's access, so a test can observe the retirement and not
+// only the call. The version that was not disabled is untouched.
+func TestSecretsFakeDisablesOneVersionAndRefusesItsValue(t *testing.T) {
+	f := NewSecrets(t)
+	f.Seed("creds-bundle", nil, []byte("first"))
+	f.AllowAccess()
+	if code, body := secretCall(t, f, http.MethodPost, "/v1/projects/p/secrets/creds-bundle:addVersion"); code == http.StatusOK {
+		t.Fatalf("an empty addVersion was answered: %s", body) // no body: the fake refuses it
+	}
+	// A second version, through the API, so the newest one is ENABLED.
+	code, body := secretCall(t, f, http.MethodPost, "/v1/projects/p/secrets/creds-bundle/versions/1:disable")
+	if code != http.StatusOK || !strings.Contains(body, `"state":"DISABLED"`) {
+		t.Fatalf("disable: %d %s", code, body)
+	}
+	if got := f.Disabled(); !slices.Equal(got, []string{"projects/p/secrets/creds-bundle/versions/1"}) {
+		t.Fatalf("Disabled = %q", got)
+	}
+	if f.Deleted() != nil || f.Destroyed() != nil {
+		t.Fatalf("a disable took something away: %q / %q", f.Deleted(), f.Destroyed())
+	}
+	if code, body := secretCall(t, f, http.MethodGet, "/v1/projects/p/secrets/creds-bundle/versions/latest:access"); code != http.StatusBadRequest || !strings.Contains(body, "disabled") {
+		t.Fatalf("the value of a disabled latest version: %d %s, want 400 and \"disabled\"", code, body)
+	}
+	if code, _ := secretCall(t, f, http.MethodPost, "/v1/projects/p/secrets/creds-bundle/versions/9:disable"); code != http.StatusNotFound {
+		t.Fatalf("disabling a version that is not there: %d, want 404", code)
+	}
+}
+
 // secrets.list is the label-filtered call a retirement discovers a kept
 // container with, and it can be refused: the two halves of Task 4's
 // degradation test.
