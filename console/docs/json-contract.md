@@ -389,7 +389,7 @@ reads:
 | `pr_url` | string | **yes** | the URL as the host gave it |
 | `execution`, `log_url` | string | **yes** | `log_url` is what `logs RUN --url` prints |
 | `created` | time.Time | no | RFC 3339 |
-| `cost` | `runstore.Cost` | no | model/compute dollars and the spend basis — *notional* when `ModelBasis == BasisSubscription` |
+| `cost` | `runstore.Cost` | no | model/compute dollars: `model_usd` is the **whole** model figure and `model_notional_usd` the subscription's part of it (C1.16, P12 — a mixed cascade run's `model_basis` is `api-list` for the whole run, so the basis is only the fallback for a row written before the split existed) |
 | `image_age_s` | `*int64` | **yes** | null = unknown |
 | `terminal`, `settled` | bool | no | |
 | `branch`, `outcome` | string | **yes** | |
