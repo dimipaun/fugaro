@@ -125,11 +125,13 @@ func TestDocsCredentialsRunbookPointsStepOneAtSomethingThatAnswers(t *testing.T)
 		"creds-rules",
 		// What no command covers, and the reads that do cover it. The section
 		// first answered this with "Check 94", which is Task C1.23's and is
-		// not in docs/gcp-live-checklist.md on this release (that file's
-		// checks stop at 91): a runbook may not answer a question with a check
-		// nobody can open, so the three gcloud reads are in the section itself
-		// and the check is named as the register's version of them, with the
-		// fact that it is not there yet (code review of C1.22).
+		// not in docs/gcp-live-checklist.md on this release (that file writes
+		// no such section; the claim is held against the file itself by
+		// TestDocsCredentialsRunbookPointsAtACheckThatIsNotWrittenYet): a
+		// runbook may not answer a question with a check nobody can open, so
+		// the three gcloud reads are in the section itself and the check is
+		// named as the register's version of them, with the fact that it is
+		// not there yet (code review of C1.22).
 		"What no Fugaro command answers is whether the Cloud Run service itself is deployed",
 		"gcloud run services describe fugaro-credentials",
 		"gcloud secrets get-iam-policy <bundle-container>",
@@ -138,6 +140,14 @@ func TestDocsCredentialsRunbookPointsStepOneAtSomethingThatAnswers(t *testing.T)
 		"roles/run.invoker",
 		"Check 94",
 		"on this release yet",
+		// ...and the shape of the claim, held to the checklist itself by
+		// TestDocsCredentialsRunbookPointsAtACheckThatIsNotWrittenYet below.
+		// The section first said "that file's checks stop at 91 here", which
+		// was already wrong when the review read it — the review base writes
+		// Check 92 (Task C1.5) — and no guard caught it, because the pin was
+		// the phrase around the number rather than the number (code review of
+		// C1.22).
+		"writes no `## Check 94` section here",
 		// What a launch actually refuses on, which §1 stated the wrong way
 		// round: the gate reads the switch, not the service (code review of
 		// C1.22, and the same correction in docs/multi-model.md).
@@ -165,6 +175,32 @@ func TestDocsCredentialsRunbookPointsStepOneAtSomethingThatAnswers(t *testing.T)
 		if strings.Contains(section, banned) {
 			t.Errorf("%s §1 says %q", credentialsRunbook, banned)
 		}
+	}
+}
+
+// TestDocsCredentialsRunbookPointsAtACheckThatIsNotWrittenYet: §1 names Check 94
+// (Task C1.23) as the register's version of its three `gcloud` reads and says
+// the check is not in docs/gcp-live-checklist.md yet. That claim is the whole
+// reason the reads are written out in the runbook rather than left behind a
+// pointer — so it is checked against the checklist itself, and not against a
+// number a later task would have to remember to edit.
+//
+// The section first answered the question with "that file's checks stop at 91
+// here", which was stale the moment the review read it: origin/integration-0.9.6
+// writes a `## Check 92` section (Task C1.5), and the phrase the guard pinned
+// ("on this release yet") said nothing about the number, so nothing caught it
+// (code review of C1.22). Reading the checklist makes the claim self-checking:
+// the day C1.23 lands Check 94 this test fails on purpose, and the failure is
+// the reminder to point §1 at the section instead of saying it is not there.
+func TestDocsCredentialsRunbookPointsAtACheckThatIsNotWrittenYet(t *testing.T) {
+	const checklist = "docs/gcp-live-checklist.md"
+	const claim = "on this release yet"
+	section := flattenDoc(docSection(t, credentialsRunbook, readDoc(t, credentialsRunbook), "## 1. Is the service on at all?"))
+	if !strings.Contains(section, claim) {
+		t.Fatalf("%s §1 no longer says %q about Check 94: this guard holds that claim against the checklist, so re-read the pin rather than dropping it", credentialsRunbook, claim)
+	}
+	if flat := flattenDoc(readDoc(t, checklist)); strings.Contains(flat, "## Check 94") {
+		t.Errorf("%s writes a `## Check 94` section, so the check %s §1 calls missing has landed: point the section at it (and at its `gcloud` reads) rather than saying it is not there yet", checklist, credentialsRunbook)
 	}
 }
 
