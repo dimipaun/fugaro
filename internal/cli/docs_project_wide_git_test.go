@@ -192,7 +192,9 @@ func TestDocsStateTheProjectScopeDefaultWhereASecretIsStored(t *testing.T) {
 // more in the second review round. `fugaro update --repo`'s secrets stage has no
 // --repo of its own to pass (internal/cli/initsecrets.go, the prompt's own
 // "press Ctrl-C here" text is the way out), so a page that tells a reader to
-// pass one at the prompt describes a flag that does not exist; and
+// pass one at the prompt describes a flag that does not exist; the resume line
+// names the door it resumes, `fugaro update --repo`, because "the run" already
+// means an artifact run (internal/runner/halt.go's "start the run again"); and
 // `bitbucket-token` is a PerRepositorySecret, which is *not* the same as never
 // project-wide (internal/config/project_secrets.go): D2's sweep skips it, so it
 // is per-repository by default, but `AllowedForProjectSecret` is asked before
@@ -217,7 +219,7 @@ func TestDocsSayTheInitPromptHasNoRepoFlagAndBitbucketIsPerRepository(t *testing
 		}},
 		{"../../docs/multi-model.md", []string{
 			"the prompt has no `--repo` to pass",
-			"press Ctrl-C at it, run the command it printed (`fugaro secrets set <name> --repo <owner>/<name>`) in your own terminal, and start the run again",
+			"press Ctrl-C at it, run the command it printed (`fugaro secrets set <name> --repo <owner>/<name>`) in your own terminal, and start `fugaro update --repo` again",
 			"`bitbucket-token` excepted: a repository access token serves one repository, so it is stored per repository by default and the prompt offers it project-wide only through an explicit `project_secrets` allow-list entry",
 		}},
 	}

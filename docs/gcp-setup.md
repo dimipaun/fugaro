@@ -201,7 +201,7 @@ fugaro update --base-image "$tag"
 ```
 
 - **The push** needs `roles/artifactregistry.writer` on `fugaro-base`, which the operator role gives.
-- **`update --base-image`** is a plan with no resource change: it rewrites the `base` entry of `base_images` in the local config: `--base-image base=IMAGE` (or an image named `fugaro-base`, whose kind setup reads from the name). A project needs the one entry `base`, built and pushed the same way with `build-base.sh base`. Rerun `fugaro update --repo` in each repository afterwards, so the check job's image follows it.
+- **`update --base-image`** is a plan with no resource change: it rewrites the `base` entry of `base_images` in the local config: `--base-image base=IMAGE` (or an image named `fugaro-base`, whose kind update reads from the name). A project needs the one entry `base`, built and pushed the same way with `build-base.sh base`. Rerun `fugaro update --repo` in each repository afterwards, so the check job's image follows it.
 - **Cost:** about 1.5 GB of registry storage per base image.
 - **Undo:** delete the image (`gcloud artifacts docker images delete <tag> --delete-tags`), and remove the `credHelpers` entry from `~/.docker/config.json`.
 - **A dev tag doesn't move,** so the `base` rebuild trigger fires only when the kind's `base_images` entry itself changes or the tag is pushed again. `rebuild.max_age` (14 days) bounds how long a base security fix waits.
@@ -692,9 +692,9 @@ Plain `fugaro setup`, run in the checkout, also writes the line as its last stag
 | has not published a shared config | an operator runs `fugaro update --publish-config` |
 | no access to gs://... | you hold neither the launcher nor the operator role: ask an operator |
 | needs the operator role | a launcher ran a publish (`fugaro update --publish-config`, `fugaro recipes publish`, `fugaro config publish`); an operator runs it, or adds you with `fugaro update --operator` |
-| the shared config has a bad `<field>` / carries `<section>:` / is not valid | the object was tampered with, edited wrongly or written by another fugaro version: ask an operator to run `fugaro setup` again (it replaces a refused object, with a warning); update `fugaro` if versions differ |
+| the shared config has a bad `<field>` / carries `<section>:` / is not valid | the object was tampered with, edited wrongly or written by another fugaro version: ask an operator to run `fugaro update` again (it replaces a refused object, with a warning); update `fugaro` if versions differ |
 | `budget.firebase_project` is not `gcp_project` | a separate Firebase project: run `fugaro setup` (adopt) for your own local config |
-| over the 64 KiB limit | an operator runs `fugaro setup` again, or edits the object |
+| over the 64 KiB limit | an operator runs `fugaro update` again, or edits the object |
 | `--gcp-project` contradicts this checkout | the flag and `fugaro.yaml` disagree: drop the flag or fix the line |
 
 ## Offboarding a repository
