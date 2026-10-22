@@ -79,7 +79,7 @@ func TestTypedOnlyFirestoreLocationMatrix(t *testing.T) {
 			if strings.Contains(err.Error()+out.String()+strings.Join(ny.Left.Commands, " "), "--yes") {
 				t.Errorf("the refusal suggests --yes: %v / %v", err, ny.Left)
 			}
-			if len(ny.Left.Commands) != 1 || strings.Contains(ny.Left.Commands[0], "\n") || !strings.Contains(ny.Left.Commands[0], "--firebase aurora-fp") {
+			if len(ny.Left.Commands) != 1 || strings.Contains(ny.Left.Commands[0], "\n") || !strings.Contains(ny.Left.Commands[0], "--firebase-project aurora-fp") {
 				t.Errorf("the typed route is not the one-line command: %+v", ny.Left)
 			}
 		})

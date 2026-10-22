@@ -65,7 +65,7 @@ type InstallOptions struct {
 	NoLogIsolation bool
 	// BudgetBackend gives the installation the history account and, once
 	// the Firebase root's outputs are known and its image exists, the
-	// history job and its sweep Scheduler job. It is set by --firebase and
+	// history job and its sweep Scheduler job. It is set by --firebase-project and
 	// by a project config that records a Firebase project.
 	BudgetBackend bool
 	// ManagedDeployerScoped opts the installation in to the managed

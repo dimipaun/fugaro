@@ -642,13 +642,13 @@ func TestBudgetRefusesWithoutFirebaseConfig(t *testing.T) {
 	newBudgetFixture(t, "budget: { mode: observe, per_run_usd: 5 }\n")
 	for _, args := range [][]string{{"show"}, {"set", "--global", "--daily", "1", "--yes"}, {"kill", "--all", "--yes"}, {"resume", "--all", "--yes"}} {
 		_, _, err := execute(t, append([]string{"budget"}, args...)...)
-		if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "update --firebase") {
+		if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "update --firebase-project") {
 			t.Errorf("%v: err = %v", args, err)
 		}
 	}
 	// No budget block at all.
 	newBudgetFixture(t, " \n")
-	if _, _, err := execute(t, "budget", "show"); err == nil || !strings.Contains(err.Error(), "update --firebase") {
+	if _, _, err := execute(t, "budget", "show"); err == nil || !strings.Contains(err.Error(), "update --firebase-project") {
 		t.Errorf("err = %v", err)
 	}
 }

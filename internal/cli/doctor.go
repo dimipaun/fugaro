@@ -1806,12 +1806,12 @@ func policyNewerThanBinaryCheck(ve *projectpolicy.VersionError, shared string) d
 func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRoutingLayer) []doctorCheck {
 	shared := projectpolicy.PathShared()
 	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
-		// The state of every installation that has not run update --firebase:
+		// The state of every installation that has not run update --firebase-project:
 		// there is no node to read, and the runs take their ceiling from the
 		// job environment, exactly as they did before this model (P3).
 		checks := []doctorCheck{{ID: "policy-published", Severity: "info",
 			Problem: fmt.Sprintf("project %s has no Firebase budget backend, so it cannot publish a project policy: runs take their ceiling from the job environment", lc.Name),
-			Fix:     "fugaro update --firebase <firebase-project-id> --name " + lc.Name + " adds the backend the policy is published to"}}
+			Fix:     "fugaro update --firebase-project <firebase-project-id> --name " + lc.Name + " adds the backend the policy is published to"}}
 		return append(checks, doctorRoutingChecks(lc, nil,
 			fmt.Sprintf("project %s has no Firebase budget backend, so there is no policy node to read a switch from", lc.Name), layer)...)
 	}
@@ -1874,7 +1874,7 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 		if ok, gerr := db.Get(ctx, shared, &raw); gerr == nil && ok && !emptyPolicyNode(raw) {
 			info.Problem = fmt.Sprintf("a policy node is written at %s, but it governs nothing: %s does not record the rules generation this Fugaro reads a policy under, so no run reads it and every run takes its ceiling from the job environment",
 				shared, projectpolicy.PathRulesMarker())
-			info.Fix = "re-run 'fugaro update --firebase' with fugaro >= " + policySince + " in your own terminal to deploy the rules a policy is read under, then 'fugaro project policy publish'"
+			info.Fix = "re-run 'fugaro update --firebase-project' with fugaro >= " + policySince + " in your own terminal to deploy the rules a policy is read under, then 'fugaro project policy publish'"
 		}
 		return append(checks, append([]doctorCheck{info},
 			doctorRoutingChecks(lc, nil, fmt.Sprintf("no policy is published at %s, so there is no switch to resolve", shared), layer)...)...)
@@ -2332,7 +2332,7 @@ func doctorPolicyVsJobs(lc *localcfg.Config) *doctorCheck {
 
 // doctorRulesSkew is the fifth check: the deployed rules are older than the
 // marker config/limits/policyRules. It is the state an older CLI's
-// `fugaro update --firebase` leaves behind by redeploying the pre-policy
+// `fugaro update --firebase-project` leaves behind by redeploying the pre-policy
 // template while the marker stays, and its consequence is that a published
 // policy becomes unreadable — a run's token is refused for a node that
 // exists, so every budget-on run halts (Task 1.3 step 1's third outcome).
@@ -2344,7 +2344,7 @@ func doctorPolicyVsJobs(lc *localcfg.Config) *doctorCheck {
 // installation whose rules were deployed by a CLI of this generation never
 // reports a skew.
 //
-// A warning, not an error: the fix is the owner's `fugaro update --firebase`
+// A warning, not an error: the fix is the owner's `fugaro update --firebase-project`
 // and doctor cannot perform it.
 //
 // The same check reports the marker's other wrong values: a value that is not a
@@ -2380,7 +2380,7 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// change).
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 			Problem: "the deployed rules cannot be told apart: " + (&projectpolicy.MarkerError{Value: oneLine(string(raw))}).Error(),
-			Fix:     "re-run 'fugaro update --firebase' with fugaro >= " + policySince + " in your own terminal, which writes the marker this Fugaro reads"}}
+			Fix:     "re-run 'fugaro update --firebase-project' with fugaro >= " + policySince + " in your own terminal, which writes the marker this Fugaro reads"}}
 	}
 	if gen > projectpolicy.RulesVersion {
 		// A marker above this binary's RulesVersion, and the review of PR
@@ -2392,13 +2392,13 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// one's reads as deployed (any marker above RulesVersion included), so
 		// a run under these rules *does* read the published policy. What is
 		// true is that the rules document itself is a shape this binary cannot
-		// verify and must not redeploy over, which is why update --firebase
+		// verify and must not redeploy over, which is why update --firebase-project
 		// refuses the state — and the operator who was told the policy is
 		// unreadable would look for the wrong thing.
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 			Problem: fmt.Sprintf("%s records generation %d, above the generation %d this Fugaro's own rules carry: a newer Fugaro deployed them, so a policy published under them is read (a marker at or above this Fugaro's generation reads as deployed) while the rules themselves are a shape this binary cannot verify, and it cannot deploy its own over them",
 				marker, gen, projectpolicy.RulesVersion),
-			Fix: fmt.Sprintf("upgrade Fugaro first: 'fugaro update --firebase' with this binary refuses this state rather than redeploying generation %d over the deployed rules, so the newer binary is the one that deploys here ('fugaro upgrade')",
+			Fix: fmt.Sprintf("upgrade Fugaro first: 'fugaro update --firebase-project' with this binary refuses this state rather than redeploying generation %d over the deployed rules, so the newer binary is the one that deploys here ('fugaro upgrade')",
 				projectpolicy.RulesVersion)}}
 	}
 	if gen < projectpolicy.PolicyRulesVersion {
@@ -2415,7 +2415,7 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// branch).
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 			Problem: rulesMarkerPrePolicyText(gen),
-			Fix: fmt.Sprintf("re-run 'fugaro update --firebase' with fugaro >= %s in your own terminal: it deploys the rules a policy is read under and records generation %d in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
+			Fix: fmt.Sprintf("re-run 'fugaro update --firebase-project' with fugaro >= %s in your own terminal: it deploys the rules a policy is read under and records generation %d in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
 				policySince, projectpolicy.RulesVersion)}}
 	}
 	if gen < projectpolicy.RulesVersion {
@@ -2431,7 +2431,7 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// mailbox grant — the state the operator's app meets — unexplained.
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 			Problem: rulesMarkerOlderText(gen),
-			Fix: fmt.Sprintf("re-run 'fugaro update --firebase' in your own terminal from a Fugaro that deploys generation %d or newer: it deploys this release's document — the rules a policy is read under, plus the mailbox — and records its generation in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
+			Fix: fmt.Sprintf("re-run 'fugaro update --firebase-project' in your own terminal from a Fugaro that deploys generation %d or newer: it deploys this release's document — the rules a policy is read under, plus the mailbox — and records its generation in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
 				projectpolicy.RulesVersion)}}
 	}
 	live, err := db.Rules(ctx)
@@ -2468,7 +2468,7 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 	}
 	return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 		Problem: rulesSkewText(),
-		Fix:     fmt.Sprintf("re-run 'fugaro update --firebase' with fugaro >= %s in your own terminal: it redeploys the rules the policy is read under (if these rules came from a newer Fugaro than this one, upgrade instead — this template would replace them)", policySince)}}
+		Fix:     fmt.Sprintf("re-run 'fugaro update --firebase-project' with fugaro >= %s in your own terminal: it redeploys the rules the policy is read under (if these rules came from a newer Fugaro than this one, upgrade instead — this template would replace them)", policySince)}}
 }
 
 // rulesGenerate is rules.Generate, indirect so a test can drive the branch

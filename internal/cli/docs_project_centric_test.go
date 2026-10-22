@@ -795,7 +795,7 @@ func TestChecklistHasCheck49(t *testing.T) {
 		}},
 		{"### 2.", []string{
 			// The two act lines are the SECOND command's, not the --plan-only
-			// one's: --plan-only with --firebase stops after the installation
+			// one's: --plan-only with --firebase-project stops after the installation
 			// root and never reaches deployDatabase, so a FACT the owner reads
 			// off the plan-only line above it is a FACT the owner cannot
 			// produce. The stop is installRoot's plan-only return

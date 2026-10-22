@@ -75,13 +75,13 @@ func declaredFlags(door string) map[string]bool {
 // under it: two doors that lost the same flag at once would leave the two sets
 // equal to each other and empty of it.
 var sharedFlagsFloor = []string{
-	"repo", "firebase", "yes", "plan-only", "print-vars", "config-only",
+	"repo", "firebase-project", "yes", "plan-only", "print-vars", "config-only",
 	"json", "anchor", "retire", "gcp-project", "region", "name",
 }
 
 // TestBothDoorsTakeTheSharedFlags: the flags that belong to the converge are
 // on both doors, and they are *declared* there rather than hidden: a user
-// reading `fugaro update --help` has to find --repo, --firebase and --yes.
+// reading `fugaro update --help` has to find --repo, --firebase-project and --yes.
 //
 // The two doors' declared sets are read off the commands and held to each
 // other rather than compared against a list written here. A list cannot say
@@ -248,7 +248,7 @@ func TestNoDoorsFlagHelpNamesTheOtherDoor(t *testing.T) {
 // TestTheDoorIndependentRefusalsNameTheReadersDoor: two refusals in
 // initOptions.check live outside any door branch -- it runs for both doors, and
 // the flags they speak about are declared on both (setupDoor.foreign is
-// --forget alone). What those flags want is the --repo converge, or --firebase,
+// --forget alone). What those flags want is the --repo converge, or --firebase-project,
 // and both doors take those, so the sentence has to name the door the reader is
 // at: a first run told to type `fugaro update --repo` is sent to the other door
 // for a command its own would have run. This is the check() half of

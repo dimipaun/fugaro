@@ -80,7 +80,7 @@ func budgetBackendOn(lc *localcfg.Config) (bool, error) {
 // nothing else can give a run its identity.
 func budgetSignerOn(lc *localcfg.Config) error {
 	if lc.Budget == nil || lc.Budget.TokenSigner == "" {
-		return userErr("budget.token_signer is not set in project %s's config, so runs cannot be given a budget identity: an operator runs fugaro update --firebase <firebase-project-id> --name %s", lc.Name, lc.Name)
+		return userErr("budget.token_signer is not set in project %s's config, so runs cannot be given a budget identity: an operator runs fugaro update --firebase-project <firebase-project-id> --name %s", lc.Name, lc.Name)
 	}
 	return nil
 }
@@ -193,7 +193,7 @@ func policyReadErr(err error) error {
 	case errors.As(err, &me):
 		return userErr("%v", err)
 	case errors.Is(err, rtdb.ErrPermission):
-		return userErr("%v: the deployed rules no longer let this project read its own policy; if they are older than %s, run fugaro update --firebase again with this Fugaro", err, projectpolicy.PathRulesMarker())
+		return userErr("%v: the deployed rules no longer let this project read its own policy; if they are older than %s, run fugaro update --firebase-project again with this Fugaro", err, projectpolicy.PathRulesMarker())
 	case errors.Is(err, rtdb.ErrUnavailable):
 		return remote(err)
 	default:

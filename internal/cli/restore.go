@@ -749,7 +749,7 @@ func restoreOldReadable(ctx context.Context, c *infra.Clients, gcpProject string
 //     firebase_project, firebase_api_key, token_signer) go the same way, and
 //     the operator's own settings in that block — the mode, the caps, the
 //     token ceiling, the grace — stay. Where the new backend lives is the
-//     operator's decision (fugaro update --firebase), not the restore's, and it
+//     operator's decision (fugaro update --firebase-project), not the restore's, and it
 //     is named in what is returned.
 //   - Every base_images entry whose reference names the old project's
 //     registry goes, and the kinds it dropped are named in what is returned.
@@ -806,7 +806,7 @@ func restoreConfig(lc, onDisk *localcfg.Config, newID string) (*localcfg.Config,
 		nb := *b
 		if nb.RTDBURL != "" || nb.FirebaseProject != "" || nb.FirebaseAPIKey != "" || nb.TokenSigner != "" {
 			nb.RTDBURL, nb.FirebaseProject, nb.FirebaseAPIKey, nb.TokenSigner = "", "", "", ""
-			left = append(left, fmt.Sprintf("the budget backend of %s — its Realtime Database, its Firestore database, its restricted web API key and its token signer — did not come across: where the new one lives is your decision, so build it again with fugaro update --firebase (the mode, the caps and the token ceiling in the config are kept as they were), or leave it off if you want none", onDisk.GCPProject))
+			left = append(left, fmt.Sprintf("the budget backend of %s — its Realtime Database, its Firestore database, its restricted web API key and its token signer — did not come across: where the new one lives is your decision, so build it again with fugaro update --firebase-project (the mode, the caps and the token ceiling in the config are kept as they were), or leave it off if you want none", onDisk.GCPProject))
 		}
 		next.Budget = &nb
 	}
@@ -1267,7 +1267,7 @@ func restoreNotRestored(old *localcfg.Config, newID string) []string {
 		fmt.Sprintf("the runs that were in flight, and their RTDB counters: they ended with %s, and nothing here starts them again", old.GCPProject),
 		fmt.Sprintf("the spend history and the kill switch state: they lived in %s's Firestore database and RTDB, and a restore carries neither across", old.GCPProject),
 		fmt.Sprintf("the Firestore and RTDB application data of %s: the usage, the counters and every document the project held are gone, and this restore does not copy them", old.GCPProject),
-		"the Firestore database's location: the new project's is chosen once, by fugaro update --firebase, and it can never be changed afterwards (a database of another location is never adopted)",
+		"the Firestore database's location: the new project's is chosen once, by fugaro update --firebase-project, and it can never be changed afterwards (a database of another location is never adopted)",
 		"every secret value: the secrets are in the old project's Secret Manager and are never carried across. Set them again in the new project with fugaro secrets set, and treat the old values as disclosed if the old project was not deleted for you alone",
 		fmt.Sprintf("the plan files that were never stored: nothing reads a plan out of %s's state, and nothing here reads prior state either — the root is applied from zero", old.GCPProject),
 		fmt.Sprintf("%s: the owner's delete list is NOT carried across, and nothing this restore runs re-creates it. Write it again with fugaro allow-delete, and until you do, every delete and every replacement in %s is refused (D74)", managed.AllowDeleteObject, newID),

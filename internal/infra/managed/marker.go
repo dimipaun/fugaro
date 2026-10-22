@@ -269,7 +269,7 @@ func insertMarker(ctx context.Context, s *storage.Service, bucket string, gen in
 // the only thing the write is gated on, and the gate is the first check
 // below: a run that created no project writes nothing at all — not the
 // object, not a read of the bucket. Adding Firebase is not creating
-// (init --firebase does it on projects that already exist, D73), so a write
+// (init --firebase-project does it on projects that already exist, D73), so a write
 // gated on anything else would mark the owner's own projects and belong.
 //
 // project is the project the marker would be about, and number the number
