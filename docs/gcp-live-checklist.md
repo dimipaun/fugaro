@@ -6890,7 +6890,7 @@ for c in fugaro gcloud curl python3; do command -v "$c" >/dev/null || { echo "Ch
 : "${FUGARO_LIVE_FIREBASE_API_KEY:?Check 96 stopped: export FUGARO_LIVE_FIREBASE_API_KEY (the restricted web API key)}"
 : "${FUGARO_LIVE_TOKEN_SIGNER:?Check 96 stopped: export FUGARO_LIVE_TOKEN_SIGNER (the token-signer service account email)}"
 : "${CHK96_SANDBOX_REPO:?Check 96 stopped: export CHK96_SANDBOX_REPO=<owner/name> (the sandbox repository)}"
-: "${CHK96_SANDBOX_JOB:?Check 96 stopped: export CHK96_SANDBOX_JOB (the sandbox repository's Cloud Run job, from 'gcloud run jobs list')}"
+: "${CHK96_SANDBOX_JOB:?Check 96 stopped: export CHK96_SANDBOX_JOB (the sandbox Cloud Run job for that repository -- read it from gcloud run jobs list)}"
 case "$CHK96_SANDBOX_REPO" in *belong*|*edge-devel-dimi*|*edgeappinc*) echo "Check 96 stopped: $CHK96_SANDBOX_REPO names an installation this check never touches" >&2; exit 1;; esac
 LINE=$(fugaro doctor --project fugaro 2>/dev/null | sed -n 's/^project: fugaro (GCP \(.*\))$/\1/p' | head -1)
 GP=${LINE%%,*}; REGION=${LINE##*, }
