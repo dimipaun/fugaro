@@ -346,7 +346,7 @@ restore_run() {
   svc_left=$(gcloud run services list --project="${P:?}" --region="${L:?}" \
     --filter="metadata.name=${SVC}" --format='value(metadata.name)' | wc -l | tr -d ' ') || svc_rc=$?
   repo_left=$(gcloud artifacts repositories list --project="${P:?}" --location="${L:?}" \
-    --filter="name:${SVC}" --format='value(name)' | wc -l | tr -d ' ') || repo_rc=$?
+    --filter="name~/repositories/${SVC}\$" --format='value(name)' | wc -l | tr -d ' ') || repo_rc=$?
   # The images live inside the repository, so the question is asked only while the repository
   # list succeeded and said one is there: against a repository this Restore has just deleted
   # the CLI answers NOT_FOUND, and that answer IS the count of images left, not a failed
@@ -483,42 +483,60 @@ guard_project() {
   fact "project-region" PASS "${P}/${L} (installation fugaro, sandbox only; never belong)"
 }
 
-# describe_state CMD... — run a `gcloud ... describe` and print WHICH of three
-# things happened: `there` (exit 0), `not-there` (the resource is absent), or
-# `unreadable` (the describe failed for any other reason).
+# list_state EXPECTED CMD... — run a `gcloud ... list` that is filtered to ONE
+# resource and print WHICH of three things happened: `there` (a line equal to
+# EXPECTED was printed), `not-there` (exit 0 and nothing printed) or
+# `unreadable` (a non-zero exit, or output that is not EXPECTED).
 #
-# The STATUS alone cannot tell the last two apart — gcloud exits 1 both for a
-# resource that is not there and for an expired session, a transient API error,
-# or a permission this account does not hold — so the MESSAGE does, exactly
-# like the staged-source check's `matched no objects` in the Restore. Reading
-# an unreadable describe as "not there" is how this check would adopt a service
-# or a repository it did not create (the guard passes, the create-or-update
-# deploy writes into it, and the Restore DELETES it), and how a run that did
-# create one would take its ownership record back on a transient failure and
-# leave a billing service behind. "It is not there" is a claim about the
-# project; "the call failed" is not a claim about anything.
+# ABSENCE IS AN EMPTY LIST, never an error string. The first version read the
+# message of a `describe` for the word NOT_FOUND, and the real gcloud says
+# `ERROR: (gcloud.run.services.describe) Cannot find service [NAME]` — no such
+# token — so the normal "absent" answer read as "unreadable" and the check could
+# never start. A list of an absent resource exits 0 and prints nothing; a list
+# that FAILS (an expired session, a transient API error, a permission this
+# account does not hold) exits non-zero. Nothing here depends on any message.
+# Reading an unreadable list as "not there" is how this check would adopt a
+# service or a repository it did not create (the guard passes, the deploy
+# writes into it, and the Restore DELETES it), and how a run that did create
+# one would take its ownership record back on a transient failure and leave a
+# billing service behind. "It is not there" is a claim about the project; "the
+# call failed" is not a claim about anything.
 #
 # Always exits 0 (printf's status), so the caller can hold the word in a
-# variable without the ERR trap or errexit seeing the describe's own status.
-describe_state() {
-  local err=$SCRATCH/describe.err rc=0
-  "$@" >/dev/null 2>"$err" || rc=$?
-  if [ "$rc" = 0 ]; then
-    printf 'there'
-  elif grep -qiE 'not.?found|could not be found|does not exist|no such|\b404\b' "$err"; then
+# variable without the ERR trap or errexit seeing the list's own status.
+list_state() {
+  local want=$1 out rc=0
+  shift
+  out=$("$@" 2>"$SCRATCH/list.err") || rc=$?
+  out=$(printf '%s' "$out" | tr -d '\r' | sed -e 's/[[:space:]]*$//' | grep -v '^$' || true)
+  if [ "$rc" != 0 ]; then
+    printf 'unreadable'
+  elif [ -z "$out" ]; then
     printf 'not-there'
+  elif [ "$out" = "$want" ]; then
+    printf 'there'
   else
     printf 'unreadable'
   fi
+}
+
+# The three probes, each one filtered LIST (see list_state).
+svc_state() {
+  list_state "${SVC:?}" gcloud run services list --project="${P:?}" --region="${L:?}" \
+    --filter="metadata.name=${SVC}" --format='value(metadata.name)'
+}
+repo_probe() {
+  list_state "projects/${P:?}/locations/${L:?}/repositories/${SVC:?}" gcloud artifacts repositories list \
+    --project="${P:?}" --location="${L:?}" --filter="name~/repositories/${SVC}\$" --format='value(name)'
 }
 
 guard_service() {
   # Hard stop 4: the service is not already there — unless it is the one this
   # check deployed, recorded in service-mine right after the deploy.
   local st
-  st=$(describe_state gcloud run services describe "${SVC:?}" --project="${P:?}" --region="${L:?}")
+  st=$(svc_state)
   if [ "$st" = unreadable ]; then
-    stop "whether ${SVC} is already in ${P}/${L} cannot be read: the describe failed for a reason other than NOT_FOUND (an expired session, a transient API error, or a permission this account does not hold), and a failed call is not the answer 'it is not there'. This guard is what stops this check adopting a service it did not create — one it would then update and its Restore would DELETE — so the run stops here rather than guessing. Run 'gcloud run services describe ${SVC} --project=${P} --region=${L}' by hand and read its answer, then run this check again. Nothing was created"
+    stop "whether ${SVC} is already in ${P}/${L} cannot be read: the list failed (an expired session, a transient API error, or a permission this account does not hold), and a failed call is not the answer 'it is not there'. This guard is what stops this check adopting a service it did not create — one it would then update and its Restore would DELETE — so the run stops here rather than guessing. Run 'gcloud run services list --project=${P} --region=${L} --filter=metadata.name=${SVC}' by hand and read its answer, then run this check again. Nothing was created"
   fi
   if [ "$st" = there ]; then
     [ -f "$SERVICE_MINE" ] \
@@ -549,7 +567,12 @@ baseline() {
   # project is not this check's, and this check never adopts, writes into or
   # deletes one it did not create.
   if [ ! -e "$REPO_EXISTED" ]; then
-    if gcloud artifacts repositories describe "${SVC:?}" --project="${P:?}" --location="${L:?}" >/dev/null 2>&1; then
+    local bst
+    bst=$(repo_probe)
+    if [ "$bst" = unreadable ]; then
+      stop "whether a repository named ${SVC} is already in ${P}/${L} cannot be read: the list failed (an expired session, a transient API error, or a permission this account does not hold), and a failed call is not the answer 'it is not there'. Run 'gcloud artifacts repositories list --project=${P} --location=${L}' by hand and read its answer, then run this check again. Nothing was created"
+    fi
+    if [ "$bst" = there ]; then
       stop "a repository named ${SVC} is already in ${P}/${L}, and it is not this check's: this check never adopts, writes into or deletes a repository it did not create. If it is a leftover of an earlier attempt whose own Restore did not finish, look at it first (gcloud artifacts docker images list ${L}-docker.pkg.dev/${P}/${SVC} --include-tags --project=${P}) and delete it yourself if it holds nothing but that attempt's image; otherwise give this check a different name. Then run again"
     fi
     echo no >"$REPO_EXISTED"
@@ -734,9 +757,9 @@ step_build_deploy() {
   [ "$(cat "$REPO_EXISTED" 2>/dev/null || true)" = no ] \
     || stop "$REPO_EXISTED does not say the repository ${SVC} was absent when this check started, and this check writes only into a repository it created itself. Read the baseline's answer and run again"
   local repo_state
-  repo_state=$(describe_state gcloud artifacts repositories describe "${SVC:?}" --project="${P:?}" --location="${L:?}")
+  repo_state=$(repo_probe)
   if [ "$repo_state" = unreadable ]; then
-    stop "whether a repository named ${SVC} is already in ${P}/${L} cannot be read: the describe failed for a reason other than NOT_FOUND, and a failed call is not the answer 'it is not there' — a repository this check did not create would be written into and then DELETED by its Restore. Run 'gcloud artifacts repositories describe ${SVC} --project=${P} --location=${L}' by hand and read its answer, then run this check again. Nothing was created"
+    stop "whether a repository named ${SVC} is already in ${P}/${L} cannot be read: the list failed, and a failed call is not the answer 'it is not there' — a repository this check did not create would be written into and then DELETED by its Restore. Run 'gcloud artifacts repositories list --project=${P} --location=${L}' by hand and read its answer, then run this check again. Nothing was created"
   fi
   if [ "$repo_state" = there ]; then
     [ -f "$REPO_MINE" ] \
@@ -759,22 +782,22 @@ step_build_deploy() {
       # which of the two happened. The record is taken back only when the
       # repository really is NOT THERE; a repository that IS there keeps its
       # record and the Restore deletes it, and so does one whose state cannot be
-      # read: a describe that failed for a reason other than NOT_FOUND is not
+      # read: a list that failed is not
       # evidence that the repository is absent, and taking the record back on
       # one would leave a repository this run made with nothing naming it.
       local made
-      made=$(describe_state gcloud artifacts repositories describe "${SVC:?}" --project="${P:?}" --location="${L:?}")
+      made=$(repo_probe)
       if [ "$made" = there ]; then
         stop "the repository create reported failure, but ${SVC} IS there now, so it is this check's: the record says so and this run's Restore deletes it. Nothing else ran"
       fi
       if [ "$made" = unreadable ]; then
-        stop "the repository create reported failure and whether ${SVC} is there now cannot be read (the describe failed for a reason other than NOT_FOUND), so the record of it is KEPT: a create that reported failure may still have made the repository, and the record is what makes this run's Restore delete it. Check 'gcloud artifacts repositories describe ${SVC} --project=${P} --location=${L}' by hand; if the repository is there, delete it yourself. Nothing else ran"
+        stop "the repository create reported failure and whether ${SVC} is there now cannot be read (the list failed), so the record of it is KEPT: a create that reported failure may still have made the repository, and the record is what makes this run's Restore delete it. Check 'gcloud artifacts repositories list --project=${P} --location=${L}' by hand; if the repository is there, delete it yourself. Nothing else ran"
       fi
       rm -f "$REPO_MINE" || true
       stop "the repository create failed and ${SVC} is not there, so this run made no repository: the record of it is removed again"
     fi
   fi
-  gcloud artifacts repositories describe "${SVC:?}" --project="${P:?}" --location="${L:?}" >/dev/null \
+  [ "$(repo_probe)" = there ] \
     || stop "no registry repository ${SVC} in ${P}/${L} for the image tag ${IMG} to build into"
   say "building ${IMG} (gcloud builds submit). If it offers to CREATE anything — the staging bucket, an API, a grant — say NO, stop, and report it: those are the installation's and are not this check's to accept"
   # The build's identity, its roles and the staging bucket were all read and
@@ -809,12 +832,12 @@ step_build_deploy() {
     --no-allow-unauthenticated --timeout=3600 --min-instances=0 --max-instances=1 \
     --set-env-vars SSE_MINUTES=20 --quiet >&2; then
     local deployed
-    deployed=$(describe_state gcloud run services describe "${SVC:?}" --project="${P:?}" --region="${L:?}")
+    deployed=$(svc_state)
     if [ "$deployed" = there ]; then
       stop "the deploy reported failure, but ${SVC} IS there now, so it is this check's: the record says so and this run's Restore deletes it, and the image and the repository go with it"
     fi
     if [ "$deployed" = unreadable ]; then
-      stop "the deploy reported failure and whether ${SVC} is there now cannot be read (the describe failed for a reason other than NOT_FOUND), so the record of it is KEPT: a deploy that reported failure may still be serving and being billed, and the record is what makes this run's Restore delete it. Check 'gcloud run services describe ${SVC} --project=${P} --region=${L}' by hand; if the service is there, delete it yourself. Nothing else ran"
+      stop "the deploy reported failure and whether ${SVC} is there now cannot be read (the list failed), so the record of it is KEPT: a deploy that reported failure may still be serving and being billed, and the record is what makes this run's Restore delete it. Check 'gcloud run services list --project=${P} --region=${L} --filter=metadata.name=${SVC}' by hand; if the service is there, delete it yourself. Nothing else ran"
     fi
     rm -f "$SERVICE_MINE" || true
     stop "the deploy failed and ${SVC} is not there, so nothing of this check's is running: the record is removed again, and the repository and the image it created are deleted by this run's Restore"
@@ -1193,12 +1216,12 @@ guard_build_identity() {
     *@"${P}".iam.gserviceaccount.com) ;;
     *) stop "CHECK91_BUILD_SA=${cand} is not a service account of ${P} (it must end in @${P}.iam.gserviceaccount.com): this check builds inside the sandbox project only. Nothing was created" ;;
     esac
-    st=$(describe_state gcloud iam service-accounts describe "$cand" --project="${P:?}")
+    st=$(list_state "$cand" gcloud iam service-accounts list --project="${P:?}" --filter="email=${cand}" --format='value(email)')
     case "$st" in
     there) BUILD_SA=$cand ;;
     not-there) [ "${cand%%@*}" = "$DEDICATED_SA_ID" ] && print_dedicated_setup
       stop "CHECK91_BUILD_SA=${cand} does not exist in ${P}. Per installation fugaro (${P}), run by YOU: gcloud iam service-accounts create ${cand%%@*} --project=${P} --display-name='Check 91 throwaway build account' — then run this check again. Nothing was created" ;;
-    *) stop "whether ${cand} exists cannot be read (the describe failed for a reason other than NOT_FOUND: an expired session, a transient error or a missing permission). Nothing was created" ;;
+    *) stop "whether ${cand} exists cannot be read (the list failed: an expired session, a transient error or a missing permission). Nothing was created" ;;
     esac
   else
     list=$(gcloud iam service-accounts list --project="${P:?}" --filter='email~^fugaro-b-' --format='value(email)' 2>"$lerr") \
