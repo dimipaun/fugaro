@@ -834,6 +834,13 @@ func TestTheBillingListIsNarrow(t *testing.T) {
 	if reads == 0 || reads != guards {
 		t.Errorf("billing_prompt.go reads canType() %d time(s), %d of them as a refusal: the account list may be asked for only where canType() says yes", reads, guards)
 	}
+	// And the call is inside askBilling, after the asksBilling() guard that
+	// reads it: the two halves of the condition, in one function, in order.
+	body := funcBody(t, string(b), "func (r *initRun) askBilling(")
+	guard, call := strings.Index(body, "if !r.asksBilling() {"), billingListCallRE.FindStringIndex(body)
+	if guard < 0 || call == nil || call[0] < guard {
+		t.Errorf("askBilling does not reach the account list through its asksBilling() guard (the guard at %d, the call at %v): the question's condition is askedBilling, and the list may be asked for only past it", guard, call)
+	}
 
 	// The half of the old rule that survives. The project is linked to an
 	// account that is not enabled, which is the one state the stage reports
