@@ -149,35 +149,77 @@ func TestAuditCarriesNamesOnly(t *testing.T) {
 		}
 	})
 
-	t.Run("a field that cannot be a name is refused, and the refusal does not repeat it", func(t *testing.T) {
-		a, buf := newAudit(t)
-		// A space: not one header value, so not a credential name.
-		err := a.Write(context.Background(), id.Audit(PurposeForward, value+" "+value, TierA, StatusOK))
-		if err == nil {
-			t.Fatal("Write accepted a credential field that is not a name")
+	t.Run("a field that cannot be one is refused, and the refusal names it and not what it held", func(t *testing.T) {
+		// Every field of the line is held to the rule the rest of the package
+		// already holds it to. The table is the rules: a field that cannot be
+		// one is refused, the refusal names the field, and neither the line nor
+		// the error repeats what the field held.
+		full := func(mutate func(*AuditEvent)) AuditEvent {
+			ev := id.Audit(PurposeForward, auditName, TierA, StatusOK)
+			mutate(&ev)
+			return ev
 		}
-		if strings.Contains(err.Error(), value) {
-			t.Errorf("the refusal repeats what the field held: %v", err)
-		}
-		raw := buf.String()
-		if strings.Contains(raw, value) {
-			t.Errorf("the audit line carries what the field held: %s", raw)
-		}
-		lines := auditLines(t, buf)
-		if len(lines) != 1 {
-			t.Fatalf("a refused event wrote %d lines, want the one refusal", len(lines))
-		}
-		if lines[0]["field"] != "credential" {
-			t.Errorf("the refusal names field %v, want credential", lines[0]["field"])
+		for _, c := range []struct {
+			name    string
+			ev      AuditEvent
+			field   string
+			content string // what the field held, which no line and no error may carry
+		}{
+			{"a credential name that is not one header value", full(func(ev *AuditEvent) { ev.Credential = value + " " + value }), "credential", value},
+			{"a credential with no tier", full(func(ev *AuditEvent) { ev.Tier = "" }), "credential", ""},
+			{"a tier with no credential", full(func(ev *AuditEvent) { ev.Credential = "" }), "credential", ""},
+			{"a tier the contract does not carry", full(func(ev *AuditEvent) { ev.Tier = "D" }), "tier", ""},
+			{"a run id that is not a path segment", full(func(ev *AuditEvent) { ev.Run = value + "/" + value }), "run", value},
+			{"a run id with no repository", full(func(ev *AuditEvent) { ev.Repository = "" }), "run", ""},
+			{"a job name that is not one", full(func(ev *AuditEvent) { ev.Job = "not a job name" }), "job", ""},
+			{"a caller that is not an address", full(func(ev *AuditEvent) { ev.Caller = "not an address" }), "caller", ""},
+			{"a job with no caller", full(func(ev *AuditEvent) { ev.Caller = "" }), "job", ""},
+			{"an issuance that names no credential", full(func(ev *AuditEvent) { ev.Credential, ev.Tier = "", "" }), "credential", ""},
+			{"an issuance with no purpose", full(func(ev *AuditEvent) { ev.Purpose = "" }), "purpose", ""},
+			{"an issuance with no run", full(func(ev *AuditEvent) { ev.Run, ev.Repository = "", "" }), "run", ""},
+			{"an issuance with no job", full(func(ev *AuditEvent) { ev.Job, ev.Caller = "", "" }), "job", ""},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				a, buf := newAudit(t)
+				err := a.Write(context.Background(), c.ev)
+				if err == nil {
+					t.Fatalf("Write accepted %s", c.name)
+				}
+				if c.content != "" && strings.Contains(err.Error(), c.content) {
+					t.Errorf("the refusal repeats what the field held: %v", err)
+				}
+				raw := buf.String()
+				if c.content != "" && strings.Contains(raw, c.content) {
+					t.Errorf("the audit line carries what the field held: %s", raw)
+				}
+				lines := auditLines(t, buf)
+				if len(lines) != 1 {
+					t.Fatalf("a refused event wrote %d lines, want the one refusal", len(lines))
+				}
+				if lines[0]["field"] != c.field {
+					t.Errorf("the refusal names field %v, want %q", lines[0]["field"], c.field)
+				}
+			})
 		}
 	})
 
-	t.Run("an issuance that names no credential is refused", func(t *testing.T) {
-		// StatusOK says a credential answered, so the line that says it names
-		// the credential, its tier and what it was for.
-		a, _ := newAudit(t)
-		if err := a.Write(context.Background(), id.Audit(PurposeForward, "", "", StatusOK)); err == nil {
-			t.Fatal("Write accepted an issuance that names no credential")
+	t.Run("a name that carries a bidi control is escaped, not carried", func(t *testing.T) {
+		// A slug is held to token.ValidSegment, which refuses '~', '/' and
+		// controls — and a bidi control is neither, so it passes that rule and
+		// reaches this line. internal/safetext is what stops it reaching the
+		// terminal (F32: the names that travel are text from another writer).
+		const rlo = "‮"
+		a, buf := newAudit(t)
+		ev := id.Audit(PurposeForward, auditName, TierA, StatusOK)
+		ev.Run = f.run + rlo + "gpj.exe"
+		if err := a.Write(context.Background(), ev); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		if strings.Contains(buf.String(), rlo) {
+			t.Errorf("the audit line carries a bidi control: %q", buf.String())
+		}
+		if got := auditLines(t, buf)[0]["run"]; got == f.run+rlo+"gpj.exe" {
+			t.Errorf("run = %q, want the control escaped", got)
 		}
 	})
 
