@@ -1459,7 +1459,6 @@ func cascadeLaunchRefusal(ctx context.Context, env *cloudEnv, spec *task.Spec) e
 // (artifactShadowedOnBatchRefusal), since nothing on this path can then say the
 // run is not an artifact one. All are asked before anything about this launch
 // is written, so none leaves a task or an execution behind.
-
 func checkArtifactLaunch(ctx context.Context, env *cloudEnv, spec *task.Spec) error {
 	cfg := checkoutConfig(ctx, spec.Repo)
 	// The boundary is asked here, before the checkout can bail out below and
