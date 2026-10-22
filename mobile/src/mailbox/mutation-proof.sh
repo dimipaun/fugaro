@@ -333,9 +333,9 @@ run "the leak fence searches only for material a match is evidence about (the cl
   mobile/src/accounts/secure-store.js src/mailbox/client.test.js
 
 run "the store is written in one file only (the scan)" \
-  "export function createRoot({ React, store, View, Text }) {" \
+  "export function createRoot({ React, store, View, Text, Pressable, useDemo, screens, onLeaveDemo }) {" \
   "export async function aSecondWritePath(store) { return store.write('mailbox/u/inbox/x', 1); }
-export function createRoot({ React, store, View, Text }) {" \
+export function createRoot({ React, store, View, Text, Pressable, useDemo, screens, onLeaveDemo }) {" \
   mobile/src/app/root.js src/mailbox/write-path.test.js
 
 # 10. The offline gate (P6.10; D167, G21). Sixteen guards in client.js, four in
