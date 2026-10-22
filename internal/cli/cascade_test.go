@@ -1020,7 +1020,11 @@ func TestCascadeRefusedWithoutService(t *testing.T) {
 // and the job halts on HaltCredsRulesDenied); reading the marker as "found is
 // enough" (a generation below this Fugaro's passes, and the deployed document
 // is not the one this binary reads); refusing on the marker for every auth
-// (every api-key launch of the installation stops).
+// (every api-key launch of the installation stops); judging both directions
+// with one `gen != rules.CredsRulesVersion` check, which is what the two
+// generation rows below were added for: a marker above this Fugaro's is then
+// reported as an older deploy and its owner is sent at the init that refuses
+// it.
 func TestCascadeRefusedWithoutCredsRulesMarker(t *testing.T) {
 	f := newProjectJobFixtureMode(t, "enforce")
 	publishPolicy(t, f.launchBudgetFixture, cascadePolicy())
