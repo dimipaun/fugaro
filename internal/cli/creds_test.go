@@ -1087,17 +1087,11 @@ func TestCredsCommandsNeverLogAValue(t *testing.T) {
 	assertRedacted(t, out+errOut+err.Error(), key)
 }
 
-// assertRedacted fails if s still carries a secret the way the production
-// redactor would catch it — the raw bytes, the JSON escape, a line of a
-// multi-line secret, and the encoded forms (the base64 cores of a secret of at
-// least encodedMin bytes, which is how an unaligned base64 stream is read).
-// assertNoValue is the hand-written half and this is the redactor's own notion
-// of a form; the two disagreeing is the interesting failure.
 // assertNoPEMLine fails if any line of a multi-line PEM value appears in s, or
 // its shape marker. It is the App key's own scan: assertNoValue's every-window
 // check is useless on a base64 body (lower-case letters make its windows
 // collide with ordinary prose), while a whole base64 line of a 2048-bit key is
-// 64 bytes and cannot.
+// 64 bytes and does not.
 func assertNoPEMLine(t *testing.T, s, value string) {
 	t.Helper()
 	for _, line := range strings.Split(strings.TrimSuffix(value, "\n"), "\n") {
@@ -1110,6 +1104,12 @@ func assertNoPEMLine(t *testing.T, s, value string) {
 	}
 }
 
+// assertRedacted fails if s still carries a secret the way the production
+// redactor would catch it — the raw bytes, the JSON escape, a line of a
+// multi-line secret, and the encoded forms (the base64 cores of a secret of at
+// least encodedMin bytes, which is how an unaligned base64 stream is read).
+// assertNoValue is the hand-written half and this is the redactor's own notion
+// of a form; the two disagreeing is the interesting failure.
 func assertRedacted(t *testing.T, s string, secrets ...string) {
 	t.Helper()
 	if got := agent.Redact(s, secrets); got != s {

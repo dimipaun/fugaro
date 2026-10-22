@@ -533,5 +533,4 @@ func TestIsServiceHeldSecretEnv(t *testing.T) {
 			t.Errorf("IsServiceHeldSecretEnv(%q, %q) = %v, want %v", tc.env, tc.name, got, tc.want)
 		}
 	}
-
 }

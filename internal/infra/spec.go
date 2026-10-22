@@ -1337,8 +1337,8 @@ func (rs RepoSpec) Addresses() []string {
 // once an installation opts in (D145, D146) and the job's account keeps no
 // accessor on it (C1.18, C2.3). The App key is in that list since C2.2's
 // release (review finding F1), so this answers true for it and the job gives up
-// the accessor it no longer needs — the runner reads the key from the service,
-// not its environment.
+// the accessor it no longer needs — the runner fetches the run's installation
+// tokens from the service instead of reading the key from its environment.
 //
 // It is the same question modules/workflow/sa.tf's job_secret_names asks, one
 // mount at a time, and it is written the same way — a name survives if ANY
