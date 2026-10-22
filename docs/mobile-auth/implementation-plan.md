@@ -8,7 +8,7 @@ fugaro -v print the version, like fugaro version (#794)`) on **2026-10-21**, and
 and symbol, never by line number**. A path marked **new** does not exist yet.
 **Owner: Dimi Paun. Date: 2026-10-21.**
 **Amended 2026-10-22**: the owner answered **D221–D236, each as recommended**, and passed this
-plan's owner approval gate (§11) for the two parts that need nothing built — **P0 and P1**.
+plan's owner approval gate (§11) for the two parts the owner approved — **P0 and P1**.
 **P2, P3, P4, P5 and P6 were not opened**: P3, P4 and P5 wait on the mobile Phase 6 tasks this work
 extends (P6.6 and P6.8, approved 2026-10-18 and unbuilt) and on each other, and §11 says so in full.
 
@@ -189,7 +189,9 @@ because *"the spec stops being verbatim"* is a thing a later edit can do silentl
 six section headings, and the absence of any decision number, any finding number and any of this
 folder's own vocabulary in it; **the four documents exist** and the index's status line says *"plan
 only; no code is implemented"*; **the decisions are D221–D236**, contiguous, each written as a
-`### D<n> — …` heading with its **Recommendation** first and its **Alternative**/cost after it;
+`### D<n> — …` heading with its **Recommendation** first and its **Alternative**/cost after it
+(D235, which scopes v1 rather than choosing between two things, states none — the guard names it as
+the one exception);
 **the parts are P0–P6**, contiguous and in order; and **the paths the reconciliation and the plan
 cite resolve on disk**, under the rule below. **What the guard does not hold is stated rather than
 implied**: a symbol named beside a citation without the possessive form is outside it, exactly as the
@@ -708,7 +710,7 @@ there is no live action of any kind in this work, and no step of any check is ru
 **Passed 2026-10-22.** The owner answered **D221–D236, each as recommended** — so §4's clauses 2,
 3 and 4 are answered, clause 5's release is the one D236 recommends, and clause 1's confirmation
 stands on the Phase 6 tasks being the ones that land — and approved **P0 and P1**, the two parts
-that wait on nothing built. **What the gate did not open is as much a part of it**: **P2** waits on
+the owner approved. **What the gate did not open is as much a part of it**: **P2** waits on
 nothing but its own approval, **P3, P4 and P5 wait on P6.6 and P6.8**, and **P6** waits on nothing
 but D221 — and a part that lands is still reviewed on its own, with its own reviewer tier.
 

@@ -2,8 +2,8 @@
 
 **Status: plan only; no code is implemented; every decision in it is answered.** The owner answered
 **D221–D236 as recommended on 2026-10-22**, and approved the plan's **P0 and P1** — the two parts
-that wait on nothing built; **P3, P4 and P5 wait on the mobile Phase 6 tasks** this work extends,
-which [implementation-plan.md](implementation-plan.md) §11 records. This document reads
+the owner approved; **P3, P4 and P5 wait on the mobile Phase 6 tasks** this work extends, which
+[implementation-plan.md](implementation-plan.md) §11 records. This document reads
 the owner's [spec.md](spec.md) ("Fugaro Mobile App Auth Spec", 2026-10-20) against the tree at
 `main` `d9dda8f3` (`cli: fugaro --version and fugaro -v print the version, like fugaro version
 (#794)`) on **2026-10-21**, and against the neighbouring documents it names. Every path and symbol
@@ -443,7 +443,9 @@ domain, each with a role, exact overrides domain"* fits it as follows:
 ## 4. The decisions planning found: D221–D236
 
 **Each row is a decision, not a question**, and each is written **recommendation first**, with the
-alternative and its cost. The plan is written to the recommendations; a part whose decision is
+alternative and its cost. (**D235 is the one that states none**: it asks what v1 is and what is
+later, so it answers with a v1 list and a later list rather than with a choice between two things,
+and there is no second option to price.) The plan is written to the recommendations; a part whose decision is
 answered the other way is rewritten before it starts, not after. **Every one of the sixteen was
 answered by the owner on 2026-10-22, each as recommended**, and each answer stands under its own
 decision below; the plan's **P0 and P1 are approved**, and **P3, P4 and P5 still wait** on the

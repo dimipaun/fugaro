@@ -372,8 +372,8 @@ and D225 puts the role as a **field on the device node**, read in v1 by the CLI 
 console and **never by the rules** (`docs/mobile-auth/reconciliation.md` §4, D225). The whole
 `docs/mobile-auth/` folder is "plan only. No code is implemented" (`docs/mobile-auth/README.md`,
 its status line), and its sixteen decisions D221–D236 were **answered by the owner, each as
-recommended, on 2026-10-22** — so the plan is approved for **P0 and P1**, the two parts that wait
-on nothing built, and the parts that wait on the mobile Phase 6 tasks (P6.6, P6.8) wait still
+recommended, on 2026-10-22** — so the plan is approved for **P0 and P1**, the two parts the owner
+approved, and the parts that wait on the mobile Phase 6 tasks (P6.6, P6.8) wait still
 (`docs/mobile-auth/reconciliation.md` §4; `docs/mobile-auth/implementation-plan.md` §11). **None
 of that makes this row's own subject less of a gap**: the role is still a field on a node no code
 writes, because the parts that would write it are the ones that wait.

@@ -2,8 +2,8 @@
 
 **Status: plan only.** No code is implemented, no rules document is changed, no Firebase
 configuration is touched, and **every decision in it is answered** — the owner answered **D221–D236
-as recommended on 2026-10-22** and approved the plan's **P0 and P1**, the two parts that wait on
-nothing built (**P3, P4 and P5 wait on the mobile Phase 6 tasks**, per the plan's §11). The four
+as recommended on 2026-10-22** and approved the plan's **P0 and P1**, the two parts the owner
+approved (**P3, P4 and P5 wait on the mobile Phase 6 tasks**, per the plan's §11). The four
 documents below are the owner's spec, what the repository actually holds, the decisions planning
 found, and the plan that would follow from them. **Owner: Dimi Paun. Date: 2026-10-21.** Read
 against `main` at `d9dda8f3` (`cli: fugaro --version and fugaro -v print the version, like fugaro
@@ -21,7 +21,7 @@ approved and unbuilt. [Reconciliation.md](reconciliation.md) works through the d
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | **The owner's spec, verbatim** — the text as it was written, alone, with nothing of ours in it. It is not edited, not annotated and not reconciled in place; the document that disagrees with it says so. |
-| [reconciliation.md](reconciliation.md) | What the repository has, what the spec asks for, and where they differ: findings **F1–F29** classified *Wrong / Exists / Gap / Rule / Open*, the provider path written out in full, the decisions **D221–D236** (recommendation first, alternative and cost after, each carrying the owner's answer of 2026-10-22 under it), what could not be verified, a glossary — and an "Open for the owner" section of things that are **not** decisions. **Where it disagrees with spec.md, it wins.** |
+| [reconciliation.md](reconciliation.md) | What the repository has, what the spec asks for, and where they differ: findings **F1–F29** classified *Wrong / Exists / Gap / Rule / Open*, the provider path written out in full, the decisions **D221–D236** (recommendation first, alternative and cost after — D235, which scopes v1 rather than choosing between two things, states none — each carrying the owner's answer of 2026-10-22 under it), what could not be verified, a glossary — and an "Open for the owner" section of things that are **not** decisions. **Where it disagrees with spec.md, it wins.** |
 | [implementation-plan.md](implementation-plan.md) | The parts **P0–P6**: each independently mergeable, each with its scope, files, **red step**, verification, dependencies, reviewer tier and commit. It carries what an **independent opus review** must cover for each security-sensitive part, and the owner-run live checks **proposed by name and not numbered**. |
 | [README.md](README.md) | This index. |
 

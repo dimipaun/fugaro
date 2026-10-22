@@ -747,10 +747,10 @@ amendment's own claim about itself: it changes documents and nothing else. A lat
 slice that writes its own pin moves the pin-count row above in the same commit
 (the plan's T4.3 is the first that will).
 
-The **53** is the convention this folder follows: there is no registry test over
+The **54** is the convention this folder follows: there is no registry test over
 `docs/`, so a folder that wants its documents pinned writes its own file, and
 this folder's is `internal/cli/docs_rigor_modes_test.go` — the forty-eighth when
-this folder's own commit wrote it, and one of the five pins the row has counted
+this folder's own commit wrote it, and one of the six pins the row has counted
 since. It is the row in this table that this folder's own commit moved.
 
 ## 5. Decisions for the owner
