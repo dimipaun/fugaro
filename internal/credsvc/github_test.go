@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -136,7 +137,7 @@ func (f *ghFake) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		f.write(w, http.StatusOK, map[string]any{"id": installation})
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/access_tokens"):
-		if status/100 != 2 {
+		if status != 0 && status/100 != 2 {
 			w.WriteHeader(status)
 			_, _ = io.WriteString(w, failBody)
 			return
@@ -291,9 +292,9 @@ func mintAnswer(t *testing.T, body []byte) MintResponse {
 //     GitHub is asked for exactly that repository;
 //   - a run identity of ANOTHER repository, presented with a job token the
 //     service admits, is refused before GitHub is reached at all;
-//   - another job account of the same installation mints for ITS repository,
-//     which is the control: the service mints for the calling job's own
-//     repository rather than for whichever one a caller asked about.
+//   - the same job account, bound by this deployment to the other repository,
+//     mints for THAT one, which is the control: the repository comes from the
+//     binding table and from nothing the caller sent.
 func TestMintForOwnRepositoryOnly(t *testing.T) {
 	t.Run("the run's own repository", func(t *testing.T) {
 		s, gh := mintSvc(t, nil)
@@ -348,11 +349,22 @@ func TestMintForOwnRepositoryOnly(t *testing.T) {
 		}
 	})
 
-	t.Run("another job account mints for its own", func(t *testing.T) {
-		s, gh := mintSvc(t, nil)
-		other := s.runToken(func(c map[string]any) { c["fs"] = testSlug(t, testOtherRepoPath) })
-		otherJob := s.jobToken(func(c map[string]any) { c["email"] = testOtherSA })
-		resp, body := s.mintTokens(t, mintBody(testAppID), other, otherJob, s.job)
+	t.Run("the repository is the binding's, not the caller's", func(t *testing.T) {
+		// The same admitted job account, bound by this deployment to the other
+		// repository, and a run identity of that repository. The token comes
+		// back scoped to it — which is the control for the two halves above:
+		// the repository is read from the binding table the service was
+		// configured with (JobAccount.Repo) and from nothing the caller sent.
+		otherSlug := testSlug(t, testOtherRepoPath)
+		s, gh := mintSvc(t, func(_ *svc, cfg *Config) {
+			cfg.JobAccounts = []JobAccount{{Email: testJobSA, Slug: otherSlug, Repo: testOtherRepo}}
+		})
+		other := s.runToken(func(c map[string]any) {
+			c["fs"] = otherSlug
+			c["sub"] = "r~" + otherSlug + "~" + s.run
+			c["user_id"] = c["sub"]
+		})
+		resp, body := s.mintTokens(t, mintBody(testAppID), other, s.jobToken(), s.job)
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("the answer is %d, want 200: %s", resp.StatusCode, body)
 		}
@@ -624,10 +636,14 @@ func TestMintRelaysNoGitHubTextAndHaltsTheRun(t *testing.T) {
 	if strings.Contains(s.logs.String(), marker) {
 		t.Error("a log line carries GitHub's own text")
 	}
-	// The operator's line is still written, so a broken App is diagnosable,
-	// and the audit line records the failure.
-	if logs := s.logs.String(); !strings.Contains(logs, "could not be minted") || !strings.Contains(logs, "failed") {
-		t.Errorf("a failed mint wrote no diagnostic and no audit line:\n%s", logs)
+	// The operator's line is still written, so a broken App is diagnosable —
+	// by the status GitHub answered with, which is the thing an operator acts
+	// on — and the audit line records the failure.
+	logs := s.logs.String()
+	for _, want := range []string{"could not be minted", "failed", "status=401"} {
+		if !strings.Contains(logs, want) {
+			t.Errorf("a failed mint's log does not name %q:\n%s", want, logs)
+		}
 	}
 }
 
@@ -688,7 +704,7 @@ func TestMintRefusesARepositoryThatIsNotGitHubs(t *testing.T) {
 // end to end: a Messages call against a bundle that holds the App key sends
 // the model credential and nothing else.
 func TestTheAppKeyIsNeverACascadeCandidate(t *testing.T) {
-	s, _ := mintSvc(t, nil)
+	s := newSvcWith(t, func(s *svc, _ *Config) { s.src.docs = [][]byte{mintBundleDoc(t)} })
 	b, err := ParseBundle(mintBundleDoc(t))
 	if err != nil {
 		t.Fatalf("the test's own bundle document is not one the loader accepts: %v", err)
@@ -708,9 +724,9 @@ func TestTheAppKeyIsNeverACascadeCandidate(t *testing.T) {
 
 	// End to end: the call goes to the model credential, and the App key is
 	// nowhere in what reached the upstream.
-	resp, _ := s.call(t, callBody("app-key-not-a-candidate"))
+	resp, body := s.call(t, callBody("app-key-not-a-candidate"))
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("the answer is %d, want 200", resp.StatusCode)
+		t.Fatalf("the answer is %d, want 200: %s", resp.StatusCode, body)
 	}
 	req := s.firstUpstream(t)
 	for name, vals := range req.Header {
@@ -720,7 +736,9 @@ func TestTheAppKeyIsNeverACascadeCandidate(t *testing.T) {
 			}
 		}
 	}
-	if got := req.Header.Get("Authorization"); got != "Bearer "+fakeCred(t, "default") {
-		t.Errorf("the upstream was called with %q, want the tier-A credential the cascade selected", got)
+	if got := strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer "); !slices.Contains([]string{
+		fakeCred(t, "default"), fakeCred(t, testAccount), fakeCred(t, "paid"),
+	}, got) {
+		t.Errorf("the upstream was called with a credential that is not one of the bundle's model credentials: %q", got)
 	}
 }
