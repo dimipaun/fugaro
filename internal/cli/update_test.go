@@ -328,6 +328,30 @@ func TestUpdateAppliesTheFourStepsItOwns(t *testing.T) {
 				}
 			})
 		}
+		// Except a coding agent's session, which reaches this warning in a
+		// --repo run (nothing gates the build in front of it there) and whose
+		// own session refuses --yes: naming it would be a recipe for getting
+		// past the check, in text the agent reads (AgentAdvice). The clause is
+		// chosen by the marker, as convergeOptIn's is.
+		t.Run("a coding agent's session is not handed --yes", func(t *testing.T) {
+			noTerminal(t)
+			fb := useFakeBuilder(t)
+			e, out := stageEngine(t, initProjectName+"\n", &initOptions{door: setupDoor.name})
+			// stageEngine clears the markers (the test session may be an
+			// agent's), so the marker is set after it, where the run reads it.
+			t.Setenv("CLAUDECODE", "1")
+			e.r.setProject(lc)
+			built, err := e.r.buildImages(t.Context(), lc, cfg, spec, []string{"app"})
+			if err != nil || built != 0 || len(fb.specs) != 0 {
+				t.Fatalf("built %d, err %v\n%s", built, err, out)
+			}
+			if !strings.Contains(out.String(), "is billable and was not confirmed") {
+				t.Fatalf("the run does not leave the build:\n%s", out)
+			}
+			if strings.Contains(out.String(), "--yes") {
+				t.Errorf("the agent's session is handed --yes, which its own session refuses:\n%s", out)
+			}
+		})
 	})
 
 	t.Run("replacing a registry tag", func(t *testing.T) {
