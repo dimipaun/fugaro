@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/gitops"
 )
@@ -73,15 +74,37 @@ func (in reviewInput) Text() string {
 	return b.String()
 }
 
+// maxBinaryMarkerPath bounds the path a binary marker quotes, in bytes.
+const maxBinaryMarkerPath = 200
+
 // binaryMarker is the one line a binary file gets in the review input: its
-// path and its size, never its bytes. A path holding a byte that would break
-// the line — a newline git is willing to carry in a name — is quoted, so the
-// marker is always exactly one line.
+// path and its size, never its bytes.
+//
+// The path is always quoted, never only when it holds a byte that would
+// break the line. It is the reviewed pull request's own file name, so it can
+// hold anything a name can: a newline or a NUL git is willing to carry, U+2028
+// (a line separator to some readers, though Go's own line splitting does not
+// treat it as one), any other control character, or a sentence that reads
+// like an instruction to the reviewer. Quoting turns every one of those into
+// an escape inside a clearly delimited string on exactly one line, where the
+// old conditional quoting left U+2028 and the rest verbatim. The name is cut
+// to maxBinaryMarkerPath first, so the marker can never carry more of the
+// pull request's own text than that.
 func binaryMarker(path string, bytes int64) string {
-	if strings.ContainsAny(path, "\n\r\x00") {
-		path = strconv.Quote(path)
+	return fmt.Sprintf("binary file %s changed, %d bytes", strconv.Quote(cutMarkerPath(path)), bytes)
+}
+
+// cutMarkerPath cuts path to maxBinaryMarkerPath bytes, at a rune boundary
+// so the quoted string stays valid UTF-8, and marks the cut.
+func cutMarkerPath(path string) string {
+	if len(path) <= maxBinaryMarkerPath {
+		return path
 	}
-	return fmt.Sprintf("binary file %s changed, %d bytes", path, bytes)
+	cut := maxBinaryMarkerPath
+	for cut > 0 && !utf8.RuneStart(path[cut]) {
+		cut--
+	}
+	return path[:cut] + "..."
 }
 
 // maxReviewDiffBytes bounds the diff the review prompt carries. A prompt is
@@ -167,22 +190,10 @@ func reviewChanges(ctx context.Context, repo *gitops.Repo, rng string) ([]review
 	if err != nil {
 		return nil, err
 	}
-	var changes []reviewChange
-	for _, rec := range strings.Split(out, "\x00") {
-		if rec == "" {
-			continue
-		}
-		added, rest, ok := strings.Cut(rec, "\t")
-		if !ok {
-			return nil, fmt.Errorf("reading the changed files: %q carries no counts", rec)
-		}
-		_, path, ok := strings.Cut(rest, "\t")
-		if !ok {
-			return nil, fmt.Errorf("reading the changed files: %q carries no path", rec)
-		}
-		changes = append(changes, reviewChange{path: path, binary: added == "-"})
-	}
-	return changes, nil
+	// The same parse the review prompt's own size is read with (diffbase.go,
+	// parseNumstat): one numstat call, one reading of it.
+	changes, _, err := parseNumstat(out)
+	return changes, err
 }
 
 // binarySizes returns each binary path's size in bytes: the blob's size at
@@ -271,10 +282,23 @@ func treeSizes(ctx context.Context, repo *gitops.Repo, rev string, paths []strin
 // bytes: the pull request's .gitattributes can mark a binary file as text
 // ("*.png diff"), and git then reports it in numstat as text and prints its
 // bytes as diff lines. Those bytes are not the input's to carry.
+//
+// The loop stops as soon as the text reaches maxReviewDiffBytes: everything
+// past that is cut by cutReviewDiff anyway, so asking git for one more path
+// would spend a process per path, every round, on text the prompt drops. What
+// the early stop gives up is the binary classification of the paths after the
+// cut — a path git was told to read as text would take no marker — which is
+// safe: the bytes of a path that is never diffed are never carried, the cut's
+// own note tells the reviewer where to read the rest, and the review stage's
+// managed settings deny the reads that would put an image block in a request
+// (internal/agent/settings.go's deniedBinaryReads).
 func reviewTextDiff(ctx context.Context, repo *gitops.Repo, rng string, paths []string) (string, []string, error) {
 	var b strings.Builder
 	var binary []string
 	for _, path := range paths {
+		if b.Len() >= maxReviewDiffBytes {
+			break
+		}
 		out, err := sessionGit(ctx, repo, "--literal-pathspecs", "diff",
 			"--no-color", "--no-ext-diff", "--no-textconv", "--no-renames",
 			"--end-of-options", rng, "--", path)
@@ -353,7 +377,11 @@ func (r *run) reviewInputBlock(ctx context.Context) string {
 	if r.repo == nil {
 		return ""
 	}
-	in, err := buildReviewInput(ctx, r.repo, "origin/"+r.cfg.Git.BaseBranch, "HEAD")
+	// The run's own base of work (diffbase.go, diffBase), the same range
+	// the prompt was built over. Building it against the configuration's
+	// base instead handed the reviewer the whole of another branch's
+	// divergence: 33,000 lines in run 865e, out of a $10 run cap.
+	in, err := buildReviewInput(ctx, r.repo, "origin/"+r.reviewPromptBase(), "HEAD")
 	if err != nil {
 		r.d.Log.Warn("the review input could not be built; the reviewer reads the diff itself",
 			"err", r.redact(err.Error()))

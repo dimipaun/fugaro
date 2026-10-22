@@ -176,7 +176,7 @@ func TestValidatePointsAtAllowDataToBesideALayerClaim(t *testing.T) {
 	if !strings.Contains(out, "no provider entry claims it") {
 		t.Fatalf("the rule's own sentence is gone:\n%s", out)
 	}
-	for _, want := range []string{"openrouter", "allow_data_to", `"acme/sandbox"`, "acme/other", "fugaro init --repo"} {
+	for _, want := range []string{"openrouter", "allow_data_to", `"acme/sandbox"`, "acme/other", "fugaro update --repo"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the line does not name %q, so the operator is sent to write an entry that is there:\n%s", want, out)
 		}

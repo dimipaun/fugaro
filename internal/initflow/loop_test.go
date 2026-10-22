@@ -376,7 +376,7 @@ func TestNonInteractiveListsAllMissingFlags(t *testing.T) {
 	var log []string
 	stages := fakes(&log, Preflight, Installation, Firebase)
 	stages[1].(*fake).missing = []string{"--gcp-project (the GCP project ID)", "--region"}
-	stages[2].(*fake).missing = []string{"--firebase (the Firebase project)"}
+	stages[2].(*fake).missing = []string{"--firebase-project (the Firebase project)"}
 	_, err := Run(context.Background(), stages, Options{NonInteractive: true, Yes: true, Out: &bytes.Buffer{}})
 	var mi *MissingInputsError
 	if !errors.As(err, &mi) {
@@ -385,7 +385,7 @@ func TestNonInteractiveListsAllMissingFlags(t *testing.T) {
 	if len(mi.Flags) != 3 {
 		t.Errorf("flags %v", mi.Flags)
 	}
-	for _, f := range []string{"--gcp-project", "--region", "--firebase"} {
+	for _, f := range []string{"--gcp-project", "--region", "--firebase-project"} {
 		if !strings.Contains(err.Error(), f) {
 			t.Errorf("%q missing from %q", f, err)
 		}
@@ -507,7 +507,7 @@ func TestPredecessorNeedsYouBlocksApply(t *testing.T) {
 func TestSkippedPredecessorDoesNotBlock(t *testing.T) {
 	var log []string
 	stages := fakes(&log, Preflight, Firebase, Repository)
-	stages[1].(*fake).status = Status{State: Skipped, Detail: "no --firebase given"}
+	stages[1].(*fake).status = Status{State: Skipped, Detail: "no --firebase-project given"}
 	stages[2].(*fake).status = Status{State: Skipped, Detail: "no fugaro.yaml on the default branch"}
 	res, _ := Run(context.Background(), stages, yesOpts())
 	if res.ExitCode() != 0 || states(res)[Repository] != Skipped {

@@ -1209,7 +1209,7 @@ func TestSecretsLsScopeIsProjectWhenTheRepoCopyHasNoVersion(t *testing.T) {
 	}
 	// The repository's own container with every version disabled: what
 	// `fugaro secrets set ... --project-wide` leaves behind when a name
-	// moves, and what init --repo's own container looks like before a value
+	// moves, and what update --repo's own container looks like before a value
 	// is ever stored in it.
 	sm.Seed(gcp.SecretID(appSlug, "openrouter-api-key"), map[string]string{
 		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, appSlug), gcp.LabelSecret: "openrouter-api-key"}, nil)
@@ -1452,7 +1452,7 @@ func TestSecretsLsMissingIsAbsentVersionNotAbsentContainer(t *testing.T) {
 	sm := secretsFixture(t)
 	projectSecretFixture(t, "project_secrets:\n  github-app-key: { allow_data_to: [acme/app] }\n")
 	appCheckoutAuth(t, "oauth")
-	// The repository's own container, empty: what init --repo leaves before
+	// The repository's own container, empty: what update --repo leaves before
 	// the value is stored.
 	sm.Seed(gcp.SecretID(appSlug, "claude-oauth-token"), map[string]string{
 		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, appSlug), gcp.LabelSecret: "claude-oauth-token"}, nil)
@@ -2096,8 +2096,8 @@ func TestNormalizeRepoArgs(t *testing.T) {
 			[]string{"secrets", "set", "npm-token", "--", "--repo"}},
 		{"global flags stay put", []string{"--config", "/tmp/c.yaml", "secrets", "set", "npm-token", "--repo"},
 			[]string{"--config", "/tmp/c.yaml", "secrets", "set", "npm-token", "--repo="}},
-		{"init's --repo is a bool", []string{"init", "--repo"},
-			[]string{"init", "--repo"}},
+		{"init's --repo is a bool", []string{"setup", "--repo"},
+			[]string{"setup", "--repo"}},
 		// A flag's *value* is not the command: the scan reads argv the way
 		// cobra's own does, so the first token that spells "secrets" being a
 		// value does not hide the subcommand behind it -- the rewrite would

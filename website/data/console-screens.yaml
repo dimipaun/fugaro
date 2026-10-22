@@ -1,31 +1,60 @@
-# website/data/console-screens.yaml — the console's screenshots (owner feedback 2026-10-19).
+# website/data/console-screens.yaml — the console's screenshots (owner feedback 2026-10-19,
+# and the four pictures of 2026-10-21).
 #
-# One row per screenshot, in the order the slider shows them. The rows are what the console
-# page's slider renders and nothing else: the component reads this file, invents no picture
-# and draws no placeholder, and an empty list is a legal document that renders no slider at
-# all — which is the state this file ships in, because the console's screenshots are the
-# owner's to take from the released console and no build can make one (D190).
+# One row per screenshot, in the order the slider shows them: these rows ARE the console page's
+# slider, and they are four now — the owner's feedback of 2026-10-21 was "console page:
+# screenshots missing", and the four files under `public/screenshots/` are the answer to it.
+# They are **fixture captures**: a fake fugaro with invented projects (the Live, Run, Spend and
+# Installations screens of `console/`), taken from the real console build and served as the
+# page's pictures until the owner replaces them with their own. A test may not commit a picture
+# either, which is why `website/test/console-screens.mjs` reads these rows and the files they
+# name rather than building its own.
 #
-# website/README.md, "Adding a console screenshot", says how to add a row and what the file
-# it names has to be.
+# website/README.md, "The console's screenshots", says how to add a row and what the file it
+# names has to be.
 #
-#   - `file` is the file's NAME under `public/images/console/`, and it is a name rather than
-#     a path or a URL: the site path the browser fetches is derived from it when the page is
+#   - `file` is the file's NAME under `public/screenshots/`, and it is a name rather than a
+#     path or a URL: the site path the browser fetches is derived from it when the page is
 #     built (`src/content.ts`), so no file under `website/` carries one (Global Constraint 9).
 #     Letters, digits, dots, dashes and underscores only, and one of the formats the loader
 #     serves: png, jpg, jpeg, webp or avif.
 #   - `alt` is what a reader gets when the picture does not arrive, and `caption` is the line
 #     under it. Both are required: a screenshot a reader cannot identify is not worth its
-#     bytes, and `alt` is also the text a screen reader reads instead of the picture.
+#     bytes, and `alt` is also the text a screen reader reads instead of the picture. The four
+#     `alt` texts below are the captures' own, verbatim, from
+#     `public/screenshots/MANIFEST.json` — the file the capture wrote beside them.
 #   - `width` and `height` are the file's own pixel dimensions, which is what lets the
 #     browser reserve the box before the file lands, so the page does not jump as it arrives.
+#     The four files are 1920 x 1200 (the manifest records the 2560 x 1600 PNG each was
+#     captured as; the WebP served here is the same picture at the same 16:10), and
+#     `website/test/console-screens.mjs` reads each file's own header and holds these numbers
+#     to it.
 #
 # Every byte of every file named here is served by this site and counted by
-# `website/test/budget.mjs`: the picture's bytes are part of the whole-site budget and part
-# of the console page's weight, and a row's `alt` and `caption` are words the page's own
-# word ceiling counts — the console page stands 11 words under D188's 250 today, and the
-# slider's heading takes one of them, so ten words across all the rows is the whole of the
-# room there is and the first row added here is likely to need that ceiling raised, in the
-# commit that adds it. website/README.md, "Adding a console screenshot", has the rule.
+# `website/test/budget.mjs`: the pictures' bytes are part of the whole-site budget and of the
+# console page's weight — the console page is the heaviest page of the site while it renders
+# these four, and both figures are re-derived in the commit that ships them — and a row's `alt`
+# and `caption` are words the page's own word ceiling counts, which the four rows keep well
+# inside. website/README.md, "The console's screenshots", has the rule.
 version: 1
-screens: []
+screens:
+  - file: console-live.webp
+    alt: "The console's Live screen for a fictional acme-platform installation: three runs -- one in its second round, in review with its verification passed; one in review with the near deadline flag; one queued -- two repositories, and the day's spend at 34.85% of a $120 daily cap."
+    caption: Live
+    width: 1920
+    height: 1200
+  - file: console-run.webp
+    alt: "The run-detail screen for run 20261020-103045-aa01 (acme/platform-core): its stage ledger, its build, test and lint verification, three findings and the tail of its log."
+    caption: Run
+    width: 1920
+    height: 1200
+  - file: console-spend.webp
+    alt: "The Spend screen for a fictional acme-platform installation: thirty days of daily spend, the account totals, and the per-repository and default daily and per-run caps."
+    caption: Spend
+    width: 1920
+    height: 1200
+  - file: console-installations.webp
+    alt: "The installation picker on a console that has three installations -- acme-platform, acme-web and acme-data -- each naming the fixture CLI binary this run installed in its own temporary directory; its status line reads \"acme-platform is the installation this console is showing (ok).\" and the other two rows have not been read."
+    caption: Installations
+    width: 1920
+    height: 1200

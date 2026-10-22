@@ -99,8 +99,17 @@ func docFlagToken(f string) string {
 // trackedDocCommands maps the exact doc phrase of a fugaro command the scanned
 // docs quote flags of to the cobra command it names, for
 // TestBaseImageDocCommandFlagsAreReal.
+//
+// `fugaro setup` and `fugaro update` are two doors over one engine (W1.2
+// retired the one command that used to be both into them), and the docs these
+// tests scan name both: the wizard's own steps spell the first, and every
+// re-run after it spells the second. W2.3 renamed the prose of every document
+// scanned here, which is what retired the old-spelling entry this map used to
+// carry beside them: it was tracked so the flags a doc quoted next to it stayed
+// checked while the prose still used it.
 var trackedDocCommands = map[string]func() *cobra.Command{
-	"fugaro init":          newInitCmd,
+	"fugaro setup":         newSetupCmd,
+	"fugaro update":        newUpdateCmd,
 	"fugaro image build":   newImageBuildCmd,
 	"fugaro image render":  newImageRenderCmd,
 	"fugaro image refresh": newImageRefreshCmd,
@@ -125,18 +134,19 @@ var mustBeAbsentFlags = map[string]map[string]bool{
 // rather than absorbing its flags too. This repo's docs often name several
 // commands in one long paragraph or bullet (gcp-setup.md especially), so
 // without this a flag of, say, "fugaro doctor" right after an aside about
-// "fugaro init" in the same sentence would be wrongly checked against init.
+// "fugaro setup" in the same sentence would be wrongly checked against setup.
 // "runs" must precede "run" in the alternation: Go's regexp alternation is
 // leftmost-first, not longest-match, so the shorter alternative would win
-// and leave a dangling "s" otherwise.
-var commandBoundaryRE = regexp.MustCompile(`fugaro (artifacts (?:ls|get)|image (?:build|render|refresh|check|gate|record|status|selftest|git-credential)|version|validate|config|verify|exec|image|runs|run|ls|logs|diagnose|cancel|secrets|init|budget|watch|report|update-skills|upgrade|doctor)\b`)
+// and leave a dangling "s" otherwise. "update-skills" must precede "update"
+// for the same reason.
+var commandBoundaryRE = regexp.MustCompile(`fugaro (artifacts (?:ls|get)|image (?:build|render|refresh|check|gate|record|status|selftest|git-credential)|version|validate|config|verify|exec|image|runs|run|ls|logs|diagnose|cancel|secrets|setup|budget|watch|report|update-skills|update|upgrade|doctor)\b`)
 
 // otherToolBoundaryRE closes a tracked command's flag window at the next
 // mention of another real CLI this repo's docs quote flags of (gcloud,
 // Docker, npm/npx, Gradle, Playwright, git, Homebrew): without it, e.g.
 // gcp-setup.md's "gcloud scheduler jobs list --location ..." right after an
-// aside about fugaro init, with no further "fugaro X" mention in between,
-// would attribute gcloud's --location to init.
+// aside about fugaro setup, with no further "fugaro X" mention in between,
+// would attribute gcloud's --location to setup.
 var otherToolBoundaryRE = regexp.MustCompile(`\b(?:gcloud|docker|npx|npm|gradlew|playwright|git|brew|go)\b`)
 
 // commandFlagExceptions lists, per (document, command phrase), a flag name
@@ -167,20 +177,18 @@ var commandFlagExceptions = map[string]map[string]map[string]bool{
 		"fugaro image refresh": {"local": true, "check": true,
 			// "Moving a repository... (2) The base step copies this
 			// release's base image of each selected workflow's kind as
-			// `init --base` does..." -- init's own flag, named without
+			// `update --base` does..." -- update's own flag, named without
 			// repeating "fugaro" (already established at the top of the
 			// same bullet).
 			"base": true},
 		// "without them nobody holds the launcher or token-minter role and
 		// the first `fugaro run` fails with ... Passing `--launcher` or
-		// `--operator` replaces that default entirely ... and `init` stops
-		// with the one line naming `--launcher` and `--operator`." --
-		// launcher/operator here are fugaro init's own flags, and this
-		// sentence reaches them by writing bare `init`, which
-		// commandBoundaryRE does not match ("fugaro init" does not recur
-		// before them, and the next "fugaro run" mention on the line is only
-		// at `--launcher user:you@example.com`'s own aside, past every one of
-		// them).
+		// `--operator` replaces that default entirely ... and `fugaro setup`
+		// stops with the one line naming `--launcher` and `--operator`." --
+		// launcher/operator here are fugaro setup's own flags, but they sit
+		// in the flag window the `fugaro run` mention opens: the boundary
+		// regex does reopen on the `fugaro setup` later in the sentence, and
+		// that mention comes after every one of them.
 		"fugaro run": {"launcher": true, "operator": true,
 			// "fugaro run \"add a --verbose flag to the export command\"" --
 			// the flag is inside a QUOTED TASK TEXT, which is a sentence for
@@ -196,8 +204,8 @@ var commandFlagExceptions = map[string]map[string]map[string]bool{
 }
 
 // TestBaseImageDocCommandFlagsAreReal: every --flag token that follows a
-// mention of a trackedDocCommands phrase -- fugaro init, image build, image
-// render, image refresh, run, artifacts ls, artifacts get -- in
+// mention of a trackedDocCommands phrase -- fugaro setup, fugaro update, image
+// build, image render, image refresh, run, artifacts ls, artifacts get -- in
 // docs/base-image.md, docs/base-image-migration.md, docs/gcp-setup.md,
 // docs/release.md, docs/dogfooding.md, docs/artifact-runs.md and README.md --
 // up to the next mention of ANY fugaro command or other CLI, or the end of
@@ -271,7 +279,7 @@ func TestGCPSetupBaseImageSectionNamesRealKinds(t *testing.T) {
 		t.Fatalf("config.BaseKind %q is not in config.Bases %v", config.BaseKind, config.Bases)
 	}
 	for _, want := range []string{
-		"`fugaro init --base " + config.BaseKind + "`",
+		"`fugaro update --base " + config.BaseKind + "`",
 		"`--expect-digest " + config.BaseKind + "=sha256:<hex>`",
 		"`--base-image " + config.BaseKind + "=IMAGE`",
 	} {

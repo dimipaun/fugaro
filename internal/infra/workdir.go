@@ -68,7 +68,7 @@ func cacheDir(getenv func(string) string) (string, error) {
 	return d, nil
 }
 
-// InstallationWorkdir is where fugaro init plans the installation of
+// InstallationWorkdir is where fugaro update plans the installation of
 // project: $XDG_STATE_HOME/fugaro/terraform/<project>/installation, by
 // default under ~/.local/state (%LOCALAPPDATA% on Windows).
 func InstallationWorkdir(getenv func(string) string, project string) (string, error) {
@@ -82,7 +82,7 @@ func InstallationWorkdir(getenv func(string) string, project string) (string, er
 	return filepath.Join(state, "fugaro", "terraform", project, "installation"), nil
 }
 
-// FirebaseWorkdir is where fugaro init --firebase plans the Firebase root of
+// FirebaseWorkdir is where fugaro update --firebase-project plans the Firebase root of
 // project: $XDG_STATE_HOME/fugaro/terraform/<project>/firebase. It is a
 // workdir of its own, so the installation's tfvars and saved plan are never
 // overwritten by the Firebase root's.
@@ -94,7 +94,7 @@ func FirebaseWorkdir(getenv func(string) string, project string) (string, error)
 	return filepath.Join(filepath.Dir(dir), "firebase"), nil
 }
 
-// InstallationOutputsWorkdir is where fugaro init --repo reads the
+// InstallationOutputsWorkdir is where fugaro update reads the
 // installation's outputs: a workdir of its own inside the installation's
 // (which keeps only its gcp tree and terraform's data directory), so the
 // installation's tfvars, imports and saved plan are never rewritten by a

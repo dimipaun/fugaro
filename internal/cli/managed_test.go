@@ -48,7 +48,7 @@ import (
 //     flags and terminal is a literal table (confirmTable);
 //   - which environment variables are a coding agent's is a literal list
 //     (expectedAgentMarkers), not agentMarkers;
-//   - every flag of `fugaro init` has a written entry (initFlagCases).
+//   - every flag of `fugaro setup` has a written entry (initFlagCases).
 //
 // The decision is computed over the program's real paths: the managed read
 // (managed.IsManaged over internal/gcpfake), combined with initRun.ask (the
@@ -703,7 +703,7 @@ var inlineAgentSites = []inlineAgentSite{
 		return a == authOK && err == nil
 	}},
 	{"init_repo_gate.go onboardLeft", "init_repo_gate.go onboardLeft (the flag offered as the route)", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
-		l := onboardLeft(originInfo{Repo: "acme/app", Host: "github.com"})
+		l := onboardLeft(originInfo{Repo: "acme/app", Host: "github.com"}, "setup")
 		return l.Kind == initflow.LeftCommand && strings.Contains(l.Text, "--onboard-repo")
 	}},
 	{"initsecrets.go Left", "initsecrets.go Left (the wording of the secrets route)", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
@@ -735,10 +735,11 @@ var propertyAgentSites = map[string]string{
 // outsideAgentSites are the agent-marker sites the property does not cover,
 // each with the reason.
 var outsideAgentSites = map[string]string{
-	"init.go runInit":             "OUTSIDE: --publish-config's refusal before any write; not a confirmation (initFlagCases: publish-config)",
-	"init.go publishSharedConfig": "OUTSIDE: the shared-config publish after the local config is written; not a confirmation, it skips with a note under a marker",
-	"initsecrets.go agentEnv":     "OUTSIDE: the definition of agentEnv itself (TestManagedAgentMarkersAreTheExpectedSix pins agentMarker)",
-	"initsecrets.go Check":        "OUTSIDE: the wording of the secrets stage's detail; whether it prompts is canPrompt (an inline site)",
+	"init.go runInit":                 "OUTSIDE: --publish-config's refusal before any write; not a confirmation (initFlagCases: publish-config)",
+	"init.go publishSharedConfig":     "OUTSIDE: the shared-config publish after the local config is written; not a confirmation, it skips with a note under a marker",
+	"initsecrets.go agentEnv":         "OUTSIDE: the definition of agentEnv itself (TestManagedAgentMarkersAreTheExpectedSix pins agentMarker)",
+	"initsecrets.go Check":            "OUTSIDE: the wording of the secrets stage's detail; whether it prompts is canPrompt (an inline site)",
+	"init_repo_gate.go convergeOptIn": "OUTSIDE: the wording of the repository gate's detail — it says whether --yes is named as a way in; whether the run may onboard at all is authState/onboardCovered (inline sites)",
 }
 
 // Every inline decision refuses under each marker, and only under a marker:
@@ -789,7 +790,7 @@ func TestManagedAgentMarkersAreTheExpectedSix(t *testing.T) {
 	}
 }
 
-// initFlagCases is every flag of `fugaro init` and its relationship to the
+// initFlagCases is every flag of `fugaro setup` and its relationship to the
 // confirmations the property is about. A flag with no entry fails
 // TestManagedEveryInitFlagHasACase: a new flag is a new condition until
 // someone writes down what it does to a confirmation.
@@ -806,11 +807,11 @@ var initFlagCases = map[string]string{
 	"replace-image":    "names the intent only; replacing confirms through askTyped (covered)",
 	"retire":           "both confirmations are askTyped; retireConfirm's agent refusal is an inline site (covered)",
 	"repo":             "the repository's applies confirm through ask/askOrdinary (covered)",
-	"firebase":         "its applies confirm through ask, its Firestore location through the Typed class (covered)",
+	"firebase-project": "its applies confirm through ask, its Firestore location through the Typed class (covered)",
 	"forget":           "its state removals confirm through ask (covered)",
 	"config-only":      "writes the local config; any confirmation is ask's (covered)",
 	"onboard-repo":     "an opt-in in place of the typed owner/name: refused under a marker (checkOnboardRepo, authState: inline sites, covered); for a non-managed project without a marker it opts in without typing, which is NOT in the table",
-	"anchor":           "OUTSIDE the property: edits only the checkout's fugaro.yaml and honours --yes under a marker by design (init --help)",
+	"anchor":           "OUTSIDE the property: edits only the checkout's fugaro.yaml and honours --yes under a marker by design (fugaro setup --help)",
 	"publish-config":   "OUTSIDE the property: refused under a marker in init.go before any write; no confirmation",
 	"check-github-app": "OUTSIDE the property: a secret read, refused under a marker (githubapp.go); no confirmation",
 	"allow-delete":     "OUTSIDE the property: feeds tf.Guard, not a confirmation (D74, Task 1.4, is the managed case)",
@@ -829,20 +830,20 @@ var initFlagCases = map[string]string{
 	"state-bucket": "value; under --managed the value must be the derived fugaro-tfstate-<gcp-project> and anything else refuses the creation before the project stage (checkManagedStateBucket, Task 4.5/D59), the way a bad --budget-currency refuses it",
 }
 
-// Every flag `fugaro init` declares has an entry above, and every entry is a
+// Every flag `fugaro setup` declares has an entry above, and every entry is a
 // flag init declares: the enumeration is the command's own flag set, so a
 // flag added without a case fails here.
 func TestManagedEveryInitFlagHasACase(t *testing.T) {
 	seen := map[string]bool{}
-	newInitCmd().Flags().VisitAll(func(f *pflag.Flag) {
+	newSetupCmd().Flags().VisitAll(func(f *pflag.Flag) {
 		seen[f.Name] = true
 		if _, ok := initFlagCases[f.Name]; !ok {
-			t.Errorf("fugaro init --%s has no case in initFlagCases: say what it does to a confirmation, and add it to the table if it is a condition", f.Name)
+			t.Errorf("fugaro setup --%s has no case in initFlagCases: say what it does to a confirmation, and add it to the table if it is a condition", f.Name)
 		}
 	})
 	for name := range initFlagCases {
 		if !seen[name] {
-			t.Errorf("initFlagCases names --%s, which fugaro init does not declare", name)
+			t.Errorf("initFlagCases names --%s, which fugaro setup does not declare", name)
 		}
 	}
 	for _, d := range []string{"yes", "non-interactive", "json", "plan-only"} {
@@ -998,7 +999,7 @@ func TestManagedEveryAgentSiteInInitHasACase(t *testing.T) {
 	}
 }
 
-// The failing combination the stage loop's gate stops: `fugaro init --yes` (or
+// The failing combination the stage loop's gate stops: `fugaro setup --yes` (or
 // a typed "y" at a terminal) in a coding agent's session, on a project that
 // is not managed whose checkout's plugin wiring is out of date. The plugin
 // stage is driven through the real loop with the options init builds

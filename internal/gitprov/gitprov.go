@@ -75,6 +75,13 @@ var ErrPRNotOpen = errors.New("pull request is not open on this branch")
 type PRHead struct {
 	// SHA is the head commit; review mode fetches and checks it out.
 	SHA string
+	// Base is the branch pull request Number targets now, as PRInfo.Base
+	// carries it: review mode diffs the head against this branch (a
+	// retargeted pull request — an integration or release branch — must not
+	// be reviewed against the branch its first run happened to assume).
+	// "" when the provider reported none, which the runner reads as "use
+	// the run's own ref".
+	Base string
 	// Fork is whether the head repository differs from the one the
 	// provider was opened for. A fork is reviewed only when its author is
 	// trusted AND SourceRepo's owner is that same author (reviewmode.go):
@@ -132,12 +139,20 @@ const (
 
 // PRInfo is a pull request as the provider shows it.
 type PRInfo struct {
-	Number       int
-	URL          string
-	State        PRState
-	Draft        bool
-	Title        string // as the host shows it: with DraftPrefix on a prefix-marked draft
-	Body         string // GitHub's body, Bitbucket's description; untrusted text
+	Number int
+	URL    string
+	State  PRState
+	Draft  bool
+	Title  string // as the host shows it: with DraftPrefix on a prefix-marked draft
+	Body   string // GitHub's body, Bitbucket's description; untrusted text
+	// Base is the branch pull request Number targets RIGHT NOW, as the
+	// provider's own answer gives it (GitHub's base.ref, Bitbucket's
+	// destination.branch.name); "" when the provider reported none. A run
+	// reads this rather than assuming, because a pull request's base can be
+	// retargeted after it was opened — an integration branch, a release
+	// branch — and a review that diffs against the base the FIRST run
+	// opened against reviews the whole of the new base's divergence.
+	Base         string
 	AuthorID     string // the PR author's account ID (GitHub numeric user ID; Bitbucket account_id)
 	SourceBranch string
 	SourceRepo   string // owner/name of the head repository, as the provider spells it

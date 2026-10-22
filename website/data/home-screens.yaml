@@ -1,0 +1,57 @@
+# website/data/home-screens.yaml — the homepage slider's slides (the brief of 2026-10-21: "replace
+# the single Fugaro Watch screenshot with a slider"; D246, D251, D252).
+#
+# One row per slide, in the order the "See it" panel's slider shows them. **The first three rows
+# are the console page's own screenshots**, in the brief's order — "lead with the desktop console
+# and give it the most space (two or three slides: spending graphs, live tasks, review inbox)" —
+# and their `alt` and `caption` are the `console-screens.yaml` rows' own, verbatim: one picture
+# has one alt text and one caption, and a page that paraphrased them would be a second copy of
+# the sentence that drifts first (`website/test/home.mjs` holds the three to the console's file,
+# row for row). The last row is the `fugaro watch` capture the panel has always shown, which is
+# the brief's "Fugaro Watch moves to the end as a 'for the terminal crowd' slide" (D252).
+#
+# **No row here is a new picture.** D190 and website/README.md, "The console's screenshots", are
+# the rule: an agent commits no screenshot, and the owner supplies the files with a
+# `MANIFEST.json`-shaped record each. Every file this file names is already committed and already
+# served; the phone app's screenshots arrive the same way, later (D251), and are not rows here.
+#
+# The shape is `console-screens.yaml`'s, read by `loadHomeScreens()` in `src/content.ts`:
+#
+#   - `file` is the file's NAME under `public/<dir>/`, and never a path or a URL — the site path
+#     the browser fetches is derived from the pair when the page is built (Global Constraint 9).
+#   - `dir` is which of the site's two picture directories that name lives in, and only the watch
+#     row carries one: the console's captures are under `public/screenshots/`, which is the
+#     default, and `fugaro-watch.png` has been under `public/images/` since PR #622 — the design
+#     record, the transcription beside it and the page's own picture all name that path.
+#   - `alt` and `caption` are what a reader gets when the picture does not arrive and the line
+#     under it. Both are required, and neither is written here for the three console rows.
+#   - `width` and `height` are the file's own pixel dimensions, which is what reserves each
+#     slide's box before its bytes land: the three console WebPs are 1920 x 1200, and the watch
+#     capture is declared at its LOGICAL size, 1459 x 441 — a 2x capture is declared at the size
+#     it occupies on the page (docs/website/redesign/README.md records the pair).
+#
+# Every byte named here is served by this site and counted by `website/test/budget.mjs`, and the
+# four rows' `alt` and `caption` are words the homepage's word ceiling counts.
+version: 1
+screens:
+  - file: console-spend.webp
+    alt: "The Spend screen for a fictional acme-platform installation: thirty days of daily spend, the account totals, and the per-repository and default daily and per-run caps."
+    caption: Spend
+    width: 1920
+    height: 1200
+  - file: console-live.webp
+    alt: "The console's Live screen for a fictional acme-platform installation: three runs -- one in its second round, in review with its verification passed; one in review with the near deadline flag; one queued -- two repositories, and the day's spend at 34.85% of a $120 daily cap."
+    caption: Live
+    width: 1920
+    height: 1200
+  - file: console-run.webp
+    alt: "The run-detail screen for run 20261020-103045-aa01 (acme/platform-core): its stage ledger, its build, test and lint verification, three findings and the tail of its log."
+    caption: Run
+    width: 1920
+    height: 1200
+  - file: fugaro-watch.png
+    dir: images
+    alt: "The fugaro watch screen: a spend bar at $55.44 counted of $100.00, a burn flagged FAST, a table of seven runs with their stage, age and spend, and four runs ready for review."
+    caption: Terminal dashboard
+    width: 1459
+    height: 441

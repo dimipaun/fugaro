@@ -3,20 +3,21 @@
  * website/src/pages/faq.astro — the FAQ (website plan, Task W1.10; findings 50-52, decisions
  * D102 and D103).
  *
- * The page renders `website/data/faq.yaml` and nothing else: the six answers, the file each
- * one is traceable to, and the comparison section. It is the site's rule in one file — **a
- * page renders a fact; it never restates one** (Global Constraint 6) — so there is no
- * question, no answer and no comparison row written in this template, and the page's own
- * prose is limited to the headings, the lede, the "Source:" label and the empty state.
+ * The page renders `website/data/faq.yaml` and nothing else: the seven answers and the file
+ * each one is traceable to. It is the site's rule in one file — **a page renders a fact; it
+ * never restates one** (Global Constraint 6) — so there is no question and no answer written
+ * in this template, and the page's own prose is limited to the headings, the lede and the
+ * "Source:" label.
  *
  * Three things this file does that the page's test holds it to:
  *
- *   1. **A comparison row without provenance stops the build** (D103, F51-F52). The
- *      repository has no network and records no sourced, dated fact about any other agent
- *      runner, so a comparison is a claim the site cannot verify — a row carries a `source:`
- *      and a `date:` or the build fails, naming the row. With no rows the section renders
- *      empty and says why, which is the honest state on day one and the one the owner
- *      supplies rows out of.
+ *   1. **The page reads two keys and refuses every other one.** `version` and `questions` are
+ *      the whole of `faq.yaml` as far as this page is concerned: a key nobody renders is a
+ *      fact nothing holds to its source, so a third key stops the build naming it rather than
+ *      sitting in the tree (W1.10 step 2). The `comparison:` list the page used to render was
+ *      removed on 2026-10-21 (the owner's feedback on the preview: the section headed "How
+ *      Fugaro compares" was empty), and this is what keeps it from coming back as data with no
+ *      page to render it.
  *   2. **An answer whose source is not in the tree stops the build.** Every answer names the
  *      file that proves it, the page links it at the branch the repository builds on, and a
  *      source that is not there is a build error rather than a link that 404s.
@@ -33,12 +34,12 @@
  *
  * **The page wears the bold look** (the owner's approved boards of 2026-10-20, the shared
  * shapes in `src/styles/base.css` §2c and the homepage's blocks): the display scale's
- * headline with the accent's gradient on its last word, one lead paragraph under it, each
- * answer a card of the site's own `.card`, and the comparison section's panel. The shapes are
- * `base.css`'s and the colours are the palette's — nothing here names a colour, a radius or a
- * size of its own (W1.2, D104) — and **not a word of the page moved with them**: the
- * headline, the lead, the answers and the empty state are the strings they were, so the word
- * ceilings and every provenance rule the page answers to are the ones they were.
+ * headline with the accent's gradient on its last word, one lead paragraph under it, and each
+ * answer a card of the site's own `.card`. The shapes are `base.css`'s and the colours are
+ * the palette's — nothing here names a colour, a radius or a size of its own (W1.2, D104) —
+ * and **not a word of the page moved with them**: the headline, the lead and the answers are
+ * the strings they were, so the word ceilings and every provenance rule the page answers to
+ * are the ones they were.
  */
 import Base from '../layouts/Base.astro'
 import { loadSite, REPO_ROOT } from '../content.ts'
@@ -218,20 +219,18 @@ interface Question {
   moreHref: string
 }
 
-interface ComparisonRow {
-  id: string
-  name: string
-  claim: string
-  source: string
-  date: string
-}
-
 interface Faq {
   questions: Question[]
-  rows: ComparisonRow[]
 }
 
-const TOP_LEVEL_KEYS = ['version', 'questions', 'comparison']
+/**
+ * The keys `faq.yaml` may carry, and the whole of what this page reads. The `comparison` list
+ * the page rendered until 2026-10-21 is deliberately not one of them: the owner removed the
+ * empty section the list fed, so the list's key is now a fact nothing renders — and a fact
+ * nothing renders is a fact nothing holds to its source (W1.10 step 2). Writing it back into
+ * the file stops the build by name rather than publishing data no page shows.
+ */
+const TOP_LEVEL_KEYS = ['version', 'questions']
 
 /** A required string of the file, or a build error naming the key and the entry. */
 function text(entry: { [key: string]: Value }, key: string, what: string): string {
@@ -292,9 +291,9 @@ function loadFaq(): Faq {
       moreHref,
     }
   })
-  if (questions.length < 6) {
+  if (questions.length < 7) {
     throw new Error(
-      `${FAQ_FILE}: carries ${questions.length} questions, and the FAQ answers the six things W1.10 step 1 fixes — what Fugaro is, where the code runs, what a run costs and what stops it, what a failed run leaves behind, what a run can never change, and what the security model does not promise.`,
+      `${FAQ_FILE}: carries ${questions.length} questions, and the FAQ answers the seven things its readers ask — what Fugaro is, where the code runs, whether a reader has to be on GCP at all, what a run costs and what stops it, what a failed run leaves behind, what a run can never change, and what the security model does not promise.`,
     )
   }
   for (const question of questions) {
@@ -303,38 +302,7 @@ function loadFaq(): Faq {
     }
   }
 
-  // D103, and the reason this page has a comparison section at all: a row about another tool
-  // carries its source and the date it was checked, or the build stops. `belong`-style
-  // fixtures are not the point here — the point is that a claim about a third party cannot
-  // reach a published page without provenance.
-  const rows = (Array.isArray(document.comparison) ? document.comparison : []).map((value, index) => {
-    const entry = asMap(value, `comparison[${index}]`)
-    const id = optionalText(entry, 'id') || `#${index + 1}`
-    const what = `comparison row "${id}"`
-    const source = optionalText(entry, 'source')
-    if (source === '') {
-      throw new Error(
-        `${FAQ_FILE}: ${what} carries no source, so it is a claim about another tool that nothing in this repository can verify — every comparison row carries a source and a date or it is not published (D103, F51-F52, W1.10 step 2).`,
-      )
-    }
-    const date = optionalText(entry, 'date')
-    if (date === '') {
-      throw new Error(
-        `${FAQ_FILE}: ${what} carries no date, and a comparison row is a fact about another tool at a moment: the date is when the source was read, so a row with no date cannot be checked again (D103, W1.10 step 2).`,
-      )
-    }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) {
-      throw new Error(`${FAQ_FILE}: ${what} carries the date ${JSON.stringify(date)}, which is not the YYYY-MM-DD the page renders (D103, W1.10 step 2).`)
-    }
-    try {
-      new URL(source)
-    } catch {
-      throw new Error(`${FAQ_FILE}: ${what} names ${JSON.stringify(source)} as its source, which is not an absolute URL — a comparison's provenance is a document a reader can open (D103, W1.10 step 2).`)
-    }
-    return { id, name: text(entry, 'name', what), claim: text(entry, 'claim', what), source, date }
-  })
-
-  return { questions, rows }
+  return { questions }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -400,9 +368,9 @@ const sourceHref = (file: string): string => `${facts.repository}/blob/${branch}
 ---
 
 <Base title="FAQ" description="What Fugaro is, where the code runs, what a run costs and what stops it, and what a run cannot change — answered from this repository's own documents.">
-  {/* The page's three bands: the opening, the answers, the comparison. The room between them
-      is the flex gap rather than a margin on each, so the page has one rhythm and a band that
-      moves moves nothing else. `main` keeps its own gutter and its own top and bottom padding
+  {/* The page's two bands: the opening and the answers. The room between them is the flex gap
+      rather than a margin on each, so the page has one rhythm and a band that moves moves
+      nothing else. `main` keeps its own gutter and its own top and bottom padding
       (this page is not one of the two the layout takes its padding off — `base.css`'s content
       container, part 1, gives that to the pages whose first block is a container of its own),
       so the room below is added to the layout's rather than replacing it. */}
@@ -417,7 +385,7 @@ const sourceHref = (file: string): string => `${facts.repository}/blob/${branch}
       </h1>
 
       <p class="faq-lede">
-        Six answers, each naming the document it comes from.
+        Seven answers, each naming the document it comes from.
       </p>
     </div>
 
@@ -442,50 +410,6 @@ const sourceHref = (file: string): string => `${facts.repository}/blob/${branch}
         </article>
       ))}
     </div>
-
-    {/* The comparison section (D103). The count is on the element so the page's own test can
-        read the state from the artifact rather than from this template, and the table is
-        rendered only when faq.yaml carries rows: an empty table is a claim that there is
-        nothing to compare, which is not what an empty list means. Either state is drawn in
-        the board's panel, so the section reads as one block whichever one it is in. */}
-    <section class="comparison" id="comparison" data-comparison-rows={String(faq.rows.length)}>
-      <h2 class="comparison-title display-lg">How Fugaro compares</h2>
-
-      <div class="comparison-panel">
-        {faq.rows.length === 0 ? (
-          <p class="comparison-empty" id="comparison-empty">
-            No comparison is published: a row about another tool is a claim this repository
-            cannot verify, and none has been supplied with a source and a date.
-          </p>
-        ) : (
-          <table>
-            <caption>Comparisons, each with the source and the date it was read (D103).</caption>
-            <thead>
-              <tr>
-                <th scope="col">Tool</th>
-                <th scope="col">What the source says</th>
-                <th scope="col">Source</th>
-                <th scope="col">Read on</th>
-              </tr>
-            </thead>
-            <tbody>
-              {faq.rows.map((row) => (
-                <tr id={row.id}>
-                  <th scope="row">{row.name}</th>
-                  <td>{row.claim}</td>
-                  <td>
-                    <a href={row.source} rel="noopener">{row.source}</a>
-                  </td>
-                  <td>
-                    <time datetime={row.date}>{row.date}</time>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </section>
   </div>
 </Base>
 
@@ -493,10 +417,10 @@ const sourceHref = (file: string): string => `${facts.repository}/blob/${branch}
   /* The page's own layout, in the site's tokens: no colour is named here, and none is
      needed — the palette decides every colour the site paints (W1.2, D104). The shapes the
      boards repeat are `base.css`'s (the display scale, `.gradient-text` and `.card`), so what
-     is this file's own is the three bands' rhythm, the two-column grid the answers sit in,
-     and the room inside a card. */
+     is this file's own is the two bands' rhythm, the two-column grid the answers sit in, and
+     the room inside a card. */
 
-  /* The three bands, and the room between them: the spacing scale's largest step, which is
+  /* The two bands, and the room between them: the spacing scale's largest step, which is
      the rhythm every redesigned page's top-level blocks keep. The top and the bottom are
      added to `main`'s own padding rather than replacing it: this page keeps the layout's
      column, and only the pages whose first block is a container of its own take its padding
@@ -530,8 +454,8 @@ const sourceHref = (file: string): string => `${facts.repository}/blob/${branch}
   }
 
   /* The answers: one card each, two to a row once there is room for two. The grid rather
-     than a plain list is what makes the six read as one block of the page — they are six
-     answers to six questions, and a reader scanning for their own question sees a set rather
+     than a plain list is what makes the seven read as one block of the page — they are seven
+     answers to seven questions, and a reader scanning for their own question sees a set rather
      than a document.
 
      **The track's minimum yields to the column, and that is what the `min()` is for.** A bare
@@ -566,9 +490,9 @@ const sourceHref = (file: string): string => `${facts.repository}/blob/${branch}
   }
 
   /* The question is the card's heading and the loudest line in it: the card's own step of the
-     type scale in the display weight and tracking, so a reader scans the six headings rather
-     than reading the answers to find theirs. It is smaller than a section's heading
-     (`base.css`'s `.display-*`), because six of these are read at once and each is a
+     type scale in the display weight and tracking, so a reader scans the seven headings
+     rather than reading the answers to find theirs. It is smaller than a section's heading
+     (`base.css`'s `.display-*`), because seven of these are read at once and each is a
      question rather than a section of the page. */
   .question-title {
     margin: 0;
@@ -598,55 +522,4 @@ const sourceHref = (file: string): string => `${facts.repository}/blob/${branch}
     font-size: var(--font-size-sm);
   }
 
-  /* The comparison section, and the panel either state of it is drawn in: the hairline and
-     the larger radius a raised thing on this site has, over a wash of the panel tones — a
-     gradient of palette tokens in `background-image`, because a colour function would be a
-     literal no palette holds and `background` would make the contrast check read a gradient
-     as the one colour the text sits on. */
-  .comparison {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-md);
-  }
-
-  .comparison-title {
-    margin: 0;
-  }
-
-  .comparison-panel {
-    padding: var(--space-2xl) var(--space-lg);
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-xl);
-    background-image: linear-gradient(180deg, var(--panel) 0%, var(--surface) 70%);
-  }
-
-  .comparison-empty {
-    margin: 0;
-    max-width: var(--measure);
-    color: var(--text-muted);
-    font-size: var(--font-size-lg);
-    line-height: var(--leading-normal);
-  }
-
-  /* The table, for the day the owner supplies a sourced row: the same hairlines the cards
-     carry, with no wash of its own — the panel already stands the whole block off the page. */
-  .comparison table {
-    border-collapse: collapse;
-    width: 100%;
-  }
-
-  .comparison caption {
-    text-align: left;
-    color: var(--text-muted);
-    font-size: var(--font-size-sm);
-    padding-block-end: var(--space-2xs);
-  }
-
-  .comparison th,
-  .comparison td {
-    text-align: left;
-    vertical-align: top;
-    border-bottom: var(--border-width) solid var(--border);
-    padding: var(--space-2xs) var(--space-xs) var(--space-2xs) 0;
-  }
 </style>

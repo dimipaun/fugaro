@@ -302,7 +302,7 @@ func (e *RefusedError) Error() string {
 func (e *RefusedError) Unwrap() error { return ErrRefused }
 
 // DeleteAdvice is the one sentence a managed project's deletion refusal ends
-// with, and the sentence a managed `fugaro init`'s guard refusal ends with too
+// with, and the sentence a managed `fugaro update`'s guard refusal ends with too
 // (internal/cli passes it through tf.GuardWith): what to do, and who can do it.
 // The owner's own object is named by its whole address, the command that writes
 // it is named, and no address of an applying command's own is accepted — so the

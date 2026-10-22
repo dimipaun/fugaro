@@ -21,7 +21,7 @@ import (
 // digits. It is a path component of the workdir and the state prefix.
 var slugRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?-[0-9a-f]{16}$`)
 
-// RepoWorkdir is where fugaro init --repo plans the repository slug of
+// RepoWorkdir is where fugaro update plans the repository slug of
 // project: $XDG_STATE_HOME/fugaro/terraform/<project>/repos/<slug>, by
 // default under ~/.local/state.
 func RepoWorkdir(getenv func(string) string, project, slug string) (string, error) {
@@ -64,7 +64,7 @@ func RepoRootVars(spec RepoSpec, o RepoRootOptions) ([]byte, error) {
 }
 
 // InstallationStateExists reports whether the state bucket holds the
-// installation's state: fugaro init has applied it there.
+// installation's state: fugaro update has applied it there.
 func InstallationStateExists(ctx context.Context, c *Clients, stateBucket string) (bool, error) {
 	return StateExists(ctx, c, stateBucket, StatePrefixInstallation)
 }

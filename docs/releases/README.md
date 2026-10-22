@@ -31,14 +31,14 @@ Example:
 
 ```markdown
 - Teammates need no setup: the installation's settings are shared through the repository.
-- `fugaro init --name` creates a second project.
+- `fugaro setup --name` creates a second project.
 
 ### For operators
 
-1. Upgrade the CLI and run `fugaro init` once per installation.
+1. Upgrade the CLI and run `fugaro update` once per installation.
 2. Rebuild each repository's image before merging its `gcp_project:` line.
 
 ### Known limits
 
-- `fugaro init --name` does not rename an installation that already exists.
+- `fugaro setup --name` does not rename an installation that already exists.
 ```

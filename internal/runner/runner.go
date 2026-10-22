@@ -1304,6 +1304,13 @@ func (r *run) bootstrap(ctx context.Context) error {
 		if err := r.checkPullRequest(ctx); err != nil {
 			return err
 		}
+		// The branch the pull request targets NOW — read above, by
+		// checkPullRequest, from the provider — is the base every diff this
+		// follow-up takes is measured against (diffbase.go, diffBase). For
+		// a pull request retargeted since the run before it (main ->
+		// integration-0.9.6) that is not the ref this follow-up read its
+		// configuration from. It is fetched below, with every other base the
+		// run diffs against, once the review heads are resolved.
 	}
 	// A job that runs without a derived image installs the repository's
 	// mise tools itself (provision.go, design generic-tool.md §2, G4): the
@@ -1319,6 +1326,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 			return err
 		}
 	}
+	// Every branch this run's diffs are measured against, brought in with
+	// the run's own credentials (diffbase.go, fetchDiffBases): a first run's
+	// --ref, which a clone job's --single-branch clone does not carry as a
+	// remote-tracking ref at all, a follow-up's retargeted pull request base,
+	// and each reviewed pull request's own base. Here, where all three are
+	// resolved — the last of them by checkReviewPRs just above — and before
+	// the prefetch reads them.
+	r.fetchDiffBases(ctx)
 	// A follow-up's and a review run's agent has no git credentials of its
 	// own, and a blobless clone fetches file contents lazily through
 	// origin: the runner brings in what the agent's own git will read while
@@ -1729,7 +1744,11 @@ func (r *run) agentLoop(ctx context.Context) {
 	// The prompt as it is before the input each review round adds to it
 	// (reviewPromptWithInput): the diff under review is built per round,
 	// never once here, because a fix between two rounds changes the branch.
-	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.cfg.Git.BaseBranch)
+	// The base is the run's own base of work, not the branch its
+	// configuration came from (diffbase.go, diffBase): a run started from
+	// another ref must review its own change, not the whole of that ref's
+	// divergence from the default branch.
+	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.reviewPromptBase(), r.reviewDiffSize(ctx), r.baseUnreadable())
 	if f := r.follow; f != nil {
 		if add := followup.ReviewAddendum(f.sel, f.nonce); add != "" {
 			reviewPrompt += "\n\n" + add
@@ -1933,7 +1952,7 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 		}
 	}
 	pins := r.stagePins(name)
-	if err := r.writeManagedSettings(pins); err != nil {
+	if err := r.writeManagedSettings(name, pins); err != nil {
 		r.fail("stage " + name + ": " + err.Error())
 		return agent.Result{}, false, err
 	}

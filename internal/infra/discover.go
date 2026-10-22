@@ -39,7 +39,7 @@ const (
 
 // Clients are the Google API clients discovery and the readiness gates
 // read through. They only ever read, except ServiceUsage, which enables
-// Cloud Resource Manager when fugaro init is confirmed to, and Run and
+// Cloud Resource Manager when fugaro setup is confirmed to, and Run and
 // RunHTTP, which update the check job when fugaro image refresh is
 // confirmed to (checkjob.go).
 type Clients struct {
@@ -62,10 +62,12 @@ type Clients struct {
 	// Billing reads whether the Firebase project has billing; nil without
 	// credentials and without its endpoint.
 	Billing *billing.APIService
-	// FirebaseDB lists the Firebase project's databases (init --firebase
-	// checks them before anything is granted on the project); nil like Billing.
+	// FirebaseDB lists the Firebase project's databases (fugaro update
+	// --firebase-project checks them before anything is granted on the project);
+	// nil like Billing.
 	FirebaseDB *firebasedatabase.Service
-	// APIKeys reads the Firebase project's API keys (init --firebase adoption); nil like Billing.
+	// APIKeys reads the Firebase project's API keys (fugaro update
+	// --firebase-project adoption); nil like Billing.
 	APIKeys *apikeys.Service
 	// NoAuth is set with fakes: no credentials, so no quota project to ask about.
 	NoAuth bool
@@ -75,18 +77,18 @@ type Clients struct {
 // so fakes can stand in. Empty means Google's own endpoint.
 type Endpoints struct {
 	IAM, ArtifactRegistry, Storage, ResourceManager, Scheduler string
-	// ServiceUsage is the Service Usage API's, through which fugaro init
+	// ServiceUsage is the Service Usage API's, through which fugaro update
 	// enables Cloud Resource Manager. Without credentials and without it,
 	// there is no Service Usage client.
 	ServiceUsage string
-	// Billing is the Cloud Billing API's, which fugaro init --firebase
+	// Billing is the Cloud Billing API's, which fugaro update --firebase-project
 	// reads the Firebase project's billing through. Without credentials and
 	// without it, there is no Billing client.
 	Billing string
 	// FirebaseDatabase is the Firebase Realtime Database management API's.
 	FirebaseDatabase string
-	// APIKeys is the API Keys API's, which init --firebase reads the
-	// project's keys through. Without credentials and without it, there is
+	// APIKeys is the API Keys API's, which fugaro update --firebase-project reads
+	// the project's keys through. Without credentials and without it, there is
 	// no API Keys client.
 	APIKeys string
 }
@@ -166,7 +168,7 @@ func NewClients(ctx context.Context, o gcp.Options, e Endpoints) (*Clients, erro
 			return nil, fmt.Errorf("connecting to Service Usage: %w", err)
 		}
 	}
-	// Only init --firebase calls it.
+	// Only fugaro update --firebase-project calls it.
 	if !o.Endpoints.NoAuth || e.Billing != "" {
 		if c.Billing, err = billing.NewService(ctx, billingOpts(e.Billing)...); err != nil {
 			return nil, fmt.Errorf("connecting to Cloud Billing: %w", err)
@@ -599,12 +601,12 @@ func (d *discovery) installationSingletons(spec InstallationSpec) error {
 	// without it is someone else's: the plan would cut its retention, and a
 	// rollback would delete it. It is never undeleted on our behalf either.
 	if b.Description != spec.LogBucketDescription {
-		d.refuse(fmt.Errorf("log bucket %s exists but is not this installation's: its description is %s, not %s. fugaro refuses to adopt it, since the plan would set its retention and a rollback would delete it. If it is Fugaro's, mark it (gcloud logging buckets update %s --location=global --project %s --description=%s) and rerun fugaro init; if it isn't, a log bucket can't be renamed, so leave it and run fugaro init --no-log-isolation, which keeps Fugaro's job logs in _Default",
+		d.refuse(fmt.Errorf("log bucket %s exists but is not this installation's: its description is %s, not %s. fugaro refuses to adopt it, since the plan would set its retention and a rollback would delete it. If it is Fugaro's, mark it (gcloud logging buckets update %s --location=global --project %s --description=%s) and rerun fugaro update; if it isn't, a log bucket can't be renamed, so leave it and run fugaro update --no-log-isolation, which keeps Fugaro's job logs in _Default",
 			name, strconv.Quote(b.Description), strconv.Quote(spec.LogBucketDescription), spec.Names.Log.Bucket, d.project, shellQuote(spec.LogBucketDescription)))
 		return nil
 	}
 	if b.LifecycleState != "ACTIVE" {
-		d.refuse(fmt.Errorf("log bucket %s is %s (a rollback deletes it, and it stays pending deletion for 7 days), so it can be neither imported nor created: restore it first with %s, then rerun fugaro init",
+		d.refuse(fmt.Errorf("log bucket %s is %s (a rollback deletes it, and it stays pending deletion for 7 days), so it can be neither imported nor created: restore it first with %s, then rerun fugaro update",
 			name, b.LifecycleState, LogBucketUndelete(d.project)))
 		return nil
 	}

@@ -278,13 +278,13 @@ func TestDecodeRefusesAProfileSecretThatIsAValueOrNotAName(t *testing.T) {
 // person-owned (design D2) and its allow_data_to is a per-repository list a
 // shared job cannot honour, so no profile may mount a Claude OAuth token until
 // phase 5 decides how an account reaches a shared job. That rule already
-// refuses `fugaro init` (internal/infra's projectJobSecrets); it is stated here
+// refuses `fugaro update` (internal/infra's projectJobSecrets); it is stated here
 // as well so that publish, the deployer and both readers of the node
 // (internal/cli's launch and internal/runner) hold a profile to ONE rule.
 //
 // Without it the two documents could disagree about one profile: publish
 // copies the operator's profiles verbatim, so a policy could carry a profile
-// mounting the reserved claude-oauth-token whose job `fugaro init` refuses to
+// mounting the reserved claude-oauth-token whose job `fugaro update` refuses to
 // deploy — the launcher would compute the account segment of a job that does
 // not exist (the default account on its side, the empty account on the
 // deployer's) and call Cloud Run on a 404, and the runner would match no

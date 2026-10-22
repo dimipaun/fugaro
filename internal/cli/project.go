@@ -78,13 +78,13 @@ func selectProject(ctx context.Context, o cloudOptions) (localcfg.Selection, *lo
 }
 
 // selectFrom is localcfg.Select with the checkout given; creating is
-// fugaro init, which may select a project config it has yet to write
+// fugaro setup, which may select a project config it has yet to write
 // (nil).
 func selectFrom(o cloudOptions, co *localcfg.Checkout, creating bool) (localcfg.Selection, *localcfg.Config, error) {
 	return selectNamed(o, co, creating, "")
 }
 
-// selectNamed is selectFrom with fugaro init's --name: where nothing else
+// selectNamed is selectFrom with fugaro setup's --name: where nothing else
 // selects one of several project configs, it names the project (a first run
 // of that name too).
 func selectNamed(o cloudOptions, co *localcfg.Checkout, creating bool, name string) (localcfg.Selection, *localcfg.Config, error) {
@@ -135,7 +135,7 @@ func selectWith(ctx context.Context, o cloudOptions, co *localcfg.Checkout, crea
 
 // errSharedWrite is the refusal of a command that would write the local
 // project config while the selected one is the shared config.
-const errSharedWrite = "this project's config is the shared one published by an operator, so it can't be changed here; run fugaro init to create your own local config"
+const errSharedWrite = "this project's config is the shared one published by an operator, so it can't be changed here; run fugaro setup to create your own local config"
 
 // refuseSharedWrite is the refusal for a command about to write the
 // selected project config when that is the shared config (which has no
@@ -199,7 +199,7 @@ func checkCloudName(ctx context.Context, b *blobx.Bucket, lc *localcfg.Config, g
 	}
 	r, err := b.Bucket.NewReader(ctx, infra.ProjectMarkerObject, nil)
 	if gcerrors.Code(err) == gcerrors.NotFound {
-		return userErr("project %s's installation has no project name yet; an operator runs fugaro init --name %s (see docs/design/m9-budget-and-dashboard.md §13.1)", lc.Name, lc.Name)
+		return userErr("project %s's installation has no project name yet; an operator runs fugaro setup --name %s (see docs/design/m9-budget-and-dashboard.md §13.1)", lc.Name, lc.Name)
 	}
 	if err != nil {
 		return remote(fmt.Errorf("reading %s from %s: %w", infra.ProjectMarkerObject, bucketURL, err))
@@ -211,7 +211,7 @@ func checkCloudName(ctx context.Context, b *blobx.Bucket, lc *localcfg.Config, g
 	}
 	var m infra.ProjectMarker
 	if len(data) > markerMaxBytes || json.Unmarshal(data, &m) != nil || m.Version != 1 || !config.ProjectNameRE.MatchString(m.Name) {
-		return userErr("%s in %s is not a version 1 project marker; an operator runs fugaro init --name %s to write it again", infra.ProjectMarkerObject, bucketURL, lc.Name)
+		return userErr("%s in %s is not a version 1 project marker; an operator runs fugaro setup --name %s to write it again", infra.ProjectMarkerObject, bucketURL, lc.Name)
 	}
 	switch {
 	case m.Name != lc.Name:
@@ -284,7 +284,7 @@ func selectedProjectConfigErr(ctx context.Context) (*localcfg.Config, error) {
 }
 
 // checkRepoProject refuses a repository whose fugaro.yaml names another
-// project than the installation init --repo is adding it to.
+// project than the installation update --repo is adding it to.
 func checkRepoProject(fugaroYAML, installation string) error {
 	if fugaroYAML == installation {
 		return nil

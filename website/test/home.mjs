@@ -24,11 +24,15 @@
 //      reader is shown: the watch block, which is the one command the page offers to copy
 //      besides the install command (`fugaro watch`, with the old `fugaro run` example asserted
 //      gone by `runExampleFailures` over every command block and every word of the built
-//      homepage — the two shapes it came back in), and the slot for the screenshot, which is
-//      asserted to be marked and to hold
-//      **the owner's real capture** (owner spec of 2026-10-18, item 5; PR #622) — the slot's
-//      own hook, a non-empty `alt`, the capture's declared dimensions and a same-origin path,
-//      so the page carries the wordmark and the working terminal and nothing else.
+//      homepage — the two shapes it came back in), and the slides' slot, which is asserted to
+//      be marked, to be where the panel's heading leads and to hold
+//      **the rows of `website/data/home-screens.yaml`** (the brief of 2026-10-21: the single
+//      capture becomes a slider; D246, D251, D252) — the console's own three screenshots in the
+//      brief's order and the owner's real `fugaro watch` capture last, each with its own file,
+//      `alt`, declared box and caption, with the page's whole `<img>` set being those rows plus
+//      the wordmark. The capture's own facts are unmoved by that: a non-empty `alt`, the
+//      dimensions `docs/website/redesign/README.md` records, and a path this site serves
+//      (owner spec of 2026-10-18, item 5; PR #622).
 //   4. **The run is How It Works' picture of it, and the homepage carries the slider instead**
 //      (changes spec of 2026-10-18, item 4; the owner's ruling of 2026-10-20). The four-step
 //      flow and its component, `ArchitectureDiagram.astro`, are retired, and what this file
@@ -241,17 +245,37 @@ function installPathNote(id) {
 }
 
 /**
- * The routes the site's pages live at, from the plan: the page files its tasks' `**Files:**`
+ * The routes the site's pages live at, from the plans: the page files their tasks' `**Files**`
  * lines name. Pages are lowercase and components are capitalised in this repository, so a
  * lowercase `<name>.astro` in a Files line is a page — and this is the only list of the
  * site's pages that exists while the page tasks are still being written.
+ *
+ * **Two plans write this site's pages, and each writes its line its own way.** The website
+ * plan (`docs/website/implementation-plan.md`) is the site's first round and writes
+ * `**Files:**`; this line of work's plan
+ * (`docs/website/zoom-diagrams/implementation-plan.md`) adds routes to the same site — its
+ * Part 2 writes `/why-gcp/` and its Part 3 writes `/mobile/` — and writes `**Files.**`. Both
+ * spellings are read, because a route a plan writes is a route a page of this site lives at
+ * whichever document writes it.
+ *
+ * **The name has to be the whole last segment of a backticked path**, and that is a fix to
+ * this reader rather than a tightening of it: the loose form it was written with — any run of
+ * lowercase letters before `.astro`, anywhere in the line — read
+ * `ArchitectureDiagram.astro` as `/iagram/`, `Terminal.astro` as `/erminal/` and
+ * `Downloads.astro` as `/ownloads/`, so the list it returned held routes no plan writes, which
+ * is the one thing the case below exists to refuse. The website plan writes its own list both
+ * ways (a full `website/src/pages/index.astro` and a bare `how-it-works.astro` beside it), so
+ * the path in front of the name is optional and the backticks are not.
  */
 function plannedRoutes() {
   const routes = new Set()
-  for (const line of repoFile('docs/website/implementation-plan.md').split('\n')) {
-    if (!line.startsWith('**Files:**')) continue
-    for (const m of line.matchAll(/([a-z0-9-]+)\.astro/g)) {
-      routes.add(m[1] === 'index' ? '/' : `/${m[1]}/`)
+  const plans = ['docs/website/implementation-plan.md', 'docs/website/zoom-diagrams/implementation-plan.md']
+  for (const plan of plans) {
+    for (const line of repoFile(plan).split('\n')) {
+      if (!/^\*\*Files[:.]\*\*/.test(line)) continue
+      for (const m of line.matchAll(/`(?:[\w./-]+\/)?([a-z0-9-]+)\.astro`/g)) {
+        routes.add(m[1] === 'index' ? '/' : `/${m[1]}/`)
+      }
     }
   }
   return routes
@@ -599,7 +623,7 @@ const BENEFITS_SOURCE = 'README.md#Why Fugaro'
  * Fugaro?" — capital W and F and the question mark — because the four points under it are the
  * reasons the README argues under that heading, and the section is the answer to the question
  * rather than a list of "benefits". Held as one string and read twice (the heading, and the
- * tab label `slider.mjs` pairs with it), so the two halves of the rename cannot drift apart.
+ * slide label `slider.mjs` pairs with it), so the two halves of the rename cannot drift apart.
  */
 const BENEFITS_TITLE = 'Why Fugaro?'
 
@@ -633,6 +657,123 @@ function drawingOf(svg) {
     .filter((el) => SHAPE_ELEMENTS.has(el.name))
     .map((el) => `${el.name} ${attrsOf(el)}`.trim())
     .join(';')
+}
+
+/** The commands a straight-edged outline is drawn with, and the only ones read here. */
+const OUTLINE_COMMANDS = 'MmLlHhVvZz'
+
+/**
+ * The corners of a drawing that is one closed outline of straight edges — a single `<path>`
+ * drawn through points and closed with `Z`, with nothing else in the drawing — or `null` when
+ * it is anything else: several shapes, several subpaths, a curve, or an outline left open.
+ *
+ * Only such a drawing is read as a mark whose corners are the whole of it, which is what the
+ * symmetry rule below is about. The rest of the set is not read here and needs no exemption:
+ * the shield and the team are drawn with curves, and the arrows are four separate strokes
+ * that never close, so a drawing this function refuses to read is a drawing the rule has
+ * nothing to say about rather than one it lets pass.
+ */
+function outlineOf(drawing) {
+  const quoted = /^path d=("(?:[^"\\]|\\.)*")$/.exec(drawing)
+  if (quoted === null) return null
+  const d = JSON.parse(quoted[1])
+  const points = []
+  let at = null
+  let moved = false
+  let closed = false
+  for (const [, letter, args] of d.matchAll(/([A-Za-z])([^A-Za-z]*)/g)) {
+    if (!OUTLINE_COMMANDS.includes(letter)) return null
+    const rest = args.replace(/[\s,]/g, '')
+    const numbers = args.match(/-?\d*\.?\d+(?:e-?\d+)?/gi) ?? []
+    if (rest.replace(/-?\d*\.?\d+(?:e-?\d+)?/gi, '') !== '') return null
+    const values = numbers.map(Number)
+    if (values.some((value) => !Number.isFinite(value))) return null
+    const relative = letter === letter.toLowerCase()
+    const move = (point) => {
+      at = point
+      points.push(point)
+      return point
+    }
+    const step = (x, y) => move(relative ? [at[0] + x, at[1] + y] : [x, y])
+    if (letter === 'Z' || letter === 'z') {
+      if (values.length !== 0 || at === null) return null
+      closed = true
+      continue
+    }
+    if (letter === 'M' || letter === 'm') {
+      // A second `M` opens a second subpath, which is a drawing of more than one outline.
+      if (moved || values.length < 2 || values.length % 2 !== 0) return null
+      moved = true
+      // A path's first `m` is absolute whatever its case — there is no current corner for it
+      // to be relative to.
+      if (at === null) move([values[0], values[1]])
+      else step(values[0], values[1])
+      for (let i = 2; i < values.length; i += 2) step(values[i], values[i + 1])
+      continue
+    }
+    if (!moved || at === null) return null
+    if (letter === 'L' || letter === 'l') {
+      if (values.length < 2 || values.length % 2 !== 0) return null
+      for (let i = 0; i < values.length; i += 2) step(values[i], values[i + 1])
+    } else if (letter === 'H' || letter === 'h') {
+      if (values.length === 0) return null
+      // A horizontal step keeps the corner's own y — the one `at` is carrying — and a
+      // vertical one keeps its x, which is the whole of what those two commands mean.
+      for (const value of values) move([relative ? at[0] + value : value, at[1]])
+    } else {
+      if (values.length === 0) return null
+      for (const value of values) move([at[0], relative ? at[1] + value : value])
+    }
+  }
+  if (!closed || !moved || points.length < 3) return null
+  // `Z` closes back onto the first corner, so the outline is the points as they stand.
+  return points
+}
+
+/**
+ * What a mark drawn as one closed outline of straight edges has to be, as the lines a reader
+ * of this file sees. The owner's feedback of 2026-10-21: "icon for 'The newest tools and
+ * models, ready to use' is asymmetrical (fix the icon's drawing so it is visually
+ * symmetric)". The glyph under that point is a four-point star, and a star is a symmetric
+ * mark — its corners mirrored onto themselves about both of the lines through its middle, and
+ * that middle the middle of the 24×24 box the icon set draws in, which is where every other
+ * glyph of the set sits. The drawing that shipped had the north-west notch left as a straight
+ * edge from the west point to the north one, so one corner of seven had nothing opposite it,
+ * and the whole mark sat a unit above the middle of the box; a reader sees both as the mark
+ * leaning, which is what the feedback is about.
+ *
+ * The rule is written over the drawing rather than over the star by name, so it is a fact
+ * about the shape a glyph is and not a description of today's markup: it reads every glyph of
+ * the set that is drawn as one closed outline, and today that is the star alone. An empty list
+ * is a glyph that is symmetric about both lines and centred in the box, or one this rule has
+ * nothing to say about.
+ */
+export function glyphSymmetryFailures(drawing, where) {
+  const points = outlineOf(drawing)
+  if (points === null) return []
+  const round = (value) => Math.round(value * 1e4) / 1e4
+  const xs = points.map(([x]) => x)
+  const ys = points.map(([, y]) => y)
+  const middle = [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2]
+  const corners = new Set(points.map(([x, y]) => `${round(x)},${round(y)}`))
+  const out = []
+  for (const [axis, mirrored] of [
+    ['vertical', points.map(([x, y]) => [2 * middle[0] - x, y])],
+    ['horizontal', points.map(([x, y]) => [x, 2 * middle[1] - y])],
+  ]) {
+    const absent = mirrored.filter(([x, y]) => !corners.has(`${round(x)},${round(y)}`))
+    if (absent.length > 0) {
+      out.push(
+        `${where}: its glyph is drawn as one closed outline of straight edges and is not symmetric about the ${axis} line through its middle — ${absent.length} of its ${points.length} corners have no corner opposite them (${absent.map(([x, y]) => `(${round(x)}, ${round(y)})`).join(', ')}), so the mark reads as a shape drawn lopsided rather than as the mark the icon set draws: the owner's feedback of 2026-10-21 asks for the drawing to be visually symmetric, with its meaning, its stroke and the set's size kept as they are`,
+      )
+    }
+  }
+  if (round(middle[0]) !== 12 || round(middle[1]) !== 12) {
+    out.push(
+      `${where}: its glyph's middle is (${round(middle[0])}, ${round(middle[1])}) and the icon set draws every glyph about the middle of the 24×24 box, (12, 12) — a mark symmetric in itself and sitting off the middle of its box is the same lean the owner's feedback of 2026-10-21 is about, seen from the other side (the box is the component's, \`viewBox="0 0 24 24"\`)`,
+    )
+  }
+  return out
 }
 
 /**
@@ -709,7 +850,7 @@ function benefitsOf(html) {
  * Every failure of the benefits' rule, as the lines a reader of this file sees:
  *
  *   - **the section is headed "Why Fugaro?"**, the owner's own name for it since the ruling of
- *     2026-10-20, and the same string the slider's tab carries;
+ *     2026-10-20, and the same string the slider's second slide carries;
  *   - **the page renders the README's reasons, all of them and in the README's order** — one
  *     benefit per reason, named with the README's own name for it (the number off, which is
  *     the README's device for counting and not part of the name). A reason the page drops is a
@@ -731,6 +872,13 @@ function benefitsOf(html) {
  *     the defect this round is about. The four glyphs are also held to being four: four points
  *     drawn with one picture is one icon used four times, and the picture then says nothing
  *     about the point under it.
+ *   - **the drawing is a mark the eye reads as symmetric, and it sits on the middle of its
+ *     box.** The owner's feedback of 2026-10-21: the icon under "The newest tools and models,
+ *     ready to use" is asymmetrical. A glyph drawn as one closed outline of straight edges is
+ *     held to being mirrored onto itself about both lines through its own middle, and to that
+ *     middle being the middle of the 24×24 box the set draws in — the rule is
+ *     `glyphSymmetryFailures` below, written over the drawing rather than over the star by
+ *     name, and a glyph drawn with curves or in several strokes is not read by it.
  *
  * Written as a function over a benefits section and the README's reasons so a fixture can
  * prove it refuses.
@@ -815,6 +963,7 @@ export function benefitFailures(benefits, reasons) {
         `${where}: its icon references something outside itself (${icon.reference}), and an icon of this site is inline SVG drawn with the page's own tokens — an icon font, an image file, a <use href> or an inline style is another thing a reader's browser has to fetch, or a colour the palette does not carry (the owner's feedback of 2026-10-19; Global Constraints 4 and 8)`,
       )
     }
+    out.push(...glyphSymmetryFailures(icon.drawing, where))
   }
 
   // Four points, four pictures: a glyph repeated under two points is one icon used twice, and
@@ -1003,6 +1152,63 @@ test('the benefits refusals fire on a missing icon, a second one, a named glyph 
   )
 })
 
+test('the benefit icon symmetry refusal fires on the glyph the owner saw and on a glyph off the middle of its box', () => {
+  // The owner's feedback of 2026-10-21: "icon for 'The newest tools and models, ready to use'
+  // is asymmetrical". The glyph is a four-point star drawn as one closed outline of straight
+  // edges, and the drawing that shipped had the north-west notch left as a straight edge from
+  // the west point to the north one, with the whole mark a unit above the middle of the box.
+  // Both are planted here alone beside the fixture section that keeps the rule — the fixture's
+  // four glyphs are open outlines, which the rule has nothing to say about, so the two
+  // refusals below are about the planted drawing and not about the fixture.
+  const reasons = readmeReasons()
+  const good = reasons.map((reason) => ({ name: reason.name, line: firstSentence(reason.paragraph) }))
+  const refusal = (items) => benefitFailures(benefitsOf(benefitsPage(items)), reasons).join('\n')
+  assert.deepEqual(benefitFailures(benefitsOf(benefitsPage(good)), reasons), [], 'the fixture section is not the README\'s own, so the two refusals below prove nothing')
+
+  const plant = (path) => good.map((item, index) => (index === 0 ? { ...item, icon: iconMarkup(`<path d="${path}"></path>`) } : item))
+
+  // The star as it shipped: seven corners, one of them with nothing opposite it, and its
+  // middle at (12, 11).
+  const shipped = plant('M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11Z')
+  assert.match(
+    refusal(shipped),
+    /not symmetric about the vertical line through its middle — 1 of its 7 corners have no corner opposite them \(\(9\.8, 8\.8\)\)/,
+    'the glyph the owner saw — three notches and a straight edge — is not refused',
+  )
+  assert.match(
+    refusal(shipped),
+    /its glyph's middle is \(12, 11\)/,
+    'a mark symmetric in itself and sitting off the middle of its box is not refused',
+  )
+
+  // The same defect from the other side: a star with all four notches and every corner
+  // mirrored, moved a unit up and to the left. Symmetric, and still not the set's glyph.
+  assert.doesNotMatch(
+    refusal(plant('M11 2l2.2 5.8L19 10l-5.8 2.2L11 18l-2.2-5.8L3 10l5.8-2.2Z')),
+    /not symmetric/,
+    'a symmetric star is refused for asymmetry',
+  )
+  assert.match(
+    refusal(plant('M11 2l2.2 5.8L19 10l-5.8 2.2L11 18l-2.2-5.8L3 10l5.8-2.2Z')),
+    /its glyph's middle is \(11, 10\)/,
+    'a star drawn off the middle of the box is not refused',
+  )
+
+  // The two glyphs the rule must not touch: one drawn with curves, and one drawn as separate
+  // strokes. Both are asymmetric or off the middle or both, and neither is a mark the rule
+  // reads — a refusal here would be this file refusing the icon set's own style.
+  for (const [what, path] of [
+    ['curves', 'M12 3l7 3v6c0 4-3.5 6.5-7 8-3.5-1.5-7-4-7-8V6Z'],
+    ['separate strokes', 'M11 13L19 5M13 5h6v6M13 11L5 19M11 19H5v-6'],
+  ]) {
+    assert.deepEqual(
+      glyphSymmetryFailures(`path d=${JSON.stringify(path)}`, 'benefit 1 of the benefits'),
+      [],
+      `a glyph drawn with ${what} is read by the symmetry rule, which is the icon set's own drawing being refused`,
+    )
+  }
+})
+
 /** The first sentence of a paragraph, for the fixture above: markdown markers taken out. */
 function firstSentence(paragraph) {
   const text = paragraph.replace(/^\*\*[^*]+\*\*\s*/, '').trim()
@@ -1121,7 +1327,11 @@ test('the homepage names the promise in its title, its description and its cards
   assert.equal(content(/<meta name="description" content="([^"]*)"/, 'meta description'), subline)
   assert.equal(content(/<meta property="og:title" content="([^"]*)"/, '`og:title`'), `Fugaro — ${tagline}`)
   assert.equal(content(/<meta property="og:description" content="([^"]*)"/, '`og:description`'), subline)
-  assert.equal(content(/<meta name="twitter:card" content="([^"]*)"/, 'Twitter card'), 'summary')
+  assert.equal(content(/<meta name="twitter:card" content="([^"]*)"/, 'Twitter card'), 'summary_large_image')
+  // The card carries a picture this site ships, by an absolute URL.
+  assert.match(content(/<meta property="og:image" content="([^"]*)"/, '`og:image`'), /^https:\/\/[^/]+\/og-image\.png$/)
+  assert.equal(content(/<meta property="og:image:width" content="([^"]*)"/, '`og:image:width`'), '1200')
+  assert.equal(content(/<meta property="og:image:height" content="([^"]*)"/, '`og:image:height`'), '630')
   // The card's description is the OG description: Astro's layout emits one `twitter:card`
   // and no second description tag, and `layout.mjs` owns the head's tag list.
   assert.equal((page.match(/<meta name="twitter:description"/g) ?? []).length, 0)
@@ -1361,126 +1571,363 @@ test('the homepage offers the reader fugaro watch and not the retired fugaro run
   )
 })
 
-test('the watch screenshot is in the slot the "See it" panel marks, named, sized and served from here', () => {
-  // The owner's spec of 2026-10-18 item 5 and PR #622 supply the picture, and it is the
-  // owner's real capture of `fugaro watch` running on their own installation, published as it
-  // was taken (D190 waived by the owner for this one image, `docs/website/redesign/README.md`).
-  // So the slot holds the image, and what this case is about is that it holds THE image and
-  // holds it so it can be read: a picture no reader can identify, or one that shifts the block
-  // under it when the file lands, or one fetched from somebody else's host, are the three ways
-  // this goes wrong.
-  const page = parse(builtPage(''))
-  const classes = (el) => (el.attrs.get('class') ?? '').split(/\s+/)
-  const slot = findAll(page, (el) => el.attrs.get('data-slot') === 'watch-screenshot')[0]
-  assert.ok(slot, 'the homepage carries no [data-slot="watch-screenshot"], and the capture of the `fugaro watch` screen needs a marked slot to be checked in (changes spec 2026-10-18, item 3)')
-  for (const attribute of ['src', 'srcset', 'href', 'style', 'aria-label', 'role']) {
-    assert.ok(!slot.attrs.has(attribute), `the slot carries ${attribute}, and the hook this check reads is \`data-slot\` alone (changes spec 2026-10-18, item 3)`)
-  }
+// ---- the "See it" slider: the panel's rows, and the pictures (the brief of 2026-10-21) -----
+//
+// The "See it" panel used to hold one `<img>` — the owner's `fugaro watch` capture of
+// 2026-10-18 (spec item 5, PR #622) — and it holds a slider now (the brief of 2026-10-21:
+// "replace the single Fugaro Watch screenshot with a slider"; D246, D251, D252): the console
+// page's component, rendering `website/data/home-screens.yaml`, which is the console's own
+// three screenshots first and the watch capture last. What the owner's screenshot item asked
+// for is unchanged and is what these cases hold: the slot is marked and is where the panel's
+// heading leads, the picture is this site's own file at its own declared size, and a reader who
+// cannot see it is owed what it shows.
+//
+// **The three assertions that used to pin the page's pictures are replaced, not deleted.** The
+// slot was held to exactly one `<img>`, the whole page to exactly `/logo.png` and
+// `/images/fugaro-watch.png`, and the component that renders the slot to exactly one file
+// (ZF47). Every one of those is now false by design, and the reading that takes their place is
+// stronger: the slot holds exactly the rows the data file names, in order, each with its own
+// `src`, `alt`, `width`, `height` and caption, the page's pictures are those rows plus the
+// wordmark, and the rows the slider shows a reader with no script are the same four.
 
-  // **It is in the third panel, and it opens it.** The owner's approved draft of 2026-10-19
-  // puts the capture in the "See it" tab, and the panel reads: its heading, then the picture,
-  // then the command the reader runs to see the same screen. Held as structure — the panel's
-  // own children — rather than as a class name, because the panel is what a reader switches to,
-  // and a picture moved into the "Why Fugaro?" panel is a picture under a heading about something
-  // else.
-  const panel = findAll(page, (el) => el.attrs.get('id') === 'home-panel-see')[0]
-  assert.ok(panel, 'the homepage carries no #home-panel-see, and the capture is what the draft\'s "See it" tab shows (the owner\'s approved draft of 2026-10-19)')
-  let inPanel = false
-  for (let parent = slot.parent; parent; parent = parent.parent) if (parent === panel) inPanel = true
-  assert.ok(inPanel, 'the watch screenshot is not in the "See it" panel, and the draft puts the capture in the tab a reader opens to see what a run looks like (the owner\'s approved draft of 2026-10-19)')
+const HOME_SCREENS_YAML = 'website/data/home-screens.yaml'
+const CONSOLE_SCREENS_YAML = 'website/data/console-screens.yaml'
+const HOME_SLOT = 'watch-screenshot'
+const HOME_SLIDER_SLOT = 'home-screens'
+const WATCH_FILE = 'fugaro-watch.png'
+
+/** A YAML scalar as the site's own reader reads it: quoted or plain, and no escapes beyond the
+ *  two its reader knows (`\"` and `\\`), which is the subset these rows are written in. */
+function yamlScalar(raw) {
+  const value = raw.trim()
+  if (value.startsWith('"') && value.endsWith('"')) return value.slice(1, -1).replace(/\\(["\\])/g, '$1')
+  return value
+}
+
+/**
+ * A screenshots data file, read literally: one row per `- file:` line, with the keys under it.
+ * Deliberately this gate's own reader rather than the build's `loadHomeScreens()` — the loader
+ * is what puts these rows on the page, so a gate that read them through it would be asking the
+ * page whether it agrees with itself — and `dir` is read because the watch row is the one row of
+ * the two files that lives under `public/images/` rather than under `public/screenshots/`.
+ */
+function readScreenRows(relative) {
+  const out = []
+  let row = null
+  for (const line of repoFile(relative).split('\n')) {
+    if (line.trim() === '' || line.trim().startsWith('#')) continue
+    let m
+    if ((m = /^ {2}- file: (\S+)$/.exec(line))) out.push((row = { file: m[1], dir: 'screenshots' }))
+    else if (row && (m = /^ {4}(alt|caption|dir|height|width): (.*)$/.exec(line))) {
+      row[m[1]] = m[1] === 'width' || m[1] === 'height' ? Number(m[2].trim()) : yamlScalar(m[2])
+    }
+  }
+  return out
+}
+
+/** The site path a row is served at, composed the way `src/content.ts` composes it. */
+const srcOfRow = (row) => `/${row.dir}/${row.file}`
+
+/**
+ * Everything the "See it" panel's slider can be wrong about, as sentences a reader of a red run
+ * can act on: the slot is where the panel's heading leads, the slider inside it renders exactly
+ * the rows the data file names in the file's own order, every row's picture is the row's own
+ * file at the row's own size with the row's own `alt` and caption, the dots are the slides'
+ * order read twice and every one of them is a named link into its own slide, and the whole
+ * page's pictures are those rows and the wordmark and nothing else.
+ *
+ * The reading is taken over the HTML the build wrote — the page as a reader whose browser runs
+ * no script receives it — which is why it is a statement about the artifact rather than about
+ * the script that reveals the control bar.
+ */
+function homeSliderFailures(page, rows) {
+  const out = []
+  const doc = parse(page)
+
+  const panel = findAll(doc, (el) => el.attrs.get('id') === 'home-panel-see')[0]
+  if (!panel) return ['the homepage carries no #home-panel-see, and the "See it" panel is the slide the slider is in (the owner\'s approved draft of 2026-10-19)']
+
+  const slot = findAll(doc, (el) => el.attrs.get('data-slot') === HOME_SLOT)[0]
+  if (!slot) return ['the homepage carries no [data-slot="watch-screenshot"], and the slot is where the slides go (changes spec 2026-10-18, item 3)']
+
+  let insidePanel = false
+  for (let parent = slot.parent; parent; parent = parent.parent) if (parent === panel) insidePanel = true
+  if (!insidePanel) out.push('the slides\' slot is not in the "See it" panel, and the draft puts what a run looks like in the slide a reader opens to see it (the owner\'s approved draft of 2026-10-19)')
+
   const children = (panel.children ?? []).filter((child) => child.name !== undefined)
   const heading = children.find((child) => child.name === 'h2')
-  assert.ok(heading, 'the "See it" panel carries no heading, and the picture and the command below it belong to a named block (the owner\'s approved draft of 2026-10-19)')
+  if (!heading) {
+    out.push('the "See it" panel carries no heading, and the slides and the command below it belong to a named block (the owner\'s approved draft of 2026-10-19)')
+  } else if (children[children.indexOf(heading) + 1] !== slot) {
+    out.push('the slot for the slides is not the element after the "See it" heading: the panel reads heading, slider, command (the owner\'s approved draft of 2026-10-19)')
+  }
+  for (const attribute of ['src', 'srcset', 'href', 'style', 'aria-label', 'role']) {
+    if (slot.attrs.has(attribute)) out.push(`the slot carries ${attribute}, and the hook this check reads is \`data-slot\` alone (changes spec 2026-10-18, item 3)`)
+  }
+
+  const slider = findAll(slot, (el) => el.attrs.get('data-slot') === HOME_SLIDER_SLOT)[0]
+  if (!slider) {
+    return [
+      ...out,
+      `the slot holds no [data-slot="${HOME_SLIDER_SLOT}"], and the slider is the panel's own component: the rows of ${HOME_SCREENS_YAML} are what a reader is shown (the brief of 2026-10-21)`,
+    ]
+  }
+  if (!slider.attrs.has('data-slider')) {
+    out.push(`the slider carries no \`data-slider\`, and that attribute is how the site's one script finds the block it drives: without it the arrows, the count and the mark on the current dot are bound to nothing`)
+  }
+
+  const inside = [...walk(slider)]
+  const images = inside.filter((el) => el.name === 'img')
+  const slides = inside.filter((el) => el.name === 'li' && el.attrs.has('data-slider-slide'))
+  const captions = inside.filter((el) => el.name === 'figcaption')
+  const dots = inside.filter((el) => el.name === 'a' && el.attrs.has('data-slider-dot'))
+
+  if (images.length !== rows.length) out.push(`the slot renders ${images.length} <img> for ${rows.length} row(s) in ${HOME_SCREENS_YAML}: the slider is the rows, and a picture the data file does not name is a picture no case here can hold to anything`)
+  if (slides.length !== rows.length) out.push(`the track carries ${slides.length} slide(s) for ${rows.length} row(s) in ${HOME_SCREENS_YAML}`)
+  if (captions.length !== rows.length) out.push(`the slider renders ${captions.length} caption(s) for ${rows.length} row(s) in ${HOME_SCREENS_YAML}`)
+  if (dots.length !== rows.length) out.push(`the slider carries ${dots.length} dot(s) for ${rows.length} row(s) in ${HOME_SCREENS_YAML}`)
+
+  for (const [index, row] of rows.entries()) {
+    const where = `the ${index + 1}th slide`
+    const img = images[index]
+    if (img) {
+      if (img.attrs.get('src') !== srcOfRow(row)) out.push(`${where} loads ${JSON.stringify(img.attrs.get('src'))}, want the row's own file under /${row.dir}/`)
+      if (img.attrs.get('alt') !== row.alt) out.push(`${where}'s alt is not the row's alt text, which is what a reader gets when the picture does not arrive and what a screen reader reads instead of it`)
+      if (img.attrs.get('width') !== String(row.width) || img.attrs.get('height') !== String(row.height)) {
+        out.push(`${where} declares ${JSON.stringify(img.attrs.get('width'))} x ${JSON.stringify(img.attrs.get('height'))} and the row carries ${row.width} x ${row.height}: the box the browser reserves is the file's own`)
+      }
+      const loading = index === 0 ? 'eager' : 'lazy'
+      if (img.attrs.get('loading') !== loading) out.push(`${where} is loaded ${JSON.stringify(img.attrs.get('loading') ?? null)}, and the first slide is the one the frame shows while every other one arrives when a reader scrolls to it (${loading})`)
+      if (img.attrs.get('decoding') !== 'async') out.push(`${where} declares decoding ${JSON.stringify(img.attrs.get('decoding') ?? null)}, and every slide decodes asynchronously so a 1920-wide WebP does not hold up the frame around it`)
+    }
+    const caption = captions[index]
+    if (caption) {
+      if (textOf(caption).trim() !== row.caption) out.push(`${where}'s caption is ${JSON.stringify(textOf(caption).trim())} and the row's is ${JSON.stringify(row.caption)}: the line under a picture is the row's own`)
+      if (slides[index] && ![...walk(slides[index])].includes(caption)) out.push(`${where}'s caption is not inside the ${index + 1}th slide, so it reads as a caption about the picture before it`)
+    }
+    const slide = slides[index]
+    const dot = dots[index]
+    if (slide) {
+      const id = slide.attrs.get('id')
+      if (!id) out.push(`${where} carries no id, so no dot can reach it`)
+      else if (dot && dot.attrs.get('href') !== `#${id}`) out.push(`${where}'s dot points at ${JSON.stringify(dot.attrs.get('href'))} and the slide is #${id}: a dot that points elsewhere sends a reader to the wrong picture`)
+    }
+    if (dot && (dot.attrs.get('aria-label') ?? '').trim() === '') out.push(`${where}'s dot has no accessible name, and it carries no text: a screen reader announces it as a link and nothing else`)
+  }
+
+  // **The page's pictures are these rows and the wordmark, and nothing else.** The old reading
+  // was the same statement about a page that carried two files; the slider makes it four, and
+  // the rule is what it was: a homepage that grew a picture the data file does not name — an
+  // illustration, an icon, a screenshot of a screen the run does not have — is refused here
+  // (Global Constraint 9).
+  const pictures = [...walk(doc)]
+    .filter((el) => ['img', 'picture', 'video', 'source'].includes(el.name))
+    .map((el) => el.attrs.get('src') ?? el.attrs.get('srcset') ?? '')
+  const want = ['/logo.png', ...rows.map(srcOfRow)]
+  if (JSON.stringify(pictures) !== JSON.stringify(want)) {
+    out.push(`the page renders the pictures ${JSON.stringify(pictures)}, and it renders ${JSON.stringify(want)}: the wordmark beside the site's name, and the slides' own files in the data file's order (owner spec of 2026-10-18, item 5; Global Constraint 9)`)
+  }
+  return out
+}
+
+/** Build a copy with `website/data/home-screens.yaml` replaced, and hand back what it made. */
+function buildWithHomeScreens(t, contents) {
+  return buildCopy(t, ({ site }) => {
+    writeFileSync(path.join(site, 'data', 'home-screens.yaml'), contents)
+  })
+}
+
+/** The rows of a data file, written back as the file writes them. */
+function screensYAML(rows) {
+  const lines = ['version: 1', 'screens:']
+  for (const row of rows) {
+    lines.push(`  - file: ${row.file}`)
+    lines.push(`    alt: ${JSON.stringify(row.alt)}`)
+    lines.push(`    caption: ${JSON.stringify(row.caption)}`)
+    if (row.dir && row.dir !== 'screenshots') lines.push(`    dir: ${row.dir}`)
+    lines.push(`    width: ${row.width}`)
+    lines.push(`    height: ${row.height}`)
+  }
+  return `${lines.join('\n')}\n`
+}
+
+test('the "See it" slot holds the rows the homepage\'s data file names, in order, Watch last', () => {
+  // The strong reading ZF47's three assertions are replaced by. It is read over the built
+  // homepage and against the data file, and what it holds is every fact each row carries: the
+  // picture's own file, its `alt`, the box the browser reserves, and the caption under it.
+  const rows = readScreenRows(HOME_SCREENS_YAML)
+  assert.ok(rows.length >= 2, `${HOME_SCREENS_YAML} carries ${rows.length} row(s), and this case asserts nothing about a slider with fewer than two slides`)
   assert.equal(
-    children[children.indexOf(heading) + 1],
-    slot,
-    'the slot for the watch screenshot is not the element after the "See it" heading: the panel reads heading, picture, command (the owner\'s approved draft of 2026-10-19)',
-  )
-  assert.ok(
-    !classes(slot).includes('watch-block') && findAll(page, (el) => classes(el).includes('watch-block'))[0],
-    'the watch command block is gone from the page, and the panel offers the reader the command that shows them the screen the picture is of (changes spec of 2026-10-18, item 3)',
+    rows[rows.length - 1].file,
+    WATCH_FILE,
+    `the last row of ${HOME_SCREENS_YAML} is ${JSON.stringify(rows[rows.length - 1].file)}, and the brief puts the Watch capture there: "Fugaro Watch moves to the end as a 'for the terminal crowd' slide" (D252)`,
   )
 
-  // **The picture is IN the slot**, exactly one of it: the slot is where the capture goes, and
-  // an image beside the slot is a picture this page renders outside the place the page says it
-  // renders it.
-  const images = [...walk(slot)].filter((el) => el.name === 'img')
+  const page = builtPage('')
+  const failures = homeSliderFailures(page, rows)
+  assert.deepEqual(failures, [], `the "See it" panel's slider is not the rows the data file names:\n  ${failures.join('\n  ')}`)
+})
+
+test('the three console rows are the console page\'s own rows, alt and caption verbatim', () => {
+  // One picture has one `alt` text and one caption. The homepage's first rows are the console
+  // page's own screenshots, and a page that paraphrased them would be a second copy of the
+  // sentence that drifts first (Global Constraint 6) — so the two files are held to each other,
+  // row for row, on the keys a reader is owed: the file, the `alt` and the caption.
+  const home = readScreenRows(HOME_SCREENS_YAML)
+  const console_ = new Map(readScreenRows(CONSOLE_SCREENS_YAML).map((row) => [row.file, row]))
+  const shared = home.filter((row) => console_.has(row.file))
   assert.equal(
-    images.length,
-    1,
-    `the watch screenshot's slot holds ${images.length} <img> element(s), and it is the one place the homepage shows the \`fugaro watch\` screen (owner spec 2026-10-18, item 5)`,
+    shared.length,
+    home.length - 1,
+    `the homepage's rows are ${JSON.stringify(home.map((row) => row.file))} and ${shared.length} of them are rows of ${CONSOLE_SCREENS_YAML}: the brief leads with the desktop console's own screenshots, and the Watch capture is the one slide that is not one of them (D251, D252)`,
   )
-  const image = images[0]
+  for (const row of shared) {
+    const source = console_.get(row.file)
+    assert.equal(row.alt, source.alt, `${HOME_SCREENS_YAML}'s ${row.file} carries an alt text of its own, and the same picture is described by ${CONSOLE_SCREENS_YAML}: one picture has one account of what it shows (Global Constraint 6)`)
+    assert.equal(row.caption, source.caption, `${HOME_SCREENS_YAML}'s ${row.file} carries a caption of its own, and the same picture carries ${CONSOLE_SCREENS_YAML}'s: the line under a picture is the row's own, and two rows for one picture are two lines that drift apart`)
+    assert.equal(row.width, source.width, `${HOME_SCREENS_YAML}'s ${row.file} declares a width of its own, and the file is the console page's own: the box the browser reserves is the file's pixels, which are one number (W1.4)`)
+    assert.equal(row.height, source.height, `${HOME_SCREENS_YAML}'s ${row.file} declares a height of its own, and the file is the console page's own: the box the browser reserves is the file's pixels, which are one number (W1.4)`)
+  }
+})
 
-  // **The path is this site's own**: a root-relative path under `/images/`, which is the file
-  // PR #622 committed, and not a URL — of any scheme, or a protocol-relative `//host/path`.
-  // This is the origins gate's rule read from the page side: the picture a reader is shown is
-  // served from the site that shows it (Global Constraint 9, D93).
-  const src = image.attrs.get('src') ?? ''
-  assert.equal(
-    src,
-    '/images/fugaro-watch.png',
-    `the homepage's watch screenshot is ${JSON.stringify(src)}, and the asset PR #622 committed and this site serves is /images/fugaro-watch.png (owner spec 2026-10-18, item 5)`,
-  )
-  assert.ok(
-    !/^[a-z][a-z0-9+.-]*:/i.test(src) && !src.startsWith('//') && !image.attrs.has('srcset'),
-    `the watch screenshot is loaded as ${JSON.stringify(src)}${image.attrs.has('srcset') ? ' with a srcset' : ''}, and a page that fetches its own picture does not name another host for it: no scheme, no protocol-relative URL, no candidate list this check cannot follow (Global Constraint 9; \`test/origins.mjs\`)`,
-  )
+test('the page holds the Watch capture at the size the design record gives it', () => {
+  // The owner's item 5, unmoved by the slider: the capture is the owner's real `fugaro watch`
+  // screen, and the box the page declares for it is the one `docs/website/redesign/README.md`
+  // records — the capture's own shape at its logical size, which is what stops the block under
+  // it moving when the file lands. The row is read from the data file, the record from the
+  // repository, and the two are held to each other.
+  const row = readScreenRows(HOME_SCREENS_YAML).find((one) => one.file === WATCH_FILE)
+  assert.ok(row, `${HOME_SCREENS_YAML} carries no ${WATCH_FILE} row, and the panel has shown that capture since PR #622 (owner spec 2026-10-18, item 5)`)
+  assert.equal(row.dir, 'images', `the Watch row is served from ${JSON.stringify(row.dir)}, and the capture PR #622 committed is at public/images/fugaro-watch.png: the design record, the transcription beside it and the page all name that path (owner spec 2026-10-18, item 5)`)
+  assert.ok((row.alt ?? '').trim().length >= 40, `the Watch row's alt is ${JSON.stringify(row.alt ?? '')}, and the picture is the owner's real \`fugaro watch\` screen: a reader who cannot see it is owed what the screen shows, from the transcription that ships beside the image (public/images/fugaro-watch.txt)`)
 
-  // **The alt says what the picture shows**, because the picture is a terminal full of the
-  // owner's own run titles and spend: a reader who cannot see it is owed an account of the
-  // screen, and the transcription ships beside the image (`public/images/fugaro-watch.txt`) as
-  // the text that account is taken from. The a11y gate refuses a missing `alt`; what this
-  // refuses is an empty one — `alt=""` marks a reader's only account of a page's one
-  // photograph as decoration — and a stub too short to be one. The floor is a floor and not the
-  // wording: what the reader is told is the owner's, the same way the picture is.
-  const alt = (image.attrs.get('alt') ?? '').trim()
-  assert.ok(
-    alt.length >= 40,
-    `the watch screenshot's alt is ${JSON.stringify(alt)}, and the picture is the owner's real \`fugaro watch\` screen: a reader who cannot see it is owed what the screen shows, from the transcription that ships beside the image (owner spec 2026-10-18, item 5; \`public/images/fugaro-watch.txt\`)`,
-  )
-
-  // **And the dimensions are the capture's own**, so the browser reserves the box before the
-  // file arrives and the command under it does not jump — which is the whole reason the
-  // attributes are there. They are held to the capture `docs/website/redesign/README.md`
-  // records rather than to themselves: a declared box of the wrong SHAPE — `1459 x 440`, one
-  // pixel off the height, or the two numbers swapped — reserves the wrong box and scales the
-  // picture into it, and that is this failure. The file the page names is the one the record
-  // is about.
   const record = /`website\/public\/images\/fugaro-watch\.png` \((\d+) x (\d+) px, a 2x retina capture, so (\d+) x (\d+) logical\)/.exec(
     repoFile('docs/website/redesign/README.md'),
   )
   assert.ok(record, 'docs/website/redesign/README.md no longer records the capture\'s pixel size and its logical size, so the declared dimensions cannot be held to the file they are about (owner spec 2026-10-18, item 5)')
   const [, captureW, captureH, logicalW, logicalH] = record.map(Number)
-  const width = Number(image.attrs.get('width'))
-  const height = Number(image.attrs.get('height'))
-  assert.ok(
-    Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0,
-    `the watch screenshot declares ${JSON.stringify(image.attrs.get('width'))} x ${JSON.stringify(image.attrs.get('height'))}, and a pair of positive integers is what reserves the picture's box before the file arrives (owner spec 2026-10-18, item 5)`,
-  )
   assert.equal(
-    width / height,
+    row.width / row.height,
     captureW / captureH,
-    `the watch screenshot declares ${width} x ${height} and the capture is ${captureW} x ${captureH} (${logicalW} x ${logicalH} logical): the declared box has to be the file's own shape, or the browser reserves the wrong space and scales the picture into it (owner spec 2026-10-18, item 5)`,
+    `the Watch row declares ${row.width} x ${row.height} and the capture is ${captureW} x ${captureH} (${logicalW} x ${logicalH} logical): the declared box has to be the file's own shape, or the browser reserves the wrong space and scales the picture into it (owner spec 2026-10-18, item 5)`,
   )
   assert.deepEqual(
-    [width, height],
+    [row.width, row.height],
     [logicalW, logicalH],
-    `the watch screenshot declares ${width} x ${height} and the capture is ${logicalW} x ${logicalH} at its logical size: a 2x capture is declared at the size it occupies on the page, which is what stops the box it reserves being twice the height of the one the CSS lays it out in (owner spec 2026-10-18, item 5)`,
+    `the Watch row declares ${row.width} x ${row.height} and the capture is ${logicalW} x ${logicalH} at its logical size: a 2x capture is declared at the size it occupies on the page (owner spec 2026-10-18, item 5)`,
+  )
+})
+
+test('every slide is in the HTML a reader receives, with no script run at all', () => {
+  // **The no-JS case.** Nothing about this slider is built at runtime: the markup renders every
+  // row — the picture with its `alt` and its declared box, the caption under it, and the dot
+  // that is a link into its slide — and the script's half is the `hidden` control bar it
+  // reveals. So a reader whose browser runs no script reaches all four slides by scrolling the
+  // track or by following a dot, which is the site's rule (D183) and the reason the fallback is
+  // a property of the markup rather than a promise about the script.
+  const rows = readScreenRows(HOME_SCREENS_YAML)
+  const doc = parse(builtPage(''))
+  const slider = findAll(doc, (el) => el.attrs.get('data-slot') === HOME_SLIDER_SLOT)[0]
+  assert.ok(slider, `the built page carries no [data-slot="${HOME_SLIDER_SLOT}"], and the slides are rendered by the console page's component rather than by a script (D183)`)
+
+  const images = [...walk(slider)].filter((el) => el.name === 'img')
+  assert.deepEqual(
+    images.map((el) => el.attrs.get('src')),
+    rows.map(srcOfRow),
+    `the slider's pictures in the HTML a reader receives are ${JSON.stringify(images.map((el) => el.attrs.get('src')))}, and the data file names ${JSON.stringify(rows.map(srcOfRow))}: with no script the pictures are the whole of the slider, so every row has to be in the markup`,
+  )
+  assert.deepEqual(
+    [...walk(slider)].filter((el) => el.name === 'figcaption').map((el) => textOf(el).trim()),
+    rows.map((row) => row.caption),
+    'the captions in the HTML a reader receives are not the data file\'s, in order: a caption written by the script is a caption a reader without one never sees',
   )
 
-  // **The page's pictures are these two and no others**: the wordmark in the header and the
-  // owner's screenshot. A homepage that grew a third `<img>` — an illustration, an icon, a
-  // picture of a screen the run does not have — is what this last assertion is for (Global
-  // Constraint 9; D107's rule for the hero's video). The slider's three step icons are inline
-  // SVG rather than files, so they are not pictures in this reading and carry no `src`.
-  const pictures = [...walk(page)]
-    .filter((el) => ['img', 'picture', 'video', 'source'].includes(el.name))
-    .map((el) => el.attrs.get('src') ?? el.attrs.get('srcset') ?? '')
+  // Every dot resolves, in the document the reader was sent: the fragment each one carries
+  // names a slide that is in this page. `linkcheck.mjs` proves the same for every link on every
+  // page; this is the slider's own half of it, stated where the slides are read.
+  const ids = new Set([...walk(doc)].filter((el) => el.attrs.has('id')).map((el) => el.attrs.get('id')))
+  for (const dot of [...walk(slider)].filter((el) => el.name === 'a' && el.attrs.has('data-slider-dot'))) {
+    const href = dot.attrs.get('href') ?? ''
+    assert.ok(
+      href.startsWith('#') && ids.has(href.slice(1)),
+      `a dot links to ${JSON.stringify(href)}, which names no element of the page: with no script the dot's own jump is the whole of what it does, and a fragment that resolves to nothing is a control that does nothing (D183)`,
+    )
+  }
+})
+
+test('a slider that is not the rows the data file names is refused, plant by plant', (t) => {
+  // The reading above is only worth its lines if it disagrees with a page that is not the one
+  // the data file describes. Three plants are edits to the built page's own HTML — the shape
+  // every defect would reach a reader in — and two are builds of a mutated data file, which is
+  // the half a page-shaped plant cannot prove: that the markup follows the file rather than
+  // agreeing with it by coincidence.
+  const rows = readScreenRows(HOME_SCREENS_YAML)
+  const page = builtPage('')
+
+  /** The offset of the `index`th slide's `<li>` in a built page. */
+  function slideAt(html, index) {
+    const at = [...html.matchAll(/<li class="screen[^"]*" data-slider-slide id="home-screen-\d+"/g)][index]
+    assert.ok(at, `the built page carries no ${index + 1}th <li> slide, so this plant cannot be made`)
+    return at.index
+  }
+
+  /** The page with the `index`th slide's caption replaced by `caption`. */
+  const withCaption = (html, index, caption) => {
+    const from = slideAt(html, index)
+    const to = html.indexOf('</li>', from)
+    return (
+      html.slice(0, from) +
+      html.slice(from, to).replace(/<figcaption[^>]*>[\s\S]*?<\/figcaption>/, `<figcaption class="screen-caption">${caption}</figcaption>`) +
+      html.slice(to)
+    )
+  }
+
+  const spent = page.replace(/\s*<li class="screen[^"]*" data-slider-slide id="home-screen-1"[\s\S]*?<\/li>/, '')
+
+  const defects = [
+    {
+      what: 'a caption that is not the row\'s',
+      html: withCaption(page, 0, 'A screenshot of something else entirely'),
+      wants: /caption is/,
+    },
+    {
+      what: 'a slide dropped out of the markup',
+      html: spent,
+      wants: /renders 3 <img> for 4 row\(s\)/,
+    },
+  ]
+  for (const { what, html, wants } of defects) {
+    assert.notEqual(html, page, `${what}: the planted edit changed nothing, so this fixture proves nothing`)
+    const failures = homeSliderFailures(html, rows)
+    assert.ok(failures.some((line) => wants.test(line)), `${what} was not refused (${wants}); the reading said:\n  ${failures.join('\n  ') || '(nothing)'}`)
+  }
+
+  // **A row dropped from the file** and **the Watch row moved off the end**: the page is built
+  // again from the mutated file, and the reading is taken against the file as it ships — so a
+  // page that rendered the same four slides whatever the file said fails both.
+  const dropped = buildWithHomeScreens(t, screensYAML(rows.slice(0, rows.length - 1)))
+  const droppedPage = readFileSync(path.join(dropped.dist, 'index.html'), 'utf8')
+  assert.equal(
+    [...droppedPage.matchAll(/<li class="screen[^"]*" data-slider-slide/g)].length,
+    rows.length - 1,
+    `a build with ${rows.length - 1} row(s) in ${HOME_SCREENS_YAML} rendered a different number of slides: the slider is the rows, and a slide the file does not name is a picture nothing on the site accounts for`,
+  )
+  assert.ok(
+    homeSliderFailures(droppedPage, rows).some((line) => /renders 3 <img> for 4 row\(s\)/.test(line)),
+    'the reading did not refuse the build whose data file dropped its last row: a page that renders three of four rows is the defect this case exists for',
+  )
+
+  const watchFirst = [rows[rows.length - 1], ...rows.slice(0, rows.length - 1)]
+  const moved = buildWithHomeScreens(t, screensYAML(watchFirst))
+  const movedPage = readFileSync(path.join(moved.dist, 'index.html'), 'utf8')
   assert.deepEqual(
-    pictures,
-    ['/logo.png', '/images/fugaro-watch.png'],
-    `the homepage renders the pictures ${JSON.stringify(pictures)}, and it renders two: the wordmark beside the site's name, and the owner's \`fugaro watch\` screenshot (owner spec 2026-10-18, item 5)`,
+    [...movedPage.matchAll(/<img[^>]*src="([^"]+)"/g)].map((m) => m[1]).slice(1),
+    watchFirst.map(srcOfRow),
+    `a build with the Watch row first in ${HOME_SCREENS_YAML} renders its slides in another order: the file's order is the order a reader meets them in, and "Watch last" is a fact about the file rather than a rule in the component`,
+  )
+  assert.ok(
+    homeSliderFailures(movedPage, rows).some((line) => /renders the pictures/.test(line)),
+    'the reading did not refuse the build whose Watch row moved off the end: the brief puts that slide last (D252), and a page that moved it is the defect this case exists for',
   )
 })
 
@@ -1568,26 +2015,29 @@ test("the run is How It Works' own picture of one, and the homepage carries the 
   )
 
   // And the slider is the block in its place, read as the retired gate read the picture: three
-  // tabs, three panels, all of them in the HTML a reader receives, each tab a link to the panel
-  // it shows. A homepage whose tabs pointed at nothing would be a homepage whose blocks a reader
-  // without JavaScript cannot reach — which is what the flow's own gate said about the figure
-  // when it asked a page to render exactly one of them.
-  const tabs = findAll(home, (el) => el.name === 'a' && classes(el).includes('tab')).map((el) => el.attrs.get('href') ?? '')
+  // slides, three panels, all of them in the HTML a reader receives, each dot a link to the
+  // panel it shows. A homepage whose dots pointed at nothing would be a homepage whose blocks a
+  // reader without JavaScript cannot reach — which is what the flow's own gate said about the
+  // figure when it asked a page to render exactly one of them. (The owner's feedback of
+  // 2026-10-21, item 3, turned the strip of tabs into this slider; the slides, the dots and the
+  // two step controls are read in full in `website/test/slider.mjs`, and this is the homepage's
+  // own gate keeping the one reading the retired flow's gate left behind.)
+  const dots = findAll(home, (el) => el.name === 'a' && classes(el).includes('slider-dot')).map((el) => el.attrs.get('href') ?? '')
   const panels = findAll(home, (el) => classes(el).includes('panel')).map((el) => el.attrs.get('id') ?? '')
   assert.equal(
-    tabs.length,
+    dots.length,
     3,
-    `the homepage's slider offers ${tabs.length} tabs, and the draft's first panel is the three steps of using Fugaro beside a Benefits tab and a See it tab (the owner's approved draft of 2026-10-19; changes spec 2026-10-18, item 4)`,
+    `the homepage's slider offers ${dots.length} dots, and the draft's first panel is the three steps of using Fugaro beside a Why Fugaro? slide and a See it slide (the owner's approved draft of 2026-10-19; the owner's feedback of 2026-10-21, item 3; changes spec 2026-10-18, item 4)`,
   )
   assert.equal(
     panels.length,
     3,
-    `the homepage's slider carries ${panels.length} panels, and every tab it offers is a link to a panel: a tab that points at nothing shows nothing (the owner's approved draft of 2026-10-19)`,
+    `the homepage's slider carries ${panels.length} panels, and every dot it offers is a link to a panel: a dot that points at nothing shows nothing (the owner's approved draft of 2026-10-19)`,
   )
   assert.deepEqual(
-    tabs,
+    dots,
     panels.map((id) => `#${id}`),
-    `the homepage's tabs point at ${JSON.stringify(tabs)} and its panels are ${JSON.stringify(panels.map((id) => `#${id}`))}: each tab is the link to the panel in its place, so the block is reachable without the script (the owner's approved draft of 2026-10-19)`,
+    `the homepage's dots point at ${JSON.stringify(dots)} and its panels are ${JSON.stringify(panels.map((id) => `#${id}`))}: each dot is the link to the panel in its place, so the block is reachable without the script (the owner's approved draft of 2026-10-19; the owner's feedback of 2026-10-21, item 3)`,
   )
 
   // **And the picture is item 4's four steps, drawn**: the drawing's boxes, its labels, the run
@@ -1968,7 +2418,7 @@ test("every link on the two pages points at a route the plan's tasks write", () 
     for (const href of internalLinks(page)) {
       assert.ok(
         routes.has(href),
-        `the ${where} page links ${href}, which is not a route the plan's tasks write (the layout's nav and the hero's call to action included, because every link on these pages is checked here): a route outside that list is a 404 in the artifact, and it is Global Constraint 9's defect one page over from the download link it names (W1.4)`,
+        `the ${where} page links ${href}, which is not a route the plans' tasks write (the layout's nav and the hero's call to action included, because every link on these pages is checked here): a route outside that list is a 404 in the artifact, and it is Global Constraint 9's defect one page over from the download link it names (W1.4)`,
       )
     }
   }
@@ -2027,8 +2477,8 @@ test('the tokens the pages name are the ones the design layer declares', () => {
  * page asks a reader to tap is at least 44 px tall**, and the page's own controls are the hero's
  * two links in the action row, the run band's link to the page that draws the run, and the one
  * button in the closing call to action (`HomeRunBand.astro`, `HomeInstall.astro`); the slider's
- * three tabs are `test/slider.mjs`'s, which reads them at the widths the page is read at, so this
- * reading is about the controls outside the slider.
+ * three dots and its two step controls are `test/slider.mjs`'s, which reads them at the widths
+ * the page is read at, so this reading is about the controls outside the slider.
  */
 const CONTROL_TARGETS = [
   ['hero-cta', "the hero's filled call to action"],
@@ -2042,9 +2492,10 @@ const CONTROL_TARGETS = [
  * it against, as the lines a reader of a failure gets. **Every control the page asks a reader
  * to tap is at least 44 px tall**, and the page's own controls are the hero's two links in the
  * action row, the run band's link to the page that draws the run, and the one button in the
- * closing call to action (`HomeRunBand.astro`, `HomeInstall.astro`); the slider's three tabs
- * are `test/slider.mjs`'s, which reads them at the widths the page is read at, so this reading
- * is about the controls outside the slider. The reading itself is `test/lib/controls.mjs`'s —
+ * closing call to action (`HomeRunBand.astro`, `HomeInstall.astro`); the slider's three dots and
+ * its two step controls are `test/slider.mjs`'s, which reads them at the widths the page is read
+ * at, so this reading is about the controls outside the slider. The reading itself is
+ * `test/lib/controls.mjs`'s —
  * one rule read in two places, since `test/caps-figures.mjs` runs it over the caps page's two
  * hero actions as well — and the list above is this page's.
  */

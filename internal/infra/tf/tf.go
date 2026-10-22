@@ -1,4 +1,4 @@
-// Package tf runs terraform for fugaro init: through os/exec, with an
+// Package tf runs terraform for fugaro update: through os/exec, with an
 // allowlisted environment and fugaro's own CLI config (plugin cache and direct
 // provider installation only; see Env), applying only a saved plan file that
 // was shown and passed the guard (Guard), which refuses any delete or replace

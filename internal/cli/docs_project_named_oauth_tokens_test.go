@@ -254,7 +254,7 @@ func TestDocsProjectNamedOAuthTokensStatusNamesTheReleasedCLI(t *testing.T) {
 //   - the two declarations (claude_accounts, and the profile's
 //     claude_accounts field) and the rules publish enforces (D3's subset rule,
 //     exact allow_repos, D4's no API key beside them);
-//   - what `fugaro init` deploys, and the version-3 rollout;
+//   - what `fugaro setup` deploys, and the version-3 rollout;
 //   - how a run selects an account, and how both refusals read;
 //   - rotation, revocation, and per-account lists;
 //   - the stopgap carrier and the security service that replaces it;
@@ -303,7 +303,7 @@ func TestDocsProjectClaudeAccountsOperatorGuide(t *testing.T) {
 		"**its own exact\n  `allow_repos`**",
 		"**No Anthropic API key beside the accounts (D4).**",
 		// What init deploys, and the rollout.
-		"`fugaro init --repo .`",
+		"`fugaro update --repo .`",
 		"fugaro project policy publish --delete",
 		// Selection.
 		"oauth_token: acme-team",
@@ -453,6 +453,10 @@ func TestDocsProjectClaudeAccountsCommandsExist(t *testing.T) {
 		// (claude-oauth-token is all lower case and hyphens), so
 		// `fugaro secrets set claude-oauth-token` would otherwise be read as a
 		// three-word path that resolves to nothing.
+		// The page's lines are its own: W2.3 renamed this page's prose, so
+		// every command it shows is one of the two doors W1.2 retired the old
+		// word into and is resolved against the word the page writes. The
+		// messages below quote the line as the page writes it.
 		words := strings.Fields(strings.TrimPrefix(text, "fugaro "))
 		var path []string
 		cmd := root
@@ -472,7 +476,7 @@ func TestDocsProjectClaudeAccountsCommandsExist(t *testing.T) {
 		}
 		for _, fm := range flagRE.FindAllStringSubmatch(text, -1) {
 			if !cmdHasFlag(cmd, fm[1]) {
-				t.Errorf("%s's `fugaro %s` names --%s, which that command has no such flag", projectClaudeAccountsDoc, strings.Join(path, " "), fm[1])
+				t.Errorf("%s's `%s` names --%s, which that command has no such flag", projectClaudeAccountsDoc, text, fm[1])
 			}
 		}
 	}
@@ -523,7 +527,7 @@ func TestDocsProjectClaudeAccountsGcpSetupRollout(t *testing.T) {
 		"(project-claude-accounts.md)",
 		// The profile field.
 		"`profiles.<profile>.claude_accounts` in the project's local config",
-		"One job per (profile, provider, account) is what `fugaro init` deploys.",
+		"One job per (profile, provider, account) is what `fugaro setup` deploys.",
 		// The project-wide storage step.
 		"**The project-wide storage step.**",
 		"the job mounts the **project-wide** copy",
@@ -541,7 +545,7 @@ func TestDocsProjectClaudeAccountsGcpSetupRollout(t *testing.T) {
 		"fugaro image refresh",
 		// The shared jobs move last, per installation: image refresh never
 		// touches a project job (the review of PR #660).
-		"Move the shared jobs, **per installation**, on a machine where step 3 ran: `fugaro init --firebase <gcp-project>`",
+		"Move the shared jobs, **per installation**, on a machine where step 3 ran: `fugaro update --firebase-project <gcp-project>`",
 		"a project job runs the installation's base image, and only this re-apply of the installation moves it",
 		// And the one-line pointer in the optional pieces.
 		"**Named Claude accounts on a shared job (0.9.0):**",
@@ -642,7 +646,7 @@ func TestDocsProjectClaudeAccountsSharedJobLimitsAreTrue(t *testing.T) {
 		}},
 		{"docs/git-providers.md", providers, []string{
 			"`projectJobGitHubAppID`",
-			"is refused at `fugaro init` rather than deployed as a job whose every run would halt when it opened its provider",
+			"is refused at `fugaro setup` rather than deployed as a job whose every run would halt when it opened its provider",
 		}},
 	} {
 		for _, want := range tc.want {
@@ -766,7 +770,7 @@ func fencedYAML(t *testing.T, path string) []string {
 // TestDocsProjectClaudeAccountsExamplesValidate holds the guide's canonical
 // example to the rule the guide itself states. §3 presents the account block
 // and the profile as the operator's two edits, and §4 says publish and
-// `fugaro init` refuse a profile that admits a repository one of the accounts
+// `fugaro setup` refuse a profile that admits a repository one of the accounts
 // it lists does not cover (projectpolicy's validProfileAccounts, D3's subset
 // rule). An example that cannot pass that rule is a config an operator copies
 // and is refused — and refused in a way that points at the wrong repair, since
@@ -801,7 +805,7 @@ func TestDocsProjectClaudeAccountsExamplesValidate(t *testing.T) {
 		t.Fatalf("%s's example is refused where publish derives the accounts block: %v", projectClaudeAccountsDoc, err)
 	}
 	if err := projectpolicy.CheckProfiles(profiles, derived); err != nil {
-		t.Fatalf("%s's example is refused by the rules publish and `fugaro init` apply to a profile: %v", projectClaudeAccountsDoc, err)
+		t.Fatalf("%s's example is refused by the rules publish and `fugaro setup` apply to a profile: %v", projectClaudeAccountsDoc, err)
 	}
 	// And the claim that makes it pass, one repository at a time: every
 	// repository a profile admits is covered by EVERY account it lists — the

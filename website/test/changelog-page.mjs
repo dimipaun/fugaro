@@ -74,6 +74,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { cssDeclarations, cssRules, parse, walk } from './lib/html.mjs'
+import { ancestorsOf, classesOf, matchesSelector, subjectOf } from './lib/selectors.mjs'
 import { READ_UNDER_PLUGIN, linkNodeModules } from './lib/build.mjs'
 
 // website/test/changelog-page.mjs -> website/test -> website.
@@ -508,102 +509,9 @@ function elementText(html) {
 // selector that names a scope no element carries is the same defect `base-styles.mjs` reads on
 // the homepage's blocks (its review round 6), read here for the chip rule.
 
-/** The classes an element carries, as the markup writes them. */
-function classesOf(el) {
-  return (el.attrs?.get('class') ?? '').split(/\s+/).filter(Boolean)
-}
-
-/** An element's ancestors, nearest first, up to the document. */
-function ancestorsOf(el) {
-  const out = []
-  for (let node = el.parent; node !== null && node !== undefined; node = node.parent) out.push(node)
-  return out
-}
-
-/** One compound selector — the part between two combinators — read into what it requires. */
-function compoundOf(part) {
-  return {
-    name: /^[a-zA-Z][\w-]*/.exec(part)?.[0] ?? null,
-    classes: [...part.matchAll(/\.([A-Za-z_][-\w]*)/g)].map((match) => match[1]),
-    attrs: [...part.matchAll(/\[([^\]]*)\]/g)].map((match) => match[1]),
-  }
-}
-
-/**
- * A complex selector as its compounds, each with the combinator before it (`null` for the
- * first). The two combinators a scoped Astro selector writes are the ones read — a descendant
- * (whitespace) and a child (`>`) — and a combinator inside `()` or `[]` is not the selector's
- * own. The other two (`+`, `~`) are read as part of a compound and so as matching nothing:
- * this page and `base.css` write none, and a reader that guessed would be worse than one that
- * refuses.
- */
-function selectorChain(selector) {
-  const parts = []
-  let buffer = ''
-  let depth = 0
-  let combinator = null
-  const flush = () => {
-    if (buffer.trim() !== '') parts.push({ combinator, part: buffer.trim() })
-    buffer = ''
-  }
-  for (const ch of selector) {
-    if (ch === '(' || ch === '[') depth += 1
-    else if (ch === ')' || ch === ']') depth -= 1
-    if (depth === 0 && (ch === '>' || /\s/.test(ch))) {
-      if (buffer.trim() !== '') {
-        flush()
-        combinator = ' '
-      }
-      if (ch === '>') combinator = '>'
-      continue
-    }
-    buffer += ch
-  }
-  flush()
-  return parts
-}
-
-/**
- * True when one compound selector requires nothing of `el` that `el` is not: the element name
- * it names, the classes it names, and each attribute selector it carries (presence, or `=` a
- * value). A pseudo-class is not evaluated and is read as matching — the safe direction for a
- * reading that asks whether a selector can match at all, and the defect it is here for is the
- * scope attribute, which it reads exactly.
- */
-function compoundMatches(part, el) {
-  const { name, classes, attrs } = compoundOf(part)
-  if (name !== null && name !== el.name) return false
-  const own = classesOf(el)
-  if (!classes.every((klass) => own.includes(klass))) return false
-  return attrs.every((spec) => {
-    const eq = spec.indexOf('=')
-    if (eq === -1) return el.attrs.has(spec.trim())
-    const value = spec.slice(eq + 1).trim().replace(/^["']|["']$/g, '')
-    return el.attrs.get(spec.slice(0, eq).trim()) === value
-  })
-}
-
-/** True when one complex selector — not a list of them — can match `el`. */
-function matches(selector, el) {
-  const chain = selectorChain(selector)
-  if (chain.length === 0) return false
-  const at = (index, node) => {
-    if (node === null || node === undefined || node.name === undefined) return false
-    if (!compoundMatches(chain[index].part, node)) return false
-    if (index === 0) return true
-    if (chain[index].combinator === '>') return at(index - 1, node.parent)
-    for (let parent = node.parent; parent !== null && parent !== undefined; parent = parent.parent) {
-      if (at(index - 1, parent)) return true
-    }
-    return false
-  }
-  return at(chain.length - 1, el)
-}
-
-/** The subject of a complex selector: the compound that decides which element the rule styles. */
-function subjectOf(selector) {
-  return compoundOf(selectorChain(selector).at(-1)?.part ?? '')
-}
+// The matcher itself — `classesOf`, `ancestorsOf`, `matchesSelector` and `subjectOf` — is
+// `website/test/lib/selectors.mjs`, which the run diagram's paint gate reads too: "can this
+// rule reach this element" is one question and one answer.
 
 /**
  * The notes' code chips and the rule that paints them on the ground, as the sentences for the
@@ -637,7 +545,7 @@ function chipFailures(css, html) {
     return ['no rule of the page’s stylesheet paints a code chip on the ground: the card is `--surface` and `base.css` paints a chip `--surface` too, so a chip with no rule of its own is a chip a reader cannot see']
   }
   return painting
-    .filter((rule) => !rule.selector.split(',').some((part) => chips.some((chip) => matches(part, chip))))
+    .filter((rule) => !rule.selector.split(',').some((part) => chips.some((chip) => matchesSelector(part, chip))))
     .map((rule) => {
       const wanted = [...new Set([...rule.selector.matchAll(/\[(data-astro-cid-[^\]]+)\]/g)].map(([, scope]) => scope))]
       return `the notes’ code chips are painted by \`${rule.selector}\`, and no selector of that rule can match any of the ${chips.length} code chips the page renders: the rule requires ${wanted.join(', ') || 'no scope attribute'} where the chips carry ${scopes.join(', ') || 'none'}. A chip arrives through \`set:html\`, so Astro never appends the component’s scope attribute to it — and a rule the chips cannot be matched by is a rule they never get, so every chip in the notes keeps \`base.css\`’s own \`--surface\`, which is the card’s own tone: a chip the same tone as the card it sits on is a chip nobody sees`

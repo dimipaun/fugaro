@@ -50,7 +50,7 @@ var (
 
 // notInstalledReason is the reason a workflow head's fugaro.yaml and the
 // installed check job disagree about gets.
-const notInstalledReason = "run fugaro init --repo"
+const notInstalledReason = "run fugaro update --repo"
 
 type imageCheckOptions struct {
 	cloud                      cloudOptions
@@ -440,7 +440,7 @@ func readJobEnv() (jobEnv, error) {
 	var e jobEnv
 	raw := os.Getenv(infra.CheckSpecEnv)
 	if raw == "" {
-		return e, fmt.Errorf("%s is not set: fugaro image check --job runs in the repository's check job, which fugaro init --repo sets up", infra.CheckSpecEnv)
+		return e, fmt.Errorf("%s is not set: fugaro image check --job runs in the repository's check job, which fugaro update --repo sets up", infra.CheckSpecEnv)
 	}
 	if err := json.Unmarshal([]byte(raw), &e.spec); err != nil {
 		return e, fmt.Errorf("%s: %w", infra.CheckSpecEnv, err)
@@ -448,26 +448,26 @@ func readJobEnv() (jobEnv, error) {
 	s := e.spec
 	if s.Repo == "" || s.Provider == "" || s.RepoURL == "" || s.BaseBranch == "" || len(s.Workflows) == 0 ||
 		s.Registry == "" || s.BuildServiceAccount == "" || s.BuildRegion == "" || len(s.BaseImages) == 0 {
-		return e, fmt.Errorf("%s is incomplete: run fugaro init --repo", infra.CheckSpecEnv)
+		return e, fmt.Errorf("%s is incomplete: run fugaro update --repo", infra.CheckSpecEnv)
 	}
 	e.name, e.gcpProject, e.region = os.Getenv("FUGARO_PROJECT"), os.Getenv("FUGARO_GCP_PROJECT"), os.Getenv("FUGARO_REGION")
 	u, err := url.Parse(os.Getenv("FUGARO_BUCKET"))
 	if e.name == "" || e.gcpProject == "" || e.region == "" || err != nil || u.Scheme != "gs" || u.Host == "" || strings.Trim(u.Path, "/") != "" {
-		return e, errors.New("FUGARO_PROJECT (the project's name), FUGARO_GCP_PROJECT, FUGARO_REGION and FUGARO_BUCKET (gs://<runs bucket>) must be set, as the check job's spec sets them; run fugaro init --repo")
+		return e, errors.New("FUGARO_PROJECT (the project's name), FUGARO_GCP_PROJECT, FUGARO_REGION and FUGARO_BUCKET (gs://<runs bucket>) must be set, as the check job's spec sets them; run fugaro update --repo")
 	}
 	e.bucket = u.Host
 	return e, nil
 }
 
 // repoSpec is the repository's spec as this job's own environment gives
-// it: the names come from Go, as fugaro init --repo gave them, and the
+// it: the names come from Go, as fugaro update --repo gave them, and the
 // project's name is the job's FUGARO_PROJECT.
 func (e jobEnv) repoSpec(cfg *config.Config) (infra.RepoSpec, *localcfg.Config, error) {
 	s := e.spec
 	host, _, _ := strings.Cut(s.Registry, "/"+e.gcpProject+"/")
 	// The spec names the base of the kinds the job was installed for. A job
 	// whose own installed spec predates the 0.7.0 cut (fugaro image refresh
-	// or init --repo has not run there since) still names a kind config.Bases
+	// or update --repo has not run there since) still names a kind config.Bases
 	// no longer has, so the one kind every HEAD workflow now resolves to
 	// (base) has no entry here yet; it stands in with whichever kind's
 	// image the old spec does have, rather than refusing the whole job.
@@ -621,7 +621,7 @@ func runImageCheckJob(cmd *cobra.Command, o imageCheckOptions) error {
 	if err != nil {
 		return failAll(err)
 	}
-	// The job's spec came from the names Go gave at fugaro init --repo;
+	// The job's spec came from the names Go gave at fugaro update --repo;
 	// this fugaro must give the same ones, or it would build elsewhere.
 	if rs.RegistryPath != s.Registry || rs.BuildServiceAccountEmail != s.BuildServiceAccount {
 		return failAll(fmt.Errorf("the installed check job names the registry %s and build account %s, but this fugaro names %s and %s: %s",
@@ -951,7 +951,7 @@ func runImageStatus(cmd *cobra.Command, o cloudOptions, only string, asJSON bool
 	repos := slices.Sorted(maps.Keys(env.lc.Repos))
 	if only != "" {
 		if _, ok := env.localRepo(only); !ok {
-			return userErr("%s is not in the local config's repos; fugaro init --repo adds it", only)
+			return userErr("%s is not in the local config's repos; fugaro update --repo adds it", only)
 		}
 		repos = []string{only}
 	}

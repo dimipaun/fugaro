@@ -65,7 +65,7 @@ type InstallOptions struct {
 	NoLogIsolation bool
 	// BudgetBackend gives the installation the history account and, once
 	// the Firebase root's outputs are known and its image exists, the
-	// history job and its sweep Scheduler job. It is set by --firebase and
+	// history job and its sweep Scheduler job. It is set by --firebase-project and
 	// by a project config that records a Firebase project.
 	BudgetBackend bool
 	// ManagedDeployerScoped opts the installation in to the managed
@@ -117,7 +117,7 @@ type InstallationSpec struct {
 	EnableBudget bool         `json:"enable_budget,omitempty"`
 	History      *HistorySpec `json:"history,omitempty"`
 	// ProjectSecrets are the installation module's project-wide secret
-	// containers (logical name -> gcp.ProjectSecretID), which fugaro init
+	// containers (logical name -> gcp.ProjectSecretID), which fugaro update
 	// creates or adopts; their values are never set by Terraform (design
 	// docs/design/project-secrets.md §4). Installation() fills it from the
 	// local config's eligibility; DiscoverInstallation then unions in every

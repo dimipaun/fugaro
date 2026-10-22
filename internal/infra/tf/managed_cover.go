@@ -99,7 +99,7 @@ var managedTypeReasons = map[string]string{
 // allowedTypes by a later module fails that test until one of the two maps
 // decides it.
 var managedDropped = map[string]string{
-	"google_billing_budget":                  "a billing-account permission no project role can hold: Fugaro's own budget is created by the owner-run installation apply (fugaro init --budget)",
+	"google_billing_budget":                  "a billing-account permission no project role can hold: Fugaro's own budget is created by the owner-run installation apply (fugaro update --budget)",
 	"google_compute_firewall":                "Fugaro's own compute-backend network (modules/compute/network.tf, main's compute root — the Cloud Batch backend, excluded from 0.9.0), applied by the owner-run compute root: a firewall rule in an agent-authored plan would open or close the network every run's VM stands on. Dropped on the merge of main into next-0.8.5 as the fail-closed default; keeping it is the owner's decision",
 	"google_compute_router":                  "Fugaro's own compute-backend network (modules/compute/network.tf), applied by the owner-run compute root; dropped on the merge of main into next-0.8.5 as the fail-closed default, keeping it is the owner's decision",
 	"google_compute_router_nat":              "Fugaro's own compute-backend network (modules/compute/network.tf): the NAT is the runs' egress path, applied by the owner-run compute root; dropped on the merge of main into next-0.8.5 as the fail-closed default, keeping it is the owner's decision",

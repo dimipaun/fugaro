@@ -558,7 +558,7 @@ printed table (pinned by `TestScopeTableMatchesDocs`), and a case in
 five edits" shape F7 records for the repository's own file. The published
 project *policy* is the wrong carrier for it: a new key inside the policy node is
 a `projectpolicy.Version` bump, and a bump drops every policy an installation has
-published until its rules are redeployed with `fugaro init --firebase`
+published until its rules are redeployed with `fugaro init --firebase-project`
 (`internal/budget/rules/marker.go`) — a mode default is not worth that.
 
 **F37 — The precedence regime exists, is stated once, and has no area rank.**
@@ -614,7 +614,7 @@ rather than being ignored. `internal/budget/model.go`'s `AgentEntry` has no mode
 field. The tree records two ways of adding one: `Recipe`'s, where
 `internal/budget/registry.go`'s `Session.Start` drops the field on
 `ErrPermissionDenied`, warns that the database's rules predate it and tells the
-operator to run `fugaro init --firebase`, and remembers for the session
+operator to run `fugaro init --firebase-project`, and remembers for the session
 (`noRecipe`); and the creds family's, where `internal/budget/rules/marker.go`
 records a marker and the run is to halt on a downgrade — **planned, not built**:
 `HaltCredsRulesDenied` is named in that file's comment, in
@@ -664,13 +664,26 @@ read to answer it).
 
 Every count below is stated with the command that produces it, because a count
 without its command is a figure a later reader cannot re-derive. All commands are
-run from the repository root against the working tree of this folder's own commit,
-which differs from the base `1d325928` by this folder's four documents and its pin
-test and nothing else — so one row is the folder's own: the 48 pins are the 47
-that already exist plus `internal/cli/docs_rigor_modes_test.go`, and they are
-files rather than folders — 13 of them pin one of `docs/`'s folders and the rest
-pin a standalone document, which is why the row above counts the pins and not the
-folders they sit beside.
+run from the repository root against the working tree — and the guard,
+`internal/cli/docs_rigor_modes_test.go`, re-runs every one of them there, so a
+figure that has drifted from its command is a failing test rather than a stale
+number. At this folder's own commit, `e5211a8a` (#773) — whose own diff is this
+folder's four documents and its pin test and nothing else — one row is then the
+folder's own: the pins were **48**, the 47 the base `1d325928` (§1) already held
+plus this folder's `internal/cli/docs_rigor_modes_test.go`, and they are files
+rather than folders, 13 of them pinning one of `docs/`'s folders and the rest a
+standalone document, which is why the row above counts the pins and not the
+folders they sit beside. **The figure is 53 today, because five folders have
+written a pin since**: `internal/cli/docs_gcp_setup_test.go` (#764, the WSL
+route's Windows forms), `internal/cli/docs_setup_wizard_checks_test.go` (#771, the
+register's Check 27), `internal/cli/docs_live_init_census_test.go` (#772, the
+setup wizard's rename census), `internal/cli/docs_windows_console_test.go`
+(#774, the Console on Windows, whose folder did not exist at `1d325928`) and
+`internal/cli/docs_mobile_release_workflow_test.go` (#777, the mobile release
+workflow while it waits under `docs/pending-workflows/`). The five
+are named because the figure is a running total of other folders' guards: a folder
+that writes one moves this row in its own commit, and a reader who finds the row
+stale has found a merge that did not.
 
 | Construct | Count | Command |
 | --- | --- | --- |
@@ -686,7 +699,7 @@ folders they sit beside.
 | Files in `internal/runner` that mention `Severity` at all | 3 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
 | Image-skew `Since` constants | 11 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 48 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 53 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 3 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -ci repo` |
@@ -732,10 +745,11 @@ amendment's own claim about itself: it changes documents and nothing else. A lat
 slice that writes its own pin moves the pin-count row above in the same commit
 (the plan's T4.3 is the first that will).
 
-The **48** is the convention this folder follows: there is no registry test over
+The **53** is the convention this folder follows: there is no registry test over
 `docs/`, so a folder that wants its documents pinned writes its own file, and
-this folder's is `internal/cli/docs_rigor_modes_test.go` — the forty-eighth, and
-the one row in this table that the folder's own commit moves.
+this folder's is `internal/cli/docs_rigor_modes_test.go` — the forty-eighth when
+this folder's own commit wrote it, and one of the five pins the row has counted
+since. It is the row in this table that this folder's own commit moved.
 
 ## 5. Decisions for the owner
 
@@ -872,7 +886,7 @@ corpus case (F36) — the five-edit shape F7 records, done at the layer rather
 than in the file. The published project policy is deliberately **not** a carrier
 for it: a policy key is a `projectpolicy.Version` bump, a bump drops every policy
 an installation has already published until its rules are redeployed with
-`fugaro init --firebase`, and a mode default is not worth that (`marker.go`'s
+`fugaro init --firebase-project`, and a mode default is not worth that (`marker.go`'s
 warning is the reason the rule exists).
 
 **Recommended, part three: a *floor* the project's repositories cannot edit
@@ -2023,7 +2037,7 @@ The live checks below are the ones a person runs, because a container cannot:
 | A run started with `--ref` at a branch whose own `rigor:` disagrees with the base branch's | which revision the mode was read from (D25) — the answer the owner's ruling on that decision makes | needs two branches and a real run on the branch |
 | A run whose diff matches two areas, one Critical and one POC | the mixed-area rule is the strictest of the matched, and the record names both (D23) | needs a real diff that lands in both |
 | A run whose first round stays in one area and whose second round reaches another | the raised mode bought the rounds that remained, and never fell back (D22) | needs a live agent and a multi-round run |
-| `fugaro watch` on a live run after the rules are redeployed | the mode and its layer reach a live row, and an installation with old rules drops the field and warns instead of failing the entry (F40) | needs a deployed database and `fugaro init --firebase` |
+| `fugaro watch` on a live run after the rules are redeployed | the mode and its layer reach a live row, and an installation with old rules drops the field and warns instead of failing the entry (F40) | needs a deployed database and `fugaro init --firebase-project` |
 | The pull request that fixes a filed item | the item's `status` flips and the index regenerates in that same commit, and the pin goes red if either is forgotten (D31) | a real pull request, reviewed as a diff |
 | Two branches filing items on the same day, merged in either order | the id collision is a rename rather than a silent clash, and the index conflict is resolved by re-running the generator (D26, D28) | two real branches, two merges, and the provider's own conflict |
 
@@ -2121,6 +2135,6 @@ the plan says so where it touches one.
 | U7 | the console tolerates a richer finding row without a contract change | the console's renderer run against a `fugaro diagnose --json` payload with scores |
 | U8 | a narrower `check` gate for POC fits inside `fugaro.yaml`'s verify timeout on a real repository | a timed run of each mode's gate |
 | U9 | an area rule matches the paths a real run actually touches at a moment when the run can still act on it (D22's moments are the tree's, not a measurement) | a live multi-round run whose diff crosses an area boundary, read from the record's own resolution note |
-| U10 | adding a child to the registry entry is accepted by a deployed database after `fugaro init --firebase`, and refused readably before it (F40) | the rules deployed to a real project, then one run live in `fugaro watch` |
+| U10 | adding a child to the registry entry is accepted by a deployed database after `fugaro init --firebase-project`, and refused readably before it (F40) | the rules deployed to a real project, then one run live in `fugaro watch` |
 | U11 | an item filed by a run into its own branch is read by the reviewer of that pull request as a record rather than as a change under review (F44) | one real run that files an item, and a reading of that pull request's diff by a person |
 | U12 | the generated index stays mergeable when two branches filed on the same day, in either merge order, without a hand edit (D28) | two real branches filing items, merged in one order and then the other |

@@ -24,7 +24,7 @@ const ProjectMarkerObject = "fugaro/project.json"
 
 // SharedConfigObject is the object in the runs bucket that holds the
 // installation-wide, non-secret part of the project config (localcfg
-// Config.Shared), published by fugaro init for the installation's other
+// Config.Shared), published by fugaro update for the installation's other
 // users.
 const SharedConfigObject = "fugaro/config.yaml"
 

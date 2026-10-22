@@ -50,7 +50,7 @@ import (
 // And the apply that reads it is built: `fugaro managed apply` takes the
 // addresses from this object through managed.GuardAllowList and registers no
 // flag of its own for them (internal/cli/managed_apply.go), so an applying
-// command cannot overrule the owner. fugaro init still honours --allow-delete
+// command cannot overrule the owner. The converge still honours --allow-delete
 // on its own command line, where the addresses go to tf.Guard directly.
 
 // newAllowDeleteCmd is `fugaro allow-delete [ADDRESS...]`.
@@ -81,7 +81,7 @@ deployer account a managed apply impersonates will not be able to (D75, Task
 1.5), so a managed apply can take its allow-list from the owner's object
 instead of from the command line of whatever session is applying: fugaro
 managed apply reads this object and takes no address flag of its own, so the
-session that applies cannot widen the list. (fugaro init still honours its own
+session that applies cannot widen the list. (the converge still honours its own
 --allow-delete on its own command line, where the addresses go to tf.Guard
 directly.) What this does not do: a coding agent's session holds the
 operator's credentials, so it can write this object directly (gcloud storage

@@ -94,7 +94,7 @@ func copyRoutes(rs []Route) []Route {
 // missingAnthropicKey is how a call that needs the Anthropic upstream is
 // refused when the run has no key stored (design project-centric §6.1): a
 // stored key is mounted whenever the secret has a version, so storing one and
-// re-running `fugaro init --repo` is the whole fix, and a run whose models all
+// re-running `fugaro update` is the whole fix, and a run whose models all
 // route through providers never needs it.
 const missingAnthropicKey = config.MissingAnthropicKey
 

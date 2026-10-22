@@ -151,12 +151,12 @@ func ApplyGate(r BudgetRead) (Enable, error) {
 		if reason == "" {
 			reason = "its creation fact was not believed"
 		}
-		return Enable{}, fmt.Errorf("%w: %s is not managed (%s), so its plans keep the coding agent's refusal and are applied by fugaro init's own path with its confirmation",
+		return Enable{}, fmt.Errorf("%w: %s is not managed (%s), so its plans keep the coding agent's refusal and are applied by fugaro update's own path with its confirmation",
 			ErrNotEnabled, safetext.Field(r.Project), reason)
 	default:
 		// Managed, and the creation fact records no amount: the marker's
 		// version 1, which is a creation before Task 4.2 or a creation that
-		// was not managed (an ordinary `fugaro init --create-project`, whose
+		// was not managed (an ordinary `fugaro setup --create-project`, whose
 		// WriteMarker call passes no budget). The sentence says what is true
 		// in this release, and since Task 6.1 there IS a way for such a
 		// project to get an amount: the owner's own command, at their own
@@ -166,7 +166,7 @@ func ApplyGate(r BudgetRead) (Enable, error) {
 		if reason == "" {
 			reason = "the creation fact records no amount"
 		}
-		return Enable{}, fmt.Errorf("%w: %s has no budget recorded (%s), so the project's own owner can add one by flagging it managed — `fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC`, typed at their own terminal, which replaces this creation fact with the version that records the amount — or a managed project is created with one: `fugaro init --create-project --managed --budget N --budget-currency CCC --billing-account ID`",
+		return Enable{}, fmt.Errorf("%w: %s has no budget recorded (%s), so the project's own owner can add one by flagging it managed — `fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC`, typed at their own terminal, which replaces this creation fact with the version that records the amount — or a managed project is created with one: `fugaro setup --create-project --managed --budget N --budget-currency CCC --billing-account ID`",
 			ErrNotEnabled, safetext.Field(r.Project), reason)
 	}
 }

@@ -80,7 +80,7 @@ func budgetBackendOn(lc *localcfg.Config) (bool, error) {
 // nothing else can give a run its identity.
 func budgetSignerOn(lc *localcfg.Config) error {
 	if lc.Budget == nil || lc.Budget.TokenSigner == "" {
-		return userErr("budget.token_signer is not set in project %s's config, so runs cannot be given a budget identity: an operator runs fugaro init --firebase <firebase-project-id> --name %s", lc.Name, lc.Name)
+		return userErr("budget.token_signer is not set in project %s's config, so runs cannot be given a budget identity: an operator runs fugaro update --firebase-project <firebase-project-id> --name %s", lc.Name, lc.Name)
 	}
 	return nil
 }
@@ -193,7 +193,7 @@ func policyReadErr(err error) error {
 	case errors.As(err, &me):
 		return userErr("%v", err)
 	case errors.Is(err, rtdb.ErrPermission):
-		return userErr("%v: the deployed rules no longer let this project read its own policy; if they are older than %s, run fugaro init --firebase again with this Fugaro", err, projectpolicy.PathRulesMarker())
+		return userErr("%v: the deployed rules no longer let this project read its own policy; if they are older than %s, run fugaro update --firebase-project again with this Fugaro", err, projectpolicy.PathRulesMarker())
 	case errors.Is(err, rtdb.ErrUnavailable):
 		return remote(err)
 	default:
@@ -209,7 +209,7 @@ func policyReadErr(err error) error {
 	}
 }
 
-// policyReadOnce memoizes one CLI run's read of the policy: init --repo asks
+// policyReadOnce memoizes one CLI run's read of the policy: update --repo asks
 // twice (once before the first plan, once after the builds) and must not pay
 // for it twice, and a launch asks twice on one path too — the gate before
 // anything of it exists, and the mint decision — where two reads could
@@ -398,7 +398,7 @@ func sealDevRefusal(spec *task.Spec) func(rec *imagecheck.Record, ref string) (b
 func sealDevNote(spec *task.Spec, clone bool) string {
 	if clone {
 		return fmt.Sprintf("if it predates the seal, its runner puts this launch's seal key into the run's record, where peer runs of the repository can read it; "+
-			"move base_images.base to a release base image (fugaro %s or later) with fugaro init --base base, in your own terminal window", sealSince)
+			"move base_images.base to a release base image (fugaro %s or later) with fugaro update --base base, in your own terminal window", sealSince)
 	}
 	return fmt.Sprintf("if that base predates the seal, its runner puts this launch's seal key into the run's record, where peer runs of the repository can read it; "+
 		"rebuild the base image from a checkout that has the seal and the job image from it with fugaro image build --repo %s --workflow %s (its record then says sealed_budget_token and this warning goes)",

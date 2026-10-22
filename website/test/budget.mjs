@@ -18,7 +18,7 @@
 // corrections of that day and the next to it, named in the first bullet below), `main`'s
 // `fugaro watch` picture on the homepage (#655), and this branch's redesigned pages on top of
 // them (the homepage's order and run animation, P4, P7 and P8) together with its two changes
-// from the owner's brief of **2026-10-19**: the menu's drawer replaced by the three group
+// from the owner's brief of **2026-10-19**: the menu's drawer replaced by the group
 // labels in the header's row (item 1), and the console's link in the homepage's call to
 // action (item 6), which renders from the console's flag — and the console's release (W3.1),
 // which turned that flag on and so put the link, the console's downloads and Getting Started's
@@ -87,22 +87,30 @@
 //     JavaScript — which is why the case below reads the artifact rather than trusting this
 //     line, and why D192 requires the README's figure to be re-derived in the same commit that
 //     changes the script.
-//   - Page weight per page: the heaviest page, `docs/index.html` — its HTML (the whole generated
-//     CLI reference) plus the first-party files it fetches: the script above and the logo and
-//     icons the layout links — × 1.25, rounded up. One ceiling for every page rather than one per
-//     page, so a page that grows with the product (the changelog, the reference) is held to the
-//     same line as the rest instead of to its own history.
-//   - Whole site: every file in `dist/` — eleven pages, the script, the brand icons, the manifest
-//     and the two `fugaro watch` assets — × 1.25, rounded up. It is the build every checkout
-//     makes alike, tags or no tags, since the changelog reads the plugin's version rather than
-//     the checkout's tags.
+//   - Page weight per page: the heaviest page — the console page today, since
+//     the four screenshots landed and its weight is its HTML plus the pictures it renders, where
+//     it was `docs/index.html` before them, whose HTML is the whole generated CLI reference —
+//     plus the first-party files the page fetches: the script above and the logo and icons the
+//     layout links — × 1.25, rounded up. One ceiling for every page rather than one per page, so
+//     a page that grows with the product (the changelog, the reference) or with the pictures it
+//     carries is held to the same line as the rest instead of to its own history. **Which page
+//     is the heaviest is a fact about the build and not about this list**: the figure in
+//     `website/README.md` names the page, a round that adds pictures can move that page from the
+//     docs hub to the console page and back, and this derivation only runs under
+//     `FUGARO_DERIVE_BUDGETS=1` — so a round that changes which page it is re-derives there in
+//     the commit that does, and the README's sentence moves with it.
+//   - Whole site: every file in `dist/` — thirteen pages, the script, the brand icons, the manifest,
+//     the two `fugaro watch` assets, and the console's four screenshots and the manifest they
+//     came with — × 1.25, rounded up. It is the build every checkout makes alike, tags or no
+//     tags, since the changelog reads the plugin's version rather than the checkout's tags.
 //
 // **Where this build's three numbers come from** is written in `website/README.md` too, one
 // bullet up from this file's name in its gates list: the same rounds, the same causes and the
 // same deltas — `main`'s fix rounds and this branch's redesign's own; the `fugaro watch`
 // picture landing on the homepage; the menu's drawer coming out and the script's comments going
 // back in step with it; the console's release turning `features.console_downloads` on;
-// Getting Started's three bands; the console's screenshot slider; the run on How It Works
+// Getting Started's three bands; the console's screenshot slider and the review round that made
+// its moves instant and its first reading the track's; the run on How It Works
 // becoming one vertical timeline; the caps-and-costs rework; the changelog's product
 // summaries; the homepage's prompt line, benefits, pull request caption, the benefits'
 // block rule and the four icons and the type step the points were given after it; the privacy
@@ -745,30 +753,90 @@ test('a budget raised without re-deriving it is refused', () => {
 // the changelog still reads no tag, which is what makes the statement true. **The pair is read
 // here from the README and from nowhere else**: the figures a reader sees are stated in one
 // place, and this file's prose repeats none of them.
+//
+// **And the one figure the two shapes are stated as is the site's own**, which is the second
+// half of the same claim and the correction of 2026-10-21: the paragraph says the two shapes are
+// *this* build, so the figure it states is the byte count the whole-site budget above derives
+// from — and the pair being equal to itself is not that. A round that re-derived the site figure
+// and left both shapes where they were would agree with itself a round behind, which is the
+// drift this case exists for and the one it could not see: the two numbers were read against
+// each other and against nothing else for as long as they have existed. The build figure beside
+// the whole-site budget is the README's own, read here rather than written here, so the pair is
+// held to the site without a byte of it appearing in this file.
 const PAIR =
   /\*\*([\d,]+) bytes in a checkout with no tags\*\*[\s\S]*?\*\*([\d,]+) bytes with the\s+tags this repository's own clone carries\*\*/
 
+/** Every way the README's two checkout shapes depart from what the paragraph claims, as lines. */
+export function pairFailures(readme) {
+  const out = []
+  const n = (s) => Number(s.replace(/,/g, ''))
+  const pair = PAIR.exec(readme)
+  if (!pair) {
+    out.push(
+      'website/README.md no longer states the site\'s two checkout shapes in the form this case reads — "**N bytes in a checkout with no tags** … **N bytes with the tags this repository\'s own clone carries**" — so the pair is not held anywhere: that paragraph is the one place the two figures are written, and a rewrite that drops one of them leaves the other stated with nothing reading it',
+    )
+    return out
+  }
+  const [noTags, clone] = [n(pair[1]), n(pair[2])]
+  if (clone !== noTags) {
+    out.push(
+      `website/README.md states the no-tags build as ${noTags} bytes and the clone build as ${clone}: no page reads the checkout's git state, so the two shapes are one build and a re-derivation that moves one of them moves the other`,
+    )
+  }
+
+  const site = DERIVATIONS.site.exec(readme)
+  if (!site) {
+    out.push(
+      'website/README.md does not write the whole-site budget as "N bytes. Three times T (every file in `dist/`, B bytes": that B is the build the two checkout shapes claim to be, and without it the pair is a figure nothing can disagree with',
+    )
+  } else if (n(site[3]) !== noTags || n(site[3]) !== clone) {
+    out.push(
+      `the two checkout shapes are stated as ${noTags} and ${clone} bytes and the whole-site budget derives from a ${n(site[3])}-byte build: the paragraph claims the two shapes are one build — this one — so a pair that agrees with itself a round behind is the drift this case is for, and it is re-derived in the commit that moves those bytes (D192)`,
+    )
+  }
+  return out
+}
+
 test('the site’s two checkout shapes are stated as one figure, and the changelog reads no tag', () => {
   const readme = readFileSync(path.join(SITE, 'README.md'), 'utf8')
-  const n = (s) => Number(s.replace(/,/g, ''))
-
-  const pair = PAIR.exec(readme)
-  assert.ok(
-    pair,
-    'website/README.md no longer states the site\'s two checkout shapes in the form this case reads — "**N bytes in a checkout with no tags** … **N bytes with the tags this repository\'s own clone carries**" — so the pair is not held anywhere: that paragraph is the one place the two figures are written, and a rewrite that drops one of them leaves the other stated with nothing reading it',
-  )
-  const [noTags, clone] = [n(pair[1]), n(pair[2])]
-  assert.equal(
-    clone,
-    noTags,
-    `website/README.md states the no-tags build as ${noTags} bytes and the clone build as ${clone}: no page reads the checkout's git state, so the two shapes are one build and a re-derivation that moves one of them moves the other`,
-  )
+  const failures = pairFailures(readme)
+  assert.deepEqual(failures, [], `website/README.md's two checkout shapes do not hold:\n  ${failures.join('\n  ')}`)
 
   const changelog = readFileSync(path.join(SITE, 'src', 'lib', 'changelog.mjs'), 'utf8')
   assert.doesNotMatch(
     changelog,
     /node:child_process|['"]tag['"]\s*,\s*['"]--list['"]/,
     'src/lib/changelog.mjs reads the checkout\'s git state again: the site\'s two checkout shapes would build two figures, and the README\'s one-figure pair would be false',
+  )
+})
+
+test('a pair of checkout shapes a round behind is refused, whether the two agree or not', () => {
+  // The reading above is only worth its lines if it disagrees with the two ways the pair goes
+  // wrong: one shape moved and the other left behind — the drift the pair was written for, and
+  // the one the case above could see — and **both moved together with neither of them the
+  // site's own build**, which is the drift it could not. The second is what this repository did
+  // on 2026-10-21: a round re-derived the site figure and left the pair where it had been.
+  const readme = readFileSync(path.join(SITE, 'README.md'), 'utf8')
+  const site = Number(DERIVATIONS.site.exec(readme)[3].replace(/,/g, ''))
+  const restate = (noTags, clone) =>
+    readme.replace(PAIR, `**${noTags} bytes in a checkout with no tags** and to **${clone} bytes with the tags this repository's own clone carries**`)
+  assert.deepEqual(pairFailures(readme), [])
+
+  assert.match(
+    pairFailures(restate(site - 1, site)).join('\n'),
+    /the two shapes are one build and a re-derivation that moves one of them moves the other/,
+    'two shapes stated as different figures are not refused, and no page reads the checkout\'s git state: the two are one build',
+  )
+  assert.match(
+    pairFailures(restate(site - 1, site - 1)).join('\n'),
+    /a pair that agrees with itself a round behind/,
+    'two shapes stated as the same stale figure are not refused: a pair the site has moved past is a figure a reader is told is this build and is not',
+  )
+  // And a paragraph rewritten out of the form this case reads is held, not passed over.
+  assert.match(
+    pairFailures(readme.replace(PAIR, 'and the two shapes build alike')).join('\n'),
+    /no longer states the site's two checkout shapes/,
+    'a README that stops stating the pair at all is not refused, so the figures a reader sees would be held by nothing',
   )
 })
 
@@ -974,16 +1042,30 @@ test('the word reader counts what a reader reads, and nothing else', (t) => {
  * D188's own words-per-page ceiling, the number the raise above it is measured against: 250 as
  * D188 set it, 300 since the owner's feedback of 2026-10-19 asked the homepage for a fourth
  * required block (its benefits section — headed "Why Fugaro?" since the owner's ruling of
- * 2026-10-20 — 294 words with the three before it), and **500 since the bold redesign of
+ * 2026-10-20 — 294 words with the three before it), **500 since the bold redesign of
  * 2026-10-20**, which is the owner's approved board `website/design-ref/HomeV3.dc.html` built:
  * the homepage is the board's five blocks — the hero, the slider, the run band, the grid of
  * what a run leaves behind, and the closing call to action — and they measure 468 words, so
  * the smallest round ceiling above the page that carries every block its briefs and its boards
- * require is 500. D188's own rule is what moves it and not convenience: the number is the
+ * require is 500 — and **600 since the 2026-10-21 brief**, which asks the homepage's "See it"
+ * panel for a slider of four slides led by the console's own screenshots
+ * (`docs/website/zoom-diagrams/spec.md`, D251, D252): the three pictures that lead it are the
+ * console page's, so they carry the console page's own `alt` texts — one picture has one
+ * account of what it shows — and an image's `alt` is text a reader reads, which is the whole
+ * of what the four slides add to the page: 461 → 563 words, and the smallest round ceiling
+ * above it is 600. D188's own rule is what moves it and not convenience: the number is the
  * ceiling above the page that carries the required blocks, and a page that wants the room has
- * to carry one. website/README.md records both readings beside the words line.
+ * to carry one. website/README.md records every reading beside the words line.
+ *
+ * **900 since the 2026-10-22 brief**, which replaces the four zoom levels with the owner's four
+ * approved design boards (`website/design-ref/zoom-levels/level1.dc.html` … `level4.dc.html`)
+ * redrawn as the site's inline SVG: a board's labels are strings the drawing renders, and a
+ * string the drawing renders is text a reader reads, so the four levels' labels are words on How
+ * It Works the way the slider's `alt` texts are words on the homepage. The page goes 492 → **868
+ * words** — the boards' own labels, word for word, which is the whole of what the brief asks it
+ * to draw — and the smallest round ceiling above it is 900.
  */
-export const D188_WORDS = 500
+export const D188_WORDS = 900
 
 /** The one page the words ceiling is derived from, by its built URL. */
 const WORDS_CEILING_PAGE = '/privacy/'

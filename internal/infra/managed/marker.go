@@ -35,7 +35,7 @@ const (
 	// that does is the operator's own.
 	//
 	// It is an object rather than a Terraform resource for D74's reason:
-	// fugaro init rewrites the installation's terraform.tfvars.json from its
+	// fugaro update rewrites the installation's terraform.tfvars.json from its
 	// own flags on every run, so a variable-driven object would be planned
 	// to destroy on the next ordinary init — silently, with the apply that
 	// follows reading "not managed".
@@ -269,8 +269,9 @@ func insertMarker(ctx context.Context, s *storage.Service, bucket string, gen in
 // the only thing the write is gated on, and the gate is the first check
 // below: a run that created no project writes nothing at all — not the
 // object, not a read of the bucket. Adding Firebase is not creating
-// (init --firebase does it on projects that already exist, D73), so a write
-// gated on anything else would mark the owner's own projects and belong.
+// (fugaro update --firebase-project does it on projects that already exist,
+// D73), so a write gated on anything else would mark the owner's own projects
+// and belong.
 //
 // project is the project the marker would be about, and number the number
 // the caller believes that project has (infra.ProjectNumber's answer, which
@@ -290,7 +291,7 @@ func insertMarker(ctx context.Context, s *storage.Service, bucket string, gen in
 //
 // budget is the monthly amount and the currency the run was required to
 // choose for a managed creation (Task 4.2, D64), or nil for a creation that
-// is not managed — an ordinary `fugaro init --create-project --budget …`
+// is not managed — an ordinary `fugaro setup --create-project --budget …`
 // records no amount, because the fact it writes is the one it wrote before
 // this version existed. It chooses the object's version and nothing else: a
 // write with a budget is version 2, one without is version 1, and there is
@@ -385,7 +386,7 @@ func writeMarker(ctx context.Context, s *storage.Service, bucket, created, proje
 // label (docs/gcp-setup.md carries the owner-run backfill). And like
 // WriteMarker's, the error is one bounded field (safetext.FieldErr) before it
 // is returned: what it carries is a project name out of a configuration and the
-// words of a Resource Manager answer, and `fugaro init` prints it in a warning.
+// words of a Resource Manager answer, and `fugaro update` prints it in a warning.
 // The bound is on the message alone, so a *googleapi.Error inside it is still
 // matched.
 func WriteManagedLabel(ctx context.Context, c *crm.Service, created, project string) error {
@@ -505,7 +506,7 @@ func writeManagedLabel(ctx context.Context, c *crm.Service, project, who string)
 //     written.
 //   - one replacement, of one object, and of nothing else. An object that is
 //     there and is the version-1 creation fact of THIS project — the state
-//     every `fugaro init --create-project` without --managed leaves, and the
+//     every `fugaro setup --create-project` without --managed leaves, and the
 //     state internal/managed's gate refusal names this command as the way out
 //     of — is replaced by the version-2 one, because adding the budget to an
 //     existing fact is what this command is for, and a flag that refused it

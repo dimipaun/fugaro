@@ -341,7 +341,7 @@ func TestLayerClaimedPinUnderObserveIsRefused(t *testing.T) {
 // and the claim — which only the layer carries — is not in it: the run
 // merges the claim on top of that table, never into it. That is why removing
 // the claim from the layer puts the refusal back on the next launch, with no
-// stale environment to step around. (The other half — that `fugaro init
+// stale environment to step around. (The other half — that `fugaro update
 // --repo` writes no claim, whatever the layer says — is
 // internal/infra's TestTheJobProvidersEnvNeverCarriesALayerClaim, where that
 // table is written; this asserts the input side, the run's own Deps.)
