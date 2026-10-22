@@ -123,35 +123,54 @@ const sitemapHref = site.sitemapHref
 // the page, and one aimed at a file that is not there is a request for nothing.
 const fonts = site.fonts
 
-// The sections of the site, in three groups of three (P3, D182: Product, Reference, Project).
-// The routes are the ones the plan's page list fixes (how-it-works, getting-started,
-// caps-and-costs, console, docs, security, changelog, faq, community) and each label is the
-// route's own words rather than a copy of a page's title — a nav that restated the pages
-// would be a second copy of them to keep in step. Home is not one of them: the wordmark
-// below is the link home, so `/` is listed once, as the logo.
+// The sections of the site, in two groups (P3's menu, D182, **with the Reference group dropped
+// by the owner's feedback of 2026-10-21**: "let's drop the top reference menu. We'll move the
+// submenu console under product, and the rest go under Project"). The routes are the ones the
+// plan's page list fixes (how-it-works, why-gcp, getting-started, caps-and-costs, console,
+// mobile, docs, security, changelog, faq, community) and each label is the route's own words
+// rather than a copy of a page's title — a nav that restated the pages would be a second copy
+// of them to keep in step. The groups' six-and-five split is the feedback's, not a symmetry:
+// *Product* carries the pages about running the thing the visitor came for — how it works and
+// where it runs, how to start, what it costs, the console and the phone app — and *Project*
+// the five about the project itself, Docs and Changelog included. **Why GCP is the second
+// *Product* item** (D238, the zoom-diagrams plan's Part 2): the brief puts it "right after the
+// zoom diagrams", because the fourth level is the picture of everything in one project and
+// the page is the argument for it.
+//
+// **Mobile is the sixth of them** (the zoom-diagrams plan §3, Part 3, item 6, with the owner's
+// answers of 2026-10-21 under it): the phone app's page is the console page's sister, and
+// Console is a Product item, so the new item goes beside it rather than into Project. The two
+// groups stay two — the plan's Part 3 asks for one item and not a third group — and
+// `website/test/base-styles.mjs`'s `GROUPS_WANTED` is what holds both to that.
+//
+// **Home is not one of them, and it is in the menu all the same** (the owner's feedback of
+// 2026-10-21: "I think we need a 'Home' as the first menu"). D182 took Home out of the menu
+// and left the wordmark as the one link to `/`; the feedback puts it back, as the item in
+// front of the groups, and the wordmark stays the way home it has always been — the two
+// links say the same thing to a reader who reaches for either. `/` is therefore listed twice,
+// which is why the current-page mark is not decided here: `isCurrent('/')` marks the menu's
+// Home link and nothing else on the page, because a page carries exactly one
+// `aria-current="page"` (RF4) and the link a reader looks for in a menu is the one to mark.
 const NAV_GROUPS = [
   {
     label: 'Product',
     items: [
       { href: '/how-it-works/', label: 'How it works' },
+      { href: '/why-gcp/', label: 'Why GCP' },
       { href: '/getting-started/', label: 'Getting started' },
       { href: '/caps-and-costs/', label: 'Caps and costs' },
-    ],
-  },
-  {
-    label: 'Reference',
-    items: [
-      { href: '/docs/', label: 'Docs' },
       { href: '/console/', label: 'Console' },
-      { href: '/changelog/', label: 'Changelog' },
+      { href: '/mobile/', label: 'Mobile' },
     ],
   },
   {
     label: 'Project',
     items: [
+      { href: '/docs/', label: 'Docs' },
       { href: '/security/', label: 'Security' },
       { href: '/faq/', label: 'FAQ' },
       { href: '/community/', label: 'Community' },
+      { href: '/changelog/', label: 'Changelog' },
     ],
   },
 ]
@@ -173,7 +192,10 @@ function navItem(href: string) {
 const FOOTER_NAV = [...['/security/', '/changelog/'].map(navItem), { href: '/privacy/', label: 'Privacy' }]
 
 // Whether a route is the page being built, for the one `aria-current="page"` a page carries:
-// the wordmark on the home page, the menu link on every other page it lists (P3, RF4).
+// the menu's own link to it on every page the menu lists, which is every page of the site
+// since the owner's feedback of 2026-10-21 put Home back in the menu (P3, RF4). The wordmark
+// carries no mark of its own any more: it links the same route the menu's first item links,
+// and two marks on the home page would be two claims about which page is being read.
 const isCurrent = (href: string) => pagePath === href
 
 // Analytics (D93, D106; the owner's ruling of 2026-10-18 in the amendment under plan Task
@@ -309,27 +331,33 @@ const analyticsEnabled = facts.analytics.enabled
     <header class="site-header">
       {/* The logo is decoration beside the name, so its alt is empty: the link's
           accessible name is the word "Fugaro", said once. The file is 2x the size drawn.
-          The link is also the way home: D182 takes Home out of the menu and leaves the
-          wordmark as the one link to `/`, marked as the current page when the page being
-          read is the home page, so every page still carries exactly one
+          The link is also a way home — the other is the menu's first item (the owner's
+          feedback of 2026-10-21) — and it carries no `aria-current` of its own: the mark is
+          on the menu's Home link, so every page still carries exactly one
           `aria-current="page"` (P3, RF4).
 
           The name is in its own `<span>` because on a phone it is the name — and not the
-          three group labels beside it — that gives way (the owner's brief of 2026-10-19,
+          group labels beside it — that gives way (the owner's brief of 2026-10-19,
           item 1: the menu's labels stay in the header's row at 375 px, and the wordmark's
           text is hidden below about 380 px, the mark alone standing for the way home).
           `base.css` hides it from the eye and not from a screen reader, so the link keeps
           its name at every width. */}
-      <a class="site-wordmark" href="/" rel="home" aria-current={isCurrent('/') ? 'page' : undefined}>
+      <a class="site-wordmark" href="/" rel="home">
         <img src="/logo.png" alt="" width="47" height="32" decoding="async" /><span class="site-wordmark-name">{SITE_NAME}</span>
       </a>
 
-      {/* The menu: three groups of three (P3, D182). The three group labels are in the
-          header's one row at every width, and each one opens its own panel of links: on a
-          wide viewport a dropdown under its label, on a phone a drawer across the header's
-          full width. There is no toggle standing in front of the whole menu — the owner's
-          brief of 2026-10-19, item 1, took the single "Menu" button away, so a phone reaches
-          any section in one tap rather than two.
+      {/* The menu: the way home and then the site's groups (P3, D182, the Reference group
+          dropped by the owner's feedback of 2026-10-21; the owner's feedback of the same day,
+          item 2, put Home at the front of it). Home is a plain
+          link and not a group — it is one page, and it has nothing under it — and it is drawn
+          in the same row as the labels, on a phone and on a wide viewport alike: the
+          brief's "first menu" is the first item of the one menu the site has, and the phone
+          shows that menu rather than a collapsed version of it (the owner's brief of
+          2026-10-19, item 1). The group labels are in the header's one row at every
+          width, and each one opens its own panel of links: on a wide viewport a dropdown
+          under its label, on a phone a drawer across the header's full width. There is no
+          toggle standing in front of the whole menu — the brief of 2026-10-19 took the single
+          "Menu" button away, so a phone reaches any section in one tap rather than two.
 
           Both levels are `<details>`, so both open and close with JavaScript off, need no
           CSP decision and cost nothing of the JavaScript budget; `public/scripts/site.js`
@@ -357,11 +385,14 @@ const analyticsEnabled = facts.analytics.enabled
           which is what the toggle-and-sibling-panel arrangement used to need, and the drawer
           it belonged to is gone with it.
 
-          The three groups share one `name`, which makes them an exclusive set without a line
-          of script: opening *Reference* closes *Product*, so two panels never hang over each
+          The groups share one `name`, which makes them an exclusive set without a line
+          of script: opening *Project* closes *Product*, so two panels never hang over each
           other. */}
       <nav class="site-nav" aria-label="Sections">
         <ul class="site-nav-groups">
+          <li class="site-nav-home">
+            <a href="/" aria-current={isCurrent('/') ? 'page' : undefined}>Home</a>
+          </li>
           {NAV_GROUPS.map((group) => (
             <li class="site-nav-group">
               <details name="site-nav-group" data-current={group.items.some((item) => isCurrent(item.href)) ? '' : undefined}>

@@ -1,4 +1,4 @@
-# Every name arrives from fugaro init's terraform.tfvars.json. The
+# Every name arrives from fugaro update's terraform.tfvars.json. The
 # validation blocks check shapes only; nothing here derives a name.
 
 variable "project" {
@@ -42,7 +42,7 @@ variable "runs_bucket" {
 }
 
 variable "state_bucket" {
-  description = "The Terraform state bucket, which fugaro init creates and Terraform doesn't manage. Operators get objectAdmin on it."
+  description = "The Terraform state bucket, which fugaro setup creates and Terraform doesn't manage. Operators get objectAdmin on it."
   type        = string
 
   validation {
@@ -97,7 +97,7 @@ variable "names" {
 }
 
 variable "log_bucket_description" {
-  description = "The log bucket's description, which is its ownership mark: a log bucket carries no labels, so fugaro init adopts an existing one only when it carries this description."
+  description = "The log bucket's description, which is its ownership mark: a log bucket carries no labels, so fugaro update adopts an existing one only when it carries this description."
   type        = string
 
   validation {
@@ -225,7 +225,7 @@ variable "registry_cleanup" {
 }
 
 variable "adopt_legacy_registry" {
-  description = "Whether to adopt the bootstrap's legacy registry. fugaro init sets it when it finds one carrying the fugaro=managed mark."
+  description = "Whether to adopt the bootstrap's legacy registry. fugaro update sets it when it finds one carrying the fugaro=managed mark."
   type        = bool
   default     = false
   nullable    = false
@@ -284,19 +284,27 @@ variable "history" {
 }
 
 variable "project_secrets" {
-  description = "Project-wide secret containers: logical name -> secret ID (gcp.ProjectSecretID), fugaro init creates/adopts each; values are never set by Terraform."
+  description = "Project-wide secret containers: logical name -> secret ID (gcp.ProjectSecretID), fugaro update creates/adopts each; values are never set by Terraform."
   type        = map(string)
   default     = {}
   nullable    = false
 }
 
 variable "credentials_service" {
-  description = "The credentials service (D146, D147): the installation's own Cloud Run service that alone holds the model credentials. OFF by default (null) — with it off this module creates nothing, every job keeps its model-secret accessors and no run reaches a service. image is the released service image, pinned BY DIGEST and never by tag (C1.20's init stage fills the verified digest, as it fills history.image; the validation below refuses a tag, because the account this service runs as reads every credential in the bundle and an operator may push a tag to the installation's own registry); bundle_secret is the Secret Manager ID of the one bundle container the service reads — the project-wide container of the logical name \"creds-bundle\" (internal/backend/gcp's ProjectSecretID, CredsBundleSecretID once the loader of C1.11 declares it), which C1.20's stage fills from that one function so the container created here and the name the loader reads cannot drift. It is created here and written only by the owner-run fugaro creds set (C1.25)."
+  description = "The credentials service (D146, D147): the installation's own Cloud Run service that alone holds the model credentials. OFF by default (null) — with it off this module creates nothing, every job keeps its model-secret accessors and no run reaches a service. image is the released service image, pinned BY DIGEST and never by tag (C1.20's init stage fills the verified digest, as it fills history.image; the validation below refuses a tag, because the account this service runs as reads every credential in the bundle and an operator may push a tag to the installation's own registry); bundle_secret is the Secret Manager ID of the one bundle container the service reads — the project-wide container of the logical name \"creds-bundle\" (internal/backend/gcp's ProjectSecretID, CredsBundleSecretID once the loader of C1.11 declares it), which C1.20's stage fills from that one function so the container created here and the name the loader reads cannot drift. It is created here and written only by the owner-run fugaro creds set (C1.25). firebase_project, rtdb_url and job_accounts are the rest of what the process is configured with (C1.14's serve, whose whole environment is this module's env blocks): the Firebase project a run's identity is verified against and the database it reads, and the installation's per-repository jobs as {provider, repo, workflow} triples, from which the service derives the job service accounts it binds a run to. url is the service's OWN URL — the audience its callers' Google ID tokens are minted for — and it is optional because Cloud Run assigns it: no expression in this file can read google_cloud_run_v2_service.credentials[0].uri from inside that resource (a self-referential block), so the first apply creates the revision with credentials.tf's unassigned placeholder (an .invalid host no ID token is ever minted for: the revision starts, is healthy and admits nobody) until the apply that carries the URL the output reads back (C1.20's stage fills it, the same way history.deploy_job and its rtdb_url are filled on a later apply). Both unset states are the fail-closed direction: a service that guessed its own audience would accept a token minted for another service, and one that refused to start would fail the very apply that produced the URL it needs."
   type = object({
-    account_id    = string
-    service       = string
-    image         = string
-    bundle_secret = string
+    account_id       = string
+    service          = string
+    image            = string
+    bundle_secret    = string
+    firebase_project = string
+    rtdb_url         = string
+    job_accounts = list(object({
+      provider = string
+      repo     = string
+      workflow = string
+    }))
+    url = optional(string)
   })
   default = null
 
@@ -321,10 +329,33 @@ variable "credentials_service" {
     )
     error_message = "credentials_service needs a service account ID (6-30 characters of a-z, 0-9 and -, starting with a letter), a Cloud Run service name, an image pinned by digest (an image reference ending in @sha256: and 64 lower-case hex digits — never a tag: an operator can push a tag), and the bundle secret's Secret Manager ID (letters, digits, - and _)."
   }
+
+  # The four facts the process is configured with (C1.14), held to their shape
+  # at plan time rather than left to the revision that would refuse them: a
+  # service whose environment is wrong does not serve at all, so an installation
+  # that planned one would halt every run that reached it (D143). The two
+  # project-shaped names are the same regex the account ID above is held to
+  # (Firebase project IDs have the same shape), the URLs are history.tf's own
+  # rule (https://<host>, no path), and the job table must not be empty: the
+  # service refuses a table that binds no run to a repository (an empty one is
+  # a service an operator would read as healthy while every run halted), so a
+  # plan that carries one is refused here instead of at the revision.
+  validation {
+    condition = var.credentials_service == null ? true : (
+      can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.credentials_service.firebase_project)) &&
+      can(regex("^https://[a-z0-9.-]+$", var.credentials_service.rtdb_url)) &&
+      length(var.credentials_service.job_accounts) > 0 &&
+      alltrue([for j in var.credentials_service.job_accounts :
+        j.provider != "" && j.repo != "" && j.workflow != ""
+      ]) &&
+      (try(var.credentials_service.url, null) == null || can(regex("^https://[a-z0-9.-]+$", var.credentials_service.url)))
+    )
+    error_message = "credentials_service needs the Firebase project a run's identity is verified against (the shape of a project ID), the installation's realtime database URL (https://<database>.firebasedatabase.app or .firebaseio.com, without a path — the same rule history.rtdb_url is held to), at least one job as {provider, repo, workflow} with all three set (the service binds a run to a repository through them, and an empty table refuses every caller), and, once it is known, its own URL in the same https://<host> form."
+  }
 }
 
 variable "managed_deployer_scoped" {
-  description = "Whether to create the managed deployer's seven conditioned roles (fugaroDeployerStorage, Secret, Account, ApiKey, Repository, RunJob, SchedulerJob) and their seven conditioned bindings. OFF by default, and fugaro init never sets it: the redesigned fmgd- prefix fence has not been measured live yet (docs/design/managed-deployer-fence.md, Check 68 of the live checklist). Before 0.10.0 this flag created one scoped role under one condition, and that condition could not be expressed as a GCP IAM condition at all (17 logical operators where IAM allows 12, resource.name.contains() is not a supported function, and resource.name is not supported for Artifact Registry repositories, Cloud Run jobs, Cloud Scheduler jobs, service accounts or API keys), so setIamPolicy would have rejected it and stopped the whole apply. Managed projects stay disabled until the redesigned fence is measured live."
+  description = "Whether to create the managed deployer's seven conditioned roles (fugaroDeployerStorage, Secret, Account, ApiKey, Repository, RunJob, SchedulerJob) and their seven conditioned bindings. OFF by default, and fugaro update never sets it: the redesigned fmgd- prefix fence has not been measured live yet (docs/design/managed-deployer-fence.md, Check 68 of the live checklist). Before 0.10.0 this flag created one scoped role under one condition, and that condition could not be expressed as a GCP IAM condition at all (17 logical operators where IAM allows 12, resource.name.contains() is not a supported function, and resource.name is not supported for Artifact Registry repositories, Cloud Run jobs, Cloud Scheduler jobs, service accounts or API keys), so setIamPolicy would have rejected it and stopped the whole apply. Managed projects stay disabled until the redesigned fence is measured live."
   type        = bool
   default     = false
   nullable    = false

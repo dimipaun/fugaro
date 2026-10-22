@@ -71,12 +71,15 @@ const UNKNOWN = Object.freeze({ state: 'unknown', verified: false, reason: null,
  *     `jobList` refuse the whole list -- spend, caps and kill switch -- for the
  *     one phone whose clock is ahead. What is refused is a value that is not a
  *     number at all (`'3s'`, `NaN`, `Infinity`). Nothing here computes one.
- *   * `reason` is a bounded string or `null`/absent. It is one of P1.4's
- *     reasons or one of P3.6's own (`PRESENCE_REASON`), which are static
- *     sentences -- never a database error's text -- and it is **carried, not
- *     interpreted**: a caller that switches on it switches over two
- *     vocabularies, which is P3.6's README's warning and not this module's to
- *     resolve.
+ *   * `reason` is a string or `null`/absent, and **no length is judged**: what
+ *     is judged is that it is a string at all. Both producers write it out of a
+ *     closed vocabulary -- P1.4's `REASON` and P3.6's own `PRESENCE_REASON`,
+ *     which are static -- so there is no bounded value here to refuse, and this
+ *     bullet used to say "a bounded string", which was a bound no line of this
+ *     file applied. A caller that needs one applies it rather than reading it
+ *     here. It is **carried, not interpreted**: a caller that switches on it
+ *     switches over two vocabularies, which is P3.6's README's warning and not
+ *     this module's to resolve.
  *
  * The agent count P3.6 reports is deliberately **not** carried: P3.6 already
  * ignores it for an unverified heartbeat, and no field of the list's table

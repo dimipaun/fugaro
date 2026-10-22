@@ -1528,6 +1528,12 @@ func TestReviewModeIncludesLauncherTaskText(t *testing.T) {
 // must be the base branch's own copy of that command's text, read
 // directly (readReviewCommandFromBase), never the fork's.
 //
+// What the prompt itself says is the instructions half (instructionsOf,
+// reviewinput.go's built input): the fork's copy of the file also appears in
+// the diff Fugaro attaches, which is the pull request's own content the
+// reviewer is there to read — the same text its own `git diff` handed it
+// before this existed, and never a command body Claude Code expands.
+//
 // Mutation (drop reviewModePrompt's `ReviewPrompt("", ...)` override, i.e.
 // restore `ReviewPrompt(r.cfg.Agent.Review, ...)`): this test fails,
 // finding the literal "/review" text in the prompt instead of either
@@ -1551,15 +1557,32 @@ func TestReviewModeUsesBaseBranchReviewCommand(t *testing.T) {
 	if _, err := h.run(t, capture); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(prompt, "evil.invalid") || strings.Contains(prompt, "Ignore everything") {
-		t.Fatalf("the fork's own command text reached the prompt: %q", prompt)
+	said := instructionsOf(prompt)
+	if strings.Contains(said, "evil.invalid") || strings.Contains(said, "Ignore everything") {
+		t.Fatalf("the fork's own command text reached the prompt: %q", said)
 	}
-	if !strings.Contains(prompt, "Focus on security issues in the diff.") {
-		t.Fatalf("the base branch's command text is missing from the prompt: %q", prompt)
+	if !strings.Contains(said, "Focus on security issues in the diff.") {
+		t.Fatalf("the base branch's command text is missing from the prompt: %q", said)
 	}
-	if strings.Contains(prompt, "allowed-tools") {
-		t.Errorf("the command file's frontmatter was not stripped: %q", prompt)
+	if strings.Contains(said, "allowed-tools") {
+		t.Errorf("the command file's frontmatter was not stripped: %q", said)
 	}
+	if said == prompt {
+		t.Fatal("the prompt carries no built input: the assertions above proved nothing")
+	}
+}
+
+// instructionsOf is a review prompt without the input Fugaro built into it
+// (reviewinput.go): the instructions the stage gives, as opposed to the
+// reviewed pull request's own text, which the prompt carries as data. The
+// built input always starts with its header, and a prompt that carries none
+// is returned whole — the assertions a caller makes on the instructions then
+// cover the whole prompt, which is the strictest reading of them.
+func instructionsOf(prompt string) string {
+	if i := strings.Index(prompt, "Fugaro built the changes under review"); i >= 0 {
+		return prompt[:i]
+	}
+	return prompt
 }
 
 // TestReviewModeStripsClaudeConfig: a fork's .claude/settings.json (a

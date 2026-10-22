@@ -110,7 +110,7 @@ func newBudgetPreviewCmd() *cobra.Command {
 			"the repository's runs (the runs bucket, for the typical line). A recipe\n" +
 			"that is not in the checkout also reads the project's recipes from the\n" +
 			"runs bucket, as recipes ls does, which a plain project Viewer cannot\n" +
-			"read (init removes that access): not reading it costs the project layer,\n" +
+			"read (the converge removes that access): not reading it costs the project layer,\n" +
 			"and the ceiling with it. The typical line's own read of the bucket is\n" +
 			"the one that costs the line and nothing else: a bucket it cannot read\n" +
 			"leaves the ceiling standing. It writes nothing.",
@@ -222,7 +222,7 @@ type previewHeadroom struct {
 
 // previewPerRun is the per-run cap a run launched from here would be held
 // to: $FUGARO_MAX_RUN_USD when it is set (the job's own cap, which
-// init --repo writes from the project config's budget.per_run_usd), else
+// update --repo writes from the project config's budget.per_run_usd), else
 // that config value; and always the database's effective per-run cap (the
 // repository's own or the default, and the global one where that side is
 // unset, D6). ok is false when neither side is set, and then only the
@@ -610,13 +610,17 @@ func readPreviewHistory(ctx context.Context, b *blobx.Bucket, slug string, now t
 		}
 		priced := false
 		for _, st := range rec.Stages {
-			if st.ModelUSD <= 0 { // omitempty: a record from before Task 24, or a stage that called no model
+			// The stage's money, not its whole figure: a cascade stage's
+			// tier-A dollars are the subscription's (C1.16, P12) and must not
+			// be averaged into a figure printed beside real caps.
+			money := st.ModelUSD - min(st.ModelNotionalUSD, st.ModelUSD)
+			if money <= 0 { // omitempty: a record from before Task 24, a stage that called no model, or a notional-only stage
 				continue
 			}
 			priced = true
 			k := previewKind{kind: st.Name, model: st.Model}
 			m := h.means[k]
-			m.total, m.stages = m.total+st.ModelUSD, m.stages+1
+			m.total, m.stages = m.total+money, m.stages+1
 			h.means[k] = m
 		}
 		if priced {

@@ -77,12 +77,15 @@ func (r *run) stageOnProviderRoute(model, background string) bool {
 	return false
 }
 
-// writeManagedSettings writes the managed settings for a stage: the
-// gateway's variables, the pins and the web-tool denial. It does nothing
-// without the gateway: a budget-off run writes no file. A failure is an
-// error, since the settings are what keep a repository's own settings from
-// rerouting the agent.
-func (r *run) writeManagedSettings(pins map[string]string) error {
+// writeManagedSettings writes the managed settings for stage: the gateway's
+// variables, the pins, and the stage's deny list — the web tools for every
+// stage, and the binary reads for a review stage, whose reviewer would
+// otherwise be free to Read a changed PNG and have the gateway refuse the
+// image block that puts in the next request (agent.deniedBinaryReads). It
+// does nothing without the gateway: a budget-off run writes no file, and so
+// carries no deny rule at all. A failure is an error, since the settings are
+// what keep a repository's own settings from rerouting the agent.
+func (r *run) writeManagedSettings(stage string, pins map[string]string) error {
 	gw := r.gateway()
 	if gw == nil {
 		return nil
@@ -94,7 +97,7 @@ func (r *run) writeManagedSettings(pins map[string]string) error {
 	for k, v := range pins {
 		vars[k] = v
 	}
-	if err := agent.WriteManagedSettings(r.managedPath(), vars, true); err != nil {
+	if err := agent.WriteManagedSettings(r.managedPath(), vars, agent.DenyRules(true, config.IsReviewStage(stage))); err != nil {
 		return fmt.Errorf("writing Claude Code's managed settings: %w", err)
 	}
 	r.mu.Lock()

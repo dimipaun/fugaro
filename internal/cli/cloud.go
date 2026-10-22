@@ -347,7 +347,7 @@ var budgetScopes = []string{"https://www.googleapis.com/auth/firebase.database",
 // openCloud) and returns a client of the project's budget database, acting as
 // the person (ADC): their IAM roles on the Firebase project decide what the
 // database lets them do (viewer reads, admin writes). The project needs
-// budget.rtdb_url, which fugaro init --firebase writes. A config that sets
+// budget.rtdb_url, which fugaro update --firebase-project writes. A config that sets
 // endpoints.no_auth (fakes only) sends no credentials.
 func openBudgetDB(ctx context.Context, o cloudOptions) (*localcfg.Config, *rtdb.Client, error) {
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
@@ -363,7 +363,7 @@ func openBudgetDB(ctx context.Context, o cloudOptions) (*localcfg.Config, *rtdb.
 // budgetDBFor is openBudgetDB's second half, for a config already selected.
 func budgetDBFor(ctx context.Context, lc *localcfg.Config) (*localcfg.Config, *rtdb.Client, error) {
 	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
-		return nil, nil, userErr("project %s has no Firebase budget backend (budget.rtdb_url is not set in its project config): an operator runs fugaro init --firebase <firebase-project-id> --name %s", lc.Name, lc.Name)
+		return nil, nil, userErr("project %s has no Firebase budget backend (budget.rtdb_url is not set in its project config): an operator runs fugaro update --firebase-project <firebase-project-id> --name %s", lc.Name, lc.Name)
 	}
 	db, err := newBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)
 	if err != nil {
@@ -644,7 +644,7 @@ type checkoutParseResult struct {
 // checkoutParse hands parseCheckoutFugaroYAML the same fixed
 // layerOptions{Lenient: true}, so root alone is key enough here.
 //
-// defaultBranchParse: fugaro init reads the default branch's fugaro.yaml
+// defaultBranchParse: the converge reads the default branch's fugaro.yaml
 // up to three times in one run (once while gathering inputs for the
 // anchor hint, once more in the repository stage, once in the secrets
 // stage), every time with the same selectedProjectConfig(ctx) too.

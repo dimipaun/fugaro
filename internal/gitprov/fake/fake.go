@@ -420,6 +420,7 @@ func (p *Provider) pullRequest(number int) (info gitprov.PRInfo, branch string, 
 		Title:        p.titleOf(st),
 		Body:         p.bodyOf(st),
 		AuthorID:     cmp.Or(st.AuthorID, p.SelfID),
+		Base:         st.Spec.Base, // the base the PR was opened with; a test retargets it by editing the state
 		SourceBranch: st.Spec.Branch,
 		SourceRepo:   cmp.Or(st.Source, p.Repo),
 		HeadSHA:      st.Head,
@@ -497,7 +498,7 @@ func (p *Provider) FetchPRHead(ctx context.Context, number int) (gitprov.PRHead,
 		login = "fugaro"
 	}
 	return gitprov.PRHead{
-		SHA: info.HeadSHA, Fork: fork, Open: info.State == gitprov.PROpen,
+		SHA: info.HeadSHA, Base: info.Base, Fork: fork, Open: info.State == gitprov.PROpen,
 		AuthorID: info.AuthorID, AuthorLogin: login, Collaborator: st.Collaborator,
 		Self: self, SourceRepo: info.SourceRepo,
 	}, nil

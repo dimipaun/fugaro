@@ -90,7 +90,7 @@ func RunsBucketFindings(p *storage.Policy, bucket, project string, launchers, op
 				// below, which prints remove-iam-policy-binding --all).
 				out = append(out, BucketFinding{Severity: "warning", Member: pm, Role: bd.Role,
 					Problem: pm + " holds " + bd.Role + " on gs://" + bucket + " under the launchers' pre-0.9.0 runs/-only condition (titled " + gcp.LegacyLauncherBucketConditionTitle + "): the installation has not been re-initialised since the budget token moved to tokens/, so its launchers cannot write the sealed budget token",
-					Fix:     "an operator runs fugaro init (" + sealRelease + " or later), which replaces the grant"})
+					Fix:     "an operator runs fugaro update (" + sealRelease + " or later), which replaces the grant"})
 			case bd.Condition != nil && fugaroAccountMember.MatchString(m) && bd.Role == "roles/storage.objectUser":
 				// A job or build account under its own prefixes (the guard checks the shape).
 			case bd.Condition != nil:
@@ -119,7 +119,7 @@ func RunsBucketFindings(p *storage.Policy, bucket, project string, launchers, op
 			case launcherOnly(m):
 				out = append(out, BucketFinding{Severity: "warning", Member: pm, Role: bd.Role,
 					Problem: "launcher " + pm + " can write anywhere in gs://" + bucket + " (" + bd.Role + "): the installation predates the 0.7.0 bucket hardening",
-					Fix:     "an operator runs fugaro init (0.7.0 or later), which replaces the grant"})
+					Fix:     "an operator runs fugaro update (0.7.0 or later), which replaces the grant"})
 			default:
 				out = append(out, BucketFinding{Severity: "warning", Member: pm, Role: bd.Role,
 					Problem: pm + " is neither a launcher nor an operator and can write anywhere in gs://" + bucket + " (" + bd.Role + ")",
@@ -131,7 +131,7 @@ func RunsBucketFindings(p *storage.Policy, bucket, project string, launchers, op
 		if launcherOnly(m) && (!reader[m] || !writer[m]) {
 			out = append(out, BucketFinding{Severity: "warning", Member: pluginwire.Printable(m),
 				Problem: "launcher " + pluginwire.Printable(m) + " lacks the runs bucket grants (read everything, write runs/ and tokens/: the 0.7.0 hardening, widened to tokens/ when the budget token moved there)",
-				Fix:     "an operator runs fugaro init (" + sealRelease + " or later)"})
+				Fix:     "an operator runs fugaro update (" + sealRelease + " or later)"})
 		}
 	}
 	return out
@@ -188,7 +188,7 @@ func JobTokenGrantFindings(p *storage.Policy, bucket, project string) []BucketFi
 						pm := pluginwire.Printable(m)
 						odd = append(odd, BucketFinding{Severity: "info", Member: pm, Role: bd.Role,
 							Problem: "project job account " + pm + ": tokens/ read grant not checked (its runs/ grant on gs://" + bucket + " is the widened condition, but its title is not " + gcp.BucketConditionTitlePrefix + "<account>)",
-							Fix:     "an operator runs fugaro init (" + sealRelease + " or later), which writes both grants"})
+							Fix:     "an operator runs fugaro update (" + sealRelease + " or later), which writes both grants"})
 						continue
 					}
 					jobs = append(jobs, job{member: m, saID: saID, project: true})
@@ -203,7 +203,7 @@ func JobTokenGrantFindings(p *storage.Policy, bucket, project string) []BucketFi
 					pm := pluginwire.Printable(m)
 					odd = append(odd, BucketFinding{Severity: "info", Member: pm, Role: bd.Role,
 						Problem: "job account " + pm + ": tokens/ read grant not checked (its runs/ grant on gs://" + bucket + " is not in the shape this fugaro writes)",
-						Fix:     "an operator runs fugaro init --repo (" + sealRelease + " or later) in that repository's checkout, which writes both grants"})
+						Fix:     "an operator runs fugaro update (" + sealRelease + " or later) in that repository's checkout, which writes both grants"})
 					continue
 				}
 				jobs = append(jobs, job{member: m, saID: saID, slug: sm[1]})
@@ -221,7 +221,7 @@ func JobTokenGrantFindings(p *storage.Policy, bucket, project string) []BucketFi
 			}
 			out = append(out, BucketFinding{Severity: "warning", Member: pm, Role: "roles/storage.objectViewer",
 				Problem: "project job account " + pm + " cannot read the bucket's budget token objects (gs://" + bucket + "/tokens/): the installation has not been re-applied since the sealed budget token moved to tokens/, so every run of its job that carries a budget token stops at bootstrap, reading the token as missing",
-				Fix:     "an operator runs fugaro init (" + sealRelease + " or later)"})
+				Fix:     "an operator runs fugaro update (" + sealRelease + " or later)"})
 			continue
 		}
 		if has[j.member+"\x00"+gcp.TokenBucketConditionTitle(j.saID)+"\x00"+gcp.TokenBucketCondition(bucket, j.slug)] {
@@ -229,7 +229,7 @@ func JobTokenGrantFindings(p *storage.Policy, bucket, project string) []BucketFi
 		}
 		out = append(out, BucketFinding{Severity: "warning", Member: pm, Role: "roles/storage.objectViewer",
 			Problem: "job account " + pm + " cannot read its repository's budget token objects (gs://" + bucket + "/tokens/" + j.slug + "/): the repository has not been re-applied since the sealed budget token moved to tokens/, so its runs with a budget token stop at bootstrap, reading the token as missing",
-			Fix:     "an operator runs fugaro init --repo (" + sealRelease + " or later) in that repository's checkout"})
+			Fix:     "an operator runs fugaro update (" + sealRelease + " or later) in that repository's checkout"})
 	}
 	return out
 }
@@ -248,7 +248,7 @@ func ProjectStorageWriters(p *crm.Policy, launchers, operators []string) []Bucke
 				pm := pluginwire.Printable(m)
 				out = append(out, BucketFinding{Severity: "warning", Member: m, Role: bd.Role,
 					Problem: "launcher " + pm + " holds " + bd.Role + " on the project, which writes fugaro/ whatever the bucket's policy says",
-					Fix:     "make " + pm + " an operator (fugaro init --operator), or remove the project role"})
+					Fix:     "make " + pm + " an operator (fugaro update --operator), or remove the project role"})
 			}
 		}
 	}

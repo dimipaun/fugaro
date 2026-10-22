@@ -121,7 +121,7 @@ func runHistoryRollover(ctx context.Context, cmd *cobra.Command, getenv func(str
 	}
 	fmt.Fprintln(out, oneLine(rep.Summary()))
 	if rep.NoFirestore {
-		fmt.Fprintln(cmd.ErrOrStderr(), "WARNING: no Firestore database: spend history is not being archived; run fugaro init --firebase")
+		fmt.Fprintln(cmd.ErrOrStderr(), "WARNING: no Firestore database: spend history is not being archived; run fugaro update --firebase-project")
 	}
 	switch {
 	case err == nil:

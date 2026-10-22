@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Caps and costs, draft 2: job cost cards, caps, ranges</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+button{font-family: inherit}
+a{color:#6FD8F5}a:hover{color:#E6EEF5}
+code{font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace}
+</style>
+</helmet>
+<div style="width: 1440px; height: 2580px; box-sizing: border-box; background: #0A0E16; color: #E6EEF5; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; display: flex; flex-direction: column; align-items: center; position: relative; overflow: hidden">
+
+  <svg aria-hidden="true" width="1440" height="900" viewBox="0 0 1440 900" style="position: absolute; top: 0; left: 0; pointer-events: none">
+    <defs>
+      <radialGradient id="ccGlowA" cx="0.8" cy="0.2" r="0.5">
+        <stop offset="0" stop-color="#17A8E6" stop-opacity="0.30"></stop>
+        <stop offset="1" stop-color="#17A8E6" stop-opacity="0"></stop>
+      </radialGradient>
+      <radialGradient id="ccGlowB" cx="0.1" cy="0.75" r="0.4">
+        <stop offset="0" stop-color="#F5A524" stop-opacity="0.10"></stop>
+        <stop offset="1" stop-color="#F5A524" stop-opacity="0"></stop>
+      </radialGradient>
+      <pattern id="ccGrid" width="48" height="48" patternUnits="userSpaceOnUse">
+        <path d="M48 0 H0 V48" fill="none" stroke="#24303F" stroke-width="1" stroke-opacity="0.45"></path>
+      </pattern>
+      <linearGradient id="ccGridFade" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#fff" stop-opacity="0.9"></stop>
+        <stop offset="1" stop-color="#fff" stop-opacity="0"></stop>
+      </linearGradient>
+      <mask id="ccGridMask"><rect width="1440" height="900" fill="url(#ccGridFade)"></rect></mask>
+    </defs>
+    <rect width="1440" height="900" fill="url(#ccGrid)" mask="url(#ccGridMask)"></rect>
+    <rect width="1440" height="900" fill="url(#ccGlowA)"></rect>
+    <rect width="1440" height="900" fill="url(#ccGlowB)"></rect>
+  </svg>
+
+  <!-- Top bar -->
+  <header style="position: relative; width: 1240px; display: flex; align-items: center; gap: 28px; padding: 20px 0; border-bottom: 1px solid #24303F">
+    <a href="/" style="display: flex; align-items: center; gap: 10px; text-decoration: none; color: #E6EEF5; font-weight: 800; font-size: 20px; letter-spacing: -0.01em">
+      <svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#17A8E6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="4"></rect><path d="M8 10 L11 12.5 L8 15"></path><path d="M13 15 H16"></path></svg>
+      Fugaro
+    </a>
+    <div style="flex-grow: 1"></div>
+    <nav aria-label="Site" style="display: flex; gap: 22px; font-size: 14px">
+      <a href="/" style="color: #9FB2C4; text-decoration: none">Home</a>
+      <a href="/how-it-works/" style="color: #9FB2C4; text-decoration: none">How it works</a>
+      <a href="/getting-started/" style="color: #9FB2C4; text-decoration: none">Getting started</a>
+      <a href="/console/" style="color: #9FB2C4; text-decoration: none">Console</a>
+      <a href="/caps-and-costs/" aria-current="page" style="color: #E6EEF5; text-decoration: none; font-weight: 600">Caps and costs</a>
+      <a href="/docs/" style="color: #9FB2C4; text-decoration: none">Docs</a>
+      <a href="/changelog/" style="color: #9FB2C4; text-decoration: none">Changelog</a>
+      <a href="/security/" style="color: #9FB2C4; text-decoration: none">Security</a>
+      <a href="/faq/" style="color: #9FB2C4; text-decoration: none">FAQ</a>
+      <a href="/community/" style="color: #9FB2C4; text-decoration: none">Community</a>
+    </nav>
+  </header>
+
+  <!-- Hero -->
+  <section aria-labelledby="cc-title" style="position: relative; width: 1240px; display: flex; gap: 64px; align-items: center; padding: 96px 0 88px">
+    <div style="flex: 1 1 0; display: flex; flex-direction: column; gap: 28px">
+      <div style="display: inline-flex; align-self: flex-start; align-items: center; gap: 10px; padding: 7px 14px; border: 1px solid #24303F; border-radius: 999px; background: #0D131D; font-size: 14px; color: #9FB2C4">
+        <span style="width: 8px; height: 8px; border-radius: 50%; background: #F5A524; box-shadow: 0 0 10px #F5A524"></span>
+        What Fugaro's own jobs cost, and the commands that set the caps
+      </div>
+      <h1 id="cc-title" style="margin: 0; font-size: 104px; line-height: 0.94; font-weight: 900; letter-spacing: -0.045em">Caps<br><span style="background: linear-gradient(92deg, #6FD8F5 0%, #17A8E6 55%, #4CC38A 100%); -webkit-background-clip: text; background-clip: text; color: transparent">and costs</span></h1>
+      <p style="margin: 0; font-size: 26px; line-height: 1.4; color: #9FB2C4; max-width: 600px">A cap is a ceiling on what a run may spend.</p>
+      <div style="display: flex; align-items: center; gap: 28px; padding-top: 8px">
+        <a href="#typical-costs" style="display: inline-flex; align-items: center; gap: 12px; padding: 18px 30px; border-radius: 16px; background: linear-gradient(135deg, #17A8E6, #6FD8F5); color: #0A0E16; font-weight: 800; font-size: 18px; text-decoration: none; box-shadow: 0 10px 40px rgba(23, 168, 230, 0.35)">
+          See what a job costs
+          <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0A0E16" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5 V19"></path><path d="M6 13 L12 19 L18 13"></path></svg>
+        </a>
+        <a href="#caps" style="color: #6FD8F5; font-size: 17px; font-weight: 600; text-decoration: none">Set the caps</a>
+      </div>
+    </div>
+
+    <!-- The two modes -->
+    <div style="flex: 0 0 480px; display: flex; flex-direction: column; gap: 18px">
+      <div style="display: flex; gap: 20px; align-items: flex-start; padding: 28px; border: 1px solid #24303F; border-radius: 20px; background: #0D131D">
+        <div style="flex: 0 0 52px; height: 52px; border-radius: 16px; background: #121A26; border: 1px solid #24303F; display: flex; align-items: center; justify-content: center">
+          <svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#6FD8F5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12 C5 6 9 4 12 4 C15 4 19 6 22 12 C19 18 15 20 12 20 C9 20 5 18 2 12 Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px">
+          <code style="font-size: 22px; font-weight: 700; color: #6FD8F5">observe</code>
+          <p style="margin: 0; font-size: 19px; line-height: 1.4; color: #E6EEF5">Counts and logs.</p>
+        </div>
+      </div>
+      <div style="display: flex; gap: 20px; align-items: flex-start; padding: 28px; border: 1px solid #5A4520; border-radius: 20px; background: linear-gradient(135deg, #17140D, #0D131D)">
+        <div style="flex: 0 0 52px; height: 52px; border-radius: 16px; background: #121A26; border: 1px solid #24303F; display: flex; align-items: center; justify-content: center">
+          <svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#F5A524" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3 H16 L21 8 V16 L16 21 H8 L3 16 V8 Z"></path><path d="M8 12 H16"></path></svg>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px">
+          <code style="font-size: 22px; font-weight: 700; color: #F5A524">enforce</code>
+          <p style="margin: 0; font-size: 19px; line-height: 1.4; color: #E6EEF5">Halts.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- What a job costs -->
+  <section id="typical-costs" aria-labelledby="cost-title" style="position: relative; width: 1240px; display: flex; flex-direction: column; gap: 36px; padding: 72px 0 80px; border-top: 1px solid #24303F">
+    <div style="display: flex; align-items: flex-end; gap: 48px">
+      <h2 id="cost-title" style="margin: 0; flex: 1 1 0; font-size: 64px; line-height: 1; font-weight: 900; letter-spacing: -0.035em">What a job costs</h2>
+      <p style="margin: 0; flex: 0 0 440px; font-size: 17px; line-height: 1.5; color: #9FB2C4">Fugaro's own runs, 2026-10-04 to 2026-10-19: 980 finished, model plus compute, an estimate.</p>
+    </div>
+
+    <!-- One card per job: labelled rows, so a phone reads them as the same rows stacked -->
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px">
+
+      <!-- task -->
+      <article data-job="task" aria-labelledby="job-task" style="display: flex; flex-direction: column; gap: 22px; padding: 30px; border: 1px solid #24303F; border-radius: 20px; background: linear-gradient(180deg, #121A26, #0D131D)">
+        <div style="display: flex; flex-direction: column; gap: 8px">
+          <h3 id="job-task" style="margin: 0; font-size: 22px; line-height: 1.25; font-weight: 800; letter-spacing: -0.01em">A first task run</h3>
+          <span style="font-size: 14px; color: #9FB2C4">Runs <strong style="color: #E6EEF5; font-weight: 700">396</strong></span>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 4px">
+          <span style="font-size: 13px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #9FB2C4">Median</span>
+          <span style="font-size: 64px; line-height: 1; font-weight: 900; letter-spacing: -0.04em; color: #6FD8F5">$0.36</span>
+        </div>
+        <dl style="margin: 0; display: flex; flex-direction: column; border-top: 1px solid #24303F">
+          <div style="display: flex; justify-content: space-between; align-items: baseline; padding: 13px 0; border-bottom: 1px solid #24303F">
+            <dt style="font-size: 16px; color: #9FB2C4">Middle half</dt>
+            <dd style="margin: 0; font-size: 18px; font-weight: 700; white-space: nowrap">$0.15–$0.68</dd>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: baseline; padding: 13px 0; border-bottom: 1px solid #24303F">
+            <dt style="font-size: 16px; color: #9FB2C4">9 in 10 under</dt>
+            <dd style="margin: 0; font-size: 18px; font-weight: 700; white-space: nowrap">$1.27</dd>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: baseline; padding: 13px 0; border-bottom: 1px solid #24303F">
+            <dt style="font-size: 16px; color: #9FB2C4">Worst</dt>
+            <dd style="margin: 0; font-size: 18px; font-weight: 700; white-space: nowrap; color: #F5A524">$5.24</dd>
+          </div>
+        </dl>
+        <div style="display: flex; flex-direction: column; gap: 8px">
+          <svg role="img" aria-label="A first task run against the per-run cap: middle half, median and 9 in 10 sit near the start, the worst run about half way" width="100%" height="22" viewBox="0 0 100 22" preserveAspectRatio="none">
+            <rect x="0" y="8" width="100" height="6" rx="3" fill="#24303F"></rect>
+            <rect x="1.5" y="8" width="5.3" height="6" fill="#17A8E6"></rect>
+            <rect x="3.6" y="3" width="0.8" height="16" fill="#6FD8F5"></rect>
+            <rect x="12.7" y="5" width="0.6" height="12" fill="#E6EEF5"></rect>
+            <rect x="52.4" y="5" width="0.8" height="12" fill="#F5A524"></rect>
+            <rect x="99.2" y="2" width="0.8" height="18" fill="#9FB2C4"></rect>
+          </svg>
+        </div>
+      </article>
+
+      <!-- follow_up -->
+      <article data-job="follow_up" aria-labelledby="job-follow" style="display: flex; flex-direction: column; gap: 22px; padding: 30px; border: 1px solid #24303F; border-radius: 20px; background: linear-gradient(180deg, #121A26, #0D131D)">
+        <div style="display: flex; flex-direction: column; gap: 8px">
+          <h3 id="job-follow" style="margin: 0; font-size: 22px; line-height: 1.25; font-weight: 800; letter-spacing: -0.01em">A follow-up round on a pull request</h3>
+          <span style="font-size: 14px; color: #9FB2C4">Runs <strong style="color: #E6EEF5; font-weight: 700">531</strong></span>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 4px">
+          <span style="font-size: 13px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #9FB2C4">Median</span>
+          <span style="font-size: 64px; line-height: 1; font-weight: 900; letter-spacing: -0.04em; color: #6FD8F5">$0.35</span>
+        </div>
+        <dl style="margin: 0; display: flex; flex-direction: column; border-top: 1px solid #24303F">
+          <div style="display: flex; justify-content: space-between; align-items: baseline; padding: 13px 0; border-bottom: 1px solid #24303F">
+            <dt style="font-size: 16px; color: #9FB2C4">Middle half</dt>
+            <dd style="margin: 0; font-size: 18px; font-weight: 700; white-space: nowrap">$0.17–$0.59</dd>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: baseline; padding: 13px 0; border-bottom: 1px solid #24303F">
+            <dt style="font-size: 16px; color: #9FB2C4">9 in 10 under</dt>
+            <dd style="margin: 0; font-size: 18px; font-weight: 700; white-space: nowrap">$1.00</dd>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: baseline; padding: 13px 0; border-bottom: 1px solid #24303F">
+            <dt style="font-size: 16px; color: #9FB2C4">Worst</dt>
+            <dd style="margin: 0; font-size: 18px; font-weight: 700; white-space: nowrap; color: #F5A524">$8.36</dd>
+          </div>
+        </dl>
+        <div style="display: flex; flex-direction: column; gap: 8px">
+          <svg role="img" aria-label="A follow-up round against the per-run cap: middle half, median and 9 in 10 sit near the start, the worst run close to the cap" width="100%" height="22" viewBox="0 0 100 22" preserveAspectRatio="none">
+            <rect x="0" y="8" width="100" height="6" rx="3" fill="#24303F"></rect>
+            <rect x="1.7" y="8" width="4.2" height="6" fill="#17A8E6"></rect>
+            <rect x="3.5" y="3" width="0.8" height="16" fill="#6FD8F5"></rect>
+            <rect x="10.0" y="5" width="0.6" height="12" fill="#E6EEF5"></rect>
+            <rect x="83.6" y="5" width="0.8" height="12" fill="#F5A524"></rect>
+            <rect x="99.2" y="2" width="0.8" height="18" fill="#9FB2C4"></rect>
+          </svg>
+        </div>
+      </article>
+
+      <!-- review -->
+      <article data-job="review" aria-labelledby="job-review" style="display: flex; flex-direction: column; gap: 22px; padding: 30px; border: 1px solid #24303F; border-radius: 20px; background: linear-gradient(180deg, #121A26, #0D131D)">
+        <div style="display: flex; flex-direction: column; gap: 8px">
+          <h3 id="job-review" style="margin: 0; font-size: 22px; line-height: 1.25; font-weight: 800; letter-spacing: -0.01em">An independent review-only run</h3>
+          <span style="font-size: 14px; color: #9FB2C4">Runs <strong style="color: #E6EEF5; font-weight: 700">53</strong></span>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 4px">
+          <span style="font-size: 13px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #9FB2C4">Median</span>
+          <span style="font-size: 64px; line-height: 1; font-weight: 900; letter-spacing: -0.04em; color: #6FD8F5">$0.11</span>
+        </div>
+        <dl style="margin: 0; display: flex; flex-direction: column; border-top: 1px solid #24303F">
+          <div style="display: flex; justify-content: space-between; align-items: baseline; padding: 13px 0; border-bottom: 1px solid #24303F">
+            <dt style="font-size: 16px; color: #9FB2C4">Middle half</dt>
+            <dd style="margin: 0; font-size: 18px; font-weight: 700; white-space: nowrap; color: #9FB2C4">—</dd>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: baseline; padding: 13px 0; border-bottom: 1px solid #24303F">
+            <dt style="font-size: 16px; color: #9FB2C4">9 in 10 under</dt>
+            <dd style="margin: 0; font-size: 18px; font-weight: 700; white-space: nowrap">$0.22</dd>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: baseline; padding: 13px 0; border-bottom: 1px solid #24303F">
+            <dt style="font-size: 16px; color: #9FB2C4">Worst</dt>
+            <dd style="margin: 0; font-size: 18px; font-weight: 700; white-space: nowrap; color: #9FB2C4">—</dd>
+          </div>
+        </dl>
+        <div style="display: flex; flex-direction: column; gap: 8px">
+          <svg role="img" aria-label="An independent review-only run against the per-run cap: median and 9 in 10 both sit at the very start" width="100%" height="22" viewBox="0 0 100 22" preserveAspectRatio="none">
+            <rect x="0" y="8" width="100" height="6" rx="3" fill="#24303F"></rect>
+            <rect x="1.1" y="3" width="0.8" height="16" fill="#6FD8F5"></rect>
+            <rect x="2.2" y="5" width="0.6" height="12" fill="#E6EEF5"></rect>
+            <rect x="99.2" y="2" width="0.8" height="18" fill="#9FB2C4"></rect>
+          </svg>
+        </div>
+      </article>
+    </div>
+
+    <!-- Bar legend + the cap callout -->
+    <div style="display: flex; gap: 24px; align-items: stretch">
+      <div style="flex: 1 1 0; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 26px; padding: 20px 26px; border: 1px solid #24303F; border-radius: 16px; background: #0D131D; font-size: 15px; color: #9FB2C4">
+        <span style="font-weight: 700; color: #E6EEF5">Each bar runs to our per-run cap</span>
+        <span style="display: inline-flex; align-items: center; gap: 8px"><span aria-hidden="true" style="width: 18px; height: 6px; border-radius: 3px; background: #17A8E6"></span>Middle half</span>
+        <span style="display: inline-flex; align-items: center; gap: 8px"><span aria-hidden="true" style="width: 3px; height: 16px; background: #6FD8F5"></span>Median</span>
+        <span style="display: inline-flex; align-items: center; gap: 8px"><span aria-hidden="true" style="width: 3px; height: 12px; background: #E6EEF5"></span>9 in 10 under</span>
+        <span style="display: inline-flex; align-items: center; gap: 8px"><span aria-hidden="true" style="width: 3px; height: 12px; background: #F5A524"></span>Worst</span>
+      </div>
+      <div style="flex: 0 0 400px; display: flex; align-items: center; gap: 20px; padding: 20px 26px; border: 1px solid #5A4520; border-radius: 16px; background: linear-gradient(135deg, #1C170D, #0D131D)">
+        <svg aria-hidden="true" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#F5A524" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 L20 6 V12 C20 16.5 16.5 20 12 21 C7.5 20 4 16.5 4 12 V6 Z"></path></svg>
+        <div style="display: flex; flex-direction: column; gap: 2px">
+          <span style="font-size: 14px; color: #9FB2C4">Our per-run cap</span>
+          <span style="font-size: 36px; line-height: 1.05; font-weight: 900; letter-spacing: -0.03em; color: #F5A524">$10.00</span>
+        </div>
+      </div>
+    </div>
+
+    <p style="margin: 0; max-width: 860px; font-size: 17px; line-height: 1.6; color: #9FB2C4">Mostly DeepSeek through OpenRouter; a Claude model costs more. Not a quote: the caps below are the safety net.</p>
+  </section>
+
+  <!-- Set the caps -->
+  <section id="caps" aria-labelledby="caps-title" style="position: relative; width: 1240px; display: flex; flex-direction: column; gap: 32px; padding: 72px 0 80px; border-top: 1px solid #24303F">
+    <div style="display: flex; align-items: center; gap: 20px">
+      <h2 id="caps-title" style="margin: 0; flex: 1 1 0; font-size: 64px; line-height: 1; font-weight: 900; letter-spacing: -0.035em">Set the caps</h2>
+      <button type="button" aria-expanded="true" aria-controls="caps-list" style="display: inline-flex; align-items: center; gap: 10px; padding: 12px 20px; border: 1px solid #24303F; border-radius: 16px; background: #0D131D; color: #E6EEF5; font-size: 15px; font-weight: 600; cursor: pointer">
+        Hide commands
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6FD8F5" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15 L12 9 L18 15"></path></svg>
+      </button>
+    </div>
+
+    <dl id="caps-list" style="margin: 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px">
+      <div data-guide="fugaro budget set" style="grid-column: 1 / span 2; display: flex; flex-direction: column; gap: 14px; padding: 26px; border: 1px solid #1E5E7E; border-radius: 20px; background: linear-gradient(135deg, #0F2130, #0D131D)">
+        <dd style="margin: 0; order: 0; font-size: 19px; font-weight: 700; color: #E6EEF5">Set a cap, the lease limit or the mode (budget admins)</dd>
+        <dt style="display: flex; align-items: flex-start; gap: 14px; padding: 16px 18px; border-radius: 16px; background: #0A0E16; border: 1px solid #24303F">
+          <code style="flex: 1 1 0; font-size: 16px; line-height: 1.55; color: #6FD8F5; overflow-wrap: anywhere">fugaro budget set (--global | --defaults | --repo [owner/name]) [--daily USD] [--per-run USD] [--max-reserve USD] [--mode observe|enforce] | --clear</code>
+          <button type="button" aria-label="Copy the usage line" style="flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid #24303F; border-radius: 10px; background: #121A26; color: #9FB2C4; font-size: 13px; cursor: pointer"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9FB2C4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="2"></rect><path d="M16 8 V6 A2 2 0 0 0 14 4 H6 A2 2 0 0 0 4 6 V14 A2 2 0 0 0 6 16 H8"></path></svg>Copy</button>
+        </dt>
+      </div>
+
+      <div data-guide="fugaro budget show" style="display: flex; flex-direction: column; gap: 14px; padding: 26px; border: 1px solid #24303F; border-radius: 20px; background: #0D131D">
+        <dd style="margin: 0; font-size: 17px; font-weight: 600; line-height: 1.4; color: #E6EEF5">Show caps, today's counters, kill switches, headroom and the runs in flight</dd>
+        <dt style="display: flex; align-items: center; gap: 14px; padding: 14px 18px; border-radius: 16px; background: #0A0E16; border: 1px solid #24303F">
+          <code style="flex: 1 1 0; font-size: 16px; color: #6FD8F5; overflow-wrap: anywhere">fugaro budget show</code>
+          <button type="button" aria-label="Copy the usage line" style="flex: 0 0 auto; padding: 6px 12px; border: 1px solid #24303F; border-radius: 10px; background: #121A26; color: #9FB2C4; font-size: 13px; cursor: pointer">Copy</button>
+        </dt>
+      </div>
+
+      <div data-guide="fugaro budget preview" style="display: flex; flex-direction: column; gap: 14px; padding: 26px; border: 1px solid #24303F; border-radius: 20px; background: #0D131D">
+        <dd style="margin: 0; font-size: 17px; font-weight: 600; line-height: 1.4; color: #E6EEF5">Estimate a batch's worst-case model spend against today's caps</dd>
+        <dt style="display: flex; align-items: center; gap: 14px; padding: 14px 18px; border-radius: 16px; background: #0A0E16; border: 1px solid #24303F">
+          <code style="flex: 1 1 0; font-size: 16px; color: #6FD8F5; overflow-wrap: anywhere">fugaro budget preview --recipe NAME --runs N [--repo R]</code>
+          <button type="button" aria-label="Copy the usage line" style="flex: 0 0 auto; padding: 6px 12px; border: 1px solid #24303F; border-radius: 10px; background: #121A26; color: #9FB2C4; font-size: 13px; cursor: pointer">Copy</button>
+        </dt>
+      </div>
+
+      <div data-guide="fugaro budget prices" style="display: flex; flex-direction: column; gap: 14px; padding: 26px; border: 1px solid #24303F; border-radius: 20px; background: #0D131D">
+        <dd style="margin: 0; font-size: 17px; font-weight: 600; line-height: 1.4; color: #E6EEF5">Show the effective model price table, offline</dd>
+        <dt style="display: flex; align-items: center; gap: 14px; padding: 14px 18px; border-radius: 16px; background: #0A0E16; border: 1px solid #24303F">
+          <code style="flex: 1 1 0; font-size: 16px; color: #6FD8F5; overflow-wrap: anywhere">fugaro budget prices</code>
+          <button type="button" aria-label="Copy the usage line" style="flex: 0 0 auto; padding: 6px 12px; border: 1px solid #24303F; border-radius: 10px; background: #121A26; color: #9FB2C4; font-size: 13px; cursor: pointer">Copy</button>
+        </dt>
+      </div>
+
+      <div style="display: none"></div>
+
+      <div data-guide="fugaro budget kill" style="display: flex; flex-direction: column; gap: 14px; padding: 26px; border: 1px solid #5A2A2A; border-radius: 20px; background: linear-gradient(135deg, #1A1114, #0D131D)">
+        <dd style="margin: 0; display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 600; line-height: 1.4; color: #E6EEF5">
+          <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F5A524" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 V12"></path><path d="M5.6 6.6 A8 8 0 1 0 18.4 6.6"></path></svg>
+          Halt every run of the project or of one repository (budget admins)
+        </dd>
+        <dt style="display: flex; align-items: center; gap: 14px; padding: 14px 18px; border-radius: 16px; background: #0A0E16; border: 1px solid #24303F">
+          <code style="flex: 1 1 0; font-size: 16px; color: #6FD8F5; overflow-wrap: anywhere">fugaro budget kill (--all | --repo [owner/name]) [--reason TEXT]</code>
+          <button type="button" aria-label="Copy the usage line" style="flex: 0 0 auto; padding: 6px 12px; border: 1px solid #24303F; border-radius: 10px; background: #121A26; color: #9FB2C4; font-size: 13px; cursor: pointer">Copy</button>
+        </dt>
+      </div>
+
+      <div data-guide="fugaro budget resume" style="display: flex; flex-direction: column; gap: 14px; padding: 26px; border: 1px solid #24303F; border-radius: 20px; background: #0D131D">
+        <dd style="margin: 0; display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 600; line-height: 1.4; color: #E6EEF5">
+          <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4CC38A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4 L19 12 L7 20 Z"></path></svg>
+          Clear a kill switch (budget admins)
+        </dd>
+        <dt style="display: flex; align-items: center; gap: 14px; padding: 14px 18px; border-radius: 16px; background: #0A0E16; border: 1px solid #24303F">
+          <code style="flex: 1 1 0; font-size: 16px; color: #6FD8F5; overflow-wrap: anywhere">fugaro budget resume (--all | --repo [owner/name]) [--reason TEXT]</code>
+          <button type="button" aria-label="Copy the usage line" style="flex: 0 0 auto; padding: 6px 12px; border: 1px solid #24303F; border-radius: 10px; background: #121A26; color: #9FB2C4; font-size: 13px; cursor: pointer">Copy</button>
+        </dt>
+      </div>
+    </dl>
+  </section>
+
+  <!-- Footer -->
+  <footer style="position: relative; width: 1240px; display: flex; align-items: center; gap: 28px; padding: 32px 0 48px; border-top: 1px solid #24303F; font-size: 15px">
+    <a href="https://github.com/dimipaun/fugaro" style="color: #9FB2C4">dimipaun/fugaro</a>
+    <a href="/security/" style="color: #9FB2C4">Security</a>
+    <a href="/changelog/" style="color: #9FB2C4">Changelog</a>
+    <a href="/privacy/" style="color: #9FB2C4">Privacy</a>
+  </footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":2580}}'>class Component extends DCLogic { renderVals() { return {}; } }</script>
+</body>
+</html>

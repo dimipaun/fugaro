@@ -54,7 +54,7 @@ const cloneSince = "0.7.5"
 //     an image older than 0.7.5 is refused with the ordinary "upgrade your
 //     base image" line, and a ref with no release tag (a dev build, a
 //     hand-pushed image, an --image-source mirror) is only warned about;
-//   - refuseClonesNotShipped returns nil, so fugaro init --repo and fugaro
+//   - refuseClonesNotShipped returns nil, so fugaro update --repo and fugaro
 //     image refresh deploy and move a checkout: clone workflow's job the
 //     way they do any other.
 //
@@ -115,7 +115,7 @@ const catalogSince = "0.7.5"
 // actually tagged: no fugaro release reads a route's require_zdr or
 // price_policy yet, so no runner that can exist today can run a job whose
 // value carries either key. While it is false, catalogSwitchSkew refuses
-// fugaro init --repo outright when any provider that may receive the
+// fugaro update --repo outright when any provider that may receive the
 // repository's code sets one — before any cloud effect, since the job it
 // would deploy carries FUGARO_MODEL_PROVIDERS — rather than judging the
 // base image (no release, of any base image, would read the key, so
@@ -154,7 +154,7 @@ const catalogShipped = false
 // with managed_deployer_scoped, which nothing sets
 // (deploy/terraform/gcp/modules/installation/deployer.tf). While it is false,
 // every command that would create a managed project or act as its deployer
-// (fugaro init --create-project --managed, fugaro managed apply and fugaro
+// (fugaro setup --create-project --managed, fugaro managed apply and fugaro
 // restore) refuses with managedDisabled before any cloud call, rather than
 // failing later at the apply or the impersonation.
 //
@@ -319,7 +319,7 @@ const titlesSince = "0.8.5"
 // one whose config reader accepts it. An installation whose base image is
 // 0.9.5 or older is therefore refused, which is right: that
 // runner's config.Validate does not know the value, so a cascade repository
-// deployed against it would die at bootstrap, and `fugaro init --base base`
+// deployed against it would die at bootstrap, and `fugaro update --base base`
 // — run by a binary of the release that carries the value — is the fix that
 // clears the refusal. No `cascadeShipped`-style boolean belongs beside this
 // constant, the shape catalogSince has: that one gates a value read by a
@@ -486,7 +486,7 @@ func checkCloneImageSince(lc *localcfg.Config, spec *task.Spec, since, subject, 
 	ref := lc.BaseImage(config.BaseKind)
 	refuse := func(why string) error {
 		return userErr("%s needs a job image whose runner knows %s (fugaro %s or later), but the checkout: clone job image of %s workflow %s %s. "+
-			"Run fugaro init --base base in your own terminal window to move the installation's base image to a current release%s",
+			"Run fugaro update --base base in your own terminal window to move the installation's base image to a current release%s",
 			subject, knows, since, spec.Repo, spec.Workflow, why, alt)
 	}
 	// notShipped is cloneSince's own refusal, used whether the image
@@ -494,7 +494,7 @@ func checkCloneImageSince(lc *localcfg.Config, spec *task.Spec, since, subject, 
 	// known at all (a dev build, a hand-pushed image, or an --image-source
 	// mirror without a release tag): cloneShipped being false means no
 	// runner a release can build today reads FUGARO_CHECKOUT, so
-	// "fugaro init --base base" (refuse's own fix line) would not help
+	// "fugaro update --base base" (refuse's own fix line) would not help
 	// either way. Say so plainly, and name checkout: baked, the only
 	// checkout that runs then. (Images at cloneSince or later do not reach
 	// this closure at all — see the constant's comment.) cloneShipped is
@@ -555,7 +555,7 @@ func checkCloneRecipeImage(lc *localcfg.Config, spec *task.Spec, warn io.Writer)
 // reaches that gate at all; if the deployed job happens to be a clone job,
 // the run fails at bootstrap instead. Making it impossible for a clone job
 // to exist while cloneShipped is false closes that gap at the source:
-// fugaro init --repo's planRepo calls this before its Apply, and fugaro
+// fugaro update --repo's planRepo calls this before its Apply, and fugaro
 // image refresh's refreshCloneJobs calls it before moving any job, each
 // naming only the clone workflow(s) it was about to act on — a baked
 // sibling in the same repository is unaffected and unmentioned. cmd names
@@ -594,7 +594,7 @@ func switchProviders(providers map[string]config.ModelProvider, repo string) []s
 	return names
 }
 
-// refuseCascadeSkew refuses fugaro init --repo, before any cloud effect, when
+// refuseCascadeSkew refuses fugaro update --repo, before any cloud effect, when
 // the cascade is in effect and the installation's base image predates the
 // release whose config reader accepts the value: the job would be deployed,
 // then die at bootstrap on a file the image refuses.
@@ -620,7 +620,7 @@ func refuseCascadeSkew(repo, auth, src, ref string, warn io.Writer) error {
 		fmt.Fprintf(warn, "warning: %s cannot be judged: the installation's base image is %s, which is not a release base image, so whether its runner reads the value is not checked\n",
 			subject, pluginwire.Printable(ref))
 	case imagePredates(rel, cascadeSince):
-		return userErr("%s needs a job image whose runner reads it (fugaro %s or later), but the installation's base image is %s, release %s: an older runner refuses the file at bootstrap, because %s is not one of the agent.auth values it knows. Run fugaro init --base base in your own terminal window to move the installation's base image to a current release, or run this repository with agent.auth: api-key",
+		return userErr("%s needs a job image whose runner reads it (fugaro %s or later), but the installation's base image is %s, release %s: an older runner refuses the file at bootstrap, because %s is not one of the agent.auth values it knows. Run fugaro update --base base in your own terminal window to move the installation's base image to a current release, or run this repository with agent.auth: api-key",
 			subject, cascadeSince, pluginwire.Printable(ref), rel, config.AuthCascade)
 	}
 	return nil
@@ -651,7 +651,7 @@ func cascadeSubject(repo, src string) string {
 	return repo + "'s agent.auth: " + config.AuthCascade + " (set by " + pluginwire.Printable(src) + ")"
 }
 
-// refuseCatalogSwitches refuses fugaro init --repo, before any cloud effect,
+// refuseCatalogSwitches refuses fugaro update --repo, before any cloud effect,
 // when a provider that may receive the repository's code sets require_zdr or
 // price_policy and the runner that would read it cannot be known to exist:
 // see catalogSince/catalogShipped above and catalogSwitchSkew below.
@@ -677,7 +677,7 @@ func catalogSwitchSkew(repo string, names []string, ref string, shipped bool, wa
 		where = "providers " + strings.Join(names, ", ")
 	}
 	if !shipped {
-		return userErr("fugaro init --repo refuses to deploy %s's %s with require_zdr or price_policy set: no fugaro release reads "+
+		return userErr("fugaro update --repo refuses to deploy %s's %s with require_zdr or price_policy set: no fugaro release reads "+
 			"those route keys yet (they ship at fugaro %s), and FUGARO_MODEL_PROVIDERS is decoded strictly, so an older runner fails "+
 			"the job at bootstrap on a field nobody typed. Leave both unset for now (their defaults are require_zdr: true, "+
 			"price_policy: cheapest), or price the model under model_prices, which replaces the catalog's row and both switches with it",
@@ -691,7 +691,7 @@ func catalogSwitchSkew(repo string, names []string, ref string, shipped bool, wa
 			where, repo, pluginwire.Printable(ref))
 	case imagePredates(rel, catalogSince):
 		return userErr("the %s of %s sets require_zdr or price_policy, which needs a job image whose runner reads them (fugaro %s or later), "+
-			"but the installation's base image is %s, release %s. Run fugaro init --base base in your own terminal window to move the "+
+			"but the installation's base image is %s, release %s. Run fugaro update --base base in your own terminal window to move the "+
 			"installation's base image to a current release, or leave both unset for now",
 			where, repo, catalogSince, pluginwire.Printable(ref), rel)
 	}

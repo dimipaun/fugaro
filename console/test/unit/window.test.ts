@@ -413,6 +413,22 @@ describe('the one path to the user’s browser is an allow-list (rule 2, D14)', 
     ).toEqual(['https://github.com/fugaro/fugaro'])
   })
 
+  it('opens a link through Electron’s shell on every platform, and through nothing else', async () => {
+    // The owner's ruling of 2026-10-20 ships the console on Linux, where the
+    // macOS habit of running `/usr/bin/open` would be a child process spawned
+    // from the renderer's request -- a new privilege for a click, and one that
+    // never existed on darwin either. `shell.openExternal` is Electron's own
+    // door and it is the same call on both platforms, so this is a guard rather
+    // than a change: `src/main/window.ts` may not import `child_process`, and
+    // the only symbol it hands to `shell` is `openExternal`.
+    const source = readFileSync(fileURLToPath(new URL('../../src/main/window.ts', import.meta.url)), 'utf8')
+    expect(source).not.toMatch(/node:child_process|require\(['"]child_process['"]\)/)
+    expect(source).not.toMatch(/['"]open['"]\s*,\s*\[/)
+    expect(source).not.toMatch(/\/usr\/bin\/open/)
+    // and the one call site is the validated handover the tests above watch
+    expect(source.match(/\.openExternal\(/g) ?? []).toHaveLength(1)
+  })
+
   it('calls nothing at all for a refused link', async () => {
     const opened: string[] = []
     const shell = {
@@ -695,6 +711,13 @@ describe('createConsoleWindow', () => {
         height: 780,
         show: false,
         title: CONSOLE_WINDOW_TITLE,
+        // The one ground literal (Task 6.5): the window paints the colour the
+        // stylesheet paints, so the first frame is not a flash of white. It is
+        // spelled out here as well as held equal to the token layer's `--ground`
+        // in `theme-tokens.test.ts`, because this case is about the options the
+        // window is built with and a `backgroundColor` that went missing would
+        // otherwise be a change this list could not see.
+        backgroundColor: '#0A0E16',
         webPreferences: dashboardWebPreferences(PRELOAD_PATH),
       },
     ])

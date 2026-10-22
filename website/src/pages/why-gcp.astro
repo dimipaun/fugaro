@@ -1,0 +1,253 @@
+---
+/**
+ * website/src/pages/why-gcp.astro — the "Why GCP" page (the owner's brief of 2026-10-21, "Why
+ * GCP"; decisions D238, D243, D248 and D249, reconciliation findings ZF15–ZF22 and ZF52–ZF59).
+ *
+ * The page's rule is the site's (Global Constraint 6): **it renders the claims, it does not
+ * write them.** Every sentence on it about GCP, Firebase and the other clouds comes out of
+ * `website/data/why-gcp.yaml`, and each one arrives with the document that proves it and the
+ * day the two were last read against each other — the file's own header states the rule, and
+ * `website/src/content.ts`'s `loadWhyGcp` refuses a row that breaks it (a key the page does
+ * not render, an empty field, a `source` that is not in the tree, a date that is not a date).
+ * So there is no argument on this page that a reader cannot follow back to a file, which is
+ * what the brief's four points and its AWS paragraph are rewritten into: the brief's
+ * "disposable" and "no extra setup" and "it never runs Terraform" are claims the repository
+ * refuses, and the rows say what is true instead (ZF15–ZF18, D248).
+ *
+ * **The framing sentence is the file's, not this page's.** The brief's suggested sentence
+ * carries a word the repository rejects; D249 fixes the replacement — *No other cloud offers
+ * this as one integrated project.* — and the gate that requires it on the built page is
+ * `website/test/wording.mjs`. It is a row of the data file like every other claim here, so it
+ * carries a source and a date too: a claim about what other clouds do is one whose age a
+ * reader has to be able to judge (docs/website/README.md, ZF58).
+ *
+ * Two facts are read from the tree rather than typed here, both the same way the FAQ and the
+ * community page read them:
+ *
+ *   - **The repository.** `website/data/site.yaml` names it, and the source links below are
+ *     built from it.
+ *   - **The branch.** `.github/workflows/ci.yml`'s push trigger names it, so a link to a
+ *     document cannot point at a branch the project has stopped building on. The read is the
+ *     one `faq.astro` and `community.astro` each carry a copy of — the same `on:` block, the
+ *     same scoping to the `push:` trigger's own `branches:` line, the same refusal when there
+ *     is none — and `website/test/faq-community.mjs` builds this page against a copy of the
+ *     workflow whose push trigger names another branch, which is what holds the two together.
+ *
+ * The look is the bold redesign's (P1's `base.css` §2c), the same one the home page ships: the
+ * headline is the display scale's largest step with the accent's gradient on it, the section
+ * headlines are the display scale's middle step, and every claim is a card with its citation
+ * as the card's foot — which is how the FAQ sets an answer and its source, because a claim and
+ * the document behind it are the same two things on both pages.
+ */
+import Base from '../layouts/Base.astro'
+import { loadSite, loadWhyGcp, REPO_ROOT } from '../content.ts'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+
+const site = loadSite()
+const facts = site.facts
+const why = loadWhyGcp()
+
+const CI_FILE = '.github/workflows/ci.yml'
+
+/**
+ * The branch the source links point at: the branch the repository's CI pushes to, read from
+ * `ci.yml` rather than typed here (see the header). The `branches:` line is read **inside
+ * `on:`'s `push:` trigger**, not from anywhere in the file: `ci.yml` carries other
+ * `branches:`-shaped lines (its jobs' matrices and its own comments), and an unscoped match
+ * would take whichever came first.
+ */
+function baseBranch(): string {
+  const lines = readFileSync(path.join(REPO_ROOT, CI_FILE), 'utf8').split('\n')
+
+  const start = lines.findIndex((line) => line.trimEnd() === 'on:')
+  if (start === -1) {
+    throw new Error(`${CI_FILE} has no top-level \`on:\` block, and the site links the repository's files at the branch its CI builds on (W1.10).`)
+  }
+  // The block's body: the indented lines under `on:`, comments and blanks skipped, up to the
+  // next top-level key. A comment is not a trigger — ci.yml explains its triggers in comments.
+  const body: { indent: number; text: string }[] = []
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = lines[i]
+    const trimmed = line.trim()
+    if (trimmed === '' || trimmed.startsWith('#')) continue
+    if (!/^\s/.test(line)) break
+    body.push({ indent: line.length - line.trimStart().length, text: trimmed })
+  }
+  const triggerIndent = body.length > 0 ? Math.min(...body.map((line) => line.indent)) : 0
+  const pushAt = body.findIndex((line) => line.indent === triggerIndent && line.text.startsWith('push:'))
+
+  let branch = ''
+  if (pushAt >= 0) {
+    for (let i = pushAt + 1; i < body.length && body[i].indent > triggerIndent; i++) {
+      const m = /^branches:\s*\[([^\]]*)\]\s*$/.exec(body[i].text)
+      if (m) {
+        branch = m[1].split(',')[0].trim()
+        break
+      }
+    }
+  }
+  if (branch === '') {
+    throw new Error(`${CI_FILE}'s \`push:\` trigger names no \`branches: [...]\`, and the site links the repository's files at the branch its CI builds on (W1.10).`)
+  }
+  return branch
+}
+
+const branch = baseBranch()
+const sourceHref = (file: string): string => `${facts.repository}/blob/${branch}/${file}`
+---
+
+{/* The description names no product but the page's subject. `website/test/origins.mjs` refuses
+    the control plane's own name in an attribute value while `site.yaml`'s `analytics.enabled`
+    is false — it is one of the names a stray measurement could arrive under — and a
+    `description` is an attribute, so the sentence a reader meets in a search result says what
+    the page is about without it. The page's text says the name as often as it needs to: the
+    rule is about what a page loads, not about what it says. */}
+<Base
+  title="Why GCP"
+  description="Why Fugaro runs in one Google Cloud project: the control plane it is built on, what a Fugaro project holds, and what a second cloud would cost."
+>
+  {/* The page's opening band, in the redesign's shape (`base.css` §2c): the display scale's
+      largest step with the accent's gradient on the title, and the page's own lede under it —
+      what the page is for, in one sentence a reader can decide on. */}
+  <div class="why-gcp-head">
+    <h1 class="why-gcp-title display-xl"><span class="gradient-text">Why GCP</span></h1>
+    <p class="lede">
+      Fugaro runs in one Google Cloud project, and the reasons are Firebase's. Here is what
+      the project holds, what Fugaro puts in it, and why a second cloud would split the thing
+      in two.
+    </p>
+  </div>
+
+  {/* The brief's four points, as the tree supports them, one card each: the claim is the
+      card's body and its citation is the card's foot. The `<ol>` is the brief's own order and
+      `loadWhyGcp` refuses a fifth row, so the list a reader sees is the argument the brief
+      makes rather than however many rows the file happens to carry. */}
+  <section id="the-project" class="why-gcp-section">
+    <h2 class="why-gcp-heading display-lg">One project</h2>
+    <ol class="claims points">
+      {why.points.map((claim) => (
+        <li class="card claim" id={claim.id}>
+          <p class="claim-text">{claim.text}</p>
+          <p class="claim-source">
+            Source: <a href={sourceHref(claim.source)} rel="noopener">{claim.source}</a>
+            {' · '}
+            <time datetime={claim.date}>{claim.date}</time>
+          </p>
+        </li>
+      ))}
+    </ol>
+  </section>
+
+  {/* The brief's AWS paragraph and the repository's own position on a second cloud, the same
+      two things a card carries. Nothing here is a rebuttal: what the brief argues as a
+      sandbox is what the tree says the layout is, and what the brief tells as a story about a
+      pluggable cloud that was tried is what the tree says is an open invitation (ZF21). */}
+  <section id="other-clouds" class="why-gcp-section">
+    <h2 class="why-gcp-heading display-lg">Other clouds</h2>
+    <ul class="claims closing">
+      {why.closing.map((claim) => (
+        <li class="card claim" id={claim.id}>
+          <p class="claim-text">{claim.text}</p>
+          <p class="claim-source">
+            Source: <a href={sourceHref(claim.source)} rel="noopener">{claim.source}</a>
+            {' · '}
+            <time datetime={claim.date}>{claim.date}</time>
+          </p>
+        </li>
+      ))}
+    </ul>
+  </section>
+
+  {/* The page's answer to the brief's "Suggested framing", and the sentence D249 requires the
+      built page to carry (`website/test/wording.mjs`). It is set apart from the claims above
+      because it is the one sentence the page asks a reader to take away, and it carries its
+      citation like every other sentence here. */}
+  <section id="the-framing" class="why-gcp-section">
+    <p class="framing display-lg" id={why.framing.id}>{why.framing.text}</p>
+    <p class="claim-source">
+      Source: <a href={sourceHref(why.framing.source)} rel="noopener">{why.framing.source}</a>
+      {' · '}
+      <time datetime={why.framing.date}>{why.framing.date}</time>
+    </p>
+  </section>
+</Base>
+
+<style>
+  /* The page's own layout, in the site's tokens (W1.2, D104): no colour is named here, and the
+     shapes the boards repeat — the display scale, `.gradient-text`, `.card` and the `lede` the
+     FAQ opens with — are `base.css` §2c, written once for every page (redesign P1). What is
+     this file's own is the room between its bands, the single column the claims are laid in,
+     and the emphasis the framing sentence carries. */
+
+  /* The head: the opening band, with the room above it the boards give the top of a page. */
+  .why-gcp-head {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    padding-block: var(--space-2xl) var(--space-xl);
+  }
+
+  .why-gcp-title {
+    margin: 0;
+  }
+
+  .lede {
+    margin: 0;
+    max-width: var(--measure);
+    color: var(--text-muted);
+    font-size: var(--font-size-xl);
+    line-height: var(--leading-snug);
+  }
+
+  .why-gcp-section {
+    margin-block: var(--space-3xl);
+  }
+
+  .why-gcp-heading {
+    margin: 0 0 var(--space-md);
+  }
+
+  /* One column, not the FAQ's two: these are four steps of one argument, and a reader follows
+     them in order. The list is the page's own; the card is `base.css`'s. */
+  .claims {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-md);
+    max-width: var(--measure);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .claim {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+  }
+
+  .claim-text {
+    margin: 0;
+    font-size: var(--font-size-lg);
+    line-height: var(--leading-snug);
+  }
+
+  /* The citation, the same line the FAQ gives an answer's source: quieter than the claim, and
+     the only place on this page a link is drawn. */
+  .claim-source {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  /* The framing sentence: the one thing the page asks a reader to take away, so it is set at
+     the display scale's middle step — the size a section headline gets — and it is the page's
+     own closing line rather than another card. */
+  .framing {
+    margin: 0 0 var(--space-2xs);
+    max-width: var(--measure);
+    font-family: var(--font-sans);
+    font-weight: var(--weight-black);
+    letter-spacing: var(--tracking-tight);
+  }
+</style>

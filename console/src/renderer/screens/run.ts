@@ -5,9 +5,10 @@
 // Seven things are on this screen, and each of them is a rule:
 //
 //   1. **The ledger.** `runstore.Cost`'s three figures, kept apart: the model
-//      dollars (`NOTIONAL~` when the basis is a subscription), compute (`est.`
-//      when the document says it is an estimate) and the total. The two accounts
-//      are never summed on screen, exactly as on the Live and Spend screens.
+//      dollars (the **billed** part of the model figure -- `NOTIONAL~` only
+//      when the whole figure is the subscription's), compute (`est.` when the
+//      document says it is an estimate) and the total. The two accounts are
+//      never summed on screen, exactly as on the Live and Spend screens.
 //   2. **The stage timeline, with deadlines.** The stages are the verify records
 //      `diagnose` carries (`build`/`test`/`lint`, `internal/verify/verify.go`),
 //      each with its outcome, its test counts and its duration; the deadline is
@@ -378,21 +379,46 @@ function prNumberOf(row: Record<string, unknown>): number | null {
 const COMPUTE_NOT_ESTIMATED =
   'compute is not estimated for this run: the price table or the run\'s resources were unknown, and a `compute_usd` of 0 with `compute_estimated` false means "not estimated", not free'
 
-/** costOf reads `runstore.Cost`. `model_usd` is a list price when the basis is
- * a subscription (never billed, never capped), and compute is what
- * `ComputeEstimated` says it is: an estimate when the flag is on, and **not an
- * estimate** -- `unavailable`, with the CLI's own sentence -- when it is off,
- * because the flag off is a `compute_usd` of 0 that means "not estimated", not
- * free (`internal/runstore/cost.go:15`, design section 10.1). The sentence is
- * the Projects screen's own constant: the two screens draw the same field and
- * say the same thing about it. */
+/** modelReading is the ledger's model figure: the row's model dollars as
+ * **money** (C1.16, P12/D140). `model_usd` is the whole model figure -- the
+ * money and the subscription's list price together -- and `model_notional_usd`
+ * is the part of it the plan paid, so the billed dollars are the difference.
+ * The basis alone cannot make that split: a mixed cascade run's basis is
+ * `api-list` for the whole run while part of its figure is the plan's, which is
+ * what this screen used to draw as billed money.
+ *
+ * A row written before C1.16 carries no `model_notional_usd`, and then the
+ * subscription basis is the fallback: such a row's whole figure is the plan's.
+ * The state follows the figure: the money part when the row has one, and
+ * otherwise the notional figure marked notional -- the same figure and the same
+ * mark a subscription row drew before the key existed. The Projects screen
+ * declares its own copy of this rule for its own document: the four screens are
+ * siblings and neither imports the other, so the rule is held equal by the
+ * tests of both rather than by a shared module that is not this task's to add. */
+function modelReading(model: Reading, notional: Reading, basis: string | null): Reading {
+  if (model.value === null) return model
+  const plan = notional.value ?? (basis === 'subscription' ? model.value : 0)
+  const money = Math.max(0, model.value - plan)
+  if (money > 0) return { ...model, value: money }
+  if (plan > 0 || basis === 'subscription') return { ...model, value: plan, state: 'notional' }
+  return model
+}
+
+/** costOf reads `runstore.Cost`. Compute is what `ComputeEstimated` says it is:
+ * an estimate when the flag is on, and **not an estimate** -- `unavailable`,
+ * with the CLI's own sentence -- when it is off, because the flag off is a
+ * `compute_usd` of 0 that means "not estimated", not free
+ * (`internal/runstore/cost.go:15`, design section 10.1). The sentence is the
+ * Projects screen's own constant: the two screens draw the same field and say
+ * the same thing about it. */
 function ledgerOf(row: Record<string, unknown>): RunLedger {
   const cost = objectAt(row['cost']) ?? {}
   const basis = textAt(cost['model_basis'])
   const model = readNumber(cost['model_usd'], 'row.cost.model_usd')
+  const notional = readNumber(cost['model_notional_usd'], 'row.cost.model_notional_usd')
   const compute = readNumber(cost['compute_usd'], 'row.cost.compute_usd')
   return {
-    model: basis === 'subscription' && model.value !== null ? { ...model, state: 'notional' } : model,
+    model: modelReading(model, notional, basis),
     compute:
       cost['compute_estimated'] === true
         ? compute.value === null

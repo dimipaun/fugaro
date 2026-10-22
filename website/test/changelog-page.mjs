@@ -2,7 +2,7 @@
 //
 // The page is a rendering of `docs/releases/vX.Y.Z.md` and of `website/data/release-summaries.yaml`,
 // and of nothing else, so the source of truth of every assertion below is **those two files** —
-// read here, never the generator's own output and never a git tag (D100, finding 44). Five
+// read here, never the generator's own output and never a git tag (D100, finding 44). Six
 // things are checked:
 //
 //   1. **The page's release set equals the directory's, in both directions.** A release
@@ -25,6 +25,30 @@
 //      block a reader opens below it. Every release file has an entry in that file, none is
 //      empty, no entry outlives the file it names, and the words of an entry are the site's
 //      rather than an internal id or a repository path.
+//   6. **The page wears the bold look, and wears no words to do it** (the owner's brief of
+//      2026-10-21, which applies the design the owner approved on the home page —
+//      `website/design-ref/HomeV3.dc.html` — to this page, which has no board of its own).
+//      The page's own look is a fact about the artifact like any other, and it is the one
+//      thing the cases above cannot see: they read the page's text, and the redesign moved
+//      no word of it. So five cases read the built HTML and the stylesheet inlined in it —
+//      the display scale's headline with its word in the accent's gradient, one card per
+//      release spaced by a step of the spacing scale, the hierarchy inside a card, the
+//      boards' background behind the page's head (the grid and the two soft glows `base.css`
+//      draws once, `.hero-glow`, which the home page's hero opens with), and the code chips
+//      a release note is full of.
+//
+//      **The chips are the case that shows what the other four cannot.** A rule can be in
+//      the stylesheet, name the right elements and paint nothing, and a case that asks
+//      whether a rule with those fragments exists answers yes: the notes arrive through
+//      `set:html`, Astro's scope attribute never reaches the markup a release file wrote, and
+//      the scoped `.release-notes code` this page shipped was built as a selector no chip
+//      could match — every chip kept `base.css`'s own `--surface`, the card's own tone, and
+//      four readings passed it green. So that case reads **reachability**: the rule is
+//      matched against the chips the page actually rendered, and a rule that can reach none
+//      of them is refused by name. The case after it plants the defect — it rewrites the
+//      built rule into exactly the shape Astro builds for a scoped one — and shows the
+//      refusal firing, because a look nothing refuses is a look that drifts back with the
+//      next edit.
 //
 // **How it builds, and why the copy's plugin version is lowered.** A page is observable only
 // as HTML, so this file builds the site — in a **copy of the repository in a temp directory**,
@@ -49,6 +73,8 @@ import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { cssDeclarations, cssRules, parse, walk } from './lib/html.mjs'
+import { ancestorsOf, classesOf, matchesSelector, subjectOf } from './lib/selectors.mjs'
 import { READ_UNDER_PLUGIN, linkNodeModules } from './lib/build.mjs'
 
 // website/test/changelog-page.mjs -> website/test -> website.
@@ -119,7 +145,7 @@ function build() {
       const parent = path.basename(path.dirname(src))
       if (path.dirname(src) === REPO && SKIP.has(name)) return false
       // `plugin/skills` and `plugin/.claude-plugin` are the parts of `plugin/` a build
-      // reads: the hero's chat quotes the skills, and the changelog decides which releases
+      // reads: the slider's "See it" panel quotes the skills, and the changelog decides which releases
       // are published from the plugin's own version (website/test/lib/build.mjs).
       if (parent === 'plugin' && !READ_UNDER_PLUGIN.has(name)) return false
       if (parent === 'website' && SKIP_UNDER_WEBSITE.has(name)) return false
@@ -423,6 +449,110 @@ function fileElements(fileName) {
 }
 
 // ---------------------------------------------------------------------------------------
+// The look: the built page's own stylesheet, read the way a reader receives it.
+// ---------------------------------------------------------------------------------------
+
+/**
+ * The built page's stylesheet: every `<style>` block in it, joined. `astro.config.mjs` sets
+ * `inlineStylesheets: 'always'`, so a page carries the whole of its CSS and this file reads
+ * what a browser receives — nothing under a `dist/` the build under test did not write, and
+ * no `<link>` followed to a file that might be from another build (the header says why the
+ * build is a copy in a temp directory).
+ */
+function pageCSS(html) {
+  return [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((match) => match[1]).join('\n')
+}
+
+/**
+ * The declarations of the first built rule whose selector carries every one of the given
+ * fragments, or `null` when the stylesheet has no such rule.
+ *
+ * **Fragments rather than a selector written out**, because Astro scopes a component's rules:
+ * the source's `.release-notes summary` is built as
+ * `.release-notes[data-astro-cid-…] summary[data-astro-cid-…]`, and a reader that asked for
+ * the source's selector exactly would find nothing — and a `null` a check happened to pass on
+ * is worse than no check at all. The fragments are the parts of the selector the page's own
+ * source writes, so a rule that moved off the elements it is about stops being found.
+ */
+function declarationsOf(css, ...fragments) {
+  for (const [, selector, body] of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (fragments.every((fragment) => selector.includes(fragment))) return body
+  }
+  return null
+}
+
+/** A rule's declarations, or a failure naming the selector a check wanted when there is none. */
+function declarationsFor(css, what, ...fragments) {
+  const body = declarationsOf(css, ...fragments)
+  assert.ok(
+    body !== null,
+    `the page's stylesheet carries no rule for ${what}: the built CSS has no selector carrying ${fragments.map((fragment) => JSON.stringify(fragment)).join(' and ')}`,
+  )
+  return body
+}
+
+/** The text of a built element, tags and entities removed and whitespace collapsed. */
+function elementText(html) {
+  return decodeEntities(html.replace(/<[^>]*>/g, '')).replace(/\s+/g, ' ').trim()
+}
+
+// ---- a rule, read against the elements the page rendered ---------------------------------
+//
+// **A rule is in force only where its selector can reach an element the page rendered**, and
+// that is a fact about the built artifact rather than about the source. Astro appends a
+// component's `data-astro-cid-…` to **every** compound of a scoped selector, so the source's
+// `.release-notes code` is built as `.release-notes[cid] code[cid]` — and the `<code>`
+// elements a release note carries arrive through `set:html`, which the scope attribute never
+// reaches. The rule was dead: every chip in the notes kept `base.css`'s own `--surface`,
+// which is the card's own tone, and the case that named it passed, because it asked whether a
+// rule with those fragments existed and never whether the rule could match anything. A
+// selector that names a scope no element carries is the same defect `base-styles.mjs` reads on
+// the homepage's blocks (its review round 6), read here for the chip rule.
+
+// The matcher itself — `classesOf`, `ancestorsOf`, `matchesSelector` and `subjectOf` — is
+// `website/test/lib/selectors.mjs`, which the run diagram's paint gate reads too: "can this
+// rule reach this element" is one question and one answer.
+
+/**
+ * The notes' code chips and the rule that paints them on the ground, as the sentences for the
+ * ways that rule cannot reach a chip — `[]` when the chips are painted by a rule that can
+ * match them.
+ *
+ * The chips are the `<code>` elements the page rendered inside a `.release-notes` block, and
+ * the rule is the one the page's own stylesheet declares with a `code` subject and a
+ * `background: var(--ground)` — the chip's own tone, which is the whole point of the rule. A
+ * rule that reaches none of the chips is refused by name, with the scope it requires and the
+ * scopes the chips carry, because the two are one line apart in the built stylesheet and the
+ * fix is to make the rule reachable (`:global()`), not to move the chips.
+ */
+function chipFailures(css, html) {
+  const doc = parse(html)
+  const chips = [...walk(doc)].filter(
+    (el) => el.name === 'code' && ancestorsOf(el).some((ancestor) => classesOf(ancestor).includes('release-notes')),
+  )
+  if (chips.length === 0) {
+    return ['the page renders no code chip inside the notes: a release note is full of them, and the rule this case reads is about the chips a reader sees in one']
+  }
+  const scopes = [...new Set(chips.flatMap((chip) => [...chip.attrs.keys()].filter((name) => name.startsWith('data-astro-cid-'))))]
+  const painting = cssRules(css).filter(
+    (rule) =>
+      rule.selector.split(',').some((part) => subjectOf(part).name === 'code') &&
+      cssDeclarations(rule.body).some(
+        ([property, value]) => /^background(-color)?$/.test(property) && value.replace(/\s+/g, '') === 'var(--ground)',
+      ),
+  )
+  if (painting.length === 0) {
+    return ['no rule of the page’s stylesheet paints a code chip on the ground: the card is `--surface` and `base.css` paints a chip `--surface` too, so a chip with no rule of its own is a chip a reader cannot see']
+  }
+  return painting
+    .filter((rule) => !rule.selector.split(',').some((part) => chips.some((chip) => matchesSelector(part, chip))))
+    .map((rule) => {
+      const wanted = [...new Set([...rule.selector.matchAll(/\[(data-astro-cid-[^\]]+)\]/g)].map(([, scope]) => scope))]
+      return `the notes’ code chips are painted by \`${rule.selector}\`, and no selector of that rule can match any of the ${chips.length} code chips the page renders: the rule requires ${wanted.join(', ') || 'no scope attribute'} where the chips carry ${scopes.join(', ') || 'none'}. A chip arrives through \`set:html\`, so Astro never appends the component’s scope attribute to it — and a rule the chips cannot be matched by is a rule they never get, so every chip in the notes keeps \`base.css\`’s own \`--surface\`, which is the card’s own tone: a chip the same tone as the card it sits on is a chip nobody sees`
+    })
+}
+
+// ---------------------------------------------------------------------------------------
 // The cases.
 // ---------------------------------------------------------------------------------------
 
@@ -650,4 +780,297 @@ test('every entry links to its GitHub release, at a URL built from site.yaml', (
       `the page carries an absolute link that is not built from site.yaml: ${href}`,
     )
   }
+})
+
+// ---------------------------------------------------------------------------------------
+// The bold look (the owner's brief of 2026-10-21).
+// ---------------------------------------------------------------------------------------
+
+test('the page opens with the display scale’s headline, its word in the accent’s gradient', () => {
+  const html = builtPage()
+
+  // One `h1`, and it is the page's own name: `website/test/a11y.mjs` counts the headings, and
+  // this word is the whole of what the page writes for itself.
+  assert.equal(
+    (html.match(/<h1\b/g) ?? []).length,
+    1,
+    'the page carries more than one <h1>: the bold look’s headline is the page’s one name, and a second one is a page with two first things',
+  )
+  const h1 = /<h1\b([^>]*)>([\s\S]*?)<\/h1>/.exec(html)
+  assert.ok(h1, 'the page carries no <h1>, so it opens with nothing a reader reads first')
+
+  // The headline is `base.css`'s largest display step — the weight, the tracking and the
+  // leading the owner's boards set a headline in, shared by every page that wears the look —
+  // and not a size this page invented.
+  assert.match(
+    h1[1],
+    /\bclass="[^"]*\bdisplay-xl\b[^"]*"/,
+    `the page’s <h1> is not the display scale’s largest step (${JSON.stringify(h1[1])}): the bold look’s headline is \`display-xl\`, and a page that sets its own size is the drift the shared look exists to prevent`,
+  )
+
+  const headline = elementText(h1[2])
+  assert.equal(headline, 'Changelog', `the page’s headline is ${JSON.stringify(headline)}, and the page’s own word is its name`)
+
+  // The gradient: `base.css`'s own class, drawn on the headline's words. The boards draw part
+  // of a headline in it and the rest in the text tone; this headline is one word, so the word
+  // is what is drawn in it — and the check is that the gradient carries those words rather
+  // than sitting beside them, which is what an emphasis on nothing would look like.
+  const gradient = /<span\b[^>]*\bclass="[^"]*\bgradient-text\b[^"]*"[^>]*>([\s\S]*?)<\/span>/.exec(h1[2])
+  assert.ok(
+    gradient,
+    'the headline carries no element in the accent’s gradient: the bold look draws the emphasised words of a headline in it (`base.css`’s `.gradient-text`), and this page’s one headline is where it has them',
+  )
+  assert.equal(
+    elementText(gradient[1]),
+    headline,
+    'the accent’s gradient is not drawn on the headline’s own words: the gradient is an emphasis, and an emphasis is drawn on the words it emphasises',
+  )
+
+  // And the page writes nothing between the headline and its first release. This is the
+  // decision the bold look's eyebrow, pill and lead paragraph would each have broken: every
+  // sentence on this page comes from `docs/releases/` or from
+  // `website/data/release-summaries.yaml` (the case above refuses one that does not), so a
+  // page that gave itself an intro would have to write one.
+  const firstRelease = html.indexOf('<h2')
+  assert.notEqual(firstRelease, -1, 'the page carries no release heading, so there is no first entry for the headline to open onto')
+  const between = html.slice(h1.index + h1[0].length, firstRelease)
+  assert.equal(
+    elementText(between),
+    '',
+    `the page writes ${JSON.stringify(elementText(between))} between its headline and its first release: the page has no lead, no eyebrow and no pill of its own, because it writes no sentence of its own (W1.9)`,
+  )
+})
+
+test('every release is a card, and the list is spaced by a step of the scale', () => {
+  const html = builtPage()
+
+  // One card per release file, drawn on `base.css`'s own shape: the panel a page is drawn on,
+  // one step above the ground with a hairline and the larger radius. The page used to be a
+  // list of entries separated by a hairline; the bold look makes each release a thing of its
+  // own, and a class of this page's own would be a second card shape for the same site.
+  const articles = [...html.matchAll(/<article\b([^>]*)>/g)]
+  assert.equal(
+    articles.length,
+    releaseFiles().length,
+    `the page renders ${articles.length} entries and docs/releases/ holds ${releaseFiles().length} release files`,
+  )
+  for (const [, attrs] of articles) {
+    assert.match(
+      attrs,
+      /\bclass="[^"]*\bcard\b[^"]*"/,
+      `an entry is not drawn as a card (${JSON.stringify(attrs)}): every release sits on the board’s panel (base.css’s \`.card\`), and an entry with no box is the hairline-separated list the bold look replaced`,
+    )
+  }
+
+  const css = pageCSS(html)
+
+  // The list: a grid whose gap is a step of the spacing scale, so two releases read as two
+  // things and the room between them is the page's room rather than a number this component
+  // invented.
+  const list = declarationsFor(css, 'the list of releases', '.changelog[')
+  assert.match(list, /display:\s*grid/, `the releases are not laid out as a grid (${list}): the gap between two cards is a grid gap, and a list with no layout of its own is the stack this page used to be`)
+  assert.match(
+    list,
+    /gap:\s*var\(--space-[a-z0-9]+\)/,
+    `the room between two releases is not a step of the spacing scale (${list}): a gap written as a number is a value no other block of the site can be compared with`,
+  )
+
+  // And the head gives the headline room below it, in a step of the same scale — and **no room
+  // above it**: the top of the page is `main`'s own padding, which every page of the site
+  // opens at (`--space-lg` there and `--space-xl` from 48 rem up, `base.css`), so a head that
+  // pads its own top sets this page's headline a step lower than every other page's. The
+  // pages whose first block is a full container of its own drop `main`'s padding instead
+  // (`main:has(> .hero, > [data-security-page])`) and this head is not one of those.
+  const head = declarationsFor(css, 'the page’s head', '.changelog-head[')
+  assert.match(
+    head,
+    /padding-block:\s*0\s+var\(--space-[a-z0-9]+\)/,
+    `the page’s head does not open at zero and give the headline a step of the spacing scale below it (${head}): the room above a page’s first block is \`main\`’s own padding, so a head with a top padding of its own puts the page’s headline a step lower than every other page’s — and a head with no room under it leaves the first card reading as the next line of the title`,
+  )
+})
+
+test('an entry is read in one hierarchy: the tag, the summary, then the notes', () => {
+  const html = builtPage()
+  const css = pageCSS(html)
+
+  // The tag is the card's title at the display scale's middle step — the same shared class the
+  // page's own headline is set in one step up — and it is still the entry's heading, its anchor
+  // and its link to the GitHub release (the case above reads the URL).
+  const headings = [...html.matchAll(/<h2\b([^>]*)>/g)]
+  assert.ok(headings.length > 0, 'the page carries no entry heading')
+  for (const [, attrs] of headings) {
+    assert.match(
+      attrs,
+      /\bclass="[^"]*\bdisplay-md\b[^"]*"/,
+      `an entry’s heading is not at the display scale (${JSON.stringify(attrs)}): the tag is the card’s title, and it is set in the same display scale as the page’s headline`,
+    )
+  }
+
+  // The summary is the loudest prose in the card: one step up the type scale, which is what
+  // makes it the line a reader reads first rather than a paragraph among the notes.
+  const summary = declarationsFor(css, 'the release summary', '.release-summary[')
+  assert.match(
+    summary,
+    /font-size:\s*var\(--font-size-lg\)/,
+    `the release summary is not set a step up the type scale (${summary}): the summary is what a release gives a reader, and it is the line of the card that is read first`,
+  )
+
+  // The notes are a control: the accent's hairline, the accent's legible tone, and a target
+  // the owner's brief of 2026-10-19 measures every control against. The `<details>` is still
+  // the mechanism (no script), so what is pinned here is that a reader can see it and reach it.
+  const control = declarationsFor(css, 'the notes’ control', '.release-notes[', 'summary')
+  assert.match(
+    control,
+    /min-height:\s*44px/,
+    `the notes’ control is not a 44 px target (${control}): the owner’s brief of 2026-10-19 measures every control of the site against it`,
+  )
+  assert.match(
+    control,
+    /border:\s*var\(--border-width\) solid var\(--accent\)/,
+    `the notes’ control does not carry the accent’s hairline (${control}): the accent is what marks a control the reader can operate, and a label in the muted tone is a line of prose`,
+  )
+  assert.match(
+    control,
+    /color:\s*var\(--accent-on-dark\)/,
+    `the notes’ control is not set in the accent’s legible tone (${control}): it is text a reader operates the page with, and the muted tone is for prose`,
+  )
+
+  // The file's own lines under the control are the quietest tone in the card — they are the
+  // operator's detail, not what the release gives a reader. The chips those lines are full of
+  // are the next case's subject, because a rule that paints them has to be able to reach them.
+  const notes = declarationsFor(css, 'the notes’ own lines', '.release-notes[')
+  assert.match(
+    notes,
+    /color:\s*var\(--text-muted\)/,
+    `the notes’ own lines are not the quieter tone (${notes}): the collapsed block is the operator’s detail, and it reads below the summary that says what the release gives a reader`,
+  )
+
+  // The "not yet released" marker is the board's pill — the shape it draws a badge of one or
+  // two words in — and the warning tone, because it is the one line of the card that says
+  // "not yet" (the case above reads which release carries it).
+  for (const [, attrs] of html.matchAll(/<p\b([^>]*data-status="not-yet-released"[^>]*)>/g)) {
+    assert.match(
+      attrs,
+      /\bclass="[^"]*\bpill\b[^"]*"/,
+      `the not-yet-released marker is not the board’s pill (${JSON.stringify(attrs)}): the marker is a badge of two words, and the pill is the shape the boards draw those in`,
+    )
+  }
+  const status = declarationsFor(css, 'the not-yet-released marker', '.release-status[')
+  assert.match(
+    status,
+    /color:\s*var\(--warn\)/,
+    `the not-yet-released marker is not in the warning tone (${status}): the tone that means "pay attention" is the one a line saying "not yet" is read in`,
+  )
+})
+
+test('the notes’ code chips are painted on the ground, by a rule that reaches them', () => {
+  const html = builtPage()
+  const css = pageCSS(html)
+
+  // A code span in a release note is a command, and a chip the same tone as the card it sits
+  // on is a chip nobody sees: the card is `--surface` (`base.css`) and `base.css` paints a
+  // chip `--surface` too, so the rule that draws one on the ground is the only thing that
+  // makes it read as a chip rather than as a word in the mono face.
+  //
+  // **What is read is reachability, not the text of a selector.** The notes arrive through
+  // `set:html`, Astro's scope attribute never reaches the markup a release file wrote, and the
+  // scoped `.release-notes code` this page shipped was built as `.release-notes[cid]
+  // code[cid]` — a selector no chip could match. The rule was in the stylesheet, named the
+  // right elements, painted nothing, and a case that asked whether a rule with those fragments
+  // existed answered yes. So the rule is matched against the chips the page rendered.
+  const failures = chipFailures(css, html)
+  assert.deepEqual(
+    failures,
+    [],
+    `the notes’ code chips are not painted by a rule that reaches them:\n  ${failures.join('\n  ')}`,
+  )
+})
+
+test('the chip reading refuses a rule that can match no chip, and passes the page’s own', () => {
+  const html = builtPage()
+  const css = pageCSS(html)
+
+  // The page's own rule for the chips, as the built stylesheet writes it: the fixture has to
+  // edit the rule the page carries rather than write one here, because the defect is the shape
+  // Astro builds a scoped selector into.
+  const rule = /\.release-notes\[[^{}]*\bcode[^{}]*\{[^{}]*\}/.exec(css)
+  assert.ok(rule, 'the changelog stylesheet carries no `.release-notes … code` rule, and the cases below are about the page’s own rule')
+  const scope = /\[(data-astro-cid-[^\]]+)\]/.exec(rule[0])
+  assert.ok(scope, `the page’s chip rule carries no scope attribute (${rule[0]}), and the plant below reproduces the scoped shape from it`)
+
+  // **The defect as it shipped**: the component's own scoped rule, which Astro builds with the
+  // scope attribute on every compound — the `code` one included, where no chip carries it.
+  const shipped = rule[0].replace(/(\s)code(\s*\{)/, `$1code[${scope[1]}]$2`)
+  assert.notEqual(shipped, rule[0], 'the plant did not change the chip rule, so the case below proves nothing about the scoped shape')
+
+  const cases = [
+    // The shape the page shipped: refused, by name, with the scope it requires and the fact
+    // that the chips carry none — which is the two lines a reader needs to fix it.
+    [
+      'the scoped rule Astro builds, which no chip can match',
+      css.replace(rule[0], shipped),
+      1,
+      [/can match any of the \d+ code chips/, /requires data-astro-cid-/, /the chips carry none/],
+    ],
+    // The other way a chip rule paints nothing: no rule at all, and the chips keep `base.css`'s
+    // `--surface`, which is the card's own tone.
+    [
+      'the chip rule taken away',
+      css.replace(rule[0], ''),
+      1,
+      [/no rule of the page’s stylesheet paints a code chip on the ground/],
+    ],
+    // The control: the page's own rule is refused not at all, so the two plants above are not
+    // passing because the reading refuses every rule it sees.
+    ['the page’s own rule', css, 0, []],
+  ]
+  for (const [what, stylesheet, count, patterns] of cases) {
+    const failures = chipFailures(stylesheet, html)
+    assert.equal(
+      failures.length,
+      count,
+      `${what}: the reading reported ${failures.length} failures where ${count} were expected:\n  ${failures.join('\n  ')}`,
+    )
+    for (const pattern of patterns) {
+      assert.match(
+        failures.join('\n'),
+        pattern,
+        `${what}: the failure does not say what it is about:\n  ${failures.join('\n  ')}`,
+      )
+    }
+  }
+})
+
+test('the page’s head carries the boards’ background, and the headline paints above it', () => {
+  const html = builtPage()
+  const css = pageCSS(html)
+
+  // The boards draw a grid and two soft glows behind the top of a page, and `base.css` writes
+  // that drawing once (`.hero-glow`) for the pages that open with it. This page opens with it
+  // rather than with a drawing of its own, and it is decoration: `aria-hidden`, and no text.
+  const glow = /<div\b[^>]*\bclass="[^"]*\bhero-glow\b[^"]*"[^>]*>/.exec(html)
+  assert.ok(
+    glow,
+    'the page’s head carries no background: the bold look opens a page with the boards’ grid and glows (`base.css`’s `.hero-glow`, which the home page’s hero opens with)',
+  )
+  assert.match(
+    glow[0],
+    /\baria-hidden="true"/,
+    `the page’s background is not marked as decoration (${glow[0]}): it is a drawing that says nothing, and a reader given it is given a picture of a grid`,
+  )
+  const head = /<header\b[^>]*\bclass="[^"]*\bchangelog-head\b[^"]*"[^>]*>([\s\S]*?)<\/header>/.exec(html)
+  assert.ok(head, 'the page carries no head element')
+  assert.ok(
+    head[1].indexOf('hero-glow') < head[1].indexOf('<h1'),
+    'the background is not the head’s first child: the layer is behind the headline, and a layer written after it is a drawing over the page’s own name',
+  )
+
+  // The two rules the layer needs, and the one the headline needs to paint above it: a
+  // positioned box paints after a static one, so a headline left static would be drawn under
+  // the glow rather than over it.
+  const headRule = declarationsFor(css, 'the page’s head', '.changelog-head[')
+  assert.match(headRule, /position:\s*relative/, `the page’s head is not a positioned box (${headRule}): the background is absolutely positioned inside it, and a glow positioned against the page is a glow across the page`)
+  assert.match(headRule, /overflow:\s*hidden/, `the page’s head does not clip its background (${headRule}): the drawing is wider than the box it belongs to`)
+  const titleRule = declarationsFor(css, 'the page’s headline', '.changelog-title[')
+  assert.match(titleRule, /position:\s*relative/, `the page’s headline is not a positioned box (${titleRule}): the background paints over a static box, so the headline would be drawn under the glow it sits on`)
 })

@@ -232,7 +232,7 @@ var bashSubcommands = map[string]map[string]bool{
 	"gh":      set("api", "auth", "browse", "gist", "issue", "pr", "release", "repo", "run", "workflow"),
 	"make":    set("all", "build", "check", "ci", "clean", "deploy", "docs", "fmt", "install", "lint", "release", "run", "test", "vet"),
 	"cargo":   set("add", "bench", "build", "check", "clippy", "doc", "fmt", "install", "publish", "remove", "run", "test", "update"),
-	"fugaro":  set("budget", "cancel", "config", "diagnose", "doctor", "image", "init", "logs", "recipes", "report", "run", "runs", "secrets", "upgrade", "version", "watch"),
+	"fugaro":  set("budget", "cancel", "config", "diagnose", "doctor", "image", "logs", "recipes", "report", "run", "runs", "secrets", "setup", "update", "upgrade", "version", "watch"),
 	"kubectl": set("apply", "config", "create", "delete", "describe", "exec", "get", "logs", "port-forward", "rollout", "scale", "top"),
 	"gcloud":  set("auth", "builds", "compute", "config", "iam", "projects", "run", "services", "storage"),
 	"bash":    set("-c"),

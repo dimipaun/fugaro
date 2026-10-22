@@ -22,7 +22,7 @@
  * one of the entries the served root admits (`src/main/protocol.ts`), and each of the three
  * documents links it with `<link rel="stylesheet" href="./console.css">`. So a value written
  * here reaches the window on the next `npm run build`, and it reaches it as one served file
- * rather than four: a task that adds a stylesheet to this directory adds it to
+ * rather than one per source file: a task that adds a stylesheet to this directory adds it to
  * `THEME_STYLESHEETS` in the same commit, because the step refuses both a listed file that
  * is not there and a `.css` the list does not name. That is what Task 6.1's paragraph here
  * used to say the opposite of, and why it was rewritten by 6.2 rather than left standing.

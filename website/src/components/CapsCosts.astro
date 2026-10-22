@@ -1,70 +1,71 @@
 ---
 /**
- * website/src/components/CapsCosts.astro — the caps-and-costs guide (website plan, Task
- * W1.5; reworked by the owner's brief of 2026-10-19).
+ * website/src/components/CapsCosts.astro — the caps-and-costs guide (website plan, Task W1.5;
+ * reworked by the owner's brief of 2026-10-19; the bold redesign of 2026-10-21, from the
+ * owner's approved board `website/design-ref/CapsAndCostsV2.dc.html`).
  *
- * The page answers three questions in this order, and the order is the point:
+ * The page answers two questions in this order, and the order is the point:
  *
- *   1. **What a job costs.** The page leads with a small table — one row per kind of run,
- *      with the sample size, the median, the middle half and the figure nine runs in ten
- *      stayed under — rendered from `website/data/typical-costs.yaml`, the owner's own
- *      measurement of this project's development runs. It is a hand-written fact file, and
- *      the page writes no figure of its own: every number below is the file's, and
- *      `website/test/caps-and-costs.mjs` fails on a figure the file does not carry or a
- *      figure the file carries that the page does not render (Global Constraint 6, D96,
- *      D97).
- *   2. **How to set the caps.** The commands are the detail and they sit below the table,
- *      behind one `<details>`: a reader who came for what a job costs meets the figures
- *      first, and the whole of `fugaro budget` is one click away. Every command is a
- *      `Usage:` line and a one-line description read out of `website/content/cli-reference.md`
- *      (W0.4, generated from the command tree), so the guide cannot print a flag the command
- *      does not ship and a renamed flag reaches this page the day the reference is
- *      regenerated (finding 26, Global Constraint 6). The page writes no command of its own
- *      — `website/test/caps-and-costs.mjs` asserts that nothing here carries `fugaro budget`
- *      outside an element the reference filled.
- *   3. **What the owner's own aggregation publishes.** `website/content/costs.json` is what
- *      the owner's run of W0.3's command writes, and the page publishes the per-recipe
- *      ranges it holds — each with the window and the sample size behind it — or, while the
- *      file is absent, the empty state, which is the honest state on day one (D96, D97). No
- *      figure is written here, and none is rounded: a rounded figure is one the JSON does
- *      not carry, and the same test fails on any number the file does not contain.
+ *   1. **What a job costs.** One card per kind of run, each with the sample size, the median,
+ *      the middle half and the figure nine runs in ten stayed under, rendered from
+ *      `website/data/typical-costs.yaml`, the owner's own measurement of this project's
+ *      development runs. It is a hand-written fact file, and the page writes no figure of its
+ *      own: every number below is the file's, and `website/test/caps-and-costs.mjs` fails on a
+ *      figure the file does not carry or a figure the file carries that the page does not
+ *      render (Global Constraint 6, D96, D97). Each card also draws its figures against the
+ *      per-run cap as a bar, and **the bar's geometry is the file's figures divided by the
+ *      file's cap** — the board's own arithmetic, computed here rather than drawn by hand, so
+ *      a refreshed figure moves its own mark and a mark nothing supports cannot be drawn. The
+ *      cap the bars are drawn against is the one these runs were **measured under**, which the
+ *      file carries beside the one in force today (the owner's feedback of 2026-10-22: the cap
+ *      was $10 when the figures were taken and the owner lowered it to $5 on 2026-10-21). Two
+ *      figures rather than one, because a bar scaled by today's cap would draw two of the
+ *      owner's own measured runs past the end of its track, and a page that said these runs
+ *      ran under today's cap would be claiming a measurement under a cap that did not exist
+ *      when they ran.
+ *   2. **How to set the caps.** The commands are the detail and they sit below the figures, as
+ *      one card each: the whole of `fugaro budget` is on the page, always visible. Every card
+ *      is a `Usage:` line and a one-line description read out of
+ *      `website/content/cli-reference.md` (W0.4, generated from the command tree), so the guide
+ *      cannot print a flag the command does not ship and a renamed flag reaches this page the
+ *      day the reference is regenerated (finding 26, Global Constraint 6). The page writes no
+ *      command of its own — `website/test/caps-and-costs.mjs` asserts that nothing here carries
+ *      `fugaro budget` outside an element the reference filled.
  *
- * What this file deliberately does not do: it does not restate the reference's long
- * descriptions (they carry the amounts' own bounds, which are the command's business and
- * not a page's), it does not print a total either file does not carry, and it does not
- * describe a group the aggregation suppressed. A thin group is absent from the JSON and the
- * page renders what is there; a file that carries one anyway stops the build in W1.3's
- * pipeline rather than reaching a reader (D96's answer fixes the minimum at 20 runs).
+ * **What the bold redesign changed, and what it removed.** The figures were a six-column table
+ * whose rows were stacked by hand below the site's breakpoint (the owner's feedback of
+ * 2026-10-19: "these render terrible on mobile"); they are three job cards now, each with its
+ * figures as a `<dl>` of labelled rows, so the phone's layout is the markup's own shape rather
+ * than a second reading of a table. The caps were six rows behind one `<details>`; they are six
+ * cards, always open. And **the per-recipe ranges section is removed until there is data** (the
+ * owner's ruling of 2026-10-21): `website/content/costs.json` is the owner-run aggregation's
+ * output and is absent from this checkout, so the section rendered an empty state on every page
+ * of the site, and a band that says nothing is worse than a band that is not there.
+ * `website/test/caps-and-costs.mjs` holds the removal — a page that grows the band back has to
+ * do it deliberately — and `src/content.ts` still validates the file if one is published.
  *
- * **What the rework of 2026-10-19 took out, and what it added.** The page used to open with
- * the caps and the whole command list — a reader asking what a run costs met the command
- * tree first — and the measured figures were last. The owner's brief turns that around: the
- * figures lead, the commands are the detail behind one `<details>`, and the aggregation's
- * ranges stay last. The per-command scope sentences went with it, because D188's 250-word
- * ceiling is a ceiling and the reference's own one-line descriptions already say what each
- * command does; the lead line the parent command carried went the same way. What the page
- * gained is the table, its provenance note, and the two rules that hold it: the file's
- * figures are the page's figures, and the page's figures are the file's.
+ * **The board's "Hide commands" toggle is not built.** It is the page's one control that needs
+ * the site's script (`website/public/scripts/site.js`) to do anything, and this change touches
+ * only this page's files: a button that toggles nothing is worse than no button, so the caps are
+ * the board's expanded state and there is no toggle. It is recorded in the pull request.
  *
- * **The cap the note prints is the installation's, not the product's.** `fugaro budget
- * set --per-run N` is what sets a per-run cap: the flag's default is 0, which sets none, and an
- * enforcing project with no per-run cap on any of the three scopes refuses every lease
- * (`internal/cli/budget.go`, and "Set caps" in `docs/gcp-setup.md`). So the figure below is
- * Fugaro's own installation's cap, the one these runs ran under, and a refresh of
- * `website/data/typical-costs.yaml` confirms it with the installation rather than assuming it.
- * The note says whose cap it is; it does not read as something `fugaro` ships by default.
+ * **What the page still does not do.** It does not restate the reference's long descriptions
+ * (they carry the amounts' own bounds, which are the command's business and not a page's), and
+ * it does not print a total no file carries. The cap the callout prints is the installation's,
+ * not the product's: `fugaro budget set --per-run N` is what sets a per-run cap, the flag's
+ * default is 0, which sets none, and an enforcing project with no per-run cap on any of the
+ * three scopes refuses every lease (`internal/cli/budget.go`, and "Set caps" in
+ * `docs/gcp-setup.md`). So the figure is Fugaro's own installation's cap, and the callout says
+ * whose it is rather than reading as something `fugaro` ships. **It is today's cap, and the
+ * page says so**: the window line carries the cap these figures were measured under and the
+ * day the cap changed, so a reader never takes a figure taken under the older cap for one
+ * taken under this one.
  *
- * **The word ceiling, measured in both states of the aggregation** (recorded here because it is
- * a conflict between two owner rulings rather than a defect of this page, and the number is what
- * the next task needs). D188's ceiling is 250 words for a page, and this page measures **249**
- * while `website/content/costs.json` is absent — the state this checkout builds, and so the
- * state `website/test/budget.mjs` reads. With a file published the same page measures **451**:
- * the empty state is 22 words, and the aggregation's own window, its counted-runs lines, its
- * table and the aggregation's "not a promise" disclaimer are about 230 more. D96 and D97 ask
- * for the window, the sample size, the counts and that disclaimer to be published, and D188
- * counts every word a reader sees, so publishing the file (W2.3) is the task that has to choose
- * which rule gives way — the five of them cannot all hold at once. Both numbers are measured
- * with the gate's own reader over a build, not argued.
+ * **The board's own new lines** — the pill, the two calls to action, the bar legend and the
+ * callout's label — are listed in the pull request for the owner to veto. Everything else a
+ * reader reads is a file's: the job names, the counts and the figures are
+ * `website/data/typical-costs.yaml`'s, the caps cards' names and descriptions are the generated
+ * reference's, and the window line is the file's own window.
  */
 import { loadSite } from '../content.ts'
 import { copyControlHTML } from '../lib/copy-control.mjs'
@@ -172,9 +173,6 @@ for (const path of ['fugaro budget', ...GUIDE]) {
 /** The figures the owner measured on this project's own runs. */
 const typical = site.typicalCosts
 
-/** The figures the owner's run of the aggregation published, or null while it has not run. */
-const costs = site.costs
-
 /**
  * A figure as a reader reads it: dollars and cents, from the value the file carries. This is
  * padding and never rounding — `website/data/typical-costs.yaml` carries `1` for a dollar and
@@ -188,212 +186,799 @@ function money(value: number): string {
 }
 
 /**
- * The counts the page prints, each one a number the file carries or nothing at all.
- *
- * A count the file does not carry is **omitted rather than defaulted**: a template that
- * renders `undefined` puts a hole on the page, and a template that renders `0` for a
- * count nobody measured states something the aggregation did not. The command prints every
- * one of these keys (W0.3's `--json`), so in practice all of them render; the page is
- * written not to depend on that, because the counts are the aggregation's and the page's
- * job is to print what is there.
+ * A figure's position along its bar, as a percentage of the per-run cap the runs behind it were
+ * measured under: **the board's own arithmetic** (each bar runs from nothing to the cap),
+ * computed from the file's figures rather than drawn by hand, so a refreshed figure moves its
+ * own mark and a mark nothing supports cannot be drawn. The viewBox is `0 0 100 22`, so a
+ * percentage is a coordinate — and the cap this divides by is the *measured-under* cap rather
+ * than the one in force today, which is what keeps every mark inside its track: a measured run
+ * above today's cap would be drawn past the end of the drawing by a bar scaled to that cap,
+ * where a reader cannot see it at all.
  */
-function countOf(name: string): number | null {
-  const value = costs?.totals[name]
-  return typeof value === 'number' ? value : null
+function along(value: number): number {
+  return Number(((value / typical.measuredUnderCapUSD) * 100).toFixed(2))
 }
 
-const counters: { label: string; value: number }[] = []
-const addCounter = (name: string, label: (value: number) => string): void => {
-  const value = countOf(name)
-  if (value !== null) counters.push({ label: label(value), value })
+/** A dash where the file carries no figure: an absent figure is not a figure of zero. */
+const DASH = '—'
+
+/**
+ * What one job's card draws, computed once: the four figures as the file spells them, the
+ * bar's marks as coordinates, and the sentence the bar carries for a reader who cannot see
+ * it. The sentence names the marks the bar actually draws, in the order it draws them — the
+ * review job has no middle half and no worst run, so its bar draws neither, and a label that
+ * promised them would describe a picture that is not there.
+ */
+const JOBS = typical.jobs.map((job) => {
+  const marks = [
+    ...(job.middleHalfUSD === null ? [] : ['the middle half']),
+    'the median',
+    'nine runs in ten stayed under this',
+    ...(job.worstUSD === null ? [] : ['the worst run']),
+  ]
+  return {
+    id: job.id,
+    name: job.name,
+    runs: String(job.runs),
+    median: money(job.medianUSD),
+    middleHalf:
+      job.middleHalfUSD === null
+        ? null
+        : {
+            text: `${money(job.middleHalfUSD.low)}–${money(job.middleHalfUSD.high)}`,
+            from: along(job.middleHalfUSD.low),
+            width: Number((along(job.middleHalfUSD.high) - along(job.middleHalfUSD.low)).toFixed(2)),
+          },
+    nineInTen: { text: money(job.nineInTenUnderUSD), at: along(job.nineInTenUnderUSD) },
+    worst: job.worstUSD === null ? null : { text: money(job.worstUSD), at: along(job.worstUSD) },
+    medianAt: along(job.medianUSD),
+    label: `${job.name} against the ${money(typical.measuredUnderCapUSD)} per-run cap these runs ran under: ${marks.slice(0, -1).join(', ')} and ${marks.at(-1)}.`,
+  }
+})
+
+/**
+ * The legend: the four marks a bar draws, each with the name of the figure it is. The names
+ * are the same names the cards' rows carry, and the swatches are decoration — a reader who
+ * cannot see the bar is told which mark is which by the bar's own label.
+ */
+const LEGEND = [
+  { name: 'Middle half', mark: 'range' },
+  { name: 'Median', mark: 'median' },
+  { name: '9 in 10 under', mark: 'nine' },
+  { name: 'Worst', mark: 'worst' },
+]
+
+/** The mode cards' glyphs: the board's two drawings, as the paths each one is made of. */
+const MODE_GLYPHS: { [name: string]: string[] } = {
+  observe: ['M2 12 C5 6 9 4 12 4 C15 4 19 6 22 12 C19 18 15 20 12 20 C9 20 5 18 2 12 Z', 'M12 12m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0'],
+  enforce: ['M8 3 H16 L21 8 V16 L16 21 H8 L3 16 V8 Z', 'M8 12 H16'],
 }
 
-addCounter('runs_below_min_runs', (value) => `${value} runs were below that threshold and are not grouped`)
-addCounter('runs_without_a_figure', (value) => `${value} runs carried no finished figure`)
-addCounter('runs_unknown_recipe', (value) => `${value} runs named a recipe this binary does not ship`)
-addCounter('runs_not_estimated', (value) => `${value} runs carried no compute estimate`)
-
-const windowRuns = countOf('runs')
-const windowRecipes = countOf('recipes')
+/**
+ * The two modes, as the page's own two cards: the word is the flag's own value
+ * (`--mode observe|enforce`, in the reference's usage line above) and the line is what the
+ * mode does. The words and the lines are the board's, and they are the two lines of this
+ * page a reader is asked to act on, so they are listed in the pull request with the rest.
+ */
+const MODES = [
+  { id: 'observe', name: 'observe', line: 'Counts and logs.' },
+  { id: 'enforce', name: 'enforce', line: 'Halts.' },
+]
 ---
 
-<section id="typical-costs">
-  <h2>What a job costs</h2>
+<section class="caps-hero" aria-labelledby="caps-title">
+  {/* The board's background: the two soft glows and the grid behind the headline. It is
+      decoration and says so, and it paints no text — the pattern is `base.css`'s
+      `.hero-glow`, written once for the site. */}
+  <div class="hero-glow" aria-hidden="true"></div>
 
-  <div class="table-scroll">
-    <table>
-      <thead>
-        <tr>
-            <th scope="col">Job</th>
-          <th scope="col">Runs</th>
-          <th scope="col">Median</th>
-          <th scope="col">Middle half</th>
-          <th scope="col">9 in 10 under</th>
-          <th scope="col">Worst</th>
-        </tr>
-      </thead>
-      <tbody>
-        {typical.jobs.map((job) => (
-          <tr data-job={job.id}>
-            <th scope="row">{job.name}</th>
-            <td>{job.runs}</td>
-            <td>{money(job.medianUSD)}</td>
-            <td>{job.middleHalfUSD === null ? '—' : `${money(job.middleHalfUSD.low)}–${money(job.middleHalfUSD.high)}`}</td>
-            <td>{money(job.nineInTenUnderUSD)}</td>
-            <td>{job.worstUSD === null ? '—' : money(job.worstUSD)}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+  <div class="caps-hero-copy">
+    <p class="pill caps-pill">
+      <span class="caps-pill-dot" aria-hidden="true"></span>
+      What Fugaro's own jobs cost, and the commands that set the caps
+    </p>
+
+    <h1 class="caps-title display-xl" id="caps-title">
+      Caps <span class="gradient-text">and costs</span>
+    </h1>
+
+    <p class="caps-lede">A cap is a ceiling on what a run may spend.</p>
+
+    {/* The two things a reader can do here: read the figures, or go straight to the
+        commands. The first is filled with the accent, which is the one colour on the page
+        that means "this is the action"; the second is a quiet link, because two filled
+        buttons are two primaries. */}
+    <p class="caps-actions">
+      <a class="caps-cta" href="#typical-costs">See what a job costs</a>
+      <a class="caps-cta-quiet" href="#caps">Set the caps</a>
+    </p>
   </div>
 
-  <p class="note">
-    Fugaro's own runs, {typical.from} to {typical.to}: {typical.runs} finished, model plus
-    compute, an estimate. Mostly DeepSeek through OpenRouter; a Claude model costs more.
-    Not a quote: the caps below are the safety net; our per-run cap is {money(typical.perRunCapUSD)}.
+  <ul class="caps-modes">
+    {
+      MODES.map((mode) => (
+        <li class="card caps-mode" data-mode={mode.id}>
+          <span class="caps-mode-glyph" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false">
+              {MODE_GLYPHS[mode.id].map((d) => (
+                <path d={d} />
+              ))}
+            </svg>
+          </span>
+          <span class="caps-mode-text">
+            <code class="caps-mode-name">{mode.name}</code>
+            <span class="caps-mode-line">{mode.line}</span>
+          </span>
+        </li>
+      ))
+    }
+  </ul>
+</section>
+
+<section id="typical-costs" class="caps-band" aria-labelledby="caps-costs-title">
+  <div class="caps-band-head">
+    <h2 class="display-lg caps-band-title" id="caps-costs-title">What a job costs</h2>
+    <p class="caps-window">
+      Fugaro's own runs, {typical.from} to {typical.to}: {typical.runs} finished, model plus compute, an estimate.
+      Every figure here was measured under the {money(typical.measuredUnderCapUSD)} per-run cap in
+      force then; the cap is {money(typical.perRunCapUSD)} since {typical.perRunCapSince}.
+    </p>
+  </div>
+
+  {/* One card per kind of run the file carries, in the file's own order. Every figure in a
+      card is the file's, printed as the file carries it and never rounded. */}
+  <ul class="caps-jobs">
+    {
+      JOBS.map((job) => (
+        <li class="card caps-job" data-job={job.id}>
+          <h3 class="caps-job-name">{job.name}</h3>
+          <p class="caps-job-runs">
+            Runs <strong class="caps-job-runs-value">{job.runs}</strong>
+          </p>
+
+          <p class="caps-job-median">
+            <span class="caps-job-median-label">Median</span>
+            <span class="caps-job-median-value">{job.median}</span>
+          </p>
+
+          <dl class="caps-job-figures">
+            <div class="caps-figure-row">
+              <dt>Middle half</dt>
+              <dd>{job.middleHalf === null ? DASH : job.middleHalf.text}</dd>
+            </div>
+            <div class="caps-figure-row">
+              <dt>9 in 10 under</dt>
+              <dd>{job.nineInTen.text}</dd>
+            </div>
+            <div class="caps-figure-row">
+              <dt>Worst</dt>
+              <dd>{job.worst === null ? DASH : job.worst.text}</dd>
+            </div>
+          </dl>
+
+          {/* The bar: the track is the per-run cap, and each mark is one of the figures
+              above it, placed by the arithmetic in `along()` rather than by hand. */}
+          <svg
+            class="caps-bar"
+            viewBox="0 0 100 22"
+            preserveAspectRatio="none"
+            role="img"
+            aria-label={job.label}
+            focusable="false"
+          >
+            <rect class="caps-bar-track" x="0" y="8" width="100" height="6" rx="3" />
+            {job.middleHalf !== null && (
+              <rect
+                class="caps-bar-range"
+                x={job.middleHalf.from}
+                y="8"
+                width={job.middleHalf.width}
+                height="6"
+              />
+            )}
+            <rect class="caps-bar-median" x={job.medianAt} y="3" width="0.8" height="16" />
+            <rect class="caps-bar-nine" x={job.nineInTen.at} y="5" width="0.6" height="12" />
+            {job.worst !== null && <rect class="caps-bar-worst" x={job.worst.at} y="5" width="0.8" height="12" />}
+            <rect class="caps-bar-cap" x="99.2" y="2" width="0.8" height="18" />
+          </svg>
+        </li>
+      ))
+    }
+  </ul>
+
+  <div class="caps-key-row">
+    <div class="card caps-key">
+      <p class="caps-key-title">Each bar runs to the {money(typical.measuredUnderCapUSD)} per-run cap these runs ran under</p>
+      <dl class="caps-key-items">
+        {
+          LEGEND.map((item) => (
+            <div class="caps-key-item">
+              <dt>{item.name}</dt>
+              <dd>
+                <span class="caps-key-mark" data-mark={item.mark} aria-hidden="true" />
+              </dd>
+            </div>
+          ))
+        }
+      </dl>
+    </div>
+
+    {/* The cap, which is the installation's own and not a default `fugaro` ships: the callout
+        says whose it is. */}
+    <p class="card caps-cap" data-cap>
+      <span class="caps-cap-glyph" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false">
+          <path d="M12 3 L20 6 V12 C20 16.5 16.5 20 12 21 C7.5 20 4 16.5 4 12 V6 Z" />
+        </svg>
+      </span>
+      <span class="caps-cap-text">
+        <span class="caps-cap-label">Our per-run cap</span>
+        <span class="caps-cap-value">{money(typical.perRunCapUSD)}</span>
+      </span>
+    </p>
+  </div>
+
+  <p class="caps-note">
+    Mostly DeepSeek through OpenRouter; a Claude model costs more. Not a quote: the caps below
+    are the safety net.
   </p>
 </section>
 
-<section id="caps">
-  <details>
-    <summary><h2>Set the caps</h2></summary>
+<section id="caps" class="caps-band" aria-labelledby="caps-commands-title">
+  <div class="caps-band-head">
+    <h2 class="display-lg caps-band-title" id="caps-commands-title">Set the caps</h2>
+  </div>
 
-    <dl class="commands">
-      {GUIDE.map((path) => {
+  <ul class="caps-commands">
+    {
+      GUIDE.map((path) => {
         const command = commands.get(path)
         return (
-          <div class="command" data-guide={path}>
-            <dt>
-              <div class="command-block" data-copy>
-                <Fragment set:html={copyControlHTML('Copy the usage line')} />
-                <code class="usage" data-command={command?.usage}>{command?.usage}</code>
-              </div>
-            </dt>
-            <dd>
-              <p>{command?.short}</p>
-            </dd>
-          </div>
+          <li class="card caps-command" data-guide={path}>
+            <h3 class="caps-command-name">{command?.short}</h3>
+            <div class="command-block" data-copy>
+              <Fragment set:html={copyControlHTML('Copy the usage line')} />
+              <code class="usage" data-command={command?.usage}>
+                {command?.usage}
+              </code>
+            </div>
+          </li>
         )
-      })}
-    </dl>
-  </details>
-</section>
-
-<section id="costs">
-  <h2>Per-recipe ranges</h2>
-
-  {costs === null || costs.groups.length === 0 ? (
-    <p class="empty">
-      The owner's aggregation has published no range: not enough runs behind it. An empty
-      figure is honest, an invented one is not.
-    </p>
-  ) : (
-    <>
-      <p class="window">Measured over the <code>{costs.project}</code> installation's own run records, from <code>{costs.since}</code> to <code>{costs.until}</code>{windowRuns !== null && windowRecipes !== null ? `: ${windowRuns} runs in the window, of which ${windowRecipes} recipes carried enough runs to publish a figure.` : '.'}</p>
-
-      <p class="suppressed">A group thinner than the {costs.minRuns} runs this site publishes from is absent rather than approximated{counters.length > 0 ? ', and the rest of the window is counted rather than grouped:' : '.'}</p>
-      {counters.length > 0 && (
-        <ul class="counters">
-          {counters.map((counter) => (
-            <li>{counter.label}</li>
-          ))}
-        </ul>
-      )}
-
-      <table>
-        <caption>
-          Duration and cost per recipe: the minimum, the median and the p90, with the sample
-          size behind every figure.
-        </caption>
-        <thead>
-          <tr>
-            <th scope="col">Recipe</th>
-            <th scope="col">Runs</th>
-            <th scope="col">Duration, s — min / median / p90</th>
-            <th scope="col">Cost, USD — min / median / p90</th>
-            <th scope="col">Runs with no compute estimate</th>
-          </tr>
-        </thead>
-        <tbody>
-          {costs.groups.map((group) => (
-            <tr data-recipe={group.recipe}>
-              <th scope="row">{group.recipe}</th>
-              <td>{group.runs}</td>
-              <td>{group.durationS.min} / {group.durationS.median} / {group.durationS.p90}</td>
-              <td>{group.costUSD.min} / {group.costUSD.median} / {group.costUSD.p90}</td>
-              <td>{group.computeNotEstimated}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      <p class="not-a-promise">{costs.notAPromise}</p>
-    </>
-  )}
+      })
+    }
+  </ul>
 </section>
 
 <style>
-  /* The guide's own box. Every space, radius and colour is a token from
-     `src/styles/tokens.css`; nothing here names a value of its own, and nothing here is a
-     colour literal (D104, D105). */
-  section {
-    margin-block: var(--space-xl);
-    max-width: var(--measure);
-  }
-
-  .command {
+  /* The page's own box. Every space, radius, size and colour below is a token from
+     `src/styles/tokens.css` or the palette, and nothing here is a colour literal (D104,
+     D105). The card, the pill, the display scale, the gradient and the command block are
+     `base.css`'s, written once for the site; what is this page's own is the layout. */
+  .caps-band {
+    padding-block: var(--space-2xl);
     border-top: var(--border-width) solid var(--border);
-    padding-block: var(--space-sm);
   }
 
-  .usage {
+  .caps-band-head {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    margin-bottom: var(--space-xl);
+  }
+
+  .caps-band-title {
+    margin: 0;
+  }
+
+  .caps-window,
+  .caps-note {
+    margin: 0;
+    max-width: var(--measure);
+    color: var(--text-muted);
+    font-size: var(--font-size-base);
+    line-height: var(--leading-normal);
+  }
+
+  /* ---- the hero -------------------------------------------------------------------------- */
+
+  /* The board's first screen: the promise on the left and the two modes on the right, over
+     the glow the site's hero uses. `position: relative` and `overflow: hidden` are what the
+     glow layer needs (`base.css`, section 2c). */
+  .caps-hero {
+    position: relative;
+    overflow: hidden;
+    display: grid;
+    gap: var(--space-xl);
+    align-items: center;
+    padding-block: var(--space-sm) var(--space-2xl);
+  }
+
+  .caps-hero-copy {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    min-width: 0;
+  }
+
+  .caps-pill {
+    font-size: var(--font-size-sm);
+  }
+
+  /* The pill's dot: the warning tone, which is the colour that asks a reader to pay
+     attention, and the caps are what this page is about. A mark and not text, so it carries
+     no pair of its own. */
+  .caps-pill-dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-pill);
+    background: var(--warn);
+  }
+
+  /* `base.css`'s `.display-xl`, with the board's own line break: `max-width: 20ch` keeps the
+     two words of the headline on two lines rather than running the width of the page. */
+  .caps-title {
+    max-width: 20ch;
+  }
+
+  .caps-lede {
+    margin: 0;
+    max-width: 34rem;
+    font-size: var(--font-size-xl);
+    line-height: var(--leading-snug);
+    color: var(--text-muted);
+  }
+
+  .caps-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-sm) var(--space-lg);
+    margin: var(--space-2xs) 0 0;
+  }
+
+  /* The primary: the accent as a fill and the ground as its label, which is the pair
+     `a11y.mjs` computes at 4.5:1 for a label a reader reads, at the 44 px minimum every
+     control on the site keeps. */
+  .caps-cta {
+    display: inline-flex;
+    align-items: center;
+    box-sizing: border-box;
+    min-height: 44px;
+    padding: var(--space-sm) var(--space-lg);
+    border-radius: var(--radius-lg);
+    background: var(--accent);
+    color: var(--ground);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-lg);
+    font-weight: var(--weight-black);
+    text-decoration: none;
+  }
+
+  /* The second action is a link, not a second button: it keeps the underline `base.css` gives
+     every link in running text, so it reads as a link at a glance rather than as a disabled
+     control beside the filled one — and it is a control all the same, so it carries the same
+     44 px minimum. */
+  .caps-cta-quiet {
+    display: inline-flex;
+    align-items: center;
+    box-sizing: border-box;
+    min-height: 44px;
+    font-size: var(--font-size-base);
+    font-weight: var(--weight-semibold);
+  }
+
+  /* The two modes: one card each, and the enforce card tinted with the warning tone, which
+     is the one that stops a run. */
+  .caps-modes {
+    position: relative;
+    display: grid;
+    gap: var(--space-sm);
+    margin: 0;
+    padding: 0;
+    max-width: none;
+    list-style: none;
+  }
+
+  .caps-mode {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
+  }
+
+  .caps-mode[data-mode='enforce'] {
+    border-color: var(--warn);
+    background-image: linear-gradient(135deg, var(--panel) 0%, var(--surface) 70%);
+  }
+
+  /* The glyph's box: the panel, one step under the card it is drawn on. It is decoration and
+     the name beside it is the point, so it is `aria-hidden` in the markup. */
+  .caps-mode-glyph {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: var(--space-xl);
+    height: var(--space-xl);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--panel);
+    color: var(--accent-on-dark);
+  }
+
+  .caps-mode[data-mode='enforce'] .caps-mode-glyph {
+    color: var(--warn);
+  }
+
+  .caps-mode-glyph svg {
+    width: var(--space-md);
+    height: var(--space-md);
+  }
+
+  .caps-mode-text {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3xs);
+    min-width: 0;
+  }
+
+  .caps-mode-name {
+    background: none;
+    padding: 0;
+    font-size: var(--font-size-xl);
+    font-weight: var(--weight-black);
+    color: var(--accent-on-dark);
+  }
+
+  .caps-mode[data-mode='enforce'] .caps-mode-name {
+    color: var(--warn);
+  }
+
+  .caps-mode-line {
+    font-size: var(--font-size-lg);
+    line-height: var(--leading-snug);
+  }
+
+  /* ---- what a job costs ------------------------------------------------------------------ */
+
+  /* One card per kind of run: one column on a phone, the board's three columns where there is
+     room for them. `website/test/caps-figures.mjs` reads both. */
+  .caps-jobs {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-md);
+    margin: 0;
+    padding: 0;
+    max-width: none;
+    list-style: none;
+  }
+
+  .caps-job {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .caps-job-name {
+    margin: 0;
+    font-size: var(--font-size-xl);
+    font-weight: var(--weight-black);
+    letter-spacing: var(--tracking-tight);
+  }
+
+  .caps-job-runs {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .caps-job-runs-value {
+    color: var(--text);
+  }
+
+  .caps-job-median {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3xs);
+    margin: 0;
+  }
+
+  .caps-job-median-label {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    font-weight: var(--weight-black);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  /* The median is the figure a reader came for, and the accent's legible form is what says
+     so. */
+  .caps-job-median-value {
+    color: var(--accent-on-dark);
+    font-size: var(--font-size-4xl);
+    font-weight: var(--weight-black);
+    line-height: var(--leading-tight);
+    letter-spacing: var(--tracking-display);
+  }
+
+  /* The card's figures: a name and its figure on one line, one line per figure. This is the
+     shape the table's stacked rows were reaching for, and it is the markup's own shape now —
+     a phone reads the same rows as a desktop does. */
+  .caps-job-figures {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    border-top: var(--border-width) solid var(--border);
+  }
+
+  .caps-figure-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    padding-block: var(--space-2xs);
+    border-bottom: var(--border-width) solid var(--border);
+  }
+
+  .caps-figure-row dt {
+    color: var(--text-muted);
+    font-size: var(--font-size-base);
+    font-weight: var(--weight-normal);
+  }
+
+  .caps-figure-row dd {
+    margin: 0;
+    color: var(--text);
+    font-size: var(--font-size-lg);
+    font-weight: var(--weight-semibold);
+  }
+
+  /* The bar: the track is the per-run cap and every mark on it is a figure the card prints
+     above, placed by `along()`. Its fills are palette tokens in the stylesheet rather than
+     attributes in the markup, so the a11y gate's colour scan reads them like any other. */
+  .caps-bar {
+    display: block;
+    width: 100%;
+    height: var(--space-md);
+    margin-top: auto;
+  }
+
+  .caps-bar-track {
+    fill: var(--border);
+  }
+
+  .caps-bar-range {
+    fill: var(--accent);
+  }
+
+  .caps-bar-median {
+    fill: var(--accent-on-dark);
+  }
+
+  .caps-bar-nine {
+    fill: var(--text);
+  }
+
+  .caps-bar-worst {
+    fill: var(--warn);
+  }
+
+  .caps-bar-cap {
+    fill: var(--text-muted);
+  }
+
+  /* The legend and the cap: the key on the left and the callout on the right, one column
+     while there is no room for two. */
+  .caps-key-row {
+    display: grid;
+    gap: var(--space-sm);
+    margin-top: var(--space-md);
+  }
+
+  .caps-key {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+  }
+
+  .caps-key-title {
+    margin: 0;
+    font-weight: var(--weight-semibold);
+    color: var(--text);
+    font-size: var(--font-size-sm);
+  }
+
+  .caps-key-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2xs) var(--space-md);
+    margin: 0;
+    max-width: none;
+  }
+
+  .caps-key-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2xs);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .caps-key-item dt {
+    font-weight: var(--weight-normal);
+  }
+
+  .caps-key-item dd {
+    display: flex;
+    align-items: center;
+    margin: 0;
+  }
+
+  /* The four swatches, each drawn the way the bar draws it: the range is the accent's block,
+     the three single figures are ticks, and their heights are the bar's own. */
+  .caps-key-mark {
     display: inline-block;
-    background: var(--surface);
-    padding: var(--space-3xs) var(--space-2xs);
+    background: var(--text-muted);
+  }
+
+  .caps-key-mark[data-mark='range'] {
+    width: 18px;
+    height: 6px;
     border-radius: var(--radius-sm);
+    background: var(--accent);
+  }
+
+  .caps-key-mark[data-mark='median'] {
+    width: 3px;
+    height: 16px;
+    background: var(--accent-on-dark);
+  }
+
+  .caps-key-mark[data-mark='nine'] {
+    width: 3px;
+    height: 12px;
+    background: var(--text);
+  }
+
+  .caps-key-mark[data-mark='worst'] {
+    width: 3px;
+    height: 12px;
+    background: var(--warn);
+  }
+
+  /* The callout: the warning tone's border and wash, because the cap is the thing that stops
+     a run — and the figure is the warn tone's own text on the surface, a pair `a11y.mjs`
+     computes. */
+  .caps-cap {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin: 0;
+    border-color: var(--warn);
+    background-image: linear-gradient(135deg, var(--panel) 0%, var(--surface) 70%);
+  }
+
+  .caps-cap-glyph {
+    display: inline-flex;
+    flex: none;
+    color: var(--warn);
+  }
+
+  .caps-cap-glyph svg {
+    width: var(--space-lg);
+    height: var(--space-lg);
+  }
+
+  .caps-cap-text {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .caps-cap-label {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .caps-cap-value {
+    color: var(--warn);
+    font-size: var(--font-size-3xl);
+    font-weight: var(--weight-black);
+    line-height: var(--leading-tight);
+    letter-spacing: var(--tracking-display);
+  }
+
+  .caps-note {
+    margin-top: var(--space-md);
+  }
+
+  /* ---- set the caps ---------------------------------------------------------------------- */
+
+  /* One card per command: one column on a phone, two where there is room. The first card —
+     the command that sets a cap — takes both columns, because it is the one a reader came
+     for. */
+  .caps-commands {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-md);
+    margin: 0;
+    padding: 0;
+    max-width: none;
+    list-style: none;
+  }
+
+  .caps-command {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  /* The card the board tints: the accent's hairline, and the card that halts a run in the
+     warning tone. The wash is a gradient of palette tokens in `background-image` — a colour
+     function would be a literal no palette holds, and `background` would make the contrast
+     check read a gradient as the one colour the text sits on. */
+  .caps-command[data-guide='fugaro budget set'] {
+    border-color: var(--accent);
+    background-image: linear-gradient(135deg, var(--panel) 0%, var(--surface) 70%);
+  }
+
+  .caps-command[data-guide='fugaro budget kill'] {
+    border-color: var(--warn);
+    background-image: linear-gradient(135deg, var(--panel) 0%, var(--surface) 70%);
+  }
+
+  .caps-command-name {
+    margin: 0;
+    font-size: var(--font-size-lg);
+    font-weight: var(--weight-semibold);
+    line-height: var(--leading-snug);
+  }
+
+  /* The usage line's own box: the panel under the card, so the command reads as a command
+     rather than as the card's prose. The control is `base.css`'s `.copy-button`, revealed by
+     the site's script. */
+  .caps-command .command-block {
+    padding: var(--space-xs) var(--space-sm);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--ground);
+    margin-top: auto;
+  }
+
+  .caps-command .usage {
+    background: none;
+    padding: 0;
+    color: var(--accent-on-dark);
+    font-size: var(--font-size-sm);
+    line-height: var(--leading-snug);
     overflow-wrap: anywhere;
   }
 
-  .note,
-  .suppressed,
-  .window,
-  caption {
-    color: var(--text-muted);
-  }
+  /* The wide viewport: the board's two-column hero and its three job cards, and the caps in
+     two columns with the first card across both. */
+  @media (min-width: 60rem) {
+    .caps-hero {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 24rem);
+      gap: var(--space-2xl);
+      padding-block: var(--space-md) var(--space-3xl);
+    }
 
-  table {
-    border-collapse: collapse;
-    width: 100%;
-  }
+    .caps-jobs {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
 
-  th,
-  td {
-    border-bottom: var(--border-width) solid var(--border);
-    padding: var(--space-2xs) var(--space-xs);
-    text-align: left;
-  }
+    .caps-key-row {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 20rem);
+    }
 
-  /* The first table is six short columns and a phone is 390 px wide: the figures keep their
-     own line rather than wrapping mid-number. Six columns of nowrap figures are wider than
-     such a screen, so the table itself scrolls: `.table-scroll` is the box that does it, and
-     the page body never scrolls sideways. Without that box the widest row would widen the
-     document (only `pre` sets its own `overflow-x` in `base.css`). */
-  .table-scroll {
-    overflow-x: auto;
-  }
+    .caps-commands {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
 
-  #typical-costs td {
-    white-space: nowrap;
-  }
-
-  .empty {
-    border-left: var(--border-width) solid var(--warn);
-    padding-left: var(--space-sm);
-  }
-
-  .not-a-promise {
-    border-left: var(--border-width) solid var(--border);
-    padding-left: var(--space-sm);
-    color: var(--text-muted);
+    .caps-command[data-guide='fugaro budget set'] {
+      grid-column: span 2;
+    }
   }
 </style>

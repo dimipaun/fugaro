@@ -98,7 +98,7 @@ func svcSessionOn(t *testing.T, db *gcpfake.RTDB, heartbeat ...time.Duration) *b
 	if len(heartbeat) > 0 {
 		every = heartbeat[0]
 	}
-	// The installation's own limits, as `fugaro init --firebase` writes them:
+	// The installation's own limits, as `fugaro update --firebase-project` writes them:
 	// without limits.maxReserveMicros the lease refuses everything, and the
 	// run's gateway would halt on its first call for a reason that is about
 	// the fixture and not about the cascade.
@@ -704,13 +704,25 @@ func TestServiceAnswerReachesTheRunsWait(t *testing.T) {
 // one credential to another between calls.
 func svcServedRun(t *testing.T, name func() string, edit func(*run)) *run {
 	t.Helper()
-	fake, svc := anthropicfake.New(t)
-	fake.Func = func(r *http.Request, body []byte) anthropicfake.Reply {
-		rep := anthropicfake.MessageOK("claude-sonnet-5-5", pricing.Usage{Input: 1, Output: 3})
-		rep.Header = http.Header{
+	return svcServedRunWith(t, func() (http.Header, pricing.Usage) {
+		return http.Header{
 			gateway.HeaderTier:       []string{gateway.TierB},
 			gateway.HeaderCredential: []string{name()},
-		}
+		}, pricing.Usage{Input: 1, Output: 3}
+	}, edit)
+}
+
+// svcServedRunWith is svcServedRun with the service's answer chosen by the
+// caller -- the tier it settled the call by and the switch it reports (C1.16),
+// and the usage the call reports -- so a test can drive a run whose calls are
+// the subscription's, or one the service moves between credentials.
+func svcServedRunWith(t *testing.T, answer func() (http.Header, pricing.Usage), edit func(*run)) *run {
+	t.Helper()
+	fake, svc := anthropicfake.New(t)
+	fake.Func = func(r *http.Request, body []byte) anthropicfake.Reply {
+		headers, usage := answer()
+		rep := anthropicfake.MessageOK("claude-sonnet-5-5", usage)
+		rep.Header = headers
 		return rep
 	}
 	meta := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

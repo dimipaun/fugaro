@@ -8,10 +8,11 @@
 // script to be able to drive it:
 //
 //   - **Every command carries exactly one control.** A command is a `<pre>` (an install
-//     block, a code block of the rendered CLI reference, the hero's `fugaro watch` snippet)
+//     block, a code block of the rendered CLI reference, the slider's `fugaro watch` snippet)
 //     or a `code.usage` (the caps guide's usage lines, which are commands but not `<pre>`).
-//     A line the reader did not type — the agent's launch in the hero's chat — is not a
-//     command block at all and carries none (changes spec of 2026-10-18, item 3).
+//     A line that is not a command a reader runs — the hero's prompt line is the one on the
+//     homepage — is not a command block at all and carries none (changes spec of
+//     2026-10-18, item 3).
 //   - **The control is in the markup, `hidden`, and the command is too.** This is D183's
 //     "no broken control": the control is emitted hidden and the script reveals it, so a
 //     reader whose browser runs no script — or whose browser has no clipboard to write to —
@@ -41,8 +42,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import vm from 'node:vm'
-import { DIST, HTMLScanError, REPO, SITE, builtPages, parse, textOf, walk } from './lib/html.mjs'
+import { fakeDOM, SCRIPT_SOURCE } from './lib/dom.mjs'
+import { DIST, HTMLScanError, REPO, builtPages, parse, textOf, walk } from './lib/html.mjs'
 
 // The script every page with a control has to load. The control is emitted `hidden` and this
 // file is what reveals it, so a page carrying controls without it is a page whose buttons
@@ -289,27 +290,21 @@ test('every copy-control refusal fires on the defect it names', () => {
   }
 })
 
-test('the homepage offers `fugaro watch` in one block with one control, and the agent\'s launch in none', () => {
-  // Item 3's shape, held on the built page rather than on a fixture: the homepage's one
-  // command block besides the install paths is the watch snippet, and the agent's launch — a
-  // status line the reader did not type — is a paragraph in the chat, in no block and with no
-  // control. A page that wrapped the launch in a `[data-copy]` block would be offering the
-  // reader a command they never ran, which is the defect this case is here for. (The block is
-  // `chat-watch` and the launch is `turn-status`: item 3 asks for the launch as "a subtle
-  // tool-call / status line", so it is not a command block at all.)
+test("the homepage offers `fugaro watch` in one block with one control", () => {
+  // Item 3's shape, held on the built page rather than on a fixture: the homepage's one command
+  // block besides the install block is the watch block, and it holds the command and nothing
+  // else — the note under it is outside the block, so what the control copies is the command a
+  // reader runs rather than the sentence describing it. The block is the slider's third panel
+  // since the owner's approved draft of 2026-10-19; the chat's status line, which this case also
+  // held out of any `[data-copy]` block, left the site with `AgentChat.astro`.
   const html = readFileSync(path.join(DIST, 'index.html'), 'utf8')
   const page = parse(html)
   const classes = (el) => (el.attrs.get('class') ?? '').split(/\s+/)
-  const watch = [...walk(page)].find((el) => classes(el).includes('chat-watch'))
-  assert.ok(watch, 'the homepage carries no watch snippet block, and the hero offers `fugaro watch` as its one command besides the install paths (changes spec 2026-10-18, item 3)')
-  assert.ok(watch.attrs.has('data-copy'), 'the watch snippet is in no [data-copy] block')
+  const watch = [...walk(page)].find((el) => classes(el).includes('watch-block'))
+  assert.ok(watch, 'the homepage carries no watch block, and the panel offers `fugaro watch` as its one command besides the install block (changes spec 2026-10-18, item 3)')
+  assert.ok(watch.attrs.has('data-copy'), 'the watch block is in no [data-copy] block')
   assert.equal(words(sourceOf(watch)), 'fugaro watch', `the watch block's control would copy ${JSON.stringify(words(sourceOf(watch)))}, and the block holds the command and nothing else`)
   assert.deepEqual(failuresOf(html), [], 'the built homepage breaks the copy control\'s rule')
-
-  const status = [...walk(page)].find((el) => classes(el).includes('turn-status'))
-  assert.ok(status, "the homepage chat carries no status line, and the agent's launch is a line of the illustration (changes spec 2026-10-18, item 3)")
-  assert.equal(blockOf(status), null, "the agent's launch is inside a [data-copy] block, and the reader did not type it: the homepage offers `fugaro watch` to copy, not the launch (changes spec 2026-10-18, item 3)")
-  assert.deepEqual([...walk(status)].filter((el) => el.attrs.has('data-copy-button')), [], "the agent's launch carries a copy control of its own (changes spec 2026-10-18, item 3)")
 })
 
 // ---- the script itself (P3, P6, D183) -----------------------------------------------------
@@ -319,203 +314,10 @@ test('the homepage offers `fugaro watch` in one block with one control, and the 
 // wrapped in the handful of DOM calls `site.js` makes — enough to say what it copies, what it
 // reveals and where it leaves the focus, and nothing that pretends to be a layout engine. What
 // a real clipboard does with a real click is still the owner's 70c.
-
-const SCRIPT_SOURCE = readFileSync(path.join(SITE, 'public', 'scripts', 'site.js'), 'utf8')
-
-/** One parsed element, with the DOM surface `site.js` touches. */
-class FakeElement {
-  constructor(node, dom) {
-    this.node = node
-    this.dom = dom
-    this.listeners = {}
-  }
-  get attrs() {
-    return this.node.attrs
-  }
-  getAttribute(name) {
-    return this.attrs.has(name) ? this.attrs.get(name) : null
-  }
-  hasAttribute(name) {
-    return this.attrs.has(name)
-  }
-  setAttribute(name, value) {
-    this.attrs.set(name, String(value))
-  }
-  get hidden() {
-    return this.attrs.has('hidden')
-  }
-  set hidden(value) {
-    if (value) this.attrs.set('hidden', '')
-    else this.attrs.delete('hidden')
-  }
-  get open() {
-    return this.attrs.has('open')
-  }
-  set open(value) {
-    if (value) this.attrs.set('open', '')
-    else this.attrs.delete('open')
-  }
-  get textContent() {
-    return textOf(this.node)
-  }
-  set textContent(value) {
-    this.node.children = [{ text: String(value), parent: this.node }]
-  }
-  get classList() {
-    const classes = (this.attrs.get('class') ?? '').split(/\s+/)
-    return { contains: (name) => classes.includes(name) }
-  }
-  get nextElementSibling() {
-    const siblings = this.node.parent.children.filter((child) => child.name !== undefined)
-    const next = siblings[siblings.indexOf(this.node) + 1]
-    return next ? this.dom.wrap(next) : null
-  }
-  contains(other) {
-    for (let node = other?.node; node; node = node.parent) if (node === this.node) return true
-    return false
-  }
-  matches(selector) {
-    return this.dom.matches(this.node, selector)
-  }
-  closest(selector) {
-    for (let node = this.node; node && node.name !== '#document'; node = node.parent) if (this.dom.matches(node, selector)) return this.dom.wrap(node)
-    return null
-  }
-  querySelector(selector) {
-    return this.querySelectorAll(selector)[0] ?? null
-  }
-  querySelectorAll(selector) {
-    return [...walk(this.node)].filter((node) => this.dom.matches(node, selector)).map((node) => this.dom.wrap(node))
-  }
-  // Rendered unless an ancestor is a closed `<details>` — a group's list is the disclosure's
-  // own child, and that is the whole of what hides it — or the case says otherwise.
-  getClientRects() {
-    return this.dom.drawn(this.node) ? [{}] : []
-  }
-  focus() {
-    this.dom.document.activeElement = this
-  }
-  addEventListener(type, fn) {
-    ;(this.listeners[type] ??= []).push(fn)
-  }
-  dispatch(type, event = {}) {
-    for (const fn of this.listeners[type] ?? []) fn({ target: this, ...event })
-  }
-}
-
-/** The event object `site.js` constructs (`new CustomEvent(type, { detail })`). */
-class FakeCustomEvent {
-  constructor(type, init = {}) {
-    this.type = type
-    this.detail = init.detail
-  }
-}
-
-/** A built page as a document `site.js` can run in, with a clipboard the case controls. */
-function fakeDOM(html, { clipboard = 'ok', undrawn = () => false, storage = {} } = {}) {
-  const root = parse(html)
-  const wrapped = new Map()
-  const written = []
-  const timers = []
-  // What a script appends to <head>, which is how the gate's one analytics tag would show
-  // up; and the storage the consent decision goes to. Both are here because `site.js` is one
-  // file with three duties (D183, W3.2) and this harness runs all of it, not only the copy
-  // control's third.
-  const appended = []
-  const store = new Map(Object.entries(storage))
-  const windowListeners = new Map()
-  const byId = new Map()
-  for (const el of walk(root)) if (el.attrs.has('id')) byId.set(el.attrs.get('id'), el)
-  const dom = {
-    wrap(node) {
-      if (!wrapped.has(node)) wrapped.set(node, new FakeElement(node, dom))
-      return wrapped.get(node)
-    },
-    // Compound selectors joined by descendant spaces, in a comma list: `tag`, `.class`,
-    // `[attr]` — the selectors site.js writes, and a refusal for anything else.
-    matches(node, selector) {
-      return selector.split(',').some((one) => {
-        const parts = one.trim().split(/\s+/)
-        if (!compound(node, parts[parts.length - 1])) return false
-        let at = node.parent
-        for (let i = parts.length - 2; i >= 0; i--) {
-          while (at && at.name !== '#document' && !compound(at, parts[i])) at = at.parent
-          if (!at || at.name === '#document') return false
-          at = at.parent
-        }
-        return true
-      })
-    },
-    drawn(node) {
-      for (let at = node; at && at.name !== '#document'; at = at.parent) {
-        if (undrawn(at)) return false
-        if (at.attrs.has('hidden')) return false
-        if (at.parent?.name === 'details' && at.name !== 'summary' && !at.parent.attrs.has('open')) return false
-      }
-      return true
-    },
-  }
-  function compound(node, part) {
-    if (!/^[a-z]*(\.[\w-]+|\[[\w-]+\])*$/.test(part)) throw new Error(`the fake DOM does not understand the selector part ${part}`)
-    const tag = /^[a-z]+/.exec(part)?.[0]
-    if (tag && node.name !== tag) return false
-    const cls = (node.attrs.get('class') ?? '').split(/\s+/)
-    for (const [, c] of part.matchAll(/\.([\w-]+)/g)) if (!cls.includes(c)) return false
-    for (const [, a] of part.matchAll(/\[([\w-]+)\]/g)) if (!node.attrs.has(a)) return false
-    return true
-  }
-  const docEl = dom.wrap(root)
-  const document = Object.assign(docEl, {
-    readyState: 'complete',
-    activeElement: null,
-    getElementById: (id) => (byId.has(id) ? dom.wrap(byId.get(id)) : null),
-    createElement: (name) => ({ name, src: '', async: false }),
-    head: { appendChild: (element) => appended.push(element) },
-  })
-  dom.document = document
-  const navigator = {}
-  if (clipboard !== 'absent') {
-    navigator.clipboard = {
-      writeText(text) {
-        written.push(text)
-        return clipboard === 'ok' ? Promise.resolve() : Promise.reject(new Error('denied'))
-      },
-    }
-  }
-  const window = {
-    setTimeout: (fn, ms) => timers.push({ fn, ms }),
-    localStorage: {
-      getItem: (key) => (store.has(key) ? store.get(key) : null),
-      setItem: (key, value) => store.set(key, String(value)),
-      removeItem: (key) => store.delete(key),
-    },
-    addEventListener(type, fn) {
-      if (!windowListeners.has(type)) windowListeners.set(type, [])
-      windowListeners.get(type).push(fn)
-    },
-    dispatchEvent(event) {
-      for (const fn of windowListeners.get(event.type) ?? []) fn(event)
-      return true
-    },
-  }
-  vm.runInNewContext(SCRIPT_SOURCE, { window, document, navigator, CustomEvent: FakeCustomEvent })
-  return {
-    document,
-    written,
-    timers,
-    appended,
-    store,
-    find: (selector) => document.querySelectorAll(selector),
-    /** Click a consent choice, which is the only way the gate's tag is ever appended. */
-    choose(decision) {
-      const banner = document.getElementById('consent-banner')
-      assert.ok(banner, 'the page carries no consent banner to choose in')
-      const control = banner.querySelectorAll('[data-consent]').find((el) => el.attrs.get('data-consent') === decision)
-      assert.ok(control, `the banner carries no ${decision} control`)
-      control.dispatch('click', { type: 'click' })
-    },
-  }
-}
+//
+// **The stub is `lib/dom.mjs`'s**, because this file is no longer the only gate that runs the
+// script: `console-screens.mjs` runs the same file for the slider's arrows, count and autoplay.
+// One harness for both is one answer to "what does the script do with this markup".
 
 const flush = () => new Promise((resolve) => setImmediate(resolve))
 
@@ -627,10 +429,10 @@ test('site.js reveals every control and copies exactly the command each one sits
       assert.equal(block.querySelector('[data-copy-status]').textContent, 'Copied', `${rel}: a copy that happened was not announced`)
     }
     if (rel === 'index.html') {
-      // The hero's one command besides the install paths, clicked the way a reader clicks it
+      // The panel's one command besides the install block, clicked the way a reader clicks it
       // (changes spec 2026-10-18, item 3): what lands on the clipboard is the command, and it
       // is a command README.md prints.
-      const watch = page.find('.chat-watch')[0]
+      const watch = page.find('.watch-block')[0]
       watch.querySelector('[data-copy-button]').dispatch('click')
       await flush()
       const copied = page.written.at(-1)

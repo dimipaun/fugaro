@@ -1,33 +1,36 @@
 ---
 /**
- * website/src/components/HomeInstall.astro — the homepage's install paths (website plan, Task
- * W1.4 step 1; changes spec of 2026-10-18, items 3 and 4).
+ * website/src/components/HomeInstall.astro — the homepage's closing call to action and the
+ * command under it (the owner's approved board `website/design-ref/HomeV3.dc.html`, 2026-10-20;
+ * redesign part P1; the draft "Home, draft 2 (slider)", 2026-10-19).
  *
- * **The commands are `website/data/install.yaml`'s commands**, rendered from the file rather
- * than copied out of it (W0.1, W1.4 step 1). Each path also renders the note that file
- * carries, so the development-only path says so where it is offered.
+ * **One button, one command.** The page used to end with two install cards — Homebrew and
+ * `go install` — each with its own command, its own copy control and its own note, which is a
+ * reader choosing between two ways to install something before they have decided to install
+ * it. The draft replaces the pair with the thing a reader does next: one large "Get started"
+ * button at `/getting-started/`, where every path is laid out with what each one sets up, and
+ * the command most readers run under it.
  *
- * **Why it is not in the hero any more.** The hero used to carry the promise, the install
- * commands and the chat, and item 4 asks for the run's picture to be the thing under the
- * promise rather than the fourth block down: the homepage is now the promise and its call to
- * action, the chat, the diagram, and then this — the commands, for the reader who has read
- * what Fugaro is and decided. It sits below the diagram and it is the page's last section, and
- * the quietest of the three: smaller type, one step of border, no accent of its own, so the
- * loudest thing on the page stays the diagram (spec item 4's acceptance). The order is the
- * built `dist/index.html`'s — `index.astro` renders Hero, then `.home-chat`, then `.home-flow`,
- * then this component; review round 5 moved the chat above the diagram, which is the reverse of
- * the order the earlier rounds recorded.
+ * **The board draws the block as a panel** — a box with the accent's hairline, a wash of the
+ * panel tones and the site's largest radius — and that is what this component draws: the
+ * heading, the command a reader copies, the file's own note about what the path sets up, and
+ * the button. The heading is the board's line ("Ship your first run") and is listed in the
+ * pull request for the owner to veto; the command and the note are the site's own data.
  *
- * **The commands wrap rather than being cut off.** The two paths share a row of about 22 rem
- * each, and `go install github.com/dimipaun/fugaro/cmd/fugaro@latest` is wider than that at
- * the size a command is set: with `overflow-x: auto` alone the line was silently clipped at
- * the card's edge (`…@late`), which is a command a reader cannot read and cannot see is
- * incomplete. A command block's `pre` wraps its command instead — `white-space: pre-wrap` with
- * `overflow-wrap: anywhere`, so a long token breaks rather than running out of the card — and
- * `website/test/base-styles.mjs` refuses a command block whose rule clips one. The wrapping is
- * declared once, on `base.css`'s `.command-block > pre`, rather than here: the control sits in
- * the command's own row, so every command on the site gives up the control's width, and this
- * component's own rule would have reached only this page's two.
+ * **The command is `website/data/install.yaml`'s**, rendered from the file rather than copied
+ * out of it (W0.1, W1.4 step 1), and so is the note under it: a command typed into this
+ * component is a second copy of the install text, and the one that drifts. The path it renders
+ * is `HOME_PATH` below — the tap the README documents first — and a path missing from the file
+ * stops the build here, naming itself.
+ *
+ * **The `go install` path is not on this page any more.** It is a development build with no
+ * release images and no plugin pin (README.md says so), so it is a path for somebody working on
+ * Fugaro rather than for a reader arriving at the site; `/getting-started/` still carries it,
+ * with the note that says what it is for.
+ *
+ * **One link, and it is the button.** `website/test/home.mjs` reads this block's links out of
+ * the built page and holds it to the draft's one: a second link here — the `go install` card's,
+ * or a release page's — is the choice the draft takes off this page.
  */
 import { loadSite } from '../content.ts'
 import { copyControlHTML } from '../lib/copy-control.mjs'
@@ -35,133 +38,132 @@ import { copyControlHTML } from '../lib/copy-control.mjs'
 const site = loadSite()
 const install = site.install
 
-// The two install paths the homepage shows: the two that install the CLI with a command. The
-// archive and the cosign block are on the getting-started page, where their notes have room
-// (W1.5) and where a reader who has decided to install goes.
-const HOME_PATHS = ['homebrew', 'go-install']
-const paths = HOME_PATHS.map((id) => {
-  const found = install.paths.find((candidate) => candidate.id === id)
-  if (!found) {
-    // The pipeline validated the file; this is the other failure, and it is this component's
-    // own: the paths named above are the ones this page renders, and one of them is gone.
-    throw new Error(
-      `website/src/components/HomeInstall.astro: website/data/install.yaml carries no install path with id "${id}", which the homepage renders`,
-    )
-  }
-  return found
-})
+// The one install path the homepage offers: the quick path, the one the README's
+// "## Getting started" prints first, and the one whose command a reader can run as it stands.
+const HOME_PATH = 'homebrew'
+const path_ = install.paths.find((candidate) => candidate.id === HOME_PATH)
+if (!path_) {
+  // The pipeline validated the file; this is the other failure, and it is this component's own:
+  // the path named above is the one this page renders, and it is gone.
+  throw new Error(
+    `website/src/components/HomeInstall.astro: website/data/install.yaml carries no install path with id "${HOME_PATH}", which the homepage's call to action offers`,
+  )
+}
+const command = path_.commands[0]
 ---
 
 <section class="home-install" aria-labelledby="home-install-title" data-source="website/data/install.yaml">
-  {/* A section heading, and a real one: it is what ends the page's lead at the promise and
-      what a reader navigating by headings lands on. It is set larger than a label (the
-      review's nit: the section's own name was the smallest type in the block it named) and
-      still quieter than the diagram's step names. */}
-  <h2 class="home-install-title" id="home-install-title">Install</h2>
+  <div class="home-install-panel">
+    {/* The block's own name, and the board's line: what a reader does next. It is the heading
+        a reader navigating by headings lands on, and the button below it is the same
+        instruction as a control. */}
+    <h2 class="home-install-title display-md" id="home-install-title">Ship your first run</h2>
 
-  <div class="home-install-paths">
-    {
-      paths.map((path) => (
-        <div class="home-install-path" data-path={path.id} data-source={path.source}>
-          <p class="home-install-name">{path.name}</p>
-          {/* Written on one line: whitespace inside `<pre>` is shown, so an indented
-              template would indent the command on the page. The control beside it is
-              `src/lib/copy-control.mjs`'s markup, emitted `hidden` and revealed by the
-              site's script (P6, D183). */}
-          {path.commands.map((command) => (
-            <div class="command-block" data-copy>
-              <Fragment set:html={copyControlHTML('Copy the install command')} />
-              <pre class="home-install-command"><code>{command}</code></pre>
-            </div>
-          ))}
-          {path.note && <p class="home-install-note">{path.note}</p>}
-        </div>
-      ))
-    }
+    {/* Written on one line: whitespace inside `<pre>` is shown, so an indented template would
+        indent the command on the page. The control beside it is `src/lib/copy-control.mjs`'s
+        markup, emitted `hidden` and revealed by the site's script (P6, D183) — and it is a
+        `<button>`, not a link, which is what keeps this block's one link the button below. */}
+    <div class="command-block" data-copy>
+      <Fragment set:html={copyControlHTML('Copy the install command')} />
+      <pre class="home-install-command"><code>{command}</code></pre>
+    </div>
+
+    {path_.note && <p class="home-install-note">{path_.note}</p>}
+
+    {/* The one call to action: filled with the accent, the same pair the hero's own primary
+        link is set in, and larger than it — this is the page's last word on what to do, and
+        the reader who has read the slider is the reader it is for. */}
+    <p class="home-install-cta">
+      <a class="home-install-button" href="/getting-started/">Get started</a>
+    </p>
   </div>
-
-  <p class="home-install-more">
-    <a href="/getting-started/">Every install path, and what each one sets up</a>
-  </p>
 </section>
 
 <style>
-  /* Tokens only (W1.2), and no colour of this component's own: the accent is the diagram's
-     and the chat's, and this block is deliberately the quietest of the three.
+  /* Tokens only (W1.2), and no colour of this component's own: the accent is the page's, and
+     the button is the second place it is used as a fill (the hero's call to action is the
+     first, and `a11y.mjs` computes that pair at 4.5:1).
 
-     **No top padding, because the block above already carries the gap** (review round 5).
-     Every top-level block on this page carries the gutter and the room below itself — the
-     hero's `--space-lg`, the two figures' `--space-3xl` — and the install paths are the last
-     of them, so a top padding here was a second gap stacked on the figure's: 7 rem plus this
-     2 rem was the 144 px band the review of the built site measured as empty page between the
-     flow's cards and the "Install" heading, the block above the heading being where the room
-     belonged. The bottom stays: it is the page's own tail, the same 7 rem between the last
-     line of prose and the footer. */
+     **No top padding, because the block above already carries the gap**: every top-level block
+     on this page carries the gutter and the room below itself, so a top padding here would be a
+     second gap stacked on the grid's (`website/test/base-styles.mjs`'s `homeRhythmFailures`
+     refuses exactly that). The bottom stays: it is the page's own tail, the same room between
+     the last line of prose and the footer. */
   .home-install {
     max-width: var(--page-max);
     margin: 0 auto;
     padding: 0 var(--space-md) var(--space-3xl);
   }
 
-  .home-install-title {
-    margin: 0 0 var(--space-sm);
-    font-family: var(--font-sans);
-    font-size: var(--font-size-lg);
-    font-weight: var(--weight-semibold);
-    letter-spacing: var(--tracking-tight);
-    color: var(--text);
-  }
-
-  .home-install-paths {
+  /* The panel: the board's box around the whole block. The hairline is the accent's, because
+     this is the page's last word and the one box on it that is a call to action rather than a
+     section; the wash behind it is a gradient of palette tones in `background-image` (a colour
+     function would be a literal no palette holds, and `background` would make the contrast
+     check read a gradient as the one colour the text sits on). */
+  .home-install-panel {
     display: flex;
-    flex-wrap: wrap;
+    flex-direction: column;
+    align-items: flex-start;
     gap: var(--space-md);
+    padding: var(--space-2xl) var(--space-lg);
+    border: var(--border-width) solid var(--accent);
+    border-radius: var(--radius-xl);
+    background-image: linear-gradient(120deg, var(--panel) 0%, var(--surface) 60%, var(--panel) 100%);
   }
 
-  /* A 22 rem basis rather than a share of the row: two of them fit the page's 72 rem column
-     with room for the gutter between, and a card that cannot hold the `go install` line
-     wraps it rather than clipping it (see the header). */
-  .home-install-path {
-    flex: 1 1 22rem;
-    padding: var(--space-sm);
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-md);
-    background: var(--ground);
+  .home-install-title {
+    margin: 0;
   }
 
-  .home-install-name {
-    margin: 0 0 var(--space-2xs);
-    font-family: var(--font-sans);
-    font-size: var(--font-size-sm);
-    font-weight: var(--weight-semibold);
-    color: var(--text-muted);
+  /* The bar the command sits in, held to the site's measure rather than the page's: one command
+     does not need the whole page, and a bar that spanned it would read as a band across the
+     foot of the page rather than as a command a reader copies. */
+  .home-install .command-block {
+    width: 100%;
+    max-width: var(--measure);
   }
 
-  /* The command's own look. What it does *not* do here is decide that the command wraps: the
-     copy control sits in the command's row, so every command block's `pre` gives up the
-     control's width, and `base.css`'s `.command-block > pre` is where the wrapping is declared
-     — for this page's commands and for Getting Started's, which this rule never reached
-     (review of this branch). One rule, one place, and `website/test/base-styles.mjs`'s
-     `installCommandFailures` reads that selector as well as this class. */
+  /* The command's own look. What it does *not* do here is decide that the command wraps:
+     `base.css`'s `.command-block > pre` is where the wrapping is declared, for this page's
+     command and for every other command on the site. */
   .home-install-command {
     margin: 0;
     padding: var(--space-2xs) var(--space-sm);
-    border-radius: var(--radius-sm);
-    background: var(--surface);
-    color: var(--text);
+    border-radius: var(--radius-md);
+    background: var(--ground);
+    color: var(--accent-on-dark);
     font-family: var(--font-mono);
     font-size: var(--font-size-sm);
   }
 
   .home-install-note {
-    margin: var(--space-2xs) 0 0;
-    font-size: var(--font-size-xs);
+    margin: 0;
+    max-width: var(--measure);
+    font-size: var(--font-size-sm);
     line-height: var(--leading-normal);
     color: var(--text-muted);
   }
 
-  .home-install-more {
-    margin: var(--space-sm) 0 0;
-    font-size: var(--font-size-sm);
+  .home-install-cta {
+    margin: var(--space-2xs) 0 0;
+  }
+
+  /* The button, at the size the board asks for: the site's own filled primary, one step up in
+     type and in padding from the hero's, and a target well over the 44 px the owner's brief
+     measures every control against. `display: inline-flex` rather than `inline-block` so the
+     label is centred in the box it makes, and `text-decoration: none` because it is a button
+     rather than a link in running text. */
+  .home-install-button {
+    display: inline-flex;
+    align-items: center;
+    min-height: 56px;
+    padding: 0 var(--space-xl);
+    border-radius: var(--radius-lg);
+    background: var(--accent);
+    color: var(--ground);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-lg);
+    font-weight: var(--weight-black);
+    text-decoration: none;
   }
 </style>

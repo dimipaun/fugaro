@@ -2,9 +2,9 @@
 # docs/design/project-secrets.md §4). They hold no value here: values are
 # added with fugaro secrets set NAME --project-wide, so none ever reaches
 # Terraform or its state. The labels are the marks that command sets and
-# that fugaro init's discovery checks before adopting one.
+# that fugaro update's discovery checks before adopting one.
 #
-# for_each is var.project_secrets, which fugaro init computes and unions with
+# for_each is var.project_secrets, which fugaro update computes and unions with
 # every correctly-labelled container that already exists live: a config edit
 # can therefore only ever add a key, never drop one, since prevent_destroy
 # turns a dropped key into a hard terraform plan failure (N3).

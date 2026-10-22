@@ -80,10 +80,10 @@ func selfCheck(bucket string, held bool, user string, launchers, operators []str
 		return doctorCheck{ID: "runs-bucket-iam", OK: true}
 	case launcherMember(m, launchers):
 		return doctorCheck{ID: "runs-bucket-iam", Severity: "warning", Problem: fmt.Sprintf(text, bucket),
-			Fix: "ask an operator to run fugaro init (0.7.0 or later)"}
+			Fix: "ask an operator to run fugaro setup (0.7.0 or later)"}
 	default:
 		return doctorCheck{ID: "runs-bucket-iam", Severity: "info", Problem: "expected for an operator; otherwise " + fmt.Sprintf(text, bucket),
-			Fix: "if you only launch runs, ask an operator to run fugaro init (0.7.0 or later)"}
+			Fix: "if you only launch runs, ask an operator to run fugaro setup (0.7.0 or later)"}
 	}
 }
 
@@ -103,7 +103,7 @@ func tokenGrantChecks(fs []infra.BucketFinding) []doctorCheck {
 	if len(fs) > 0 {
 		sum.OK, sum.Severity = false, "info"
 		sum.Problem = "a repository's job account could not be checked for its read grant on tokens/ (see the job-token-grant-N lines)"
-		sum.Fix = "an operator runs fugaro init --repo in each repository named"
+		sum.Fix = "an operator runs fugaro update --repo in each repository named"
 		for _, f := range fs {
 			if f.Severity == "warning" {
 				sum.Severity = "warning"

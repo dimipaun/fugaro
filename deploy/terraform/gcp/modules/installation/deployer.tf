@@ -28,7 +28,7 @@
 # are), and resource.name is not supported at all for Artifact Registry
 # repositories, Cloud Run jobs, Cloud Scheduler jobs, IAM service accounts or
 # API keys. setIamPolicy would have rejected the binding and stopped every
-# fugaro init. The fix is the split: one custom role per service, each holding
+# fugaro update. The fix is the split: one custom role per service, each holding
 # that service's slice of the 31 scoped permissions and each bound once under
 # its own condition, which needs one or two clauses and so one `||` at most. The
 # seven permission lists partition D75's 31 exactly — none added, none dropped,

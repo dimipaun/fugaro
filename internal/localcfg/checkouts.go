@@ -28,7 +28,7 @@ import (
 // printed by a command other than `config list` itself.
 //
 // It is a file of its own, not a key in <project>.yaml, for the reason the
-// project config is a *document the operator owns*: `fugaro init` rewrites
+// project config is a *document the operator owns*: `fugaro update` rewrites
 // it with a diff and a .bak, every reader parses it strictly (Parse refuses
 // an unknown key), and a machine-local path is not a fact about the
 // installation that belongs in a file an operator reviews and commits into

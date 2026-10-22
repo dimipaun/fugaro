@@ -135,7 +135,7 @@ variable "managed_deployer_scoped" {
   # The managed deployer's seven scoped roles and their seven conditioned
   # bindings — the 0.10.0 redesign of the fence. Before 0.10.0 this flag created
   # one scoped role under one condition, and that condition could not be
-  # expressed as a GCP IAM condition at all. Off by default, and fugaro init
+  # expressed as a GCP IAM condition at all. Off by default, and fugaro update
   # never sets it: the gate has never been flipped. An installation that does
   # not name it plans exactly as before, minus those fourteen resources. The
   # module's own variable (../../modules/installation/variables.tf) says why
@@ -161,18 +161,35 @@ variable "history" {
 
 variable "credentials_service" {
   type = object({
-    account_id    = string
-    service       = string
-    image         = string
-    bundle_secret = string
+    account_id       = string
+    service          = string
+    image            = string
+    bundle_secret    = string
+    firebase_project = string
+    rtdb_url         = string
+    job_accounts = list(object({
+      provider = string
+      repo     = string
+      workflow = string
+    }))
+    url = optional(string)
   })
-  # The credentials service (D146, D147), OFF by default: fugaro init's
+  # The credentials service (D146, D147), OFF by default: fugaro update's
   # credentials stage (C1.20) is the only writer, and only when the owner runs
   # it. Absent, the module creates nothing and every job keeps its
   # model-secret accessors. bundle_secret is the one container the service
   # reads — the project-wide container of the logical name "creds-bundle"
   # (internal/backend/gcp's ProjectSecretID), which that stage fills so this
   # variable and the loader's own derivation (C1.11) name one secret.
+  # firebase_project, rtdb_url and job_accounts are the rest of the service's
+  # environment (C1.14: the Firebase project, the database, and the jobs whose
+  # accounts may call it), and url is the service's own URL — the audience its
+  # callers' tokens are minted for — which Cloud Run assigns, so the module
+  # carries its unassigned placeholder until the apply after the one that
+  # creates the service (the module's own output reads the URL back, and the
+  # stage that fills this variable applies again in the same run; the type is
+  # the module's, and its validations are the ones that hold these four to
+  # their shape).
   default = null
 }
 
@@ -187,7 +204,7 @@ variable "project_secrets" {
 }
 
 variable "project_jobs" {
-  description = "The shared project jobs (design project-centric §4.1), by Cloud Run job name: one entry per (profile, provider, account), each the module's own object type. fugaro init writes it from the local config's profiles; empty for an installation that names none, which creates no project job at all."
+  description = "The shared project jobs (design project-centric §4.1), by Cloud Run job name: one entry per (profile, provider, account), each the module's own object type. fugaro update writes it from the local config's profiles; empty for an installation that names none, which creates no project job at all."
   type = map(object({
     profile  = string
     provider = string

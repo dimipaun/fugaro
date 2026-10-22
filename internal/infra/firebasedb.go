@@ -96,13 +96,13 @@ func (d *DB) RequireCapsForEnforce(ctx context.Context) error {
 func NoCapsForEnforce() error { return noCapsErr() }
 
 func noCapsErr() error {
-	return userErr("--budget-mode enforce needs the database's global caps (%s: dailyMicros and perRunMicros), and there are none: without dailyMicros the rules refuse every lease, so every run halts, and without perRunMicros a run whose repository has no per-run cap of its own and no default has none to compare against. Run init with --budget-mode observe first, set the caps with fugaro budget set --global --daily <usd> --per-run <usd>, then switch with fugaro budget set --global --mode enforce", budget.PathCapsGlobal)
+	return userErr("--budget-mode enforce needs the database's global caps (%s: dailyMicros and perRunMicros), and there are none: without dailyMicros the rules refuse every lease, so every run halts, and without perRunMicros a run whose repository has no per-run cap of its own and no default has none to compare against. Run 'fugaro setup --firebase-project <firebase-project-id> --budget-mode observe' first (or 'fugaro update --firebase-project <firebase-project-id> --budget-mode observe' on an installation that already exists), set the caps with fugaro budget set --global --daily <usd> --per-run <usd>, then switch with fugaro budget set --global --mode enforce", budget.PathCapsGlobal)
 }
 
 // dbErr turns a refused or failed read into the operator's words.
 func dbErr(what string, err error) error {
 	if errors.Is(err, rtdb.ErrPermission) {
-		return userErr("%s: the database refused you (%v); init writes it as a project owner or editor, or a budget admin (firebasedatabase.admin on the Firebase project; role changes take a few minutes to apply)", what, err)
+		return userErr("%s: the database refused you (%v); fugaro writes it as a project owner or editor, or a budget admin (firebasedatabase.admin on the Firebase project; role changes take a few minutes to apply)", what, err)
 	}
 	return fmt.Errorf("%s: %w", what, err)
 }
@@ -122,7 +122,7 @@ func (d *DB) Check(ctx context.Context) (marked bool, err error) {
 	if err != nil {
 		var ue *json.UnmarshalTypeError
 		if errors.As(err, &ue) {
-			return false, userErr("the database's %s is not a Fugaro mark; it is not ours, and init writes into databases that are empty or carry our mark", budget.PathMark)
+			return false, userErr("the database's %s is not a Fugaro mark; it is not ours, and fugaro writes into databases that are empty or carry our mark", budget.PathMark)
 		}
 		return false, dbErr("reading "+budget.PathMark, err)
 	}
@@ -130,7 +130,7 @@ func (d *DB) Check(ctx context.Context) (marked bool, err error) {
 	case !found && len(keys) == 0:
 		return false, nil
 	case !found:
-		return false, userErr("the database holds data (%s) and no Fugaro mark (%s): it is not ours, and init writes into databases that are empty or carry our mark", strings.Join(clipKeys(keys), ", "), budget.PathMark)
+		return false, userErr("the database holds data (%s) and no Fugaro mark (%s): it is not ours, and fugaro writes into databases that are empty or carry our mark", strings.Join(clipKeys(keys), ", "), budget.PathMark)
 	case m.By != markBy || m.Version != markVersion || m.Project != d.project || m.GCPProject != d.gcpProject:
 		return false, userErr("the database carries the Fugaro mark of project %q in GCP project %q (managed_by %q, version %d), not project %s in %s: one Firebase project serves one installation (design D3)", m.Project, m.GCPProject, m.By, m.Version, d.project, d.gcpProject)
 	}
@@ -161,7 +161,7 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 	// deploy would put an older document over the newer one and the marker
 	// write at the end would record this generation over the newer number:
 	// exactly the downgrade `fugaro doctor` warns about and tells the owner not
-	// to cause ("do not re-run 'fugaro init --firebase' with this binary",
+	// to cause ("do not re-run 'fugaro update --firebase-project' with this binary",
 	// doctorRulesSkew). A warning the deploy path then ignores is not a
 	// boundary, so the deploy path refuses — before anything is planned, so
 	// nothing is written and the newer installation's rules, marker and
@@ -179,7 +179,7 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 		return nil, nil, dbErr("reading "+projectpolicy.PathRulesMarker(), err)
 	}
 	if markerFound && markerGen > projectpolicy.RulesVersion {
-		return nil, nil, userErr("the deployed security rules are generation %d (%s = %d) and this Fugaro's are generation %d: the rules this database runs under came from a newer Fugaro, and 'fugaro init --firebase' would deploy this binary's older rules over them and record generation %d in the marker. Upgrade Fugaro first ('fugaro upgrade') and re-run init with the newer binary; 'fugaro doctor' reports this as policy-rules-skew",
+		return nil, nil, userErr("the deployed security rules are generation %d (%s = %d) and this Fugaro's are generation %d: the rules this database runs under came from a newer Fugaro, and 'fugaro update --firebase-project' would deploy this binary's older rules over them and record generation %d in the marker. Upgrade Fugaro first ('fugaro upgrade'), then run 'fugaro update --firebase-project' again with the newer binary; 'fugaro doctor' reports this as policy-rules-skew",
 			markerGen, projectpolicy.PathRulesMarker(), markerGen, projectpolicy.RulesVersion, projectpolicy.RulesVersion)
 	}
 	// The credentials children's own generation is read and refused the same
@@ -197,7 +197,7 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 		return nil, nil, dbErr("reading "+rules.PathCredsRulesMarker(), err)
 	}
 	if credsFound && credsGen > rules.CredsRulesVersion {
-		return nil, nil, userErr("the deployed security rules carry credentials generation %d (%s = %d) and this Fugaro's are generation %d: the credentials children this database runs under came from a newer Fugaro, and 'fugaro init --firebase' would deploy this binary's older rules over them and record generation %d in the marker. Upgrade Fugaro first ('fugaro upgrade') and re-run init with the newer binary",
+		return nil, nil, userErr("the deployed security rules carry credentials generation %d (%s = %d) and this Fugaro's are generation %d: the credentials children this database runs under came from a newer Fugaro, and 'fugaro update --firebase-project' would deploy this binary's older rules over them and record generation %d in the marker. Upgrade Fugaro first ('fugaro upgrade'), then run 'fugaro update --firebase-project' again with the newer binary",
 			credsGen, rules.PathCredsRulesMarker(), credsGen, rules.CredsRulesVersion, rules.CredsRulesVersion)
 	}
 	d.acts = nil
@@ -332,7 +332,7 @@ func (d *DB) Apply(ctx context.Context) error {
 	for _, a := range d.acts {
 		if err := a.do(ctx); err != nil {
 			if errors.Is(err, rtdb.ErrPrecondition) {
-				return userErr("%s changed while init was running; run it again", a.Path)
+				return userErr("%s changed while fugaro was running; run it again", a.Path)
 			}
 			return dbErr("writing "+a.Path, err)
 		}

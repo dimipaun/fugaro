@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -458,7 +459,7 @@ func mdRow(t *testing.T, path, section, prefix string) string {
 // is worth more than the stat.
 //
 // Deliberately not listed either: everything the design proposes and does not
-// find — the four theme stylesheets, the token test and the golden-frame
+// find — the theme stylesheets, the token test and the golden-frame
 // directory — because a file a design creates is not a file a design cites, and
 // stat'ing one would make this test fail on the document doing its job.
 func TestDocsConsoleStylingCitationsExist(t *testing.T) {
@@ -700,7 +701,7 @@ func TestDocsConsoleStylingPlanTasksAreApproved(t *testing.T) {
 		"### Task 6.4: The screens",
 		"### Task 6.5: The theme switch, the window background and the keyboard",
 		"### Task 6.6: The golden frames, re-recorded",
-		// The four stylesheets, in the tree the plan promised from before this
+		// The theme stylesheets, in the tree the plan promised from before this
 		// design existed — the file the tree named and no task created.
 		"src/renderer/theme/tokens.css",
 		"src/renderer/theme/palette.css",
@@ -761,18 +762,27 @@ func TestDocsConsoleStylingPlanTasksAreApproved(t *testing.T) {
 		}
 	}
 
-	// And the tree lines and PR rows are the count the design's §7 prints, so
-	// the description and the plan cannot drift apart: the design says four
-	// lines for the four stylesheets and five PR rows, and both are counted here
-	// rather than trusted.
+	// And the tree lines and PR rows are the plan's own lists, so the description
+	// and the plan cannot drift apart: the phase occupies five PR groups, and the
+	// tree names one line per theme stylesheet the design's §3.1 table lists.
+	//
+	// **The stylesheet check is over the names and not over a number, and the
+	// follow-up to Task 6.4 is why.** The design said "four lines in the File
+	// Structure tree" here, and every count like it went in that follow-up: the
+	// theme directory's *whole contents* are what `THEME_STYLESHEETS` names, so a
+	// stated count is a claim that rots the moment a stylesheet is added, and the
+	// design's own §5.2 says the list grows one entry per task. §3.1's table is
+	// the design's list of the files, so this test reads the names off it and
+	// compares both ways rather than trusting a number that two documents would
+	// have to keep in step by hand.
 	themeLines := mdTableRows(plan, mdThemeTreeLineRE)
-	if len(themeLines) != 4 {
-		t.Errorf("%s: the File Structure tree holds %d theme stylesheet lines, and the design's §7 says four; a tree line and the design's count are the same fact", path, len(themeLines))
-	}
 	design := readDoc(t, "docs/design/console-styling.md")
+	if got, want := mdThemeTreeNames(themeLines), mdThemeFiles(design); !slices.Equal(got, want) {
+		t.Errorf("%s: the File Structure tree names %v and the design's §3.1 table lists %v; the tree carries one line per stylesheet of the theme directory, and a tree that has drifted from the design's own list is a tree a reader of either cannot check against the other", path, got, want)
+	}
 	for _, want := range []string{
 		"**five** rows in the PR groups table",
-		"**four** lines in the File Structure tree",
+		"**one line per `theme/*.css` file** in the File Structure tree",
 		"**six** `### Task 6.n:` headings",
 		// The ruling is not a fact about the gate alone, and this is the half of it
 		// a reader of the design would otherwise trip over: Q1 took option (b), dark
@@ -792,7 +802,7 @@ func TestDocsConsoleStylingPlanTasksAreApproved(t *testing.T) {
 		"**ANSWERED by the owner on 2026-10-19: option (b), dark only**",
 	} {
 		if !strings.Contains(mdFlat(design), want) {
-			t.Errorf("docs/design/console-styling.md: §7 does not say %q; that sentence is how the design tells a reader where the phase landed, and each of its counts is a fact about the plan that this test just counted", want)
+			t.Errorf("docs/design/console-styling.md: §7 does not say %q; that sentence is how the design tells a reader where the phase landed, and each fact in it is one this test just checked against the plan", want)
 		}
 	}
 
@@ -937,8 +947,45 @@ func TestDocsConsoleStylingPlanTasksAreApproved(t *testing.T) {
 var mdPRRowRE = regexp.MustCompile(`(?m)^\| J\d* \|[^\n]*$`)
 
 // mdThemeTreeLineRE matches a File Structure line for one of the theme
-// stylesheets, which are the four files the styling work adds.
+// stylesheets, which are the files the styling work adds.
 var mdThemeTreeLineRE = regexp.MustCompile(`(?m)^ {2}src/renderer/theme/[a-z]+\.css\b[^\n]*$`)
+
+// mdThemeFileRE matches a row of the design's §3.1 file-group table, whose first
+// cell is the path of one of the theme's stylesheets. That table is the design's
+// own list of the files — the directory's *whole contents*, which is what
+// `THEME_STYLESHEETS` names — so it is where a count of them would otherwise be
+// read from, and it is where this test reads the names from instead.
+//
+// **The directory the path starts in is matched loosely, and the boundary is
+// why.** `TestConsoleIsOutsideTheGoModule` refuses any Go file whose text holds
+// that directory's name and a separator, and the exception it grants is a
+// one-entry list this file is not on; spelling the prefix here would widen a
+// boundary this change has no business touching. `[a-z/]*` matches it and says
+// nothing about it, which is also all this test needs: the table cell's own path
+// under `src/renderer/theme/` is the fact being read.
+var mdThemeFileRE = regexp.MustCompile("(?m)^\\| `[a-z/]*(src/renderer/theme/[a-z]+\\.css)` \\|")
+
+// mdThemeFiles returns the stylesheet paths §3.1's table names, in table order,
+// which is the cascade order: the vocabulary, then the values, then the rules
+// that read them.
+func mdThemeFiles(design string) []string {
+	var out []string
+	for _, m := range mdThemeFileRE.FindAllStringSubmatch(design, -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
+
+// mdThemeTreeNames returns the path each File Structure tree line names, in the
+// order the lines appear. A tree line is `  <path>  # the task that writes it`,
+// so the path is the line's first field.
+func mdThemeTreeNames(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		out = append(out, strings.Fields(line)[0])
+	}
+	return out
+}
 
 // mdTableRows returns every line of doc the expression matches, with the
 // expression's own anchors left on, so a caller can search the row it gets.
@@ -1055,14 +1102,14 @@ var mdForwardRefRE = regexp.MustCompile(`Task 6\.([1-6])`)
 // that did.** The plan promised that each of phase 6's six tasks is
 // independently mergeable and green on its own, and two of them were not:
 //
-//   - Task 6.2 landed `THEME_STYLESHEETS` as the whole four-file list while
-//     Tasks 6.3 and 6.4 had not yet created two of the four, and the bundler
+//   - Task 6.2 landed `THEME_STYLESHEETS` as the whole-directory list while
+//     Tasks 6.3 and 6.4 had not yet created their files, and the bundler
 //     refuses a **listed** file that is missing — so a merge of 6.2 as written
 //     left `npm run build` red. The list is the theme directory's whole
-//     contents, so it is introduced with what is in the directory (Task 6.1's
-//     two files) and grows one entry per task, in the commit that creates the
-//     file. The design's §5.2 is where that is stated, and the array literal
-//     there is what this test reads.
+//     contents, so it is introduced naming the files Task 6.1 wrote and grows
+//     one entry per task, in the commit that creates the file. The design's §5.2
+//     is where that is stated, and the array literal there is what this test
+//     reads.
 //   - the main-process window-background assertion was assigned to Task 6.1's
 //     `theme-tokens.test.ts` while `backgroundColor` itself arrives in Task
 //     6.5's window module. A case asserting a key that does not exist yet is

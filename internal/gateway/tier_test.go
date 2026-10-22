@@ -232,8 +232,8 @@ func TestSwitchLogRecorded(t *testing.T) {
 	cached := int64(300)
 	u := pricing.Usage{Input: 900, CacheRead: cached, Output: 40}
 	// 300 cached tokens at sonnet's list rates -- $2/M in, cache reads at
-	// 0.1 x in -- is 300 x $1.8/M of miss.
-	const want = 0.00054
+	// 0.05 x in (the pricing table's 2026-10-20 row) -- is 300 x $1.9/M of miss.
+	const want = 0.00057
 	for _, tc := range []struct {
 		tier string
 		cost SwitchCost
@@ -520,7 +520,7 @@ func TestAProbeCountsAgainstTheCapOnTierB(t *testing.T) {
 func TestAProbeLeavesWhatTheRunHadCached(t *testing.T) {
 	cached := int64(300)
 	u := pricing.Usage{Input: 900, CacheRead: cached, Output: 40}
-	const want = 0.00054 // 300 cached tokens at sonnet's rates, as TestSwitchLogRecorded
+	const want = 0.00057 // 300 cached tokens at sonnet's rates, as TestSwitchLogRecorded
 	var answers []ServiceAnswer
 	var n atomic.Int64
 	h, _ := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {

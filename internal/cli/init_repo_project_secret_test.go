@@ -48,7 +48,7 @@ func TestInitRepoProjectWideProviderKeyIsReadyUnderYes(t *testing.T) {
 	r.seedRepoSecret(t, "probe2-api-key", nil)
 	r.seedProjectKey(t, "probe2-api-key")
 	r.seedBuildRecord(t, "app")
-	out, errOut, err := executeStdin(t, "", "init", "--repo", "--yes")
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--yes")
 	if err != nil {
 		t.Fatalf("the project-covered key left the --yes run unfinished: %v\n%s\n%s", err, out, errOut)
 	}
@@ -63,7 +63,7 @@ func TestInitRepoRepoCopyStillWinsAndIsReady(t *testing.T) {
 	r.seedRepoSecret(t, "probe2-api-key", []byte("repo-value"))
 	r.seedProjectKey(t, "probe2-api-key")
 	r.seedBuildRecord(t, "app")
-	out, errOut, err := executeStdin(t, "", "init", "--repo", "--yes")
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--yes")
 	if err != nil {
 		t.Fatalf("%v\n%s\n%s", err, out, errOut)
 	}

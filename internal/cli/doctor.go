@@ -76,7 +76,7 @@ func doctorOpenProvidersCheck(lc *localcfg.Config) *doctorCheck {
 	}
 	return &doctorCheck{ID: "provider-open-to-every-repository", Severity: "info",
 		Problem: strings.Join(lines, "; "),
-		Fix:     "to narrow it, list the repositories in that provider's allow_data_to and run " + selfCommand() + " init --repo in each one (a deployed job keeps the key's mount and the routes it was applied with until then)"}
+		Fix:     "to narrow it, list the repositories in that provider's allow_data_to and run " + selfCommand() + " update --repo in each one (a deployed job keeps the key's mount and the routes it was applied with until then)"}
 }
 
 // doctorProviderSecretNamesCheck is doctor's "provider-secret-name" finding:
@@ -134,7 +134,7 @@ func cliVersionCheck(ctx context.Context, version string, now time.Time) doctorC
 
 // doctorProject is the installation doctor names, read from the local
 // config only (never a cloud call by itself). BaseImages are what the local
-// config records (fugaro init --base-image, or a future mirror stage): doctor
+// config records (fugaro update --base-image, or a future mirror stage): doctor
 // reports what is recorded, not whether the registry still carries it.
 type doctorProject struct {
 	Name         string            `json:"name"`
@@ -212,7 +212,7 @@ do, with or without --strict. A repository's CI runs
 fugaro doctor --plugin --strict.
 
 With no local Fugaro installation configured, doctor says so and names
-fugaro init as the fix, rather than guessing at a project.
+fugaro setup as the fix, rather than guessing at a project.
 
 Exit 1 when a check fails, with the one-line fix to run.`,
 		Args: cobra.NoArgs,
@@ -278,7 +278,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// Distinguishing "no installation at all" from every other selection
 	// refusal (ambiguous projects, a wrong --project) needs the raw list,
 	// not localcfg.Select's wrapped error (design: "no installation means
-	// run fugaro init first").
+	// run fugaro setup first").
 	// A checkout that names its gcp_project:, or --gcp-project, reaches
 	// selection on a fresh machine: the shared config may stand in.
 	namesGCP := cloudOpts.gcpProject != ""
@@ -288,7 +288,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	if names, err := localcfg.Projects(os.Getenv); err == nil && len(names) == 0 && !namesGCP {
 		o.Checks = append(o.Checks, doctorCheck{ID: "installation", OK: false,
 			Problem: "no Fugaro installation is configured",
-			Fix:     "run fugaro init"})
+			Fix:     "run fugaro setup"})
 		o.OK = !checksFail(o.Checks, strict)
 		return emitDoctor(cmd, o, asJSON)
 	}
@@ -338,7 +338,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	if co != nil {
 		if needsAnchorHint(ctx, co, lc) {
 			o.Checks = append(o.Checks, doctorCheck{ID: "gcp-project-line", Severity: "info", Problem: anchorHintText,
-				Fix: "fugaro init --anchor writes the gcp_project line into fugaro.yaml after checking the job images"})
+				Fix: "fugaro update --anchor writes the gcp_project line into fugaro.yaml after checking the job images"})
 		}
 		fyCheck, fy, rf = fugaroYAMLCheck(ctx, co.Root, lc)
 	}
@@ -367,7 +367,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		return failed(remote(err))
 	}
 	sameProjectFirebase := lc.Budget == nil || lc.Budget.FirebaseProject == "" || lc.Budget.FirebaseProject == lc.GCPProject
-	for _, c := range preflight.Billing(ctx, billingSvc, lc.GCPProject) {
+	for _, c := range preflight.Billing(ctx, billingSvc, crmSvc, lc.GCPProject) {
 		dc := fromPreflight(c)
 		if c.ID == "billing-api" && !lc.Endpoints.NoAuth && infra.CredentialsQuotaProject(ctx) == "" {
 			// Credentials with no quota project: say so, and never suggest the
@@ -490,7 +490,7 @@ func doctorManagedDeployer() *doctorCheck {
 		return nil
 	}
 	return &doctorCheck{ID: "managed-deployer-disabled", Severity: "info",
-		Problem: "the managed deployer's scoped roles are disabled in this release, so their absence is expected: the redesigned fmgd- prefix fence (one IAM condition per service) has not been measured live yet, so the seven roles and their seven bindings are not created, and managed projects (fugaro init --create-project --managed, fugaro managed apply, fugaro restore) are refused until 0.10.0",
+		Problem: "the managed deployer's scoped roles are disabled in this release, so their absence is expected: the redesigned fmgd- prefix fence (one IAM condition per service) has not been measured live yet, so the seven roles and their seven bindings are not created, and managed projects (fugaro setup --create-project --managed, fugaro managed apply, fugaro restore) are refused until 0.10.0",
 		Fix:     "nothing to do: an installation and a project created without --managed are unaffected (docs/design/managed-deployer-fence.md, Check 68 of docs/gcp-live-checklist.md)"}
 }
 
@@ -593,7 +593,7 @@ func doctorCosign(lc *localcfg.Config) doctorCheck {
 	if basepin.CosignPath() != "" {
 		return doctorCheck{ID: id, OK: true}
 	}
-	problem := "cosign is not on PATH (looked for " + basepin.CosignBin + "): a base image is pinned at the digest its cosign signature was verified for, so fugaro init --base and fugaro image refresh refuse without it"
+	problem := "cosign is not on PATH (looked for " + basepin.CosignBin + "): a base image is pinned at the digest its cosign signature was verified for, so fugaro update --base and fugaro image refresh refuse without it"
 	fix := "install cosign (https://docs.sigstore.dev/cosign/installation/), or name a base image explicitly with --base-image KIND=IMAGE"
 	if lc.BaseImage(config.BaseKind) == "" {
 		problem = "no Fugaro base is recorded, and cosign is not on PATH (looked for " + basepin.CosignBin + "): recording one with fugaro image refresh needs it"
@@ -649,7 +649,7 @@ func doctorGitHubApps(ctx context.Context, lc *localcfg.Config, notice io.Writer
 				problem = drift.short()
 			}
 			out = append(out, doctorCheck{ID: id, OK: false, Severity: "warning", Problem: problem,
-				Fix: "run " + selfCommand() + " init --repo " + quoteWord(repo) + " in its checkout to reapply it, so the App's key this check reads and the one its builds read are the same secret"})
+				Fix: "run " + selfCommand() + " update --repo " + quoteWord(repo) + " in its checkout to reapply it, so the App's key this check reads and the one its builds read are the same secret"})
 			continue
 		}
 		c := checkGitHubApp(ctx, lc, repo, lc.Repos[repo].GitHubAppID, appKeySource{Read: true, SecretID: keyID, Notice: notice})
@@ -862,7 +862,7 @@ func doctorRepoSecretsOf(lc *localcfg.Config, cfg *config.Config, repo string) (
 	// Whether the optional key is needed at all is the checkout's own answer,
 	// not the local config's: needsAnthropicKey merges the owner's ceiling with
 	// this file and reads the routes the run would take, exactly as init's
-	// prompt, init --repo's missing list and validate's note do.
+	// prompt, update --repo's missing list and validate's note do.
 	facts.keyNeeded = needsAnthropicKey(lc, cfg, repo)
 	return facts, true
 }
@@ -989,14 +989,14 @@ func printableNames(names []string) []string {
 // apply. The deployed job's own mounted references are read (metadata only),
 // never the secret's value.
 //
-// A warning (design §7's own reasoning): the next fugaro init --repo fixes
+// A warning (design §7's own reasoning): the next fugaro update --repo fixes
 // it, and a repository mid-move is the expected, transient case. Best
 // effort: a job that could not be read, a name that resolves to nothing, or
 // no Cloud Run endpoint at all says nothing.
 //
 // Only each workflow's default-account job is read, the same limitation
 // jobConfigCopyNote documents (internal/cli/upgrade_cloud.go): the one
-// fugaro init --repo that refreshes the default job refreshes every named
+// fugaro update --repo that refreshes the default job refreshes every named
 // account's variant of it too, so a finding here is never the only one.
 func doctorProjectSecretScopeCheck(ctx context.Context, lc *localcfg.Config, facts doctorRepoSecrets, listed []secretEntry, project []gcp.SecretInfo) *doctorCheck {
 	if lc.Endpoints.NoAuth && lc.Endpoints.Run == "" {
@@ -1054,7 +1054,7 @@ func doctorProjectSecretScopeCheck(ctx context.Context, lc *localcfg.Config, fac
 	}
 	return &doctorCheck{ID: "project-secret-scope-stale", Severity: "warning",
 		Problem: strings.Join(stale, "; ") + ": the deployed job was applied before the secret's scope changed",
-		Fix:     "run " + selfCommand() + " init --repo " + quoteWord(facts.repo) + " in your own terminal to reapply the repository, so the next run mounts the copy Fugaro resolves"}
+		Fix:     "run " + selfCommand() + " update --repo " + quoteWord(facts.repo) + " in your own terminal to reapply the repository, so the next run mounts the copy Fugaro resolves"}
 }
 
 // doctorSecretScopeChecks are doctor's "secret-scope" pair (plan Task 2.3
@@ -1083,7 +1083,7 @@ func doctorProjectSecretScopeCheck(ctx context.Context, lc *localcfg.Config, fac
 // (design project-secrets.md §5) — the footgun `fugaro secrets set` already
 // warns about at store time (internal/cli/secrets.go's storeSecretValue
 // notes), now visible from a checkout instead of only at the moment of
-// storing. A warning, not red: the next init --repo cannot change which copy
+// storing. A warning, not red: the next update --repo cannot change which copy
 // wins, so the fix is deliberate, and doctor without --strict still passes.
 //
 // It is the stored copies it compares, not a deployed job's mounts: that is
@@ -1168,7 +1168,7 @@ func doctorSecretScopeChecks(facts doctorRepoSecrets, listed []secretEntry, proj
 // eligibility rule no longer lists. Removing a repository from
 // project_secrets, from a provider's allow_data_to or from an account's
 // leaves its job's grant live until that one repository's own apply runs
-// again, and no repository's own fugaro init --repo has reason to look at
+// again, and no repository's own fugaro update --repo has reason to look at
 // another repository's bindings -- noteExtraAccessors only ever compares one
 // repository's spec against its own secrets.
 //
@@ -1214,7 +1214,7 @@ func doctorProjectSecretAccessorChecks(ctx context.Context, lc *localcfg.Config,
 		slices.Sort(extra)
 		cmds := make([]string, len(extra))
 		for i, repo := range extra {
-			cmds[i] = "re-run " + selfCommand() + " init --repo " + quoteWord(repo) + " and pass --allow-delete"
+			cmds[i] = "re-run " + selfCommand() + " update --repo " + quoteWord(repo) + " and pass --allow-delete"
 		}
 		out = append(out, doctorCheck{ID: "project-secret-extra-accessors", Severity: "warning",
 			Problem: fmt.Sprintf("project secret %s can still be read by %s, which its allow_data_to no longer lists: the grant stays live until each of those repositories is applied again",
@@ -1745,7 +1745,7 @@ func sharedConfigChecks(ctx context.Context, sel localcfg.Selection, lc *localcf
 		if e, ok := localcfg.LoadSharedCache(os.Getenv, sel.Name); ok {
 			problem += fmt.Sprintf(" (generation %d, checked %s ago)", e.Generation, ageDays(now.Sub(e.CheckedAt)))
 		}
-		return []doctorCheck{{ID: "shared-config", Severity: "info", Problem: problem, Fix: "fugaro init creates your own local config"}}
+		return []doctorCheck{{ID: "shared-config", Severity: "info", Problem: problem, Fix: "fugaro setup creates your own local config"}}
 	}
 	if sel.Path == "" || lc == nil {
 		return nil
@@ -1770,7 +1770,7 @@ func sharedConfigChecks(ctx context.Context, sel localcfg.Selection, lc *localcf
 	}
 	return []doctorCheck{{ID: "shared-config-differs", Severity: "info",
 		Problem: "the shared config published to the runs bucket differs from your local config on " + strings.Join(diff, ", ") + "; yours is used",
-		Fix:     "fugaro init publishes your local config's installation-wide fields"}}
+		Fix:     "fugaro update publishes your local config's installation-wide fields"}}
 }
 
 // policyNewerThanBinaryCheck is doctor's line for a policy node written by a
@@ -1813,12 +1813,12 @@ func policyNewerThanBinaryCheck(ve *projectpolicy.VersionError, shared string) d
 func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRoutingLayer) []doctorCheck {
 	shared := projectpolicy.PathShared()
 	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
-		// The state of every installation that has not run init --firebase:
+		// The state of every installation that has not run update --firebase-project:
 		// there is no node to read, and the runs take their ceiling from the
 		// job environment, exactly as they did before this model (P3).
 		checks := []doctorCheck{{ID: "policy-published", Severity: "info",
 			Problem: fmt.Sprintf("project %s has no Firebase budget backend, so it cannot publish a project policy: runs take their ceiling from the job environment", lc.Name),
-			Fix:     "fugaro init --firebase <firebase-project-id> --name " + lc.Name + " adds the backend the policy is published to"}}
+			Fix:     "fugaro update --firebase-project <firebase-project-id> --name " + lc.Name + " adds the backend the policy is published to"}}
 		return append(checks, doctorRoutingChecks(lc, nil,
 			fmt.Sprintf("project %s has no Firebase budget backend, so there is no policy node to read a switch from", lc.Name), layer)...)
 	}
@@ -1895,7 +1895,7 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 		if ok, gerr := db.Get(ctx, shared, &raw); gerr == nil && ok && !emptyPolicyNode(raw) {
 			info.Problem = fmt.Sprintf("a policy node is written at %s, but it governs nothing: %s does not record the rules generation this Fugaro reads a policy under, so no run reads it and every run takes its ceiling from the job environment",
 				shared, projectpolicy.PathRulesMarker())
-			info.Fix = "re-run 'fugaro init --firebase' with fugaro >= " + policySince + " in your own terminal to deploy the rules a policy is read under, then 'fugaro project policy publish'"
+			info.Fix = "re-run 'fugaro update --firebase-project' with fugaro >= " + policySince + " in your own terminal to deploy the rules a policy is read under, then 'fugaro project policy publish'"
 		}
 		return append(checks, append([]doctorCheck{info},
 			doctorRoutingChecks(lc, nil, fmt.Sprintf("no policy is published at %s, so there is no switch to resolve", shared), layer)...)...)
@@ -1978,7 +1978,7 @@ const routingCacheMarkersUndetermined = "whether a routed Claude senior's cost i
 // repository named there is no set of routes to resolve over — and a resolution
 // doctor did not resolve is not printed as one, which is the resolver's own
 // rule (config.RoutingClaudeFor).
-const routingUnresolvedNoRepo = "this machine's project config names no repository, and the routes a run resolves the switch over are the ones that repository is allowed to send code to (allow_data_to); run 'fugaro init --repo' in the repository's checkout to record it here"
+const routingUnresolvedNoRepo = "this machine's project config names no repository, and the routes a run resolves the switch over are the ones that repository is allowed to send code to (allow_data_to); run 'fugaro update --repo' in the repository's checkout to record it here"
 
 // doctorRoutingChecks are doctor's two routing checks (plan task 1b.3 step 2).
 //
@@ -2244,7 +2244,7 @@ func doctorRoutes(lc *localcfg.Config, repo string, claims map[string][]string) 
 
 // doctorNodeMode is the budget mode a run of the project has under the
 // published node: the node's own mode when it sets one, and the job
-// environment's own — this machine's config, whose ceiling init --repo deploys
+// environment's own — this machine's config, whose ceiling update --repo deploys
 // into the job (localcfg.BudgetMode) — when it does not.
 //
 // The fallback is the whole point of the function. runner.policyCeiling
@@ -2300,7 +2300,7 @@ func doctorCanonicalRepos(lc *localcfg.Config) []string {
 // credential exists — and the machine that launches them is where the
 // operator finds out first.
 //
-// The names come from the machine's own `repos:` map, the one `init --repo`
+// The names come from the machine's own `repos:` map, the one `update --repo`
 // fills, converted with Canonical exactly as the publish seed converts them
 // (project_cmd.go's seedAllowRepos), so the two cannot spell a repository
 // differently. A repository with no provider recorded is skipped rather than
@@ -2349,12 +2349,12 @@ func doctorPolicyVsJobs(lc *localcfg.Config) *doctorCheck {
 	}
 	return &doctorCheck{ID: "policy-vs-jobs", Severity: "warning",
 		Problem: fmt.Sprintf("the jobs are deployed from the runner image %s, which predates this Fugaro: a policy published at %s is one those runs do not read, so they keep the ceiling from their own environment", pluginwire.Printable(cur), projectpolicy.PathShared()),
-		Fix:     "fugaro image refresh moves the jobs to this release's runner image (then fugaro init --repo . in your own terminal, which is the only path that writes a job's environment)"}
+		Fix:     "fugaro image refresh moves the jobs to this release's runner image (then fugaro update --repo . in your own terminal, which is the only path that writes a job's environment)"}
 }
 
 // doctorRulesSkew is the fifth check: the deployed rules are older than the
 // marker config/limits/policyRules. It is the state an older CLI's
-// `fugaro init --firebase` leaves behind by redeploying the pre-policy
+// `fugaro update --firebase-project` leaves behind by redeploying the pre-policy
 // template while the marker stays, and its consequence is that a published
 // policy becomes unreadable — a run's token is refused for a node that
 // exists, so every budget-on run halts (Task 1.3 step 1's third outcome).
@@ -2366,7 +2366,7 @@ func doctorPolicyVsJobs(lc *localcfg.Config) *doctorCheck {
 // installation whose rules were deployed by a CLI of this generation never
 // reports a skew.
 //
-// A warning, not an error: the fix is the owner's `fugaro init --firebase`
+// A warning, not an error: the fix is the owner's `fugaro update --firebase-project`
 // and doctor cannot perform it.
 //
 // The same check reports the marker's other wrong values: a value that is not a
@@ -2402,7 +2402,7 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// change).
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 			Problem: "the deployed rules cannot be told apart: " + (&projectpolicy.MarkerError{Value: oneLine(string(raw))}).Error(),
-			Fix:     "re-run 'fugaro init --firebase' with fugaro >= " + policySince + " in your own terminal, which writes the marker this Fugaro reads"}}
+			Fix:     "re-run 'fugaro update --firebase-project' with fugaro >= " + policySince + " in your own terminal, which writes the marker this Fugaro reads"}}
 	}
 	if gen > projectpolicy.RulesVersion {
 		// A marker above this binary's RulesVersion, and the review of PR
@@ -2414,13 +2414,13 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// one's reads as deployed (any marker above RulesVersion included), so
 		// a run under these rules *does* read the published policy. What is
 		// true is that the rules document itself is a shape this binary cannot
-		// verify and must not redeploy over, which is why init --firebase
+		// verify and must not redeploy over, which is why update --firebase-project
 		// refuses the state — and the operator who was told the policy is
 		// unreadable would look for the wrong thing.
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 			Problem: fmt.Sprintf("%s records generation %d, above the generation %d this Fugaro's own rules carry: a newer Fugaro deployed them, so a policy published under them is read (a marker at or above this Fugaro's generation reads as deployed) while the rules themselves are a shape this binary cannot verify, and it cannot deploy its own over them",
 				marker, gen, projectpolicy.RulesVersion),
-			Fix: fmt.Sprintf("upgrade Fugaro first: 'fugaro init --firebase' with this binary refuses this state rather than redeploying generation %d over the deployed rules, so the newer binary is the one that deploys here ('fugaro upgrade')",
+			Fix: fmt.Sprintf("upgrade Fugaro first: 'fugaro update --firebase-project' with this binary refuses this state rather than redeploying generation %d over the deployed rules, so the newer binary is the one that deploys here ('fugaro upgrade')",
 				projectpolicy.RulesVersion)}}
 	}
 	if gen < projectpolicy.PolicyRulesVersion {
@@ -2437,7 +2437,7 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// branch).
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 			Problem: rulesMarkerPrePolicyText(gen),
-			Fix: fmt.Sprintf("re-run 'fugaro init --firebase' with fugaro >= %s in your own terminal: it deploys the rules a policy is read under and records generation %d in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
+			Fix: fmt.Sprintf("re-run 'fugaro update --firebase-project' with fugaro >= %s in your own terminal: it deploys the rules a policy is read under and records generation %d in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
 				policySince, projectpolicy.RulesVersion)}}
 	}
 	if gen < projectpolicy.RulesVersion {
@@ -2453,7 +2453,7 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// mailbox grant — the state the operator's app meets — unexplained.
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 			Problem: rulesMarkerOlderText(gen),
-			Fix: fmt.Sprintf("re-run 'fugaro init --firebase' in your own terminal from a Fugaro that deploys generation %d or newer: it deploys this release's document — the rules a policy is read under, plus the mailbox — and records its generation in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
+			Fix: fmt.Sprintf("re-run 'fugaro update --firebase-project' in your own terminal from a Fugaro that deploys generation %d or newer: it deploys this release's document — the rules a policy is read under, plus the mailbox — and records its generation in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
 				projectpolicy.RulesVersion)}}
 	}
 	live, err := db.Rules(ctx)
@@ -2490,7 +2490,7 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 	}
 	return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 		Problem: rulesSkewText(),
-		Fix:     fmt.Sprintf("re-run 'fugaro init --firebase' with fugaro >= %s in your own terminal: it redeploys the rules the policy is read under (if these rules came from a newer Fugaro than this one, upgrade instead — this template would replace them)", policySince)}}
+		Fix:     fmt.Sprintf("re-run 'fugaro update --firebase-project' with fugaro >= %s in your own terminal: it redeploys the rules the policy is read under (if these rules came from a newer Fugaro than this one, upgrade instead — this template would replace them)", policySince)}}
 }
 
 // rulesGenerate is rules.Generate, indirect so a test can drive the branch
@@ -2650,13 +2650,13 @@ func doctorCredsRules(ctx context.Context, db *rtdb.Client, p *projectpolicy.Pol
 	if !found {
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("the cascade is switched on (%s) and %s is not written: the deployed rules predate the credentials family, so the first credential a cascade run records is refused and the run halts instead of running (fugaro accounts and fugaro watch show no state on such an installation)", via, marker),
-			Fix:     "re-run 'fugaro init --firebase' in your own terminal from a Fugaro that carries the credentials rules — this one does. Do not run it from an older Fugaro: that binary deploys a document without the family and leaves this switch on"}}
+			Fix:     "re-run 'fugaro update --firebase-project' in your own terminal from a Fugaro that carries the credentials rules — this one does. Do not run it from an older Fugaro: that binary deploys a document without the family and leaves this switch on"}}
 	}
 	var gen int
 	if err := json.Unmarshal(raw, &gen); err != nil || projectpolicy.MarkerHandEdited(gen) {
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("%s cannot be told apart: %s", marker, oneLine(string(raw))),
-			Fix:     "re-run 'fugaro init --firebase' in your own terminal from a Fugaro that carries the credentials rules: it records the generation this Fugaro reads, over a document it deploys itself"}}
+			Fix:     "re-run 'fugaro update --firebase-project' in your own terminal from a Fugaro that carries the credentials rules: it records the generation this Fugaro reads, over a document it deploys itself"}}
 	}
 	if gen > rules.CredsRulesVersion {
 		return []doctorCheck{{ID: id, Severity: "warning",
@@ -2666,7 +2666,7 @@ func doctorCredsRules(ctx context.Context, db *rtdb.Client, p *projectpolicy.Pol
 	if gen < rules.CredsRulesVersion {
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("%s records generation %d, below the generation %d this Fugaro's credentials rules carry: the deployed document predates the credentials family, so a cascade run's first recorded credential is refused and the run halts", marker, gen, rules.CredsRulesVersion),
-			Fix:     "re-run 'fugaro init --firebase' in your own terminal from this Fugaro: it deploys the document the family ships in and records the generation"}}
+			Fix:     "re-run 'fugaro update --firebase-project' in your own terminal from this Fugaro: it deploys the document the family ships in and records the generation"}}
 	}
 	return nil
 }

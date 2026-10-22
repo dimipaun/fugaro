@@ -1,6 +1,6 @@
 # The same inputs as the firebase module, which checks their shapes. See its
 # variables.tf for what each one means. There is no remote state to read:
-# fugaro init passes the installation's outputs as tfvars.
+# fugaro update passes the installation's outputs as tfvars.
 
 variable "project" {
   type = string

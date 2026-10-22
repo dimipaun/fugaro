@@ -12,7 +12,7 @@ import (
 // TestRegistryHaltsWhenRulesRefuseTheCascadeChildren (C1.17): the deployed
 // rules are the artifact a downgrade can take the cascade's fields back out
 // of, and C1.3's `credsRules` marker cannot see it — an older Fugaro that
-// ran `fugaro init --firebase` redeployed its own document over the newer
+// ran `fugaro update --firebase-project` redeployed its own document over the newer
 // one. What the run meets is a permission refusal on the heartbeat that
 // carried `credential` or `waiting_until`, and checkCascadeKeys tells it
 // from a blip by writing the same entry twice: as sent, then without the
@@ -44,7 +44,7 @@ func TestRegistryHaltsWhenRulesRefuseTheCascadeChildren(t *testing.T) {
 			if h.Reason != budget.ReasonCredsRulesDenied || h.Scope != budget.ScopeRun {
 				t.Fatalf("halt = %+v, want %s/%s", h, budget.ReasonCredsRulesDenied, budget.ScopeRun)
 			}
-			if !contains(h.Detail, "fugaro init --firebase") {
+			if !contains(h.Detail, "fugaro update --firebase-project") {
 				t.Errorf("the halt's detail does not name the redeploy: %q", h.Detail)
 			}
 			// The stripped write landed: the run's entry is there, without

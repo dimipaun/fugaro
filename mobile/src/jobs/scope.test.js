@@ -217,18 +217,6 @@ test('the module\'s specifiers resolve inside the app', () => {
   assert.deepEqual(bad, []);
 });
 
-/** The names a file's `export { … } from '…'` blocks carry, sorted. */
-function doorNames(text) {
-  const names = new Set();
-  for (const block of code(text).matchAll(/export\s*\{([^}]*)\}\s*from/g)) {
-    for (const entry of block[1].split(',')) {
-      const name = entry.trim().split(/\s+as\s+/).pop().trim();
-      if (name.length > 0) names.add(name);
-    }
-  }
-  return [...names].sort();
-}
-
 /** Is `name` **used** in this file's code?
  *
  * A name's own declaration is not a use: `export const FOO = …` and
@@ -326,15 +314,30 @@ test('every member of an exported vocabulary is produced somewhere', () => {
   assert.deepEqual(unproducedMembers(files), []);
 });
 
-test('the door carries the module\'s surface, and no dead name', () => {
+test('the door carries the module\'s surface, and no dead name', async () => {
   // The door's surface as an **exact set**, the rule P3.2's `index.test.js`
-  // gives: a re-export added without a thought is how an internal helper ends
-  // up reachable from a screen. This is the whole of it -- the field table and
-  // its vocabularies, the row, the heartbeat, the list and its wiring, and what
-  // the screen says.
+  // gives: an export added without a thought is how an internal helper ends up
+  // reachable from a screen. This is the whole of it -- the field table and its
+  // vocabularies, the row, the heartbeat, the list and its wiring, and what the
+  // screen says.
+  //
+  // **The set is read from the MODULE, not from its text.** `import()` the door
+  // and take `Object.keys`: that is what a screen sees, so every form an export
+  // can be written in is judged -- `export { A } from '…'`, `export { A }` from
+  // this file's own scope, `export const A`, `export function A`, `export class
+  // A`, an alias, and a default. The first version of this test collected
+  // `export { … } from '…'` blocks out of the source, which is ONE of those
+  // forms: `export const GHOST = 1;` appended to the door was reachable from a
+  // screen, was not in the list judged here, and was not in the list the
+  // dead-name rule below walked either -- the two rules shared one blind spot,
+  // and a planted `GHOST` left both green. Reading the surface at runtime has
+  // no forms to enumerate and cannot go blind the same way.
   const files = sources();
-  const door = files.find(([file]) => file === 'src/jobs/index.js')[1];
-  assert.deepEqual(doorNames(door), [
+  const names = Object.keys(await import('./index.js')).sort();
+  // A surface that did not load would pass the assertion below for the wrong
+  // reason, so the door's size is checked before its contents.
+  assert.ok(names.length >= 19, `expected the door's surface, found ${names.length} names`);
+  assert.deepEqual(names, [
     'HEARTBEAT_STATES',
     'JOB_FAMILIES',
     'JOB_FIELDS',
@@ -373,5 +376,5 @@ test('the door carries the module\'s surface, and no dead name', () => {
   // A dead export is a name a reviewer has to check is still true:
   // `PRINTED_FIELDS`, `NO_VALUE` and `jobField` were all three, and all three
   // are gone.
-  assert.deepEqual(deadNames(doorNames(door), files), []);
+  assert.deepEqual(deadNames(names, files), []);
 });

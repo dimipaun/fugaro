@@ -35,6 +35,19 @@
  * rather than by a request (Global Constraints 4 and 8). No font, script, stylesheet,
  * image or embed reaches a reader from anywhere but this build (D106): the page links
  * nothing but this repository and the anchor it renders itself.
+ *
+ * **The bold look** (the owner's approved home page, PR #779; the owner's brief of
+ * 2026-10-21 for this page). The page is styled in the shapes the foundation PR wrote once
+ * for the site — the oversized headline with the accent's gradient, the slim lead, the
+ * card — and it adds no shape of its own and touches no shared file: the headline is
+ * `base.css`'s `.display-xl` with `.gradient-text` on the word, the Guides heading and the
+ * reference's own title are `.display-md` (the class `demotedTitle` moves the generated title
+ * onto), the guides are `.card`s in a grid, and no rule of this page's writes a type size, a
+ * weight or a tracking of its own. **Not
+ * one word of the page changed with it**: the headline, the lead, the entries' titles, the
+ * paths and the answers are the strings they were, and the rendered reference is the
+ * generated document it was — the redesign is the layout and the styling, and
+ * `website/test/docs-hub.mjs` holds the words to the documents they come from either way.
  */
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -202,6 +215,16 @@ const referenceEntry = {
  * are the generated file's own. A document that does not open with exactly one `h1` is a
  * build error naming the file, because the build has nothing to move and would otherwise
  * render a page with two titles.
+ *
+ * **The move is also where the heading's shape comes from.** The title is the band's heading
+ * and the command headings under it are entries, so the title takes the display scale's middle
+ * step — `base.css`'s `.display-md`, the class written onto it here. It is a class rather than
+ * a rule of this page's on purpose: the display scale is a set of declarations (the weight, the
+ * tracking, the leading, the size's `clamp`, `text-wrap: balance`) written once in `base.css`,
+ * and a copy of it in this page's stylesheet is a copy that drifts from it — this page's copy
+ * already had, by the time it was reviewed, dropped the balance. The page therefore writes no
+ * rule for the title at all, and the rule for the command headings below is written as the
+ * headings *after* the title so the mono face cannot reach it.
  */
 function demotedTitle(html: string, file: string, title: string): string {
   const titles = [...html.matchAll(/<h1\b[^>]*>([\s\S]*?)<\/h1>/g)]
@@ -210,7 +233,7 @@ function demotedTitle(html: string, file: string, title: string): string {
       `${file} renders ${titles.length} "h1" headings and the page moves its title to a section heading: the generated document and this file have to agree on what its title is (W1.7 step 3).`,
     )
   }
-  const rendered = titles[0][0].replace(/^<h1/, '<h2').replace(/<\/h1>$/, '</h2>')
+  const rendered = titles[0][0].replace(/^<h1/, '<h2 class="display-md"').replace(/<\/h1>$/, '</h2>')
   if (rendered.replace(/<[^>]*>/g, '').trim() !== title) {
     throw new Error(
       `${file}'s "# " title is ${JSON.stringify(title)} and its rendered title reads ${JSON.stringify(rendered.replace(/<[^>]*>/g, '').trim())}: the page renders the generated document, and the two disagree about its own title (W1.7 step 3).`,
@@ -266,28 +289,37 @@ const entries = [...guides, referenceEntry]
 ---
 
 <Base title="Documentation" description="The guides this repository holds, and the generated CLI reference.">
-  <h1>Documentation</h1>
+  {/* The hub's opening band: the headline and the lead, and the room the guides start after
+      (the bold look's two blocks, separated by the hairline `.docs-hero` carries). **No word
+      is added between the `h1` and the `Guides` heading**, and that is a gate's business
+      rather than a taste: D188 reads a page's lead as the text between those two headings
+      (`budget.mjs`'s `pageWords`, which measures 36 here), and this page's lead is 36 of its
+      40 words — an eyebrow, a byline or a sentence about
+      the page here would be a word the ceiling counts. */}
+  <div class="docs-hero">
+    <h1 class="docs-title display-xl"><span class="gradient-text">Documentation</span></h1>
 
-  {/* The hub's lead (D188, D189). It is one sentence and it gathers what the guides below
-      answer, in the order they are listed: D189 puts the hub's summary here, drawn from the
-      per-guide `answers` lines the page already carries. It is not those lines themselves —
-      six of them plus the reference's are about 110 words, and D188 holds every page's lead,
-      this one included, to 40. So the lead is their subjects gathered into one sentence, and
-      the answers stay on their entries, where the reader is when they need them. The count
-      is rendered rather than typed, so a guide added to `GUIDES` changes the sentence with
-      it. */}
-  <p class="lead">
-    {entries.length} documents, in the order a reader needs them: install the CLI, set up the
-    cloud, choose the loop a run follows, configure the layers, run another model, connect a
-    provider, and the generated command reference.
-  </p>
+    {/* The hub's lead (D188, D189). It is one sentence and it gathers what the guides below
+        answer, in the order they are listed: D189 puts the hub's summary here, drawn from the
+        per-guide `answers` lines the page already carries. It is not those lines themselves —
+        six of them plus the reference's are about 110 words, and D188 holds every page's lead,
+        this one included, to 40. So the lead is their subjects gathered into one sentence, and
+        the answers stay on their entries, where the reader is when they need them. The count
+        is rendered rather than typed, so a guide added to `GUIDES` changes the sentence with
+        it. */}
+    <p class="lead">
+      {entries.length} documents, in the order a reader needs them: install the CLI, set up the
+      cloud, choose the loop a run follows, configure the layers, run another model, connect a
+      provider, and the generated command reference.
+    </p>
+  </div>
 
-  <section id="guides">
-    <h2>Guides</h2>
+  <section class="docs-guides" id="guides">
+    <h2 class="docs-heading display-md">Guides</h2>
 
     <ul class="guides">
       {entries.map((entry) => (
-        <li class="guide">
+        <li class="guide card">
           <a href={entry.href}>{entry.title}</a>
           <code class="path">{entry.path}{entry.anchor === null ? '' : `#${entry.anchor}`}</code>
           <p class="answers">{entry.answers}</p>
@@ -301,86 +333,168 @@ const entries = [...guides, referenceEntry]
       boundary between the hub's own words and a generated document — because the two rules
       are opposite: the hub may not repeat a document's prose, and this document is here to
       be read as it was generated. */}
-  <section id="cli-reference" data-generated-document={reference.path}>
+  <section class="docs-reference" id="cli-reference" data-generated-document={reference.path}>
     <Fragment set:html={referenceHTML} />
   </section>
 
 </Base>
 
 <style is:global>
-  /* The hub's own layout. It is `is:global` rather than scoped on purpose: the reference
-     below is rendered from a generated document and its elements carry none of the
-     compiler's scope attributes, so a scoped rule could not reach them — every selector
-     here is anchored on a class this file writes, which is the scoping a rendered document
-     needs. Only the design tokens are named (W1.2's `tokens.css`); no colour, spacing or
-     type size is written as a literal, so a palette change is that file's business. */
-  .lead {
-    max-width: var(--measure);
-    color: var(--text-muted);
+  /* The hub's own layout, in the bold look the owner approved on the home page (the
+     foundation PR #779): the oversized headline with the accent's gradient on it, the slim
+     lead under it, the guides as a grid of the site's cards, and the rendered reference in
+     its own band below. Every shape here is a shared one — `base.css`'s `.display-xl`,
+     `.display-md`, `.gradient-text` and `.card` — so this page adds no shape of its own and
+     **no shared file is touched by the redesign of this page**: the tokens, the layout and
+     the other pages are where the parallel page runs are, and a class each of them already
+     has is a merge that cannot conflict.
+
+     It is `is:global` rather than scoped on purpose: the reference below is rendered from a
+     generated document and its elements carry none of the compiler's scope attributes, so a
+     scoped rule could not reach them — every selector here is anchored on a class or an id
+     this file writes, which is the scoping a rendered document needs. Only the design tokens
+     are named (W1.2's `tokens.css`); no colour, spacing or type size is written as a literal,
+     so a palette change is that file's business. */
+
+  /* The opening band: the headline and the lead, then the room the guides start after and the
+     hairline that separates the two bands. The page's own vertical rhythm is here and not in
+     `main`'s padding, which the layout gives every page: the room above the headline is the
+     bold look's, and it is what makes the first screen of this page read as a band of the
+     site rather than as a heading the layout happened to place. */
+  .docs-hero {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    padding-top: var(--space-2xl);
+    padding-bottom: var(--space-2xl);
+    border-bottom: var(--border-width) solid var(--border);
   }
 
+  /* The headline: `base.css`'s `.display-xl` — the display scale's largest step, the heaviest
+     weight the system stack draws, and the display tracking, all written once for the site —
+     with the accent's gradient on the word, which is the whole of this page's title and so
+     the whole of what the gradient can carry. `max-width` keeps a headline from running the
+     width of a wide page, which is what the step's size would otherwise let it do. */
+  .docs-title {
+    max-width: 20ch;
+  }
+
+  /* The lead: one step up the type scale from the body, the quieter tone, and the measure —
+     the same shape the homepage's hero lead is set in. */
+  .lead {
+    margin: 0;
+    max-width: var(--measure);
+    color: var(--text-muted);
+    font-size: var(--font-size-xl);
+    line-height: var(--leading-snug);
+  }
+
+  .docs-guides {
+    padding-top: var(--space-2xl);
+  }
+
+  .docs-heading {
+    margin: 0 0 var(--space-lg);
+  }
+
+  /* The guides: a grid of cards, one per document, wrapping to one column on a phone. */
   .guides {
     list-style: none;
     margin: 0;
     padding: 0;
     display: grid;
-    gap: var(--space-sm);
-    max-width: var(--measure);
+    grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+    gap: var(--space-md);
   }
 
+  /* One guide: `base.css`'s `.card` — the padding, the hairline, the radius and the surface
+     tone every raised thing on this site is drawn with — and the stack its three lines are
+     laid in. */
   .guide {
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-md);
-    padding: var(--space-sm) var(--space-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3xs);
   }
 
+  /* The guide's title, as the loudest line of its card: the display weight and the display
+     tracking, one step down the type scale from the page's headline. Its colour and its
+     underline are the site's link defaults (`base.css`), because it is a link and a reader
+     has to be able to see that. */
   .guide a {
-    color: var(--accent);
-    font-size: var(--font-size-lg);
-    font-weight: var(--weight-medium);
+    font-size: var(--font-size-xl);
+    font-weight: var(--weight-black);
+    letter-spacing: var(--tracking-tight);
   }
 
+  /* The path: the file the guide lives in, in the mono face and the smallest step.
+     `display: block` is what `website/test/spacing.mjs` reads as the boundary between the
+     title above it and the path — the two are lines rather than one run of words, which the
+     markup writes no space for. */
   .guide .path {
     display: block;
     color: var(--text-muted);
     font-family: var(--font-mono);
     font-size: var(--font-size-xs);
+    overflow-wrap: anywhere;
   }
 
   .answers {
-    margin: var(--space-2xs) 0 0;
+    margin: 0;
+    color: var(--text-muted);
   }
 
   /* The rendered reference: a long generated document, given the typography a reader
      needs to follow a command, a flag table and a code span — and nothing that would make
-     it look like anything other than the document it is. */
-  #cli-reference {
+     it look like anything other than the document it is. It is the page's second band: the
+     hairline above it and the room on either side of that hairline are the bold look's
+     rhythm, and the measure is the column a document is read in. */
+  .docs-reference {
+    margin-top: var(--space-3xl);
+    padding-top: var(--space-2xl);
+    border-top: var(--border-width) solid var(--border);
     max-width: var(--measure);
   }
 
-  #cli-reference h2 {
+  /* The document's own title, which the page moves from `h1` to `h2` (`demotedTitle`), carries
+     `base.css`'s `.display-md` — the class the move writes onto it — and so has **no rule of
+     this page's at all**: the step's own `margin-block: 0` is the room it needs, and every
+     declaration of its shape is the display scale's, written once for the site. A copy of the
+     scale here is a copy that drifts from it: the one this replaced had already dropped the
+     scale's `text-wrap: balance`, so the band's heading wrapped unbalanced where a `display-md`
+     heading does not.
+
+     The command headings below it are the reference's *other* headings, and the rule for them
+     is written that way — `:not(:first-child)` — rather than as `.docs-reference h2`, which
+     would out-specify `.display-md` (a class and a type against a class) and set the band's
+     own heading in the mono face at a command's size. The heading the title is moved to is the
+     band's first child, which is what the page's own `demotedTitle` guarantees and what
+     `website/test/docs-hub.mjs` reads the band by. */
+
+  /* Every other heading of the reference is a command's name: the mono face, one step up
+     from the body, with the room a section needs. */
+  .docs-reference > h2:not(:first-child) {
     font-family: var(--font-mono);
     font-size: var(--font-size-lg);
-    margin-top: var(--space-lg);
+    margin-top: var(--space-xl);
   }
 
-  #cli-reference h3,
-  #cli-reference h4 {
+  .docs-reference h3,
+  .docs-reference h4 {
     margin-top: var(--space-md);
   }
 
-  #cli-reference code {
+  .docs-reference code {
     font-family: var(--font-mono);
     font-size: var(--font-size-sm);
   }
 
-  #cli-reference table {
+  .docs-reference table {
     border-collapse: collapse;
     width: 100%;
   }
 
-  #cli-reference th,
-  #cli-reference td {
+  .docs-reference th,
+  .docs-reference td {
     border: var(--border-width) solid var(--border);
     padding: var(--space-3xs) var(--space-2xs);
     text-align: left;

@@ -48,11 +48,11 @@ func runGated(t *testing.T, args ...string) (string, error) {
 // cover from the command tree, so a managed command added later without an
 // entry here fails rather than shipping ungated.
 var managedGateCases = map[string][]string{
-	"init --create-project --managed": {"init", "--create-project", "--gcp-project", "fugaro-newproj-1234", "--managed", "--budget", "50", "--budget-currency", "USD", "--billing-account", "000000-000000-000000"},
-	"init --managed":                  {"init", "--managed"},
-	"managed apply":                   {"managed", "apply", "infra"},
-	"managed flag":                    {"managed", "flag", "fugaro-newproj-1234", "--budget", "50", "--budget-currency", "USD"},
-	"restore":                         {"restore", "fugaro-newproj-1234", "infra"},
+	"setup --create-project --managed": {"setup", "--create-project", "--gcp-project", "fugaro-newproj-1234", "--managed", "--budget", "50", "--budget-currency", "USD", "--billing-account", "000000-000000-000000"},
+	"setup --managed":                  {"setup", "--managed"},
+	"managed apply":                    {"managed", "apply", "infra"},
+	"managed flag":                     {"managed", "flag", "fugaro-newproj-1234", "--budget", "50", "--budget-currency", "USD"},
+	"restore":                          {"restore", "fugaro-newproj-1234", "infra"},
 }
 
 // While managedDeployerShipped is false (0.8.6 onward: 0.9.0 still ships with
@@ -88,10 +88,15 @@ func TestManagedEntryPointsAreAllGated(t *testing.T) {
 			if len(p) >= 2 && p[0] == "managed" && sub.Runnable() {
 				want[strings.Join(p, " ")] = true
 			}
-			if sub.Flags().Lookup("managed") != nil {
+			// A flag the command HIDES is not an entry point: it is not
+			// offered, and the door that hides it refuses it by name before
+			// any stage runs, so nothing can reach the gate through it. The
+			// update door declares the creating flags for exactly that
+			// refusal (W1.2), which is why the walk has to read Hidden.
+			if f := sub.Flags().Lookup("managed"); f != nil && !f.Hidden {
 				name := strings.Join(p, " ")
 				want[name+" --managed"] = true
-				if sub.Flags().Lookup("create-project") != nil {
+				if c := sub.Flags().Lookup("create-project"); c != nil && !c.Hidden {
 					want[name+" --create-project --managed"] = true
 				}
 			}
@@ -100,7 +105,7 @@ func TestManagedEntryPointsAreAllGated(t *testing.T) {
 	}
 	root := NewRootCmd()
 	walk(root, nil)
-	if !want["managed apply"] || !want["init --managed"] {
+	if !want["managed apply"] || !want["setup --managed"] {
 		t.Fatalf("the walk did not find the known entry points: %v", want)
 	}
 	if c, _, err := root.Find([]string{"restore"}); err != nil || c.Name() != "restore" {

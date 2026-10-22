@@ -221,8 +221,24 @@ func (s *credentialsStage) Apply(ctx context.Context, _ initflow.Env) (out initf
 		// service it describes. Putting the key back would leave a document
 		// that plans that service's destruction — which the bundle
 		// container's prevent_destroy refuses — while this stage reported
-		// itself done.
+		// itself done. It is kept BEFORE the audience below, which is the same
+		// rule the apply further down follows: things that apply start here,
+		// and a document restored after one of them applied is the destruction
+		// plan above.
 		s.keepKey = true
+		// Nothing to change in the tfvars as they stand, and the revision may
+		// STILL be the one the apply that created the service left behind:
+		// with no url in the tfvars the module writes its unassigned
+		// placeholder, which is what the state then holds, so the plan is
+		// empty and the service admits nobody. The output is what decides
+		// that, not the plan.
+		filled, err := s.fillAudience(ctx)
+		if err != nil {
+			return initflow.Outcome{}, err
+		}
+		if filled {
+			return initflow.Outcome{Changed: true, Detail: "applied: " + s.changes.String() + " (the credentials service's audience)"}, nil
+		}
 		return initflow.Outcome{Detail: "No changes"}, nil
 	}
 	fmt.Fprint(r.w, tf.Summary(plan))
@@ -260,6 +276,10 @@ func (s *credentialsStage) Apply(ctx context.Context, _ initflow.Env) (out initf
 	if err := s.Verify(ctx); err != nil {
 		return initflow.Outcome{}, err
 	}
+	// The audience, which the apply above could not set: see fillAudience.
+	if _, err := s.fillAudience(ctx); err != nil {
+		return initflow.Outcome{}, err
+	}
 	fmt.Fprintf(r.w, "the credentials service is on: %s runs in %s with %s; every repository root re-applied after this drops its jobs' model-secret accessors and grants them an invoker on it\n",
 		infra.CredentialsServiceName, e.spec.Region, s.image)
 	return initflow.Outcome{Changed: true, Detail: "applied: " + counts.String() + " (credentials service " + infra.CredentialsServiceName + ", image " + s.image + ")"}, nil
@@ -290,7 +310,7 @@ func (s *credentialsStage) plan(ctx context.Context) (*tf.Plan, error) {
 // against the service makes, and a database that refuses them would halt
 // each run mid-flight instead of at its start. The gate is the same one a
 // cascade launch makes (C1.19), read from the same marker, with the same
-// remedy: the owner's own `fugaro init --firebase`.
+// remedy: the owner's own `fugaro update --firebase-project`.
 func (s *credentialsStage) requireCredsRules(ctx context.Context) error {
 	lc, db, err := budgetDBFor(ctx, s.e.lc)
 	if err != nil {
@@ -313,14 +333,14 @@ func (s *credentialsStage) requireCredsRules(ctx context.Context) error {
 		return dbErr(lc, fmt.Errorf("reading the credentials rules marker at %s: %w", rules.PathCredsRulesMarker(), err), false)
 	}
 	if !found {
-		return userErr("the installation's database carries no credentials rules marker at %s, so its rules predate the credentials service: the service's runs write the registry entry's credential and waiting_until and are denied /creds, and rules without them would halt every run in the middle; re-run 'fugaro init --firebase <firebase-project-id>' with fugaro >= %s, then run this stage", rules.PathCredsRulesMarker(), credsServiceSince)
+		return userErr("the installation's database carries no credentials rules marker at %s, so its rules predate the credentials service: the service's runs write the registry entry's credential and waiting_until and are denied /creds, and rules without them would halt every run in the middle; re-run 'fugaro update --firebase-project <firebase-project-id>' with fugaro >= %s, then run this stage", rules.PathCredsRulesMarker(), credsServiceSince)
 	}
 	var gen int
 	if err := json.Unmarshal(raw, &gen); err != nil {
-		return userErr("the credentials rules marker at %s is %s, which is not a generation number: fix it with 'fugaro init --firebase <firebase-project-id>'", rules.PathCredsRulesMarker(), oneLine(string(raw)))
+		return userErr("the credentials rules marker at %s is %s, which is not a generation number: fix it with 'fugaro update --firebase-project <firebase-project-id>'", rules.PathCredsRulesMarker(), oneLine(string(raw)))
 	}
 	if gen < rules.CredsRulesVersion {
-		return userErr("the installation's rules are generation %d at %s and this fugaro carries generation %d: they predate the credentials service, so a run against it would be halted mid-flight; re-run 'fugaro init --firebase <firebase-project-id>' with fugaro >= %s, then run this stage", gen, rules.PathCredsRulesMarker(), rules.CredsRulesVersion, credsServiceSince)
+		return userErr("the installation's rules are generation %d at %s and this fugaro carries generation %d: they predate the credentials service, so a run against it would be halted mid-flight; re-run 'fugaro update --firebase-project <firebase-project-id>' with fugaro >= %s, then run this stage", gen, rules.PathCredsRulesMarker(), rules.CredsRulesVersion, credsServiceSince)
 	}
 	return nil
 }
@@ -387,6 +407,16 @@ func (s *credentialsStage) prepare(ctx context.Context) error {
 	if err != nil {
 		return userErr("reading the installation's tfvars: %v (the installation stage of this run writes them first)", err)
 	}
+	// The URL a previous run wrote, carried forward. It is the audience every
+	// caller's ID token is minted for, and this stage is the only writer: a
+	// run that rebuilt the spec without it would put the module's unassigned
+	// placeholder back on the revision and stop admitting callers, which is
+	// the same class of mistake as dropping the whole key (CarriedCredentialsService).
+	url, err := infra.CredentialsServiceURLOf(vars)
+	if err != nil {
+		return userErr("reading %s: %v", path, err)
+	}
+	svc.URL = url
 	updated, err := infra.SetCredentialsService(vars, svc)
 	if err != nil {
 		return userErr("setting credentials_service in %s: %v", path, err)
@@ -404,6 +434,96 @@ func (s *credentialsStage) prepare(ctx context.Context) error {
 	}
 	s.image = image
 	return nil
+}
+
+// fillAudience writes the service's own URL into the installation's tfvars
+// from the module's output and applies it, when the two differ. It reports
+// whether it applied anything.
+//
+// This is the second half of the audience (C1.14), and it is a second apply
+// because the first one cannot do it: Cloud Run assigns the URL, Terraform
+// refuses an expression that reads google_cloud_run_v2_service.credentials[0]
+// .uri from inside that resource (a self-referential block), and the URL
+// carries the project NUMBER, which nothing in the module learns offline. So
+// the apply that CREATES the service writes the module's unassigned
+// placeholder (credentials.tf's local) and its revision admits nobody; the URL
+// exists the moment that apply returns, the module's own output carries it
+// back (outputs.tf), and this is the apply that puts it on the revision —
+// inside the same stage, so an installation this stage reports as on is one
+// that serves.
+//
+// It needs no confirmation of its own. What the owner typed at the
+// confirmation is the opt-in, and this changes ONE environment value on a
+// service that is already theirs and already unreachable; asking again would
+// be asking them to re-approve the same step. A run whose tfvars already carry
+// the output's URL applies nothing at all — that is every run after the first,
+// because prepare carried it forward.
+//
+// An output with no URL is refused rather than skipped: the module's output
+// reads the service's own uri, so an empty one means the service in the state
+// is not the one this stage made, and a revision whose audience is not its own
+// URL admits no caller however healthy it looks.
+func (s *credentialsStage) fillAudience(ctx context.Context) (bool, error) {
+	e, r := s.e, s.e.r
+	raw, err := e.t.Output(ctx)
+	if err != nil {
+		return false, remote(err)
+	}
+	outs, err := infra.DecodeOutputs(raw)
+	if err != nil {
+		return false, remote(err)
+	}
+	if outs.CredentialsService == nil {
+		return false, userErr("the installation's outputs carry no credentials service, so there is no URL to set as the service's audience")
+	}
+	url := outs.CredentialsService.URL
+	if url == "" {
+		return false, userErr("the installation's outputs carry the credentials service %s with no URL: the module's output reads the service's own uri, so an empty one means the state holds something other than the service this stage created, and a revision whose audience is not its own URL admits no caller", outs.CredentialsService.Name)
+	}
+	vars, err := os.ReadFile(s.path)
+	if err != nil {
+		return false, userErr("reading the installation's tfvars: %v", err)
+	}
+	current, err := infra.CredentialsServiceURLOf(vars)
+	if err != nil {
+		return false, userErr("reading %s: %v", s.path, err)
+	}
+	if current == url {
+		return false, nil
+	}
+	updated, err := infra.SetCredentialsServiceURL(vars, url)
+	if err != nil {
+		return false, userErr("setting the credentials service's URL in %s: %v", s.path, err)
+	}
+	if err := os.WriteFile(s.path, updated, 0o600); err != nil {
+		return false, userErr("writing %s: %v", s.path, err)
+	}
+	changed, err := e.t.Plan(ctx, infra.PlanFile)
+	if err != nil {
+		return false, remote(err)
+	}
+	if !changed {
+		return false, userErr("the installation plans nothing with credentials_service.url set to the service's own URL: the module does not carry that value onto the revision, so no revision would ever carry the audience its callers' ID tokens are minted for")
+	}
+	plan, err := e.t.Show(ctx, infra.PlanFile)
+	if err != nil {
+		return false, remote(err)
+	}
+	fmt.Fprint(r.w, tf.Summary(plan))
+	if err := r.guard(ctx, e.c, plan, r.o.allowDelete); err != nil {
+		return false, err
+	}
+	counts := infra.CountPlan(plan)
+	s.changes = &counts
+	if err := e.t.Apply(ctx, infra.PlanFile); err != nil {
+		return false, remote(err)
+	}
+	r.res.Applied = true
+	if err := s.Verify(ctx); err != nil {
+		return false, err
+	}
+	fmt.Fprintf(r.w, "the credentials service's audience is its own URL: %s\n", url)
+	return true, nil
 }
 
 // putBack is Apply's deferred return: the tfvars go back as the stage found
@@ -434,7 +554,7 @@ func (s *credentialsStage) putBack(out initflow.Outcome, err error) (initflow.Ou
 // undoing the ONE key it wrote. Every path that does not apply calls it, and
 // that is not tidiness: the key IS the opt-in — it is what the next apply of
 // the installation root reads — so leaving it behind would let the next
-// ordinary `fugaro init` (which carries the key forward,
+// ordinary `fugaro update` (which carries the key forward,
 // infra.CarriedCredentialsService) turn the service on with none of this
 // stage's confirmation. A --plan-only run, an owner who declines, a run with
 // no terminal to ask at: all of them must leave the installation exactly as
@@ -450,7 +570,7 @@ func (s *credentialsStage) restore() error {
 	before, path := s.before, s.path
 	s.before = nil
 	if err := os.WriteFile(path, before, 0o600); err != nil {
-		return userErr("putting %s back after a run that applied nothing: %v (remove credentials_service from it by hand before the next fugaro init)", path, err)
+		return userErr("putting %s back after a run that applied nothing: %v (remove credentials_service from it by hand before the next fugaro update)", path, err)
 	}
 	return nil
 }

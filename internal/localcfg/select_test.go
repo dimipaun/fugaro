@@ -47,9 +47,9 @@ func TestSelect(t *testing.T) {
 		"FUGARO_PROJECT":     {projects: both, envProject: "borealis", want: "borealis", from: "FUGARO_PROJECT"},
 		"FUGARO_CONFIG":      {projects: both, envConfig: "borealis", want: "borealis", from: "FUGARO_CONFIG", explicit: true},
 		"one project config": {projects: []string{"aurora"}, want: "aurora", from: "only project config"},
-		"none":               {errs: []string{"no project config; see `fugaro init --config-only`"}},
+		"none":               {errs: []string{"no project config; see `fugaro setup --config-only`"}},
 		"none, old config.yaml": {legacy: true,
-			errs: []string{"no project config; see `fugaro init --config-only`", "config.yaml isn't read any more", "§13.1"}},
+			errs: []string{"no project config; see `fugaro setup --config-only`", "config.yaml isn't read any more", "§13.1"}},
 		"several, nothing selecting": {projects: both,
 			errs: []string{"several project configs", "aurora", "borealis", "--project"}},
 		"--config and another --project": {projects: both, config: "aurora", project: "borealis",
@@ -81,7 +81,7 @@ func TestSelect(t *testing.T) {
 		"checkout without project:, creating": {projects: both, checkout: &Checkout{Root: "/src/app"}, creating: true,
 			errs: []string{"has no `project:`"}},
 		"checkout naming a project with no config": {projects: []string{"borealis"}, checkout: &Checkout{Project: "aurora"},
-			errs: []string{"this checkout belongs to project aurora; there is no project config for aurora (run `fugaro init --config-only --gcp-project <id>`)"}},
+			errs: []string{"this checkout belongs to project aurora; there is no project config for aurora (run `fugaro setup --config-only --gcp-project <id>`)"}},
 		"checkout naming a project with no config, creating": {projects: []string{"borealis"}, checkout: &Checkout{Project: "aurora"}, creating: true,
 			want: "aurora", from: "checkout", noConfig: true},
 		"creating another project in a checkout": {checkout: &Checkout{Project: "aurora"}, project: "borealis", creating: true,
@@ -97,7 +97,7 @@ func TestSelect(t *testing.T) {
 			errs: []string{"this checkout's fugaro.yaml names project \"Aurora\", which is not a project name"}},
 		"unknown FUGARO_PROJECT": {projects: both, envProject: "cyan",
 			errs: []string{"FUGARO_PROJECT names project cyan, which has no project config", "aurora, borealis"}},
-		// fugaro init creating the file --config names: for the project the
+		// fugaro setup creating the file --config names: for the project the
 		// other selectors name, never one they disagree on.
 		"creating at a missing --config in a checkout": {checkout: &Checkout{Project: "aurora"}, config: "new", missing: true, creating: true,
 			want: "aurora", from: "--config", noConfig: true, explicit: true},
@@ -220,7 +220,7 @@ func TestSelect(t *testing.T) {
 
 // --config and FUGARO_CONFIG name files, which need not live under
 // projects/ nor be named after their project; a missing one is created by
-// fugaro init and refused by everything else.
+// fugaro setup and refused by everything else.
 func TestSelectExplicitFile(t *testing.T) {
 	xdg := t.TempDir()
 	getenv := func(k string) string { return map[string]string{"XDG_CONFIG_HOME": xdg}[k] }
@@ -312,7 +312,7 @@ func TestSelectNameAndOrigin(t *testing.T) {
 	}
 }
 
-// With exactly one project config, fugaro init's --name for another project
+// With exactly one project config, fugaro setup's --name for another project
 // is a first run of that project; its own name selects it; without Creating
 // --name never selects.
 func TestSelectNameWithOneConfig(t *testing.T) {

@@ -1308,7 +1308,7 @@ func TestSecretsLsScopeIsProjectWhenTheRepoCopyHasNoVersion(t *testing.T) {
 	}
 	// The repository's own container with every version disabled: what
 	// `fugaro secrets set ... --project-wide` leaves behind when a name
-	// moves, and what init --repo's own container looks like before a value
+	// moves, and what update --repo's own container looks like before a value
 	// is ever stored in it.
 	sm.Seed(gcp.SecretID(appSlug, "openrouter-api-key"), map[string]string{
 		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, appSlug), gcp.LabelSecret: "openrouter-api-key"}, nil)
@@ -1551,7 +1551,7 @@ func TestSecretsLsMissingIsAbsentVersionNotAbsentContainer(t *testing.T) {
 	sm := secretsFixture(t)
 	projectSecretFixture(t, "project_secrets:\n  github-app-key: { allow_data_to: [acme/app] }\n")
 	appCheckoutAuth(t, "oauth")
-	// The repository's own container, empty: what init --repo leaves before
+	// The repository's own container, empty: what update --repo leaves before
 	// the value is stored.
 	sm.Seed(gcp.SecretID(appSlug, "claude-oauth-token"), map[string]string{
 		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, appSlug), gcp.LabelSecret: "claude-oauth-token"}, nil)
@@ -2164,10 +2164,11 @@ func TestSecretsLsDefaultsToProjectAndSaysSo(t *testing.T) {
 // `--repo` (no "=value", no token after it) becomes `--repo=`, whose empty
 // value resolveSecretRepo reads as this checkout's origin, and nothing else
 // changes -- the space-separated form every script writes, `--repo=` as typed,
-// anything after `--`, anything outside `secrets set` / `secrets ls` (init's
-// --repo is a bool), and everything before the subcommand (the global flags
-// and their values) are left byte for byte as they came in. The input slice is
-// not mutated: cmd/fugaro/main.go passes os.Args[1:] into it.
+// anything after `--`, anything outside optionalRepoVerbs (init's --repo is a
+// bool; budget set/kill/resume have their own half of the table in
+// TestBudgetNormalizeRepoArgs), and everything before the subcommand (the
+// global flags and their values) are left byte for byte as they came in. The
+// input slice is not mutated: cmd/fugaro/main.go passes os.Args[1:] into it.
 func TestNormalizeRepoArgs(t *testing.T) {
 	cases := []struct {
 		name string
@@ -2194,8 +2195,8 @@ func TestNormalizeRepoArgs(t *testing.T) {
 			[]string{"secrets", "set", "npm-token", "--", "--repo"}},
 		{"global flags stay put", []string{"--config", "/tmp/c.yaml", "secrets", "set", "npm-token", "--repo"},
 			[]string{"--config", "/tmp/c.yaml", "secrets", "set", "npm-token", "--repo="}},
-		{"init's --repo is a bool", []string{"init", "--repo"},
-			[]string{"init", "--repo"}},
+		{"init's --repo is a bool", []string{"setup", "--repo"},
+			[]string{"setup", "--repo"}},
 		// A flag's *value* is not the command: the scan reads argv the way
 		// cobra's own does, so the first token that spells "secrets" being a
 		// value does not hide the subcommand behind it -- the rewrite would
@@ -2262,7 +2263,7 @@ func TestNormalizeRepoArgs(t *testing.T) {
 }
 
 // TestSecretsBoolFlagsMatchTheFlags keeps secretsBoolFlags equal to the flags
-// the secrets commands declare with a NoOptDefVal. secretsVerb's scan decides
+// the secrets commands declare with a NoOptDefVal. optionalRepoVerb's scan decides
 // from that map whether a token after a long flag is the flag's value, and
 // pflag decides the same question from the flag's NoOptDefVal: a flag in one
 // and not the other is how the scan read "set" as --json's value in
@@ -2289,7 +2290,7 @@ func TestSecretsBoolFlagsMatchTheFlags(t *testing.T) {
 	}
 	for name := range declared {
 		if !secretsBoolFlags[name] {
-			t.Errorf("the secrets commands declare %s with a NoOptDefVal (it takes no value), and secretsVerb's scan does not know it: a token after it would be read as its value", name)
+			t.Errorf("the secrets commands declare %s with a NoOptDefVal (it takes no value), and optionalRepoVerb's scan does not know it: a token after it would be read as its value", name)
 		}
 	}
 	for name := range secretsBoolFlags {

@@ -7,11 +7,15 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/oauth2"
+	secretmanager "google.golang.org/api/secretmanager/v1"
 
 	"github.com/dimipaun/fugaro/internal/credsvc"
 )
@@ -85,19 +89,23 @@ func findSub(t *testing.T, cmd *cobra.Command, name string) *cobra.Command {
 }
 
 // The service's environment is the installation module's: credentials.tf sets
-// FUGARO_PROJECT, FUGARO_GCP_PROJECT and FUGARO_REGION on the service, and
-// internal/infra/tf's credentialsServiceEnv is the allow-list that pins those
-// three names and no others. A service started without one of them cannot say
-// which project it is serving, so the command refuses by name before anything
-// else -- the same refusal the history job makes for the same variables.
+// seven names on the service's container, internal/infra/tf's
+// credentialsServiceEnv is the allow-list that pins exactly those, and
+// credentialsServiceEnvNames is what this command reads. A service started
+// without one of them cannot say which installation it is serving, so the
+// command refuses by name before anything else -- the same refusal the history
+// job makes for the same variables, and one that never quotes the value it
+// found (or did not find).
 func TestCredentialsServeRefusesWithoutItsEnvironment(t *testing.T) {
-	for _, k := range []string{envProject, envGCPProject, envRegion} {
+	for _, k := range credentialsServiceEnvNames {
 		t.Run(k, func(t *testing.T) {
-			// The three names are set, then the one under test is emptied: an
-			// empty variable is not a value the module can set.
-			t.Setenv(envProject, "fugaro")
-			t.Setenv(envGCPProject, "fugaro-dev")
-			t.Setenv(envRegion, "us-east5")
+			// Every name is set, then the one under test is emptied: an empty
+			// variable is not a value the module can set (Terraform writes
+			// each of these from an input the installation has), so the
+			// refusal must be about that name and not about another.
+			for _, n := range credentialsServiceEnvNames {
+				t.Setenv(n, credentialsServeEnv[n])
+			}
 			t.Setenv(k, "")
 			_, _, err := execute(t, "credentials", "serve")
 			if err == nil || ExitCode(err) != ExitUserError {
@@ -110,55 +118,284 @@ func TestCredentialsServeRefusesWithoutItsEnvironment(t *testing.T) {
 	}
 }
 
-// With its environment complete, the command still refuses -- and the refusal
-// names what the deployment is missing rather than a piece of this build.
-// internal/credsvc carries the service (C1.11) and NewServer is what the host
-// below starts, but a credsvc.Config cannot be built from the three names the
-// installation module sets on the container: the service's realtime database
-// URL, its Firebase project, its own audience and the installation's job
-// service accounts are facts of the deployment, none of them derivable from
-// those three, and inventing any of them is a service that admits a caller it
-// should not. The refusal is a user error, so a revision deployed without them
-// fails to start rather than serving something a run would act on.
-func TestCredentialsServeRefusesWithoutTheDeploymentsOwnFacts(t *testing.T) {
-	t.Setenv(envProject, "fugaro")
-	t.Setenv(envGCPProject, "fugaro-dev")
-	t.Setenv(envRegion, "us-east5")
-	_, _, err := execute(t, "credentials", "serve")
-	if err == nil || ExitCode(err) != ExitUserError {
-		t.Fatalf("err = %v, want a user error (exit 1)", err)
+// credentialsServeEnv is a complete, valid service environment: the values the
+// installation module would set, with the Fugaro project, GCP project and
+// Firebase project the golden fixtures use (internal/infra/testdata's
+// installation-budget-job.tfvars.json) so the derived names here are the names
+// a real installation derives.
+var credentialsServeEnv = map[string]string{
+	envProject:               "aurora",
+	envGCPProject:            "proj-1234",
+	envRegion:                "us-east5",
+	envRTDBURL:               "https://aurora-fp-default-rtdb.firebaseio.com",
+	envFirebaseFP:            "aurora-fp",
+	envCredentialsServiceURL: "https://fugaro-credentials-abcde-uc.a.run.app",
+	envJobAccounts:           `[{"provider":"github","repo":"acme/webapp","workflow":"api"}]`,
+}
+
+// TestCredentialsServiceConfigBuildsFromAFullEnvironment is the headline: the
+// whole of this task is that the service can be configured at all, so a
+// complete environment must build a credsvc.Config that NewServer accepts --
+// the object the host below serves. Until this task the builder could not: it
+// read the three names the module set and refused, because the four facts a
+// Config needs (the database, the Firebase project, the audience and the job
+// accounts) were not in the container.
+//
+// The two things the builder needs that reach Google as the service itself --
+// the token source the database is read with and the Secret Manager client the
+// bundle is read through -- are the test seam (credentialsTest); nothing else
+// here is faked, so the derivation of the job accounts and every validation
+// the verifier makes are the production ones.
+//
+// The derived table is pinned by value and not by comparison with the
+// function that made it: these emails are the ones internal/infra deploys
+// (gcp.ServiceAccountID over task.Slug), so a change in either derivation
+// fails here rather than in a run that cannot authenticate.
+func TestCredentialsServiceConfigBuildsFromAFullEnvironment(t *testing.T) {
+	for _, n := range credentialsServiceEnvNames {
+		t.Setenv(n, credentialsServeEnv[n])
 	}
-	// It names the four facts, so an operator who deploys this image is owed
-	// the reason.
-	for _, want := range []string{"realtime database URL", "Firebase project", "audience", "job service accounts"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("err = %v, want it to name %q", err, want)
+	fakeCredentialsService(t)
+
+	cfg, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+	if err != nil {
+		t.Fatalf("credentialsServiceConfig: %v", err)
+	}
+	want := []credsvc.JobAccount{{
+		Email: "fugaro-acme-webapp-ap-7daad322@proj-1234.iam.gserviceaccount.com",
+		Slug:  "acme-webapp-cf67624405f4121a",
+		Repo:  "github/acme/webapp",
+	}}
+	if len(cfg.JobAccounts) != 1 || cfg.JobAccounts[0] != want[0] {
+		t.Fatalf("job accounts = %+v, want %+v", cfg.JobAccounts, want)
+	}
+	// Every piece NewServer requires is built here, and the one thing that is
+	// deliberately left empty is the shared project jobs' accounts (Global
+	// Constraint 6: per-repository jobs only until C3.9).
+	for _, missing := range []struct {
+		name string
+		set  bool
+	}{
+		{"Auth", cfg.Auth != nil},
+		{"Bundles", cfg.Bundles != nil},
+		{"Policy", cfg.Policy != nil},
+		{"State", cfg.State != nil},
+		{"Kills", cfg.Kills != nil},
+		{"DB", cfg.DB != nil},
+		{"Probes", cfg.Probes != nil},
+		{"AuditLog", cfg.AuditLog != nil},
+		{"Log", cfg.Log != nil},
+	} {
+		if !missing.set {
+			t.Errorf("the configuration has no %s: the service cannot serve without it", missing.name)
 		}
 	}
-	// And it names the real change rather than a variable someone forgot: the
-	// four facts cannot be added to the container, because the cover's
-	// credentialsServiceEnv allow-list admits exactly the three names the
-	// module sets and refuses a fourth at plan time, and credentials.tf sets
-	// those three. So the refusal names this command's own builder, that
-	// allow-list and credentials.tf together -- and says the plan records no
-	// task for it. A message naming only a deployment change would send an
-	// operator at something this tree refuses at plan time and that would not
-	// make the command serve (PR #872's stub had the same defect from the other
-	// side: it named a build state).
-	for _, want := range []string{"credentialsServiceEnv", "allow-list", "config builder", "credentials.tf", "no task in the plan"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("err = %v, want it to name %q", err, want)
+	if _, err := credsvc.NewServer(cfg); err != nil {
+		t.Fatalf("NewServer refused the configuration a complete environment builds: %v", err)
+	}
+}
+
+// fakeCredentialsService replaces the two constructors that would need
+// Application Default Credentials with ones that build nothing: the token
+// source is never asked for a token (nothing in the configuration reads the
+// database) and the Secret Manager client is never asked for a version.
+func fakeCredentialsService(t *testing.T) {
+	t.Helper()
+	credentialsTest = &credentialsWiring{
+		tokens: func(context.Context) (oauth2.TokenSource, error) {
+			return oauth2.StaticTokenSource(&oauth2.Token{}), nil
+		},
+		secrets: func(context.Context) (*secretmanager.Service, error) { return &secretmanager.Service{}, nil },
+	}
+	t.Cleanup(func() { credentialsTest = nil })
+}
+
+// TestCredentialsServiceConfigRefusesAMalformedVariable: every name has a
+// shape, and a value that is not it is refused by name -- before the
+// configuration is built, so a deployment that is wrong never reaches a
+// database read or a caller. The three that matter most are the ones a wrong
+// value would silently mis-serve with: a database URL that is another
+// installation's (the pair with the Firebase project, which is what a copied
+// environment looks like), an audience that is not this service's URL (a
+// service that admits nobody, or the wrong somebody), and a job account table
+// that cannot be derived (a service whose account names do not exist).
+func TestCredentialsServiceConfigRefusesAMalformedVariable(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		set   map[string]string
+		names []string // the variables the refusal must name
+	}{
+		{
+			name:  "the database URL is not one",
+			set:   map[string]string{envRTDBURL: "aurora-fp-default-rtdb.firebaseio.com"},
+			names: []string{envRTDBURL},
+		},
+		{
+			name:  "the database URL has a path",
+			set:   map[string]string{envRTDBURL: "https://aurora-fp-default-rtdb.firebaseio.com/fugaro"},
+			names: []string{envRTDBURL},
+		},
+		{
+			name:  "the database is another Firebase project's",
+			set:   map[string]string{envRTDBURL: "https://other-default-rtdb.firebaseio.com"},
+			names: []string{envRTDBURL, envFirebaseFP},
+		},
+		{
+			name:  "the audience has no scheme",
+			set:   map[string]string{envCredentialsServiceURL: "fugaro-credentials-abcde-uc.a.run.app"},
+			names: []string{envCredentialsServiceURL},
+		},
+		{
+			name:  "the audience is http",
+			set:   map[string]string{envCredentialsServiceURL: "http://fugaro-credentials-abcde-uc.a.run.app"},
+			names: []string{envCredentialsServiceURL},
+		},
+		{
+			name:  "the audience carries a path",
+			set:   map[string]string{envCredentialsServiceURL: "https://fugaro-credentials-abcde-uc.a.run.app/v1/messages"},
+			names: []string{envCredentialsServiceURL},
+		},
+		{
+			name:  "the job accounts are not JSON",
+			set:   map[string]string{envJobAccounts: "acme/webapp api"},
+			names: []string{envJobAccounts},
+		},
+		{
+			name:  "the job accounts are an object",
+			set:   map[string]string{envJobAccounts: `{"provider":"github"}`},
+			names: []string{envJobAccounts},
+		},
+		{
+			name:  "the job accounts are empty",
+			set:   map[string]string{envJobAccounts: `[]`},
+			names: []string{envJobAccounts},
+		},
+		{
+			name:  "a job has no workflow",
+			set:   map[string]string{envJobAccounts: `[{"provider":"github","repo":"acme/webapp"}]`},
+			names: []string{envJobAccounts},
+		},
+		{
+			name:  "a job carries a field nothing reads",
+			set:   map[string]string{envJobAccounts: `[{"provider":"github","repo":"acme/webapp","workflow":"api","project":"aurora"}]`},
+			names: []string{envJobAccounts},
+		},
+		{
+			name:  "a job's provider is not a provider kind",
+			set:   map[string]string{envJobAccounts: `[{"provider":"GitHub","repo":"acme/webapp","workflow":"api"}]`},
+			names: []string{envJobAccounts},
+		},
+		{
+			name:  "a job's repository cannot be named",
+			set:   map[string]string{envJobAccounts: `[{"provider":"github","repo":"acme","workflow":"api"}]`},
+			names: []string{envJobAccounts},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, n := range credentialsServiceEnvNames {
+				t.Setenv(n, credentialsServeEnv[n])
+			}
+			for k, v := range tc.set {
+				t.Setenv(k, v)
+			}
+			// No seam: every refusal below is made before the configuration
+			// reaches Google, which is the property this pins -- a deployment
+			// that is wrong costs nothing but the refusal.
+			_, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want a user error (exit 1)", err)
+			}
+			for _, n := range tc.names {
+				if !strings.Contains(err.Error(), n) {
+					t.Fatalf("err = %v, want a refusal naming %s", err, n)
+				}
+			}
+		})
+	}
+}
+
+// TestCredentialsServiceRefusalsNeverCarryAValue: this process is the one that
+// holds the bundle's values in memory, and every refusal below is a line an
+// operator reads in a log, so none of them may quote what the environment
+// held. The values here are shaped like a credential (and deliberately not
+// like the names the installation really uses), and every refusal path is
+// walked with them set: the variable that is wrong is the one that gets
+// named, never the text that was in it, and never the text in the others.
+func TestCredentialsServiceRefusalsNeverCarryAValue(t *testing.T) {
+	secret := func(n string) string { return "s3cr3t-" + strings.ToLower(strings.TrimPrefix(n, "FUGARO_")) }
+	values := map[string]string{
+		envProject:               secret(envProject),
+		envGCPProject:            secret(envGCPProject),
+		envRegion:                secret(envRegion),
+		envRTDBURL:               "https://" + secret(envFirebaseFP) + "-default-rtdb.firebaseio.com",
+		envFirebaseFP:            secret(envFirebaseFP),
+		envCredentialsServiceURL: "https://" + secret(envCredentialsServiceURL) + ".run.app",
+		envJobAccounts:           `[{"provider":"github","repo":"` + secret("repo") + `","workflow":"api"}]`,
+	}
+	for _, tc := range []struct {
+		name string
+		set  map[string]string
+	}{
+		{"every name is missing", map[string]string{
+			envProject: "", envGCPProject: "", envRegion: "", envRTDBURL: "",
+			envFirebaseFP: "", envCredentialsServiceURL: "", envJobAccounts: "",
+		}},
+		{"the database URL is not one", map[string]string{envRTDBURL: "s3cr3t-db"}},
+		{"the database is another project's", map[string]string{envRTDBURL: "https://s3cr3t-other-default-rtdb.firebaseio.com"}},
+		{"the audience is malformed", map[string]string{envCredentialsServiceURL: "s3cr3t-url"}},
+		{"the job accounts are malformed", map[string]string{envJobAccounts: "s3cr3t-jobs"}},
+		{"a job cannot be derived", map[string]string{envJobAccounts: `[{"provider":"github","repo":"s3cr3t-nope","workflow":"api"}]`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for n, v := range values {
+				t.Setenv(n, v)
+			}
+			for n, v := range tc.set {
+				t.Setenv(n, v)
+			}
+			_, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+			if err == nil {
+				t.Fatal("want a refusal")
+			}
+			for n, v := range values {
+				if v == "" {
+					continue
+				}
+				if strings.Contains(err.Error(), v) {
+					t.Errorf("err = %v, which carries the value of %s", err, n)
+				}
+			}
+		})
+	}
+}
+
+// TestCredentialsServiceEnvIsTheDeploymentsOwn: the seven names this command
+// reads are the seven credentials.tf sets on the service's container, and
+// neither side may move without the other. The direction that matters is the
+// module setting a name this command does not read: an operator reading
+// credentials.tf would believe the fact was in effect while the service
+// refused to start without it (or, worse, served with a value it never read).
+// The other direction is a name this command reads that nothing sets, which is
+// a fact the service silently does not have.
+//
+// internal/infra/tf's credentialsServiceEnv is the third side of this, and it
+// is held to the module by that package's own test (the cover's allow-list
+// refuses a container that sets a name outside it, which is what makes the
+// module's list a boundary rather than a convention).
+func TestCredentialsServiceEnvIsTheDeploymentsOwn(t *testing.T) {
+	tf := readRepoFile(t, "deploy/terraform/gcp/modules/installation/credentials.tf")
+	inModule := map[string]bool{}
+	for _, m := range regexp.MustCompile(`name\s*=\s*"(FUGARO_[A-Z0-9_]+)"`).FindAllStringSubmatch(tf, -1) {
+		inModule[m[1]] = true
+	}
+	for _, n := range credentialsServiceEnvNames {
+		if !inModule[n] {
+			t.Errorf("this command reads %s, which credentials.tf does not set on the service: the service would refuse to start on a deployment that is right", n)
 		}
+		delete(inModule, n)
 	}
-	if strings.Contains(err.Error(), "C1.18") {
-		t.Fatalf("err = %v, but C1.18 has landed and its allow-list is what refuses a fourth name: the fix is not that task", err)
-	}
-	// And it never claims the service is absent from this build: C1.11 is in
-	// it, and a refusal that said otherwise would send an operator looking for
-	// the wrong thing (PR #872's stub said exactly that, on a base where it was
-	// true).
-	if strings.Contains(err.Error(), "C1.11") {
-		t.Fatalf("err = %v, but internal/credsvc carries the service (C1.11) in this build", err)
+	for n := range inModule {
+		t.Errorf("credentials.tf sets %s, which this command does not read: an operator would believe the fact was in effect and the service would refuse to start without it", n)
 	}
 }
 

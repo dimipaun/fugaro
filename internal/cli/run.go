@@ -1386,10 +1386,24 @@ func printRecipeNote(warn io.Writer, rr *resolvedRecipe, explicit bool) {
 //     with nothing to carry its calls. config.CheckCascadeGateway is the one
 //     place that rule lives, and its own comment named this task as the
 //     launch's caller of it.
+//   - the project's published model allow-list (the owner's ruling of
+//     2026-10-22): the credentials service holds every call it carries to the
+//     project's budget.allowed_models and refuses a project that publishes
+//     none (internal/credsvc's requestNoAllowList), so a cascade run of such a
+//     project would have every call refused and halt on the first (D143). What
+//     is judged is the *policy node's* list and not the run's merged one: the
+//     node is the only list the service can read, and the environment's
+//     ceiling and the repository's file never reach it. The rule has no skip
+//     for a project layer this launcher cannot read — an absent node is
+//     refused by the switch's arm above — and this read is the one all three
+//     surfaces the cascade is judged on make: `fugaro validate` reports it to
+//     the author (validate.go's cascadeProblems) and the run refuses it in
+//     bootstrap, before any model call (internal/runner/routing.go's
+//     applyRouting).
 //   - the rules marker (budget/rules, C1.3): the deployed document must carry
 //     the credentials family, or the run's first write of the credential's
 //     name is denied and it halts named (HaltCredsRulesDenied, C1.17). This is
-//     the same read `fugaro init --provision-credentials` makes before it
+//     the same read `fugaro update --provision-credentials` makes before it
 //     applies anything and the same pair `fugaro doctor` reports; here it is a
 //     refusal, because a launch is the moment it can still save the run. The
 //     marker's generation is wanted to be exactly this binary's, and the two
@@ -1422,7 +1436,7 @@ func cascadeLaunchRefusal(ctx context.Context, env *cloudEnv, spec *task.Spec) e
 		return nil
 	}
 	if env.lc.Budget == nil || env.lc.Budget.RTDBURL == "" {
-		return userErr("agent.auth: cascade cannot run here: this installation has no database, so neither the policy switch that turns the cascade on (%s) nor the credentials rules marker (%s) can be read — and a job of such an installation mounts no model credential at all (C1.20), so this run would have nothing to fall back to (D143). Run 'fugaro init --provision-credentials' in your own terminal to enable the credentials service, or set agent.auth to api-key or oauth in this workflow",
+		return userErr("agent.auth: cascade cannot run here: this installation has no database, so neither the policy switch that turns the cascade on (%s) nor the credentials rules marker (%s) can be read — and a job of such an installation mounts no model credential at all (C1.20), so this run would have nothing to fall back to (D143). Run 'fugaro update --provision-credentials' in your own terminal to enable the credentials service, or set agent.auth to api-key or oauth in this workflow",
 			projectpolicy.PathShared(), rules.PathCredsRulesMarker())
 	}
 	ceiling := ceilingLayer(env.lc)
@@ -1459,6 +1473,15 @@ func cascadeLaunchRefusal(ctx context.Context, env *cloudEnv, spec *task.Spec) e
 		}
 		return userErr("agent.auth: cascade cannot run here: %s. A cascade run holds no model credential of its own — the gateway carries every call to the credentials service and accounts for it (D143) — so a budget that leaves the gateway off cannot run one", strings.Join(msgs, "; "))
 	}
+	// The allow-list the credentials service holds this run's calls to, read
+	// from the policy node and refused fail closed: there is no fall-back to
+	// the environment's ceiling or to the repository's file, because the
+	// service never sees either and refuses every call of a project that
+	// publishes none (the owner's ruling of 2026-10-22).
+	if len(p.Budget.AllowedModels) == 0 {
+		return userErr("agent.auth: cascade cannot run here: this project's published policy (%s) carries no budget.allowed_models, and the credentials service — which carries every call of a cascade run and accounts for it (D143) — refuses a project that publishes none, so this run's first call would be refused and halt it. agent.auth: cascade needs the project's budget.allowed_models; add the allow-list to the project layer and publish it (fugaro project policy publish)",
+			projectpolicy.PathShared())
+	}
 	db, err := newBudgetClient(ctx, env.lc.Budget.RTDBURL, env.lc.Endpoints.NoAuth)
 	if err != nil {
 		return userErr("%v", err)
@@ -1470,20 +1493,20 @@ func cascadeLaunchRefusal(ctx context.Context, env *cloudEnv, spec *task.Spec) e
 		return dbErr(env.lc, fmt.Errorf("reading the credentials rules marker at %s: %w", marker, err), false)
 	}
 	if !foundMarker {
-		return userErr("agent.auth: cascade cannot run here: the installation's database carries no credentials rules marker at %s, so its deployed rules predate the credentials service and the first credential this run records would be refused — the run would halt instead of running (C1.17). Re-run 'fugaro init --firebase <firebase-project-id>' in your own terminal from a Fugaro that carries the credentials rules (%s), then launch again",
+		return userErr("agent.auth: cascade cannot run here: the installation's database carries no credentials rules marker at %s, so its deployed rules predate the credentials service and the first credential this run records would be refused — the run would halt instead of running (C1.17). Re-run 'fugaro update --firebase-project <firebase-project-id>' in your own terminal from a Fugaro that carries the credentials rules (%s), then launch again",
 			marker, credsServiceSince)
 	}
 	var gen int
 	if err := json.Unmarshal(raw, &gen); err != nil || projectpolicy.MarkerHandEdited(gen) {
-		return userErr("agent.auth: cascade cannot run here: the credentials rules marker at %s is %s, which is not a generation number; fix it with 'fugaro init --firebase <firebase-project-id>'",
+		return userErr("agent.auth: cascade cannot run here: the credentials rules marker at %s is %s, which is not a generation number; fix it with 'fugaro update --firebase-project <firebase-project-id>'",
 			marker, oneLineCLI(string(raw)))
 	}
 	switch {
 	case gen < rules.CredsRulesVersion:
-		return userErr("agent.auth: cascade cannot run here: the credentials rules marker at %s records generation %d, below the generation %d this Fugaro's credentials rules carry, so the deployed document predates the credentials family and the first credential this run records would be refused (C1.17); re-run 'fugaro init --firebase <firebase-project-id>' in your own terminal from this Fugaro (%s), then launch again",
+		return userErr("agent.auth: cascade cannot run here: the credentials rules marker at %s records generation %d, below the generation %d this Fugaro's credentials rules carry, so the deployed document predates the credentials family and the first credential this run records would be refused (C1.17); re-run 'fugaro update --firebase-project <firebase-project-id>' in your own terminal from this Fugaro (%s), then launch again",
 			marker, gen, rules.CredsRulesVersion, credsServiceSince)
 	case gen > rules.CredsRulesVersion:
-		return userErr("agent.auth: cascade cannot run here: the credentials rules marker at %s records generation %d, above the generation %d this Fugaro's credentials rules carry, so a newer Fugaro deployed them and this release refuses to deploy its own rules over a newer marker; upgrade Fugaro first ('fugaro upgrade') and re-run 'fugaro init --firebase <firebase-project-id>' with the newer binary, then launch again",
+		return userErr("agent.auth: cascade cannot run here: the credentials rules marker at %s records generation %d, above the generation %d this Fugaro's credentials rules carry, so a newer Fugaro deployed them and this release refuses to deploy its own rules over a newer marker; upgrade Fugaro first ('fugaro upgrade') and re-run 'fugaro update --firebase-project <firebase-project-id>' with the newer binary, then launch again",
 			marker, gen, rules.CredsRulesVersion)
 	}
 	return nil

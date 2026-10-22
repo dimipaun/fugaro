@@ -315,7 +315,7 @@ const (
 	// credentialsRepo is the repository the whole publish-credentials chain
 	// works on. Every step of it names this, so a chain pointed at another
 	// repository cannot sign and pin that one while leaving this image with
-	// nothing `fugaro init` may resolve.
+	// nothing `fugaro update` may resolve.
 	credentialsRepo = "ghcr.io/dimipaun/fugaro-credentials"
 )
 
@@ -554,7 +554,7 @@ func signingProblems(wf imagesWorkflow) []string {
 // missing without anyone noticing.
 //
 // Why this image is signed at all is a property of its consumer, not of this
-// file: `fugaro init`'s credentials stage resolves
+// file: `fugaro update`'s credentials stage resolves
 // `fugaro-credentials:<version>-pinned`, verifies the cosign signature and
 // writes the digest it names into the service's Terraform variable
 // (internal/cli/init_credentials.go; internal/infra/tf refuses a tag at plan
@@ -621,7 +621,7 @@ func credentialsSigningProblems(wf imagesWorkflow) []string {
 
 	// Every step of the chain works on the credentials service's own
 	// repository. A chain pointed anywhere else would sign and pin that
-	// repository and leave this image with nothing `fugaro init` may resolve.
+	// repository and leave this image with nothing `fugaro update` may resolve.
 	for _, id := range []string{"index", "sign", "verify", "pinned"} {
 		if !strings.Contains(script(steps[id].Run), "repo="+credentialsRepo) {
 			bad("the %s step does not work on %s: the chain must sign and pin this image's own repository", id, credentialsRepo)
@@ -1043,7 +1043,7 @@ func TestSigningProblemsFindEveryMutation(t *testing.T) {
 // chain: the credentials service's image is pushed, the digest that push
 // reported is signed with this workflow's own keyless identity on a tag push,
 // the signature is verified, and only then is the nightly-immune
-// <version>-pinned tag written at that digest — the tag `fugaro init`'s
+// <version>-pinned tag written at that digest — the tag `fugaro update`'s
 // credentials stage resolves and verifies before it writes the digest into
 // the service's Terraform variable.
 func TestCredentialsPublishSignsByDigestOnPushOnly(t *testing.T) {
@@ -1134,7 +1134,7 @@ func TestCredentialsSigningProblemsFindEveryMutation(t *testing.T) {
 		// The chain must sign and pin THIS image's repository: a chain that
 		// ran against another one would put this release's identity on that
 		// repository and leave the credentials image with nothing `fugaro
-		// init` may resolve.
+		// update` may resolve.
 		{"the sign step works on another repository", func(wf imagesWorkflow) imagesWorkflow {
 			return wf.withStepIn(job, "sign", func(s *workflowStep) {
 				s.Run = strings.ReplaceAll(s.Run, credentialsRepo, "ghcr.io/dimipaun/fugaro-base")

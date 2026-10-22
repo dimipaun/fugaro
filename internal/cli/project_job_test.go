@@ -38,7 +38,7 @@ const otherRepo = "acme/other"
 
 // projectJobFixture is a cloudFixture whose installation has deployed one
 // shared project job for the profile standard, and whose local config and
-// published policy both define it, as `fugaro init` and `fugaro project
+// published policy both define it, as the converge and `fugaro project
 // policy publish` leave them.
 type projectJobFixture struct {
 	*launchBudgetFixture
@@ -1107,7 +1107,7 @@ func TestProjectJobOAuthRefusedAccountNotListed(t *testing.T) {
 // node is theirs), with the standard profile mounting the reserved
 // claude-oauth-token. The account segment of the job that profile names is the
 // default account on the launcher's and the runner's side and the empty account
-// on the deployer's, and `fugaro init` refuses to deploy it at all
+// on the deployer's, and the converge refuses to deploy it at all
 // (internal/infra's projectJobSecrets) — the state in which the launcher took
 // the claim, minted the budget token and reached Cloud Run on a job that does
 // not exist, and every run of the profile halted with cannotPlaceJob, which
@@ -1121,7 +1121,7 @@ const projectJobReservedTokenPolicy = `{"version":3,"allow_repos":["github/acme/
 // (as an owner's own write, or an earlier CLI's publish, leaves it), and the
 // launch of a repository the profile admits is refused where the node is read —
 // projectpolicy.validProfiles, the one rule publish, init and both readers
-// share — rather than on a job `fugaro init` refused to deploy. Nothing was
+// share — rather than on a job the converge refused to deploy. Nothing was
 // launched: no claim, no budget token, no Cloud Run call.
 func TestLaunchRefusesAPolicyMountingAClaudeOAuthToken(t *testing.T) {
 	f := newProjectJobFixture(t)
@@ -1309,7 +1309,7 @@ func TestLaunchRefusesARepositoryTheProfileDoesNotAdmit(t *testing.T) {
 // other half of the same finding: the comparison above is on the repository's
 // provider against the profile's, so a Bitbucket repository whose workflow
 // selects a *Bitbucket* profile agreed with it and the launch went onto
-// gcp.ProjectJobName(profile, "bitbucket", "") — a job `fugaro init` deploys
+// gcp.ProjectJobName(profile, "bitbucket", "") — a job the converge deploys
 // for no profile (internal/infra's ProjectJobs skips a provider no shared job
 // serves; the owner's ruling of 2026-10-15, D5 as amended). Cloud Run answers
 // that jobs.run with a 404, which the backend wraps as a missing job, after

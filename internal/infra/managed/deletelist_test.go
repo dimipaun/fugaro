@@ -649,7 +649,7 @@ func TestAllowDeleteRefusesAnAddressTheApplyingCommandPasses(t *testing.T) {
 
 // TestTheDeleteListIsNotTerraformManaged is D74's other half, and the reason
 // the list is a second object rather than a field of the marker: no
-// Terraform-managed object writes it. fugaro init rewrites the
+// Terraform-managed object writes it. fugaro update rewrites the
 // installation's terraform.tfvars.json from its own flags on every run, so a
 // variable-driven object would be planned to destroy on the next ordinary
 // init — silently, with the apply that follows reading an empty list and

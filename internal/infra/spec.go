@@ -161,6 +161,28 @@ type CredentialsService struct {
 	// Name is the Cloud Run service's name, Region the region it runs in.
 	Name   string `json:"name"`
 	Region string `json:"region"`
+	// URL is the service's own URL — the audience its callers' Google ID
+	// tokens are minted for (C1.14) — and it is the INSTALLATION root's: the
+	// module's output carries it (outputs.tf, the service resource's uri) and
+	// the init stage writes it into var.credentials_service on the apply
+	// after the one that created the service. A repository root reads the
+	// first two fields and nothing else, so the object it writes into its own
+	// tfvars is built without it (repoCredentialsService).
+	URL string `json:"url,omitempty"`
+}
+
+// repoCredentialsService is the installation's credentials service as a
+// REPOSITORY root reads it: the name and the region the workflow module turns
+// into each job account's roles/run.invoker grant. The URL is left behind
+// because the module's variable carries no such attribute — an object
+// conversion in Terraform silently DROPS an extra attribute rather than
+// refusing it, so passing it would read as a value the repository root agreed
+// on while nothing used it.
+func repoCredentialsService(s *CredentialsService) *CredentialsService {
+	if s == nil {
+		return nil
+	}
+	return &CredentialsService{Name: s.Name, Region: s.Region}
 }
 
 // RoleIDs are the custom roles' full names, projects/<p>/roles/<id>.
@@ -169,7 +191,7 @@ type RoleIDs struct {
 	JobRunner      string `json:"job_runner"`
 	BuildSubmitter string `json:"build_submitter"`
 	// TagMover is empty in the outputs of an installation applied before
-	// the role existed; fugaro init --repo refuses those.
+	// the role existed; fugaro update refuses those.
 	TagMover string `json:"tag_mover"`
 }
 
@@ -955,7 +977,7 @@ func Repo(in Inputs) (RepoSpec, error) {
 			RoleIDs:                 RepoRoleIDs{JobRunner: c.inst.RoleIDs.JobRunner, BuildSubmitter: c.inst.RoleIDs.BuildSubmitter, TagMover: c.inst.RoleIDs.TagMover},
 			Launchers:               c.inst.Launchers,
 			Operators:               c.inst.Operators,
-			CredentialsService:      c.inst.CredentialsService,
+			CredentialsService:      repoCredentialsService(c.inst.CredentialsService),
 		},
 		GitHubAppID:              c.appID,
 		RepoURL:                  c.repoURL,
@@ -1040,7 +1062,7 @@ func (c *repoCtx) projectSecretCandidates(rs RepoSpec) map[string]string {
 // provider's own key whose provider lists repo -- AllowsData uniformly
 // across the last three, so §3a's no-list/["*"]-means-any-repository rule
 // applies to a provider's key exactly as it does everywhere else. ok is
-// false, id "" otherwise. It is exported because fugaro init --repo's
+// false, id "" otherwise. It is exported because fugaro update's
 // secrets stage (before any RepoSpec exists) needs the identical answer.
 func ProjectSecretCandidate(lc *localcfg.Config, logical, repo string) (id string, ok bool) {
 	if lc == nil || logical == "" {

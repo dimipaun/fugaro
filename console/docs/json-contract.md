@@ -389,7 +389,7 @@ reads:
 | `pr_url` | string | **yes** | the URL as the host gave it |
 | `execution`, `log_url` | string | **yes** | `log_url` is what `logs RUN --url` prints |
 | `created` | time.Time | no | RFC 3339 |
-| `cost` | `runstore.Cost` | no | model/compute dollars and the spend basis — *notional* when `ModelBasis == BasisSubscription` |
+| `cost` | `runstore.Cost` | no | model/compute dollars: `model_usd` is the **whole** model figure and `model_notional_usd` the subscription's part of it (C1.16, P12 — a mixed cascade run's `model_basis` is `api-list` for the whole run, so the basis is only the fallback for a row written before the split existed) |
 | `image_age_s` | `*int64` | **yes** | null = unknown |
 | `terminal`, `settled` | bool | no | |
 | `branch`, `outcome` | string | **yes** | |
@@ -684,11 +684,17 @@ the command resolves the checkout's origin), `--json`, plus the cloud flags.
 **Command:** `internal/cli/root.go` `newVersionCmd`, **`cobra.NoArgs` with no
 `Flags()` at all**. It prints **one line of plain text** — the `Version`
 variable (`Version`, `var Version = "dev"`), i.e. the release tag of a
-built binary. There is **no `--json` and no flag of any kind**, which is why
-the handshake is the one spawn that carries no `--project` (§8), and why the
-root command sets no cobra `Version` field (`fugaro --version` fails). The
-console parses the human line, pinned by a test against the real output
-(design §4.3 gap 2).
+built binary. **The subcommand has no `--json` and no flag of any kind**, which
+is why the handshake is the one spawn that carries no `--project` (§8). The
+root command does answer `--version` and `-v` now, printing the same line
+through the same template (`internal/cli/root.go`'s `versionTemplate`), and a
+leading one of those is the whole command — the argv boundary reduces it to the
+flag before cobra resolves anything, so `fugaro --version run` prints the
+version and runs nothing — but
+**the handshake stays `fugaro version`**: the console's argv is pinned to the
+subcommand every CLI version in its supported range has, while the root flag is
+newer than some of them. The console parses the human line, pinned by a test
+against the real output (design §4.3 gap 2).
 
 ### 6.8 `fugaro config list --json`
 
@@ -755,7 +761,7 @@ beside the project configs and not among them: the `state` directory is created
 0700 and the file 0600, and the operator's config home itself is never
 chmodded), written best effort by the commands that resolve a checkout's
 project and are **not** reads the console spawns — `fugaro validate`,
-`fugaro run`, `fugaro init --repo` and the rest — bounded to 20 repositories
+`fugaro run`, `fugaro update --repo` and the rest — bounded to 20 repositories
 per project and 5 paths per repository, **and to 1000 rows across the whole
 document**. A repository the project config does not enroll is **not
 recorded at all**: an un-enrolled clone must not push a real repository out of
@@ -1041,8 +1047,8 @@ behind **both** `rows` and `totals`; the counts are an embedded `Counts`
 | `succeeded`, `failed`, `halted`, `infra_error` | int | no | the four settled statuses, spelled as `result.json` spells them |
 | `other` | int | no | a record that settled as none of the four: still running, or cancelled |
 | `no_record` | int | no | **no usable `result.json`**: not finalised yet, or the object cannot be read. Its status and its money are unknown — never a measured `0` |
-| `counted_usd` | float64 | no | the group's **model** dollars that count toward the caps (`model_basis` `api-list`/vertex). Compute is attributed to nobody, here or in the budget database's own person view |
-| `notional_usd` | float64 | no | the group's model dollars on a **subscription** (`agent.auth oauth`): **notional**, counted toward no cap and nobody's bill. Kept apart from `counted_usd` by construction and never summed with it |
+| `counted_usd` | float64 | no | the group's **model** dollars that count toward the caps: the money part of a run's model figure, `model_usd` minus `model_notional_usd` (C1.16/P12 — **not** a reading of `model_basis`, which the CLI's own `runs stats` help spells out). Compute is attributed to nobody, here or in the budget database's own person view |
+| `notional_usd` | float64 | no | the part of the group's model figure a **subscription** paid: the whole figure of a run on `agent.auth oauth`, and the tier-A dollars of a cascade run, whose basis is `api-list` like any api-key run's. **Notional** — counted toward no cap and nobody's bill, kept apart from `counted_usd` by construction and never summed with it. The basis is the fallback for a record written before the breakdown existed |
 | `counted_runs` | int | no | the sample `avg_counted_usd` is over: the runs whose record settled a real-dollar cost. Published because an average without its sample is a figure a reader cannot weigh |
 | `avg_counted_usd` | float64 | no | `counted_usd / counted_runs`, rounded to the cent; `0` with `counted_runs` `0`, which is *unavailable* ("no run to average"), not `$0.00 a run` |
 
@@ -1102,16 +1108,17 @@ and **not** off this document or the design:
 | `secrets ls` | yes (`secretsOptions.addFlags`) |
 | `accounts ls` | yes (`newAccountsLsCmd`) |
 | `doctor` | yes (`newDoctorCmd`) |
-| **`version`** | **no — it takes no flags at all** (`internal/cli/root.go`) |
+| **`version`** | **no — it takes no flags at all** (`internal/cli/root.go`; the root's `--version`/`-v` is the root's own, not this subcommand's — §6.7) |
 | **`config list`** | **no — it reads the operator's local project configs, not a cloud** (`internal/cli/config_list.go`, §6.8) |
 | **`plan graph`** | **no — it reads the graph artifact in the checkout, not a cloud** (`internal/cli/plan.go`, §6.9) |
 
 So the console passes `--project <name>` (and `--config <path>` when the
 installation is not the ambient one) on **every spawn except the handshake**,
-which runs `fugaro version` bare. A console that appended `--project` to
-`version` would fail its own version check on the first launch, on every
-machine. `docs/gcp-live-checklist.md`'s Check 43 guard states the same
-exception. `TestDocsDesktopConsoleContractNamesTheFlagInventory` asserts this
+which runs `fugaro version` bare (never the root's `--version`, which older
+CLIs in the console's supported range do not have — §6.7). A console that
+appended `--project` to `version` would fail its own version check on the first
+launch, on every machine. `docs/gcp-live-checklist.md`'s Check 43 guard states
+the same exception. `TestDocsDesktopConsoleContractNamesTheFlagInventory` asserts this
 table against the live constructors.
 
 ## 9. What the console may do with all this

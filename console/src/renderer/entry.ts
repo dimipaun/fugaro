@@ -4,9 +4,10 @@
 // This is the file the dashboard document loads, and **its first call is
 // `startConsole`, and it draws nothing before that promise settles** (plan step
 // 5). Everything a screen may draw is behind the gate `startConsole` hands back.
-// The refusal screen or the reduced-mode banner is drawn, then one line saying
-// which installation the console is showing, or that none is chosen, and then --
-// Task 3.4c -- the navigation, the header and the screens themselves.
+// The refusal screen or the reduced-mode banner is drawn, then the installation
+// rail (Task 6.3), then one line saying which installation the console is
+// showing, or that none is chosen, and then -- Task 3.4c -- the navigation and
+// the screens themselves.
 //
 // Three things this file decides, each for a reason a reviewer can check:
 //
@@ -23,6 +24,26 @@
 //     in the plan's tree and in no task's Files), so the entry names one theme
 //     rather than inventing a preference query here. A later task that follows
 //     the OS edits `CONSOLE_THEME`'s *value*; nothing else in this file moves.
+//     **The owner's Q1 ruling of 2026-10-19 settled that question the other
+//     way**: the console ships one value set, dark, so `CONSOLE_THEME` keeps the
+//     literal it has and nothing here reads a preference at all -- the case that
+//     holds this is in `test/unit/entry-wiring.test.ts`, and it scans every
+//     renderer source for a media query, a `nativeTheme` query or a
+//     `themeChoice()` arriving without a ruling that ships a second set with
+//     them. (`data-theme` is *not* in that scan: the screens have stamped the
+//     theme they were drawn with on their own roots since they were written, and
+//     that attribute is the drawing's record rather than a read of the machine.)
+//   - **The keyboard is this file's, and it is the console's first.** Two
+//     tablists get the WAI-ARIA behaviour -- the view navigation and the
+//     installation rail's list (design section 4.3) -- and the rail's rows are
+//     addressable by position with the shortcut keys (design section 4.1:
+//     Command-1 to Command-3 on macOS, Control-1 to Control-3 elsewhere, read
+//     from the **physical** key so that the operator's layout cannot spell them
+//     away). Every write is an
+//     attribute (`role`, `aria-selected`, `tabindex`) and no style is written,
+//     which is why the CSP and `ElementLike` are untouched; the two events are
+//     a `keydown` on a drawn control and one on the document, the second being
+//     what "without walking the tab order at all" means.
 //   - **The DOM is reached through the same narrow interface the screens get.**
 //     `domSurface` hands `startConsole` a `SkewFactory` and a `MountLike`, and
 //     the element it wraps exposes a text slot and attributes -- no markup
@@ -52,8 +73,10 @@
 // this module under plain Node, where there is no document and nothing should
 // happen at all.
 
-import { startConsole } from './app'
+import { putReading, putText, startConsole } from './app'
 import type { CompatibilityBridge, MountLike, ScreenGate } from './app'
+import { readNumber, unavailable } from '../shared/availability'
+import type { Reading } from '../shared/availability'
 import { decodeSnapshot } from '../shared/schema'
 import { sanitizeRefusal } from '../shared/sanitize'
 import { LIVE_STALE_AFTER_SECONDS, BurnHistory, buildLiveModel, renderLive } from './screens/live'
@@ -72,6 +95,14 @@ import type { ReducedView, SkewElement, SkewFactory, SkewTheme } from '../shared
  * would read the operating system's preference is in no task's Files, and a
  * drawing that guessed would be a drawing nobody decided. `'dark'` is the
  * console's own first screen in design section 6.3's mockups.
+ *
+ * **The owner's Q1 ruling of 2026-10-19 makes that literal the shipped answer
+ * rather than a placeholder** (design section 3.6): one value set ships, dark,
+ * so there is nothing for this word to be chosen between and no `matchMedia`
+ * read, no `change` subscription and no `nativeTheme` query comes with it. A
+ * later task that ships a light set changes this *value* under a new ruling, and
+ * the case in `test/unit/entry-wiring.test.ts` is what makes that a decision
+ * rather than a drift.
  */
 export const CONSOLE_THEME: SkewTheme = 'dark'
 
@@ -105,6 +136,13 @@ export interface DomElement extends SkewElement {
   readonly node: Element
   append(child: SkewElement): void
   childNodes(): readonly DomElement[]
+  /** focus moves the keyboard to this element. It is here rather than on
+   * `SkewElement` because a *screen* never moves the focus: the two callers are
+   * the tablists' own key handling (design sections 4.1 and 4.3), where a
+   * roving `tabindex` that moved the attribute and left the keyboard behind
+   * would be a tablist whose ring never follows the arrows. `ElementLike` -- the
+   * interface the screens are drawn against -- is untouched by it. */
+  focus(): void
 }
 
 /** DomScreenFactory is a `SkewFactory` whose elements are wrapped nodes. It is
@@ -170,6 +208,13 @@ export function domSurface(document: Document): DomSurface {
         node.appendChild(nodeOf(child))
       },
       childNodes: () => [...node.children].map((child) => wrap(child)),
+      focus: (): void => {
+        // Every element this factory makes comes from `createElement`, so it is
+        // an `HTMLElement` -- and `focus` is the one member this file needs that
+        // `Element`, which is what `nodeOf` answers with, does not declare.
+        const focusable = node as HTMLElement
+        focusable.focus()
+      },
     }
     nodes.set(element, node)
     return element
@@ -456,6 +501,509 @@ export function drawInstallation(factory: SkewFactory, reply: unknown): SkewElem
 }
 
 // ---------------------------------------------------------------------------
+// The keyboard (desktop-console plan Task 6.5; design sections 4.1 and 4.3).
+// ---------------------------------------------------------------------------
+
+/**
+ * KeyEventLike is the keyboard event this file reads: **the two fields a key
+ * has** -- `code`, the physical key, and `key`, the character the operator's
+ * layout produced from it -- the two modifiers the shortcut keys are spelled
+ * with, and `preventDefault`, which is how a key the console has taken stops
+ * being the window's.
+ *
+ * Both of the key's fields are here because **the two handlers read different
+ * ones**: a tablist's arrow, Home, End and Enter are characters the layout does
+ * not change (`event.key`), while the shortcut keys are *positions on the
+ * keyboard* and are read as `event.code`, since the unshifted `1` key of an
+ * AZERTY keyboard produces `&` (see `shortcutRow`).
+ *
+ * It is declared structurally rather than as `KeyboardEvent` for the reason
+ * every seam in this file is: the wiring is driven under `vitest` with a fake
+ * document, and a case dispatches an object it built rather than a real event.
+ * A real `KeyboardEvent` satisfies this shape, which is why `keydownOn` below
+ * can hand it to a listener typed as this.
+ */
+export interface KeyEventLike {
+  readonly code: string
+  readonly key: string
+  readonly metaKey: boolean
+  readonly ctrlKey: boolean
+  preventDefault(): void
+}
+
+/**
+ * keydownOn attaches a key listener to a real node -- the two tablists'
+ * listeners, and the document's for the shortcut keys.
+ *
+ * The cast is the seam between the DOM's signature and this file's: `Element`'s
+ * own `addEventListener` types a key listener's argument as `Event`, which
+ * declares none of the three fields a key handler reads, so a listener written
+ * in `KeyEventLike` is not assignable to it -- and not even comparable, which is
+ * why the conversion goes through `unknown`. Writing it once, here, is what
+ * keeps the two tablists' handlers the same shape as the mappings they call.
+ */
+function keydownOn(node: Element, listener: (event: KeyEventLike) => void): void {
+  node.addEventListener('keydown', listener as unknown as EventListener)
+}
+
+/**
+ * TabAxis is which arrow pair drives a tablist. **The two tablists have
+ * different axes and the design says so**: the navigation is a row of buttons
+ * and is driven with Left and Right (design section 4.3), and the rail's list is
+ * a column of rows driven with "Arrow Up and Arrow Down" (design section 4.1).
+ * Home and End are on both, because they are the same question of either -- the
+ * first tab and the last.
+ */
+export type TabAxis = 'x' | 'y'
+
+/**
+ * tabTarget is where an arrow, Home or End moves within a tablist of `count`
+ * tabs from the tab at `at`, and `null` for a key the tablist does not handle --
+ * which is how a key the console does not own stays the window's.
+ *
+ * **The arrows wrap**, and that is the one thing here the design does not spell
+ * out: "Arrow/Home/End handling" (section 4.3) and "Arrow Up and Arrow Down move
+ * between the rows" (section 4.1) say which keys move but not what the last tab
+ * does. Wrapping is the WAI-ARIA pattern's own optional behaviour and the one
+ * that keeps every arrow key doing something -- without it, Right on the last
+ * tab either does nothing or re-selects the tab already on screen, and Home and
+ * End would be the only keys that reach the far end. It is a behaviour a case
+ * asserts (`entry-wiring.test.ts`), not a licence to invent: a task that wants
+ * clamping changes this function and the case with it.
+ */
+export function tabTarget(key: string, at: number, count: number, axis: TabAxis): number | null {
+  if (count <= 0 || at < 0 || at >= count) return null
+  const next = axis === 'x' ? 'ArrowRight' : 'ArrowDown'
+  const previous = axis === 'x' ? 'ArrowLeft' : 'ArrowUp'
+  if (key === next) return (at + 1) % count
+  if (key === previous) return (at - 1 + count) % count
+  if (key === 'Home') return 0
+  if (key === 'End') return count - 1
+  return null
+}
+
+/**
+ * tabStop is the roving `tabindex` one tab of a tablist carries: `'0'` for the
+ * tab that holds the list's single stop and `'-1'` for every tab beside it
+ * (design sections 4.1 and 4.3 -- "the selected row is `0`, the rest `-1`").
+ *
+ * It is a function rather than the same ternary written twice because **the two
+ * tablists must answer it the same way**, and the rail's list holds one row
+ * today: a rail that stopped roving would still be one stop while it is one row,
+ * so the rule is held here, where a case drives both answers, and each tablist
+ * is left with the write.
+ */
+export function tabStop(selected: boolean): '0' | '-1' {
+  return selected ? '0' : '-1'
+}
+
+/**
+ * SHORTCUT_ROWS is how many rows the shortcut keys address: **the first three
+ * the rail draws**, which is the whole of what design section 4.1 grants
+ * ("**Command-1** to **Command-3** on macOS and **Control-1** to **Control-3**
+ * elsewhere address the first three rows **the rail draws**") and the hint's own
+ * sentence ("Switch with the shortcut keys 1 2 3"). A fourth key is **not the
+ * console's key**: it is neither selected nor prevented, so the window keeps it
+ * rather than the console swallowing a keystroke no ruling gave it.
+ */
+export const SHORTCUT_ROWS = 3
+
+/**
+ * shortcutRow is the row a shortcut key addresses, or `null` for a key that is
+ * not one. The design's rule (section 4.1) is **Command-1 to Command-3 on macOS
+ * and Control-1 to Control-3 elsewhere**, and every half of it is load-bearing:
+ * the modifier the platform does not use answers `null` rather than being
+ * accepted as a second spelling, a digit held with both modifiers answers `null`
+ * too, because a key that two rules claim is a key whose rule is not this one,
+ * and a position above `SHORTCUT_ROWS` answers `null` because the design grants
+ * three rows and no fourth.
+ *
+ * **`event.code` is read and `event.key` deliberately is not.** `code` is the
+ * *physical* key -- the number row's `Digit1` -- while `key` is the character
+ * the operator's layout produces from it, and on AZERTY the unshifted `1` key
+ * produces `&`: a mapping that read `key` would do nothing at all to the
+ * keystroke the rail's hint tells that operator to press. The field is also what
+ * makes `Numpad1`, which produces the character `1`, **not** a spelling of
+ * `Digit1` -- the design grants the number row's digits and names no keypad key,
+ * so admitting one would be a binding nobody ruled on.
+ *
+ * The digit is the row's **position, one-based** -- `1` is the first row the
+ * rail draws -- which is the hint's own sentence. An index no row is drawn at
+ * addresses nothing (the rail addresses only the rows it draws), so a rail of
+ * one row answers the first key and no other.
+ *
+ * `mac` is a parameter rather than a read: `isMacPlatform` is the one place the
+ * window's platform is asked about, and this function stays a mapping a case can
+ * drive both ways.
+ */
+export function shortcutRow(event: KeyEventLike, mac: boolean): number | null {
+  const modifier = mac ? event.metaKey : event.ctrlKey
+  const other = mac ? event.ctrlKey : event.metaKey
+  if (!modifier || other) return null
+  const digit = /^Digit([1-9])$/.exec(event.code)
+  if (digit === null) return null
+  const position = Number(digit[1])
+  if (position > SHORTCUT_ROWS) return null
+  return position - 1
+}
+
+/**
+ * isMacPlatform answers whether this window is on macOS, which is the whole of
+ * what the shortcut keys need to know about the machine.
+ *
+ * **This is the file's one read of the window's platform, and it is a read of
+ * the navigator the scope carries** -- not a global, so a case can drive both
+ * platforms. The origin is not the reason for the two spellings: the console's
+ * `app://` scheme is registered `{ standard: true, secure: true }` precisely so
+ * the document is a secure context (`src/main/protocol.ts`), and
+ * `navigator.userAgentData` is not withheld from it. The fallback is for the
+ * value rather than the origin -- the modern spelling is a Chromium
+ * user-agent-client-hints member, and **its `platform` can be an empty string**
+ * where the hints are unavailable or reduced, which is a spelling that is
+ * present and says nothing. So `navigator.platform` -- deprecated, but answering
+ * `MacIntel` on macOS -- is read when the modern one is missing *or blank*, and
+ * a name that is still blank answers `false`. A scope with no navigator at all
+ * (a `vm` realm, a unit test) answers `false` too, which is the "elsewhere" half
+ * of the rule and never an exception.
+ */
+export function isMacPlatform(navigator: unknown): boolean {
+  const scope = navigator as
+    | {
+        readonly userAgentData?: { readonly platform?: unknown }
+        readonly platform?: unknown
+      }
+    | null
+    | undefined
+  const modern = scope?.userAgentData?.platform
+  const legacy = scope?.platform
+  const spelled = (value: unknown): string => (typeof value === 'string' ? value : '')
+  const name = spelled(modern) || spelled(legacy)
+  return /^mac/i.test(name)
+}
+
+// ---------------------------------------------------------------------------
+// The installation rail (desktop-console plan Task 6.3; design section 4.1).
+// ---------------------------------------------------------------------------
+
+/** RAIL_CLASS and the eleven below it are the rail's **twelve hooks on thirteen
+ * elements** (design sections 2.1 and 4.1): `RAIL_ADD_CLASS` names the foot row
+ * and the button inside it both, because a row and the control in it are one
+ * region and the class names the region. The rules that select them are
+ * `theme/base.css`'s, and they land in this task's commit with these elements --
+ * a hook and the rule that selects it move together, because a stylesheet
+ * written against a tree nothing draws is a rule nothing can see. */
+export const RAIL_CLASS = 'console-rail'
+export const RAIL_HEAD_CLASS = 'console-rail-head'
+export const RAIL_TITLE_CLASS = 'console-rail-title'
+export const RAIL_COLLAPSE_CLASS = 'console-rail-collapse'
+export const RAIL_LIST_CLASS = 'console-rail-list'
+export const RAIL_ROW_CLASS = 'console-rail-row'
+export const RAIL_NAME_CLASS = 'console-rail-name'
+export const RAIL_PROJECT_CLASS = 'console-rail-project'
+export const RAIL_STATE_CLASS = 'console-rail-state'
+export const RAIL_SPEND_CLASS = 'console-rail-spend'
+export const RAIL_ADD_CLASS = 'console-rail-add'
+export const RAIL_HINT_CLASS = 'console-rail-hint'
+
+/** RAIL_LIST_ID is what the collapse control's `aria-controls` names. It is an
+ * `id` and not a hook: `aria-controls` takes an element's id, and no rule in the
+ * stylesheet selects it -- the class above is what a rule may select. */
+export const RAIL_LIST_ID = 'console-rail-list'
+
+/** RAIL_TITLE, RAIL_HINT and RAIL_ADD_LABEL are the rail's own words, drawn
+ * from here rather than from a document: the title names the region, the hint is
+ * the design's own sentence about the shortcut keys (Task 6.5's), and the add
+ * row's label is the design's. */
+export const RAIL_TITLE = 'Installations'
+export const RAIL_HINT = 'Switch with the shortcut keys 1 2 3'
+export const RAIL_ADD_LABEL = '+ Add installation'
+
+/** RAIL_COLLAPSE_LABEL and RAIL_EXPAND_LABEL are the collapse control's
+ * accessible name in the two states it has. The name changes with the state, so
+ * what the control *does* next is announced rather than drawn only (design
+ * section 4.1); the glyph beside it is the drawn half and is never the only
+ * one. */
+export const RAIL_COLLAPSE_LABEL = 'Collapse the installations rail'
+export const RAIL_EXPAND_LABEL = 'Expand the installations rail'
+export const RAIL_COLLAPSE_GLYPH = '‹'
+export const RAIL_EXPAND_GLYPH = '›'
+
+/** RailState is the rail's three words, and the glyph each is drawn beside. The
+ * word is drawn **and** the glyph is drawn, never one instead of the other
+ * (design sections 3.5 and 4.1), and `data-state` carries the same word so the
+ * tone has a hook -- the tone is the redundant second channel, never the only
+ * carrier. `idle` is the stored installation nothing is being read from: it is
+ * the vocabulary's third word and **no read in this phase draws it**, because a
+ * row for a stored installation needs a list read the design withholds
+ * (design section 4.1, section 11). */
+export type RailState = 'running' | 'silent' | 'idle'
+
+/** RAIL_STATE_GLYPHS is the glyph of each word, in the design's own table. */
+export const RAIL_STATE_GLYPHS: Readonly<Record<RailState, string>> = Object.freeze({
+  running: '●',
+  silent: '▲',
+  idle: '○',
+})
+
+/** RAIL_SPEND_UNREAD is what the spend span says before the console has read a
+ * budget: the caps panel's own sentence, so the rail and the panel say the same
+ * thing about the same absence (`screens/spend.ts`). It is a **reason with no
+ * figure** -- `n/a` and never `$0.00`, which would be a spend nobody measured. */
+export const RAIL_SPEND_UNREAD = 'no budget show document was read'
+
+/**
+ * railSpend is the one figure the rail's row draws: `global.counted_usd` from a
+ * `budget.show` document, which is the figure the caps panel counts its caps
+ * against (design section 4.1: "the spend is the console's own budget read ...
+ * whose counted and spent dollars section 2.4's caps panel already draws").
+ *
+ * The path is read here rather than through `screens/spend.ts`'s `capsOf`,
+ * because that function builds a whole caps model for a screen and the rail
+ * draws one number of it. A document that is not an object, or one with no
+ * `global` block, is `n/a` with the field's own reason -- `readNumber`'s rule,
+ * one layer out -- and never a zero.
+ */
+export function railSpend(raw: unknown): Reading {
+  const document = typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null
+  const global = document === null ? null : document['global']
+  const block = typeof global === 'object' && global !== null && !Array.isArray(global) ? (global as Record<string, unknown>) : null
+  return readNumber(block === null ? undefined : block['counted_usd'], 'global.counted_usd')
+}
+
+/** RailView is the drawn rail and the four writes this file makes to it. The
+ * rail is drawn once and updated in place, rather than redrawn on every frame:
+ * it is chrome, and a rail rebuilt under the operator's pointer is a rail that
+ * loses its focus. */
+export interface RailView {
+  readonly root: DomElement
+  /** setState writes the state word and its glyph. */
+  setState(state: RailState): void
+  /** setSpend writes the row's spend, from the console's own budget read. */
+  setSpend(reading: Reading): void
+  /** selectAt selects the row at a position -- the write the shortcut keys make
+   * (design section 4.1: "the shortcut keys select by position"). It moves the
+   * keyboard to that row as well, because a selection the operator's next arrow
+   * key would move away from is a selection that does not agree with the focus;
+   * an index no row is drawn at selects nothing, and a rail of one row answers
+   * the first shortcut key and no other. */
+  selectAt(index: number): void
+}
+
+/**
+ * drawRail draws the installation rail: the canvas's one structural addition
+ * (design section 4.1, approved by the owner on 2026-10-19), and the grid's
+ * first column -- the body's first content child when there is no banner, and
+ * its second when there is one, because `startConsole` appends the skew banner
+ * to the same mount first. It is appended before the installation line so the
+ * tab order is the order a reader sees.
+ *
+ * **It draws one row per installation the dashboard can read, which is one
+ * row.** `installation.current` is the only installation read this document
+ * has, it takes no argument and names no id, and its answer is the installation
+ * the operator chose -- so the row's name and project are that answer's one
+ * label, drawn twice (the canvas's two-line identity), and a console with no
+ * installation chosen, or one whose store could not be read, draws **no row**
+ * rather than an invented one. A row per *stored* installation needs a bounded
+ * list read on this bridge, which the design withholds (section 4.1, section
+ * 11); this file does not add one, and the rail makes **no read of its own** --
+ * which is also what keeps the entry spec's spawn log at the two spawns a
+ * healthy console makes.
+ *
+ * **The row's state is the rail's own mark, not a field of any read**: the rail
+ * knows whether the console is reading this installation now, so it opens at
+ * `running` and goes `silent` when that read was refused or the feed has gone
+ * quiet. `setState` is how the Live half of this file tells it.
+ *
+ * **The foot row is drawn and not wired.** "+ Add installation" is the design's
+ * control, and the flow it opens is the picker window, which this document
+ * cannot open: the picker is reached from the application menu's `Installations…`
+ * item (ruling C9), the dashboard's fourteen-operation bridge has no operation
+ * that opens a window, and both the design (section 11: no Phase-6 task owns the
+ * preload or the IPC allow-list) and this task's Files keep it that way. So the
+ * control is drawn where the design draws it, with the label the design gives
+ * it, and the click that would open the picker is the one thing this task
+ * cannot add -- said here rather than papered over with a handler that does
+ * nothing. The rows are the same shape for a different reason: a row's
+ * `aria-selected` and its keys are Task 6.5's, and **what a row selects is the
+ * row** -- the rail's own mark of which row is active (design section 4.1) --
+ * because the console's one choose operation is the picker's, which this
+ * document cannot reach.
+ */
+export function drawRail(surface: DomSurface, reply: unknown): RailView {
+  const factory = surface.factory
+  const rail = factory.create('aside')
+  rail.setAttribute('class', RAIL_CLASS)
+
+  const head = factory.create('div')
+  head.setAttribute('class', RAIL_HEAD_CLASS)
+  const title = factory.create('p')
+  title.setAttribute('class', RAIL_TITLE_CLASS)
+  title.textContent = RAIL_TITLE
+  const collapse = factory.create('button')
+  collapse.setAttribute('class', RAIL_COLLAPSE_CLASS)
+  collapse.setAttribute('type', 'button')
+  collapse.setAttribute('aria-controls', RAIL_LIST_ID)
+  collapse.setAttribute('aria-expanded', 'true')
+  collapse.setAttribute('aria-label', RAIL_COLLAPSE_LABEL)
+  collapse.textContent = RAIL_COLLAPSE_GLYPH
+  head.append(title)
+  head.append(collapse)
+
+  // The list is a tablist in its own right (design sections 2.1 and 4.1): the
+  // role is Task 6.5's, and it is the renderer's first `role=` -- the rows below
+  // are its tabs.
+  const list = factory.create('div')
+  list.setAttribute('class', RAIL_LIST_CLASS)
+  list.setAttribute('id', RAIL_LIST_ID)
+  list.setAttribute('role', 'tablist')
+
+  const foot = factory.create('div')
+  foot.setAttribute('class', RAIL_ADD_CLASS)
+  const add = factory.create('button')
+  add.setAttribute('class', RAIL_ADD_CLASS)
+  add.setAttribute('type', 'button')
+  add.textContent = RAIL_ADD_LABEL
+  foot.append(add)
+
+  const hint = factory.create('p')
+  hint.setAttribute('class', RAIL_HINT_CLASS)
+  hint.textContent = RAIL_HINT
+
+  // The one row, when the dashboard can read an installation to draw one for.
+  // Its spans exist either way, so the two setters below are the same code in
+  // both cases -- a rail with no row has nothing to write to, and writing to a
+  // span that is not in the tree is a no-op rather than a branch.
+  const row = factory.create('button')
+  row.setAttribute('class', RAIL_ROW_CLASS)
+  row.setAttribute('type', 'button')
+  row.setAttribute('role', 'tab')
+  const name = factory.create('span')
+  name.setAttribute('class', RAIL_NAME_CLASS)
+  const project = factory.create('span')
+  project.setAttribute('class', RAIL_PROJECT_CLASS)
+  const state = factory.create('span')
+  state.setAttribute('class', RAIL_STATE_CLASS)
+  const spend = factory.create('span')
+  spend.setAttribute('class', RAIL_SPEND_CLASS)
+
+  const envelope = typeof reply === 'object' && reply !== null ? (reply as Record<string, unknown>) : null
+  const data = envelope !== null && envelope['ok'] === true ? envelope['data'] : null
+  const value = typeof data === 'object' && data !== null && !Array.isArray(data) ? (data as Record<string, unknown>) : null
+  const readable = value !== null && value['chosen'] === true
+
+  let word: RailState = 'running'
+  const writeState = (): void => {
+    if (!readable) return
+    state.textContent = `${RAIL_STATE_GLYPHS[word]} ${word}`
+    state.setAttribute('data-state', word)
+  }
+  writeState()
+
+  // rows is the rail's drawn rows, in the order they are drawn: the shortcut
+  // keys address them by position and the arrows move between them, and both are
+  // the list's own behaviour rather than a property of the one row a console can
+  // read today.
+  const rows: DomElement[] = []
+
+  /** select marks one row as the rail's selected row: the attribute the design's
+   * rule selects for the 3 px `--accent` border (`base.css`, design section 4.1)
+   * and the list's single tab stop. The rows beside it are unmarked in both, so
+   * "exactly one row is selected" is a fact this function keeps rather than a
+   * property of there being one row. */
+  const select = (wanted: DomElement): void => {
+    for (const each of rows) {
+      const selected = each === wanted
+      each.setAttribute('aria-selected', selected ? 'true' : 'false')
+      each.setAttribute('tabindex', tabStop(selected))
+    }
+  }
+
+  if (readable && value !== null) {
+    // One label, two spans: `ActiveInstallation` carries no display name, so the
+    // row's identity is the project it names, drawn as the name and again as the
+    // small-text line under it.
+    putText(name, value['project'], 'label', 'the installation’s project')
+    putText(project, value['project'], 'label', 'the installation’s project')
+    putReading(spend, unavailable(RAIL_SPEND_UNREAD), 'usd')
+    row.append(name)
+    row.append(project)
+    row.append(state)
+    row.append(spend)
+    list.append(row)
+    rows.push(row)
+    // The one row this console can read is the installation it is reading, so it
+    // is the selected row from the first paint -- which is also what gives the
+    // list its tab stop.
+    select(row)
+
+    // The row's keys, which are the rail's half of Task 6.5 (design section
+    // 4.1): **the arrows move the focus and Enter selects** -- the pattern's
+    // manual-activation form, because a row's selection is the rail's own mark of
+    // which row is active and choosing an installation is the picker's command,
+    // which this document cannot reach. So the arrows move the keyboard between
+    // the rows and change no mark, and Enter changes the mark on the row the
+    // operator is standing on.
+    keydownOn(surface.nodeOf(row), (event: KeyEventLike) => {
+      const target = tabTarget(event.key, rows.indexOf(row), rows.length, 'y')
+      if (target !== null) {
+        event.preventDefault()
+        rows[target]?.focus()
+        return
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        select(row)
+      }
+    })
+  }
+
+  rail.append(head)
+  rail.append(list)
+  rail.append(foot)
+  rail.append(hint)
+
+  // The collapse control is this task's, so its behaviour is too: it flips the
+  // rail's `data-collapsed`, which is the one rule the 216 px and 56 px widths
+  // are selected by, and it keeps `aria-expanded` and its own name in step with
+  // what it drew. Nothing else about the rail moves -- a collapsed rail is the
+  // same tree, drawn narrow.
+  let collapsed = false
+  surface.nodeOf(collapse).addEventListener('click', () => {
+    collapsed = !collapsed
+    rail.setAttribute('data-collapsed', collapsed ? 'true' : 'false')
+    collapse.setAttribute('aria-expanded', collapsed ? 'false' : 'true')
+    collapse.setAttribute('aria-label', collapsed ? RAIL_EXPAND_LABEL : RAIL_COLLAPSE_LABEL)
+    collapse.textContent = collapsed ? RAIL_EXPAND_GLYPH : RAIL_COLLAPSE_GLYPH
+  })
+
+  return {
+    root: rail,
+    setState: (next: RailState): void => {
+      word = next
+      writeState()
+    },
+    setSpend: (reading: Reading): void => {
+      if (!readable) return
+      // The title is cleared first: `putReading` writes one only for a reading
+      // with no value, and the rail is the one drawing this file *updates* in
+      // place rather than redrawing -- so a reason left over from the `n/a` this
+      // span drew a moment ago would sit under a figure that is now measured.
+      spend.removeAttribute('title')
+      putReading(spend, reading, 'usd')
+    },
+    selectAt: (index: number): void => {
+      const wanted = rows[index]
+      if (wanted === undefined) return
+      select(wanted)
+      // The focus follows the selection, and it is the same move the row's own
+      // Enter makes: a shortcut that marked a row the keyboard was not on would
+      // leave the operator's next arrow key acting somewhere else.
+      wanted.focus()
+    },
+  }
+}
+
+// ---------------------------------------------------------------------------
 // The dashboard (desktop-console plan Task 3.4c).
 // ---------------------------------------------------------------------------
 
@@ -581,6 +1129,14 @@ export function killWithheld(model: LiveModel): LiveModel {
 export interface DashboardScope {
   readonly fugaro: unknown
   readonly document: Document
+  /** navigator is the window's navigator, and it is here for one question: the
+   * rail's shortcut keys are Command-1 to Command-3 on macOS and Control-1 to
+   * Control-3 elsewhere (design section 4.1), so `isMacPlatform` has to be able
+   * to ask.
+   * It is optional because a caller that drives this file under `vitest` has no
+   * window -- and a scope with none answers "not macOS", which is the rule's
+   * other half rather than a special case. */
+  readonly navigator?: unknown
 }
 
 /**
@@ -590,11 +1146,14 @@ export interface DashboardScope {
  * `test/unit/entry-wiring.test.ts` with a fake document and a fake bridge, and
  * in `test/e2e/entry.spec.ts` in the real window.
  *
- * What it draws, in order: the refusal or the banner (`startConsole`'s), which
- * installation the console is showing (`drawInstallation`), the navigation, and
- * the Live screen. A refused console draws the refusal and **stops**: no
- * navigation, no header, and not one read -- which is the whole of D7 from this
- * side.
+ * What it draws, and what it appends to the mount (`document.body`) in that
+ * order, so DOM order and tab order agree with the layout: `startConsole`'s
+ * refusal or banner first (it appends that itself), then the installation rail
+ * (`drawRail`, Task 6.3), then the line saying which installation the console is
+ * showing (`drawInstallation`), and then -- `mountDashboard`'s -- the navigation
+ * and the panel with the Live screen in it. A refused console draws the refusal
+ * and **stops**: no rail, no installation line, no navigation, no panel, and not
+ * one read -- which is the whole of D7 from this side.
  */
 export async function bootDashboard(scope: DashboardScope): Promise<void> {
   const surface = domSurface(scope.document)
@@ -612,8 +1171,17 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
   } catch {
     installation = null
   }
+  const rail = drawRail(surface, installation)
+  surface.mount.append(rail.root)
   surface.mount.append(drawInstallation(surface.factory, installation))
-  await mountDashboard({ document: scope.document, surface, gate, bridge })
+  await mountDashboard({
+    document: scope.document,
+    surface,
+    gate,
+    bridge,
+    rail,
+    navigator: scope.navigator,
+  })
 }
 
 /** DashboardDeps is what the dashboard half of `bootDashboard` needs, named so
@@ -623,6 +1191,15 @@ interface DashboardDeps {
   readonly surface: DomSurface
   readonly gate: ScreenGate
   readonly bridge: ReadBridge
+  /** rail is the installation rail, drawn before the dashboard was mounted and
+   * updated from here: the Live half owns its state word, the two views that
+   * read the budget fill its spend, and the shortcut keys select its rows. */
+  readonly rail: RailView
+  /** navigator is the window's, for the one question the shortcut keys ask of
+   * the machine -- which modifier they are spelled with (design section 4.1:
+   * Command on macOS, Control elsewhere). It is the scope's rather than a global
+   * so a case can drive both platforms (`isMacPlatform`). */
+  readonly navigator: unknown
 }
 
 /**
@@ -632,7 +1209,7 @@ interface DashboardDeps {
  * figures in it rather than at an empty panel that fills in later.
  */
 async function mountDashboard(deps: DashboardDeps): Promise<void> {
-  const { document, surface, gate, bridge } = deps
+  const { document, surface, gate, bridge, rail, navigator } = deps
   const factory = surface.factory
   const theme = CONSOLE_THEME
 
@@ -727,17 +1304,42 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   const stale = (mine: number): boolean => mine !== generation
 
   /**
+   * markButtons is the navigation's one writer of its three markers (Task 6.5;
+   * design sections 2.1 and 4.3). A button carries the fact twice on purpose:
+   * `aria-current` is the navigation's own mark, which the code emitted before
+   * this task and the stylesheet already selects, and `aria-selected` is the
+   * same fact in the vocabulary a tablist is read with -- a tab that is not
+   * selected is not the tab that is showing.
+   *
+   * The `tabindex` is the roving one: **the current view's button is the
+   * navigation's single tab stop** and the others are out of the tab order, so a
+   * reader tabs into the nav once rather than three times and the arrows move
+   * within it. Run detail is a view with no button, and while it is up no
+   * offered view is current -- so the stop falls back to the first offered
+   * button rather than to none: a tablist with every tab at `-1` is a tablist the
+   * keyboard cannot enter at all, which is the one thing a roving `tabindex` may
+   * not do.
+   */
+  const markButtons = (id: string): void => {
+    const first = buttons.keys().next()
+    const roving = buttons.has(id) || first.done === true ? id : first.value
+    for (const [key, button] of buttons) {
+      button.setAttribute('aria-current', key === id ? 'true' : 'false')
+      button.setAttribute('aria-selected', key === id ? 'true' : 'false')
+      button.setAttribute('tabindex', tabStop(key === roving))
+    }
+  }
+
+  /**
    * markCurrent is the navigation's one writer: it records which view is on
-   * screen, marks its button, and invalidates whatever was in flight for the
+   * screen, marks its buttons, and invalidates whatever was in flight for the
    * view before it. Run detail is a view without a button -- it is reached from
    * a run row -- so every button is unmarked while it is up, which is the truth
    * about the navigation: none of the offered views is the one on screen.
    */
   const markCurrent = (id: string): void => {
     claim()
-    for (const [key, button] of buttons) {
-      button.setAttribute('aria-current', key === id ? 'true' : 'false')
-    }
+    markButtons(id)
     currentView = id
     syncPolling()
   }
@@ -755,8 +1357,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     if (id === 'projects') void showProjects()
   }
 
+  // The navigation is a tab list in all but name, and Task 6.5 makes it one
+  // (design section 4.3): the role is on the nav, the buttons are its tabs, and
+  // the arrows and Home/End drive it below.
   const nav = factory.create('nav')
   nav.setAttribute('class', VIEW_NAV_CLASS)
+  nav.setAttribute('role', 'tablist')
   surface.mount.append(nav)
 
   for (const entry of VIEWS) {
@@ -766,19 +1372,36 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     const button = factory.create('button')
     button.setAttribute('class', VIEW_BUTTON_CLASS)
     button.setAttribute('type', 'button')
+    button.setAttribute('role', 'tab')
     button.setAttribute('data-view', entry.id)
-    // The view on screen is marked from the first paint, not only after the
-    // first click: `show` writes this attribute on every switch, and a
-    // navigation that carried it only once something had been clicked would
-    // draw a console whose current view is unmarked.
-    button.setAttribute('aria-current', entry.id === currentView ? 'true' : 'false')
     button.textContent = entry.label
     nav.append(button)
     buttons.set(entry.id, button)
     surface.nodeOf(button).addEventListener('click', () => {
       show(entry.id)
     })
+    // The navigation's keys (design section 4.3): Left and Right, Home and End,
+    // and each of them is `show` -- a nav button's selection *is* the view it
+    // puts on screen, so the arrows activate as they move and no second key is
+    // needed (the rail's rows, which select only themselves, need Enter for
+    // that). The focus follows the view, which is what keeps the ring on the
+    // button the reader is standing on.
+    keydownOn(surface.nodeOf(button), (event: KeyEventLike) => {
+      const order = [...buttons.keys()]
+      const target = tabTarget(event.key, order.indexOf(entry.id), order.length, 'x')
+      const wanted = target === null ? undefined : order[target]
+      if (wanted === undefined) return
+      event.preventDefault()
+      show(wanted)
+      buttons.get(wanted)?.focus()
+    })
   }
+
+  // The view on screen is marked from the first paint, not only after the first
+  // click: `markButtons` writes these attributes on every switch, and a
+  // navigation that carried them only once something had been clicked would draw
+  // a console whose current view is unmarked and whose tab stop is nowhere.
+  markButtons(currentView)
 
   surface.mount.append(panel)
 
@@ -799,6 +1422,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     } catch {
       // The same rule `drawLive` keeps: a poll that fails while another view is
       // on screen does not replace the view the operator chose.
+      rail.setState('silent')
       if (currentView === 'live') refuse('live.watch', READ_UNREADABLE)
     } finally {
       live.inFlight = false
@@ -820,16 +1444,23 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     if (currentView !== 'live') return
     const answer = replyData(reply)
     if (!answer.ok) {
+      rail.setState('silent')
       refuse('live.watch', answer.sentence)
       return
     }
     const envelope = answer.data as Record<string, unknown>
     const decoded = decodeSnapshot(envelope['document'], 'live.watch')
     if (!decoded.ok) {
+      rail.setState('silent')
       refuse('live.watch', decoded.skew.because)
       return
     }
     const feed = feedHealthOf(envelope['receivedAt'], nowStamp())
+    // The rail's state word is this read's own: the console is reading this
+    // installation now (`running`), unless the frame it holds has gone quiet --
+    // which is the second of the two conditions the design gives `silent`
+    // (section 4.1). A read that was refused sets it above.
+    rail.setState(feed.stale ? 'silent' : 'running')
     const model = buildLiveModel(decoded.value, history, feed)
     // The kill banner is the `kill` view. It is asked for through the gate --
     // the one door -- with an empty drawing, because what a reduced console
@@ -879,6 +1510,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     let controls: SpendControls = SPEND_DEFAULT_CONTROLS
     let caps: Readonly<Record<string, unknown>> | null = null
     const capsReply = documentOf(await bridge.showBudget({}))
+    // The rail's spend is the console's own budget read -- this one, the read
+    // the caps panel makes -- and the rail makes none of its own (design section
+    // 4.1). It is filled before the staleness check below: the spend is a fact
+    // about the installation rather than about the view the operator chose, so a
+    // read that landed after they moved on still fills the rail.
+    if (capsReply.ok) rail.setSpend(railSpend(capsReply.data))
     if (stale(mine)) return
     if (capsReply.ok) caps = capsReply.data
 
@@ -977,6 +1614,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       return answer.ok ? answer.data : null
     }
     const budget = await read('budget.show', () => bridge.showBudget({}))
+    // The Projects view makes the same budget read, and the rail's spend is that
+    // read's too: one read serves the panel and the rail.
+    if (budget !== null) rail.setSpend(railSpend(budget))
     const runs = await read('runs.list', () => bridge.listRuns({}))
     // Both reads are in, and the operator may have moved on while they were.
     if (stale(mine)) return
@@ -1047,15 +1687,42 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   document.addEventListener('visibilitychange', () => {
     syncPolling()
   })
+
+  // ---- The rail's shortcut keys -----------------------------------------
+
+  // The shortcut keys are the *document's* and not the rail's, which is what
+  // design section 4.3 means by "without walking the tab order at all": the key
+  // reaches a row from wherever the operator is standing, and the rail is the
+  // region it addresses rather than the place the keyboard has to be. The
+  // modifier is the platform's (design section 4.1), so the key is read against
+  // the navigator this window was handed, and a key the console has taken is
+  // prevented -- a shortcut that also did whatever the platform does with it
+  // would be two actions for one keystroke. Which keys those are is
+  // `shortcutRow`'s whole answer: the first three rows and no fourth, read from
+  // the physical key rather than from the character the layout produced, and
+  // everything it answers `null` for is the window's and is not prevented here.
+  const mac = isMacPlatform(navigator)
+  document.addEventListener('keydown', (event: KeyboardEvent) => {
+    const index = shortcutRow(event, mac)
+    if (index === null) return
+    event.preventDefault()
+    rail.selectAt(index)
+  })
 }
 
 // The one moment this file gets in a renderer. `startConsole` answers every
 // failure as a compatibility and so does not reject; the `catch` is for a
 // document this file cannot draw into at all, and then the right drawing is
 // none.
-const scope = globalThis as { readonly fugaro?: unknown; readonly document?: unknown }
+const scope = globalThis as {
+  readonly fugaro?: unknown
+  readonly document?: unknown
+  readonly navigator?: unknown
+}
 if (hasDashboardContext(scope)) {
-  void bootDashboard({ fugaro: scope.fugaro, document: scope.document as Document }).catch(
-    () => undefined,
-  )
+  void bootDashboard({
+    fugaro: scope.fugaro,
+    document: scope.document as Document,
+    navigator: scope.navigator,
+  }).catch(() => undefined)
 }

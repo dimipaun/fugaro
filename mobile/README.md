@@ -34,7 +34,57 @@ build-time config that resolves the two release identities from EAS
 environment variables) and `eas.json` (the `development`, `preview` and
 `internal` profiles) are in the tree, with their tests — see "Building for
 internal testing". **Nothing is built or submitted by any of this**: Check 89
-is owner-run, and no `eas` command has been run here.
+is owner-run, and no `eas` command has been run here. (The owner's own first
+iOS submission, on **2026-10-20**, did succeed — EAS created the App Store
+Connect app record and printed its `ASC App ID`, which `eas.json` now records so
+EAS never asks for it again — but that was the owner's terminal, not this
+repository.)
+
+**The toolchain is declared too (added 2026-10-20).** `eas build --profile
+internal` could not detect an SDK, because the manifest declared no dependency
+at all; it now names **Expo SDK 58** and the four packages `index.js` imports,
+`package-lock.json` pins the tree `npm ci` installs, and `metro.config.cjs` adds
+the repository root to Metro's `watchFolders` so the app's `shared/` imports
+bundle. `npx expo export` builds a JavaScript bundle for both platforms; a
+native build is still owner-run — see "Building for internal testing" and "What
+is not verified here".
+
+**The Android launch crash, and the two things that came out of it (added
+2026-10-21).** The owner installed the `preview` APK on Android on 2026-10-21
+and it **opened and closed with no screen at all**. The cause was a `TypeError`
+thrown while `index.js` was being *evaluated*: `expoSecureStorePort` required
+`SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY`, and that constant **does not exist
+on Android** — `expo-secure-store`'s `ios/SecureStoreModule.swift` registers
+seven `Constant(...)` entries and its
+`android/.../SecureStoreModule.kt` registers **none**, so the SDK's own
+`export const WHEN_UNLOCKED_THIS_DEVICE_ONLY = ExpoSecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY`
+is `undefined` there. Nothing else about the build was wrong:
+`expo-secure-store` 58.0.2 is the version `node_modules/expo/bundledNativeModules.json`
+pins for SDK 58, its config plugin is listed in `app.json`, and its native
+module is linked and works on Android — it simply has no accessibility levels to
+name. Two changes answer it:
+
+* **the port takes the platform** (`expoSecureStorePort(SecureStore, { platform:
+  Platform.OS })`). On iOS the constant is still required, so a rename is a loud
+  refusal rather than a silent downgrade to `WHEN_UNLOCKED` — the item that
+  rides an iCloud backup onto another phone; on Android no constant is asked for
+  and the write carries no `keychainAccessible`, which the Kotlin
+  `SecureStoreOptions` record has no field for. `src/accounts/expo-secure-store.js`
+  has the full account, `src/accounts/expo-secure-store.test.js` the tests.
+* **the startup is guarded** (`src/app/startup.js`, wired in `index.js`). The
+  whole of the wiring — both ports, the store, the demo, the screens, the shell
+  — is built inside `startup.root(build)`, so a throw from any of it renders a
+  plain screen: what failed, the error's message, and a **"Copy details"** line
+  a reviewer can long-press and paste. A root error boundary catches a
+  render-time throw the same way, and `startup.guard(what, run)` — built on
+  `report(error, what)` — is the door for a failure that arrives *after* a
+  successful start, catching **both** halves: a rejected promise (its `try`
+  cannot see what happens after an `await`) and a **synchronous** throw (a tap
+  handler runs from the platform's event loop, not from `root`'s `try`, so a
+  throw there is an uncaught error in a release build; the demo's entry is the
+  app's first guarded step today, and a future SecureStore read, listener or
+  fetch joins it). A release build on a phone has no terminal and no
+  red box, so a startup failure that is not *drawn* is one nobody can report.
 
 **Two audio seams, and now one of them is wired.** P3.6 defined the one audio
 seam it needed -- `src/mailbox/speaker.js`, `speak(text)` answering whether the
@@ -55,6 +105,15 @@ P3.5 does not own `src/mailbox/`. The secure store is **not** stubbed: P3.1's
 cd mobile && npm test          # node --test "src/**/*.test.js"
 ```
 
+**No install is needed to run them.** The app's runtime packages are declared in
+`package.json` (see "Building for internal testing") and no test imports one:
+every test reaches the platform through a fake, and `index.js` — the file that
+imports the real modules — is not tested (see "What is not verified here").
+`npm test` therefore runs in a fresh clone with no `node_modules`, and
+`npm install` is a prerequisite of *bundling* the app, not of testing it.
+`src/dependencies.test.js` is what keeps the declaration and the imports in
+step.
+
 Node 22 (`>=22 <23`) and npm 10, per the manifest's `engines`. The script is a
 **glob**, deliberately (implementation-plan §"files each task owns"): no later
 task has to edit this manifest to add a test file. The cost of a glob is that
@@ -71,9 +130,11 @@ module plugged in by `index.js` at the bottom of the tree.
 
 ## Demo mode: how to enter it, and how to leave it
 
-1. Start the app the way this file describes under "Running the tests" (the
-   Expo toolchain, which is not installed in the environment this was written
-   in). The first screen appears: "Try the demo".
+1. Start the app on a device or simulator with the Expo toolchain, declared in
+   `package.json` since this task (Expo SDK 58) and installed with
+   `npm install` — see "Building for internal testing". **No `expo start` has
+   been run in this environment** (see "What is not verified here"). The first
+   screen appears: "Try the demo".
 2. Tap **Try the demo**. There is nothing to set up first -- no account, no
    pairing, no sign-in and no network -- and the demo runs entirely on the
    phone, on fixed sample data.
@@ -95,12 +156,16 @@ fences, are `src/demo/`'s; the words the owner pastes into the Play form are
 
 | Path | What it is |
 | --- | --- |
-| `index.js` | The entry. The one file that knows what a device is: it imports `expo`, `expo-secure-store`, `@react-native-async-storage/async-storage`, `react` and `react-native`, builds the two ports, the store and the demo controller, wires the two screens and registers the root. No decisions of its own, and no test (see "What is not verified"). |
-| `app.json` | The Expo config. No credential, no installation, no bundle identifier, no Android package — see `src/app-config.test.js`. |
+| `index.js` | The entry. The one file that knows what a device is: it imports `expo`, `expo-secure-store`, `@react-native-async-storage/async-storage`, `react` and `react-native`, builds the two ports (the Keychain one with `Platform.OS`, the constant that decides its rule being iOS's), the store and the demo controller, wires the two screens, and registers the root **inside the guarded startup**. No decisions of its own, and no test (see "What is not verified"). |
+| `package.json`, `package-lock.json` | The manifest and the tree `npm ci` installs. The dependencies are the packages `index.js` and `src/` actually import — `expo`, `react`, `react-native`, `expo-secure-store` and `@react-native-async-storage/async-storage` — plus `expo-splash-screen`, which nothing imports and which `app.json` names as a **config plugin** (a plugin that is not installed is a prebuild that stops): `src/dependencies.test.js` fails on an undeclared import and on a manifest that lacks `expo`, `react` or `react-native`. |
+| `metro.config.cjs` | Metro's config, and the one entry in it that matters: `watchFolders` includes the **repository root**, because the app imports `shared/` (`../../../shared/confirm/index.js` and its siblings) and Metro's project root is `mobile/`. Without it the bundle fails to resolve them — `npx expo export` stops at `Unable to resolve module ../../../shared/confirm/index.js` — so it is not removable, and `src/dependencies.test.js` fails if it goes. `.cjs`, because `package.json` is `"type": "module"`. |
+| `app.json` | The Expo config. No credential, no installation, no bundle identifier, no Android package — see `src/app-config.test.js`. Three fields are what SDK 58 needs: `icon` and `android.adaptiveIcon` (`./assets/icon.png` and `./assets/adaptive-icon.png`, the two brand masters copied in — see `assets/` below and `src/app-config.icons.test.js`), `plugins: ["expo-secure-store", ["expo-splash-screen", …]]` (the module that holds D111's two items, whose config plugin is what configures it for a native build — `npx expo install` asks for it — and the splash SDK 58 has no top-level key for) and **no `edgeToEdgeEnabled` and no `newArchEnabled`**: `npx expo-doctor` reports each of the two as `Additional property "…" is not allowed` against the SDK 58 schema (one error per run, so removing the first is what makes the second visible — 19/20, then 19/20, then 20/20). Both flags ask for what SDK 58 builds anyway: edge-to-edge is mandatory from Android 16 (Expo's own `withEdgeToEdge` says so), and the new architecture is the only architecture. |
 | `app.config.js` | **The build-time config** (P4.4), and the one place the two release identities come from: it resolves `FUGARO_IOS_BUNDLE_ID` and `FUGARO_ANDROID_PACKAGE` from the environment over `app.json`'s `expo` object — see "Building for internal testing" and `src/app-config.ids.test.js`. |
-| `eas.json` | The EAS profiles: `development`, `preview` and `internal` (the store profile Check 89 builds and submits with). No credential path, no credential value and no identity value — see `src/eas-config.test.js`. |
+| `eas.json` | The EAS profiles: `development`, `preview` and `internal` (the store profile Check 89 builds and submits with). It carries exactly one store-side **identifier** — `ascAppId`, the App Store Connect app record's own public number, so EAS is never asked for it (the submit track, the store distribution and the AAB build type are store-side *settings*, not identifiers, and "Building for internal testing" below is where the track is called C8's whole content) — and no credential path, no credential value and no identity value — see `src/eas-config.test.js`. |
+| `assets/` | The app's icons (the owner's task of 2026-10-21): `icon.png` and `adaptive-icon.png` are **byte copies** of `brand/app-icon-1024.png` (the opaque master — iOS refuses an icon with transparency) and `brand/app-icon-android-foreground-1024.png` (the transparent adaptive-icon foreground), which `scripts/gen-brand-icons.py` writes from `brand/fugaro-logo.png` alone — the masters are never edited by hand, and neither is this copy: change an icon by re-running the script and copying again, and `src/app-config.icons.test.js` fails on the bytes if it is forgotten. The splash shows the same `icon.png` over the masters' own ground colour, so the app's first screen is the logo on the brand's dark ground. |
 | `src/accounts/` | The account store: the installation tuple (`account.js`), the two items (`secret.js`), the secure store (`secure-store.js`), the settings store and its fences (`settings.js`), the per-account listeners and caches (`resources.js`), the store itself (`store.js`), and the two device ports (`expo-secure-store.js`, `expo-async-storage.js`). `index.js` is the one door. |
 | `src/app/root.js` | The root shell. Renders the current account's id, and nothing else an installation was built from; while demo mode is on it draws the banner and the way out on **every** screen, above whatever the screen holds. |
+| `src/app/startup.js` | The guarded startup and the root error boundary (added 2026-10-21, after the Android launch crash): `startup.root(build)` builds the app inside a `try` and renders the failure screen if it throws, `report(error, what)` is the same door for a failure that arrives later, `guard(what, run)` wraps one step the app runs later -- a tap handler, an async startup step -- and catches **both** its synchronous throw and its rejected promise, because a handler runs from the platform's event loop and not from any `try` in this file, and `failureDetails`/`createFailureScreen` turn anything thrown -- a string, `undefined`, a circular object -- into what the phone shows: the step, the message, and a selectable "Copy details" line. `React` arrives as an argument that must carry `Component`, because an error boundary is a class. `src/app/startup.test.js` drives it with a fake React, a renderer and all. |
 | `src/app/first-screen.js` | The first screen: what the app is waiting for, the "Try the demo" control, and the slot (`pairingScreen`) where P6.8's pairing screen goes -- above the demo control, never instead of it. |
 | `src/demo/` | Demo mode (the owner's ruling of 2026-10-19): the fixed sample data (`sample.js`), the placeholder key source (`keys.js`), the transport that plants the consumer's side in the port double (`transport.js`), the controller (`index.js`) and the screen (`screen.js`). `safety.test.js` is the scan that holds the three fences (no network, no secure storage, no credential). |
 | `src/mailbox/` | The mailbox client: the write paths and their key rules (`paths.js`), the app's SHA-256 and HMAC (`sha256.js`, `mac.js`), the redactor's seam (`redact.js`), the database port and its double (`store.js`), the audio stub (`speaker.js`) and the client itself (`client.js`). `index.js` is the one door; `write-path.test.js` is the scan that enforces the one-write-path claim; `mutation-proof.sh` proves the guards; `README.md` is the module's own rule sheet. |
@@ -109,6 +174,7 @@ fences, are `src/demo/`'s; the words the owner pastes into the Play form are
 | `src/audio/` | The voice ports and their fakes (P3.4): the capture path (`audio-in.js`), transcription (`stt.js`), speech output (`tts.js`), the transcript-to-message rule (`message.js`) and the pipeline that wires them (`pipeline.js`). **No engine, no device, no SDK**: `index.js` is the one door, and its test scans the directory for exactly that. |
 | `src/voice/` | The voice screen (P3.5): the interrupt switch and the pure decision it gates (`interrupt.js`), the screen itself — the queue, P1.4's offline refusal, P1.2's lease and D122's microphone state (`screen.js`) — and the adapter that puts P3.4's pipeline behind P3.6's speaker port (`speaker.js`). **No engine, no device, no database**: `index.js` is the one door, and its test scans the directory for exactly that. |
 | `src/boundary.test.js` | The scan that says **which files may write a credential** (below). |
+| `src/dependencies.test.js` | The scan that says **which packages the app is made of**: `expo`, `react` and `react-native` are declared, every bare import under `index.js` and `src/` is declared, and `package-lock.json` is the lockfile `npm ci` installs. It is what makes `eas build` able to find an SDK. |
 | `src/skeleton/` | The trivial module and test that proved the runner runs (P3.1's red step). |
 
 ## Building for internal testing
@@ -120,6 +186,18 @@ public release is not reversible in the way an internal one is (C8), and **no
 agent runs any of the commands below**: each needs the owner's Expo, Apple and
 Google accounts, and no Expo token, App Store Connect key or Play
 service-account key goes into an agent's session (D120, Global Constraint 9).
+
+**Prerequisites: run `npm install` in `mobile/` first; the SDK is Expo SDK 58.**
+The manifest declares the app's runtime packages (`expo` 58.x, `react-native`
+0.88, `react` 19.3, `expo-secure-store` 58.x and
+`@react-native-async-storage/async-storage` 2.2), the versions `npx expo
+install` picks for that SDK, and `package-lock.json` pins the tree `npm ci`
+installs. `metro.config.cjs` is the other half of a bundle: it adds the
+repository root to `watchFolders`, because the app imports `shared/`. What
+**is** verified here is that the JavaScript resolves — `npx expo export` for
+both platforms, see the pull request that added this paragraph — and what is
+**not** is a native build or a submission: those need the owner's accounts, and
+the list is at the end of this file ("What is not verified here").
 
 **The two identities, and where they are not.** The iOS bundle identifier and
 the Android package name are one public reverse-DNS name each — the same name
@@ -185,7 +263,16 @@ eas submit --platform android --profile internal --latest
 `internal` is the store profile: `distribution: store`, an Android
 `app-bundle` (the Play app-signing path) and `submit.internal.android.track`
 **exactly `internal`** — C8's whole content is that one value. The iOS submit
-side names nothing at all: EAS prompts for it. `cli.appVersionSource` is
+side names **exactly one** thing, and it is the app's own record on Apple's
+side: `submit.internal.ios.ascAppId` is the App Store Connect app id EAS printed
+when it created that record — `ASC App ID: 6824584935`, from the owner's first
+submission of **2026-10-20** — so EAS is never asked for it again. It is a
+**public number** on Apple's side of the submission and not a credential and not
+one of the two identities: `src/eas-config.test.js` admits that one key, with
+the digits Apple's record carries, and refuses every other entry of the section
+— the bundle identifier, the Android package, the Apple ID, the team id and an
+App Store Connect API key id included, whether it arrives as the name of an
+entry or as the value of that one key. `cli.appVersionSource` is
 `remote`, and what that puts on the project is the **build number** —
 `expo.ios.buildNumber` and `expo.android.versionCode`: EAS holds it, so no file
 here carries one. Remote means *stored* remotely, not *moved*: the `internal`
@@ -212,6 +299,67 @@ names the EAS environment it builds with (`development`, `preview`, and
 three above: a profile that named none would resolve EAS's default environment
 instead.
 
+**The submit step, on your own machine.** `eas build` uploads nothing to a
+store: the submission is `eas submit`, and **it needs the two identities in that
+shell as well**. `eas submit` resolves `app.config.js` in its own process, where
+`EAS_BUILD` is unset (above), and on your machine it reads no EAS environment at
+all — the `internal` profile's variables live in the EAS project's `production`
+environment, which EAS loads for a *build job* and not for a local command. So
+without them the submit stops before it uploads anything, with
+`Specify ios.bundleIdentifier`; the owner's first submission (2026-10-20) hit
+exactly that. Two ways to run it, and they are the same command:
+
+```sh
+# --- as the owner, at your own terminal: the submit, two ways ---
+FUGARO_IOS_BUNDLE_ID=<the reverse-DNS identity> \
+FUGARO_ANDROID_PACKAGE=<the reverse-DNS identity> \
+  eas submit --profile internal --platform ios            # ... and --platform android
+# or, with the environment the profile names loaded into this one command:
+eas env:exec production 'eas submit --profile internal --platform ios'
+```
+
+`--latest` — the flag the Check 89 block above uses — submits the profile's most
+recent finished build instead of asking which build; the two forms just above
+are the same command without it. **Neither form has been run from this
+repository**, and no agent runs either: the submission is the owner's (D120,
+Check 89). What follows is what the stores do with the upload.
+
+**After the iOS upload: TestFlight.** The submission is not the install — Apple
+processes the build first, and the owner does four things:
+
+1. **Apple processes the build** (about 5 to 10 minutes) and sends an email when
+   it is done; in App Store Connect the build goes *Processing* → *Ready to
+   test*. Nothing is installable until then.
+2. **App Store Connect → TestFlight → the build → add yourself as an internal
+   tester.** Internal testers need **no Apple review** — that is the whole
+   reason this first release is an internal one (C8) — so the build is testable
+   as soon as it is processed.
+3. **Answer the export-compliance question, if the console asks it.** The build
+   already carries the answer: `app.config.js` merges
+   `ios.infoPlist.ITSAppUsesNonExemptEncryption: false` (the owner's declaration
+   of 2026-10-20, in "The export-compliance answer is declared, not asked
+   again." below), which is why the question is normally not put at all; if App
+   Store Connect shows it anyway, the answer is the declared one.
+4. **Install through the TestFlight app** on the device — the console hands out
+   no build by itself. This is Check 89 step 4's install, and what it records is
+   the version the app reports against the release's tag (C6).
+
+**The Android equivalent.** `eas submit --profile internal --platform android`
+uploads the **AAB** to Play's **internal testing** track — `eas.json`'s
+`submit.internal.android.track` is exactly `internal` (C8's one value) and the
+AAB is the signed app bundle the Play app-signing path takes (Check 89 step 2's
+FACT) — and then the release is handed to the testers the same way TestFlight's
+is: the console shows it on the internal testing track, testers are added to
+that track there, and the app installs from the Play internal-testing link.
+**One prerequisite is Google's and not EAS's, and nothing here has verified
+it**: a brand-new Play app's **first** upload has to be made once through the
+Play Console's own UI, because neither the Play API nor `eas submit` can create
+an app's first release; `eas submit` publishes the ones after it. No Play
+command has been run from this repository — that step, the console's exact
+wording and whether the internal-testing track needs anything else are read off
+Google's documentation and from the owner's console, **not observed here**, and
+they are on the unverified list below with the rest of the store path.
+
 **What `app.config.js` refuses, and what it does not ask for.** Under a build —
 `EAS_BUILD` is set on EAS's build servers, or the owner asks for the same check
 locally with `FUGARO_REQUIRE_IDS=1` — a variable that is missing or malformed
@@ -226,6 +374,13 @@ file in, above), and a static identity planted in `app.json` is dropped rather
 than passed through, so the file stays the single site for them. The file reads
 the two variables and the two switches, and **nothing else in the environment
 reaches the config**: it holds no credential, and it cannot.
+
+**The export-compliance answer is declared, not asked again.** `app.config.js`
+merges `ios.infoPlist.ITSAppUsesNonExemptEncryption: false` into every
+resolution — the owner's declaration of **2026-10-20** ("write it, it's OK":
+the app uses only standard/exempt encryption), made after `eas build` printed
+that it cannot write that key into a dynamic config — while **the owner answers
+Apple's other export questions in App Store Connect**.
 
 ## The mailbox client, and the app's write set
 
@@ -268,13 +423,31 @@ storage (Keychain on iOS, Keystore-backed storage on Android) via
 
 They are written under `fugaro.account.<accountId>.<item>`, one Keychain item
 per account per item, with `keychainAccessible:
-WHEN_UNLOCKED_THIS_DEVICE_ONLY` (`src/accounts/expo-secure-store.js`). That
+WHEN_UNLOCKED_THIS_DEVICE_ONLY` **on iOS** (`src/accounts/expo-secure-store.js`;
+Android's store is SharedPreferences behind the Keystore, declares no
+accessibility constant and takes no such option, which is the platform split
+the 2026-10-21 crash was about). That
 choice is the one security decision the port makes, and it has its own test: it
 keeps an item out of an **iCloud Keychain backup** and off a **restored-to-
 another-phone** device. The MAC key proves possession of the pairing, so a key
 that could be restored anywhere would restore the ability to speak as this
-installation — `per-pairing` in name only. It is also not readable while the
-phone is locked. `requireAuthentication` (a Face ID prompt on every read) is
+installation — `per-pairing` in name only. **On iOS** it is also not readable
+while the phone is locked, which is what `WHEN_UNLOCKED` rather than
+`AFTER_FIRST_UNLOCK` buys and what the voice-session reconciliation's **F24**
+(and VS5.1, a paused session touches no credential) rests on. **That sentence is
+iOS's, and this branch has just made that distinction load-bearing**: Android's
+store is SharedPreferences behind the Keystore, has no accessibility constant to
+set, and its key is **not** unlock-gated, so F24 is **not** a property of the
+Android build — an Android session paused on a call can still read its pairing
+key. That is read off the installed module, not assumed:
+`expo-secure-store/android/.../encryptors/AESEncryptor.kt:64` is
+`.setUserAuthenticationRequired(options.requireAuthentication)`, and this app
+never sets `requireAuthentication`, so the Android key is generated
+authentication-free (there is no `setUnlockedDeviceRequired` call either).
+Nothing in this repository asserts a cross-platform version of F24: F24's own
+evidence is the port's **iOS** rule, and neither platform's constant has been
+exercised on a device (see the unverified list below).
+`requireAuthentication` (a Face ID prompt on every read) is
 deliberately **not** set: the ID token is refreshed and read in the background,
 and a prompt per refresh is a prompt the owner switches off.
 
@@ -741,6 +914,14 @@ sign on them, and for `clock-differs` the age is not a fact this phone can state
 at all. The sign is P1.4's arithmetic; the state is the fact. A reading with an
 age the phone *can* state keeps it — `stale (190s ago)`.
 
+**And a value that is not a number is not a duration either.** `heartbeatRow`
+refuses one, so no reading the wiring makes can carry it — but `lines()` sits on
+the screen's edge and asks only that the list be `jobList`-**shaped**, so a list
+assembled by hand reaches `ageText` with anything in the heartbeat. `NaN < 0` is
+false and `'3s' < 0` is false, so a sign test alone let both through to the
+arithmetic and the line read `live (NaNs ago)`. The state is printed alone
+there too, and the test is `Number.isFinite` so that `Infinity` goes with them.
+
 ### The scan: the resolution's "not shown" as rules
 
 `scope.test.js` holds what no behavioural test can hold on its own — that no
@@ -760,7 +941,12 @@ so a mistyped pattern cannot pass for a clean tree, and with test files exempt
 
 Two rules are not token rules. The door's surface is asserted as an **exact set**
 (the rule P3.2's `index.test.js` gives) and **no name on it may be dead** — used
-nowhere. The first version of that rule counted a name's own declaration as a use
+nowhere. The set is read from the **module** (`import()` the door, `Object.keys`),
+not from its text: the first version collected `export { … } from '…'` blocks out
+of the source, which is one of the forms an export can be written in, so an
+`export const GHOST = 1` appended to the door was reachable from a screen and
+invisible both to that rule and to the dead-name rule below it — one blind spot
+shared by two rules. The first version of that rule counted a name's own declaration as a use
 and the scan file's own enumeration of the names as another, so it could not fail
 and three dead exports (`NO_VALUE`, `PRINTED_FIELDS`, `jobField`) were on the door
 behind it. The declarations are stripped before the search now, the scan file is
@@ -813,6 +999,9 @@ planted dead export, that being the finding that the rule could not fail.
 | the degraded document's project is discarded | `a degraded read still says which project it is about, and why` |
 | the degraded document's notice is discarded | the same test |
 | a refusal code nothing produces is declared again (`BAD_NOW`) | `every member of an exported vocabulary is produced somewhere` |
+| an age that is not a number is printed as one (`live (NaNs ago)`) | `an age the phone cannot state is not printed as one` |
+| a name is added to the door as `export const GHOST = 1` (a form the old scanner could not see) | `the door carries the module's surface, and no dead name` |
+| a name is added to the door as `export function GHOST() {}`, and as `export { LOCAL as GHOST }` | the same test |
 
 ## Which files may write a credential
 
@@ -1313,31 +1502,69 @@ the two apart -- so it is written down here rather than claimed as a kill.
 
 ## What is not verified here
 
-* **The Expo/Metro toolchain.** It is not installed in the environment this was
-  written in, and nothing under `mobile/` declares a runtime dependency yet —
-  which is asserted, so the manifest cannot quietly grow one. There has been no
-  `expo start`, no `expo lint`, no `eas build` and no device or simulator run.
-  `package.json`'s `test` script is the whole of the verified surface.
+* **The toolchain: declared, and half of it run.** The manifest declared no
+  runtime dependency at all until the task that made this app buildable — which
+  is why `eas build --profile internal` could not detect an SDK — and now
+  declares the five the app imports. In the environment that ran that task
+  (Node 22.23.3, npm 10.9.9), three things were run and are the whole of the
+  verified surface beyond `package.json`'s `test` script:
+  `npx expo-doctor` (**20/20 checks pass**), and
+  `npx expo export --platform ios` and `--platform android`, both of which
+  bundle `index.js` and everything it reaches, `shared/` included, with no
+  unresolved import. That is a **JavaScript** proof: Metro resolved the graph
+  and produced a bundle.
+  **Re-run on 2026-10-21**, after the Android launch crash, in the same
+  toolchain (Node 22.23.3, npm 10.9.9): `npx expo-doctor` **20/20**,
+  `npx expo install --check` → *Dependencies are up to date* (so every
+  installed package matches the SDK 58 `bundledNativeModules.json`), and
+  `npx expo export --platform android` produced an Android bundle of
+  **655 modules** (654 before the guard was added). `npm test` was **640/640**
+  green. None of that is a device: the bundle *builds*, it has not been *run*.
+  **Still not run, and it is the larger half:** no `expo start`, no `expo lint`,
+  no `eas build`, no `expo prebuild`, no Xcode or Gradle run, no simulator and
+  no device. So a **native** iOS or Android build — the pods, the Gradle
+  modules, the config plugins, the signing — is unverified, and so is a
+  submission to either store: both need the owner's Expo, Apple and Google
+  accounts, and no agent runs them (D120, Check 89 is owner-run). The two
+  identities, too, are exercised only as values this repository validates: a
+  bundle was exported here with **test** values in the shell, and no build has
+  ever read the owner's real ones.
   **This includes P4.4's two files**: `app.config.js` is exercised as a
   function of a base config and an environment (which is what its tests call
-  it with), and **Expo's own loader has never read it** — the `({ config }) =>`
-  form and the ESM `export default` are what that loader does (`@expo/config`'s
-  `evalConfig` resolves `result.default` and then calls it with a request whose
-  `config` is the `app.json` `expo` object with Expo's defaults filled in,
-  `Config.ts`), but the shape was read off the loader's source and has not been
-  through a real `expo start`. `eas.json` is parsed and asserted as JSON; **no `eas` command
+  it with), and **Expo's own loader has read it — as of this task, and only with
+  the CLI's own reads**: with both variables exported in the shell,
+  `npx expo config --type public --json` returns
+  `ios.bundleIdentifier = com.example.testapp` and
+  `android.package = com.example.testapp` — the values the two variables held,
+  resolved through this file, which is what proves the `({ config }) =>` form
+  and the ESM `export default` are what `@expo/config`'s `evalConfig` calls (it
+  resolves `result.default` and calls it with the `app.json` `expo` object as
+  `config`, `Config.ts`). `npx expo export` reads the same file the same way.
+  What is still unverified is the rest of the path: **no `expo start` and no
+  `eas build`** have resolved it, and the value that has been through the loader
+  is a shell test value, never the owner's own identity.
+  `eas.json` is parsed and asserted as JSON; **no `eas` command
   has been run**, so the profiles are as correct as the register's text says
   they must be and not as correct as a build would show — including the two
   claims about `eas-cli` that the local build path rests on (that it resolves
   `app.config.js` in its own process before uploading, and that a profile's
-  `environment` is the environment its build job reads): both are read off
-  Expo's documentation and neither has been observed here.
+  `environment` is the environment its build job reads). The first of the two
+  **was observed on 2026-10-20**, by the owner's first submission: `eas submit`
+  stopped with `Specify ios.bundleIdentifier` until the two variables were in the
+  shell, which is the CLI resolving the config locally with `EAS_BUILD` unset
+  ("the submit step", above) — the values, the builds and the submission itself
+  are still the owner's, and none of that ran here. The second (a profile's
+  `environment` reaches its build job) is read off Expo's documentation and has
+  not been observed anywhere.
 * **The SDKs themselves.** `expo`, `expo-secure-store`,
   `@react-native-async-storage/async-storage`, `react` and `react-native` are
   faked in every test that touches them: what is tested is the shape of the
   calls this repository makes (including the accessibility constant, read off
-  the module rather than guessed), not what the modules do. `index.js`, which
-  imports the real ones, is untested for that reason.
+  the module **when the platform has one** — the Android half of that was the
+  2026-10-21 crash), not what the modules do. `index.js`, which imports the
+  real ones, is untested for that reason, and the guard around it
+  (`src/app/startup.js`) is what turns the next untested import into a screen
+  somebody can read instead of an app that closes.
 * **`useSyncExternalStore`, and the demo as a running app.** The demo's
   subscription is `React.useSyncExternalStore(demo.subscribe, demo.state)`,
   passed into the shell as the `useDemo` hook (`index.js`); every test supplies
@@ -1347,9 +1574,27 @@ the two apart -- so it is written down here rather than claimed as a kill.
   and no device run, which is the first bullet in this list.
 * **`WHEN_UNLOCKED_THIS_DEVICE_ONLY`'s name and value**, which come from the
   documented `expo-secure-store` API and are not exercised against the package.
-  The port refuses to construct if the constant is missing, so an SDK rename is
-  a loud failure rather than a silent downgrade to the platform default — but
-  the constant has not been seen on a device here.
+  The port requires the constant **where the platform declares it** (iOS) and
+  refuses to construct if it is missing, so an SDK rename is a loud failure
+  rather than a silent downgrade to the platform default — but the constant has
+  not been seen on a device here. That requirement is now **per platform**,
+  which is the 2026-10-21 fix: `expo-secure-store`'s Kotlin module registers no
+  `Constant(...)` at all (`mobile/src/accounts/expo-secure-store.js` has the
+  grep), so requiring it everywhere was a `TypeError` at module scope on
+  Android — which is the crash — and requiring it nowhere would silently drop
+  the iOS accessibility level. Both halves are tested against a fake module on
+  each platform; neither has been run on either.
+* **The voice-session reconciliation's F24, on Android.** F24 says the secure
+  store is unreadable while the phone is locked, and that is a property of the
+  **iOS** Keychain item (`WHEN_UNLOCKED_THIS_DEVICE_ONLY` and nothing to do with
+  this app's code). Its Android half is a claim **read off the installed
+  module's source** — `AESEncryptor.kt:64` sets `setUserAuthenticationRequired`
+  from the caller's `requireAuthentication`, which this app never passes — and
+  never observed: no device here has been locked mid-session with the store
+  open. A test on a device, or a design that does not lean on unlock-gating on
+  Android, is what would make VS5.1's "a paused session touches no credential"
+  true on both platforms rather than on one.
+  (O7 in the reconciliation's open list tracks the same gap.)
 * **Every speech engine, and every acoustic behaviour.** Nothing under
   `src/audio/` is an engine: the ports are contracts and the tests drive them
   with fakes, which is D52's rule and P3.4's whole scope. Which engine is
@@ -1397,11 +1642,12 @@ the two apart -- so it is written down here rather than claimed as a kill.
   re-write* is asserted here only as the double's model of them.
 * **Metro, and the `shared/` imports.** `src/mailbox/` imports
   `../../../shared/mailbox-schema/index.js`, `../../../shared/presence/index.js`
-  and `../../../shared/digest/redact.js`; node resolves them (the tests run) and
-  the D119 boundary rule allows them, but **bundling `mobile/` and `shared/`
-  together needs a Metro `watchFolders` entry that no task has added yet.**
-  There has been no `expo start` here, so that wiring is unverified — see
-  `src/mailbox/README.md`.
+  and `../../../shared/digest/redact.js`; node resolves them (the tests run), the
+  D119 boundary rule allows them, and **Metro resolves them too** — that was the
+  missing half until this task added `metro.config.cjs`, whose `watchFolders`
+  entry is the repository root, and `npx expo export` now bundles `shared/` into
+  both platforms' bundles. There has still been no `expo start` here, so the
+  *dev server* is unverified — see `src/mailbox/README.md`.
 * **The Realtime Database itself (P3.2).** No database client is installed: the
   reader takes a port — `{ subscribe(path, { onValue, onError }) }` — and every
   test hands it a fake that records the paths it is asked for. So **no listener

@@ -194,7 +194,15 @@ func haltLines(rec *runstore.Record) string {
 	}
 	fmt.Fprintf(&b, " at %s", h.At.UTC().Format("2006-01-02 15:04:05 UTC"))
 	if rec.Cost == nil || rec.Cost.ModelBasis != runstore.BasisSubscription {
-		fmt.Fprintf(&b, " — this run spent $%.2f", rec.CostUSD)
+		// The money the run spent: rec.CostUSD is the whole model figure, and
+		// a cascade run's tier-A dollars are the subscription's, not the
+		// run's (C1.16, P12). Without a breakdown (a record from before it)
+		// the figure is all there is.
+		spent := rec.CostUSD
+		if rec.Cost != nil {
+			spent = rec.Cost.ModelMoneyUSD()
+		}
+		fmt.Fprintf(&b, " — this run spent $%.2f", spent)
 	}
 	b.WriteString(".\n\n")
 	// A halt before anything was pushed has no pull request to continue on.
@@ -222,7 +230,7 @@ func haltLines(rec *runstore.Record) string {
 	case runstore.HaltNoCredential:
 		fmt.Fprintf(&b, "To continue: %s once a credential is usable again (`fugaro accounts ls` shows each admitted account's state; the project policy's `credentials` decides whether another tier may be used meanwhile).\n\n", again)
 	case runstore.HaltCredsRulesDenied:
-		fmt.Fprintf(&b, "To continue: an operator re-runs `fugaro init --firebase <firebase-project-id>` with this release, which deploys the rules the cascade's fields need, then %s.\n\n", again)
+		fmt.Fprintf(&b, "To continue: an operator re-runs `fugaro update --firebase-project <firebase-project-id>` with this release, which deploys the rules the cascade's fields need, then %s.\n\n", again)
 	case runstore.HaltRunCap, runstore.HaltNoCap:
 		if rec.Budget != nil && h.Reason == runstore.HaltNoCap {
 			fmt.Fprintf(&b, "To continue: an admin sets the missing cap with `fugaro budget set`, then %s.\n\n", again)
@@ -253,7 +261,7 @@ func raiseAdvice(rec *runstore.Record, key, yamlName, nodeName string) string {
 	}
 	switch src {
 	case policy.SourceCeiling:
-		return fmt.Sprintf("raise %s in the project config and run `fugaro init --repo` (a raise in any fugaro.yaml is ignored: it can only tighten the ceiling)", nodeName)
+		return fmt.Sprintf("raise %s in the project config and run `fugaro update` (a raise in any fugaro.yaml is ignored: it can only tighten the ceiling)", nodeName)
 	case policy.SourcePolicy:
 		return fmt.Sprintf("raise %s in the project's policy at %s (a raise in any fugaro.yaml is ignored: it can only tighten the ceiling)", nodeName, projectpolicy.PathShared())
 	case policy.SourceDefaultBranch:
@@ -262,7 +270,7 @@ func raiseAdvice(rec *runstore.Record, key, yamlName, nodeName string) string {
 		return fmt.Sprintf("raise %s in `fugaro.yaml` on this run's branch (it cannot exceed the project config's ceiling or the default branch's value)", yamlName)
 	}
 	if key == policy.KeyPerRunUSD {
-		return fmt.Sprintf("raise %s in the project config and run `fugaro init --repo`", nodeName)
+		return fmt.Sprintf("raise %s in the project config and run `fugaro update`", nodeName)
 	}
 	return fmt.Sprintf("raise %s in `fugaro.yaml`", yamlName)
 }

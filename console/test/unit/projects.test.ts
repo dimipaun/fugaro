@@ -697,6 +697,38 @@ describe('renderProjects', () => {
     expect(drawn(tree)).not.toContain(token)
   })
 
+  it('splits a job\'s model figure on `model_notional_usd`, never on the basis', () => {
+    // C1.16 (P12/D140): `model_usd` is the **whole** model figure and
+    // `model_notional_usd` the subscription's part of it, so the billed dollars
+    // are the difference. A mixed cascade run's `model_basis` is `api-list` for
+    // the whole run while part of its figure is the plan's, and this screen read
+    // that part as money: the basis is the fallback for a row written before the
+    // key, never the split. Three cases -- a mixed row, an all-notional one and
+    // an all-billed one -- each through the model the panel draws from.
+    const one_ = (cost: Record<string, unknown>) => {
+      const runs = { ...RUNS, runs: [{ ...RUNS.runs[0], cost }] }
+      return all(renderProjects(factory, buildProjectsModel(inputs({ runs })), 'light'), 'projects-job')
+    }
+    const figured = (cost: Record<string, unknown>) =>
+      buildProjectsModel(inputs({ runs: { ...RUNS, runs: [{ ...RUNS.runs[0], cost }] } })).jobs.rows[0]?.cost.model
+    const mixed = figured({ model_usd: 3.2, model_notional_usd: 2, compute_usd: 0.5, compute_estimated: true, total_usd: 1.7, model_basis: 'api-list' })
+    expect(mixed?.value).toBeCloseTo(1.2)
+    expect(mixed?.state).toBe('measured')
+    expect(drawnText(one_({ model_usd: 3.2, model_notional_usd: 2, compute_usd: 0.5, compute_estimated: true, total_usd: 1.7, model_basis: 'api-list' })[0] as ScreenElement)).toContain('$1.20')
+    // All notional: the figure drawn is the plan's, marked as the notional
+    // account -- with the key (C1.16) and without it (the fallback).
+    const notional = figured({ model_usd: 3.2, model_notional_usd: 3.2, compute_usd: 0.5, compute_estimated: true, total_usd: 0.5, model_basis: 'api-list' })
+    expect(notional?.value).toBeCloseTo(3.2)
+    expect(notional?.state).toBe('notional')
+    const before = figured({ model_usd: 3.2, compute_usd: 0.5, compute_estimated: true, total_usd: 0.5, model_basis: 'subscription' })
+    expect(before?.value).toBeCloseTo(3.2)
+    expect(before?.state).toBe('notional')
+    // All billed: no notional part at all, so the whole figure is the money.
+    const billed = figured({ model_usd: 1.25, compute_usd: 0.5, compute_estimated: true, total_usd: 1.75, model_basis: 'api-list' })
+    expect(billed?.value).toBeCloseTo(1.25)
+    expect(billed?.state).toBe('measured')
+  })
+
   it('draws a kill with its operator, its time and its reason', () => {
     const tree = renderProjects(factory, buildProjectsModel(inputs()), 'light')
     const kill = one(tree, 'projects-kill')
@@ -839,6 +871,31 @@ describe('buildRunModel', () => {
     expect(model.stages[0]?.deadline).toBeNull()
     expect(model.stages[0]?.deadlineBecause).toBe('the document has no row.deadline')
     expect(model.halt?.reason).toBe('the daily cap was reached')
+  })
+
+  it('splits the ledger\'s model figure on `model_notional_usd`, never on the basis', () => {
+    // The same rule as the Projects screen's job rows, on this screen's own
+    // document (C1.16, P12/D140): `model_usd` is the whole model figure,
+    // `model_notional_usd` the subscription's part of it, and the billed dollars
+    // are the difference -- while a mixed cascade run's `model_basis` is
+    // `api-list` for the whole run. Read through the basis, the plan's dollars
+    // were the figure this ledger drew as money.
+    const costRow = (cost: Record<string, unknown>) => ({ ...DIAGNOSIS, row: { ...DIAGNOSIS.row, cost } })
+    const ledger = (cost: Record<string, unknown>) => buildRunModel(runInputs({ diagnosis: costRow(cost) })).ledger.model
+    // Mixed: money and the plan's list price in one figure.
+    const mixed = { model_usd: 3.2, model_notional_usd: 2, compute_usd: 0.5, compute_estimated: true, total_usd: 1.7, model_basis: 'api-list' }
+    expect(ledger(mixed).value).toBeCloseTo(1.2)
+    expect(ledger(mixed).state).toBe('measured')
+    const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis: costRow(mixed) })), 'light')
+    expect(one(tree, 'run-ledger-model-value').textContent).toBe('$1.20')
+    // All notional: the plan's figure, marked notional -- with the key (C1.16)
+    // and without it (the fallback for a row written before the split).
+    expect(ledger({ model_usd: 3.2, model_notional_usd: 3.2, compute_usd: 0, compute_estimated: true, total_usd: 0, model_basis: 'api-list' }).state).toBe('notional')
+    expect(ledger({ model_usd: 3.2, compute_usd: 0, compute_estimated: true, total_usd: 0, model_basis: 'subscription' }).state).toBe('notional')
+    // All billed: no notional part, so the whole figure is the money.
+    const billed = ledger({ model_usd: 1.25, compute_usd: 0.5, compute_estimated: true, total_usd: 1.75, model_basis: 'api-list' })
+    expect(billed.value).toBeCloseTo(1.25)
+    expect(billed.state).toBe('measured')
   })
 
   it('reads a compute the document did not estimate as unavailable, not as a free zero', () => {

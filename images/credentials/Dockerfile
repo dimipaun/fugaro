@@ -28,7 +28,7 @@
 # and neither is a floating tag here: a tag is a name whose bytes the registry
 # may point somewhere else between two builds of the same commit, and this
 # image is the one process that holds every model credential the installation
-# has -- the digest the release signs and `fugaro init` writes into the
+# has -- the digest the release signs and `fugaro update` writes into the
 # service's Terraform variable is a digest of what the build produced, and a
 # base that moved under it would make that signature describe something else
 # than what a rebuild from the same commit produces. The digests are read from

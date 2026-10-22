@@ -117,7 +117,7 @@ func TestVerifyPublicRequiresArm64ForTheBase(t *testing.T) {
 // (TestImagesWorkflowPublishesAMultiArchBase), so publish's own matrix, after
 // the 0.7.0 cut, holds only history; the credentials service's image is
 // published by publish-credentials, which carries the signing chain its
-// consumer needs (fugaro init resolves its -pinned tag and verifies the
+// consumer needs (fugaro update resolves its -pinned tag and verifies the
 // signature).
 func TestImagesWorkflowPublishesAndVerifiesEveryImage(t *testing.T) {
 	data := readImagesWorkflow(t)

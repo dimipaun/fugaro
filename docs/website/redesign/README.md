@@ -46,7 +46,7 @@ npm install --prefix /tmp/fugaro-pw playwright@1.49.1
 PLAYWRIGHT_PREFIX=/tmp/fugaro-pw node docs/website/redesign/capture-screenshots.mjs docs/website/redesign/current
 ```
 
-It writes 22 JPEGs (eleven routes at 1280 × 900 and 390 × 844) into `current/` and the
+It writes 24 JPEGs (twelve routes at 1280 × 900 and 390 × 844) into `current/` and the
 measurements to `/tmp/website-screenshots.json` (a second argument changes that path). The
 "after" set is the same command with `docs/website/redesign/after` as the argument.
 
@@ -76,11 +76,11 @@ deliberately, with their tests, as the owner's ruling of 2026-10-18 requires.
 The owner accepted every recommendation of D180 to D192, as written in `reconciliation.md`:
 
 - **D180** the accent is the logo's hue, `#17A8E6`, as a fourth palette file; **D181** the warning colour moves to amber `#F5A524`.
-- **D182** the menu is three groups of three (Product, Reference, Project), a drawer on mobile — **amended on 2026-10-19 by the owner's brief (item 1): the three group labels ARE the menu on a phone, and the drawer and its one toggle are retired** (see "The 2026-10-19 brief" below). What D182 decided about the *groups* stands: three groups of three, Home as the wordmark, Privacy in the footer.
+- **D182** the menu is three groups of three (Product, Reference, Project), a drawer on mobile — **amended on 2026-10-19 by the owner's brief (item 1): the three group labels ARE the menu on a phone, and the drawer and its one toggle are retired** (see "The 2026-10-19 brief" below). What D182 decided about the *groups* stood until **2026-10-21, when the owner changed them: the Reference group comes out, Console moves under Product and the rest — Docs and Changelog — under Project, so the menu is two groups** (see "The 2026-10-21 feedback: the Reference group comes out of the menu" below; the Home item of the same day's earlier feedback stays, and Privacy stays in the footer).
 - **D183** the JavaScript is one first-party file, `website/public/scripts/site.js`; no inline script, no CSP edit.
 - **D184** the homepage animation shows the README's documented sequence, held to the file at build time, captioned as the documented sequence.
 - **D185** How It Works uses the brief's four steps, each captioned by a quoted line.
-- **D186** a build gate refuses the listed provenance phrases; **D188** the lead is at most 40 words on every page and the whole page at most 250 words (not Docs, Security, Changelog) — amended 2026-10-19: the privacy statement's own ceiling is derived from its own count, and every other page stays at 250.
+- **D186** a build gate refuses the listed provenance phrases; **D188** the lead is at most 40 words on every page and the whole page at most 250 words (not Docs, Security, Changelog) — amended 2026-10-19: the privacy statement's own ceiling is derived from its own count, and every other page stays at 250 — amended 2026-10-21: the number is 500, the bold redesign's homepage being five blocks and 468 words (the reading below) — amended 2026-10-21 again: the number is **600**, the 2026-10-21 brief's slider being the sixth block on that page, 563 words with the three pictures' `alt` texts it leads with (the reading below) — amended 2026-10-22: the number is **900**, the 2026-10-22 brief's four boards replacing the four zoom levels on How It Works, 868 words of the boards' own labels (the reading below).
 - **D187** the fold is checked by the word ceiling plus one owner-run live check (70b).
 - **D189** long-page summaries are rendered from files; **D190** the design lives in the owner's tool, the repository keeps `design.md`, screenshots are regenerated and never committed; **D191** the redesign goes first; **D192** the byte budgets are re-derived in the commit that ships the script.
 
@@ -147,7 +147,11 @@ here goes stale the way the byte budgets did before D192.
   changes spec is the later brief and names them itself (`1 Your agent`, `2 Fugaro`,
   `3 Ephemeral cloud job`, `4 Pull request`), so the flow is drawn from those names, one
   line each — and `website/test/home.mjs` reads them out of the spec's own item 4 rather
-  than out of a copy in the component, so the picture and the ruling cannot drift.
+  than out of a copy in the component, so the picture and the ruling cannot drift. **That
+  bullet is item 4 as it stands on the homepage, and item 4's second half is amended by the
+  owner's draft of 2026-10-19**: the HOW IT WORKS page opens with the run's own diagram rather
+  than with this flow, and the amendment is recorded in "The owner's 2026-10-19 approval of the
+  run's diagram" at the end of this document.
 - **The two facts D185 put in the captions move to the detail.** Item 4 asks for "one short
   line each" in one bold picture, so neither the caches nor the trust boundary is a caption:
   the caches stay in the README's own step 2, and "The trust boundary is the container, not
@@ -276,7 +280,11 @@ here goes stale the way the byte budgets did before D192.
   component's stylesheet: Astro inlines it into the console page that imports it, whether or
   not the slider renders, so the bytes are in the build while the list is empty and while it is
   not. The page weight and the script stay where they were: the console page is not the
-  heaviest page, and the slider ships no script at all.
+  heaviest page, and the slider ships no script at all. (**The list is no longer empty**: the
+  owner's feedback of 2026-10-21 — "console page: screenshots missing" — is the four fixture
+  captures under `website/public/screenshots/` and the four rows that render them, which moved
+  both figures and made the console page the page the page-weight ceiling is derived from. The
+  round is in `website/README.md`'s list, with the numbers.)
   **And the round after *that* is the run's own timeline** (the owner's feedback of
   2026-10-19): the site figure alone moves once more, by the rail, the connector, the rule that
   stops it at the last step and the markup that places them, on the one page that renders a
@@ -323,6 +331,18 @@ here goes stale the way the byte budgets did before D192.
   eleven pages grows by the same bytes — the stylesheet they all inline — so the site figure and
   the page weight both move, the docs hub inlining the same stylesheet and being the heaviest
   page. The script is untouched.
+  **And a later round is the run's own diagram** (the owner's approval of the draft *"How it
+  works, draft 2 (diagram)"* on 2026-10-19, *"build it"*, which took the timeline above out of
+  the page): the site figure alone moves, on the one page that renders a run — one inline
+  `<svg>` per width, the box, pill, arrow and band rules that paint them from the palette's
+  tokens, and the two lists of the repository's own lines under the picture — and then the
+  review of that round moves it once more by the two rules that say where the drawings change
+  over and how wide the stacked one is drawn. The page weight and the script stay where they
+  were: the heaviest page is the docs hub, which renders none of it, and the drawing is markup
+  rather than script. **That round also re-derived all three figures from the gates' own build
+  rather than from its own delta**, because the base they carried was stale: the generated CLI
+  reference had been regenerated a round earlier without re-deriving the numbers, and the
+  correction is recorded in `website/README.md` with the round.
   **The figures themselves are the ones `website/README.md` writes, and they are written
   there and nowhere else**: `website/test/budget.mjs` reads them from there and holds each to
   the build it can measure, and a derivation that names another build fails, which is what
@@ -383,10 +403,11 @@ here goes stale the way the byte budgets did before D192.
   fixed the same way (`max-width: none`), with `website/test/base-styles.mjs`'s new
   `chatRowFailures` reading the smallest column and the gap out of the grid rule and the cap
   out of the cascade. (That gate and the two-column chat are both gone again: the third fix
-  round made the chat one conversation card at the measure's own width, and the gate that
-  reads it now is `chatConversationFailures` — see the reading below. The history is kept
-  here because the round that found the hole was the round that measured the page rather
-  than read it.) The `go install` command, which the same review found clipped at
+  round made the chat one conversation card at the measure's own width, and the fourth round's
+  `chatConversationFailures` read that card's stylesheet — and the card, the chat and that gate
+  all left the site with the owner's draft of 2026-10-19, which is the reading at the foot of
+  this file. The history is kept here because the round that found the hole was the round that
+  measured the page rather than read it.) The `go install` command, which the same review found clipped at
   `...@late`, wraps now (`white-space: pre-wrap`, `overflow-wrap: anywhere`) on both install
   cards, and `installCommandFailures` refuses a command block that clips instead. The agent's
   launch is the status line `Fugaro: launching 3 jobs` rather than a command block, which is
@@ -418,20 +439,25 @@ here goes stale the way the byte budgets did before D192.
     by the accent's own left border. The caption moved out from under "Watch it run" to
     directly under the conversation, and the whole watch block — heading, item 5's slot, the
     command bar, the note — is now a sibling of the figure rather than inside it, so the
-    caption can be the figure's last child. What reads that markup is `website/test/home.mjs`,
-    not the stylesheet gate: it reads the caption as the figure's last child, the caption's
+    caption can be the figure's last child. What read that markup was `website/test/home.mjs`,
+    not the stylesheet gate: it read the caption as the figure's last child, the caption's
     words (`chat-caption`, an illustration and not a recording), and the slot as the element
-    after the watch heading. `chatConversationFailures` reads the stylesheet — the one-column
+    after the watch heading. `chatConversationFailures` read the stylesheet — the one-column
     turn list, the card, the measure's cap, the speaker column and the two speakers' sides —
-    and nothing about the caption.
+    and nothing about the caption. The chat is not on the page any more (the draft of
+    2026-10-19, below), so neither is that case; the slot the picture is in is the slider's
+    now, and `website/test/home.mjs` reads it there.
   - **the empty slot takes no page** (item 3b). `[data-slot="watch-screenshot"]` with no rule
     of its own was a box of blank page between the conversation and the command bar, which is
     the ~140 px the review measured. `.chat-shot:empty { display: none }` takes it out until
     PR #622's image lands — and it is kept now that the image is in the slot, because it is the
-    rule that keeps a placeholder from coming back — and `chatSlotFailures` refuses a slot rule
-    that gives it height, padding, a border or a background, and holds the rule that sizes the
+    rule that keeps a placeholder from coming back — and `chatSlotFailures` refused a slot rule
+    that gives it height, padding, a border or a background, and held the rule that sizes the
     image (`.chat-shot > img`) to scaling it: a width that is a percentage of the column and a
-    height that follows the file's ratio.
+    height that follows the file's ratio. The slot moved into the slider's "See it" panel with
+    the draft of 2026-10-19 and its class moved with it (`.watch-shot`); the same rules, read
+    by `website/test/base-styles.mjs`'s `watchSlotFailures` under the new name, are what hold
+    the picture to the column it sits in.
   - **How It Works has one left edge, and room under its title** (item 3d). The detail section
     carried `var(--space-md)` of inline padding of its own on top of `main`'s gutter, so "The
     run, step by step" and the five steps were 24 px right of the `h1` and of the flow between
@@ -509,12 +535,15 @@ here goes stale the way the byte budgets did before D192.
   `--ground` against the card with a `--border` outline and a radius, the reader's at the right
   edge and the agent's at the left, with the agent's name in `--accent-on-dark` — the accent's
   left rail the third round put on the agent's row is gone, because a rail and a bubble on
-  opposite sides drew two marks for one thing. `chatConversationFailures` refuses a turn whose
+  opposite sides drew two marks for one thing. `chatConversationFailures` refused a turn whose
   body has no side of its own (a grid item's `normal` is `stretch`, which draws a band rather
-  than a message) and refuses both speakers on one side; the third round's refusal of a card on
-  `.chat-turn` itself stands, and a bubble is not that: those were three cards across the page,
+  than a message) and refused both speakers on one side; the third round's refusal of a card on
+  `.chat-turn` itself stood, and a bubble is not that: those were three cards across the page,
   each stretched to the row's tallest, and this is one content-sized box in a row of the one
-  card. **The flow's cards lost three of their four cyan edges** — the sides and the bottom are
+  card. (The chat, its bubbles, its caption and `chatConversationFailures` all left the
+  homepage with the owner's draft of 2026-10-19 — the reading at the foot of this file — so the
+  flow's cards and the footer's label are the parts of this round still on the site.)
+  **The flow's cards lost three of their four cyan edges** — the sides and the bottom are
   `--border` at one pixel and the top rail is the accent at 4 px — which is the review's
   "calmer borders": what makes the picture prominent is the section, the card's size, the
   surface and the numbers, not an outline on every edge. **The footer's link label is the
@@ -605,23 +634,34 @@ reads them from there and holds them to the build it makes itself — no figure 
 here, for the reason the byte-budget bullet above gives. Placing the two assets and the `<img>`
 moved the site figure and nothing else (above).
 
-**It is on the homepage now** (`website/src/components/AgentChat.astro`): the slot
-`[data-slot="watch-screenshot"]` under the chat holds it, so the block that was empty until the asset
-existed is the picture the owner took. The markup declares the capture's logical size (1459 x 441, the
-2x file's own ratio) so the box is reserved before the file arrives, `loading="lazy"` because the block
-sits under the whole conversation and nothing above the fold waits on it, and the `alt` is the gist of
-`fugaro-watch.txt` — the transcription ships as the text a reader gets when the picture does not.
-`website/test/home.mjs` holds all four (in the slot, a non-empty `alt`, the declared dimensions, and no
-external URL), and `website/test/base-styles.mjs`'s `chatSlotFailures` holds the sizing that makes it
-scale — a width that is a percentage of the column it sits in and a height that follows the file's own
-ratio, refused if either becomes a pixel count (the two planted cases). The rendered page was measured in
-a headless Chromium over the built site at 1280, 768 and 375: `scrollWidth` is the viewport's width at all
-three (no horizontal scroll, the picture being the page's own and nothing else overflowing), and the
-screenshot lays out at 750 x 228, 722 x 220 and 329 x 101 px — the column's width and the capture's ratio
-at each. Whether the rendered page matches the owner's design is the owner's check (70a-70c, D190), as no
-gate here can see an image: at 375 px the picture is a quarter of the width of the screen it captures, so
-its small print is not readable at that width and the transcription beside it is what a reader reads
-instead.
+**It is on the homepage now, in the slider's "See it" panel** (`website/src/components/HomeSlider.astro`;
+the owner's draft of 2026-10-19, the reading at the foot of this file): the panel's `div.watch-shot` is
+the slot `[data-slot="watch-screenshot"]`, and the panel reads heading, picture, command — the block that
+was empty until the asset existed is the picture the owner took. It was `AgentChat.astro`'s slot until
+that draft folded the chat into the slider's first panel and deleted the component, and the picture moved
+with the slot. **Since the 2026-10-21 brief the picture is the last slide of the slider the panel
+renders** (`website/data/home-screens.yaml`, `website/src/components/ScreenshotSlider.astro`; D251,
+D252): the slot is unchanged and still `HomeSlider.astro`'s, and what is in it is the site's one
+slider component, over four rows — the console page's own three captures and this one, last. The
+row declares the capture's logical size (1459 x 441, the 2x file's own ratio) so the box is
+reserved before the file arrives, the slide is `loading="lazy"` because it is the last of the four
+and the first slide is the only eager one, and the row's `alt` is the gist of `fugaro-watch.txt` —
+the transcription ships as the text a reader gets when the picture does not. `website/test/home.mjs`
+holds the row to the data file, the data file's row to the sizes recorded here, and the built page's
+slides to the rows in the order the file names them, so the capture is last; the slot's four
+pictures are sized by the slider's own rule (`.screen-image`: a width that is a percentage of the
+slide it sits in and a height that follows the file's ratio), and `website/test/base-styles.mjs`'s
+`watchSlotFailures` reads that rule off the built page through the class the slot's own `<img>`
+elements carry, refusing a fixed width or a fixed height wherever it stands (the planted cases). The rendered page was measured
+in a headless Chromium over the built site at 1280, 768 and 375 while the picture sat in the chat's block:
+`scrollWidth` was the viewport's width at all three (no horizontal scroll, the picture being the page's own
+and nothing else overflowing), and the picture laid out at 750 x 228, 722 x 220 and 329 x 101 px — the
+column's width and the capture's ratio at each. That reading is the chat's block and not this one: the
+panel is `display: none` until its tab is chosen, so the picture's width inside it is a fact of a page with
+a tab chosen, and what holds it is the pair of declarations `watchSlotFailures` reads. Whether the rendered
+page matches the owner's design is the owner's check (70a-70c, D190), as no gate here can see an image: at
+the phone's column the picture is about a quarter of the width of the screen it captures, so its small
+print is not readable there and the transcription beside it is what a reader reads instead.
 
 ## The 2026-10-19 brief: the phone's menu and the console in the call to action
 
@@ -643,7 +683,10 @@ goes stale the way the byte budgets did before D192.
   group closes its siblings, which is the one-menu-at-a-time behaviour the toggle used to
   provide by hand. **D182's group decision is untouched** — three groups of three, Home as
   the wordmark, Privacy in the footer — and what changed is only what a phone *does* with
-  them. `site.js` loses the branch it kept for the panel (`holds()` no longer looks for a
+  them. **Amended 2026-10-21: the groups themselves changed later that day — the Reference
+  group came out, so the menu is two groups** (the day's own feedback section below); what
+  this bullet records of the phone's menu stands, and its "three labels" are the two the menu
+  now draws. `site.js` loses the branch it kept for the panel (`holds()` no longer looks for a
   sibling), and with it the only reason the script had to know where the panel was.
 - **The wordmark's text leaves the header row below 390 px, and the mark stays (item 1).**
   The owner's ruling is "hide the wordmark TEXT below about 380px (keep the logo mark)", and
@@ -721,6 +764,12 @@ goes stale the way the byte budgets did before D192.
   and no screenshot is committed here — this run cannot see one either.
 
 ## The owner's 2026-10-19 feedback on How It Works: the run is one vertical timeline
+
+**Superseded**: the owner's next reading of that page approved the draft *"How it works, draft
+2 (diagram)"* with *"build it"*, and the timeline below came out of the page — `RunDetail.astro`
+and the gate that read its shape went with it. The section is kept as the round that decided
+it; the shape that ships is the one in "The owner's 2026-10-19 approval of the run's diagram"
+at the end of this document.
 
 - **"It is a bit better, but not quite there. The run, step by step section does not look
   good."** The section had the right content and the wrong shape. `RunDetail.astro`'s five
@@ -833,6 +882,82 @@ changes are cited as the feedback's own.
   feedback puts there. The caption below takes two words back off that page — it measures **294**
   words with everything the feedback asks for in place, which is the number `website/README.md`
   derives the ceiling from.
+- **D188's ceiling moves again, from 300 to 500, for the bold redesign's homepage.** The owner's
+  board `design-ref/HomeV3.dc.html` (approved 2026-10-20) draws the homepage as five blocks: the
+  hero, the slider, the run as a band of four steps, the grid of what a run leaves behind, and
+  the closing call to action with the install command. The page that carried three blocks carries
+  five, and the five measure **468 words**, so the page was over 300. The rule is the same one as
+  above and it is the same kind of reading: the number is the smallest round ceiling above the
+  page that carries every block its briefs and its boards require — still a ceiling, and the
+  highest page that gained nothing from the board is How It Works at 279 words. The lead ceiling
+  is untouched and the homepage's lead **fell** from 23 words to **16**: the board's hero prints
+  the request, the promise and the two links, and the illustration the board adds below them is a
+  `figure.hero-shot` the lead reading excludes whole, the way it already excludes the block the
+  first `h2` belongs to. Both changes are read off the built page by `website/test/budget.mjs`,
+  which is where the numbers above come from.
+- **D188's ceiling moves again, from 500 to 600, for the 2026-10-21 brief's slider.** The brief
+  (`docs/website/zoom-diagrams/spec.md`, Part 1 of its implementation plan) asks the homepage's
+  "See it" panel for a slider of four slides: the console's own three screenshots first, the
+  `fugaro watch` capture last (D251, D252). The three that lead it are the console page's
+  pictures, so they carry the console page's own `alt` texts — one picture has one account of
+  what it shows — and an image's `alt` is text a reader reads (`website/README.md`, "Words per
+  page"). The four slides are the whole of the move: the homepage's count goes 461 → **563**,
+  and the rule is the one above, applied again: the number is the smallest round ceiling above
+  the page that carries every block its briefs require, and 563's is **600**. Still a ceiling
+  rather than a target — the next page down is How It Works at 332 words — and the lead ceiling
+  is untouched: the slider's heading and its controls are not between the homepage's `h1` and
+  its first `h2`, so the lead stays 16 words. The number is read off the built page by
+  `website/test/budget.mjs`'s `wordsCeilingFailures`, which is where every figure here comes
+  from. The three byte figures are re-derived in the same commit, as the rounds in
+  `website/README.md`'s list re-derive theirs: the site figure moves 1,437,824 → **1,447,967**,
+  and **the heaviest page of the site is the homepage now** (563,219 bytes, the four pictures it
+  fetches), where every derivation before this one named the console page or the docs hub — so
+  the page-weight ceiling is derived from the homepage here. The review round of the same pull
+  request moved the script's bytes again (the guard that keeps the shared slider's count and dots
+  on the slide its track is showing while its panel is `display: none`, the two step controls read
+  through `own()`, and the gates that run the shared slider as the homepage renders it), and the
+  three figures are re-derived from that build rather than from the round before it.
+- **D188's ceiling moves again, from 600 to 900, for the 2026-10-22 brief's four boards.** The brief
+  (`docs/website/zoom-diagrams/reconciliation.md` §13) replaces the four zoom levels on
+  `/how-it-works/` with the owner's four approved design boards
+  (`website/design-ref/zoom-levels/level1.dc.html` … `level4.dc.html`) redrawn as the site's inline
+  SVG. The rule is the one above, applied to the same kind of text: a board's labels are strings the
+  drawing renders, and a string the drawing renders is text a reader reads — the reading that made
+  the slider's `alt` texts words on the homepage — so the four levels' labels are words on How It
+  Works. The page goes 492 → **868 words** — the boards' own labels, word for word, which is the
+  whole of what the brief asks it to draw — and the smallest round ceiling above it is **900**. Still
+  a ceiling rather than a target: the highest page that gained nothing from the brief is the privacy
+  statement at 759 words, and a page that wants the extra room has to carry a block its own brief
+  requires for it. The lead ceiling is untouched: the boards are drawn below the page's first `h2`,
+  so the page's lead is the 29 words it already was. The number is read off the built page by
+  `website/test/budget.mjs`'s `wordsCeilingFailures`, which is where every figure here comes from.
+- **The byte figures are not re-derived, and that is the owner's ruling and not an omission.**
+  The owner ruled on 2026-10-20 that the three figures `website/README.md` states are re-derived
+  **only when the owner asks** — `website/test/budget.mjs` runs D192's exact derivation only with
+  `FUGARO_DERIVE_BUDGETS=1`, so a round that moves a few hundred bytes no longer reds the
+  preview — while the ceilings the pages are measured against hold on every run. They hold here:
+  the gates' own build (the copy `test/lib/build.mjs` builds, which is the build the README's
+  figures name) is **1,035,806 bytes** against the stated **3,705,975**, and it is the docs hub,
+  not the homepage, that is still the heaviest page. The three figures are left as they stand
+  until the owner asks for the re-derivation; the drift is recorded in the pull request body
+  rather than silently absorbed.
+- **The site's green is its own value, and not the console's `--ok`.** The bold look's success
+  tone was first written as the board's own green, `#4CC38A` — which is also the console's
+  `--ok`, and `docs/design/console-styling.md` §3.2 records that colour as one of six the
+  console **invents** because "the website has no equivalent". `internal/cli`'s
+  `TestDocsConsoleStylingTokenProvenance` holds that sentence true by refusing those six literals
+  anywhere in `website/src/styles/palette-logo.css`, the palette in force, so the first value was
+  a red Go test rather than a judgement call. The palette's green is **`#43C08A`**: the same hue
+  family, the same contrast on the ground, the panel and the surface (read by
+  `website/test/a11y.mjs` like every other designed pair), and not the console's literal. The
+  other three palettes keep the console's value; the reading is about the palette the site
+  actually imports, which is also the only one the Go test reads.
+- **What this round could not verify, again.** The visual match to the owner's board is the
+  owner's check at the preview: this run cannot open an image, no browser was driven, and no
+  screenshot is committed. What the gates read is the artifact, the stylesheet and the numbers
+  above — the homepage's five blocks and their rhythm (`base-styles.mjs`), the lead and the words
+  (`budget.mjs`), the controls' 44 px minimum (`home.mjs`), the contrast of every designed pair
+  (`a11y.mjs`), and the slider's panels (`slider.mjs`).
 - **The diagram's fourth caption said more than the repository says.** It read "each commit is
   pushed within about a minute while the agent works", which is not what a reader of the picture
   takes it to mean: what opens the pull request is the run's **first checkpoint push** — within
@@ -875,6 +1000,52 @@ changes are cited as the feedback's own.
   again. **Whether the page then looks right is the owner's check (70a–70c, D190)** — the
   two-column grid, the rule above each benefit and the prompt line's bubble are the parts of
   this round a gate can only say is present.
+
+## The 2026-10-19 benefits feedback: an icon each, and a step up the type scale
+
+A third comment the same day, on the design canvas rather than on a page: **"make them bigger,
+bolder, use an icon for each point"**, under the four benefits. Every reading it does not spell
+out is recorded here, as the two sections above record theirs. It changes the section's
+presentation and **not one word of it**: the four names and the four lines are still
+`README.md`'s `## Why Fugaro` reasons, held to their own reason's paragraph by the component's
+build-time guard and by `website/test/home.mjs` from outside the build.
+
+- **One glyph per point, inline, and decorative.** Each benefit carries one `<svg>` written in
+  `src/components/Benefits.astro`: a shield for *Safe by construction*, arrows leaving a centre
+  for *Scale out, and walk away*, three people for *Team control in one place*, a spark for *The
+  newest tools and models, ready to use*. There is no icon font, no image file, no third-party
+  anything and no JavaScript: the four are shapes in the markup, so the page fetches nothing for
+  its own drawing and stays readable with the script off (Global Constraints 4 and 8). The glyph
+  is `aria-hidden="true"` with `focusable="false"` — the name beside it is the point, and a
+  screen reader handed the picture as well would read the point twice. It is drawn with
+  `stroke="currentColor"` under a rule that sets `color: var(--accent)`, and `--accent` on
+  `--ground` is a pair `a11y.mjs` already computes at 3:1 for all four palettes; its box is
+  `--space-xl` (48 px), a step of the spacing scale rather than a number of the component's own.
+- **Both the name and its line are larger, and the section's heading moved with them.** The
+  type scale has one step between the body size and the size above it, and the feedback asks for
+  the name *and* the line to be larger, so both are `--font-size-lg`; they are told apart by the
+  weight and the colour the block already used, which is also why "bolder" is the size step
+  rather than a weight — the scale stops at `--weight-semibold`, the weight the name already
+  carried. The section's own `h2` is one step above them (`--font-size-xl`), so the block reads
+  as a section with four points under it instead of as four headings and a label.
+- **The gate is the icons' own, and it reads the built page.** `website/test/home.mjs` reads
+  every `<svg>` under each benefit and refuses a point with none or with several, an icon that
+  draws nothing (`<svg>` with no shape in it, which is a picture nobody sees and the one defect
+  of this set no other gate can catch), an icon that is not marked as decoration or out of the
+  tab order (`aria-hidden="true"`, `focusable="false"` — the pair `a11y.mjs` already holds the
+  flow's arrows to), an icon that references anything (`<use href>`, an `<image>`, an `href` on
+  the `<svg>` itself, an inline `style`) and four points drawn with one picture between them.
+  Each refusal was proved by planting the defect in the component, rebuilding and watching the
+  built-page case fail — not only by its fixture. The glyphs live in the component as drawings
+  rather than as a template branch per name, so a name whose entry holds no shape stops the
+  build instead of shipping an empty box.
+- **The measurements, and the check that is still the owner's.** The figure re-derived in the
+  commit is the site's, from the gates' own build (`website/README.md`); the page weight, the
+  script and the word ceilings did not move, because the section is the homepage's and not one
+  word of it changed. Nothing was rendered: no browser was driven and no screenshot is committed, and
+  this run cannot see one. **Whether the four points now look right is the owner's check
+  (70a–70c, D190)** — a gate can say the icons are present, decorated, unreferenced and four
+  distinct drawings, and it cannot say the section looks good.
 
 ## The 2026-10-19 changelog brief: the released state, and the summaries
 
@@ -934,3 +1105,697 @@ out is recorded here.
 - **What is still the owner's check.** Whether the summaries read as product news and whether
   `/changelog/` looks right is the owner's own reading of the page (70a–70c, D190): this run
   cannot see a rendered page, and no screenshot is committed here.
+
+## The owner's 2026-10-19 approval of the run's diagram: the timeline comes out
+
+The owner approved the draft *"How it works, draft 2 (diagram)"* on 2026-10-19 with *"build
+it"*, and the round that built it is the one `website/README.md` records as "How It Works is
+one diagram of the run, and the run in words under it". Its sections here are the one above
+(the timeline) and **changes spec item 4**, which is amended by it rather than rewritten there
+(the spec is committed as it was agreed, and no part of it is implemented by being written
+down).
+
+- **The timeline above is superseded, and item 4's "SAME diagram" is amended for one page.**
+  Item 4 asks for the homepage's four-step flow and for the HOW IT WORKS page to "open with the
+  SAME diagram (one shared component, not two copies)". That page opens with the run's own
+  diagram now: one drawing of the run — the draft's `[fix ─► review(2)]` loop and all — with
+  the same facts in words under it, drawn by `RunDiagram.astro`. The homepage kept
+  `ArchitectureDiagram.astro` and its four quoted captions, and the two components are two
+  drawings of two things rather than two copies of one; the owner's ruling of 2026-10-20 retires
+  that component and the four-step flow with it, so this branch has one drawing of a run and the
+  homepage's block where the flow stood is the slider. The reading is the owner's and it is
+  the whole of the amendment: **item 4's "one shared component" holds for the picture the two
+  pages used to share, and the page that answers "what happens between asking for the work and
+  getting the pull request" answers it with the run**, which is a picture the homepage's flow
+  is not (item 4's acceptance — a picture, not a paragraph — is untouched).
+- **The timeline section above is a record, not the page's shape.** The vertical timeline, its
+  rail and its connector are gone from the artifact, `RunDetail.astro` with them, and
+  `test/base-styles.mjs`'s `runTimelineFailures` went with the shape it read (that file's own
+  note says so, and what is left of the run's layout there is the room its blocks take). The
+  section above stays because the rounds are kept as they were decided — read it with this one
+  beside it, and the page it describes is not the page that ships.
+- **Every line of the drawing is quoted from the repository, and the drawing is markup.** Both
+  drawings are inline `<svg>` rendered from one set of labels, each label carrying the document
+  it is quoted from (`data-source`), and nothing is fetched: no picture file, no font, no
+  origin, no script (D183, D190). The four steps the retired flow drew cited their captions the
+  same way, and the run's diagram cites the redesign's own changes spec,
+  `docs/design/v1.md` and the plugin's skills.
+- **The shape is a gate, and each claim has a fixture.** `website/test/how-it-works.mjs` reads
+  the built page and refuses: a figure that is not one diagram, a drawing without an
+  accessible name or a `viewBox`, a stage the repository does not name, a label that is not a
+  line of the document it cites, a line of the drawing wider than the box it is drawn in, a
+  drawing scaled into a box narrower than a phone's column — and, since the review round below,
+  the loop's own arrow. Its fixtures plant each defect in the built page and read the refusal
+  back, and the page as it is built passes its own gate.
+- **The review round: the changeover, the ceiling and the arrow.** Three findings came out of
+  the review of that round, and all three were the gate's rather than the page's rendering:
+  **the arrow was unheld** — deleting both loop paths, or drawing the arrow between two other
+  stages, left the gate green, so the gate now reads the line and the head that lands it,
+  which two stages its two ends join (paired with the pills by the drawing's own geometry) and
+  where the head sits; **the wide drawing's floor held only at the widths the page happened to
+  be read at** — its smallest label is 16 units of a 1200-unit picture and the drawings changed
+  over at the site's 48 rem chrome breakpoint, so at a 768 px viewport that label came out at
+  9.6 px, and the changeover is 59.25 rem now, the width at which the label is exactly the 12
+  px floor in the page's own 900 px column; and **no ceiling held the stacked drawing**, which
+  a tablet would have been shown stretched to the column, so `.run-tall` carries a
+  `max-width` of its own scale — 22.5 rem, one unit to the pixel — and the gate refuses a
+  ceiling that is absent, unreadable or larger than the viewBox it is drawn at. The box every
+  readability number is taken at is read out of the page's own stylesheet (`main`'s inline
+  padding and the page's ceiling) rather than typed into the gate, so a gutter that moves moves
+  the arithmetic with it. **The byte budget is re-derived in the commit that moves it (D192)**:
+  the site figure alone moved, by the stylesheet rules of that round, and the numbers are
+  `website/README.md`'s (that round also re-derived the three figures from the gates' own
+  build, because the base they carried was stale — `website/content/cli-reference.md` had been
+  regenerated a round earlier without re-deriving them, which is recorded there).
+- **And the review of that review round: the side of the query, and the way the head points.**
+  Two of the three readings the round above added held less than they said. **The changeover was
+  held by its width alone** — `(width<=59.25rem)` and `(width>=59.25rem)` name the same width
+  and show the drawings to opposite readers, so a stylesheet that turned `.run-tall` on above
+  59.25 rem and `.run-wide` off there satisfied every reading while stacking the drawing on a
+  desktop and showing the shrunk wide one to the phone the floor exists for; the gate reads
+  which side each switched rule holds on now, and refuses one read from above. **The head was
+  held where it sat, not which way it pointed** — and the head the component drew was mirrored,
+  its point at the base's place, so it landed on `implement` pointing back up its own line at
+  the stage the run came from; a mirrored head is the same triangle over the same two x's, so
+  only the corners can say which way round it was drawn, and the gate reads them (the point has
+  to lead the base along the direction the line arrives in) and refuses a head that is not a
+  triangle of three corners. The component's own header comment had still said the drawings
+  change over "below 48 rem — the width the site's chrome switches at", which the round above
+  made false. Neither fix moved a byte: the head is the same numbers written in another order
+  and the side of a query is a reading, so the figures in `website/README.md` are the ones the
+  build already measured.
+- **What is still the owner's check.** The drawing was built to the draft the owner approved,
+  and whether the page then looks right is the owner's reading of it (70a–70c, D190): this run
+  cannot see a rendered page, no screenshot is committed here, and the gate says what the
+  drawing contains and how large its labels come out rather than what it looks like.
+
+## The 2026-10-19 home draft: one slider with three tabs, and one Get started button
+
+The owner approved a **second canvas draft for the homepage** the same day as the brief and the
+feedback above — **"Home, draft 2 (slider)"**, 2026-10-19 — and it is the authority the page and
+its gates cite by name (`website/src/pages/index.astro`, `HomeSlider.astro`, `HomeInstall.astro`,
+`how-it-works.astro`, and `website/test/{home,slider,fold,budget,a11y,wording}.mjs`). The canvas
+is not a file of this repository and no agent opened it: what it asked for is recorded here, from
+the draft's own text, and every reading it does not spell out is a decision of this branch's,
+in the commit that made it.
+
+- **The page is three blocks, and the page renders exactly those three.** `index.astro` is
+  `Hero.astro`, then `HomeSlider.astro`, then `HomeInstall.astro`. The hero is the headline
+  (README.md's tagline), the prompt line the feedback of the same day asked for
+  (`> Fan out these three bug fixes.`, the string `src/lib/agent-request.mjs` holds to the
+  changes spec), the one-line promise (README.md's subline) and the two links under them. The
+  install block is the page's **last** section, which is where the draft puts it: the commands
+  are no longer under the promise.
+- **One slider with three tabs, and all three panels in the HTML.** `HomeSlider.astro` renders
+  `.home-slider`, a row of three fragment links — "Easy to use", "Why Fugaro?", "See it" — and the
+  three panels they open. *Easy to use* is the draft's own three lines (you tell your agent,
+  Fugaro runs it in your cloud, you get a draft pull request), each with one inline SVG and the
+  repository's sentence about it under it, held to README.md's sections at build time and read
+  again by `website/test/slider.mjs`'s `stepFailures`. *Why Fugaro?* is `Benefits.astro`
+  unchanged, rendered into the panel (`inPanel`), because the README's four reasons and their
+  icons were already the thing this panel is for; the middle tab and the section's own heading
+  are that one string since the owner's ruling of 2026-10-20, which read "Benefits" as the
+  block's shape rather than as the question its four points answer (the reading at the foot of
+  this file). *See it* is the owner's real `fugaro watch`
+  capture above the command, and under the command the panel's caption: `fugaro watch` is the
+  live screen of spend, repositories and running agents. — `plugin/skills/working/SKILL.md`'s own
+  line, which `home.mjs` reads back to that file. The picture and its transcription are the
+  section above's subject.
+- **The tabs are fragment links and not radio inputs, and the site's own privacy statement is
+  why.** The draft allows either. A radio group would put three `input` elements on the
+  homepage, and the site makes two claims that would then be false: the privacy statement's
+  "It has no account, form or comment box.", and `website/test/consent.mjs`, which refuses a
+  `form`, an `input`, a `textarea` or a `select` on **every** built page. So the tabs are
+  `<a href="#home-panel-…">`, one rule shows each panel, and the first panel is shown while no
+  fragment is chosen: the page needs no JavaScript to be read or used, every panel's text is in
+  the HTML a reader receives, and the tabs are keyboard operable as links with the focus ring
+  the rest of the site's links carry. What that costs is recorded in the component: a radio
+  group is announced as three choices and its arrow keys move between them, and a row of
+  fragment links is announced as three links. `website/test/slider.mjs` holds the shape —
+  three tabs, three panels, the panel the fragment names, no script that switches them.
+- **The install block is one button, and the command under it is read from the data file.**
+  `HomeInstall.astro` renders one large link to `/getting-started/` with the brew command under
+  it, from `website/data/install.yaml` through `HOME_PATH` — the same reader the two install
+  cards used, so the command is still never typed twice and the two cards are gone.
+- **Every control the page asks a reader to tap is at least 44 px tall**, which is the size the
+  owner's brief of 2026-10-19 measures every control against. The tabs and the install button
+  already were; the hero's two links were a fraction of a pixel short of it on their padding and
+  their line height alone, so they declare `min-height: 44px` and `website/test/home.mjs`'s
+  `controlTargetFailures` reads the rule — including the case where the minimum sits inside a
+  media query that is not in force, which is a minimum a phone does not get.
+- **What left the page.** `AgentChat.astro` is deleted rather than hidden: a component no page
+  renders is a component whose build-time guards stop running, and every line the site still
+  publishes is still held to the document it quotes. `ArchitectureDiagram.astro` is off the
+  homepage because the draft's page is those three blocks and the picture of the run is not one
+  of them — the slider's first panel is the flow the reader is shown — and it drew
+  `/how-it-works/` for a while; the owner's ruling of 2026-10-20 then retires the component and
+  the flow with it, so the site's picture of a run is `RunDiagram.astro`'s and it is on
+  `/how-it-works/` alone. The checks that were about the
+  chat were replaced by checks about what replaced it (`website/test/slider.mjs` is new;
+  `home.mjs`, `fold.mjs`, `budget.mjs`, `wording.mjs` and `base-styles.mjs` were re-pointed in
+  the same commit), not dropped.
+- **What the gates hold, and what they cannot.** The page's order, the three tabs and the three
+  panels, the panel each fragment shows, the absence of a script, the 44 px targets — read at
+  360 px and at 1280 px, so a minimum that holds at one of the two and not the other is refused —
+  and the steps' provenance are `website/test/slider.mjs`'s five rules, with twenty-two planted
+  cases under them; the hero's links against `features.console_downloads`, the prompt line's
+  source, the watch block and the capture's slot are `home.mjs`'s; the lead's word count is
+  `budget.mjs`'s and the byte figures are `website/README.md`'s, re-derived from the gate's own
+  build in the commit that moved them (D192). **Whether the page looks like the owner's draft
+  is the owner's check** (70a–70c, P9, D190): no gate here can see an image, and no screenshot
+  is committed.
+
+## The owner's ruling of 2026-10-20: the benefits section is headed "Why Fugaro?"
+
+The owner's ruling of 2026-10-20 renames the homepage's "Benefits" heading to exactly `Why
+Fugaro?` — capital W and F, question mark — and the slider's middle slide with it. Nothing else
+about the section moves.
+
+- **What the ruling settles.** The section renders README.md's `## Why Fugaro`: the four names
+  that document gives its reasons, and for each one a sentence of the paragraph it argues it
+  in. The block was headed "Benefits", which named the *shape* of the list rather than what the
+  list is for, and "Benefits" is not a word README.md uses for it. The heading is now the
+  question the four points answer, which is the reading the section's own provenance already
+  carried: `data-source="README.md#Why Fugaro"` has cited that heading since the section
+  landed.
+- **What changed, and what did not.** `src/components/Benefits.astro`'s `<h2>` reads "Why
+  Fugaro?", and `src/components/HomeSlider.astro`'s `SLIDES` middle entry carries the same
+  string as its label. (The entry was `TABS` when the ruling was written; the owner's feedback
+  of 2026-10-21, item 3, turned the tabs into the slider, and the list is `SLIDES` now. The
+  string it carries is where it was.) The component's and the file's names, the section's `id`
+  (`benefits-title`), its `class` (`home-benefits`), the panel's `id`
+  (`home-panel-benefits`) and the `aria-labelledby` that ties the heading to the section are
+  all where they were: they are the element's name in the markup, which the stylesheet and the
+  accessibility tree read, and none of them is a label a reader sees. **The four points are
+  not touched** — neither the README's own names nor the sentences drawn from its paragraphs —
+  because they are the answer the new heading asks for, and a rename is not a licence to
+  reword them.
+- **The two gates that pin the string, and the ones that do not.** `website/test/home.mjs`
+  reads the built page's `benefits-title` and refuses anything but the exact string, so the
+  question mark is held as well as the words: its case plants the owner's own phrase without
+  the question mark, and a second plants the label the section carried before the ruling.
+  `website/test/slider.mjs` already held each panel's own `h2` equal to the label of the dot
+  that opens it — a reader who arrives on a panel reads the label of the slide it is — so the
+  dot's name and the heading are one name by construction, and a rename that reached only one
+  of the two stops the build. The other gates named in the brief pin no string of this
+  section: `a11y.mjs` reads the section as a named landmark and its `h3`s as headings under
+  one `h2` and never the words; `copy.mjs` reads no heading of the homepage; and
+  `stacking.mjs` reads the blocks' order and their rule, not their text. Nothing there moved.
+- **The figures, re-derived rather than argued.** The site figure moved by the **6 bytes** the
+  longer string costs in the built page — "Why Fugaro?" is three characters longer than
+  "Benefits" and the string is written twice, once in the `<h2>` and once in the dot's own name — so
+  `website/README.md`'s byte budget is re-derived in the same commit, 988,253 → **988,259**
+  bytes across the same 23 files, with the whole-site ceiling following it, 3,705,951 →
+  **3,705,972**. One more byte lands on the same branch after it, from the second item of the
+  review of 2026-10-20 — the security page's boundary drawing grows the two cards whose last
+  line was drawn below the inset they declare, and the gateway card's height goes from two
+  digits to three (`96` → `120`) — so **the branch's own figures are 988,260 bytes across the
+  same 23 files and a 3,705,975-byte whole-site ceiling**, and those are the pair
+  `website/README.md` states. The page's own word count moves by two (the heading and the tab
+  are each a word longer, which is what the shipped tab label costs the lead region too, 29 →
+  **30** words), and **neither word ceiling moves**: the ceiling of 949 words is `privacy`'s own
+  page plus a quarter, and the homepage stays well inside D188's 300. No file was added, no
+  stylesheet rule was touched, and the one script is the same 39,888 bytes.
+- **The measurement, and the check that is still the owner's.** Nothing here was rendered: no
+  browser was driven for this round, no screenshot is committed, and this run cannot see one.
+  What was read is the built artifact — the two strings out of `dist/index.html`, the site
+  figure and the page's words and lead from the gates' own measurement of it, and
+  `(cd website && npm run check)` green over all fourteen gates. **Whether the renamed
+  heading looks right in the section's own type step is the owner's check** (70a–70c, P9,
+  D190): the ruling names a string, and no gate here can see a page.
+
+## The owner's 2026-10-21 feedback on the FAQ: the empty comparison section comes out
+
+The owner's feedback on the preview of 2026-10-21 is one line — "FAQ page: remove How Fugaro
+compares section, it's empty" — and this round is that one line. The section is removed from
+the FAQ page and from the file that fed it; nothing else on the page moved.
+
+- **What the section was, and why it was empty.** `website/src/pages/faq.astro` rendered a
+  section headed "How Fugaro compares" from `website/data/faq.yaml`'s `comparison:` list. The
+  list carried no row and never had one, and D103's provenance rule (F51–F52) is exactly what
+  kept it that way: a row about another tool is a claim this repository cannot verify — it has
+  no network and records no sourced, dated fact about any other agent runner — so a row
+  without a `source:` and a `date:` stopped the build. The honest empty state was written for
+  day one and the owner has now answered it: a heading over a panel that says nothing is a
+  promise a reader meets on the page, and the answer is to take the section out rather than to
+  keep a place set for rows that may never come.
+- **What came out, and where.** `faq.astro`: the section and its panel, its empty state, the
+  `data-comparison-rows` count and its heading; the validator that read the list (`rows`,
+  `ComparisonRow` and `comparison` in `TOP_LEVEL_KEYS`); and the seven stylesheet rule blocks
+  the section and its table were drawn with — `.comparison`, `.comparison-title`,
+  `.comparison-panel`, `.comparison-empty`, `.comparison table`, `.comparison caption` and
+  `.comparison th, .comparison td`. `website/data/faq.yaml`: the `comparison: []` key and
+  the comment block that documented the row format, both replaced by a note that records the
+  removal and its date. **Nothing else in the page moved** — the headline, the lede, the six
+  answers, their sources and the two `more_*` links are the strings and the files they were.
+- **The anchor, the navigation and the sitemap.** There was no table of contents on the page
+  and no sitemap entry to remove: `src/layouts/Base.astro`'s menu links `/faq/` and no anchor
+  of it, and the page's own outline was its bands. Nothing in the tree linked
+  `/faq/#comparison`, and nothing links it now — `website/test/linkcheck.mjs`'s second rule is
+  what holds that either way, since a `#fragment` that resolves to no `id` on the target page
+  is refused wherever it is written.
+- **The two gates that pin the removal.** `website/test/faq-community.mjs` reads the built
+  page for every leftover of the section — the band, the heading "How Fugaro compares", and the
+  word `comparison` itself, which is what every shape of the section was written in: its anchor
+  and class, its panel, its empty state, its row count and all seven of its rule blocks. The
+  word rather than a list of them, because a list is what a first cut of this check carried:
+  it named the three shapes a reader sees and left five of the seven rule blocks free to come
+  back unnoticed. Each shape has a plant a later edit would write, and the stylesheet's plant
+  is the five selectors that list missed. The file half is a build case: a `comparison:` key written into
+  `faq.yaml` again stops the build naming the key, because the page reads `version` and
+  `questions` and refuses every other one. That is what keeps the removed section's data from
+  returning as a fact nothing renders (W1.10 step 2), and it is the rule D103's reader used to
+  be; the provenance cases themselves went out with the rows they were written for.
+- **The figures, and the owner's request that they stay put.** The removal takes the section's
+  markup and its rules out of the page: the built FAQ is **1,583 bytes** lighter (23,719 →
+  **22,136** bytes), and the whole build is lighter by the same 1,583 bytes, the file count
+  unmoved at 23. The page's word count drops from 241 to **211** — the heading and the
+  empty-state sentence — and its lead is the nine words it was. **No figure in
+  `website/README.md` is re-derived**: the owner's ruling of 2026-10-20 re-derives the byte
+  budgets only when asked, and the round moves the whole-site total *down*, so every ceiling
+  holds with the numbers further inside them than they were — which is what the budget gate
+  measures on every run, whatever the README states.
+- **The measurement, and the check that is still the owner's.** Nothing here was rendered: no
+  browser was driven for this round and this run cannot see a picture. What was read is the
+  built artifact — the page's own HTML for the section's leftovers and its bytes and words
+  from the gates' own measurement — with `(cd website && npm run check)` green over all of the
+  gates. **Whether the page looks right without the section is the owner's check at the
+  preview** (70a–70c, P9, D190).
+
+## The owner's 2026-10-21 feedback, items 1 and 2: the spark's drawing, and Home in the menu
+
+The owner's feedback of **2026-10-21** is three readings of the live site (fugaro.dev) in one
+message: the icon under the homepage's fourth benefit, a `Home` item at the front of the menu,
+and the homepage's tab strip, which becomes a slider (the section below). This section is items
+1 and 2. As every round here, the readings the feedback does not spell out are recorded, so a
+later reader does not have to guess them from the markup.
+
+- **The spark is drawn symmetric (item 1: "icon for 'The newest tools and models, ready to
+  use' is asymmetrical").** `Benefits.astro` draws the four benefit glyphs as inline SVG in one
+  24 × 24 box with a 2-unit `currentColor` stroke, and the fourth — the four-point star that
+  means the newest tools and models — was drawn as one closed outline of straight edges with
+  the north-west notch left out: `M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11Z` runs from
+  the west point straight to the north one, so six of its seven corners had a corner opposite
+  them and the seventh had none, and the mark was drawn about y = 11 in a box whose middle is
+  y = 12. Both are what a reader sees as the star leaning. The drawing is now
+  `M12 4l2.2 5.8L20 12l-5.8 2.2L12 20l-2.2-5.8L4 12l5.8-2.2Z`: the same four points, the same
+  four notches, the same 16-unit span, the same stroke, and the mark centred on (12, 12) like
+  every other glyph of the set. **The meaning is untouched** — a spark, the newest tools and
+  models, ready to use — and so are the set's size and stroke.
+- **The rule that would have caught it, and its two plants.** `website/test/home.mjs`'s
+  `benefitFailures` now holds a glyph that is *drawn as one closed outline of straight edges*
+  to being symmetric about both of the lines through its own middle, and to that middle being
+  the middle of the box. The rule is written over the drawing and not over the star by name —
+  `outlineOf` reads the path's own commands — so it is a fact about the shape a glyph is rather
+  than a description of today's markup, and a glyph drawn with curves or in several strokes (the
+  shield, the arrows, the team) is not a mark it has anything to say about. Two defects are
+  planted beside the fixture section: **the star as it shipped** (refused twice for the missing
+  corner, at (9.8, 8.8), and once for the middle at (12, 11)) and **a symmetric star a unit off
+  the box's middle** (refused for the middle alone). Both were also proved by hand against the
+  real page: with the old drawing in `Benefits.astro` and the artifact rebuilt, the case that
+  reads the built homepage fails naming the corner; with the fix in place it passes.
+- **Home is the menu's first item (item 2: "I think we need a 'Home' as the first menu").**
+  D182 took Home out of the menu and left the wordmark as the one link to `/`; the item is back
+  as a plain `<li class="site-nav-home"><a href="/">Home</a></li>` in front of the groups — three
+  of them that morning, **two since the later feedback of 2026-10-21 dropped the Reference
+  group** (the section at the end of this file) —
+  in the same list, at every width — the "first menu" is the first item of the one menu the site
+  has, and the phone shows that menu rather than a collapsed version of it (the 2026-10-19
+  amendment). **The wordmark stays the way home it has always been**, so `/` is listed twice and
+  the two links say the same thing; what moves is the current-page mark, which is now the menu's
+  Home link on the home page and never the wordmark, because a page carries exactly one
+  `aria-current="page"` (RF4) and the mark belongs on the link a reader looks for in a menu.
+  Home is a link and not a group: home is one page and has nothing under it, so a disclosure in
+  front of it would be a control that opens nothing, and it needs no script at all.
+- **The phone row carries four items, and the fourth one moves the breakpoint and the row's
+  spacing.** The 2026-10-19 round measured the row rather than estimating it: at 381 px the
+  wordmark's text plus the three labels was a few pixels wider than the header's content box in
+  the font the built site falls back to, so the text left the row below **390 px**. The Home
+  link and its gap are about 45 px at that size, and the same arithmetic puts the cut at
+  **432 px (27 rem)**, rounded up from the 426 px the three-item figure implies. Below the cut
+  the row's own spacing is what the fourth item is paid for: the 8 px between the wordmark and
+  the menu becomes 4, and the items stand with no gap between them — their own 4 px padding
+  either side is what separates them, which is the 8 px a phone's labels have always been drawn
+  with. That is 16 px of the 45 px back, and it is the part of the row that is neither the mark
+  (the 2026-10-19 ruling keeps it) nor the labels (their 44 px height is the brief's tap
+  target).
+- **The gates, and what the live check has to settle.** `website/test/base-styles.mjs`'s
+  `navFailures` holds the item's position (read off the list's own children, because "first" is
+  the order a reader meets them in), its route and its name, refuses a Home item that holds a
+  list or a disclosure, and refuses an item that is neither Home nor a group; `navLayoutFailures`
+  holds the phone block's two rules, because a phone block that leaves the row's spacing standing
+  is the three-item row's spacing with a fourth item in it. Each rule keeps a plant: a menu with
+  no Home item, one with Home last, a Home link pointing elsewhere, a first item named something
+  else, a Home item holding a list, a fifth item that is neither, and the two spacing rules
+  removed. **Whether the row fits a 320 px phone's content box is a rendered measurement no
+  hermetic test can take**: it is the owner's check 70a, exactly as the three-item row's fit was,
+  and the arithmetic above says the row needs about 12 px more than a 320 px content box has on
+  the label widths the 2026-10-19 round measured in a browser (65, 83.5 and 59.3 px at 375 px).
+  If that check shows a sideways scroll, the levers are named in the code: the mark, the labels'
+  own 4 px padding, and the breakpoint.
+- **The bytes, re-derived in the commits that moved them.** The spark's drawing is 8 bytes onto
+  the homepage's markup and so onto the site figure, and it was re-derived in its own commit —
+  which also paid 12,799 bytes the stated figure had drifted by, the `cli-reference` rewrites of
+  the CLI rounds (#789, #832) landing after the screenshots round re-derived (the running list in
+  `website/README.md` records both, and D192's exact derivation runs only under
+  `FUGARO_DERIVE_BUDGETS=1`, which CI does not set). The Home item is markup **and** stylesheet
+  inlined into every page, so its move is uniform and large for one link: 170 bytes onto each of
+  the 11 pages (119 of stylesheet, 51 of markup — the homepage's own current-page mark moves from
+  the wordmark to the new link, which is why its markup moves by the same 51), 1,870 onto the
+  site figure and 170 onto the page weight, all re-derived in its own commit. The script is
+  untouched by both, and the count of files in `dist/` stays 28.
+- **The measurement, and the check that is still the owner's.** Nothing here was rendered: no
+  browser was driven for this round and this run cannot see a picture. What was read is the built
+  artifact and the stylesheet, through the gates above, with `(cd website && npm run check)`
+  green over all 415 cases. **Whether the star now reads as symmetric and whether the phone's
+  header row fits at 320 px are the owner's check at the preview** (70a–70c, P9, D190).
+
+## The owner's 2026-10-21 feedback, item 3: the tabs become a slider
+
+The third reading of the owner's feedback of 2026-10-21 is the homepage's middle block:
+"**'Say it. Get pull requests.': can we auto-rotate between tabs every few seconds? Like a
+slider? Maybe a slider would work better than tabs?**" The 2026-10-19 draft approved the block as
+a strip of three tabs; this section is what changed, why, and what the gates now read instead.
+The draft's own section above still describes the shape the block was approved in — the three
+slides, the three panels, the fragment links and the no-script switching are all still exactly
+what it says — and the strip of tabs is the one part of it that is gone.
+
+- **The controls are a row of dots and two step controls.** `HomeSlider.astro` renders
+  `.slider-controls` — a previous button, a list of three dots, a next button — above the
+  panels. Each dot is `<a class="slider-dot" href="#home-panel-…">` with an empty body and its
+  own `aria-label` ("Slide 2 of 3: Why Fugaro?"): the circle a reader taps is a drawing, so the
+  name a screen reader reads is the whole of what the dot says, and it says both the slide and
+  the reader's place in the three. **The dots are fragment links and not buttons**, which is the
+  2026-10-19 section's own decision kept: the block switches with no JavaScript at all, every
+  panel's text is in the HTML a reader receives, and the no-script state of the block is a
+  stylesheet rule rather than a script. **The two step controls are buttons**, because they step
+  a block rather than going anywhere, and the markup emits them `hidden` — a control rendered
+  visible by the markup is a button that does nothing for a reader whose browser runs no script
+  (D183's "no broken control"), so the site's one script is what reveals them.
+- **The script drives the block, and the stylesheet stands the no-script state down while it
+  does.** `public/scripts/site.js` gains a `panels()` section (it is `panels(block)` since the
+  console page's slider took the name `slider()` in the feedback-B round; see the note on the two
+  sliders being one file): it finds the block by `[data-slider]`, writes the name of the slide on
+  screen to the block's `data-active`, and the stylesheet's
+  `.home-slider[data-active='easy'] #home-panel-easy`-style rules are what show the panel it
+  belongs to. The no-script rules — the `:target` one and the one that shows the first panel
+  while nothing is targeted — are scoped `.home-slider:not([data-active])`, and that scoping is
+  load-bearing rather than tidiness: a reader who arrived on `#home-panel-see` and then let the
+  block advance would otherwise have **two** panels shown at once. The reason is not the order
+  the two rules are written in — the `:target` selector is (0,4,0), one class and three
+  class-level parts, where the script's own rule is (1,2,0), and it wins on the id whatever the
+  order — it is that both rules would be in force at once, each naming a different panel and each
+  saying `display: block`. The script also marks the dot of the slide on screen with
+  `aria-current="true"`, which the stylesheet draws in the accent — the mark a reader has instead
+  of a text label.
+- **The clock, and the four things that stop it.** The block advances every six seconds
+  (`AUTO_MS = 6000`, the six seconds both of the site's sliders stand a slide for, declared once
+  with the console page's slider) and wraps from the third slide back to the first. It is held
+  while the pointer is over the block or the keyboard's focus is inside it (a reader who is
+  reading must not have the slide move under them) — **two holds and not one**, because a pointer
+  leaving the block and a focus leaving it are different readers: one flag for both would let a
+  resting pointer's drifting off the block start the clock under a reader who is tabbing through
+  the dots, and let the focus's leaving start it under a reader whose pointer is resting on a
+  control. It does not run while the page is not being shown at all (`document.hidden`), and it
+  does not run for a reader whose system asks for less motion (`prefers-reduced-motion: reduce`)
+  — for that reader the dots, the two controls and the arrow keys all still work, because what
+  they asked for is that nothing move **on its own**. That query is asked once and **watched**,
+  the way the console slider's and the menu's own queries are, because a visitor can turn the
+  setting on without reloading: a query read only at load would give that reader one more
+  advance before the block settled. A click
+  on a dot is `preventDefault`ed: with the script running the block's state is its own, and an
+  address that kept the fragment would send the reader back to that slide on a reload. The script
+  never writes to the address. Arrow keys work on the dots and on the two controls, and every
+  other key is left to the browser, because Tab has to reach the next control.
+- **The stub DOMs the whole file runs in, and why the clock is behind a short circuit.**
+  `website/test/copy.mjs`, `website/test/consent.mjs` and `website/test/nav-hover.mjs` each run
+  the real `site.js` against the built homepage, and none of them is a browser: they have no
+  `document.hidden` and two of them have no `matchMedia`. So `still()` reads
+  `over || inside || !pageShown() || calm()`, and `pageShown()` is `document.hidden === false` —
+  a document that cannot answer is a document no clock is started in, which is both the correct
+  reading of a browser that does not answer and the reason those three gates keep their timer and
+  query assertions unchanged. `website/test/consent.mjs`'s two selector maps did have to learn the
+  block: that stub refuses a selector it does not read rather than matching nothing, so the five
+  `data-slider` attributes are written into it, and the file's own comment says why.
+- **What the gates read now.** `website/test/slider.mjs` is rewritten around the slider, and its
+  six rules are: the three slides and the three dots paired (each dot a fragment link to the
+  panel it opens, named after it, announced with its place in the three, and the panel headed
+  with the same label); the stylesheet read in **both** states, one selector at a time so a rule
+  that marks one dot for another dot's panel is refused rather than counted as a pair present;
+  the block held to carrying no script and the script to naming no id and no class of the block
+  (the two files are joined by the `data-` attributes alone); the 44 px targets, the wrapping
+  rows, the focus ring and the 360 px content box; **the behaviour, run** — the file the site
+  ships, against the built homepage, in a fourth stub DOM written for this gate, with seven
+  cases (the first slide and both controls revealed; the clock stepping and wrapping; the hold
+  under the pointer and under the keyboard's focus; a page nobody is shown; less motion; the
+  dots, the controls and the arrow keys, and the address left alone; a reader arriving on a
+  fragment) and each one planted against the line of the script it reads, with the plant
+  asserted to parse; and the steps' provenance, unchanged. `website/test/home.mjs`'s gate over
+  the block reads dots where it read tabs, `fold.mjs`'s fixture and `stacking.mjs`'s class list
+  follow the new markup, and `website/test/budget.mjs`'s ceilings are re-derived in the commit
+  that moved the bytes.
+- **The bytes.** The block is only on the homepage, so its own bytes land there and nowhere
+  else: **2,186 onto the homepage's HTML** — 1,054 of stylesheet and 1,132 of markup — and
+  **13,211 onto the script**, which every page loads once. The page weight (the console page,
+  still the heaviest) moves by the script alone and by the fourth item Home put in the header's
+  row, 411,896 → **425,277**; the site figure by those and by the star's 8 and Home's 1,870,
+  1,412,642 → **1,429,917**; and all three of the README's byte budgets are re-derived in the
+  commit that ships the script (D192). The figures are the merged round's: the console page's
+  slider (#841) landed on `main` while this round was open, and the two rounds' bytes are one
+  build. The count of files in `dist/` stays **28** and the count of pages **11**, and the
+  homepage's own words go 468 → **461**, because a dot is a circle with no text in it: the three
+  labels the tabs showed are now the dots' names, which a screen reader reads and the page does
+  not draw.
+- **The review round's bytes.** The block's review (2026-10-21) moved the three figures again and
+  again by the block's own bytes alone: `site.js` 63,925 → **66,189** (+2,264), the page weight
+  425,277 → **427,596** and the site figure 1,429,917 → **1,432,910** — the script's 2,264 once
+  each, plus **55 bytes of stylesheet onto every one of the 11 pages** (605 in all), of which the
+  homepage's own stylesheet is 124 more. No page's markup was rewritten and no page's words
+  moved, so the count of files in `dist/` stays **28** and the count of pages **11**. The five
+  corrections are in `website/README.md`'s round above this one; two of them changed what this
+  record itself says, and both are corrected in place here: the clock's holds are two and not
+  one, and the specificity the `:not([data-active])` scoping is defended by.
+- **The two sliders are one script file, and they share four names and nothing else.** The
+  console page's slider (#841) landed on `main` while this round was open, so
+  `public/scripts/site.js` carries both: **one query** for `[data-slider]` in `start()`, and every
+  block it finds handed to both drivers — the console's `slider(section)`, which returns at once
+  from a block with no `.screens-track` in it, and this round's `panels(block)`, which returns at
+  once from a block with no panels. What the two share is what the two blocks have to agree on:
+  the block's attribute, the two step-control attributes, the six seconds a slide stands
+  (`AUTO_MS`) and the reduced-motion query (`LESS_MOTION`), declared once with the console's
+  section, with `calm()` reading that one query for this slider. **Their clocks stay their own**,
+  because what they drive is not the same thing: the console's is a snapping scroll container
+  whose position is read back from `scrollLeft`, and this one is a set of panels the block names
+  in `data-active`. Two of this round's names had to move: its `slider()` is the console's
+  function, so it is `panels(block)`, and its page-visibility reading is `pageShown()` because
+  the console's section already has a `shown()` of its own — the slide its track is on.
+- **The live check, and the one line of it that had to change with the page.**
+  `docs/gcp-live-checklist.md`'s check 70b reads the block, so its Method now reads `SLIDES` out
+  of the component and the clock out of the script, and its step 2 reads dots rather than tabs.
+  **The step also tells the owner to put the pointer over the block before reading a panel**:
+  the block moves on by itself six seconds after the page lands, and a slide that is being read
+  stays where it is only while the pointer or the focus is inside it — a live check that took
+  longer than six seconds to read a panel would otherwise be reading a different panel than the
+  one it chose.
+- **The measurement, and the check that is still the owner's.** Nothing here was rendered: no
+  browser was driven for this round and this run cannot see a picture. What was read is the built
+  artifact, the stylesheet and the script, through the gates above, with `(cd website && npm run
+  check)` green over all 430 cases — 429 pass and one skipped. That is the round as merged with
+  the console page's slider (#841): the two sliders are one script file now, and the merge's own
+  run is what the count is. **Whether the slider reads as a slider — the look of the dots, the
+  feel of the six seconds, whether the motion is too fast or too slow — is the owner's check**
+  (70a–70c, P9, D190), and the number to move first if it is wrong is `AUTO_MS` in
+  `public/scripts/site.js`.
+
+## The 2026-10-21 feedback: the Reference group comes out of the menu
+
+The owner's feedback of **2026-10-21** (a message of its own, after items 1 to 3 above) is one
+reading of the live site's menu: "**Okay, let's drop the top reference menu. We'll move the
+submenu console under product, and the rest go under Project.**" As every round here, the
+readings the feedback does not spell out are recorded, so a later reader does not have to guess
+them from the markup. **D182's group decision is amended by it, and the amendment is dated
+rather than written over the decision**: the 2026-10-18 ruling, the 2026-10-19 brief and the
+2026-10-21 readings above stand as what was decided and read then.
+
+- **The menu is two groups, and `NAV_GROUPS` is the one place that says so.** The Reference
+  group — its `<li>`, its `<details>`, its `<summary>` and its list — is gone from
+  `website/src/layouts/Base.astro`, and the three links it held were **moved rather than
+  rewritten**: Console's item into *Product*'s list, after Caps and costs, and Docs's and
+  Changelog's into *Project*'s, Docs first and Changelog last — the order the feedback's own
+  sentence gives them. *Product* holds How it works, Getting started, Caps and costs and
+  Console (four), *Project* holds Docs, Security, FAQ, Community and Changelog (five), every
+  label and every route unchanged. The division is the feedback's rather than a symmetry:
+  *Product* is the four pages about running the thing the visitor came for, *Project* the five
+  about the project itself.
+- **What did not change.** The menu's first item is still **Home** (the same day's earlier
+  feedback), drawn in front of the groups and carrying the page's one `aria-current="page"`
+  where it is the page being read; Privacy is still a footer link and not a menu item; the
+  groups still share one `name`, so opening one closes the other *with two groups as much as
+  with three* — which is the whole of the exclusivity the browser provides, and the script
+  writes nothing to keep it; both levels are still `<details>`, so the menu still opens and
+  closes with JavaScript off; and the group's list is still the `<details>`'s own child.
+  **"Why GCP" is not added here**: a later part of this line of work adds a fourth *Product*
+  item, and this round adds none — the group counts above are what the menu draws today.
+- **The gates moved with it.** `website/test/base-styles.mjs`'s `navFailures` holds **two**
+  groups, names them (*Product* and *Project*) and holds the routes each group lists, rather
+  than counting to three — the count alone was all it held until the review of this round
+  found that a renamed group left every gate green — its fixture is
+  the real two-group shape the layout writes, and the refusal case that plants a fourth menu
+  item expects the four items the two-group menu plus one makes. `website/test/nav-hover.mjs`
+  reads the two lists the menu draws — its `.site-nav-group ul` count, its phone case's opening
+  sentence, and the case where a sibling closes a group under the reader's focus all follow —
+  and `website/test/checklist.mjs` and `internal/cli/docs_website_redesign_test.go` hold check
+  70a's names to the site as before (the check itself is corrected with this round: its labels
+  are two, and its "Products, Reference, Project" is "Product, Project").
+- **The phone row is one item narrower, and its cut is left where it was measured.** The
+  2026-10-21 round above moved the wordmark's breakpoint to **432 px (27 rem)** because the row
+  carried four items (Home and three labels); with the Reference group gone it carries three
+  again, about 45 px narrower. The cut and the phone block's two spacing rules are **left as
+  measured** rather than re-tightened against a row no browser has seen: the cost is the
+  wordmark's text leaving the row a width earlier than a three-item row would need, which is
+  the safe direction of the two, and whether the row fits is the owner's check 70a either way.
+  `base.css` and `website/test/base-styles.mjs` say so beside the rules.
+- **The bytes.** The move is uniform, because the menu is inlined into every page: **110 bytes
+  off each of the 11 pages' HTML** (the removed block's own elements and their attributes; the
+  three links themselves are moved, not rewritten), **8 bytes off the script** (the two
+  comments in it
+  that counted three groups — the second one found by the review of this round, which is why
+  the figure is eight and not six), so **118 off the page weight** and **1,218 off the site
+  figure**.
+  No file was added or removed (`dist/` stays 28 files and 11 pages) and no page's words move —
+  a menu label is chrome, and D188's ceilings count `main`. **The three budget figures are left
+  where they are**, per the owner's ruling of 2026-10-20 that they are re-derived when the owner
+  asks rather than on every round; `website/README.md`'s running list records this round's move
+  the same way.
+- **The measurement, and the check that is still the owner's.** Nothing here was rendered: no
+  browser was driven for this round and this run cannot see a picture. What was read is the built
+  artifact, the stylesheet, the script and the two hermetic menu gates, with `(cd website && npm
+  run check)` green. **Whether the two-group menu reads right — the labels' row at every width,
+  the two groups' lengths, whether four and five is the split the owner wants — is the owner's
+  check** (70a, P9, D190); `Base.astro`'s `NAV_GROUPS` is the one place a label would move.
+
+## The owner's 2026-10-21 feedback on the security page and How It Works: one picture at two layouts, and a bullet per fact
+
+The owner's feedback on the preview of 2026-10-21 is two lines, one per page. On the security
+page: "The image is tall (works well in mobile) but on desktop doesn't fit above the fold, can
+we do it more horizontally for desktop?" On How It Works, under the run's picture: "'Also true
+of a run': can we have a bullet point for each of the items?" This round is those two lines and
+nothing else: the security page's boundary drawing now exists in two layouts, and the five facts
+under the run's picture are a real list.
+
+- **The drawing is one picture, drawn twice.** `website/src/pages/security.astro` carries two
+  inline `<svg>`s of the same drawing: the tall one the page already had (`viewBox="0 0 360
+  744"`, about 22.5 rem wide) and a new wide one (`viewBox="0 0 1180 400"`, 3:1) that lays the
+  same cards out in a row — the source card, the arrow, the boundary box with its two rows of
+  two cards, the pull request and the unrestricted egress below. Both carry the same
+  `aria-label` and there is still no raster image anywhere on the page: **the layout is markup
+  and CSS, and no screenshot was committed** (D190). The precedent is How It Works' own
+  `website/src/components/RunDiagram.astro` (`src/pages/how-it-works.astro`), which has drawn its
+  picture twice — a wide default and a tall twin with `hidden` — since the run's timeline came
+  out; this page follows it rather than inventing a second way to do the same thing.
+- **Which one a reader gets, and where the changeover sits.** The shared
+  `.boundary-drawing` rule renders the drawing block at the column's own width and no ceiling
+  (`width: 100%`, `max-width: 100%`, `height: auto`); `.boundary-drawing-tall`
+  adds `max-width: 22.5rem` and `display: none`, and one `@media (max-width: 70rem)` block swaps
+  them — the tall drawing for a phone and the wide one above the changeover. The stylesheet says
+  which is which in one place, and **the value of the changeover is not a taste: 70 rem is
+  exactly where the wide drawing's own labels stop being legible.** The wide drawing is 1180
+  units and the page's column is at most `--page-max` (72 rem) less the article's gutters and
+  the card's own padding, so at 70 rem the column is 1024 px and each unit is 0.868 px; the
+  drawing's smallest label is 14 units, which is 12.15 px there and 12.53 px at 1440 px — the
+  12 px floor a reader can still read, and the reason the changeover is not pushed lower to
+  catch one more desktop width. The drawing's own geometry is unchanged by this: every card,
+  inset and label position is the tall drawing's, laid out along the row.
+- **The fold, as arithmetic, and whose check it stays.** At 1440 × 800 the column is 1056 px, so
+  the wide drawing's 1180 units settle at about 0.895 px each and the picture is 358 px tall.
+  Above it sit the site header (77 px), the hero's own padding (72), the `display-xl` title
+  (103.68 px at `--leading-display`, 97.46), the hero's lower padding (16), the gap (48), the
+  card's top padding (32), the section heading (35.19) and its margin (24) — **401.65 px** — so
+  the headline and the whole drawing come to about 760 px inside a 800 px first screen. **The
+  fold itself is the owner's live-browser check** (D187, 70b): this repository's gates are
+  browser-free and nothing here can see a viewport, so what the tree holds is the arithmetic the
+  layout rests on, not a picture of the result.
+- **The gate that keeps both halves of that honest.** `website/test/security.mjs` gains an
+  eighth thing it checks, and it is written as the mechanical form of this feedback: the page
+  carries exactly two drawings, each with its own layout class, the same accessible name and
+  **the same words in the same order** (a layout that quietly dropped or reordered a fact is
+  refused); the stylesheet renders exactly one of them outside every media query — read through
+  the shared class's own rule the way a browser resolves it — and the `hidden` attribute has to
+  sit on the drawing the stylesheet turns off, so the two can never both be visible or both be
+  hidden; the changeover has to be one width, read from below, with the tall drawing block and
+  the wide one off; the wide drawing's smallest label has to stay at or above 12 px **in the box
+  the page actually draws it in** at that width; and the headline plus the whole drawing has to
+  fit 1440 × 800. The box is read, not assumed (the review of 2026-10-21): the shared
+  `.boundary-drawing` rule has to lay the drawing out in the column — `width: 100%` and no
+  ceiling of the site's own, `max-width: 100%`, the same pair How It Works' `.run-svg` is held to
+  — and a layout class may cap its own drawing under that (the tall one does, at 22.5 rem), so
+  the check reads the `width` and `max-width` in force for the wide layout's own class, takes the
+  smaller of it and the column in pixels, and takes both the label floor and the fold height **in
+  that box**. Without it a `max-width: 600px` on the wide drawing passed every rule while its
+  14-unit labels rendered at 7.12 px: the column was the wrong box to measure a drawing that is
+  not drawn in it. **Each refusal of the four rules has a plant that proves it fires**: a third
+  unclassed `<svg>`, a wide drawing stripped of its class, a mismatched label, a shared rule with
+  no `display` left on it (so neither layout has a value where no query holds), a tall drawing
+  left rendered, a drawing turned off with no `hidden` on it, a changeover read the wrong way
+  round, a `viewBox` made 900 units tall so the arithmetic stops fitting a first screen, a
+  `viewBox` with no readable width and another with no readable height, a page whose media query
+  is taken out and a page with a second one, the wide drawing left on below the changeover, a
+  label shrunk to 8 units, a `max-width: 600px` cap added to the wide drawing's own class, the
+  shared rule's `max-width` capped at 600 px and its `width` taken off, a cap written as
+  `max-width: thin` so nothing here can turn it into pixels, and the two values the arithmetic is
+  read through (`--page-max`, and `--leading-display` under the headline) made unreadable. The
+  reader-guard branches — a column, a `viewBox`, a cap and a room the check cannot turn into
+  pixels — are planted with those same unreadable values rather than left as branches nothing has
+  seen fire; disabling the box reading or the shared-rule pin makes the plants above fail, which
+  is how the two new rules were proved rather than asserted.
+- **The five facts are a list, and they always were one.** The "Also true of a run" panel on
+  How It Works is a `<ul>` of five `<li>`s drawn from the owner's board — the panel, the hairline
+  between two rows and the larger radius are the board's — but every row was set with
+  `list-style: none`, so a reader met five facts as one run-on paragraph. The panel's own
+  typography is unchanged and the marker is the list's own: `website/src/components/
+  RunDiagram.astro`'s `.run-also` now says `list-style: disc`, which draws the bullet outside
+  the item's content box at the room the row's own `padding-left` (`--space-lg`, 32 px) leaves,
+  so it sits inside the row rather than at the panel's edge, in the quieter tone `base.css` gives
+  every marker on the site. `website/test/how-it-works.mjs` holds it, and holds it in the two
+  halves a marker actually has: **the type the page's own stylesheet leaves in force** — the
+  `list-style` shorthand and the `list-style-type` longhand read together, in the stylesheet's
+  order, because the two are one answer in the cascade (`list-style: none inside`,
+  `list-style: outside none` and a `list-style-type: none` written after a shorthand all leave the
+  browser nothing to draw while the shorthand alone still names a marker) — and **the rows still
+  being list items**, since a marker is generated for a list item and the board draws these rows as
+  flex rows: `display: flex` on the item blockifies it and the bullet goes with it however the
+  list's own `list-style` reads, and `display: flex` on the list does the same to its children.
+  The cases that prove each refusal fires add the declaration back to the page's own rule —
+  `list-style: none`, `list-style-type: none`, `display: flex` on a row and on the list. Each
+  plant **adds** its declaration rather than swapping one in, because the build's CSS minifier
+  rewrites `list-style: disc` into `list-style: outside` — `disc` is `list-style-type`'s initial
+  value, so a plant that wrote `list-style: none` in one place and expected to read it back would
+  pass or fail on the minifier rather than on the rule; the shorthand plant is what caught the
+  first reading of this rule, which asked whether **every** word of the value was `none` and so
+  called `list-style: none inside` a bulleted list.
+- **The figures, and the numbers that did not move.** Nothing here is re-derived (D192: the
+  budgets move only when the owner asks). The built `/security/` page weighs **119,082 bytes**
+  (HTML 30,342, of which inline CSS 15,749; fetched files 88,740) inside the 1,603,485-byte page
+  budget — the 15 bytes the shared rule's `max-width: 100%` pin costs — and the whole site is
+  **1,436,585 bytes** inside the 5,373,414-byte one — the figures as
+  this branch reads them once `main`'s console page and slider (#841, #842) are merged in, since
+  both pages fetch the same one script and `main` re-derived the ceilings for it; `/security/` is
+  one of the three reference pages D188 exempts from the page word ceiling, with its lead measured
+  on every run like any other page's. Its word count is **553**, which is
+  the number it read before this round: the wide drawing's 76 words are the tall drawing's own
+  words in the tall drawing's own order — the gate above refuses any difference — and the tall
+  one is now `hidden`, so the page counts one drawing's words either way. The bullets half adds
+  no word to How It Works, because the five facts and their text are the board's and only their
+  marker changed.
+- **The measurement, and the check that is still the owner's.** Nothing here was rendered: no
+  browser was driven for this round and this run cannot see a picture. What was read is the built
+  artifact — the page's own HTML for the two drawings, the layout classes, the `hidden`
+  attribute, the labels and their boxes, the built stylesheet for the changeover and the
+  marker, and the gates' own measurement for the bytes and the words — with `(cd website &&
+  npm run check)` green over all of the gates (432 cases, 431 pass, 1 skipped, on the merged
+  branch) and `node --test test/security.mjs` green over all ten of its cases. **Whether the wide
+  drawing reads as the
+  same picture the owner approved, and whether the headline and the whole drawing really fit a
+  1440 × 800 first screen, are the owner's checks at the preview** (70a–70c, P9, D187) — and no
+  word of `SECURITY.md` changed in this round, so the page's claims are the owner's text
+  verbatim, exactly as before.

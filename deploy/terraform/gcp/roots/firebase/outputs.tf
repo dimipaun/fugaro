@@ -1,4 +1,4 @@
-# fugaro init --firebase reads these with terraform output -json and passes
+# fugaro update reads these with terraform output -json and passes
 # them to the installation root, the config and the jobs.
 
 output "rtdb_url" {

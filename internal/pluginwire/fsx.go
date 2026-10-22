@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"syscall"
 )
 
 // maxSettingsBytes bounds what is read: a settings file is a few lines.
@@ -66,9 +65,12 @@ func checkPath(path string) error {
 }
 
 // readFile reads path without following a symlink; a missing file is
-// (nil, false, nil).
+// (nil, false, nil). The refusal to follow one is openNoFollow's (a pair:
+// O_NOFOLLOW where the platform has it, os.Open where it does not — see
+// openfile_other.go for what that half keeps and loses), and the fstat below
+// is the second half of the same guard.
 func readFile(path string, limit int64) (data []byte, perm fs.FileMode, exists bool, err error) {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	f, err := openNoFollow(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, 0, false, nil
 	}

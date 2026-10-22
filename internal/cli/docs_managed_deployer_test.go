@@ -194,7 +194,7 @@ func TestChecklistHasCheck68(t *testing.T) {
 		// Scheduler is not offered everywhere (this installation's us-east5
 		// gives us-east4), so a Scheduler command given the region fails on the
 		// pinned installation and its condition goes unmeasured. The config
-		// records it — `fugaro init` writes it from gcp.SchedulerRegion — and
+		// records it — `fugaro update` writes it from gcp.SchedulerRegion — and
 		// the guard refuses to run without it.
 		`sed -n 's/^scheduler_region: *//p' "$C"`,
 		"SREGION",
@@ -289,7 +289,7 @@ func TestChecklistHasCheck68(t *testing.T) {
 	// backend block, so a check that plans there cannot run at all.
 	for _, want := range []string{
 		`XDG_STATE_HOME:-$HOME/.local/state`,
-		`/fugaro/terraform/${I:?}/installation`,
+		`/fugaro/terraform/${P:?}/installation`, // keyed by the GCP project ID (infra.InstallationWorkdir), not the installation name
 		`TF_DATA_DIR="$W/.terraform" TF_CLI_CONFIG_FILE="$W/terraformrc"`,
 		`-backend-config=bucket="${STATE_BUCKET:?}"`,
 		"-backend-config=prefix=fugaro/installation",
@@ -2906,7 +2906,7 @@ func TestChecklistCheck68BucketSuffixIsDrawnOnce(t *testing.T) {
 // Cloud Scheduler is not offered in every region: `gcp.SchedulerRegion` maps
 // this installation's `us-east5` to `us-east4`
 // (internal/backend/gcp/names.go:282), the installation's own jobs run in the
-// recorded `scheduler_region` (internal/localcfg, written by `fugaro init` from
+// recorded `scheduler_region` (internal/localcfg, written by `fugaro update` from
 // the region unless `--scheduler-region` overrides it), and
 // `gcloud scheduler jobs … --location=us-east5` fails on the pinned
 // installation. Every one of those commands would have failed — the listing,

@@ -90,6 +90,14 @@ const RecordWriteTimeout = recordWriteTimeout
 // MaxCredentialResumes exposes maxCredentialResumes.
 const MaxCredentialResumes = maxCredentialResumes
 
+// CredentialsServiceURLEnv and MetadataHostEnv are where a cascade run reads
+// its upstream from, exposed so a runner_test run can be pointed at a
+// stand-in the same way a job is pointed at the real service.
+const (
+	CredentialsServiceURLEnv = credentialsServiceURLEnv
+	MetadataHostEnv          = metadataHostEnv
+)
+
 // RunHandle reaches a run's halt and cancel hooks from a test's agent.
 type RunHandle struct{ r *run }
 

@@ -69,13 +69,13 @@ func TestPrompts(t *testing.T) {
 			t.Errorf("system prompt lacks %q", want)
 		}
 	}
-	if got := ReviewPrompt("/review", "", "main"); !strings.HasPrefix(got, "/review ") || !strings.Contains(got, "origin/main") {
+	if got := ReviewPrompt("/review", "", "main", DiffSize{}, false); !strings.HasPrefix(got, "/review ") || !strings.Contains(got, "origin/main") {
 		t.Errorf("skill review prompt = %q", got)
 	}
-	if got := ReviewPrompt("", "Check the SQL.", "develop"); !strings.HasPrefix(got, "Check the SQL.") || !strings.Contains(got, "origin/develop") {
+	if got := ReviewPrompt("", "Check the SQL.", "develop", DiffSize{}, false); !strings.HasPrefix(got, "Check the SQL.") || !strings.Contains(got, "origin/develop") {
 		t.Errorf("file review prompt = %q", got)
 	}
-	if got := ReviewPrompt("", "", "main"); !strings.Contains(got, "correctness bugs") {
+	if got := ReviewPrompt("", "", "main", DiffSize{}, false); !strings.Contains(got, "correctness bugs") {
 		t.Errorf("default review prompt = %q", got)
 	}
 	fix := FixPrompt(Verdict{Verdict: "changes", Findings: []Finding{{Severity: "major", File: "a.go", Summary: "nil deref"}, {Summary: "add a test"}}})

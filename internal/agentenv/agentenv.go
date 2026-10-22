@@ -1,5 +1,5 @@
 // Package agentenv names the environment variables a coding agent's session
-// sets. It is the one list: `fugaro init`'s and `fugaro image refresh`'s gates
+// sets. It is the one list: `fugaro update`'s and `fugaro image refresh`'s gates
 // refuse to apply anything with one of them present, and the owner-run live
 // credentials-rules check (internal/e2e, TestLiveCredsRules) refuses to run at
 // all, because a check that writes to a real installation is the owner's, at

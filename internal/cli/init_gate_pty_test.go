@@ -47,6 +47,7 @@ func TestPtyFirstRunPrompts(t *testing.T) {
 	go func() { done <- e.r.gatherInputs(t.Context()) }()
 	typeAt("GCP project ID", 1, "my-proj-42\n")
 	typeAt("Region", 1, "\n")
+	typeAt(setupAskProject, 1, "\n")       // Enter takes the default: create the project
 	typeAt("Fugaro project name", 1, "\n") // last: its default can come from an installation in that project
 	select {
 	case err := <-done:

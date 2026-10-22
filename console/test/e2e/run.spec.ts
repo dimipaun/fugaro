@@ -644,4 +644,45 @@ test.describe('the Run detail screen', () => {
     )
     for (const file of present) expect(file).toMatch(new RegExp(`^(${RUN_THEMES.join('|')})-(darwin|linux)\\.png$`))
   })
+
+  test('keeps its state words and its row boundary under forced colors (design section 6.4)', async () => {
+    // The Run detail screen's half of the forced-colors smoke (section 4.4, in the half
+    // section 6.4 gives this task). This is the densest table in the console: a stage
+    // that is `n/a` because no document carries spend by stage, a deadline that is `n/a`,
+    // and the halt's own `HALTED` -- each a word rather than a tone, so each survives.
+    // The chrome's half is `entry.spec.ts`'s; a smoke, not a golden.
+    await mount(DIAGNOSIS, logLines(4), LOG_LINK, ARRIVALS, null, 'light')
+    await page.emulateMedia({ forcedColors: 'active', colorScheme: 'light' })
+    expect(await page.evaluate(() => matchMedia('(forced-colors: active)').matches)).toBe(true)
+
+    const forced = await page.evaluate(() => {
+      const scope: ParentNode = document.getElementById('run-mount') ?? document.createDocumentFragment()
+      const row = scope.querySelector('li.run-log-line') ?? scope.querySelector('li.run-stage')
+      const computed = row === null ? null : getComputedStyle(row)
+      const number = scope.querySelector('.run-number')
+      return {
+        words: document.getElementById('run-mount')?.textContent ?? '',
+        rowVisibility: computed?.visibility ?? null,
+        rowWidth: computed?.borderBottomWidth ?? null,
+        rowColour: computed?.borderBottomColor ?? null,
+        linkColour: (() => {
+          const link = scope.querySelector('a.run-log-link')
+          return link === null ? null : getComputedStyle(link).color
+        })(),
+        tabular: number === null ? null : getComputedStyle(number).fontVariantNumeric,
+      }
+    })
+
+    expect(forced.words, 'the halt lost its word').toContain('HALTED')
+    expect(forced.words, 'a stage with no spend lost its mark').toContain('n/a')
+    expect(forced.rowVisibility).toBe('visible')
+    expect(forced.rowWidth, 'the log row’s boundary collapsed under forced colors').not.toBe('0px')
+    expect(forced.rowColour).not.toBe('rgba(0, 0, 0, 0)')
+    // The link the console is allowed to draw keeps a colour the system names, which is
+    // the one thing the palette hands over rather than paints (section 4.4's second rule).
+    expect(forced.linkColour).not.toBe('rgba(0, 0, 0, 0)')
+    expect(forced.tabular, 'the numbers lost their tabular figures').toContain('tabular-nums')
+
+    await page.emulateMedia({ forcedColors: 'none' })
+  })
 })

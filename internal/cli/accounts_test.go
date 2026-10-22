@@ -15,18 +15,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-// noTerminal makes stdin look like a pipe for this test, and restores the real
-// check afterwards. stdinIsTerminal is a package-level var: a test that left it
-// false would have every later prompt-taking test in this package skip its
-// prompt, which is how the pty tests of the init gate broke (their stdin is a
-// real terminal, and they fake nothing).
-func noTerminal(t *testing.T) {
-	t.Helper()
-	old := stdinIsTerminal
-	stdinIsTerminal = func(io.Reader) bool { return false }
-	t.Cleanup(func() { stdinIsTerminal = old })
-}
-
 // executeStdinReader is executeStdin for a reader of the test's own: it is how
 // a test acts at the exact moment the command reads the confirmation — after
 // the read it decided on and before the write it makes.

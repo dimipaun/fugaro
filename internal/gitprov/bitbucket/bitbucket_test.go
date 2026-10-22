@@ -399,7 +399,7 @@ func TestBitbucketRepositoryVisibility(t *testing.T) {
 func TestBitbucketPullRequestOpen(t *testing.T) {
 	p := open(t, "pull_open.json")
 	got, err := p.PullRequest(ctx, 12)
-	want := gitprov.PRInfo{Number: 12, URL: "https://bitbucket.org/acme/web/pull-requests/12", State: gitprov.PROpen, Draft: true, Title: "Add search",
+	want := gitprov.PRInfo{Number: 12, URL: "https://bitbucket.org/acme/web/pull-requests/12", State: gitprov.PROpen, Draft: true, Title: "Add search", Base: "main",
 		AuthorID: "712020:00000000-0000-4000-8000-00000000b07e", SourceBranch: branchName, SourceRepo: "acme/web", HeadSHA: "0123456789ab"}
 	if err != nil || got != want {
 		t.Fatalf("PullRequest = %+v, %v\nwant %+v", got, err, want)
@@ -438,7 +438,7 @@ func TestBitbucketPullRequestOpen(t *testing.T) {
 func TestBitbucketFetchPRHead(t *testing.T) {
 	p := open(t, "pull_open_head.json")
 	got, err := p.FetchPRHead(ctx, 12)
-	want := gitprov.PRHead{SHA: "0123456789abcdef0123456789abcdef01234567", Fork: false, Open: true,
+	want := gitprov.PRHead{SHA: "0123456789abcdef0123456789abcdef01234567", Base: "main", Fork: false, Open: true,
 		AuthorID: "712020:00000000-0000-4000-8000-00000000b07e", AuthorLogin: "fugaro-bot", SourceRepo: "acme/web"}
 	if err != nil || got != want {
 		t.Fatalf("FetchPRHead(12) = %+v, %v, want %+v", got, err, want)

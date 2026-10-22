@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 )
 
 // ReadRepoFile reads RepoPath(name) under root. name must be a recipe name.
@@ -39,7 +38,7 @@ func ReadRepoFile(root, name string) (data []byte, found bool, err error) {
 			return nil, false, fmt.Errorf("%s is %d bytes, over the 16 KiB limit", rel, fi.Size())
 		}
 	}
-	f, err := os.OpenFile(filepath.Join(root, filepath.FromSlash(rel)), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	f, err := openNoFollow(filepath.Join(root, filepath.FromSlash(rel)))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, false, nil

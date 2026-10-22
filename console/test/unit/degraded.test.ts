@@ -45,7 +45,7 @@ import { githubToken } from '../support/fakeSecrets'
 import { ESTIMATED_MARK, UNAVAILABLE_MARK, estimated, formatReading, measured, unavailable } from '../../src/shared/availability'
 import { sanitizeRefusal, sanitizeText, TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
 import { decodeDocument } from '../../src/shared/schema'
-import type { DegradedDocument, LiveDocument } from '../../src/shared/schema'
+import type { CostView, DegradedDocument, LiveDocument } from '../../src/shared/schema'
 import { LIVE_BURN_MAX_SAMPLES, LIVE_STALE_AFTER_SECONDS, BurnHistory, buildLiveModel, renderLive } from '../../src/renderer/screens/live'
 import type { FeedHealth, LiveTheme, ScreenElement, ScreenFactory } from '../../src/renderer/screens/live'
 import {
@@ -56,7 +56,7 @@ import {
   renderNoFirebase,
   renderUnavailable,
 } from '../../src/renderer/screens/degraded'
-import type { NoBinaryState, RefusedState } from '../../src/renderer/screens/degraded'
+import type { DegradedRunRow, NoBinaryState, RefusedState } from '../../src/renderer/screens/degraded'
 
 const consoleDir = join(__dirname, '..', '..')
 const fixturePath = join(consoleDir, 'test', 'fixtures', 'degraded.ndjson')
@@ -321,6 +321,56 @@ describe('the no-Firebase screen', () => {
     expect(notionalRows[0]?.getAttribute('data-notional-model')).toBe('true')
   })
 
+  it('splits a run\'s model figure on `model_notional_usd`, never on the basis', () => {
+    // C1.16 (P12/D140): `model_usd` is the **whole** model figure and
+    // `model_notional_usd` the part of it the subscription paid, so the billed
+    // dollars are the difference. A mixed cascade run's `model_basis` is
+    // `api-list` for the whole run, and this screen read the whole figure as
+    // money -- while the notional split only existed on a sum, which is what the
+    // comment here used to say. The key is what says it now, and the basis is
+    // the fallback for a row written before it.
+    const document = theDegradedDocument()
+    const template = document.runs[0]
+    if (template === undefined) throw new Error('the fixture has no runs')
+    const missing = unavailable('cost.model_notional_usd')
+    const withCost = (cost: Partial<CostView>): DegradedDocument => ({
+      ...document,
+      runs: [
+        {
+          ...template,
+          cost: {
+            modelUsd: measured(3.2),
+            modelNotionalUsd: missing,
+            computeUsd: measured(0.5),
+            computeEstimated: true,
+            totalUsd: measured(1.7),
+            modelBasis: 'api-list',
+            ...cost,
+          },
+        },
+      ],
+    })
+    const row = (cost: Partial<CostView>): DegradedRunRow | undefined => buildNoFirebaseModel(withCost(cost)).runs[0]
+    // Mixed: the ledger draws the billed part, and the row is still marked as
+    // one that carries the plan's list price.
+    const mixed = row({ modelNotionalUsd: measured(2) })
+    expect(mixed?.modelUsd.value).toBeCloseTo(1.2)
+    expect(mixed?.modelUsd.state).toBe('measured')
+    expect(mixed?.notionalModel).toBe(true)
+    // All notional: the plan's figure, marked notional -- with the key (C1.16)
+    // and without it (a row written before the split, which the basis decides).
+    expect(row({ modelNotionalUsd: measured(3.2) })?.modelUsd.state).toBe('notional')
+    const before = row({ modelBasis: 'subscription' })
+    expect(before?.modelUsd.value).toBeCloseTo(3.2)
+    expect(before?.modelUsd.state).toBe('notional')
+    expect(before?.notionalModel).toBe(true)
+    // All billed: no notional part at all.
+    const billed = row({})
+    expect(billed?.modelUsd.value).toBeCloseTo(3.2)
+    expect(billed?.modelUsd.state).toBe('measured')
+    expect(billed?.notionalModel).toBe(false)
+  })
+
   it('does not price a run whose compute was not estimated at zero', () => {
     const document = theDegradedDocument()
     const unestimated = document.runs.find((run) => !run.cost.computeEstimated)
@@ -434,6 +484,49 @@ describe('the no-Firebase screen', () => {
       expect((tree as FakeScreen).getAttribute('data-theme')).toBe(theme)
       expect((tree as FakeScreen).getAttribute('data-kind')).toBe('no-firebase')
     }
+  })
+
+  it('gives every figure it draws the alignment hook, and gives it to no other cell', () => {
+    // Design §2.10's gap, closed by the styling work (plan Task 6.4): five
+    // screens have a `numberCell` and this one prepended no class at all, so the
+    // degraded screen's figures had no tabular-figures and no right-align hook
+    // while every other screen's did. The hook is `degraded-num`, the rule that
+    // reads it is in `theme/screens.css` beside the other four, and this is the
+    // case that fails if the prepend is removed.
+    const model = buildNoFirebaseModel(theDegradedDocument())
+    const tree = renderNoFirebase(factory, model, 'light')
+    // The feed age is drawn only when the console has a frame to age, so it is
+    // asserted on a model that has one: the same document, handed a feed.
+    const frame = theLiveFrames()[0]
+    if (frame === undefined) throw new Error('the synthetic fixture has no live frame')
+    const fed = renderNoFirebase(factory, { ...model, feed: aFeed(frame, 90) }, 'light')
+    const figures = [
+      'degraded-runs',
+      'degraded-model-usd',
+      'degraded-model-notional-usd',
+      'degraded-compute-usd',
+      'degraded-total-usd',
+      'degraded-compute-unknown',
+      'degraded-run-model',
+      'degraded-run-compute',
+      'degraded-run-total',
+    ]
+    for (const figure of figures) {
+      // `span` only, and `degraded-runs` is why: §2.7 gives the list and the
+      // count on it the same class, so the region comes first in document order
+      // and only the `span` is a reading.
+      const nodes = all(tree, figure).filter((node) => node.tag === 'span')
+      expect(nodes.length, `.${figure} is not drawn as a reading at all, so the case is vacuous for it`).toBeGreaterThan(0)
+      for (const node of nodes) expect(node.classes, `.${figure} carries no degraded-num`).toContain('degraded-num')
+    }
+    // And the hook is the readings' rather than the screen's: a cell that draws
+    // a document string is not a number and may not carry it.
+    for (const text of ['degraded-project', 'degraded-mode', 'degraded-run-id', 'degraded-run-created', 'degraded-since-at']) {
+      for (const node of all(tree, text)) expect(node.classes, `.${text} is not a figure`).not.toContain('degraded-num')
+    }
+    const age = one(fed, 'degraded-since-age')
+    expect(age.classes).toContain('degraded-num')
+    expect(one(fed, 'degraded-since-at').classes).not.toContain('degraded-num')
   })
 })
 
@@ -598,6 +691,14 @@ describe('the stale Live screen', () => {
 })
 
 describe('the console with no binary to read', () => {
+  it('gives the one figure it draws the same alignment hook as the degraded screen', () => {
+    // The searched count is this screen's only reading, and it comes through the
+    // same `numberCell` as the degraded screen's figures -- so it carries the
+    // same hook (design §2.10: the hook is the helper's, not the screen's).
+    const tree = renderUnavailable(factory, anAbsentState(), 'light')
+    expect(one(tree, 'unavailable-searched-count').classes).toContain('degraded-num')
+  })
+
   it('names what is needed, the install command and the picker, and draws no dashboard', () => {
     const state = anAbsentState()
     expect(state.installCommand).toBe(FUGARO_INSTALL_COMMAND)
