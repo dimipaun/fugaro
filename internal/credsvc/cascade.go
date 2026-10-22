@@ -416,14 +416,12 @@ const markRefusal = "the credential's state could not be recorded"
 // hands), so what fail-closed withholds is its effect: no byte of the answer
 // reaches the run and the run halts on the refusal.
 //
-// The headers are built and validated BEFORE the line is written, so a call
-// that cannot carry them is a refusal with no issuance line beside it: a line
-// saying a credential answered a run this service then refused would be a line
-// an operator could not act on, and the refusal is the one act that happened.
-//
 // The headers are built and validated before any of them is written, so an
 // answer that cannot carry them is a typed refusal with no upstream header
-// leaking onto it.
+// leaking onto it — and, since the line is written after them, a refusal with
+// no issuance line beside it: a line saying a credential answered a run this
+// service then refused would be a line an operator could not act on, and the
+// refusal is the one act that happened.
 //
 // The body is scrubbed of the credential as the headers are, and for every
 // tier rather than the subscription one alone: an upstream that echoes the
@@ -472,9 +470,9 @@ func (s *Server) answer(ctx context.Context, w http.ResponseWriter, id Identity,
 	// refusal on this path, so the refusal itself is audited too: the act that
 	// could not be recorded is the issuance, and a failure to write one line is
 	// no reason to leave the line the operator DOES need — the call that got no
-	// answer — unwritten. (The handler below may fail this second line as well;
-	// then the refusal is on the service's log twice, which is where an
-	// operator looks for an audit log that is not recording.)
+	// answer — unwritten. (The auditor may fail this second line as well; then
+	// the failure is on the service's log twice, which is where an operator
+	// looks for an audit log that is not recording.)
 	if err := s.auditCall(ctx, id, PurposeForward, c.Name, wireTier(c.Tier), StatusOK); err != nil {
 		s.log.Error("credsvc: the issuance's audit line was not written", "error", err)
 		s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable, answerUnaudited)

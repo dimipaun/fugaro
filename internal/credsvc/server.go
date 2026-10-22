@@ -453,8 +453,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// an admitted job account from presenting a run token of another
 		// repository. The refusal is recorded like the ones below it: the
 		// identity Verify returned is whole, so the line names the run, the
-		// repository the run belongs to, the job and the account — and no
-		// credential, because none was read.
+		// repository the run belongs to, the job and the account — and the
+		// route's credential and no other, which for a model call is none (the
+		// bundle has not been read) and for a mint is the App key's name.
 		s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnverified, ErrorUnverifiedRunIdentity,
 			"the run identity is not a run of the calling job's repository")
 		return
