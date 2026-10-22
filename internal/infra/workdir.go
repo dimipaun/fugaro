@@ -82,7 +82,7 @@ func InstallationWorkdir(getenv func(string) string, project string) (string, er
 	return filepath.Join(state, "fugaro", "terraform", project, "installation"), nil
 }
 
-// FirebaseWorkdir is where fugaro update --firebase plans the Firebase root of
+// FirebaseWorkdir is where fugaro update --firebase-project plans the Firebase root of
 // project: $XDG_STATE_HOME/fugaro/terraform/<project>/firebase. It is a
 // workdir of its own, so the installation's tfvars and saved plan are never
 // overwritten by the Firebase root's.

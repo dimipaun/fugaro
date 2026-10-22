@@ -44,9 +44,10 @@ func wizardRun(t *testing.T, stdin string, o *initOptions) (*initRun, *strings.B
 
 // wizardAnswers is the line that answers each of the wizard's questions, by
 // the flag that answers the same question without a terminal: the default
-// answer for the ones that have a suggestion, and a real value for the GCP
-// project (there is none to suggest in this environment, so Enter is not an
-// answer).
+// answer for the ones whose suggestion Enter takes, and a typed value for the
+// GCP project — its suggestion is fugaro-<name> (D4), and typing another id is
+// what keeps these runs at an id of the test's own choosing rather than one
+// built from the temporary directory's name.
 var wizardAnswers = map[string]string{
 	"--create-project": "\n",
 	"--gcp-project":    "proj-1234\n",
@@ -268,7 +269,7 @@ func TestTheQuestionIsAskedOnlyWhereItCanBeActedOn(t *testing.T) {
 // project ID may not contain Google's restricted words (infra.ValidateNewProjectID),
 // which the prompt's own check accepts. Without this, "create" typed at a
 // terminal would reach Google with an ID Google refuses, or create a project
-// that is not the one --firebase names.
+// that is not the one --firebase-project names.
 func TestTheCreateAnswerIsHeldToTheFlagsChecks(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -281,9 +282,9 @@ func TestTheCreateAnswerIsHeldToTheFlagsChecks(t *testing.T) {
 			want: "google",
 		},
 		{
-			name: "--firebase names another project",
+			name: "--firebase-project names another project",
 			o:    &initOptions{door: setupDoor.name, cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}, firebase: "proj-9999"},
-			want: "--firebase",
+			want: "--firebase-project",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

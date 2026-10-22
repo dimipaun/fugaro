@@ -9,3 +9,4 @@ These five boards are the owner-approved "bold" look for the home page and the p
 | `GettingStartedV4.dc.html` | getting started |
 | `ConsoleV2.dc.html` | console |
 | `CapsAndCostsV2.dc.html` | caps and costs (the per-recipe ranges section is removed until there is data) |
+| `zoom-levels/level1.dc.html` .. `level4.dc.html` | the four zoom diagrams of How it works (owner-approved 2026-10-22, 1280x720 boards: inside one job, one orchestrator with many jobs, the developer's view, the whole project); drawn in Claude Design, the site redraws each as SVG |

@@ -7,11 +7,11 @@
 [installation] prompt: in your own terminal window, not through a coding agent or a pipe, type the project's name to apply after running
     fugaro setup
 [firebase] prompt: in your own terminal window, not through a coding agent or a pipe, type the project's name at each apply after running
-    fugaro setup --firebase <firebase-project-id>
+    fugaro setup --firebase-project <firebase-project-id>
 [images] prompt: in your own terminal window, not through a coding agent or a pipe, type the project's name to pin this release's base images and copy the release images after running
     fugaro setup
 [installation-2] prompt: in your own terminal window, not through a coding agent or a pipe, type the project's name to apply the history job after running
-    fugaro setup --firebase <firebase-project-id>
+    fugaro setup --firebase-project <firebase-project-id>
 [secrets/no-checkout] command: in a checkout of the repository, in your own terminal window, run
     fugaro setup
 [secrets/github] command: run these in your own terminal window, one line at a time, in this order

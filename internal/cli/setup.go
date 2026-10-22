@@ -51,9 +51,11 @@ account's credentials it stops and names the two flags.
 
 On a first run it asks its questions once, in this order, each with a
 suggestion Enter takes, and writes the local config, so later runs ask
-nothing: the GCP project's ID (--gcp-project; suggested from
-GOOGLE_CLOUD_PROJECT or the credentials' quota project, never gcloud's default
-project), the region (--region; us-east5), whether to create the GCP project
+nothing: the GCP project's ID (--gcp-project; a new project named after this
+one, fugaro-<name>, which Enter takes — and, offered second when it differs, the
+project GOOGLE_CLOUD_PROJECT or the credentials' quota project names, the one
+you are already working in; never gcloud's default project), the region
+(--region; us-east5), whether to create the GCP project
 or adopt one that already exists (--create-project; "create", what Enter
 takes, is a new fugaro-<name> project, and "adopt" leaves one that is already
 there exactly as it is), and the project's name (--name; from the
@@ -85,17 +87,17 @@ not, the build is left for you with each missing permission and its fix and
 nothing is billed. A repository the local config does not list is asked about
 first, at the start, before any plan.
 
-setup runs as a converge of stages (preflight, installation, with --firebase
-the Firebase backend and the images, the secrets, the plugin wiring and the
-repository, and on a first run the project — the one stage that may create the
-GCP project, and it does that only when the first question's answer was to
-create: an answer of "adopt" reads nothing and creates nothing), each with its
-own confirmation, in order,
-and stops at the first that fails or needs you; a rerun resumes, and one
-with nothing to do says "No changes" and exits 0. Exit codes: 0 done (or
-only planned), 1 a refusal, or a step left for you (see left_for_you in
---json), 2 a cloud failure; --json prints the stages, left_for_you and the
-failed stage on every outcome.
+setup runs as a converge of stages (preflight, installation, with
+--firebase-project the Firebase backend and the images, the secrets, the
+plugin wiring and the repository, and on a first run the project — the one
+stage that may create the GCP project, and it does that only when the first
+question's answer was to create: an answer of "adopt" reads nothing and
+creates nothing), each with its own confirmation, in order, and stops at the
+first that fails or needs you; a rerun resumes, and one with nothing to do
+says "No changes" and exits 0. Exit codes: 0 done (or only planned), 1 a
+refusal, or a step left for you (see left_for_you in --json), 2 a cloud
+failure; --json prints the stages, left_for_you and the failed stage on every
+outcome.
 
 setup --anchor, run in the checkout of a repository the project lists, writes
 only the gcp_project: line of its fugaro.yaml (the line teammates find the
@@ -124,12 +126,15 @@ and safe, 1 a check failed or nothing was written, 2 a build record could not
 be read from the cloud (missing credentials included). A coding agent's
 session may run it, --yes included: it edits only a local file.
 
-setup --firebase <firebase-project-id> builds the project's budget backend in a
-Firebase project you created and linked to billing. It may be the project's
-own GCP project (one project for everything) or a project of its own (setup
-creates a project or links billing only with --create-project and
---link-billing, and refuses one that is missing, has no billing, or whose
-database holds data and no Fugaro mark). It runs three applies, each
+setup --firebase-project <firebase-project-id> builds the budget backend in a
+Firebase project you created and linked to billing, and it is the advanced
+case: the run's Firebase project is the installation's own --gcp-project by
+default (one id for both, D7), so this flag is for a project of its own — and
+it is also what adds the backend to the run, so a setup without it builds
+none. It creates nothing and links nothing (a project is created or billing
+linked only with --create-project and --link-billing, and it refuses one that
+is missing, has no billing, or whose database holds data and no Fugaro mark).
+It runs three applies, each
 with its own plan and confirmation: the installation (the history account),
 the Firebase root (the database, a restricted sign-in key, the token signer,
 and the budget admins: the GCP project's owners and editors who are users or
@@ -391,7 +396,7 @@ func (r *initRun) asksProjectAnswer() bool {
 // The answer that does create goes through the flag's own checks
 // (checkCreateProject): init.go's check() ran before the question was asked, so
 // this is where the ID's rules — Google's restricted words among them, which
-// the prompt's own check does not know — and the --firebase mismatch are
+// the prompt's own check does not know — and the --firebase-project mismatch are
 // applied to what the person typed. The answer is the flag, so it is held to
 // what the flag is held to.
 func (r *initRun) askProjectAnswer() error {

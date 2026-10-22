@@ -240,7 +240,7 @@ func (f *RTDB) Rules() []byte {
 }
 
 // SetRules plants a deployed rules document without a PUT: the state an
-// older CLI's `fugaro update --firebase` leaves behind (rules that predate the
+// older CLI's `fugaro update --firebase-project` leaves behind (rules that predate the
 // policy nodes, while config/limits/policyRules stays), which is what
 // doctor's policy-rules-skew check reads. It does not count as a deployment.
 func (f *RTDB) SetRules(rules []byte) {

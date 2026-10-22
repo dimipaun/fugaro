@@ -1,6 +1,6 @@
 # Project Claude accounts: one OAuth token per (profile, account)
 
-Status: **0.9.0, released.** The released Fugaro is 0.9.5, and 0.9.0 is the first release any of this page works on:
+Status: **0.9.0, released.** The released Fugaro is 0.9.7, and 0.9.0 is the first release any of this page works on:
 the `claude_accounts` field inside a profile, the `accounts` block in the published policy and the
 jobs they name all ship in 0.9.0 (policy version 3,
 [`internal/projectpolicy/version.go`](../internal/projectpolicy/version.go)), and a 0.8.x binary
@@ -232,7 +232,7 @@ The published policy carries the account axis in a node the previous release can
    ```
 
    `--delete` puts the project back on the ceiling its jobs' environments carry, so make it a
-   step of its own and not a repair. A re-run of `fugaro init --firebase` is deliberately **not**
+   step of its own and not a repair. A re-run of `fugaro init --firebase-project` is deliberately **not**
    the remedy: it deploys the rules template and marker and never writes `config/policy/shared`.
 
    **Read the list out first: the publish that follows rebuilds it.** With no node to replace,
@@ -268,7 +268,7 @@ The published policy carries the account axis in a node the previous release can
    step 3 ran:
 
    ```bash
-   fugaro init --firebase <gcp-project>
+   fugaro init --firebase-project <gcp-project>
    ```
 
    `fugaro image refresh` re-pins `base_images` and moves each repository's own jobs, but never a

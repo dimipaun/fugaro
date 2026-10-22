@@ -123,16 +123,26 @@ const sitemapHref = site.sitemapHref
 // the page, and one aimed at a file that is not there is a request for nothing.
 const fonts = site.fonts
 
-// The sections of the site, in three groups of three (P3, D182: Product, Reference, Project).
-// The routes are the ones the plan's page list fixes (how-it-works, getting-started,
-// caps-and-costs, console, docs, security, changelog, faq, community) and each label is the
-// route's own words rather than a copy of a page's title — a nav that restated the pages
-// would be a second copy of them to keep in step.
+// The sections of the site, in two groups (P3's menu, D182, **with the Reference group dropped
+// by the owner's feedback of 2026-10-21**: "let's drop the top reference menu. We'll move the
+// submenu console under product, and the rest go under Project"). The routes are the ones the
+// plan's page list fixes (how-it-works, getting-started, caps-and-costs, console, mobile, docs,
+// security, changelog, faq, community) and each label is the route's own words rather than a
+// copy of a page's title — a nav that restated the pages would be a second copy of them to
+// keep in step. The groups' five-and-five split is the feedback's, not a symmetry: *Product*
+// carries the five pages about running the thing the visitor came for, and *Project* the five
+// about the project itself, Docs and Changelog included.
+//
+// **Mobile is the fifth of them** (the zoom-diagrams plan §3, Part 3, item 6, with the owner's
+// answers of 2026-10-21 under it): the phone app's page is the console page's sister, and
+// Console is a Product item, so the new item goes beside it rather than into Project. The two
+// groups stay two — the plan's Part 3 asks for one item and not a third group — and
+// `website/test/base-styles.mjs`'s `GROUPS_WANTED` is what holds both to that.
 //
 // **Home is not one of them, and it is in the menu all the same** (the owner's feedback of
 // 2026-10-21: "I think we need a 'Home' as the first menu"). D182 took Home out of the menu
 // and left the wordmark as the one link to `/`; the feedback puts it back, as the item in
-// front of the three groups, and the wordmark stays the way home it has always been — the two
+// front of the groups, and the wordmark stays the way home it has always been — the two
 // links say the same thing to a reader who reaches for either. `/` is therefore listed twice,
 // which is why the current-page mark is not decided here: `isCurrent('/')` marks the menu's
 // Home link and nothing else on the page, because a page carries exactly one
@@ -144,22 +154,18 @@ const NAV_GROUPS = [
       { href: '/how-it-works/', label: 'How it works' },
       { href: '/getting-started/', label: 'Getting started' },
       { href: '/caps-and-costs/', label: 'Caps and costs' },
-    ],
-  },
-  {
-    label: 'Reference',
-    items: [
-      { href: '/docs/', label: 'Docs' },
       { href: '/console/', label: 'Console' },
-      { href: '/changelog/', label: 'Changelog' },
+      { href: '/mobile/', label: 'Mobile' },
     ],
   },
   {
     label: 'Project',
     items: [
+      { href: '/docs/', label: 'Docs' },
       { href: '/security/', label: 'Security' },
       { href: '/faq/', label: 'FAQ' },
       { href: '/community/', label: 'Community' },
+      { href: '/changelog/', label: 'Changelog' },
     ],
   },
 ]
@@ -326,7 +332,7 @@ const analyticsEnabled = facts.analytics.enabled
           `aria-current="page"` (P3, RF4).
 
           The name is in its own `<span>` because on a phone it is the name — and not the
-          three group labels beside it — that gives way (the owner's brief of 2026-10-19,
+          group labels beside it — that gives way (the owner's brief of 2026-10-19,
           item 1: the menu's labels stay in the header's row at 375 px, and the wordmark's
           text is hidden below about 380 px, the mark alone standing for the way home).
           `base.css` hides it from the eye and not from a screen reader, so the link keeps
@@ -335,13 +341,14 @@ const analyticsEnabled = facts.analytics.enabled
         <img src="/logo.png" alt="" width="47" height="32" decoding="async" /><span class="site-wordmark-name">{SITE_NAME}</span>
       </a>
 
-      {/* The menu: the way home and then three groups of three (P3, D182; the owner's
-          feedback of 2026-10-21, item 2, which put Home at the front of it). Home is a plain
+      {/* The menu: the way home and then the site's groups (P3, D182, the Reference group
+          dropped by the owner's feedback of 2026-10-21; the owner's feedback of the same day,
+          item 2, put Home at the front of it). Home is a plain
           link and not a group — it is one page, and it has nothing under it — and it is drawn
-          in the same row as the three labels, on a phone and on a wide viewport alike: the
+          in the same row as the labels, on a phone and on a wide viewport alike: the
           brief's "first menu" is the first item of the one menu the site has, and the phone
           shows that menu rather than a collapsed version of it (the owner's brief of
-          2026-10-19, item 1). The three group labels are in the header's one row at every
+          2026-10-19, item 1). The group labels are in the header's one row at every
           width, and each one opens its own panel of links: on a wide viewport a dropdown
           under its label, on a phone a drawer across the header's full width. There is no
           toggle standing in front of the whole menu — the brief of 2026-10-19 took the single
@@ -373,8 +380,8 @@ const analyticsEnabled = facts.analytics.enabled
           which is what the toggle-and-sibling-panel arrangement used to need, and the drawer
           it belonged to is gone with it.
 
-          The three groups share one `name`, which makes them an exclusive set without a line
-          of script: opening *Reference* closes *Product*, so two panels never hang over each
+          The groups share one `name`, which makes them an exclusive set without a line
+          of script: opening *Project* closes *Product*, so two panels never hang over each
           other. */}
       <nav class="site-nav" aria-label="Sections">
         <ul class="site-nav-groups">

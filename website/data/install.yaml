@@ -109,10 +109,10 @@ paths:
     source: README.md
     platforms: [darwin, linux]
     note: >-
-      The agent's skills; fugaro init wires them into the checkout.
+      The agent's skills; fugaro setup wires them into the checkout.
     commands:
       - |-
-        fugaro init
+        fugaro setup
       - |-
         /fugaro:setup
       - |-

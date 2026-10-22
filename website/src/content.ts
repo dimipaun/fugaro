@@ -842,10 +842,20 @@ export interface TypicalCostsFacts {
   to: string
   runs: number
   jobs: TypicalCostJob[]
-  /** The per-run cap Fugaro's own installation sets, and the cap these runs ran under: the
-   * ceiling a looping run met. Not a CLI default, so it is a fact about the installation the
-   * runs were taken from and never a claim about what `fugaro` ships. */
+  /** The per-run cap Fugaro's own installation sets today: the ceiling a looping run meets. Not
+   * a CLI default, so it is a fact about the installation the runs were taken from and never a
+   * claim about what `fugaro` ships. It is **not** the cap these figures were measured under —
+   * see `measuredUnderCapUSD`. */
   perRunCapUSD: number
+  /** The day the cap above took effect, as the file spells it (`YYYY-MM-DD`). The page prints
+   * it beside the cap, so a reader can tell which cap was in force when the figures were
+   * measured rather than taking today's cap for the one they ran under. */
+  perRunCapSince: string
+  /** The per-run cap the figures above were measured under, which is a second figure and not a
+   * copy of the one above: the owner lowered the cap on the date above, so a page that printed
+   * today's cap as the one these runs ran under would claim a measurement under a cap that did
+   * not exist yet. The bars are drawn against this one, so every mark sits inside its track. */
+  measuredUnderCapUSD: number
 }
 
 const TYPICAL_COSTS_FILE = 'website/data/typical-costs.yaml'
@@ -863,7 +873,7 @@ export function loadTypicalCosts(minRuns: number): TypicalCostsFacts {
     file,
     'the document',
   )
-  refuseUnknownKeys(doc, ['jobs', 'per_run_cap_usd', 'version', 'window'], file)
+  refuseUnknownKeys(doc, ['jobs', 'measured_under_cap_usd', 'per_run_cap_since', 'per_run_cap_usd', 'version', 'window'], file)
 
   if (asInt(doc.version, file, 'version') !== 1) {
     throw new Error(`${file}: version is not 1, and this reader knows version 1 (W1.3 step 2).`)
@@ -933,6 +943,10 @@ export function loadTypicalCosts(minRuns: number): TypicalCostsFacts {
   if (perRunCapUSD <= 0) {
     throw new Error(`${file}: per_run_cap_usd is ${perRunCapUSD}, and the cap the page prints as the ceiling a looping run meets is above zero (W1.3 step 2).`)
   }
+  const measuredUnderCapUSD = asCents(doc.measured_under_cap_usd, file, 'measured_under_cap_usd')
+  if (measuredUnderCapUSD <= 0) {
+    throw new Error(`${file}: measured_under_cap_usd is ${measuredUnderCapUSD}, and the cap the page draws the bars of its figures against is above zero: a bar scaled by a cap of nothing is a bar whose every mark is at infinity (the owner's feedback of 2026-10-22).`)
+  }
 
   return {
     from: asString(window.from, file, 'window.from'),
@@ -940,21 +954,30 @@ export function loadTypicalCosts(minRuns: number): TypicalCostsFacts {
     runs,
     jobs,
     perRunCapUSD,
+    perRunCapSince: asString(doc.per_run_cap_since, file, 'per_run_cap_since'),
+    measuredUnderCapUSD,
   }
 }
 
 // ---------------------------------------------------------------------------------------
-// website/data/console-screens.yaml — the console's screenshots (owner feedback 2026-10-19).
+// website/data/{console,home}-screens.yaml — the sliders' slides, and the pictures in them
+// (the console's: owner feedback 2026-10-19; the homepage's: the zoom work of 2026-10-21, D246).
+//
+// **One reader for two files, because the two files are the same document.** The console page's
+// slider and the homepage's "See it" panel render the same component from rows of the same
+// shape, so the validation is one function and each page names its file and gets its rows. A
+// row's `file` is a NAME and its `dir` is the one of the two directories under `public/` that
+// serves it — `screenshots` unless the row says otherwise, which is why every console row (and
+// every homepage row but the watch capture) carries no `dir` at all.
 // ---------------------------------------------------------------------------------------
 
 /**
- * One screenshot of the console: the file, the two texts a reader gets for it, and its own
- * pixel dimensions.
+ * One slide: the file, the two texts a reader gets for it, and its own pixel dimensions.
  */
-export interface ConsoleScreen {
-  /** The file's name under `public/screenshots/`, as the data file writes it. */
+export interface Screen {
+  /** The file's name under `public/<dir>/`, as the data file writes it. */
   file: string
-  /** The site path the browser fetches: derived here from `file`, and written down nowhere. */
+  /** The site path the browser fetches: derived here from `file` and `dir`, written nowhere. */
   src: string
   /** What a reader gets when the picture does not arrive, and what a screen reader reads. */
   alt: string
@@ -966,17 +989,26 @@ export interface ConsoleScreen {
   height: number
 }
 
-/** website/data/console-screens.yaml, validated. */
-export interface ConsoleScreensFacts {
-  screens: ConsoleScreen[]
+/** One of the two screenshots data files, validated. */
+export interface ScreensFacts {
+  screens: Screen[]
 }
-
-const SCREENS_FILE = 'website/data/console-screens.yaml'
 
 /** Where a screenshot's file lives under `public/`, and the site path it is served at. */
 const SCREENS_DIR = 'screenshots'
 
+/**
+ * The directories under `public/` a row's `file` may name, and the default. The console's rows
+ * are all captures of the console and live in `screenshots/`; the homepage's last slide is the
+ * owner's `fugaro watch` capture, which has been at `public/images/fugaro-watch.png` since PR
+ * #622 and is not one of the console's four. **A row names one of these two and never a path**:
+ * the site path is composed here from the pair, so no data file carries a URL (Global
+ * Constraint 9), and a `dir` that is neither is refused by name rather than fetched.
+ */
+const SCREEN_DIRS = ['images', 'screenshots']
+
 const SCREENS_KEYS = ['screens', 'version']
+const SCREEN_KEYS = ['alt', 'caption', 'dir', 'file', 'height', 'width']
 
 /**
  * The formats the slider serves. A console screenshot is a raster image, and these are the
@@ -1008,23 +1040,86 @@ const SCREEN_FORMATS = ['avif', 'jpeg', 'jpg', 'png', 'webp']
  * not serve, an `alt` or a `caption` nobody could read, and a size that is not a positive
  * whole number of pixels.
  */
-export function loadConsoleScreens(): ConsoleScreensFacts {
-  const file = SCREENS_FILE
-  const doc = asMap(
-    parseYAML(readBytes(path.join(DATA_DIR, 'console-screens.yaml'), "the console's screenshots: the files, their alt text, their captions and their sizes (the owner's feedback of 2026-10-19)"), file),
-    file,
-    'the document',
-  )
+export function loadConsoleScreens(): ScreensFacts {
+  return {
+    screens: screensOf(
+      'console-screens.yaml',
+      "the console's screenshots: the files, their alt text, their captions and their sizes (the owner's feedback of 2026-10-19)",
+    ),
+  }
+}
+
+/**
+ * The homepage's "See it" slides, in the order the panel's slider shows them (the owner's
+ * feedback of 2026-10-21, and the brief's "replace the single Fugaro Watch screenshot with a
+ * slider"; D246, D251, D252).
+ *
+ * **The rows are the console's own three screenshots and then the watch capture**, which is the
+ * order the brief asks for — "lead with the desktop console and give it the most space … Fugaro
+ * Watch moves to the end as a 'for the terminal crowd' slide" — and the three leading rows'
+ * `alt` and `caption` are the `console-screens.yaml` rows' own, verbatim: one picture has one
+ * `alt` text and one caption, and a second page that paraphrased them would be a second copy of
+ * the sentence that drifts first (`website/test/home.mjs` holds the three to the console file).
+ * The last row is `public/images/fugaro-watch.png`, which is the same file the panel has always
+ * shown, and its caption is the brief's own example for that slide.
+ */
+export function loadHomeScreens(): ScreensFacts {
+  return {
+    screens: screensOf(
+      'home-screens.yaml',
+      "the homepage slider's slides: the console's screenshots and the `fugaro watch` capture, with their alt text, their captions and their sizes (the brief of 2026-10-21)",
+    ),
+  }
+}
+
+/**
+ * The phone app's screenshots, in the order the mobile page's slider shows them (the
+ * zoom-diagrams plan, Part 3 item 4; D251).
+ *
+ * **The list is empty, and that is the document rather than a failure.** The owner supplies
+ * the phone captures as files later (D251) and no agent commits a screenshot (D190), so the
+ * file ships with no row and the page renders no slider at all: a row added here is a slide,
+ * and nothing in the page or the shared component moves for it.
+ */
+export function loadMobileScreens(): ScreensFacts {
+  return {
+    screens: screensOf(
+      'mobile-screens.yaml',
+      "the phone app's screenshots: the files, their alt text, their captions and their sizes (the owner's answer of 2026-10-21, D251)",
+    ),
+  }
+}
+
+/**
+ * One screenshots data file, read and validated: the name under `website/data/` and the
+ * sentence that says what the file is for, because that sentence is what an unreadable file's
+ * error names. Every caller above is this function with a different name, which is what keeps
+ * the pages' rows the same shape — and therefore what keeps one component's rendering of them
+ * the same.
+ */
+function screensOf(name: string, why: string): Screen[] {
+  const file = `website/data/${name}`
+  const doc = asMap(parseYAML(readBytes(path.join(DATA_DIR, name), why), file), file, 'the document')
   refuseUnknownKeys(doc, SCREENS_KEYS, file)
 
   if (asInt(doc.version, file, 'version') !== 1) {
     throw new Error(`${file}: version is not 1, and this reader knows version 1 (W1.3 step 2).`)
   }
 
-  const screens = asList(doc.screens, file, 'screens').map((entry, index) => {
+  return asList(doc.screens, file, 'screens').map((entry, index) => {
     const what = `screens[${index}]`
     const screen = asMap(entry, file, what)
-    refuseUnknownKeys(screen, ['alt', 'caption', 'file', 'height', 'width'], `${file} ${what}`)
+    refuseUnknownKeys(screen, SCREEN_KEYS, `${file} ${what}`)
+
+    // The directory the row's file is served from: one of the two under `public/`, and
+    // `screenshots` for a row that names none — which is every console row, and the reason a
+    // row's shape did not change when the homepage's file arrived.
+    const dir = screen.dir === undefined ? SCREENS_DIR : asString(screen.dir, file, `${what}.dir`)
+    if (!SCREEN_DIRS.includes(dir)) {
+      throw new Error(
+        `${file}: ${what}.dir is ${JSON.stringify(dir)}, and a picture this site serves lives in one of ${SCREEN_DIRS.map((one) => `public/${one}/`).join(' or ')}: the site path the browser fetches is composed from the pair, so a directory that is neither is a file no page can reach.`,
+      )
+    }
 
     const name = asString(screen.file, file, `${what}.file`)
     // A NAME and not a path: the site path is `/${SCREENS_DIR}/${name}` below, and a name
@@ -1032,13 +1127,13 @@ export function loadConsoleScreens(): ConsoleScreensFacts {
     // a URL written into a data file (Global Constraint 9).
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {
       throw new Error(
-        `${file}: ${what}.file is ${JSON.stringify(name)}, and it is the file's NAME under website/public/${SCREENS_DIR}/ — letters, digits, dots, dashes and underscores, with no directory, no scheme and no space. The site path the browser fetches is derived from the name, so a name that is a path or a URL is a fact this file is not allowed to carry (Global Constraint 9).`,
+        `${file}: ${what}.file is ${JSON.stringify(name)}, and it is the file's NAME under website/public/${dir}/ — letters, digits, dots, dashes and underscores, with no directory, no scheme and no space. The site path the browser fetches is derived from the name, so a name that is a path or a URL is a fact this file is not allowed to carry (Global Constraint 9).`,
       )
     }
     // The dot is required before the format is read. With no dot at all `lastIndexOf` answers
     // -1 and `slice(0)` hands back the whole name, so a name that IS a served format — `png`,
     // `jpg`, `webp` — would pass a check that only asks whether the extension is one of them,
-    // and the row would render a picture at `/screenshots/png`. There is no dot, so there is
+    // and the row would render a picture at `/<dir>/png`. There is no dot, so there is
     // no extension and no picture either.
     const dot = name.lastIndexOf('.')
     const format = dot === -1 ? '' : name.slice(dot + 1).toLowerCase()
@@ -1078,10 +1173,254 @@ export function loadConsoleScreens(): ConsoleScreensFacts {
       )
     }
 
-    return { file: name, src: `/${SCREENS_DIR}/${name}`, alt, caption, width, height }
+    return { file: name, src: `/${dir}/${name}`, alt, caption, width, height }
+  })
+}
+
+/**
+ * One line the zoom drawing prints: its text, and the document the text is a line of. The
+ * component holds every one of them to that document at build time (`src/lib/zoom-labels.mjs`),
+ * so the name here is a citation and not a description (Global Constraint 6).
+ */
+export interface ZoomLabel {
+  /** The line as the drawing prints it. */
+  text: string
+  /** The document it is quoted from, as the data file names it: `README.md#How it works`. */
+  source: string
+}
+
+/**
+ * One entity a level draws, and the words beside it. `entity` names a `<symbol>` of the
+ * component's one `<defs>` (`job`, `orchestrator`, `developer`, `console`, `project`); the
+ * component refuses a name with no symbol, and `website/test/how-it-works.mjs` refuses a symbol
+ * no level draws (D244).
+ */
+export interface ZoomPart {
+  /** Which of the five entities this part is. */
+  entity: string
+  /** The lines drawn beside it, in the order the drawing writes them. */
+  labels: ZoomLabel[]
+}
+
+/** One of the four levels: its anchor, its name, its caption and the parts it draws. */
+export interface ZoomLevel {
+  /** The anchor the level's markers point at: `level-1` … `level-4` (D245). */
+  id: string
+  /** The level's name — the `<figcaption>` of its `<figure>`. */
+  name: ZoomLabel
+  /** The line under the drawing, or `null` when the level carries none. */
+  caption: ZoomLabel | null
+  /** The entities the level draws, in the order it draws them. */
+  parts: ZoomPart[]
+}
+
+/** website/data/zoom-levels.yaml, validated. */
+export interface ZoomLevelsFacts {
+  levels: ZoomLevel[]
+}
+
+const ZOOM_FILE = 'website/data/zoom-levels.yaml'
+
+const ZOOM_KEYS = ['levels', 'version']
+const ZOOM_LEVEL_KEYS = ['caption', 'id', 'name', 'parts']
+const ZOOM_PART_KEYS = ['entity', 'labels']
+const ZOOM_LABEL_KEYS = ['source', 'text']
+
+/** One row that is a line of a document: `{ text, source }`, both read and both non-empty. */
+function asLabel(value: Value, file: string, what: string): ZoomLabel {
+  const label = asMap(value, file, what)
+  refuseUnknownKeys(label, ZOOM_LABEL_KEYS, `${file} ${what}`)
+  const text = asString(label.text, file, `${what}.text`)
+  const source = asString(label.source, file, `${what}.source`)
+  if (text.trim() === '') {
+    throw new Error(
+      `${file}: ${what}.text is empty, and every row of this file is a line the drawing prints: a level whose name, caption or label is empty draws a blank space where a reader was meant to read the repository's own words.`,
+    )
+  }
+  if (source.trim() === '') {
+    throw new Error(
+      `${file}: ${what}.source is empty, and every line this drawing prints cites the document it is quoted from (Global Constraint 6): a line with no citation is a line no guard can hold, and the component refuses to build the drawing rather than print an unchecked claim.`,
+    )
+  }
+  return { text, source }
+}
+
+/**
+ * The four zoom levels, in the order the page draws them: each level's anchor, its name, its
+ * caption and the entities it draws with the words beside them (D237, D244).
+ *
+ * **A row's words are held to a document twice.** This reader holds the *shape* — a row is a
+ * `{ text, source }` pair and neither half is empty — and the component holds the *line*
+ * (`src/lib/zoom-labels.mjs`'s `holdZoomLabels`), which refuses a text that is not a line of
+ * the document its row cites. `website/test/how-it-works.mjs` makes the same check against the
+ * built page, so a label that drifts from its document stops the tests as well as the build.
+ *
+ * Everything else is refused by name: an `id` that is not `level-N` (the anchors Part 5 reuses
+ * are `#level-1` … `#level-4`, so a level whose id is anything else is a marker nothing can
+ * point at), an `entity` that is not a name at all, and a level with no parts — a level that
+ * draws nothing is a `<figure>` with a caption and no picture.
+ */
+export function loadZoomLevels(): ZoomLevelsFacts {
+  const file = ZOOM_FILE
+  const doc = asMap(
+    parseYAML(readBytes(path.join(DATA_DIR, 'zoom-levels.yaml'), "the zoom drawing's four levels: their anchors, their names, their captions and the words beside each entity they draw (the brief of 2026-10-21, D237 and D244)"), file),
+    file,
+    'the document',
+  )
+  refuseUnknownKeys(doc, ZOOM_KEYS, file)
+
+  if (asInt(doc.version, file, 'version') !== 1) {
+    throw new Error(`${file}: version is not 1, and this reader knows version 1 (W1.3 step 2).`)
+  }
+
+  const levels = asList(doc.levels, file, 'levels').map((entry, index) => {
+    const what = `levels[${index}]`
+    const level = asMap(entry, file, what)
+    refuseUnknownKeys(level, ZOOM_LEVEL_KEYS, `${file} ${what}`)
+
+    const id = asString(level.id, file, `${what}.id`)
+    // The anchor, and the only shape of it there is: `#level-1` … `#level-N` (D245). An id is
+    // what a marker's `href` and a figure's own `id` are built from, so an id carrying anything
+    // else is a link that resolves to nothing or an id written twice on one page — both of
+    // which the linkcheck and a11y gates would report without saying which row to open.
+    if (!/^level-[1-9][0-9]*$/.test(id)) {
+      throw new Error(
+        `${file}: ${what}.id is ${JSON.stringify(id)}, and a level's id is its anchor: \`level-\` and the level's number, which is what the markers' \`href="#${id}"\` and the \`<figure id="${id}">\` are made of (D245). A name of any other shape is a marker that points at nothing.`,
+      )
+    }
+
+    const name = asLabel(level.name, file, `${what}.name`)
+    const caption = level.caption === undefined || level.caption === null ? null : asLabel(level.caption, file, `${what}.caption`)
+
+    const parts = asList(level.parts, file, `${what}.parts`).map((partEntry, partIndex) => {
+      const partWhat = `${what}.parts[${partIndex}]`
+      const part = asMap(partEntry, file, partWhat)
+      refuseUnknownKeys(part, ZOOM_PART_KEYS, `${file} ${partWhat}`)
+      const entity = asString(part.entity, file, `${partWhat}.entity`)
+      if (!/^[a-z][a-z-]*$/.test(entity)) {
+        throw new Error(
+          `${file}: ${partWhat}.entity is ${JSON.stringify(entity)}, and an entity is the name of one of the drawing's shapes — \`job\`, \`orchestrator\`, \`developer\`, \`console\` or \`project\` (D244): lower-case letters and dashes, which is the id the level's \`<use href="#…">\` is built from. Anything else is a reference to a shape the drawing does not have.`,
+        )
+      }
+      // A part's labels may be empty, and level 4's are: an entity that is there to be
+      // recognised rather than explained draws a shape and no words, and a level's own name
+      // and caption carry what it is. A part with **no such key at all** is refused by
+      // `refuseUnknownKeys` above only when it is misspelled, and by `asList` here when it is
+      // absent — which is what keeps "draws nothing" a decision a row makes rather than one a
+      // reader assumes.
+      const labels = asList(part.labels, file, `${partWhat}.labels`).map((label, labelIndex) =>
+        asLabel(label, file, `${partWhat}.labels[${labelIndex}]`),
+      )
+      return { entity, labels }
+    })
+
+    if (parts.length === 0) {
+      throw new Error(
+        `${file}: ${what} draws no parts, and a level is a drawing: every level of the four draws at least one entity through \`<use>\` (D244). A level with no parts is a caption with no picture under it.`,
+      )
+    }
+
+    return { id, name, caption, parts }
   })
 
-  return { screens }
+  if (new Set(levels.map((level) => level.id)).size !== levels.length) {
+    throw new Error(
+      `${file}: two levels share an id, and an id is an anchor: the page would carry \`id="…"\` twice and every marker for it would resolve to the first — one level's marker would scroll a reader to another level.`,
+    )
+  }
+
+  return { levels }
+}
+
+// ---------------------------------------------------------------------------------------
+// website/data/mobile-claims.yaml — what the phone app does, and what it does not do yet.
+// ---------------------------------------------------------------------------------------
+
+/**
+ * One claim about the phone app, and whether the tree backs it today.
+ *
+ * `shipped` and `planned` are the two states the page renders differently (D240's second
+ * condition, D241's answer), and they are the whole of the vocabulary: a third state would be
+ * a third way for a reader to be unsure which of the two a bullet is.
+ */
+export interface MobileClaim {
+  /** The claim, as the page renders it. */
+  text: string
+  /** Whether the tree backs it today (`shipped`) or it is still to be built (`planned`). */
+  state: 'shipped' | 'planned'
+}
+
+/** website/data/mobile-claims.yaml, validated. */
+export interface MobileClaimsFacts {
+  claims: MobileClaim[]
+}
+
+const MOBILE_CLAIMS_FILE = 'website/data/mobile-claims.yaml'
+
+const MOBILE_CLAIMS_KEYS = ['claims', 'version']
+const MOBILE_CLAIM_KEYS = ['state', 'text']
+
+/** The two states a claim may carry, in the order the page renders them. */
+export const MOBILE_CLAIM_STATES = ['shipped', 'planned']
+
+/**
+ * The phone app's claims, in the order the page renders them (the zoom-diagrams plan, Part 3;
+ * D240, D241).
+ *
+ * **A row is a claim and its state, and the state is required.** The page is a "coming soon"
+ * page, and D240 allows one only while every bullet is marked shipped or planned: a row
+ * without a state would be a claim the reader cannot place, and a state this reader does not
+ * know would be a bullet the page cannot mark at all — so both are refused here, by name,
+ * rather than rendered as prose.
+ *
+ * **An empty list is refused**, which is the one place this reader differs from the
+ * screenshots reader beside it. A file with no screenshot is a legal document (no build can
+ * make a picture, D190); a file with no claim is a page whose whole job is the claims, and a
+ * build that rendered one would be a badge and nothing behind it — the state the brief's
+ * third item exists to avoid.
+ */
+export function loadMobileClaims(): MobileClaimsFacts {
+  const file = MOBILE_CLAIMS_FILE
+  const doc = asMap(
+    parseYAML(readBytes(path.join(DATA_DIR, 'mobile-claims.yaml'), "the phone app's claims: what it does today and what is still to be built, one row each, with the state the page marks it with (the zoom-diagrams plan Part 3; D240, D241)"), file),
+    file,
+    'the document',
+  )
+  refuseUnknownKeys(doc, MOBILE_CLAIMS_KEYS, file)
+
+  if (asInt(doc.version, file, 'version') !== 1) {
+    throw new Error(`${file}: version is not 1, and this reader knows version 1 (W1.3 step 2).`)
+  }
+
+  const claims = asList(doc.claims, file, 'claims').map((entry, index) => {
+    const what = `claims[${index}]`
+    const claim = asMap(entry, file, what)
+    refuseUnknownKeys(claim, MOBILE_CLAIM_KEYS, `${file} ${what}`)
+
+    const state = asString(claim.state, file, `${what}.state`)
+    if (!MOBILE_CLAIM_STATES.includes(state)) {
+      throw new Error(
+        `${file}: ${what}.state is ${JSON.stringify(state)}, and a claim is either ${MOBILE_CLAIM_STATES.map((one) => `\`${one}\``).join(' or ')}: the page renders the two into two lists with their own headings, so a bullet is marked shipped or planned and a reader never has to guess which one it is reading (D240, D241).`,
+      )
+    }
+
+    const text = asString(claim.text, file, `${what}.text`)
+    if (text.trim() === '') {
+      throw new Error(
+        `${file}: ${what}.text is empty, and every row of this file is a claim: a bullet with no words in it is a mark with nothing behind it, and the page renders this string as the whole of what the row says.`,
+      )
+    }
+
+    return { text, state: state as MobileClaim['state'] }
+  })
+
+  if (claims.length === 0) {
+    throw new Error(
+      `${file}: claims is empty, and this file is the page: the phone app's page is a "coming soon" badge and the claims under it, so a build with no claim in the file is a page that says nothing about what is coming (D240, D241). A page whose every claim has been dropped is a page to take down, not one to build empty.`,
+    )
+  }
+
+  return { claims }
 }
 
 // ---------------------------------------------------------------------------------------

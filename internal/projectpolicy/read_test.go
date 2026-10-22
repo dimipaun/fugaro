@@ -61,7 +61,7 @@ func TestReadWithoutTheMarkerIsLegacy(t *testing.T) {
 // generation 2 — is a deployment that *does* carry the config/policy nodes, and
 // the policy published under it is read. Generation 1 is a real deployment: its
 // rules have the nodes, `fugaro project policy publish` wrote there and
-// `fugaro update --firebase` of that release recorded it. Gating on RulesVersion
+// `fugaro update --firebase-project` of that release recorded it. Gating on RulesVersion
 // answered "not found" for it, which every caller of Read takes as "this
 // installation has no policy": the runner kept the ceiling its job environment
 // was deployed with, the launcher skipped the allow-list and release-skew gates

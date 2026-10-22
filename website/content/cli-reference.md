@@ -1542,7 +1542,7 @@ job's environment was deployed with.
 
 Publishing refuses without the rules marker (config/limits/policyRules): a
 policy published before the rules are deployed is one the runs it bounds
-cannot read, so run fugaro update --firebase with a Fugaro that deploys them
+cannot read, so run fugaro update --firebase-project with a Fugaro that deploys them
 first. It also refuses a node written by a newer Fugaro.
 
 allow_repos is seeded from this machine's repos: map and from the shared
@@ -2416,9 +2416,11 @@ account's credentials it stops and names the two flags.
 
 On a first run it asks its questions once, in this order, each with a
 suggestion Enter takes, and writes the local config, so later runs ask
-nothing: the GCP project's ID (--gcp-project; suggested from
-GOOGLE_CLOUD_PROJECT or the credentials' quota project, never gcloud's default
-project), the region (--region; us-east5), whether to create the GCP project
+nothing: the GCP project's ID (--gcp-project; a new project named after this
+one, fugaro-<name>, which Enter takes — and, offered second when it differs, the
+project GOOGLE_CLOUD_PROJECT or the credentials' quota project names, the one
+you are already working in; never gcloud's default project), the region
+(--region; us-east5), whether to create the GCP project
 or adopt one that already exists (--create-project; "create", what Enter
 takes, is a new fugaro-<name> project, and "adopt" leaves one that is already
 there exactly as it is), and the project's name (--name; from the
@@ -2450,17 +2452,17 @@ not, the build is left for you with each missing permission and its fix and
 nothing is billed. A repository the local config does not list is asked about
 first, at the start, before any plan.
 
-setup runs as a converge of stages (preflight, installation, with --firebase
-the Firebase backend and the images, the secrets, the plugin wiring and the
-repository, and on a first run the project — the one stage that may create the
-GCP project, and it does that only when the first question's answer was to
-create: an answer of "adopt" reads nothing and creates nothing), each with its
-own confirmation, in order,
-and stops at the first that fails or needs you; a rerun resumes, and one
-with nothing to do says "No changes" and exits 0. Exit codes: 0 done (or
-only planned), 1 a refusal, or a step left for you (see left_for_you in
---json), 2 a cloud failure; --json prints the stages, left_for_you and the
-failed stage on every outcome.
+setup runs as a converge of stages (preflight, installation, with
+--firebase-project the Firebase backend and the images, the secrets, the
+plugin wiring and the repository, and on a first run the project — the one
+stage that may create the GCP project, and it does that only when the first
+question's answer was to create: an answer of "adopt" reads nothing and
+creates nothing), each with its own confirmation, in order, and stops at the
+first that fails or needs you; a rerun resumes, and one with nothing to do
+says "No changes" and exits 0. Exit codes: 0 done (or only planned), 1 a
+refusal, or a step left for you (see left_for_you in --json), 2 a cloud
+failure; --json prints the stages, left_for_you and the failed stage on every
+outcome.
 
 setup --anchor, run in the checkout of a repository the project lists, writes
 only the gcp_project: line of its fugaro.yaml (the line teammates find the
@@ -2489,12 +2491,15 @@ and safe, 1 a check failed or nothing was written, 2 a build record could not
 be read from the cloud (missing credentials included). A coding agent's
 session may run it, --yes included: it edits only a local file.
 
-setup --firebase <firebase-project-id> builds the project's budget backend in a
-Firebase project you created and linked to billing. It may be the project's
-own GCP project (one project for everything) or a project of its own (setup
-creates a project or links billing only with --create-project and
---link-billing, and refuses one that is missing, has no billing, or whose
-database holds data and no Fugaro mark). It runs three applies, each
+setup --firebase-project <firebase-project-id> builds the budget backend in a
+Firebase project you created and linked to billing, and it is the advanced
+case: the run's Firebase project is the installation's own --gcp-project by
+default (one id for both, D7), so this flag is for a project of its own — and
+it is also what adds the backend to the run, so a setup without it builds
+none. It creates nothing and links nothing (a project is created or billing
+linked only with --create-project and --link-billing, and it refuses one that
+is missing, has no billing, or whose database holds data and no Fugaro mark).
+It runs three applies, each
 with its own plan and confirmation: the installation (the history account),
 the Firebase root (the database, a restricted sign-in key, the token signer,
 and the budget admins: the GCP project's owners and editors who are users or
@@ -2632,16 +2637,16 @@ Flags:
 | `--base-image` | stringArray | `[]` | no | a base image the image checks run and builds start from, recorded in the local config under its base kind (repeatable; KIND=IMAGE, or just IMAGE when its repository is named fugaro-<kind>; the kinds you don't name keep theirs) |
 | `--billing-account` | string | "" | no | the billing account the budget is on |
 | `--budget` | int64 | `0` | no | a monthly budget on the project, in whole units of --budget-currency |
-| `--budget-admin` | stringArray | `[]` | no | with --firebase: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins) |
+| `--budget-admin` | stringArray | `[]` | no | with --firebase-project: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins) |
 | `--budget-currency` | string | "" | no | the budget's currency, such as USD |
-| `--budget-mode` | string | "" | no | with --firebase: off, observe or enforce: the jobs' budget mode in the project config, and for observe and enforce the project-wide mode in the database (an absent one is seeded observe) |
+| `--budget-mode` | string | "" | no | with --firebase-project: off, observe or enforce: the jobs' budget mode in the project config, and for observe and enforce the project-wide mode in the database (an absent one is seeded observe) |
 | `--check-github-app` | bool | `false` | no | let the GitHub App pre-check read the App's private key from Secret Manager with your own credentials (held in memory only, for one signed token; refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it); without it setup checks only with the key you typed in this run |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--config-only` | bool | `false` | no | only write the local config, from the installation's outputs (else the flags) |
 | `--create-project` | bool | `false` | no | create the GCP project --gcp-project names and add Firebase to it, as you, after you type its ID at a terminal (never with --yes, --non-interactive or --json). An ID that exists and you can read is adopted; one held by someone else is refused. Billing is not linked unless --link-billing is also given; without it setup prints the one gcloud command that links it |
 | `--display-name` | string | "" | no | with --create-project: the project's display name (default: its ID) |
 | `--expect-digest` | stringArray | `[]` | no | pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it setup trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag |
-| `--firebase` | string | "" | no | adopt this Firebase project (the one you created and linked to billing, or created with --create-project) and build the budget backend in it: three confirmed applies, the database's rules and mark, the Firestore history database (permanent us-east5 location, typed confirmation) and the config |
+| `--firebase-project` | string | "" | no | build the budget backend in this Firebase project: the run's Firebase project is the installation's own --gcp-project by default (one id for both, D7), so this is the advanced flag, for a Firebase project of its own (one you created and linked to billing, or created with --create-project). It is also the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location, typed confirmation) and the config |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `--github-app-id` | string | "" | no | the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; setup asks once at a terminal, and --non-interactive needs it) |
 | `-h`, `--help` | bool | `false` | no | help for setup |
@@ -2796,14 +2801,14 @@ Flags:
 | `--base-image` | stringArray | `[]` | no | a base image the image checks run and builds start from, recorded in the local config under its base kind (repeatable; KIND=IMAGE, or just IMAGE when its repository is named fugaro-<kind>; the kinds you don't name keep theirs) |
 | `--billing-account` | string | "" | no | the billing account the budget is on |
 | `--budget` | int64 | `0` | no | a monthly budget on the project, in whole units of --budget-currency |
-| `--budget-admin` | stringArray | `[]` | no | with --firebase: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins) |
+| `--budget-admin` | stringArray | `[]` | no | with --firebase-project: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins) |
 | `--budget-currency` | string | "" | no | the budget's currency, such as USD |
-| `--budget-mode` | string | "" | no | with --firebase: off, observe or enforce: the jobs' budget mode in the project config, and for observe and enforce the project-wide mode in the database (an absent one is seeded observe) |
+| `--budget-mode` | string | "" | no | with --firebase-project: off, observe or enforce: the jobs' budget mode in the project config, and for observe and enforce the project-wide mode in the database (an absent one is seeded observe) |
 | `--check-github-app` | bool | `false` | no | let the GitHub App pre-check read the App's private key from Secret Manager with your own credentials (held in memory only, for one signed token; refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it); without it update checks only with the key you typed in this run |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--config-only` | bool | `false` | no | only write the local config, from the installation's outputs (else the flags) |
 | `--expect-digest` | stringArray | `[]` | no | pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it update trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag |
-| `--firebase` | string | "" | no | adopt this Firebase project (the one you created and linked to billing, or created with --create-project) and build the budget backend in it: three confirmed applies, the database's rules and mark, the Firestore history database (permanent us-east5 location, typed confirmation) and the config |
+| `--firebase-project` | string | "" | no | build the budget backend in this Firebase project: the run's Firebase project is the installation's own --gcp-project by default (one id for both, D7), so this is the advanced flag, for a Firebase project of its own (one you created and linked to billing, or created with --create-project). It is also the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location, typed confirmation) and the config |
 | `--forget` | bool | `false` | no | roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `--github-app-id` | string | "" | no | the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; update asks once at a terminal, and --non-interactive needs it) |

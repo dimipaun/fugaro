@@ -326,8 +326,8 @@ func (in Inventory) foreign(listed []Asset) []Asset {
 // sometimes declares: `fugaro setup --create-project` adds Firebase to every
 // project it makes (init_project.go's addFirebase), while the Firebase ROOT —
 // which holds google_firebase_project, the resource a state would account for
-// — runs only under --firebase (init_stages.go). So a managed project created
-// without --firebase holds a Firebase project no state has ever seen, and an
+// — runs only under --firebase-project (init_stages.go). So a managed project created
+// without --firebase-project holds a Firebase project no state has ever seen, and an
 // inventory that did not name it here would read every such project as
 // foreign and keep the confirmations of every apply forever. The
 // whole-project read lists all of them, so without this the accounted side

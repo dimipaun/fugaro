@@ -62,10 +62,10 @@ type Clients struct {
 	// Billing reads whether the Firebase project has billing; nil without
 	// credentials and without its endpoint.
 	Billing *billing.APIService
-	// FirebaseDB lists the Firebase project's databases (init --firebase
+	// FirebaseDB lists the Firebase project's databases (init --firebase-project
 	// checks them before anything is granted on the project); nil like Billing.
 	FirebaseDB *firebasedatabase.Service
-	// APIKeys reads the Firebase project's API keys (init --firebase adoption); nil like Billing.
+	// APIKeys reads the Firebase project's API keys (init --firebase-project adoption); nil like Billing.
 	APIKeys *apikeys.Service
 	// NoAuth is set with fakes: no credentials, so no quota project to ask about.
 	NoAuth bool
@@ -79,13 +79,13 @@ type Endpoints struct {
 	// enables Cloud Resource Manager. Without credentials and without it,
 	// there is no Service Usage client.
 	ServiceUsage string
-	// Billing is the Cloud Billing API's, which fugaro update --firebase
+	// Billing is the Cloud Billing API's, which fugaro update --firebase-project
 	// reads the Firebase project's billing through. Without credentials and
 	// without it, there is no Billing client.
 	Billing string
 	// FirebaseDatabase is the Firebase Realtime Database management API's.
 	FirebaseDatabase string
-	// APIKeys is the API Keys API's, which init --firebase reads the
+	// APIKeys is the API Keys API's, which init --firebase-project reads the
 	// project's keys through. Without credentials and without it, there is
 	// no API Keys client.
 	APIKeys string
@@ -166,7 +166,7 @@ func NewClients(ctx context.Context, o gcp.Options, e Endpoints) (*Clients, erro
 			return nil, fmt.Errorf("connecting to Service Usage: %w", err)
 		}
 	}
-	// Only init --firebase calls it.
+	// Only init --firebase-project calls it.
 	if !o.Endpoints.NoAuth || e.Billing != "" {
 		if c.Billing, err = billing.NewService(ctx, billingOpts(e.Billing)...); err != nil {
 			return nil, fmt.Errorf("connecting to Cloud Billing: %w", err)

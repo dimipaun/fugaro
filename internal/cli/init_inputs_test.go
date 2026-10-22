@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -73,6 +75,294 @@ func TestNameDefaultSanitised(t *testing.T) {
 	}
 }
 
+// noInstallation stubs the read-only "is an installation already there?" lookup
+// (installationName) with "no": these tests are about the questions, and none of
+// them reaches a cloud.
+func noInstallation(t *testing.T) {
+	t.Helper()
+	old := installationName
+	installationName = func(context.Context, string, string, string) string { return "" }
+	t.Cleanup(func() { installationName = old })
+}
+
+// TestProjectIDDefaultIsFugaroName: the wizard's ID question suggests a new
+// project named after this one — "fugaro-" + the Fugaro project's name (D4,
+// reconciliation F3) — and Enter takes it. The default is a name to *create*
+// (D4, answered 2026-10-20 as recommended), which is why it is not
+// suggestGCPProject()'s answer: that project already exists, and adopting it is
+// the second suggestion's job.
+func TestProjectIDDefaultIsFugaroName(t *testing.T) {
+	dir := firstRunEnv(t)
+	noInstallation(t)
+	t.Setenv("GOOGLE_CLOUD_PROJECT", "")
+	fakeTerminal(t)
+	// --name is the run's own word for the project, and the region is a flag, so
+	// the two Enters are the ID question and the create/adopt question after it
+	// (adopt: nothing is created and no check of a creation's rules runs here).
+	var out strings.Builder
+	r := &initRun{o: &initOptions{name: "aurora", cloud: cloudOptions{region: defaultRegion}}, w: &out, in: bufio.NewReader(strings.NewReader("\n" + setupAnswerAdopt + "\n")), cmd: NewRootCmd()}
+	if err := r.gatherInputs(t.Context()); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if got := r.o.cloud.gcpProject; got != "fugaro-aurora" {
+		t.Errorf("Enter took %q, want the new project fugaro-aurora\n%s", got, out.String())
+	}
+	if !strings.Contains(out.String(), "GCP project ID [fugaro-aurora]") {
+		t.Errorf("the question does not suggest fugaro-aurora:\n%s", out.String())
+	}
+
+	// Without --name the suggestion is built from the name the name question
+	// would itself suggest: the checkout's origin owner, else the directory.
+	work := filepath.Join(dir, "Acme Webapp")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.IsolateGit(t)
+	testutil.Git(t, work, "init", "-q")
+	t.Chdir(work)
+	out.Reset()
+	r = &initRun{o: &initOptions{cloud: cloudOptions{region: defaultRegion}}, w: &out, in: bufio.NewReader(strings.NewReader("\n" + setupAnswerAdopt + "\n\n")), cmd: NewRootCmd()}
+	if err := r.gatherInputs(t.Context()); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if got := r.o.cloud.gcpProject; got != "fugaro-acme-webapp" {
+		t.Errorf("the directory's name: id %q, want fugaro-acme-webapp\n%s", got, out.String())
+	}
+	if got := r.o.name; got != "acme-webapp" {
+		t.Errorf("the name question suggests %q, and the id was built from another name\n%s", got, out.String())
+	}
+}
+
+// TestProjectIDSuggestionIsTheCredentialProjectSecond: the project this
+// machine is already working in — GOOGLE_CLOUD_PROJECT or the credentials'
+// quota project — is offered as the **second** suggestion, after the
+// fugaro-<name> default and with the line saying why (D4). Enter takes the
+// first; the second is an answer a person types.
+func TestProjectIDSuggestionIsTheCredentialProjectSecond(t *testing.T) {
+	firstRunEnv(t)
+	noInstallation(t)
+	t.Setenv("GOOGLE_CLOUD_PROJECT", "env-proj-1")
+	fakeTerminal(t)
+	var out strings.Builder
+	r := &initRun{o: &initOptions{name: "aurora", cloud: cloudOptions{region: defaultRegion}}, w: &out, in: bufio.NewReader(strings.NewReader("\n" + setupAnswerAdopt + "\n")), cmd: NewRootCmd()}
+	if err := r.gatherInputs(t.Context()); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if got := r.o.cloud.gcpProject; got != "fugaro-aurora" {
+		t.Errorf("Enter took %q, want the default\n%s", got, out.String())
+	}
+	s := out.String()
+	at, second := strings.Index(s, "[fugaro-aurora]"), strings.Index(s, "env-proj-1")
+	if second < 0 || !strings.Contains(s, "you are already working in env-proj-1") {
+		t.Errorf("the credentials' project is not offered with the line saying why:\n%s", s)
+	}
+	if at < 0 || second < at {
+		t.Errorf("the credentials' project is not the second suggestion:\n%s", s)
+	}
+
+	// Typed, it is the answer: the second suggestion is not only a sentence.
+	out.Reset()
+	r = &initRun{o: &initOptions{name: "aurora", cloud: cloudOptions{region: defaultRegion}}, w: &out, in: bufio.NewReader(strings.NewReader("env-proj-1\n" + setupAnswerAdopt + "\n")), cmd: NewRootCmd()}
+	if err := r.gatherInputs(t.Context()); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if got := r.o.cloud.gcpProject; got != "env-proj-1" {
+		t.Errorf("the credentials' project typed: %q\n%s", got, out.String())
+	}
+
+	// Nothing to offer second when the credentials name no project, or name the
+	// one the default already is.
+	t.Setenv("GOOGLE_CLOUD_PROJECT", "fugaro-aurora")
+	out.Reset()
+	r = &initRun{o: &initOptions{name: "aurora", cloud: cloudOptions{region: defaultRegion}}, w: &out, in: bufio.NewReader(strings.NewReader("\n" + setupAnswerAdopt + "\n")), cmd: NewRootCmd()}
+	if err := r.gatherInputs(t.Context()); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if strings.Contains(out.String(), "(or ") {
+		t.Errorf("the same project is offered twice:\n%s", out.String())
+	}
+}
+
+// TestProjectIDIsCheckedBeforeAnyCreate: the ID the wizard takes is held to
+// what a creation is held to, inside gatherInputs — before the engine exists,
+// so before anything is read, planned or created. The prompt accepts an ID
+// Google reserves a word in (that rule is not a shape rule), and the create
+// answer's own checks refuse it; and the *default* the wizard offers is checked
+// the same way, so a project named after this one cannot reach Google with an
+// ID Google refuses.
+func TestProjectIDIsCheckedBeforeAnyCreate(t *testing.T) {
+	firstRunEnv(t)
+	noInstallation(t)
+	fakeTerminal(t)
+	for _, tc := range []struct {
+		name   string
+		stdin  string
+		o      *initOptions
+		projID string
+	}{
+		{
+			name:   "an id typed that Google restricts",
+			stdin:  "fugaro-google-ads\n" + setupAnswerCreate + "\n",
+			projID: "fugaro-google-ads",
+		},
+		{
+			name:   "the default the run suggests",
+			stdin:  "\n" + setupAnswerCreate + "\n",
+			o:      &initOptions{name: "google-ads", cloud: cloudOptions{region: defaultRegion}},
+			projID: "fugaro-google-ads",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := tc.o
+			if o == nil {
+				o = &initOptions{name: "aurora", cloud: cloudOptions{region: defaultRegion}}
+			}
+			var out strings.Builder
+			r := &initRun{o: o, w: &out, in: bufio.NewReader(strings.NewReader(tc.stdin)), cmd: NewRootCmd()}
+			err := r.gatherInputs(t.Context())
+			if err == nil {
+				t.Fatalf("the run took %q as an ID to create with\n%s", tc.projID, out.String())
+			}
+			if !strings.Contains(err.Error(), "google") || ExitCode(err) != ExitUserError {
+				t.Errorf("err = %v (exit %d), want the refusal naming the restricted word", err, ExitCode(err))
+			}
+			if r.o.cloud.gcpProject != tc.projID {
+				t.Errorf("the id checked is %q, want %q\n%s", r.o.cloud.gcpProject, tc.projID, out.String())
+			}
+		})
+	}
+
+	// The same ID adopted is the installation's business, not this run's: the
+	// check belongs to creation (D4's answer, askProjectAnswer).
+	var out strings.Builder
+	r := &initRun{o: &initOptions{name: "aurora", cloud: cloudOptions{region: defaultRegion}}, w: &out, in: bufio.NewReader(strings.NewReader("fugaro-google-ads\n" + setupAnswerAdopt + "\n")), cmd: NewRootCmd()}
+	if err := r.gatherInputs(t.Context()); err != nil {
+		t.Errorf("adopting the id was refused: %v\n%s", err, out.String())
+	}
+}
+
+// TestProjectIDDefaultIsSanitised: the default is built from a project name,
+// and a project name may hold capitals, spaces, an underscore, a non-ASCII
+// letter or a leading digit — none of which a project ID holds. Enter is always
+// a legal answer: what comes out is a project ID, and a name with nothing
+// usable in it suggests nothing rather than something illegal.
+func TestProjectIDDefaultIsSanitised(t *testing.T) {
+	for in, want := range map[string]string{
+		"aurora":                "fugaro-aurora",
+		"Acme Corp":             "fugaro-acme-corp",
+		"  --Acme_Inc.--  ":     "fugaro-acme-inc",
+		"UPPER.case":            "fugaro-upper-case",
+		"1password":             "fugaro-1password",
+		"ünï":                   "fugaro-n",
+		strings.Repeat("a", 60): "fugaro-" + strings.Repeat("a", 23),
+		"---":                   "",
+		"":                      "",
+	} {
+		got := defaultGCPProject(in)
+		if got != want {
+			t.Errorf("defaultGCPProject(%q) = %q, want %q", in, got, want)
+			continue
+		}
+		if got != "" && !infra.ValidProjectID(got) {
+			t.Errorf("defaultGCPProject(%q) = %q, which is not a project ID", in, got)
+		}
+	}
+}
+
+// TestProjectIDDefaultIsNotTakenWhenItExists: the ID the wizard suggests is a
+// name to create, and a project that already carries it is not created twice.
+// The run reads the ID before anything is created — availability and ownership,
+// the check the typed confirmation has always rested on — keeps the project it
+// found, and asks again (its ID typed at the confirmation) rather than failing.
+func TestProjectIDDefaultIsNotTakenWhenItExists(t *testing.T) {
+	r := newProjectRig(t)
+	id := defaultGCPProject(initProjectName)
+	if id == "" {
+		t.Fatalf("the wizard suggests no id for the project name %q", initProjectName)
+	}
+	// There and readable, with no Firebase.
+	r.crm.AddProject(id, 424242)
+	r.gcs.AddProject(id, 424242)
+	r.bill.SetBilling(id, true)
+	fakeTerminal(t)
+	out := &strings.Builder{}
+	cmd := NewRootCmd()
+	cmd.SetIn(strings.NewReader(id + "\n"))
+	e := &initEngine{
+		r: &initRun{o: &initOptions{door: setupDoor.name, createProject: true, cloud: cloudOptions{gcpProject: id, region: defaultRegion}},
+			w: out, in: bufio.NewReader(strings.NewReader(id + "\n")), cmd: cmd},
+		lc: &localcfg.Config{GCPProject: id, Region: defaultRegion, Name: initProjectName, RunsBucket: "fugaro-runs-" + id},
+	}
+	e.lc.Endpoints = localcfg.Endpoints{ResourceManager: r.crm.URL + "/", FirebaseManagement: r.fb.URL + "/", CloudBilling: r.bill.URL + "/", NoAuth: true}
+	s := newProjectStage(e)
+	// First the read, which is where availability and ownership are settled —
+	// before anything is created — and it finds the project there.
+	st, err := s.Check(t.Context())
+	if err != nil {
+		t.Fatalf("the check of the wizard's own default id: %v", err)
+	}
+	if st.State != initflow.Todo || !strings.Contains(st.Detail, "adopting an EXISTING project "+id) {
+		t.Errorf("state %q, detail %q: want the existing project noticed, not a creation\n%s", st.State, st.Detail, out)
+	}
+	// Then the step, which asks again — the id typed at the confirmation — and
+	// creates nothing: a project that already carries the default is never made
+	// twice, and the run does not fail on it either.
+	if _, err := s.Apply(t.Context(), initflow.Env{Interactive: true}); err != nil {
+		t.Fatalf("the apply: %v\n%s", err, out)
+	}
+	if n := len(r.crm.Creates()); n != 0 {
+		t.Errorf("the id already exists and %d project(s) were created:\n%s", n, out)
+	}
+	if adds := r.fb.Adds(); len(adds) != 1 || adds[0] != id {
+		t.Errorf("Firebase adds = %v, want the existing project once:\n%s", adds, out)
+	}
+	if !strings.Contains(out.String(), "adopting an EXISTING project "+id) {
+		t.Errorf("the confirmation does not say the project is already there:\n%s", out)
+	}
+}
+
+// TestGatherInputsNonInteractiveNamesEveryFlag: the ID's default is a
+// suggestion, never an answer taken on nobody's behalf. A run that cannot ask —
+// --non-interactive, or any of the other flags that turn the questions off —
+// still refuses, and the one error names every flag that is missing, the ID's
+// among them (D4 changes the suggestion, not what a scripted run must pass).
+func TestGatherInputsNonInteractiveNamesEveryFlag(t *testing.T) {
+	firstRunEnv(t)
+	noInstallation(t)
+	fakeTerminal(t) // a terminal does not make it ask
+	// Every flag but the ID's: the ID's own default is what a run may not take
+	// for a person, so it is the one still missing.
+	_, _, err := executeStdin(t, "aurora\n", "setup", "--non-interactive", "--name", "aurora", "--region", defaultRegion)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+	if !strings.Contains(err.Error(), "--non-interactive: missing") || !strings.Contains(err.Error(), "--gcp-project <id>") {
+		t.Errorf("the refusal does not name the id's flag: %v", err)
+	}
+	if strings.Contains(err.Error(), "\n") {
+		t.Errorf("more than one error: %v", err)
+	}
+	for _, f := range []string{"--name", "--region"} {
+		if strings.Contains(err.Error(), f) {
+			t.Errorf("the refusal names %s, which the run was given: %v", f, err)
+		}
+	}
+
+	// Nothing given: every question with a flag is named, in one error.
+	_, _, err = executeStdin(t, "", "setup", "--non-interactive")
+	if err == nil {
+		t.Fatal("a first run with no terminal and no flags exited 0")
+	}
+	for _, q := range setupQuestions {
+		if q.missing == "" {
+			continue
+		}
+		if !strings.Contains(err.Error(), q.missing) {
+			t.Errorf("the refusal does not name %q: %v", q.missing, err)
+		}
+	}
+}
+
 // The GCP project is suggested from GOOGLE_CLOUD_PROJECT or the credentials'
 // quota project, never from gcloud's configured default project, whichever
 // way gcloud holds it.
@@ -94,18 +384,29 @@ func TestProjectIDNeverFromGcloudDefault(t *testing.T) {
 	if got := suggestGCPProject(); got != "" {
 		t.Fatalf("suggested %q from gcloud's own default project", got)
 	}
-	// At the prompt there is no suggestion, so Enter alone is not an answer.
+	// At the prompt gcloud's default is named nowhere: the suggestion is this
+	// run's own name for the project (D4's fugaro-<name>), and Enter takes it.
+	// The answers: Enter at the ID, and Enter at the project question the
+	// wizard asks next (W1.3).
+	noInstallation(t)
 	fakeTerminal(t)
 	var out strings.Builder
-	// The answers: two empty tries at the ID (there is nothing to suggest),
-	// the ID, and Enter to the project question the wizard asks next (W1.3).
-	r := &initRun{o: &initOptions{name: "aurora", cloud: cloudOptions{region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader("\n\nproj-5678\n\n")), cmd: NewRootCmd()}
+	r := &initRun{o: &initOptions{name: "aurora", cloud: cloudOptions{region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader("\n\n")), cmd: NewRootCmd()}
 	r.cmd.SetIn(strings.NewReader(""))
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if r.o.cloud.gcpProject != "proj-5678" || strings.Contains(out.String(), "gcloud-default") || strings.Contains(out.String(), "GCP project ID [") {
+	if r.o.cloud.gcpProject != "fugaro-aurora" || strings.Contains(out.String(), "gcloud-default") || strings.Contains(out.String(), "GOOGLE_CLOUD_PROJECT") {
 		t.Errorf("gcp project %q:\n%s", r.o.cloud.gcpProject, out.String())
+	}
+	// A person who means another id types it, and it is what the run takes.
+	out.Reset()
+	r = &initRun{o: &initOptions{name: "aurora", cloud: cloudOptions{region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader("proj-5678\n\n")), cmd: NewRootCmd()}
+	if err := r.gatherInputs(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if r.o.cloud.gcpProject != "proj-5678" {
+		t.Errorf("the typed id: gcp project %q:\n%s", r.o.cloud.gcpProject, out.String())
 	}
 
 	// What is allowed: the environment, then the credentials' quota project.
@@ -127,6 +428,7 @@ func TestProjectIDNeverFromGcloudDefault(t *testing.T) {
 // region and the name is one more Enter, and is pinned in setup_wizard_test.go.)
 func TestFirstRunAsksWithSuggestions(t *testing.T) {
 	firstRunEnv(t)
+	noInstallation(t)
 	t.Setenv("GOOGLE_CLOUD_PROJECT", "env-proj-1")
 	root := t.TempDir()
 	testutil.IsolateGit(t)
@@ -139,10 +441,12 @@ func TestFirstRunAsksWithSuggestions(t *testing.T) {
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if o := r.o; o.name != "acme" || o.cloud.gcpProject != "env-proj-1" || o.cloud.region != "us-east5" {
+	// The ID's suggestion is the new project named after this one (D4); the
+	// project the credentials name is offered beside it, second.
+	if o := r.o; o.name != "acme" || o.cloud.gcpProject != "fugaro-acme" || o.cloud.region != "us-east5" {
 		t.Errorf("name %q, project %q, region %q\n%s", o.name, o.cloud.gcpProject, o.cloud.region, out.String())
 	}
-	for _, want := range []string{"[acme]", "[env-proj-1]", "[us-east5]"} {
+	for _, want := range []string{"[acme]", "[fugaro-acme]", "env-proj-1", "[us-east5]"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("no suggestion %s:\n%s", want, out.String())
 		}
@@ -318,7 +622,10 @@ func TestFirstRunSuggestsTheInstallationsName(t *testing.T) {
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if r.o.name != "team-x" || r.o.createProject || !strings.Contains(out.String(), setupAlreadySetUp) || strings.Contains(out.String(), "my-app") {
+	// The name is the installation's, so the name question is not asked at all
+	// (the ID's suggestion is the directory's name prefixed — fugaro-my-app —
+	// which is a suggestion for a project to create, not this run's name).
+	if r.o.name != "team-x" || r.o.createProject || !strings.Contains(out.String(), setupAlreadySetUp) || strings.Contains(out.String(), "Fugaro project name") {
 		t.Errorf("name %q, create %v:\n%s", r.o.name, r.o.createProject, out.String())
 	}
 	if len(asked) != 1 || asked[0] != "proj-1234 us-east5" {
