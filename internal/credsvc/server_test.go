@@ -461,6 +461,12 @@ func (l *logBuf) String() string {
 	return l.b.String()
 }
 
+func (l *logBuf) Len() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Len()
+}
+
 // hostRewriter sends every upstream request to a test server, whatever host
 // the service built the URL for. It is what lets the tier-A destination check
 // (D133) run on the real destination — the service builds
@@ -494,6 +500,7 @@ type svc struct {
 	kills  *fakeKills
 	state  *fakeStore
 	nodes  *fakePatcher
+	probes *fakeProbes
 	logs   *logBuf
 	// audit is where C1.13's audit lines go. They are written to their own
 	// handler and not to the service's logger (NewAuditor takes the handler),
@@ -531,11 +538,12 @@ func newSvcWith(t *testing.T, mutate func(*svc, *Config)) *svc {
 				f.slug: decodeTestChild(t, testChildDoc("default", testAccount)),
 			},
 		},
-		kills: &fakeKills{repos: map[string]bool{}},
-		state: newFakeStore(),
-		nodes: &fakePatcher{nodes: map[string]any{}},
-		logs:  &logBuf{},
-		audit: &logBuf{},
+		kills:  &fakeKills{repos: map[string]bool{}},
+		state:  newFakeStore(),
+		nodes:  &fakePatcher{nodes: map[string]any{}},
+		probes: newFakeProbes(),
+		logs:   &logBuf{},
+		audit:  &logBuf{},
 	}
 	auditor, err := NewAuditor(slog.NewJSONHandler(s.audit, nil),
 		WithAuditScrub(s.fixtureScrub()))
@@ -557,6 +565,12 @@ func newSvcWith(t *testing.T, mutate func(*svc, *Config)) *svc {
 		Log:    slog.New(slog.NewTextHandler(s.logs, nil)),
 		Now:    func() time.Time { return f.now },
 		DB:     s.nodes,
+		Probes: s.probes,
+		// The audit lines are written as the JSON objects they are (C1.13), so
+		// a test that reads one reads it the way an operator's tooling does.
+		// They go to the same buffer as the service's own lines: the probe's
+		// tests take a buffer of their own where they need to read them apart.
+		AuditLog: slog.NewJSONHandler(s.logs, nil),
 	}
 	if mutate != nil {
 		mutate(s, &cfg)

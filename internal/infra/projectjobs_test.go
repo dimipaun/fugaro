@@ -1083,6 +1083,15 @@ profiles:
 // and `internal/credsvc/bundle.go` is on the list so that a second reader in
 // that package has to be added deliberately.
 //
+// The third is the same container again, read by the other end of the
+// credentials service: `fugaro creds set` is the bundle's only writer, and a
+// read-modify-write cannot be written without the read (C1.25 of the same
+// plan: it reads the `latest` version, sets one entry, writes a new version,
+// and re-reads to catch a concurrent writer). It is owner-run, refused in a
+// coding agent's session and in a run's process, and its value never leaves
+// the process — but it is a read, so it is on the list by name rather than
+// left to be discovered.
+//
 // Mutation (run, restore): read the account's token in the deployer or the
 // launcher (any `sm.Access(...)` outside the files below) — the scan fails
 // with the file that did it.
@@ -1090,6 +1099,7 @@ func TestNoSecretValueReadUnderInternal(t *testing.T) {
 	// The files allowed to name a secret-value read, and what each one is.
 	allowed := map[string]string{
 		"backend/gcp/secrets.go": "the Secret Manager client: Access is the GitHub App key pre-check's one read, Set writes values",
+		"cli/creds.go":           "C1.25's owner-run `fugaro creds set`/`creds ls` over the same ONE bundle container (Q6): set reads the document it is about to rewrite",
 		"cli/githubapp.go":       "the GitHub App key pre-check of init and doctor",
 		"credsvc/bundle.go":      "the credentials service's ONE bundle container (Q6): the service attaches the credential upstream, and it is the only Fugaro process that ever holds a model credential's value",
 	}
