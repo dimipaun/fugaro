@@ -70,6 +70,16 @@ func testSlug(t *testing.T, repo string) string {
 	return slug
 }
 
+// testBudgetDoc is the budget block the fixture's policy documents publish: the
+// ceiling an operator writes, carrying the model allow-list the service now
+// requires. A project that publishes none is refused fail-closed (the owner's
+// ruling of 2026-10-22, request.go), so a fixture whose calls are forwarded is
+// a fixture whose policy publishes a list — and testPolicyDocNoAllowList is the
+// one written for the tests about the refusal itself. (Other fixtures' own
+// policy documents publish none too — sharedJobsPolicyDoc, say — but those are
+// documents of another node, written for tests that never serve a call.)
+var testBudgetDoc = `{"mode": "enforce", "per_run_usd": 5, "allowed_models": ["` + testModel + `"]}`
+
 // testPolicyDoc is the project's published policy as an operator writes it:
 // the project admits both repositories, both accounts are offered to both, and
 // the cascade is on (`fallback: auto`, which Decode accepts only beside a
@@ -96,7 +106,7 @@ func testPolicyDocWith(fallback string) string {
 func testPolicyDocAccounts(fallback, accounts string) string {
 	return `{
 		"version": 3,
-		"budget": {"mode": "enforce", "per_run_usd": 5},
+		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
 		"accounts": {
 			` + accounts + `
@@ -114,7 +124,7 @@ func testPolicyDocAccounts(fallback, accounts string) string {
 func testPolicyDocAllowRepos(allowRepos, accounts string) string {
 	return `{
 		"version": 3,
-		"budget": {"mode": "enforce", "per_run_usd": 5},
+		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ` + allowRepos + `,
 		"accounts": {
 			` + accounts + `
@@ -131,12 +141,31 @@ func testPolicyDocAllowRepos(allowRepos, accounts string) string {
 func testPolicyDocNoCredentials() string {
 	return `{
 		"version": 3,
-		"budget": {"mode": "enforce", "per_run_usd": 5},
+		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
 		"accounts": {
 			"default": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]},
 			"` + testAccount + `": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]}
 		}
+	}`
+}
+
+// testPolicyDocNoAllowList is the same document with no budget.allowed_models
+// at all: a project that publishes no model allow-list. It is the one policy
+// this service refuses to serve a Messages call under (the owner's ruling of
+// 2026-10-22), so it is written out rather than built by dropping a field from
+// testBudgetDoc: the absent key is the case, and a document that spelled it as
+// an empty list would be a different one.
+func testPolicyDocNoAllowList() string {
+	return `{
+		"version": 3,
+		"budget": {"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
+		"accounts": {
+			"default": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]},
+			"` + testAccount + `": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]}
+		},
+		"credentials": {"fallback": "auto"}
 	}`
 }
 
@@ -147,7 +176,7 @@ func testPolicyDocNoCredentials() string {
 func testPolicyDocControls(fallback string, stops bool, concurrency int) string {
 	return `{
 		"version": 3,
-		"budget": {"mode": "enforce", "per_run_usd": 5},
+		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
 		"accounts": {
 			"default": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]},
