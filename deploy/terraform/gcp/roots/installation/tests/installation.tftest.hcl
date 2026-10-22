@@ -2004,11 +2004,10 @@ run "credentials_service_on" {
   # CREATES the service: Cloud Run assigns it, and no expression inside this
   # resource can read its own uri (Terraform refuses a self-referential
   # block), so the variable carries it and the module's output reads it back
-  # for the next apply. Unset, the name is set and EMPTY — the service then
-  # refuses to serve and names it (C1.14) — which is the fail-closed
-  # direction, and `coalesce(try(var.credentials_service.url, null), "")` is
-  # what keeps the empty case a value the module set rather than a name the
-  # process would refuse by a different message.
+  # for the apply that follows in the same init stage. Unset, the name carries
+  # the module's unassigned placeholder instead (an .invalid host, which no ID
+  # token is ever minted for) so the first revision starts and admits nobody;
+  # the run below this one is the unset case.
   # The job table is the one name whose value is a document, and it is the
   # module's own jsonencode of the triples: the service derives the job
   # accounts from them (credsvc.JobAccountsFor) rather than reading emails,
@@ -2061,6 +2060,55 @@ run "credentials_service_on" {
       if g.member == google_service_account.credentials[0].member
     ]) == 0
     error_message = "the service's account holds no project-level role: it reads one secret and nothing else"
+  }
+}
+
+# The first apply of an installation that has just opted in: the tfvars carry
+# no credentials_service.url yet, because the URL does not exist until this
+# apply creates the service (and Terraform refuses a resource that reads its
+# own uri). The audience must still be a name the service takes, and a value
+# no caller's ID token can carry — the placeholder is under the reserved
+# .invalid TLD, so the first revision starts, is healthy, and admits nobody
+# until the init stage reads the real URL back from this module's output and
+# applies again. An empty value here would be the deadlock the local's comment
+# describes; a run.app-shaped guess would be a service that trusts a token
+# minted for someone else's.
+run "credentials_service_first_apply_has_no_audience_yet" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
+    }
+  }
+
+  assert {
+    condition = tomap({
+      for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.name => e.value
+    })["FUGARO_CREDENTIALS_SERVICE_URL"] == "https://credentials-service-url-unassigned.invalid"
+    error_message = "with no credentials_service.url the audience is the module's unassigned placeholder, so the first revision starts without admitting a caller rather than failing the apply that would have produced the URL"
+  }
+  assert {
+    condition     = !strcontains(tomap({ for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.name => e.value })["FUGARO_CREDENTIALS_SERVICE_URL"], "run.app")
+    error_message = "the placeholder must not look like a Cloud Run URL: a run.app-shaped audience would be a guess at another service's name"
+  }
+  assert {
+    condition     = length(google_cloud_run_v2_service.credentials[0].template[0].containers[0].env) == 7
+    error_message = "the unset case sets the same seven names, the audience among them: a name the module drops is a service the process refuses by a different message"
   }
 }
 

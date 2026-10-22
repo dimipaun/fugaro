@@ -185,9 +185,11 @@ variable "credentials_service" {
   # environment (C1.14: the Firebase project, the database, and the jobs whose
   # accounts may call it), and url is the service's own URL — the audience its
   # callers' tokens are minted for — which Cloud Run assigns, so the module
-  # carries it empty until the apply after the one that creates the service
-  # (the module's own output reads it back; the type is the module's, and its
-  # validations are the ones that hold these four to their shape).
+  # carries its unassigned placeholder until the apply after the one that
+  # creates the service (the module's own output reads the URL back, and the
+  # stage that fills this variable applies again in the same run; the type is
+  # the module's, and its validations are the ones that hold these four to
+  # their shape).
   default = null
 }
 

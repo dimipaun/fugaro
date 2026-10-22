@@ -20,6 +20,28 @@ locals {
   # TestCredentialsServiceResourcesAreCounted is what holds this number and the
   # file's own resources together, in both directions).
   credentials_service_on = var.credentials_service != null
+
+  # The audience for the first apply of an installation whose tfvars carry no
+  # credentials_service.url yet (C1.14's `fugaro credentials serve` refuses to
+  # bind a port, by name, without one).
+  #
+  # Why a placeholder rather than an empty value or a guess. Cloud Run's front
+  # end checks a caller's Google ID token against the service's OWN URL, so the
+  # audience has to be that URL and cannot be a constant, and nothing in this
+  # file may read google_cloud_run_v2_service.credentials[0].uri from inside
+  # that resource (Terraform refuses a self-referential block). The URL also
+  # carries the project NUMBER, which this module never learns offline. An
+  # empty value is not the answer: the revision would refuse to serve, the
+  # container would exit, and the create this plan is making would have to
+  # finish before the owner could read the URL it needs — a deadlock, whose
+  # re-run would then plan "no changes" and report an installation whose
+  # service never answered. So the first revision starts and is healthy with an
+  # audience no ID token can carry: this host is under the reserved .invalid
+  # TLD (RFC 2606), it is not a run.app URL, and nothing is ever minted for it.
+  # The service admits no caller until the owner-run init stage reads the real
+  # URL back from this module's own output (outputs.tf) and applies again —
+  # inside the same stage, so an installation init reports is one that serves.
+  credentials_service_url_unassigned = "https://credentials-service-url-unassigned.invalid"
 }
 
 # The service's own account. It reads the bundle and nothing else: no project
@@ -229,18 +251,15 @@ resource "google_cloud_run_v2_service" "credentials" {
       }
       # The service's own URL: the audience every caller's Google ID token is
       # minted for, and the one thing that binds such a token to THIS service.
-      # Cloud Run assigns it, and nothing in this file may read
-      # google_cloud_run_v2_service.credentials[0].uri from inside that
-      # resource (Terraform refuses a self-referential block), so the first
-      # apply writes the name empty and the revision refuses to serve — by
-      # name — until the apply whose tfvars carry the URL the module's output
-      # (outputs.tf) reads back. Fail-closed either way: a revision that
-      # guessed its own audience would accept a token minted for another
-      # service, and one that served with no audience would halt every run
-      # (D143) while looking healthy.
+      # Cloud Run assigns it, so it is a variable the init stage fills from
+      # this module's output (outputs.tf) rather than anything read here; the
+      # unassigned case is local.credentials_service_url_unassigned above.
+      # Fail-closed either way: a revision that guessed its own audience would
+      # accept a token minted for another service, and one that served with no
+      # audience would halt every run (D143) while looking healthy.
       env {
         name  = "FUGARO_CREDENTIALS_SERVICE_URL"
-        value = coalesce(try(var.credentials_service.url, null), "")
+        value = coalesce(var.credentials_service.url, local.credentials_service_url_unassigned)
       }
       # The installation's per-repository jobs, as the triples the service
       # derives the job accounts from (credsvc.JobAccountsFor over
