@@ -1170,6 +1170,7 @@ NAME is a credential the service can issue, in the document's own spelling:
   claude-oauth-token                    the default Claude account's OAuth token (tier A)
   claude-oauth-token-<account>       a named Claude account's OAuth token (tier A)
   anthropic-api-key                the project's Anthropic API key (tier B)
+  github-app-key                  the GitHub App's private key (no tier: the mint signs with it)
 
 The value is read only from stdin: pipe or redirect it in
 (fugaro creds set claude-oauth-token < token-file), or, when stdin is a terminal, paste it
@@ -1178,6 +1179,17 @@ environment, and never printed. One trailing newline (\n or \r\n) is dropped,
 and the command says so. A value must be 4 bytes to 8192, on one line, with
 no whitespace at either end; a longer value is a document the service's loader
 would refuse, so it is refused here instead.
+
+github-app-key is the ONE multi-line entry: it is an RSA private key in a PEM,
+so it has to come in on stdin, from the key file the App's page downloads
+(fugaro creds set github-app-key < PATH-TO-THE-KEY-FILE) — the hidden prompt reads one
+line and cannot take a paste of a whole key, so it refuses this name and says
+so. The value must be exactly one PEM block, its -----BEGIN line to its
+matching -----END line and nothing else, and it must be a key the service's
+mint can parse (internal/gitprov/github's ParsePrivateKey: PKCS#1 "RSA PRIVATE
+KEY" or PKCS#8 "PRIVATE KEY", RSA). A single line of anything, a PEM with a
+line of text around it, and a key the mint cannot use are each refused before
+the write, and no refusal repeats a byte of the value.
 
 The write is a read-modify-write of one document: the other entries keep their
 bytes, and the whole document is parsed with the service's own loader
