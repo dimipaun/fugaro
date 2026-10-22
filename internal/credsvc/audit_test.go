@@ -247,26 +247,27 @@ func TestAuditCarriesNamesOnly(t *testing.T) {
 			name    string
 			ev      AuditEvent
 			field   string
+			reason  string // the class of thing wrong: missing, malformed or unknown
 			content string // what the field held, which no line and no error may carry
 		}{
-			{"a credential name that is not one header value", full(func(ev *AuditEvent) { ev.Credential = value + " " + value }), "credential", value},
-			{"a credential with no tier", full(func(ev *AuditEvent) { ev.Tier = "" }), "credential", ""},
-			{"a tier with no credential", full(func(ev *AuditEvent) { ev.Credential = "" }), "credential", ""},
-			{"a tier the contract does not carry", full(func(ev *AuditEvent) { ev.Tier = "D" }), "tier", "D"},
-			{"a run id that is not a path segment", full(func(ev *AuditEvent) { ev.Run = value + "/" + value }), "run", value},
-			{"a run id with no repository", full(func(ev *AuditEvent) { ev.Repository = "" }), "run", ""},
+			{"a credential name that is not one header value", full(func(ev *AuditEvent) { ev.Credential = value + " " + value }), "credential", refusalMalformed, value},
+			{"a credential with no tier", full(func(ev *AuditEvent) { ev.Tier = "" }), "credential", refusalMissing, ""},
+			{"a tier with no credential", full(func(ev *AuditEvent) { ev.Credential = "" }), "credential", refusalMissing, ""},
+			{"a tier the contract does not carry", full(func(ev *AuditEvent) { ev.Tier = "D" }), "tier", refusalUnknown, "D"},
+			{"a run id that is not a path segment", full(func(ev *AuditEvent) { ev.Run = value + "/" + value }), "run", refusalMalformed, value},
+			{"a run id with no repository", full(func(ev *AuditEvent) { ev.Repository = "" }), "run", refusalMissing, ""},
 			// The repository's own guards, which the run's do not stand in for:
 			// a slug is held to the same segment rule and escaped by the same
 			// safetext call, and neither is pinned by a case that only moves Run.
-			{"a repository slug that is not a path segment", full(func(ev *AuditEvent) { ev.Repository = value + "/" + value }), "repository", value},
-			{"a repository with no run", full(func(ev *AuditEvent) { ev.Run = "" }), "run", ""},
-			{"a job name that is not one", full(func(ev *AuditEvent) { ev.Job = "not a job name" }), "job", "not a job name"},
-			{"a caller that is not an address", full(func(ev *AuditEvent) { ev.Caller = "not an address" }), "caller", "not an address"},
-			{"a job with no caller", full(func(ev *AuditEvent) { ev.Caller = "" }), "job", ""},
-			{"an issuance that names no credential", full(func(ev *AuditEvent) { ev.Credential, ev.Tier = "", "" }), "credential", ""},
-			{"an issuance with no purpose", full(func(ev *AuditEvent) { ev.Purpose = "" }), "purpose", ""},
-			{"an issuance with no run", full(func(ev *AuditEvent) { ev.Run, ev.Repository = "", "" }), "run", ""},
-			{"an issuance with no job", full(func(ev *AuditEvent) { ev.Job, ev.Caller = "", "" }), "job", ""},
+			{"a repository slug that is not a path segment", full(func(ev *AuditEvent) { ev.Repository = value + "/" + value }), "repository", refusalMalformed, value},
+			{"a repository with no run", full(func(ev *AuditEvent) { ev.Run = "" }), "run", refusalMissing, ""},
+			{"a job name that is not one", full(func(ev *AuditEvent) { ev.Job = "not a job name" }), "job", refusalMalformed, "not a job name"},
+			{"a caller that is not an address", full(func(ev *AuditEvent) { ev.Caller = "not an address" }), "caller", refusalMalformed, "not an address"},
+			{"a job with no caller", full(func(ev *AuditEvent) { ev.Caller = "" }), "job", refusalMissing, ""},
+			{"an issuance that names no credential", full(func(ev *AuditEvent) { ev.Credential, ev.Tier = "", "" }), "credential", refusalMissing, ""},
+			{"an issuance with no purpose", full(func(ev *AuditEvent) { ev.Purpose = "" }), "purpose", refusalMissing, ""},
+			{"an issuance with no run", full(func(ev *AuditEvent) { ev.Run, ev.Repository = "", "" }), "run", refusalMissing, ""},
+			{"an issuance with no job", full(func(ev *AuditEvent) { ev.Job, ev.Caller = "", "" }), "job", refusalMissing, ""},
 		} {
 			t.Run(c.name, func(t *testing.T) {
 				a, buf := newAudit(t)
@@ -287,6 +288,13 @@ func TestAuditCarriesNamesOnly(t *testing.T) {
 				}
 				if lines[0]["field"] != c.field {
 					t.Errorf("the refusal names field %v, want %q", lines[0]["field"], c.field)
+				}
+				// The class is what tells an operator reading the line whether
+				// the service was handed nothing, something of the wrong shape,
+				// or something out of a set it owns — without the line
+				// repeating what it was handed.
+				if lines[0]["reason"] != c.reason {
+					t.Errorf("the refusal gives reason %v, want %q", lines[0]["reason"], c.reason)
 				}
 			})
 		}
@@ -402,18 +410,35 @@ func TestAuditFailsClosed(t *testing.T) {
 	})
 
 	t.Run("a refused event is an error whether or not its line could be written", func(t *testing.T) {
-		// The refusal is the caller's answer; the refusal line is the
-		// operator's. A log that records neither must not turn a refusal into
-		// a silent success.
+		// The refusal is the caller's answer and the refusal line is the
+		// operator's: a log that records neither must not turn a refusal into a
+		// silent success, and a handler that fails must not be silent either.
+		bad := ok()
+		bad.Run, bad.Repository = "", ""
+
 		var buf bytes.Buffer
-		a, err := NewAuditor(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError})))
+		quiet, err := NewAuditor(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError})))
 		if err != nil {
 			t.Fatalf("NewAuditor: %v", err)
 		}
-		ev := ok()
-		ev.Run, ev.Repository = "", ""
-		if err := a.Write(context.Background(), ev); err == nil {
+		if err := quiet.Write(context.Background(), bad); err == nil {
 			t.Fatal("Write accepted an issuance that names no run")
+		}
+
+		want := errors.New("the disk is full")
+		failing, err := NewAuditor(slog.New(&recordHandler{err: want}))
+		if err != nil {
+			t.Fatalf("NewAuditor: %v", err)
+		}
+		err = failing.Write(context.Background(), bad)
+		if err == nil {
+			t.Fatal("Write accepted an issuance that names no run")
+		}
+		if !strings.Contains(err.Error(), "run") {
+			t.Errorf("the refusal is not in the error: %v", err)
+		}
+		if !errors.Is(err, want) {
+			t.Errorf("the handler's own error was dropped from the refusal's: %v", err)
 		}
 	})
 
@@ -509,6 +534,9 @@ func TestAuditOnRefusal(t *testing.T) {
 		if got := auditLines(t, buf)[0]["field"]; got != "status" {
 			t.Errorf("the refusal names field %v, want status", got)
 		}
+		if got := auditLines(t, buf)[0]["reason"]; got != refusalUnknown {
+			t.Errorf("the refusal gives reason %v, want %q", got, refusalUnknown)
+		}
 	})
 
 	t.Run("a purpose the service does not issue for is refused", func(t *testing.T) {
@@ -518,6 +546,9 @@ func TestAuditOnRefusal(t *testing.T) {
 		}
 		if got := auditLines(t, buf)[0]["field"]; got != "purpose" {
 			t.Errorf("the refusal names field %v, want purpose", got)
+		}
+		if got := auditLines(t, buf)[0]["reason"]; got != refusalUnknown {
+			t.Errorf("the refusal gives reason %v, want %q", got, refusalUnknown)
 		}
 	})
 }

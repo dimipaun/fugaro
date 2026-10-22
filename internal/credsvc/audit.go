@@ -222,6 +222,39 @@ const (
 	auditRefusedMessage = "credsvc: audit event refused"
 )
 
+// The classes a refusal falls into, so a refusal says what kind of thing was
+// wrong and not only which field — the class is this file's own text, like the
+// field name, and never a value.
+const (
+	// refusalMissing: the event needs the field and it is empty — the
+	// both-or-neither pairs, and the fields an issuance with StatusOK must
+	// name.
+	refusalMissing = "missing"
+	// refusalMalformed: the field is set and is not a value of the shape it
+	// holds — a run id that is not a path segment, a job name that is not one,
+	// an account that is not an address, a credential name that is not one
+	// header value.
+	refusalMalformed = "malformed"
+	// refusalUnknown: the field is one of a closed set the contract owns and
+	// the value is not one of them (a status, a purpose, a tier).
+	refusalUnknown = "unknown"
+)
+
+// refusal is why an event was not recorded: the field, and the class of thing
+// wrong with it. Both are this file's own text, so a refusal can say what was
+// wrong and still never repeat what the field held (the no-echo rule).
+type refusal struct {
+	field  string
+	reason string
+}
+
+// Error is the refusal in words. It carries the field and the class and
+// nothing the event held, which is what makes it safe to hand back to a caller
+// that will log it.
+func (r refusal) Error() string {
+	return fmt.Sprintf("credsvc: the audit event's %s is %s", r.field, r.reason)
+}
+
 // Write records one audited act as one structured line, and returns an error
 // if the act could not be recorded — in which case the caller must not go on
 // with it (D143: an issuance that cannot be audited is not made).
@@ -239,12 +272,19 @@ const (
 // line's to carry.
 func (a *Auditor) Write(ctx context.Context, ev AuditEvent) error {
 	ev, bad := a.checked(ev)
-	if bad != "" {
-		// One line saying the act was refused, naming the field and never
-		// what it held (the no-echo rule): the field name is this file's own
-		// text. The error says the same and no more.
-		a.log.WarnContext(ctx, auditRefusedMessage, "field", bad)
-		return fmt.Errorf("credsvc: the audit event's %s is not one this service can record", bad)
+	if bad.field != "" {
+		// One line saying the act was refused, naming the field and the class
+		// of thing wrong with it and never what it held (the no-echo rule):
+		// both are this file's own text. The caller gets the same two in an
+		// error.
+		//
+		// The refusal is the caller's answer whether or not its line lands —
+		// an act this service will not record is not made either way — so the
+		// two errors are joined rather than one dropped: a handler that cannot
+		// write is not silent.
+		return errors.Join(bad, a.line(ctx, slog.LevelWarn, auditRefusedMessage,
+			slog.String("field", bad.field),
+			slog.String("reason", bad.reason)))
 	}
 	return a.line(ctx, slog.LevelInfo, auditMessage,
 		slog.String("run", safetext.OneLine(ev.Run)),
@@ -288,55 +328,61 @@ func (a *Auditor) line(ctx context.Context, level slog.Level, msg string, attrs 
 }
 
 // checked holds an event to the rules of its fields, after the scrub has run,
-// and returns the name of the first field that is not one this service can
-// record — never what it held — or "" for an event that can be written.
-func (a *Auditor) checked(ev AuditEvent) (AuditEvent, string) {
+// and returns the first field that is not one this service can record with the
+// class of thing wrong with it — never what it held — or a zero refusal for an
+// event that can be written.
+//
+// The classes are read off the rules rather than guessed at: a value of the
+// wrong shape is refusalMalformed, a value out of a closed set the contract
+// owns is refusalUnknown, and a field the event needs and does not have is
+// refusalMissing.
+func (a *Auditor) checked(ev AuditEvent) (AuditEvent, refusal) {
 	ev = a.redact(ev)
 	switch {
 	case !ValidStatus(ev.Status):
-		return AuditEvent{}, "status"
+		return AuditEvent{}, refusal{"status", refusalUnknown}
 	case ev.Purpose != "" && !ValidPurpose(ev.Purpose):
-		return AuditEvent{}, "purpose"
+		return AuditEvent{}, refusal{"purpose", refusalUnknown}
 	case ev.Run != "" && !token.ValidSegment(ev.Run):
-		return AuditEvent{}, "run"
+		return AuditEvent{}, refusal{"run", refusalMalformed}
 	case ev.Repository != "" && !token.ValidSegment(ev.Repository):
-		return AuditEvent{}, "repository"
+		return AuditEvent{}, refusal{"repository", refusalMalformed}
 	case (ev.Run == "") != (ev.Repository == ""):
 		// The identity carries both: a run id without the repository it
 		// belongs to is not a run this service can name.
-		return AuditEvent{}, "run"
+		return AuditEvent{}, refusal{"run", refusalMissing}
 	case ev.Job != "" && !ValidJobName(ev.Job):
-		return AuditEvent{}, "job"
+		return AuditEvent{}, refusal{"job", refusalMalformed}
 	case ev.Caller != "" && !validAccount(ev.Caller):
-		return AuditEvent{}, "caller"
+		return AuditEvent{}, refusal{"caller", refusalMalformed}
 	case (ev.Job == "") != (ev.Caller == ""):
-		return AuditEvent{}, "job"
+		return AuditEvent{}, refusal{"job", refusalMissing}
 	case ev.Credential != "" && !ValidCredentialName(ev.Credential):
-		return AuditEvent{}, "credential"
+		return AuditEvent{}, refusal{"credential", refusalMalformed}
 	case (ev.Credential == "") != (ev.Tier == ""):
 		// The both-or-neither rule the wire already keeps (SetCredentialHeaders,
 		// CredentialHeaders): a line naming one without the other is not one
 		// this service writes, and a reader that guessed the missing half
 		// would be reading an answer the service did not give.
-		return AuditEvent{}, "credential"
+		return AuditEvent{}, refusal{"credential", refusalMissing}
 	case ev.Tier != "" && !ValidTier(ev.Tier):
-		return AuditEvent{}, "tier"
+		return AuditEvent{}, refusal{"tier", refusalUnknown}
 	}
 	// A line that says a credential was used names the whole act; a refusal
 	// carries only what was known when it was refused.
 	if ev.Status == StatusOK {
 		switch {
 		case ev.Purpose == "":
-			return AuditEvent{}, "purpose"
+			return AuditEvent{}, refusal{"purpose", refusalMissing}
 		case ev.Run == "":
-			return AuditEvent{}, "run"
+			return AuditEvent{}, refusal{"run", refusalMissing}
 		case ev.Job == "":
-			return AuditEvent{}, "job"
+			return AuditEvent{}, refusal{"job", refusalMissing}
 		case ev.Credential == "":
-			return AuditEvent{}, "credential"
+			return AuditEvent{}, refusal{"credential", refusalMissing}
 		}
 	}
-	return ev, ""
+	return ev, refusal{}
 }
 
 // redact applies the service's own redaction to every field before any rule
