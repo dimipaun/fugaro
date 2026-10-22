@@ -373,6 +373,17 @@ so the section is **written below** rather than reserved. Its subject is the fou
 5** of that plan and is not in this checkout, so the one step of the section that is about the zoom
 is written and **cannot be run yet**. The check is owner-run and it is **NOT RUN**.
 
+**Check 113 is the phone app's page, and it is the next number free above 112** (the
+zoom-diagrams plan `docs/website/zoom-diagrams/implementation-plan.md` §3, its Part 3 — decisions
+**D239**, **D240**, **D241** and **D242**, all answered 2026-10-21). The reading is the same shape
+as the two above and is taken the same way: the highest **written** `## Check N` section in this
+file, read at **`d413219b`** — the commit this change is based on — was **112**, and a reservation
+is not a fact about the tree, so the section is **written below**. Its subject is the page a
+reader meets **before** the app exists: a "coming soon" page is the one kind of page that can be
+wrong in a way no byte and no link is — it can promise a date, it can state a plan in the present
+tense, or it can ask a reader for something the project has nowhere to keep. The check is
+owner-run and it is **NOT RUN**.
+
 **That is the end of the register.** The paragraph below is not another
 reservation: it introduces the check that owns 57, whose row is in the table
 below.
@@ -543,6 +554,7 @@ probe account carries predefined grants only).
 
 | 111 | The billing picker's failure modes (setup-wizard plan Task W0.3; D3 and D6): the Cloud Billing API disabled on the quota project — in D3's two cases, the quota project **being** the project set up and the quota project being **another** one — a caller without `billing.accounts.list` on a project whose API **is** enabled (so the API answers **403** rather than the disabled-API refusal), and the three sessions that never list anything at all (no TTY, `--json`, an agent session) — each asserting the guided `gcloud billing projects link` line, that **nothing was enabled**, and that **no account list appears in any output** (the one run where a list *is* expected is the `gcloud` fallback answering an API that refused) | See "Check 111" below; **you** run it at your own terminal, on installation `fugaro` (never `belong`), and **no agent runs any step of it** (an agent session is one of the five modes it observes). | Three throwaway projects of your own — `P` (the installation's), `Q` (API off) and `S` (API on) — and the ADC quota project is repointed by three of the runs. Every step is a refusal, and nothing is created, enabled or linked by the check itself. **NOT RUN.** |
 | 112 | The four zoom levels, drawn once and drawn as stills (zoom-diagrams plan §3, Part 4; D237, D244, D245, D247): the section sits on `/how-it-works/`, **under "The run, end to end" and its diagram** (D237); the four levels are four `<figure>`s in the brief's order, each named by its own `<figcaption>`, which also says which recipe the drawing is; **every entity is one `<symbol>` of one `<defs>`, drawn through `<use>`** — the job tile, the orchestrator, the developer, the console and the project — so a job tile is the same tile at every level (D244), and no level draws its own copy of one; every label of every level is a row of `website/data/zoom-levels.yaml`, held to the document it cites; the four markers are one `<nav>` of anchors with accessible names (D245), each jumping to its own level by keyboard and by pointer; the four levels and every label are in the document **with JavaScript off** (the section ships no script of its own); and the drawings are legible — labels at the palette's own contrast, nothing clipped, nothing drawn as an empty box — on a desktop and at 360, 390 x 844 and 320 (ZU4) | See "Check 112" below; **you** run it, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the live site — read-only, no account, no cloud project touched, no `fugaro` command, and **No agent runs any step of it**. The pinned scroll-driven zoom is **Part 5** and is not in this tree: that step of the section is written and cannot be run yet, and an unrun step is not a pass | One browser, a hard reload, one look at the section with script on and one with it off, and one narrow viewport. Nothing is created, enabled, linked or written. **USER-RUN, NOT RUN.** |
+| 113 | The phone app's page, and every claim on it marked shipped or planned (zoom-diagrams plan §3, Part 3; D239, D240, D241, D242): `/mobile/` is the app's own page and it is a **"coming soon"** page, so it carries a **preview badge** over its headline reading "Coming soon" (D240's third condition) and **no date anywhere** — no year, no month, no season, in the page's text, its title or its description (D240's first condition) — and **every bullet is marked**: the claims of `website/data/mobile-claims.yaml` render as two lists under two headings, *What the app does today* and *What is still to come*, each card carrying its own word, **Shipped** or **Planned**, so the mark is a word and not a colour alone (D240's second condition, D241's answer: shipped is status and spend, planned is the roster, switching by name, the wake word, QR pairing and the three roles); the **wake word's bullet says the listening and the recognition happen on the phone** and the page names no speech service and no cloud (D242); **nothing asks a reader for anything** — no form, no field, no button, no `mailto:`, no third party, no waitlist (D239) — and the page shows **no empty frame**: with no row in `website/data/mobile-screens.yaml` there is no slider, no heading and no picture-shaped hole, and when your captures land the slider appears with this page's own slot and ids (D251); and the page reads at a phone's width, with the marks and the badge legible at 360, 390 x 844 and 320 | See "Check 113" below; **you** run it, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the live site — read-only, no account, no cloud project touched, no `fugaro` command, and **No agent runs any step of it**. The pictures are yours and are **not** in this tree: step 6's second half is written and cannot be run until they land, and an unrun step is not a pass | One browser, a hard reload, one look at the page, one look at the menu, and one narrow viewport. Nothing is created, enabled, linked or written, and no address is entered anywhere. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -6271,6 +6283,189 @@ run — the pinned zoom is Part 5's. Until both halves have been seen, this row 
 - **Put the browser's JavaScript and motion settings back** if you changed either for steps 6 and
   8: they are your browser's, not the check's, and step 6 needs JavaScript on again to be about the
   site you actually read.
+- **Never touch `belong`, EdgeWeb or EdgeServer**: no step here reads or writes a project at all,
+  and the only host this check fetches is the built artifact on localhost or the canonical origin
+  the site's own `site.yaml` names.
+
+## Check 113: the phone app's page, and every claim on it marked shipped or planned (the built artifact or the live site, read-only; run by you; NOT RUN)
+
+**NOT RUN.** Written by **Part 3** of the zoom-diagrams plan
+(`docs/website/zoom-diagrams/implementation-plan.md` §3, the owner's answers of 2026-10-21 under
+**D239**, **D240**, **D241** and **D242**), and written here rather than left to that plan because
+this is the file the owner runs live checks out of. It is the half of Part 3 no hermetic test can
+take. `website/test/mobile.mjs` reads the **built** page and refuses each defect by name — a claim
+rendered in the other state's list, a date, a badge that is missing or reworded or below the
+headline, a named speech service, a form, a `mailto:` — but what a browser is for is the reader's
+own question: **does this page, met cold, tell me what the app does today and what it does not?**
+A page can pass every one of those readings and still leave a reader believing the app ships in
+March, or believing the roster is here.
+
+**What this tree carries today, and what it does not.** The page exists: `/mobile/` renders a
+preview badge reading **"Coming soon"** over its headline, the claims of
+`website/data/mobile-claims.yaml` as two lists under the headings **"What the app does today"** and
+**"What is still to come"**, and a one-line lead that says the app is in progress. **It carries no
+picture**: `website/data/mobile-screens.yaml` ships with no row, so the page renders no slider at
+all — no section, no heading, no frame and no picture-shaped hole — because the captures are
+**yours** and arrive as files (D251, D240's second condition's counterpart in the design: a page
+that shows an empty box is a page whose picture looks broken). **And the page asks a reader for
+nothing**: D239's answer is "no waitlist", so there is no form, no email field, no button and no
+`mailto:` anywhere on it. What is **not** here is a date: nothing on the page says when the app
+will arrive, and that is the point of step 3 rather than a gap.
+
+**What the gates hold, and what only your eyes can.** `website/test/mobile.mjs` holds the claims
+against the data file's rows — one card per row, in the list its own `state` names, with the same
+word on the card — and refuses a date in the page's text, its title and its description, a badge
+that is missing, reworded or moved below the headline, the speech services a page like this one
+reaches for, the roster printed among the shipped claims while `mobile/src/feed/paths.js` denies
+the phone the `agents` family, and every form of asking. `website/test/budget.mjs` holds the page
+inside its byte and word ceilings, `linkcheck.mjs` resolves every link and anchor on it, and
+`a11y.mjs` holds its landmarks and headings like any other page's. **None of them reads it as a
+reader does**: whether the two lists are told apart at a glance, whether the badge is above the
+fold, whether the marks are legible on a phone, and whether the page leaves the impression the
+app is further along than it is.
+
+**Method.** One browser, one built site, one narrow viewport, no account and no cloud project.
+Either serve the artifact locally or read the deployed site; both are read-only:
+
+```bash
+# What this check needs, read out of the tree rather than remembered. It refuses to start on a
+# build that is not there, so a pass below is a pass about a page that exists.
+[ -f website/dist/index.html ] || { echo "Check 113 stopped: website/dist/ is not built — run (cd website && npm run check) first" >&2; exit 1; }
+(cd website/dist && python3 -m http.server 8080) &     # the built artifact, on localhost:8080
+# ...or, for the deployed site instead, read the canonical origin out of the site's own facts:
+sed -n 's/^canonical_url: *//p' website/data/site.yaml
+# The preview badge, and the two lists' hooks: steps 1 and 2.
+grep -o 'data-preview-badge' website/dist/mobile/index.html
+grep -o 'data-claims="[a-z]*"' website/dist/mobile/index.html
+# Each card's own mark and each card's own words: step 2. The marks are the words a reader reads,
+# so this is what step 2 checks the lists' headings against.
+grep -o 'data-state="[a-z]*"' website/dist/mobile/index.html
+grep -o '<p class="mobile-claim-state"[^>]*>[^<]*' website/dist/mobile/index.html
+# The claims themselves, out of the data file rather than remembered: the texts step 2 reads back.
+sed -n 's/^ *state: *//p;s/^ *text: *//p' website/data/mobile-claims.yaml
+# The screenshots file: one line, and the empty list is what step 6's first half reads.
+sed -n '/^screens:/p' website/data/mobile-screens.yaml
+# Nothing on the page asks a reader for anything: step 5. All four of these must print nothing.
+grep -o '<form\|<input\|<textarea\|<select\|<button' website/dist/mobile/index.html
+grep -o 'mailto:' website/dist/mobile/index.html
+grep -o 'https\?://[^"]*' website/dist/mobile/index.html | grep -v 'fugaro.dev\|www.w3.org'
+# The menu item, and the page it points at: step 7.
+grep -o 'href="/mobile/"' website/dist/index.html
+```
+
+1. **The page says what it is before it says anything else.** Open `/mobile/` cold and read only
+   what is above the fold: a badge reading **"Coming soon"**, then the headline, then the lead
+   saying the app is in progress. **FACT:** the badge's text, the headline's text, and whether the
+   badge sits **above** the headline rather than under the bullets it qualifies. A reader who meets
+   the claims first and the badge last has been told the app exists before being told it does not —
+   which is the one failure a "coming soon" page exists to avoid, and it is a placement, not a
+   string, so no test above can see it.
+
+2. **Every bullet is marked, and the mark agrees with the list it is in.** Read the two sections:
+   **"What the app does today"** and **"What is still to come"**. Every card carries a word —
+   **Shipped** or **Planned** — and the word matches its section: **one** card is shipped today
+   (*Status and spend for every run…*), and the roster, switching by name, the wake word, QR
+   pairing and the three roles are all planned. Read each card's words against the `sed` output
+   above: nothing is on the page that is not a row of the data file, and no row is missing.
+   **FACT:** per section, the cards and the word on each; and whether any card's word disagrees
+   with the heading it stands under. **The mark being a word and not a colour is the other half**:
+   the shipped card's border and its mark are drawn differently from the planned ones, so a reader
+   who cannot tell those two colours apart still reads *Shipped* and *Planned*, and a page that
+   marked its bullets by colour alone is the defect this step is for.
+
+3. **There is no date anywhere, and none is implied.** Read the page's own words for a year, a
+   month or a season — **"Coming soon"** and the lead's "in progress" are as far as it goes — and
+   then read the browser tab's title and the page's description: **no year and no month in
+   either**. **FACT:** the page's text, its `<title>` and its description, and the absence of a
+   date in all three. A date here would be a promise this repository cannot keep: the app's
+   schedule is yours, and the page is written to say only what is built. **And nothing else on the
+   page dates it either** — no "shipping in…", no roadmap, no changelog entry claiming a release.
+
+4. **The wake word is the phone's, and the page says so.** Find the wake-word bullet in the
+   planned list and read it whole: it says the listening and the recognition happen **on the
+   phone**. **FACT:** that bullet, verbatim. Then look for any speech service named anywhere on the
+   page — a vendor, an engine, "the cloud", a model — and find none: D242's answer is that the
+   bullet is on-device only, because the local/remote evaluation switch is design only and not
+   built (ZF28), and a page that named an engine would be previewing a switch the owner has not
+   adopted. A bullet that says the phone listens *and* a line elsewhere that says the transcript is
+   sent somewhere is the same defect in two places.
+
+5. **Nothing on the page asks a reader for anything.** D239's answer is "no waitlist": look for a
+   form, an email field, a "notify me" button, a `mailto:` link or a third-party collector, and
+   find **none**. **FACT:** that there is no field to type into and no control to press, and — in
+   the browser's network panel, on a fresh load — that the page itself sends nothing anywhere.
+   (The site's one consent banner and the analytics behind it are the layout's and shared with
+   every page; that half is check 69b's, not this one's. What is this check's is that **this page**
+   has no door of its own on it.)
+
+6. **The pictures: no empty frame today, and the slider when your captures land.** First, today:
+   the page shows **no slider, no heading over one, and no empty box where a picture should be** —
+   a reader who met a broken frame could not tell it from a picture that failed to arrive, which is
+   why a file with no row renders nothing at all. **FACT:** that the page carries no slider section
+   and no picture-shaped gap. Then, **when your captures are in `website/public/screenshots/` and a
+   row per picture is in `website/data/mobile-screens.yaml`**: rebuild, reload, and read the
+   slider — the pictures are the app's own screens, each with the caption the row gives it, and
+   **no slide's address leaks the console's** (`mobile-screen-` and never `console-screen-`). Until
+   the captures land, this half is **not run**, and this row stays **NOT RUN**.
+
+7. **The menu gains one item and stays two groups.** Open the menu on any page: **Product** holds
+   *How it works*, *Getting started*, *Caps and costs*, *Console* and **Mobile** — five, with the
+   phone app's page last — and **Project** holds its five as before. There is **no third group**.
+   Follow the Mobile item: it lands on `/mobile/`. **FACT:** both groups' items and their order,
+   and the page the Mobile item opens. A renamed group, a moved item or a third group is the
+   defect; the two groups' contents are held by `website/test/base-styles.mjs`, and what this step
+   adds is that the menu a reader actually opens is the one the tree builds.
+
+8. **The page is readable on a phone.** Set the viewport to **360 × 800**, then **390 × 844** and
+   **320**, and hard-reload `/mobile/`: the badge, the headline, the lead and both lists fit the
+   column without a sideways scroll (`document.documentElement.scrollWidth` is not wider than the
+   viewport), the **Shipped** and **Planned** marks are legible at that width, and the cards are
+   not a wall of text a thumb cannot follow. **FACT:** the document's scroll width at each of the
+   three widths, and the rendered size of the mark's text.
+
+**Passes when:** `/mobile/` shows a "Coming soon" badge above its headline; its claims render as
+two lists under the headings *What the app does today* and *What is still to come*, one card per
+row of `website/data/mobile-claims.yaml`, each carrying the word **Shipped** or **Planned** and
+standing in the list that word names; no date appears in the page's text, its title or its
+description, and none is implied; the wake word's bullet says the listening and the recognition
+happen on the phone and no speech service is named; the page carries no form, no field, no button,
+no `mailto:` and no third party, and sends nothing of its own; it shows no empty frame today, and
+when your captures land the slider shows them with this page's own ids; the menu's Product group
+has five items with Mobile last and no third group exists; and the page is readable and its marks
+legible at 360, 390 × 844 and 320.
+
+**Fails when:** the badge is missing, says something other than "Coming soon", or stands below the
+headline or below the claims; a claim is rendered in the other list, or its card's word disagrees
+with the list it stands in — a reader then believes the app has the roster today, which is the
+false present tense D240's second condition exists to refuse; a year, a month or a season appears
+anywhere in the page's own words, its title or its description; the wake-word bullet stops saying
+where the recognition happens, or any speech service, engine or cloud is named on the page; a form,
+an email field, a button, a `mailto:` or a third party appears, or the page sends a request of its
+own; the page draws an empty frame or a broken picture where a screenshot should be; the menu gains
+a third group, loses the Mobile item or puts it somewhere other than last in Product; or the page
+overflows a phone's column or draws its marks too small to read. **What failing looks like:** a page
+that is honest in its data file and reads as a launch announcement — the badge below the fold, or a
+planned bullet in the shipped list with the right word on the wrong list.
+
+**Paste back** (no secret, no account, nothing from any project): the browser and its version, the
+OS and the date; whether you read the built artifact or the live site, and at which commit; the
+badge's text and where it sits; per section, the cards and the word on each, and any card whose
+word disagreed with its heading; the page's text, title and description, and the absence of a date
+in all three; the wake-word bullet verbatim and any service named on the page; that no field,
+control, `mailto:` or third party is there, and that a fresh load sends nothing of the page's own;
+that no empty frame is drawn, and — if your captures have landed — the slides you read and their
+ids; the menu's two groups item by item, and the page the Mobile item opened; the scroll width and
+the mark's rendered size at 360, at 390 × 844 and at 320; and, if the captures have not landed
+yet, that step 6's second half was not run. Until it has been, this row stays **NOT RUN**.
+
+**Restore.** Nothing is created, so there is nothing to undo: no account, no cloud project, no
+`fugaro` command, no installation and no file is touched by any step above.
+
+- **Stop the localhost server** the Method block started (`kill %1` in the shell that started it,
+  or close that shell) — that is the whole of the check's footprint on your machine.
+- **Put the browser's JavaScript setting back** if you turned it off to read the page without the
+  layout's script: the page itself ships no behaviour, and the menu and the consent banner are the
+  layout's, so a reading with script off is a reading of a site that is not the one you serve.
 - **Never touch `belong`, EdgeWeb or EdgeServer**: no step here reads or writes a project at all,
   and the only host this check fetches is the built artifact on localhost or the canonical origin
   the site's own `site.yaml` names.
