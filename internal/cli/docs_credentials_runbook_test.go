@@ -123,8 +123,21 @@ func TestDocsCredentialsRunbookPointsStepOneAtSomethingThatAnswers(t *testing.T)
 		"creds-broken",
 		"creds-unknown-state",
 		"creds-rules",
-		// And what no command covers.
+		// What no command covers, and the reads that do cover it. The section
+		// first answered this with "Check 94", which is Task C1.23's and is
+		// not in docs/gcp-live-checklist.md on this release (that file's
+		// checks stop at 91): a runbook may not answer a question with a check
+		// nobody can open, so the three gcloud reads are in the section itself
+		// and the check is named as the register's version of them, with the
+		// fact that it is not there yet (code review of C1.22).
 		"What no Fugaro command answers is whether the Cloud Run service itself is deployed",
+		"gcloud run services describe fugaro-credentials",
+		"gcloud secrets get-iam-policy <bundle-container>",
+		"gcloud run services get-iam-policy fugaro-credentials",
+		"roles/secretmanager.secretAccessor",
+		"roles/run.invoker",
+		"Check 94",
+		"on this release yet",
 		// What a launch actually refuses on, which §1 stated the wrong way
 		// round: the gate reads the switch, not the service (code review of
 		// C1.22, and the same correction in docs/multi-model.md).

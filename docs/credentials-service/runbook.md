@@ -12,7 +12,19 @@ fugaro creds ls
 
 `fugaro creds ls` is the one Fugaro command that answers part of this. It reads the bundle container the service issues from, and it needs the container to exist and to hold a version the service's own loader could read — so an installation that never ran `fugaro init --provision-credentials` has no container at all, and the command says so as a named failure rather than as an empty list (an empty answer would read as "the bundle holds no credential" while the service is in fact issuing from one this command could not read). Its rows are the credential **names** and their metadata, never a value.
 
-**What no Fugaro command answers is whether the Cloud Run service itself is deployed**, and `fugaro doctor` is not the exception: its three credentials checks are about the credential marks (`creds-broken`, `creds-unknown-state`) and the deployed rules' marker (`creds-rules`, silent unless the cascade is switched on), and they name no piece of the service. The reads that do answer it are `gcloud` ones — the service, its own account and the one `secretmanager.secretAccessor` grant on the one container are what Check 94 reads back (§10 is that check's audit-log half).
+**What no Fugaro command answers is whether the Cloud Run service itself is deployed**, and `fugaro doctor` is not the exception: its three credentials checks are about the credential marks (`creds-broken`, `creds-unknown-state`) and the deployed rules' marker (`creds-rules`, silent unless the cascade is switched on), and they name no piece of the service. The reads that do answer it are `gcloud` ones, and they are here — the service, its own account, and the one grant:
+
+```bash
+gcloud run services describe fugaro-credentials --project <gcp-project> --region <region>
+gcloud secrets get-iam-policy <bundle-container> --project <gcp-project>
+gcloud run services get-iam-policy fugaro-credentials --project <gcp-project> --region <region>
+```
+
+- **The service** is the first read: a service that was never applied answers `NotFound`, and the one that was names its revision, its own account (`fugaro-credentials@<gcp-project>.iam.gserviceaccount.com`) and the image it runs pinned by digest.
+- **The service's account and its one grant** is the second: the bundle container's policy holds exactly **one** member — that account, on `roles/secretmanager.secretAccessor` and nothing else (Q6) — and the same read over any model secret of the project shows no member for it at all. The container's ID is the one `fugaro creds ls` prints and the refusals in §3 name.
+- **The job side** is the third: one `roles/run.invoker` member per repository job account, written by each repository's own `fugaro init --repo` after the opt-in, and never `allUsers` or `allAuthenticatedUsers`.
+
+The live checklist's **Check 94** (Task C1.23) is the register's version of these three reads, and it is **not in [docs/gcp-live-checklist.md](../gcp-live-checklist.md) on this release yet** — that file's checks stop at 91 here — so until C1.23 lands, the three reads above are the whole of it. §10 is the same check's audit-log half, which is also yours to run.
 
 An installation with the service off is not silent either — but the refusal an operator meets there is the **switch**'s, not this service's. The launch gate reads the project's published policy, the gateway's mode and the rules marker, and never this service or its bundle: so a policy that carries no `routing.claude: {via: cascade}` refuses the run at launch, before any model call, while a policy that carries the switch with no service applied launches the run, and the run then **halts** at the gateway (`budget_unavailable`, §2) with no model credential of its own to fall back to (D143). What makes a `cascade` launch legal is the switch, not the service.
 
@@ -137,7 +149,9 @@ This is an **ordered** procedure — re-apply every repository root first, then 
 
 **The bundle container and its document are left behind by all three steps**, with every credential still in it — that is what step 2 buys. Delete the container yourself, by hand, when you are sure nothing needs it. Rotate or revoke the credentials in it at the providers as well: deleting the container does not un-issue a token that has already leaked.
 
-## 10. The audit log Check 94 reads
+## 10. The audit log: the `DATA_READ` step a live check needs
+
+This is the step **Check 94** (Task C1.23) reads back, and it is here because the check cannot do it for itself and no Fugaro command does it either.
 
 Secret Manager `DATA_READ` audit logs are **off by default**, and Fugaro's Terraform manages no audit config, so the live check reads the config back before it reads a log line. Turn them on yourself, the same owner-run way [docs/gcp-setup.md](../gcp-setup.md) records for the runs bucket's `DATA_WRITE`:
 
