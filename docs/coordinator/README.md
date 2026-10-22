@@ -57,11 +57,12 @@ not this work's — the numbering ruling of 2026-10-13, on the register's own li
 from the one table in this repository that lists every work's block, and the redesign's proposed
 block and the unused gap beside it from that work's own documents; the check numbers from the
 paragraphs that allocate them — `docs/gcp-live-checklist.md` for every range up to **70a–70c**,
-for mobile's **80–89**, and now for **90** itself, whose row and section the register writes and
-whose block's own allocation paragraph it carries — and `docs/mobile/README.md`,
-`docs/mobile/implementation-plan.md` and `docs/credentials-service/README.md` for **90–99** and
-**100–109**, the ranges whose remaining numbers the register does not yet reach: **91** is not
-written, **92** and **94–99** are not written, and **93** is reserved and unused. Every block
+for mobile's **80–89**, and now for **90**, **91**, **92**, **94**, **95** and **99** themselves,
+whose rows and sections the register writes and whose block's own allocation paragraph it
+carries — and `docs/mobile/README.md`, `docs/mobile/implementation-plan.md` and
+`docs/credentials-service/README.md` for **90–99** and **100–109**: of **90–99**, the register
+writes **90**, **91**, **92**, **94**, **95** and **99**, and **96–98** are not written while **93**
+is reserved and unused. Every block
 either row states names the document it is read from, and
 both rows are held to the line that document carries it on by
 `internal/cli/docs_coordinator_test.go` rather than trusted. One range is read differently by two
