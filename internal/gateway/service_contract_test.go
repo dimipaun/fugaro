@@ -117,6 +117,7 @@ func TestServiceConstantsMirrorCredsvc(t *testing.T) {
 		{"the tier's header", gateway.HeaderTier, credsvc.HeaderTier},
 		{"the credential's header", gateway.HeaderCredential, credsvc.HeaderCredential},
 		{"the switch's header", gateway.HeaderSwitch, credsvc.HeaderSwitch},
+		{"the probe's header", gateway.HeaderProbe, credsvc.HeaderProbe},
 	}
 	for _, h := range headers {
 		if h.gateway != h.wire {
@@ -136,6 +137,7 @@ func TestServiceConstantsMirrorCredsvc(t *testing.T) {
 		{gateway.ErrorUnverifiedRunIdentity, credsvc.ErrorUnverifiedRunIdentity},
 		{gateway.ErrorUnverifiedJobIdentity, credsvc.ErrorUnverifiedJobIdentity},
 		{gateway.ErrorStateUnavailable, credsvc.ErrorStateUnavailable},
+		{gateway.ErrorRequestRefused, credsvc.ErrorRequestRefused},
 	}
 	for _, x := range errs {
 		if x.gateway != x.wire {

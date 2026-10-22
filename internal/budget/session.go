@@ -38,6 +38,12 @@ const (
 // any answer — a credential *name* is all a cascade run ever writes.
 const credsRulesDeniedDetail = "the database's rules refused this run's credential state: they predate the credentials cascade's fields, and the write is not retried. Re-run 'fugaro init --firebase <firebase-project-id>' with this release to deploy the rules that carry them"
 
+// byTierDeniedDetail is the same refusal for the by-tier counters (C1.16):
+// the same fix, named for the write that was refused. The split is not
+// retried and the run's totals are unaffected -- what it loses is the tier a
+// settled call was paid by.
+const byTierDeniedDetail = "the database's rules refused this run's by-tier spend counters: they predate the credentials cascade's fields, and the split is not retried. Re-run 'fugaro init --firebase <firebase-project-id>' with this release to deploy the rules that carry them"
+
 // Halt is a cause to stop the run that the session found by itself: a kill
 // switch, the grace running out, a revoked identity. Detail is shown to
 // people (the report) and, through the gateway, to the agent: it never holds
@@ -476,8 +482,10 @@ func (s *Session) readState(ctx context.Context, day int64) (State, error) {
 
 // AdmitOptions say what the run needs from the backend.
 type AdmitOptions struct {
-	// Gateway: the run's model calls are leased (api-key and vertex). An
-	// oauth run has no lease and is checked for kill switches only.
+	// Gateway: the run's model calls are leased (api-key, vertex and the
+	// cascade, whose calls the credentials service's upstream carries,
+	// C1.19). An oauth run has no lease and is checked for kill switches
+	// only.
 	Gateway bool
 	// LocalEnforce: the run's merged mode is enforce, whatever the project's.
 	LocalEnforce bool

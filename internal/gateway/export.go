@@ -67,7 +67,11 @@ type RequestPin struct {
 	// nothing. That is what a caller with no list of its own means, and it is
 	// deliberately not the same as a list that names nothing: a policy that
 	// publishes no allow-list sets no model ceiling (H1), while a list with no
-	// model in it could never admit a call.
+	// model in it could never admit a call. The credentials service, which is
+	// the caller that reads that policy, refuses such a call before it builds a
+	// pin at all (internal/credsvc, the owner's ruling of 2026-10-22); this
+	// reading is unchanged, because the gateway's own path pins a call to the
+	// stage's models and never to the project's.
 	Models []string
 	// Where names the list in the refusal, after "is not pinned for": the
 	// gateway's own path passes "stage " + Stage.Name, so its sentence is

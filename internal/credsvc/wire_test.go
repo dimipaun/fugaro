@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -517,6 +518,93 @@ func TestSwitchHeaderRoundTrip(t *testing.T) {
 	twice.Add(HeaderSwitch, `{"from":"acct-two","to":"anthropic-key","reason":"exhausted"}`)
 	if got, ok, err := SwitchHeader(twice); ok || err == nil {
 		t.Fatalf("SwitchHeader(%v) = (%v, %v, %v), want a refusal", twice, got, ok, err)
+	}
+}
+
+// TestProbeHeaderRoundTrip: the tiers a probe was made on are what the run
+// settles the probe by (C1.16), so the header is held on both sides to the
+// same rules -- a tier of this contract, once each, and no more of them than
+// the contract's bound.
+func TestProbeHeaderRoundTrip(t *testing.T) {
+	h := http.Header{}
+	if err := SetProbeHeader(h, []string{TierB}); err != nil {
+		t.Fatalf("SetProbeHeader: %v", err)
+	}
+	got, ok, err := ProbedTiers(h)
+	if err != nil || !ok {
+		t.Fatalf("ProbedTiers = (%v, %v, %v), want the tiers", got, ok, err)
+	}
+	if !slices.Equal(got, []string{TierB}) {
+		t.Fatalf("ProbedTiers = %v, want [B]", got)
+	}
+
+	// The order the probes were made is the order carried, and a tier is
+	// written once: two probes of one call on one tier are one ledger input.
+	h = http.Header{}
+	if err := SetProbeHeader(h, []string{TierA, TierB, TierA}); err != nil {
+		t.Fatalf("SetProbeHeader: %v", err)
+	}
+	if got, ok, err = ProbedTiers(h); err != nil || !ok || !slices.Equal(got, []string{TierA, TierB}) {
+		t.Fatalf("ProbedTiers = (%v, %v, %v), want [A B]", got, ok, err)
+	}
+
+	// An answer with no probe carries no header, and reads back as one that
+	// carries none: most answers are not a probe's.
+	h = http.Header{}
+	if err := SetProbeHeader(h, nil); err != nil {
+		t.Fatalf("SetProbeHeader(nil): %v", err)
+	}
+	if len(h) != 0 {
+		t.Errorf("an empty probe list wrote %v", h)
+	}
+	if got, ok, err := ProbedTiers(http.Header{}); ok || err != nil || got != nil {
+		t.Fatalf("an answer with no probe reports (%v, %v, %v), want (nil, false, nil)", got, ok, err)
+	}
+
+	// Every tier this contract knows is one the writer can carry: the bound is
+	// at least the closed set, so a fourth tier added to ValidTier without
+	// moving the bound is caught here rather than in production (the writer's
+	// own bound check is unreachable while the set is this small, and this is
+	// what says so).
+	h = http.Header{}
+	if err := SetProbeHeader(h, []string{TierA, TierB, TierC}); err != nil {
+		t.Fatalf("SetProbeHeader(every tier) = %v, want the three tiers written", err)
+	}
+
+	// A tier this code does not know is refused rather than carried: the tier
+	// is the ledger input, and a reader that guessed at an unknown one would
+	// settle a probe the service did not report.
+	if err := SetProbeHeader(http.Header{}, []string{"D"}); err == nil {
+		t.Error("SetProbeHeader accepted a tier that is not one of A, B or C")
+	}
+
+	malformed := map[string]string{
+		"a tier this contract does not know": "D",
+		"one tier twice":                     TierA + "," + TierA,
+		"a list past the bound":              strings.Repeat(TierA+",", maxProbedTiers) + TierA,
+		"an empty tier":                      TierA + ",",
+		"a lower-case tier":                  "b",
+		"a credential name":                  "acct-one",
+		"a present but empty header":         "",
+	}
+	for name, raw := range malformed {
+		t.Run(name, func(t *testing.T) {
+			h := http.Header{}
+			h.Set(HeaderProbe, raw)
+			if got, ok, err := ProbedTiers(h); ok || err == nil {
+				t.Fatalf("ProbedTiers(%q) = (%v, %v, %v), want a refusal", raw, got, ok, err)
+			}
+		})
+	}
+
+	// A probe header sent twice is refused for the same reason the switch's
+	// is: which of the two lists the run settles must not be decided by header
+	// order. Both values here are individually valid.
+	twice := http.Header{}
+	twice.Add(HeaderProbe, TierA)
+	twice.Add(HeaderProbe, TierB)
+	if got, ok, err := ProbedTiers(twice); ok || err == nil {
+		t.Fatalf("ProbedTiers(%v) = (%v, %v, %v), want a refusal", twice, got, ok, err)
 	}
 }
 

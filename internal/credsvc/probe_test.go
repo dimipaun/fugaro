@@ -181,7 +181,7 @@ func probeSvc(t *testing.T, mutate func(*svc, *Config)) (*svc, *logBuf) {
 func testPolicyDocBackoff(initial, cap string) string {
 	return `{
 		"version": 3,
-		"budget": {"mode": "enforce", "per_run_usd": 5},
+		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
 		"accounts": {
 			"default": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]},
@@ -1267,5 +1267,57 @@ func TestProbeCallIsBuiltByTheService(t *testing.T) {
 	}
 	if _, ok := probeCall(&call{path: "/v1/complete", body: []byte(callBody("x"))}); ok {
 		t.Error("a call on a path this service does not serve built a probe")
+	}
+}
+
+// TestAProbedCallsAnswerCarriesTheTiersItsProbesWereMadeOn is the probe's other
+// half (C1.16): the probe's call was made, so it is the run's to account for,
+// and the run can only account for it if the answer says which tier it was made
+// on. A probe is accounted notional on tier A and money on any other tier, so
+// the tier is the whole of what the run needs — and it is the tier the audit
+// line above carries, never the name: which credential was probed is this
+// service's own record.
+//
+// The header is on the answer the run is given, and only there: a probe's own
+// answer is closed unread (probeOne), so a run's ledger learns of the probe
+// from the call it was actually waiting for.
+func TestAProbedCallsAnswerCarriesTheTiersItsProbesWereMadeOn(t *testing.T) {
+	s, _ := probeSvc(t, nil)
+	s.backedOff("default", s.now.Add(-time.Hour), creds.DefaultBackoffInitial)
+	s.up.Script = []anthropicfake.Reply{
+		{Status: http.StatusOK, Body: `{"type":"message","probe_answer":"probe-answer"}`},
+		anthropicfake.MessageOK(testModel, testUsage),
+		anthropicfake.MessageOK(testModel, testUsage),
+	}
+
+	resp, body := s.call(t, callBody("real-work"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the call was not served after its probe: %d %s", resp.StatusCode, body)
+	}
+	// The header is on the run's own answer, and not on the probe's — which
+	// this service has already closed.
+	if !strings.Contains(string(body), "msg_fake") {
+		t.Fatalf("the answer is not the upstream's answer to the run's own call: %s", body)
+	}
+	tiers, ok, err := ProbedTiers(resp.Header)
+	if err != nil {
+		t.Fatalf("the answer's probe header is not one this contract reads: %v", err)
+	}
+	if !ok {
+		t.Fatal("the answer of a call whose credential was probed carries no probe header")
+	}
+	if len(tiers) != 1 || tiers[0] != TierA {
+		t.Errorf("the answer names the probed tiers %v, want the one tier the probe was made on", tiers)
+	}
+	if v := resp.Header.Get(HeaderProbe); v != TierA {
+		t.Errorf("the header says %q, want the tier alone: %q", v, TierA)
+	}
+
+	// The next call is served by the cleared credential, needs no probe, and so
+	// carries no probe header at all: a header written for a probe that was not
+	// made would be a run charged for a call nobody made.
+	next, _ := s.call(t, callBody("real-work-again"))
+	if tiers, ok, err := ProbedTiers(next.Header); err != nil || ok {
+		t.Errorf("a call that made no probe carries %v (%v), want no probe header", tiers, err)
 	}
 }

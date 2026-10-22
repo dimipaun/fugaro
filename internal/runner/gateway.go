@@ -192,6 +192,25 @@ func (r *run) gatewayUpstream(ctx context.Context) (gateway.Upstream, error) {
 	return up, nil
 }
 
+// cascadeLocalRefusal is D149's refusal of a cascade auth in a local run, kept
+// in one place because two doers say it: the service upstream below, and the
+// routing switch's own arm in bootstrap (routing.go's applyRouting), which
+// judges the auth before a gateway is ever started.
+//
+// The second caller is why this is not just a line in serviceUpstream: that
+// function is reached only through the gateway, and only for a run whose mode
+// turns the gateway on — while a local `fugaro exec` is usually mode-off or
+// mode-unset, so its cascade file was answered by agent.BuildEnv instead
+// ("agent.auth cascade needs..."), and a local run whose mode *is* on was
+// refused for the switch, with the operator's remedy (publish the policy),
+// which no local invocation can be fixed by: `fugaro exec` never cascades.
+// The local invocation's own sentence is the one that names the fix — use
+// api-key or oauth locally — so applyRouting says this before it judges the
+// switch at all.
+func cascadeLocalRefusal() error {
+	return fmt.Errorf("agent.auth is %s and this is a local run: %s runs on the developer's own credentials and never through the credentials service (D149). Use agent.auth api-key or oauth locally", config.AuthCascade, execName)
+}
+
 // serviceUpstream is the credentials service's upstream for a cascade run
 // (C1.15, D135): the service's URL from the job's environment, and the two
 // identities every call carries -- the job's Google ID token, minted from
@@ -228,7 +247,7 @@ func (r *run) gatewayUpstream(ctx context.Context) (gateway.Upstream, error) {
 // stops here.
 func (r *run) serviceUpstream() (gateway.Upstream, error) {
 	if r.d.Local {
-		return gateway.Upstream{}, fmt.Errorf("starting the gateway: agent.auth is %s and this is a local run: %s runs on the developer's own credentials and never through the credentials service (D149). Use agent.auth api-key or oauth locally", config.AuthCascade, execName)
+		return gateway.Upstream{}, fmt.Errorf("starting the gateway: %w", cascadeLocalRefusal())
 	}
 	url := envLookup(r.d.Env, credentialsServiceURLEnv)
 	if url == "" {
@@ -276,18 +295,26 @@ const execName = "fugaro exec"
 // that is in flight, so it takes no lock of its own beyond noteExhausted's
 // and does nothing a caller could block on.
 //
-// Only the exhausted answer is acted on. It is the one answer that is a
-// decision about the stage in flight: the stage ends -- it did not fail --
-// and the runner waits for the reset and resumes it (C1.17, D138). The tier a
-// call settled by, the credential's name and the switch are C1.16's ledger
-// and C1.19's record to consume; reading them here as well would be a second
-// reading of one contract, and this release has one reader per field.
+// Two answers are acted on. The exhausted one is a decision about the stage in
+// flight: the stage ends -- it did not fail -- and the runner waits for the
+// reset and resumes it (C1.17, D138). The other is the name of the credential
+// that answered (C1.19): a cascade run is the one run whose credential is not
+// its own, so it is the one run that has to record which one it spent on --
+// the record `/runs/<id>/result.json` carries (D140) and the registry entry
+// the dashboard reads (C1.3). Both are written by r.recordCredential
+// (runner.go, with the run's other record writers) and decided here, where the
+// answer arrives, because a second reader of the same contract is how two
+// records come to disagree. The tier a call settled by and the switch are
+// C1.16's ledger.
 //
 // The typed answer is turned back into the contract's own type
 // (credsvc.ExhaustedUntil) rather than a runner type of its own: the wire
 // contract is the only spelling of it, and noteExhausted's caller in a test
 // hands it the same shape.
 func (r *run) serviceAnswer(a gateway.ServiceAnswer) {
+	if a.Credential != "" {
+		r.recordCredential(a.Credential)
+	}
 	if a.Exhausted == nil {
 		return
 	}

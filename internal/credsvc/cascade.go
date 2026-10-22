@@ -368,6 +368,18 @@ func (s *Server) answer(w http.ResponseWriter, cl *call, ans *answer, c creds.Cr
 			return
 		}
 	}
+	if len(cl.probed) > 0 {
+		// The probes this call made before it was served (C1.12): the run
+		// accounts for them by the tier each was made on (C1.16), and the
+		// answer is the only place it can learn them. An answer that cannot
+		// carry them is refused rather than sent without them — a model
+		// answer that hid the probes it was served after is a run paying for
+		// calls its ledger never saw.
+		if err := SetProbeHeader(hdr, cl.probed); err != nil {
+			s.refuse(w, StatusUnavailable, ErrorStateUnavailable, "the answer could not carry the probes this call made")
+			return
+		}
+	}
 	for k, vs := range hdr {
 		w.Header()[k] = vs
 	}

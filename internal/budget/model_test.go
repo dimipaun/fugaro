@@ -130,6 +130,46 @@ func TestPaths(t *testing.T) {
 	}
 }
 
+// TestByTierPaths: the four leaves the by-tier split is written to, exactly
+// as C1.3's rules spell them (`byTier/$tier/spent`), and nothing else. A path
+// builder that ever produced a tier the rules have no leaf for would turn a
+// programming error into a write the deployed rules deny — which is what the
+// run's rules probe reads as an out-of-date document (C1.17) — so the
+// builders refuse it here, on the spot.
+func TestByTierPaths(t *testing.T) {
+	for got, want := range map[string]string{
+		PathRunByTier("a.b", "r1", TierB):             "runs/a%2Eb/r1/byTier/b",
+		PathSpendRunByTier(20728, "a.b", "r1", TierC): "spend/20728/runs/a%2Eb/r1/byTier/c",
+		PathSpendRepoByTier(20728, "a.b", TierB):      "spend/20728/repos/a%2Eb/byTier/b",
+		PathSpendGlobalByTier(20728, TierC):           "spend/20728/global/byTier/c",
+	} {
+		if got != want {
+			t.Errorf("path = %q, want %q", got, want)
+		}
+	}
+	for name, f := range map[string]func(){
+		"PathRunByTier empty":          func() { PathRunByTier("s", "r", "") },
+		"PathRunByTier slug":           func() { PathRunByTier("", "r", TierB) },
+		"PathRunByTier tier A":         func() { PathRunByTier("s", "r", "A") },
+		"PathRunByTier tier a":         func() { PathRunByTier("s", "r", "a") },
+		"PathRunByTier tier b upper":   func() { PathRunByTier("s", "r", "B") },
+		"PathRunByTier tier nonsense":  func() { PathRunByTier("s", "r", "b/../c") },
+		"PathSpendRunByTier":           func() { PathSpendRunByTier(1, "s", "r", "A") },
+		"PathSpendRepoByTier":          func() { PathSpendRepoByTier(1, "s", "d") },
+		"PathSpendGlobalByTier":        func() { PathSpendGlobalByTier(1, "") },
+		"PathSpendGlobalByTier tier A": func() { PathSpendGlobalByTier(1, "A") },
+	} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("%s accepted a tier (or a segment) with no byTier leaf", name)
+				}
+			}()
+			f()
+		}()
+	}
+}
+
 func TestDocumentsJSON(t *testing.T) {
 	// Absent caps stay absent (nil), they never become 0: a zero cap and a
 	// missing cap are different things to the rules.
