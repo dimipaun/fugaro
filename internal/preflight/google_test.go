@@ -37,11 +37,15 @@ func newBilling(t *testing.T) (*gcpfake.Billing, *billing.APIService) {
 
 func TestBillingAPIDisabledOnQuotaProject(t *testing.T) {
 	f, svc := newBilling(t)
+	crmFake, crmSvc := newCRM(t)
 	su := gcpfake.NewServiceUsage(t)
+	// Google names the quota project by number, and this one is not the number
+	// the CRM fake answers for proj-1234 (123456789012): the check has to read
+	// that number to tell the two apart, so it is asserted below that it did.
 	su.Consumer = "projects/999999999999"
 	su.Disable("cloudbilling.googleapis.com", f.Server)
 
-	cs := Billing(context.Background(), svc, "proj-1234")
+	cs := Billing(context.Background(), svc, crmSvc, "proj-1234")
 	if len(cs) != 1 {
 		t.Fatalf("checks = %+v", cs)
 	}
@@ -64,6 +68,13 @@ func TestBillingAPIDisabledOnQuotaProject(t *testing.T) {
 	if len(f.Requests()) == 0 {
 		t.Fatal("the check never read billing info")
 	}
+	// The distinction is drawn by comparing numbers, and the project's number is
+	// the only place it can come from (Google's answer named a number, the caller
+	// named an ID): no read of it means the two strings were compared as they
+	// stand, which is the answer "not this project" for every project.
+	if len(crmFake.Requests()) == 0 {
+		t.Error("the check told the quota project apart from proj-1234 without reading proj-1234's number")
+	}
 }
 
 // TestBillingAPIDisabledOnTheProjectItself is D3's first case, and the half of
@@ -75,11 +86,14 @@ func TestBillingAPIDisabledOnQuotaProject(t *testing.T) {
 // not.
 func TestBillingAPIDisabledOnTheProjectItself(t *testing.T) {
 	f, svc := newBilling(t)
+	crmFake, crmSvc := newCRM(t)
 	su := gcpfake.NewServiceUsage(t)
-	su.Consumer = "projects/proj-1234"
+	// proj-1234's own number, as Google's answer carries it: the check has to
+	// read that number to see the two are the same project.
+	su.Consumer = "projects/123456789012"
 	su.Disable("cloudbilling.googleapis.com", f.Server)
 
-	cs := Billing(context.Background(), svc, "proj-1234")
+	cs := Billing(context.Background(), svc, crmSvc, "proj-1234")
 	if len(cs) != 1 {
 		t.Fatalf("checks = %+v", cs)
 	}
@@ -96,12 +110,49 @@ func TestBillingAPIDisabledOnTheProjectItself(t *testing.T) {
 	if strings.Contains(strings.ToLower(c.Fix), "ask an owner") {
 		t.Fatalf("fix %q sends the reader to an owner for their own project", c.Fix)
 	}
+	if len(crmFake.Requests()) == 0 {
+		t.Error("the check read the answer as this project without reading proj-1234's number")
+	}
+}
+
+// TestBillingAPIDisabledOnAProjectWhoseNumberCannotBeRead is the other half of
+// the number comparison: where the number cannot be read the check has not
+// established that the two projects differ, so it must not say that they do —
+// and it must not send the reader to an owner either, which is the same claim
+// from the other side. It names the quota project as the answer did and the line
+// to run on it.
+func TestBillingAPIDisabledOnAProjectWhoseNumberCannotBeRead(t *testing.T) {
+	f, svc := newBilling(t)
+	crmFake, crmSvc := newCRM(t)
+	crmFake.Refuse(403, "PERMISSION_DENIED", "IAM_PERMISSION_DENIED", "the caller does not have permission")
+	su := gcpfake.NewServiceUsage(t)
+	su.Consumer = "projects/123456789012"
+	su.Disable("cloudbilling.googleapis.com", f.Server)
+
+	cs := Billing(context.Background(), svc, crmSvc, "proj-1234")
+	if len(cs) != 1 {
+		t.Fatalf("checks = %+v", cs)
+	}
+	c := cs[0]
+	if c.ID != "billing-api" || c.OK {
+		t.Fatalf("got %+v", c)
+	}
+	if !strings.Contains(c.Problem, "123456789012") || !strings.Contains(c.Problem, "could not read") {
+		t.Fatalf("problem %q does not say what it could not read", c.Problem)
+	}
+	if strings.Contains(c.Problem, "which is not") {
+		t.Fatalf("problem %q claims the two projects differ, which the check has not established", c.Problem)
+	}
+	if want := "gcloud services enable cloudbilling.googleapis.com --project 123456789012"; c.Fix != want {
+		t.Fatalf("fix = %q, want %q: the line is the quota project's either way", c.Fix, want)
+	}
 }
 
 func TestBillingLinked(t *testing.T) {
 	f, svc := newBilling(t)
+	_, crmSvc := newCRM(t)
 	f.SetBilling("proj-1234", true)
-	cs := Billing(context.Background(), svc, "proj-1234")
+	cs := Billing(context.Background(), svc, crmSvc, "proj-1234")
 	if len(cs) != 1 || cs[0].ID != "billing-linked" || !cs[0].OK {
 		t.Fatalf("got %+v", cs)
 	}
@@ -109,8 +160,9 @@ func TestBillingLinked(t *testing.T) {
 
 func TestBillingNotLinked(t *testing.T) {
 	f, svc := newBilling(t)
+	_, crmSvc := newCRM(t)
 	f.SetBilling("proj-1234", false)
-	cs := Billing(context.Background(), svc, "proj-1234")
+	cs := Billing(context.Background(), svc, crmSvc, "proj-1234")
 	if len(cs) != 1 {
 		t.Fatalf("checks = %+v", cs)
 	}
@@ -195,7 +247,7 @@ func TestPreflightReadOnly(t *testing.T) {
 	billingFake.SetBilling("proj-1234", true)
 
 	iam := IAMPolicy(context.Background(), crmSvc, "proj-1234", true)
-	bill := Billing(context.Background(), billingSvc, "proj-1234")
+	bill := Billing(context.Background(), billingSvc, crmSvc, "proj-1234")
 
 	for _, c := range append(iam, bill...) {
 		if !c.OK {
