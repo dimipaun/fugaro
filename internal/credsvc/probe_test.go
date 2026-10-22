@@ -606,11 +606,9 @@ func TestWaitWhenAProbeIsOwedAndNotMade(t *testing.T) {
 		name: "the claim keeps losing its compare-and-set",
 		body: callBody("real-work"),
 		set:  func(_ *testing.T, s *svc) { s.probes.stale = true },
-	}, {
-		name: "the body names no model",
-		body: `{"max_tokens":16,"messages":[{"role":"user","content":"real-work"}]}`,
-		set:  func(*testing.T, *svc) {},
 	}} {
+		// A body that names no model is not a case here any more: the request check
+		// (C1.11 follow-up) refuses it with a 400 before the probe is reached.
 		t.Run(tc.name, func(t *testing.T) {
 			s, auditLog := probeSvc(t, nil)
 			s.backedOff("default", s.now.Add(-time.Hour), creds.DefaultBackoffInitial)

@@ -658,10 +658,10 @@ func TestStartCopiesRoutes(t *testing.T) {
 	routes[0].Models[0] = "claude-*"
 	routes[0].BaseURL = "https://evil.example"
 	routes[0].Auth = "x-api-key"
-	if r := gw.routeFor(dsModel); r == nil || r.BaseURL != "https://openrouter.ai/api" || r.Auth != "bearer" {
+	if r := routeFor(dsModel, gw.o.Routes); r == nil || r.BaseURL != "https://openrouter.ai/api" || r.Auth != "bearer" {
 		t.Errorf("the caller's slice changed the gateway's routes: %+v", r)
 	}
-	if gw.routeFor(sonnet) != nil {
+	if routeFor(sonnet, gw.o.Routes) != nil {
 		t.Error("a Claude model got routed after the caller edited its slice")
 	}
 }

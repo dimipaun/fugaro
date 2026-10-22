@@ -38,13 +38,14 @@ import (
 // The loader is strict and it fails closed, and the two are the same
 // property:
 //
-//   - The shape is closed. The keys are exactly the credential names the
-//     platform defines (config.AnthropicSecret and the claude-oauth-token
-//     family), and a key outside that set is refused rather than ignored: a
-//     typo'd key that parsed would be a credential nobody meant to store,
-//     read as nothing and never noticed. The published shape is
-//     schemas/creds-bundle.schema.json, and TestBundleSchemaMatchesTheLoader
-//     holds the two together.
+//   - The shape is closed. The keys are exactly the credentials the platform
+//     defines — the model credentials (config.AnthropicSecret and the
+//     claude-oauth-token family) and the GitHub App's private key
+//     (config.GitHubAppKeySecret, C2.1) — and a key outside that set is
+//     refused rather than ignored: a typo'd key that parsed would be a
+//     credential nobody meant to store, read as nothing and never noticed.
+//     The published shape is schemas/creds-bundle.schema.json, and
+//     TestBundleSchemaMatchesTheLoader holds the two together.
 //   - A document over MaxBundleBytes is refused before it is parsed. The
 //     bound is a constant and not a policy field: an oversize document is a
 //     mistake or an attack, and neither is something an operator should be
@@ -65,14 +66,19 @@ import (
 // was replaced by one this loader refuses must stop issuance, not keep
 // issuing from the copy it read a minute ago.
 //
-// The credentials are named as the cascade names them: tier A's name is the
-// Claude ACCOUNT's (config.DefaultClaudeAccount for the bare token, the
+// The model credentials are named as the cascade names them: tier A's name is
+// the Claude ACCOUNT's (config.DefaultClaudeAccount for the bare token, the
 // suffix for a named one), because that is the name the policy's `accounts`
 // block, the admission lists, the marks under creds/marks and the audit line
 // all speak; tier B's is config.AnthropicSecret. The document's keys are the
 // Secret Manager-side spelling of the same credentials
 // (config.ClaudeAccountSecret), which is what a workflow's `secrets:` would
 // have named and what `fugaro creds set` writes.
+//
+// The App key is the one entry that is not a model credential (C2.1, D145):
+// it has no tier, no account, and no cascade ever sees it — Credentials is
+// the whole of what the cascade is offered, and it answers the model
+// credentials alone.
 
 const (
 	// MaxBundleBytes bounds the bundle document before it is parsed. 64 KiB
@@ -189,14 +195,41 @@ func BundleRefusal(err error) string {
 	return ErrBundleUnreadable.Error()
 }
 
+// Kind is what a bundle entry is for. The bundle holds two kinds of thing:
+// the model credentials the cascade selects, each with a tier, and the GitHub
+// App's private key, which the mint signs with and which is not a candidate
+// for anything (C2.1).
+type Kind string
+
+const (
+	// KindModel is a model credential: the cascade offers it, creds.Select
+	// picks one, and the service attaches its value to an Anthropic call.
+	KindModel Kind = "model"
+	// KindGitHubApp is the GitHub App's private key: the document key
+	// config.GitHubAppKeySecret. The mint parses it and signs the App's JWT
+	// with it (github.go) and nothing else in this service reads it. It has no
+	// tier, and it must never reach the cascade: a candidate the cascade could
+	// select would be an App private key attached to an Anthropic call as the
+	// caller's credential.
+	KindGitHubApp Kind = "github-app"
+)
+
 // Entry is one credential the bundle holds, as the cascade names it.
 type Entry struct {
+	// Kind is what the entry is for: KindModel for a credential the cascade
+	// may select, KindGitHubApp for the App key. Credentials answers the
+	// model ones alone.
+	Kind Kind
 	// Name is the credential's name: the Claude account's for tier A
 	// (config.DefaultClaudeAccount for the bare token), and
 	// config.AnthropicSecret for tier B. It is what the marks, the policy's
-	// accounts block and the wire contract's headers all speak.
+	// accounts block and the wire contract's headers all speak. The App key's
+	// name is config.GitHubAppKeySecret, which is what the audit line and the
+	// mint's own refusal name it by.
 	Name string
-	// Tier is the cost class (creds.TierA, creds.TierB).
+	// Tier is the cost class (creds.TierA, creds.TierB). It is empty for an
+	// entry that is not a model credential: the App key is spent nowhere, so
+	// it has no tier to settle a call against.
 	Tier creds.Tier
 	// Key is the document's own key for this credential
 	// (config.ClaudeAccountSecret for a named account). It is not a value.
@@ -229,7 +262,14 @@ func (e Entry) Value() string { return e.value.value }
 // prints an unexported field structurally, without consulting a method on
 // the field's own type, so a Stringer on `secret` is not reached through
 // `%v` of an Entry.
-func (e Entry) String() string { return e.Name + " (" + string(e.Tier) + ")" }
+func (e Entry) String() string {
+	if e.Kind != KindModel {
+		// An entry with no tier: it renders as what it is rather than as an
+		// empty tier, because this is the line an operator and a log read.
+		return e.Name + " (" + string(e.Kind) + ")"
+	}
+	return e.Name + " (" + string(e.Tier) + ")"
+}
 
 // GoString is String for `%#v`.
 func (e Entry) GoString() string { return "credsvc.Entry(" + e.Name + ")" }
@@ -245,7 +285,21 @@ func (e Entry) LogValue() slog.Value { return slog.StringValue(e.String()) }
 // (TestBundleValueNeverInErrorOrLog).
 type Bundle struct {
 	entries []Entry
-	byName  map[string]int
+	// byName indexes the MODEL credentials by the name the cascade speaks
+	// (the Claude account's, config.AnthropicSecret). The App key is not in
+	// it, and it cannot be: an account may legally be named
+	// config.GitHubAppKeySecret (claude-oauth-token-github-app-key is a legal
+	// named account), so the App key's resolved name is a name a model
+	// credential may also have, and one map keyed by name could not hold both
+	// without one of them being unreachable. The App key is found by its kind
+	// instead (AppKey), which is a stronger reading than a name: there is
+	// exactly one document key that is the App key.
+	byName map[string]int
+	// appKey is the index of the App key entry, or -1 when the document holds
+	// none. It is at most one entry: CredentialKey answers KindGitHubApp for
+	// exactly one document key, and a second occurrence of that key is a
+	// duplicate the loader refuses.
+	appKey int
 }
 
 // Len is how many credentials the document holds.
@@ -254,12 +308,17 @@ func (b *Bundle) Len() int { return len(b.entries) }
 // Entries are the credentials the bundle holds, in the document's order.
 func (b *Bundle) Entries() []Entry { return slices.Clone(b.entries) }
 
-// Credentials are the bundle's credentials as the cascade speaks them: names
-// and tiers, never values. It is what the service offers creds.Select after
-// the policy's admissions have narrowed it.
+// Credentials are the bundle's model credentials as the cascade speaks them:
+// names and tiers, never values. It is what the service offers creds.Select
+// after the policy's admissions have narrowed it, and it is the ONLY accessor
+// the cascade reads (candidates), so the App key — which is in the document
+// and in Entries and is not a model credential — cannot become a candidate.
 func (b *Bundle) Credentials() []creds.Credential {
 	out := make([]creds.Credential, 0, len(b.entries))
 	for _, e := range b.entries {
+		if e.Kind != KindModel {
+			continue
+		}
 		out = append(out, creds.Credential{Name: e.Name, Tier: e.Tier})
 	}
 	return out
@@ -274,14 +333,38 @@ func (b *Bundle) Names() []string {
 	return out
 }
 
-// Lookup answers the credential of that name. found=false is a name the
-// document does not hold, which is a refusal and never an empty credential.
+// Lookup answers the MODEL credential of that name — the name the cascade,
+// the policy's accounts block, the marks and the wire contract speak. found
+// =false is a name the document does not hold, which is a refusal and never an
+// empty credential.
+//
+// The App key is deliberately not reachable through it (AppKey is), because
+// its name is a name a model credential may also have: a caller of Lookup that
+// asked for "github-app-key" would be asking for an account, and a caller that
+// wants the key says so by asking for the kind.
 func (b *Bundle) Lookup(name string) (Entry, bool) {
 	i, ok := b.byName[name]
 	if !ok {
 		return Entry{}, false
 	}
 	return b.entries[i], true
+}
+
+// AppKey answers the bundle's GitHub App private key (C2.1), which is the
+// entry whose document key is config.GitHubAppKeySecret. found=false is a
+// document that holds no App key, which the mint refuses on (ErrMintNoAppKey)
+// and never falls back from (D143).
+//
+// It selects by KIND rather than by name, and that is the whole reason it is
+// not a Lookup: an account named "github-app-key" resolves to that same name,
+// so a name lookup could not tell the key from the token, and the token
+// offered to a PEM parser is the mistake this accessor exists to make
+// unrepresentable.
+func (b *Bundle) AppKey() (Entry, bool) {
+	if b == nil || b.appKey < 0 {
+		return Entry{}, false
+	}
+	return b.entries[b.appKey], true
 }
 
 // String renders the bundle as its names and tiers. It is what makes
@@ -300,23 +383,27 @@ func (b *Bundle) GoString() string { return b.String() }
 // LogValue is String for slog, so a line that logs the bundle carries names.
 func (b *Bundle) LogValue() slog.Value { return slog.StringValue(b.String()) }
 
-// CredentialKey maps a bundle key to the credential it holds, answering the
-// credential's name and tier. It is the ONE place the document's spelling
-// (a secret's logical name) is turned into the cascade's (an account's), so
-// the loader, C1.25's writer and the published schema cannot drift into
-// disagreeing about which key is which credential.
+// CredentialKey maps a bundle key to the credential it holds, answering what
+// the entry is for, the credential's name and its tier. It is the ONE place
+// the document's spelling (a secret's logical name) is turned into the
+// service's, so the loader, C1.25's writer and the published schema cannot
+// drift into disagreeing about which key is which credential.
 //
-// The two families are the platform's model credentials and nothing else:
-// the project's Anthropic API key (config.AnthropicSecret, tier B) and the
-// Claude OAuth tokens (config.ClaudeOAuthToken for the default account and
-// the claude-oauth-token-<name> namespace, tier A). The App key C2.1 adds
-// joins this function and the schema together, in that task.
-func CredentialKey(key string) (name string, tier creds.Tier, ok bool) {
+// The keys are the platform's credentials and nothing else: the project's
+// Anthropic API key (config.AnthropicSecret, tier B), the Claude OAuth tokens
+// (config.ClaudeOAuthToken for the default account and the
+// claude-oauth-token-<name> namespace, tier A) and the GitHub App's private
+// key (config.GitHubAppKeySecret, C2.1), which is the one key that is not a
+// model credential: its kind is KindGitHubApp and it has no tier, because the
+// mint signs a JWT with it rather than spending it on a call.
+func CredentialKey(key string) (name string, kind Kind, tier creds.Tier, ok bool) {
 	switch {
+	case key == config.GitHubAppKeySecret:
+		return config.GitHubAppKeySecret, KindGitHubApp, "", true
 	case key == config.AnthropicSecret:
-		return config.AnthropicSecret, creds.TierB, true
+		return config.AnthropicSecret, KindModel, creds.TierB, true
 	case key == config.ClaudeOAuthToken:
-		return config.DefaultClaudeAccount, creds.TierA, true
+		return config.DefaultClaudeAccount, KindModel, creds.TierA, true
 	case strings.HasPrefix(key, config.ClaudeOAuthTokenPrefix):
 		account := strings.TrimPrefix(key, config.ClaudeOAuthTokenPrefix)
 		// The whole namespace is reserved for named accounts
@@ -337,11 +424,11 @@ func CredentialKey(key string) (name string, tier creds.Tier, ok bool) {
 		// unreachable: no policy could name it, no account could be
 		// admitted to it, and no writer would ever rotate it.
 		if len(account) <= config.MaxClaudeAccountNameLen && config.ClaudeAccountNameRE.MatchString(account) {
-			return account, creds.TierA, true
+			return account, KindModel, creds.TierA, true
 		}
-		return "", "", false
+		return "", "", "", false
 	}
-	return "", "", false
+	return "", "", "", false
 }
 
 // BundleSecretID is the Secret Manager ID of the bundle container for
@@ -392,22 +479,43 @@ func ParseBundle(raw []byte) (*Bundle, error) {
 	if n := len(root.Content) / 2; n > MaxBundleCredentials {
 		return nil, bundleErr(ErrBundleTooMany, "")
 	}
-	b := &Bundle{entries: make([]Entry, 0, len(root.Content)/2), byName: make(map[string]int, len(root.Content)/2)}
+	b := &Bundle{entries: make([]Entry, 0, len(root.Content)/2), byName: make(map[string]int, len(root.Content)/2), appKey: -1}
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		k, v := root.Content[i], root.Content[i+1]
 		if k.Kind != yaml.ScalarNode || k.Tag != "!!str" {
 			return nil, bundleErr(ErrBundleUnknownKey, k.Value)
 		}
-		name, tier, ok := CredentialKey(k.Value)
+		name, kind, tier, ok := CredentialKey(k.Value)
 		if !ok {
 			return nil, bundleErr(ErrBundleUnknownKey, k.Value)
 		}
-		if _, dup := b.byName[name]; dup {
-			// yaml.v3 refuses a duplicate mapping key when it decodes into a
-			// Go map, but this is a Node walk: two keys that are different
-			// strings and one credential would otherwise be one entry
-			// silently replacing another, which is a document no writer
-			// produces and no reader may guess at.
+		// yaml.v3 refuses a duplicate mapping key when it decodes into a Go
+		// map, but this is a Node walk: two keys that are different strings
+		// and one credential would otherwise be one entry silently replacing
+		// another, which is a document no writer produces and no reader may
+		// guess at.
+		//
+		// What "one credential" means is read off the KIND, because the two
+		// kinds do not share a namespace. The App key is one document key
+		// (CredentialKey answers KindGitHubApp for exactly one spelling), so a
+		// second github-app-key is the duplicate. A model credential is one
+		// NAME, which two spellings may carry (claude-oauth-token and
+		// claude-oauth-token-alice are different names, but
+		// claude-oauth-token-github-app-key resolves to "github-app-key"), so
+		// the model family is keyed on the resolved name.
+		//
+		// The two families do NOT collide even though a name can be the same
+		// string: "github-app-key" is the App key's document key and may also
+		// be an account's resolved name, and a document holding both is a
+		// legal document (the published schema admits both keys) with two
+		// different credentials in it. Keying them into one map would refuse
+		// it with ErrBundleUnknownKey — a false diagnosis of a valid
+		// document, and the loader disagreeing with the schema it publishes.
+		if kind == KindGitHubApp {
+			if b.appKey >= 0 {
+				return nil, bundleErr(ErrBundleUnknownKey, k.Value)
+			}
+		} else if _, dup := b.byName[name]; dup {
 			return nil, bundleErr(ErrBundleUnknownKey, k.Value)
 		}
 		if v.Kind != yaml.ScalarNode || v.Tag != "!!str" {
@@ -419,8 +527,12 @@ func ParseBundle(raw []byte) (*Bundle, error) {
 		if v.Value == "" || len(v.Value) > MaxBundleValueBytes {
 			return nil, bundleErr(ErrBundleBadValue, k.Value)
 		}
-		b.byName[name] = len(b.entries)
-		b.entries = append(b.entries, Entry{Name: name, Tier: tier, Key: k.Value, value: secret{value: v.Value}})
+		if kind == KindGitHubApp {
+			b.appKey = len(b.entries)
+		} else {
+			b.byName[name] = len(b.entries)
+		}
+		b.entries = append(b.entries, Entry{Kind: kind, Name: name, Tier: tier, Key: k.Value, value: secret{value: v.Value}})
 	}
 	if len(b.entries) == 0 {
 		return nil, bundleErr(ErrBundleEmpty, "")

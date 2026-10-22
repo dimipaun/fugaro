@@ -166,6 +166,13 @@ type Config struct {
 	Policy PolicyReader
 	// State is the cascade's shared state under creds/.
 	State creds.Store
+	// Audit is C1.13's auditor: the one writer of the service's audit lines,
+	// and the seam the service's own redaction is armed at (WithAuditScrub).
+	// Every act of this service that touches a credential is recorded through
+	// it — a mint (C2.1) writes its line here — and an act that cannot be
+	// audited is not made (D143), so NewServer refuses a service without one
+	// rather than building one whose mints could only refuse.
+	Audit *Auditor
 	// Kills reads the operator's two stop switches.
 	Kills KillReader
 	// DB is the one database write the service makes outside the cascade: the
@@ -302,6 +309,13 @@ func NewServer(cfg Config) (*Server, error) {
 	if cfg.Kills == nil {
 		return nil, errors.New("credsvc: the service cannot read the stop switches")
 	}
+	if cfg.Audit == nil {
+		// C1.13: an issuance that cannot be audited is not made. A service with
+		// no auditor is a service whose every mint would refuse, so it is
+		// refused here — where an operator sees it at startup — rather than
+		// discovered as a run that halts.
+		return nil, errors.New("credsvc: the service has no auditor, so an issuance it made could not be audited")
+	}
 	if cfg.DB == nil {
 		return nil, errors.New("credsvc: the service cannot remove an ended run's placement")
 	}
@@ -361,14 +375,29 @@ func NewServer(cfg Config) (*Server, error) {
 // The order of the checks is the order of their cost and of their authority:
 // the route, then the request as the contract reads it, then the two
 // identities, then the binding between them, then the operator's stop flag,
-// then the bundle and the policy, and only then the cascade.
+// then the policy and the request itself, and only then the bundle and the
+// cascade.
+//
+// The request's own check is deliberately before the bundle (the C1.11
+// follow-up): the bundle is the one document that holds every credential, and a
+// request the gateway would refuse — a model the project does not allow, a
+// server tool, a shape the budget cannot bound — must be refused without a
+// credential ever being read. The policy is read first because the check needs
+// it: it is a policy read, not a credential, and a policy that cannot be read
+// refuses the call either way.
+//
+// Two routes share that order, and the mint leaves it after the stop flag: the
+// mint's whole admission is the two identities, the binding and the switch
+// (C2.1, D145), and the policy, the cascade and the shape of a model call are
+// none of its business.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	if r.Method != http.MethodPost || (r.URL.Path != MessagesPath && r.URL.Path != CountTokensPath) {
+	if r.Method != http.MethodPost || (r.URL.Path != MessagesPath && r.URL.Path != CountTokensPath && r.URL.Path != MintPath) {
 		// There is no other route, and in particular no admin route: D143's
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
-		s.refuse(w, http.StatusNotFound, "not_found", "this service serves POST "+MessagesPath+" and "+CountTokensPath)
+		s.refuse(w, http.StatusNotFound, "not_found",
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+" and "+MintPath)
 		return
 	}
 	req, err := RequestFromHTTP(r)
@@ -412,6 +441,55 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"the credentials service is stopped by the "+which+" kill switch")
 		return
 	}
+	if r.URL.Path == MintPath {
+		// The mint (C2.1, D145). Everything above it is its admission and
+		// nothing below it is: the run identity and the job's own token have
+		// been verified, the binding between them has been made — which is what
+		// fixes the repository the token is scoped to — and the operator's stop
+		// flag has been read, so a stopped service mints nothing. It reads the
+		// bundle itself, because the App key is in it, and it reads no policy
+		// and consults no cascade: an installation token is not a model
+		// credential and no tier or admission has anything to say about it.
+		s.mint(ctx, w, r, id, ja)
+		return
+	}
+	// The project's policy, and the request itself, are read before the bundle:
+	// the request's check needs the policy's allow-list, and neither is a
+	// credential. A request the gateway's own rules refuse is answered here —
+	// before the one document that holds every credential is read at all.
+	shared, found, err := s.cfg.Policy.Shared(ctx)
+	if err != nil || !found {
+		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, "the project's policy could not be read")
+		return
+	}
+	cl, err := readCall(r, []string{req.RunIDToken, req.JobIDToken})
+	if err != nil {
+		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, err.Error())
+		return
+	}
+	if r.URL.Path == MessagesPath {
+		// Only the Messages path is held to these rules. The token count's body
+		// is not a Messages body — it carries no max_tokens — and the gateway
+		// does not hold it to them either (its own forwardFree), so a check
+		// applied to it would refuse calls the gateway forwards.
+		refusal, err := s.requestRefusal(shared, cl.body)
+		if err != nil {
+			// The project's own prices could not be read: a state the caller
+			// cannot fix, and never a refusal of what it sent.
+			s.refuse(w, StatusUnavailable, ErrorStateUnavailable, "the project's model prices could not be read")
+			return
+		}
+		if refusal != "" {
+			// The gateway's own sentence, and the one thing this service's
+			// answer adds to it: the refusal happened before any credential was
+			// read. The sentence does quote the request's own model ID and the
+			// tool type or field it objects to — that is what makes it
+			// actionable — but no credential value is anywhere in it: none was
+			// touched.
+			s.refuse(w, StatusRequestRefused, ErrorRequestRefused, requestRefused+refusal)
+			return
+		}
+	}
 	b, err := s.cfg.Bundles.Load(ctx)
 	if err != nil {
 		// Fail closed, and name the CLASS of what is wrong without ever
@@ -421,24 +499,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, BundleRefusal(err))
 		return
 	}
-	shared, found, err := s.cfg.Policy.Shared(ctx)
-	if err != nil || !found {
-		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, "the project's policy could not be read")
-		return
-	}
 	cands, notAdmitted, err := s.candidates(ctx, id.Slug, ja.Repo, b)
 	if err != nil {
 		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, "the repository's admissions could not be read")
 		return
 	}
-	cl, err := readCall(r, []string{req.RunIDToken, req.JobIDToken})
-	if err != nil {
-		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, err.Error())
-		return
-	}
 	sel := &creds.Selector{Store: s.cfg.State, Settings: settingsOf(shared), Now: s.now}
 	s.forward(ctx, w, cl, sel, id, b, cands, notAdmitted)
 }
+
+// requestRefused is what every request refusal begins with: the gateway's own
+// sentence follows it. A caller reading it learns the two things that are not
+// in the gateway's sentence — that this is the request being refused and that
+// the refusal came before any credential was read — and no credential value is
+// in either.
+const requestRefused = "the request is refused before any credential is read: "
 
 // refuse writes one typed refusal. It is the only way this service answers a
 // call it does not forward, so every refusal carries a type the runner

@@ -72,12 +72,16 @@ func (s *scriptedSource) readCount() int {
 	return s.reads
 }
 
-// bundleDoc is a valid document holding the two credential families.
+// bundleDoc is a valid document holding every credential the platform
+// defines: the two model families and the GitHub App's private key (C2.1).
+// The App key is in it on purpose — it is in the document and NOT in the
+// cascade, and a document without one would not show that.
 func bundleDoc(t *testing.T) []byte {
 	t.Helper()
 	return []byte("claude-oauth-token: " + fakeCred(t, "default") + "\n" +
 		"claude-oauth-token-alice: " + fakeCred(t, "alice") + "\n" +
-		config.AnthropicSecret + ": " + fakeCred(t, "paid") + "\n")
+		config.AnthropicSecret + ": " + fakeCred(t, "paid") + "\n" +
+		config.GitHubAppKeySecret + ": " + fakeCred(t, "appkey") + "\n")
 }
 
 // TestBundleLoadsOncePerCall: one read of the container answers a whole
@@ -103,8 +107,8 @@ func TestBundleLoadsOncePerCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got := b.Names(); len(got) != 3 {
-		t.Fatalf("names = %v, want the three credentials of the document", got)
+	if got := b.Names(); len(got) != 4 {
+		t.Fatalf("names = %v, want the four credentials of the document", got)
 	}
 	// Every credential of one call, and every credential of the next call
 	// inside the TTL, comes from the one read.
@@ -180,6 +184,76 @@ func TestBundleUnknownKeyRefused(t *testing.T) {
 	// nothing else.
 	if _, err := ParseBundle(bundleDoc(t)); err != nil {
 		t.Fatalf("the valid document was refused: %v", err)
+	}
+}
+
+// TestBundleHoldsTheAppKeyAndAnAccountNamedAfterIt: the App key and the
+// account family are two namespaces that can spell the same string, so a
+// document may legally hold both config.GitHubAppKeySecret and the account
+// config.ClaudeAccountSecret(config.GitHubAppKeySecret) — the latter resolves
+// to the name "github-app-key", which is the former's document key. Both keys
+// are legal (the published schema admits both), so the document loads, and the
+// two entries stay tellable apart: AppKey answers the key by its kind, Lookup
+// answers the account by its name, and the cascade is offered the account
+// alone.
+//
+// This is the case a single by-name index gets wrong: it would refuse a valid
+// document with ErrBundleUnknownKey, which is both a false diagnosis and the
+// loader disagreeing with the schema it publishes.
+func TestBundleHoldsTheAppKeyAndAnAccountNamedAfterIt(t *testing.T) {
+	doc := []byte(config.GitHubAppKeySecret + ": " + fakeCred(t, "the-app-key") + "\n" +
+		config.ClaudeAccountSecret(config.GitHubAppKeySecret) + ": " + fakeCred(t, "the-account") + "\n")
+	b, err := ParseBundle(doc)
+	if err != nil {
+		t.Fatalf("ParseBundle(%q) = %v; the document holds two legal keys", doc, err)
+	}
+	if b.Len() != 2 {
+		t.Fatalf("the bundle holds %d entries, want 2 (%v)", b.Len(), b.Names())
+	}
+	app, ok := b.AppKey()
+	if !ok {
+		t.Fatal("AppKey found nothing, and the document holds the key")
+	}
+	if app.Kind != KindGitHubApp || app.Key != config.GitHubAppKeySecret {
+		t.Errorf("AppKey() = %+v, want the github-app entry keyed %q", app, config.GitHubAppKeySecret)
+	}
+	if !strings.HasSuffix(app.Value(), "the-app-key-not-a-real-credential") {
+		t.Errorf("AppKey() answered the account, not the key: %q", app.Value())
+	}
+	acct, ok := b.Lookup(config.GitHubAppKeySecret)
+	if !ok {
+		t.Fatal("Lookup found no account named after the App key")
+	}
+	if acct.Kind != KindModel || acct.Tier != creds.TierA || acct.Key != config.ClaudeAccountSecret(config.GitHubAppKeySecret) {
+		t.Errorf("Lookup(%q) = %+v, want the tier-A account keyed %q", config.GitHubAppKeySecret, acct, config.ClaudeAccountSecret(config.GitHubAppKeySecret))
+	}
+	if !strings.HasSuffix(acct.Value(), "the-account-not-a-real-credential") {
+		t.Errorf("Lookup answered the App key, not the account: %q", acct.Value())
+	}
+	// The cascade sees the account and not the key: one credential, and the
+	// kind is what excludes the other.
+	if got := b.Credentials(); len(got) != 1 || got[0] != (creds.Credential{Name: config.GitHubAppKeySecret, Tier: creds.TierA}) {
+		t.Errorf("Credentials() = %v, want the account alone", got)
+	}
+
+	// The other direction: what is still a duplicate. A repeated App key is
+	// one credential written twice, and two spellings of one account are one
+	// credential written twice — both are documents no writer produces, and
+	// both are refused rather than silently collapsed.
+	for _, tc := range []struct {
+		name string
+		doc  string
+	}{
+		{"the app key twice", config.GitHubAppKeySecret + ": " + fakeCred(t, "x") + "\n" + config.GitHubAppKeySecret + ": " + fakeCred(t, "y") + "\n"},
+		{"two spellings of one account", config.ClaudeOAuthToken + ": " + fakeCred(t, "x") + "\n" +
+			config.ClaudeAccountSecret(config.DefaultClaudeAccount) + ": " + fakeCred(t, "y") + "\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParseBundle([]byte(tc.doc))
+			if !errors.Is(err, ErrBundleUnknownKey) {
+				t.Fatalf("ParseBundle(%q) = %v, %v; want ErrBundleUnknownKey", tc.doc, got, err)
+			}
+		})
 	}
 }
 
@@ -329,7 +403,8 @@ func TestBundleValueNeverInErrorOrLog(t *testing.T) {
 		buf.String(),
 	}
 	for _, s := range rendered {
-		if strings.Contains(s, fakeCred(t, "default")) || strings.Contains(s, fakeCred(t, "paid")) {
+		if strings.Contains(s, fakeCred(t, "default")) || strings.Contains(s, fakeCred(t, "paid")) ||
+			strings.Contains(s, fakeCred(t, "appkey")) {
 			t.Errorf("a rendering of the bundle carries a credential: %s", s)
 		}
 	}
@@ -496,8 +571,19 @@ func TestBundleSchemaMatchesTheLoader(t *testing.T) {
 		name string
 		doc  string
 	}{
-		{"the two families", string(bundleDoc(t))},
+		{"every credential the platform defines", string(bundleDoc(t))},
 		{"the paid key alone", config.AnthropicSecret + ": " + fakeCred(t, "x") + "\n"},
+		{"the app key alone", config.GitHubAppKeySecret + ": " + fakeCred(t, "x") + "\n"},
+		// The App key AND an account whose resolved name is the same string:
+		// two different credentials that share a name, both legal, and the
+		// schema admits both — so the loader has to as well. It is the case a
+		// duplicate check keyed on the resolved name gets wrong (it would
+		// refuse a valid document with ErrBundleUnknownKey, the loader
+		// disagreeing with the schema it publishes).
+		{"the app key and an account named after it", config.GitHubAppKeySecret + ": " + fakeCred(t, "x") + "\n" +
+			config.ClaudeAccountSecret(config.GitHubAppKeySecret) + ": " + fakeCred(t, "y") + "\n"},
+		{"the app key with a credential-shaped key", "github-app-key-pem: " + fakeCred(t, "x") + "\n"},
+		{"a key that is nearly the app key", "github-app-keys: " + fakeCred(t, "x") + "\n"},
 		{"the exact count bound", many.String()},
 		{"an unknown key", "antropic-api-key: " + fakeCred(t, "x") + "\n"},
 		{"an account name outside the rule", "claude-oauth-token-9alice: " + fakeCred(t, "x") + "\n"},
@@ -530,6 +616,11 @@ func TestBundleSchemaMatchesTheLoader(t *testing.T) {
 // TestBundleCredentialKeyIsTheCascadesSpelling: the document's key is the
 // secret's logical name and the credential's name is the account's, which is
 // what the policy's accounts block, the marks and the wire contract speak.
+//
+// It is also where the App key's exclusion is pinned from the document side
+// (C2.1): the key is loaded and is reachable through AppKey, and it is in
+// NEITHER Credentials (what the cascade is offered) nor a candidate — a bundle
+// that holds it holds one credential fewer than it holds entries.
 func TestBundleCredentialKeyIsTheCascadesSpelling(t *testing.T) {
 	b, err := ParseBundle(bundleDoc(t))
 	if err != nil {
@@ -568,6 +659,27 @@ func TestBundleCredentialKeyIsTheCascadesSpelling(t *testing.T) {
 	if _, ok := b.Lookup("nobody"); ok {
 		t.Error("Lookup found a credential the document does not hold")
 	}
+	// The App key: in the document, findable by its KIND, and not a model
+	// credential. Lookup is the model family's accessor and does not answer it,
+	// because "github-app-key" is a name a model account may also carry.
+	app, ok := b.AppKey()
+	if !ok {
+		t.Fatalf("AppKey() found nothing, and the document holds %q", config.GitHubAppKeySecret)
+	}
+	if app.Kind != KindGitHubApp || app.Tier != "" || app.Key != config.GitHubAppKeySecret {
+		t.Errorf("the App key's entry = %+v, want the github-app kind, no tier, keyed %q", app, config.GitHubAppKeySecret)
+	}
+	if app.Value() == "" {
+		t.Error("the App key's entry has no value")
+	}
+	if _, ok := b.Lookup(config.GitHubAppKeySecret); ok {
+		t.Errorf("Lookup(%q) answered, and it answers model credentials only", config.GitHubAppKeySecret)
+	}
+	for _, c := range got {
+		if c.Name == config.GitHubAppKeySecret {
+			t.Errorf("Credentials() offers the App key (%v) to the cascade", c)
+		}
+	}
 }
 
 // TestBundleCredentialKeyHoldsTheAccountNameRuleInBothHalves: CredentialKey is
@@ -592,36 +704,45 @@ func TestBundleCredentialKeyHoldsTheAccountNameRuleInBothHalves(t *testing.T) {
 		name     string
 		key      string
 		wantName string
+		wantKind Kind
 		wantTier creds.Tier
 		wantOK   bool
 	}{
-		{name: "the paid key", key: config.AnthropicSecret, wantName: config.AnthropicSecret, wantTier: creds.TierB, wantOK: true},
-		{name: "the default account", key: config.ClaudeOAuthToken, wantName: config.DefaultClaudeAccount, wantTier: creds.TierA, wantOK: true},
-		{name: "a named account", key: config.ClaudeAccountSecret("alice"), wantName: "alice", wantTier: creds.TierA, wantOK: true},
-		{name: "a dash inside a name", key: config.ClaudeAccountSecret("acme-personal"), wantName: "acme-personal", wantTier: creds.TierA, wantOK: true},
-		{name: "the longest name the rule admits", key: config.ClaudeAccountSecret(strings.Repeat("a", config.MaxClaudeAccountNameLen)), wantName: strings.Repeat("a", config.MaxClaudeAccountNameLen), wantTier: creds.TierA, wantOK: true},
+		{name: "the paid key", key: config.AnthropicSecret, wantName: config.AnthropicSecret, wantKind: KindModel, wantTier: creds.TierB, wantOK: true},
+		{name: "the default account", key: config.ClaudeOAuthToken, wantName: config.DefaultClaudeAccount, wantKind: KindModel, wantTier: creds.TierA, wantOK: true},
+		{name: "a named account", key: config.ClaudeAccountSecret("alice"), wantName: "alice", wantKind: KindModel, wantTier: creds.TierA, wantOK: true},
+		{name: "a dash inside a name", key: config.ClaudeAccountSecret("acme-personal"), wantName: "acme-personal", wantKind: KindModel, wantTier: creds.TierA, wantOK: true},
+		{name: "the longest name the rule admits", key: config.ClaudeAccountSecret(strings.Repeat("a", config.MaxClaudeAccountNameLen)), wantName: strings.Repeat("a", config.MaxClaudeAccountNameLen), wantKind: KindModel, wantTier: creds.TierA, wantOK: true},
 		{name: "a name one byte over the bound", key: config.ClaudeAccountSecret(strings.Repeat("a", config.MaxClaudeAccountNameLen+1)), wantOK: false},
 		{name: "a dash-heavy name the regex alone admits", key: config.ClaudeAccountSecret("a" + strings.Repeat("-a", 30)), wantOK: false},
 		{name: "a name starting with a digit", key: config.ClaudeAccountSecret("9alice"), wantOK: false},
 		{name: "a name ending in a dash", key: config.ClaudeAccountSecret("alice-"), wantOK: false},
 		{name: "an upper-case name", key: config.ClaudeAccountSecret("Alice"), wantOK: false},
 		{name: "an empty suffix", key: config.ClaudeOAuthTokenPrefix, wantOK: false},
-		{name: "the reserved name, spelled the long way", key: config.ClaudeAccountSecret(config.DefaultClaudeAccount), wantName: config.DefaultClaudeAccount, wantTier: creds.TierA, wantOK: true},
+		{name: "the reserved name, spelled the long way", key: config.ClaudeAccountSecret(config.DefaultClaudeAccount), wantName: config.DefaultClaudeAccount, wantKind: KindModel, wantTier: creds.TierA, wantOK: true},
 		{name: "a name outside both families", key: "anthropic-oauth-token", wantOK: false},
+		// The App key is the one key that is not a model credential: it has a
+		// name the mint and the audit line speak, and no tier at all.
+		{name: "the app key", key: config.GitHubAppKeySecret, wantName: config.GitHubAppKeySecret, wantKind: KindGitHubApp, wantTier: "", wantOK: true},
+		{name: "the app key under the account prefix", key: config.ClaudeAccountSecret(config.GitHubAppKeySecret), wantName: config.GitHubAppKeySecret, wantKind: KindModel, wantTier: creds.TierA, wantOK: true},
+		{name: "an app key that is not the app key", key: "github-app-private-key", wantOK: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			gotName, gotTier, ok := CredentialKey(tc.key)
+			gotName, gotKind, gotTier, ok := CredentialKey(tc.key)
 			if ok != tc.wantOK {
 				t.Fatalf("CredentialKey(%q) ok = %v, want %v", tc.key, ok, tc.wantOK)
 			}
 			if !ok {
-				if gotName != "" || gotTier != "" {
-					t.Errorf("CredentialKey(%q) = (%q, %q) for a key it refused, want empty", tc.key, gotName, gotTier)
+				if gotName != "" || gotKind != "" || gotTier != "" {
+					t.Errorf("CredentialKey(%q) = (%q, %q, %q) for a key it refused, want empty", tc.key, gotName, gotKind, gotTier)
 				}
 				return
 			}
 			if gotName != tc.wantName {
 				t.Errorf("CredentialKey(%q) name = %q, want %q", tc.key, gotName, tc.wantName)
+			}
+			if gotKind != tc.wantKind {
+				t.Errorf("CredentialKey(%q) kind = %q, want %q", tc.key, gotKind, tc.wantKind)
 			}
 			if gotTier != tc.wantTier {
 				t.Errorf("CredentialKey(%q) tier = %q, want %q", tc.key, gotTier, tc.wantTier)

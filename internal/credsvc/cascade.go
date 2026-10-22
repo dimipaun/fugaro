@@ -31,10 +31,15 @@ import (
 // installation whose bundle holds no tier-A credential never consults an
 // admission at all (Global Constraint 4's drop, if it had applied).
 func (s *Server) candidates(ctx context.Context, slug, canonical string, b *Bundle) ([]creds.Credential, []Tried, error) {
-	entries := b.Entries()
+	// b.Credentials() and never b.Entries(): the bundle holds the GitHub App
+	// key as well (C2.1), and it is not a candidate for anything. A cascade
+	// that offered it would attach an App private key to an Anthropic call as
+	// the caller's credential, so the filter is the accessor's rather than
+	// this loop's.
+	all := b.Credentials()
 	hasA := false
-	for _, e := range entries {
-		if e.Tier == creds.TierA {
+	for _, c := range all {
+		if c.Tier == creds.TierA {
 			hasA = true
 			break
 		}
@@ -47,14 +52,14 @@ func (s *Server) candidates(ctx context.Context, slug, canonical string, b *Bund
 			return nil, nil, err
 		}
 	}
-	out := make([]creds.Credential, 0, len(entries))
+	out := make([]creds.Credential, 0, len(all))
 	var skipped []Tried
-	for _, e := range entries {
-		if e.Tier == creds.TierA && !admitted[e.Name] {
-			skipped = append(skipped, Tried{Name: e.Name, Tier: wireTier(e.Tier), Reason: ReasonNotAdmitted})
+	for _, c := range all {
+		if c.Tier == creds.TierA && !admitted[c.Name] {
+			skipped = append(skipped, Tried{Name: c.Name, Tier: wireTier(c.Tier), Reason: ReasonNotAdmitted})
 			continue
 		}
-		out = append(out, creds.Credential{Name: e.Name, Tier: e.Tier})
+		out = append(out, c)
 	}
 	return out, skipped, nil
 }

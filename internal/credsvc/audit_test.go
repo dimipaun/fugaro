@@ -80,7 +80,14 @@ func (h *recordHandler) WithGroup(string) slog.Handler { return h }
 // written from the server's goroutine while the test reads it.
 func auditLines(t *testing.T, buf interface{ String() string }) []map[string]any {
 	t.Helper()
-	raw := buf.String()
+	return parseAuditLines(t, buf.String())
+}
+
+// parseAuditLines is auditLines for a test whose audit lines were written to
+// somewhere other than a plain buffer — the service fixture's own log buffer,
+// which the handler writes to through a mutex (server_test.go).
+func parseAuditLines(t *testing.T, raw string) []map[string]any {
+	t.Helper()
 	if raw == "" {
 		t.Fatal("the auditor wrote no line")
 	}
