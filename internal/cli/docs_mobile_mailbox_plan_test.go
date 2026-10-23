@@ -176,9 +176,11 @@ func isPlanPath(p string) bool {
 // are checked like every other cited path, and T2's two (`mac.go`, the verify
 // half of the tag and the inbound gate, and `internal/mailbox/keychain`, the
 // item-name reader), T3's two (`lease.go` and `shared/lease/parity.test.js`) and
-// T4's (`internal/mailbox/ledger.go`; its `ledger_test.go` is cited by the plan
-// too and is checked like any other path now that it exists) left it the same
-// way. The remaining entries are the tasks still unbuilt — T2a's
+// T4's (`internal/mailbox/ledger.go`; its `ledger_test.go` was written bare in
+// the plan's T4 Files line, which `planPathRE` could never collect — a citation
+// with no directory prefix is not a path — so the plan now spells it
+// `internal/mailbox/ledger_test.go` and it is checked like any other cited path)
+// left it the same way. The remaining entries are the tasks still unbuilt — T2a's
 // `mac_sign_test.go` and the signing half of `mac.go`, T5's command, T6's
 // runner, T7's sweeper and T8's corpus — and each of them must stay absent until
 // its own task lands.

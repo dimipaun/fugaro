@@ -304,15 +304,34 @@ type LedgerOptions struct {
 	BeforeRename func(tmpPath string) error
 }
 
-// maxLedgerRecordBytes bounds one record **as this package writes it**: the five
-// fields in the widest spelling the ledger can hold — both strings at the
-// schema's bounds, `kind` and `status` at their longest words, `at` as wide as an
-// int64 can be rather than as TimeMax — plus the comma that separates it from the
-// next. A code unit of either string is at most three bytes of JSON: the two
-// validators refuse control characters and U+2028/U+2029, which are the only ones
-// an encoder escapes to six (`\uXXXX`), and the widest unescaped character
-// (U+4E00) is three bytes of UTF-8.
-const maxLedgerRecordBytes = len(`{"sender":"","id":"","at":-9223372036854775808,"kind":"command","status":"accepted"},`) + 3*SenderMax + 3*IDMax
+// maxLedgerRecordBytes bounds one record **as any encoder of a ledger this
+// reader accepts can write it**: the five fields in the widest spelling the
+// ledger can hold — both strings at the schema's bounds, `kind` and `status` at
+// their longest words, `at` as wide as an int64 can be rather than as TimeMax —
+// plus the comma that separates it from the next. A UTF-16 code unit of either
+// string is at most six bytes of JSON, `\uXXXX`, and that six — not three — is
+// the figure the bound needs.
+//
+// Six because the two ends of this ledger do not escape the same characters:
+//
+//   - `commit` marshals with json.Marshal, whose default HTML escaping writes
+//     `<`, `>` and `&` as `<`, `>`, `&` — six bytes per code
+//     unit — and those three *are* legal in a sender and an `id`: stringField
+//     (message.go) refuses control characters, 0x7f and U+2028/U+2029, and
+//     keyField refuses only `% . $ # [ ] /`, so a sender or an id can be all
+//     `<>&` at full length and `commit` really does write six bytes for each.
+//   - `JSON.stringify` (what the JS end would write a ledger with; the module
+//     itself `readSeen`s a state and keeps no file, so this file is the only
+//     writer today) does *not* escape those three, but it does escape control
+//     characters, `"`, `\` and lone surrogates to `\uXXXX` — and this reader
+//     admits strings the message validators would refuse, exactly as the
+//     module's readSeen does: validEntry checks the schema's *lengths*, not its
+//     character rules. So a file written by the other end can hold escaped
+//     controls too, at the same six bytes per unit.
+//
+// Assuming three — the widest unescaped UTF-8 character, U+4E00 — was this
+// bound's bug: TestLedgerReadBoundCoversTheWritersWorstCase is that record.
+const maxLedgerRecordBytes = len(`{"sender":"","id":"","at":-9223372036854775808,"kind":"command","status":"accepted"},`) + 6*SenderMax + 6*IDMax
 
 // maxLedgerHeaderBytes bounds the document's own fields, `at` spelled as wide as
 // an int64 can be a second time.
@@ -333,7 +352,10 @@ const maxLedgerHeaderBytes = len(`{"now":-9223372036854775808,"evictedThrough":-
 //
 // A hostile file past the bound is still refused from its size without being
 // read, so the bound is also what a file must exceed to get this process to
-// allocate for it.
+// allocate for it. At MaxMaxSeen records at their widest the bound is ~189 MB,
+// which is what the module's own largest cap costs; a consumer at the default
+// MaxSeen (1_024) writes a ledger of a couple of megabytes, and the bound is
+// nowhere near a limit it meets in practice.
 const maxLedgerBytes = maxLedgerHeaderBytes + maxLedgerRecordBytes*MaxMaxSeen
 
 // tmpPattern is the temporary file's name inside the destination directory: the
@@ -687,16 +709,26 @@ func (l *Ledger) Ack(now int64) (PerformResult, error) {
 // answers the new state and what happened — a refusal, a duplicate, or an
 // accepted record — and it writes nothing.
 //
-// The order of the checks is the rule, and it is `shared/mailbox`'s own:
-// the message's own time first (the ledger's floor, then the ceiling, then the
-// future bound, then the kind's window), then the ledger, then the watermark,
-// then the cap, then the sender's quota.
+// The order of the checks is the rule, and it is `shared/mailbox`'s own: the
+// event is read first — its `now` as a time, then its kind — because readEvent
+// answers invalid-now and unknown-kind before anything else can be said about
+// the event; then stepUnguarded's two `now` guards; then the message's own time
+// (the ledger's floor, then the ceiling, then the future bound, then the kind's
+// window), which is the handler's validateMessage; then the ledger, then the
+// watermark, then the cap, then the sender's quota.
 func (l *Ledger) deliver(state ledgerState, msg *Message, kind string, now int64) (ledgerState, PerformResult) {
-	if refusal := l.readNow(state, now); refusal != nil {
+	if refusal := l.readNowValue(now); refusal != nil {
 		return state, PerformResult{Refusal: refusal}
 	}
 	if kind != KindCommand && kind != KindPrompt {
 		return state, PerformResult{Refusal: refuse(CodeUnknownKind, "kind")}
+	}
+	// The kind is read before the guards below, which is the module's order:
+	// readEvent validates the kind, stepUnguarded applies the two `now` guards
+	// afterwards. Answering now-went-backwards for an event whose kind is not a
+	// kind would be this file refusing for a fact the event does not have.
+	if refusal := l.readNowOrder(state, now); refusal != nil {
+		return state, PerformResult{Refusal: refusal}
 	}
 	if msg == nil {
 		// The gate hands this function a checked message and never a nil one
@@ -802,10 +834,31 @@ func (l *Ledger) ack(state ledgerState, now int64) (ledgerState, PerformResult) 
 // it "outside the window" would mean nothing, which is what the eviction
 // argument rests on — and one further ahead than MaxForwardJumpMs would refuse
 // every later honest `now` for as long as it claimed.
+// readNow is the two `now` checks as one, for a caller that has no event to read
+// first: the value, then the order. The `now` a ledger is *asked about* is read
+// this way (`Ack`); the `now` an event carries is read in two steps, because the
+// module reads it in two steps — its kind is validated between them.
 func (l *Ledger) readNow(state ledgerState, now int64) *Refusal {
+	if refusal := l.readNowValue(now); refusal != nil {
+		return refusal
+	}
+	return l.readNowOrder(state, now)
+}
+
+// readNowValue is readEvent's own reading of `now`: a `now` that is not a time
+// is not a ledger with a bad clock, it is an event that cannot be read at all,
+// and that is answered before anything else the event says.
+func (l *Ledger) readNowValue(now int64) *Refusal {
 	if now < 1 || now > TimeMax {
 		return refuse(CodeInvalidNow, "now")
 	}
+	return nil
+}
+
+// readNowOrder is stepUnguarded's pair of ordering guards, which the module
+// applies after the event has been read: a `now` that goes backwards is a clock
+// that moved, and one that jumps further than a year is not a clock at all.
+func (l *Ledger) readNowOrder(state ledgerState, now int64) *Refusal {
 	if state.now == 0 {
 		// A ledger that has never been written has no clock of its own yet.
 		return nil

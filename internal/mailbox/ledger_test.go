@@ -33,7 +33,7 @@ import (
 // *outcomes* for a schedule are T8's corpus; this file pins the rules the ledger
 // applies on its own.
 //
-// **Six mutations were run and watched fail**, and they are the guards this
+// **Nine mutations were run and watched fail**, and they are the guards this
 // file is security-relevant for:
 //
 //   - Move the commit after the `perform` call in ledger.go (T4's red step, and
@@ -50,13 +50,29 @@ import (
 //     that re-performs a phone's action, so it is the one that matters most.
 //   - Drop the held-pair check from `deliver`: TestLedgerDuplicateIsNotActedOnTwice
 //     fails with the action run twice, and with two records for one pair.
-//   - Put the read bound back to a chosen 4 MiB (the review's finding, and the
-//     fail-closed dead end): TestLedgerAtTheHighestCapRoundTrips fails — the
+//   - Put the read bound back to a chosen 4 MiB (the first review's finding, and
+//     the fail-closed dead end): TestLedgerAtTheHighestCapRoundTrips fails — the
 //     largest ledger the module's cap allows is 97,500,076 bytes, a ledger at
 //     that cap is 9,000,049, and the bound was 4,194,304.
-//   - Compare `sender` and `id` with Go's `<` instead of by code unit (the
+//   - Compare `sender` and `id` with Go's `<` instead of by code unit (the first
 //     review's second finding): TestLedgerOrdersKeysByUTF16CodeUnit fails with
 //     a ledger in the module's own order refused `unsorted-seen`.
+//   - Compute the bound from **three** bytes per code unit (the second review's
+//     HIGH: json.Marshal escapes `<`, `>`, `&` to six, and both fields may carry
+//     them): TestLedgerReadBoundCoversTheWritersWorstCase fails with "the widest
+//     record the schema allows is 1874 bytes of JSON and maxLedgerRecordBytes is
+//     985", and with the ledger at MaxMaxSeen needing 187,500,076 against a
+//     98,500,076 bound.
+//   - Apply the two `now` guards before reading the kind (the second review's
+//     first LOW): TestLedgerReadsTheEventKindBeforeTheNowGuards fails on the two
+//     cases the review named — an unknown kind with an earlier `now` answers
+//     `now-went-backwards` and one with a far-ahead `now` answers `now-jumped`,
+//     where `readEvent` answers `unknown-kind` for both.
+//   - Drop the `acked` check from `evict` (the second review's second LOW, and
+//     what makes the ack -> evict path's negative control real):
+//     TestLedgerAckedRecordIsEvictedByALaterPass fails with "the ledger holds
+//     [m-2], and an acted record is work still owed", and with the watermark
+//     moved to 1699999999000 for a record that was never acked.
 //
 // Every one restored; see the pull request.
 
@@ -899,6 +915,109 @@ func TestLedgerAckRetiresARecord(t *testing.T) {
 	}
 }
 
+// ledgerIDs is the ids the ledger holds, in the ledger's own order.
+func ledgerIDs(l *Ledger) []string {
+	ids := []string{}
+	for _, entry := range l.Entries() {
+		ids = append(ids, entry.ID)
+	}
+	return ids
+}
+
+// TestLedgerAckedRecordIsEvictedByALaterPass is the ack -> evict path end to
+// end, through the steps that really produce it: a delivery is acted on, its
+// answer is acked — a second commit, and the only thing that makes a record
+// forgettable — and a later pass, whose own delivery reaches past the horizon,
+// drops it and raises the watermark. Nothing here is hand-written: the fixture
+// TestLedgerEvictsOnlyAckedRecordsPastTheHorizon needs is produced by the ledger
+// itself, so this is the path two of a consumer's passes take rather than the
+// shape a test author typed into a file.
+//
+// The other half is the negative control the rule needs: the same jump with the
+// record *acted* rather than acked forgets nothing, because an acted record is
+// work this consumer still owes an answer for.
+func TestLedgerAckedRecordIsEvictedByALaterPass(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ledger.json")
+	l := openLedger(t, dir)
+	delivered, err := l.Perform(ledgerMessage("m-1", "mb-a", "hi", testNow-1_000), KindCommand, testNow, nil)
+	if err != nil {
+		t.Fatalf("delivering: %v", err)
+	}
+	if delivered.Outcome != OutcomeActed {
+		t.Fatalf("the delivery answered %+v, and a delivery that is taken is acted on in the same call", delivered)
+	}
+	acked, err := l.Ack(testNow + 1_000)
+	if err != nil {
+		t.Fatalf("acking: %v", err)
+	}
+	if acked.Outcome != OutcomeAcked || acked.Entry.ID != "m-1" {
+		t.Fatalf("acking answered %+v", acked)
+	}
+	// The acked status is on disk and not only in memory: the pass that evicts
+	// reads it back, so this is the state the eviction is decided from.
+	var afterAck ledgerFile
+	if err := json.Unmarshal([]byte(ledgerBytes(t, path)), &afterAck); err != nil {
+		t.Fatalf("reading the ledger: %v", err)
+	}
+	if len(afterAck.Seen) != 1 || afterAck.Seen[0].Status != StatusAcked {
+		t.Fatalf("after the ack the file holds %+v", afterAck.Seen)
+	}
+	if afterAck.EvictedThrough != 0 {
+		t.Errorf("the watermark is %d before anything was evicted", afterAck.EvictedThrough)
+	}
+
+	// The later pass: its own delivery is inside its window, and m-1 — acked, and
+	// now past the horizon — is what it forgets.
+	later := testNow + testHorizonMs + 5_000
+	next, err := l.Perform(ledgerMessage("m-2", "mb-a", "hi", later-1_000), KindCommand, later, nil)
+	if err != nil {
+		t.Fatalf("the later pass: %v", err)
+	}
+	if next.Outcome != OutcomeActed || next.Entry.ID != "m-2" {
+		t.Fatalf("the later pass answered %+v", next)
+	}
+	if ids := ledgerIDs(l); strings.Join(ids, ",") != "m-2" {
+		t.Errorf("the ledger holds %v, and only the acked record past the horizon may be forgotten", ids)
+	}
+	var afterEvict ledgerFile
+	if err := json.Unmarshal([]byte(ledgerBytes(t, path)), &afterEvict); err != nil {
+		t.Fatalf("reading the ledger: %v", err)
+	}
+	if afterEvict.EvictedThrough != testNow-1_000 {
+		t.Errorf("the watermark is %d, and the evicted record's `at` is %d", afterEvict.EvictedThrough, testNow-1_000)
+	}
+	// What the forgetting costs: the evicted pair is refused as a replay now that
+	// its record is gone, which is the promise the eviction rule exists to keep.
+	again, err := l.Perform(ledgerMessage("m-1", "mb-a", "hi", testNow-1_000), KindCommand, later, nil)
+	if err != nil {
+		t.Fatalf("redelivering: %v", err)
+	}
+	if again.Refusal == nil || again.Refusal.Code != CodeReplay {
+		t.Errorf("a message the ledger evicted answered %+v, and the module answers replay", again)
+	}
+
+	// The negative control: the same two passes with the record acted and never
+	// acked. The mutation this half pins is dropping `evict`'s status check.
+	other := openLedger(t, t.TempDir())
+	if got, err := other.Perform(ledgerMessage("m-1", "mb-a", "hi", testNow-1_000), KindCommand, testNow, nil); err != nil || got.Outcome != OutcomeActed {
+		t.Fatalf("delivering: %+v, %v", got, err)
+	}
+	if got, err := other.Perform(ledgerMessage("m-2", "mb-a", "hi", later-1_000), KindCommand, later, nil); err != nil || got.Outcome != OutcomeActed {
+		t.Fatalf("the later pass: %+v, %v", got, err)
+	}
+	if ids := ledgerIDs(other); strings.Join(ids, ",") != "m-1,m-2" {
+		t.Errorf("the ledger holds %v, and an acted record is work still owed: the same jump must not forget it", ids)
+	}
+	var unacked ledgerFile
+	if err := json.Unmarshal([]byte(ledgerBytes(t, other.Path())), &unacked); err != nil {
+		t.Fatalf("reading the ledger: %v", err)
+	}
+	if unacked.EvictedThrough != 0 {
+		t.Errorf("the watermark moved to %d for a record that was never acked", unacked.EvictedThrough)
+	}
+}
+
 // TestLedgerNowGuards pins the module's two `now` guards, which are what make
 // the eviction argument sound: a `now` that went backwards would let a window
 // run in reverse — so "outside the window" would mean nothing — and one far
@@ -946,7 +1065,58 @@ func TestLedgerNowGuards(t *testing.T) {
 	}
 }
 
-// TestLedgerUnreadableFileIsRefused is the fail-closed half, and the one that
+// TestLedgerReadsTheEventKindBeforeTheNowGuards pins the order the module reads
+// an event in, and it is the order the file claims: `readEvent` reads `now` as a
+// *time* and validates the kind, and only then does `stepUnguarded` apply the
+// two ordering guards. A delivery whose kind is not a kind therefore answers
+// unknown-kind whatever its `now` is — including a `now` earlier than the
+// ledger's own, which is the case this test was written for: answering
+// now-went-backwards there would be this file naming a fact the event does not
+// have, and a caller that read the two together (the guards first, which is what
+// `deliver` used to do) would report a clock problem for a malformed kind.
+func TestLedgerReadsTheEventKindBeforeTheNowGuards(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		kind string
+		now  int64
+		want Code
+	}{
+		// readEvent's own order: a `now` that is not a time at all is answered
+		// first, because there is no event to validate a kind on.
+		{"an unknown kind with a now past the module's ceiling", "note", TimeMax + 1, CodeInvalidNow},
+		{"an unknown kind with a zero now", "note", 0, CodeInvalidNow},
+		// And a readable `now` reaches the kind before the guards: the guards are
+		// stepUnguarded's, and stepUnguarded runs after the event has been read.
+		{"an unknown kind with a now earlier than the ledger's own", "note", testNow - 1, CodeUnknownKind},
+		{"an unknown kind with a now a jump ahead", "note", testNow + MaxForwardJumpMs + 1, CodeUnknownKind},
+		{"an unknown kind with the ledger's own now", "note", testNow, CodeUnknownKind},
+		// The control: a kind the module knows still meets both guards.
+		{"a known kind with a now earlier than the ledger's own", KindCommand, testNow - 1, CodeNowWentBackwards},
+		{"a known kind with a now a jump ahead", KindCommand, testNow + MaxForwardJumpMs + 1, CodeNowJumped},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "ledger.json")
+			writeLedgerFile(t, path, ledgerFile{Now: testNow, Seen: []LedgerEntry{}})
+			l, err := OpenLedger(ledgerOptions(path))
+			if err != nil {
+				t.Fatalf("opening: %v", err)
+			}
+			got, err := l.Perform(ledgerMessage("m-1", "mb-a", "hi", testNow-1_000), tc.kind, tc.now, nil)
+			if err != nil {
+				t.Fatalf("delivering: %v", err)
+			}
+			if got.Refusal == nil || got.Refusal.Code != tc.want {
+				t.Errorf("answered %+v, and the module says %q", got, tc.want)
+			}
+			// A refusal writes nothing, whatever it is a refusal about.
+			if body := ledgerBytes(t, path); strings.Contains(body, "m-1") {
+				t.Errorf("a refused delivery was recorded:\n%s", body)
+			}
+		})
+	}
+}
+
 // matters most: a ledger that is present but cannot be read is refused, never
 // replaced by an empty one. Starting from an empty ledger would re-accept every
 // id it holds and re-perform the action the operator's phone asked for once —
@@ -1133,7 +1303,112 @@ func TestLedgerAtTheHighestCapRoundTrips(t *testing.T) {
 	}
 }
 
-// TestLedgerOrdersKeysByUTF16CodeUnit pins the other finding: `compareEntries`
+// TestLedgerReadBoundCoversTheWritersWorstCase pins the other half of the read
+// bound's defect, and it is the half that made the bound a fail-closed dead end
+// rather than merely a small number: `maxLedgerRecordBytes` assumed a code unit
+// of a sender or an id costs at most **three** bytes of JSON, which is the
+// widest *unescaped* character (U+4E00), and `commit` does not leave every
+// character unescaped. json.Marshal's default HTML escaping writes `<`, `>` and
+// `&` as `<`, `>`, `&` — six bytes per code unit — and all three
+// are legal in both fields: stringField refuses control characters, 0x7f and
+// U+2028/U+2029, and keyField refuses only `% . $ # [ ] /`. So a sender and an
+// id of `<>&` at full length are a record this package really writes, at six
+// bytes per unit, and a three-per-unit bound is smaller than a ledger `commit`
+// can produce: after a restart the reader refuses the file its own writer left,
+// the command will not start, and the operator has to delete the dedupe memory
+// by hand.
+//
+// The round-trip is the end of it: the record goes in through Perform (which
+// commits it to disk, escaped) and comes back out through OpenLedger, field for
+// field. The arithmetic above it is what was red before the fix — the file this
+// test writes is one record, and one record is inside any bound.
+func TestLedgerReadBoundCoversTheWritersWorstCase(t *testing.T) {
+	// Every code unit escapes to six bytes, and the two validators the gate uses
+	// agree the fields are legal — otherwise `commit` could not be handed them
+	// and this would not be the worst case.
+	worst := LedgerEntry{
+		Sender: strings.Repeat("&", SenderMax),
+		ID:     strings.Repeat("<", IDMax),
+		At:     TimeMax,
+		Kind:   KindCommand,
+		Status: StatusAcked,
+	}
+	if !validEntry(worst) {
+		t.Fatal("a record of `<>&` at full length is not one this ledger's reader takes, so this is not the worst case")
+	}
+	if got := stringField(worst.Sender, "sender", SenderMax, false); got.bad != nil {
+		t.Fatalf("stringField refuses a sender of `&`: %v", got.bad)
+	}
+	if got := keyField(worst.ID, "id"); got.bad != nil {
+		t.Fatalf("keyField refuses an id of `<`: %v", got.bad)
+	}
+	body, err := json.Marshal(worst)
+	if err != nil {
+		t.Fatalf("marshalling the widest record: %v", err)
+	}
+	// The encoder's own verdict on the figure the bound is computed from: six
+	// bytes for each code unit, not three. The quotes json.Marshal adds are the
+	// two bytes taken off each side.
+	for _, field := range []struct {
+		name  string
+		value string
+		units int
+	}{{"sender", worst.Sender, SenderMax}, {"id", worst.ID, IDMax}} {
+		escaped, err := json.Marshal(field.value)
+		if err != nil {
+			t.Fatalf("marshalling the %s: %v", field.name, err)
+		}
+		if got := len(escaped) - 2; got != 6*field.units {
+			t.Fatalf("the %s is %d bytes of JSON for %d code units, and this test is written for six bytes per unit",
+				field.name, got, field.units)
+		}
+	}
+	if len(body) > maxLedgerRecordBytes {
+		t.Errorf("the widest record the schema allows is %d bytes of JSON and maxLedgerRecordBytes is %d: the read bound would refuse a ledger this package wrote",
+			len(body), maxLedgerRecordBytes)
+	}
+	if need := maxLedgerHeaderBytes + (len(body)+1)*MaxMaxSeen; maxLedgerBytes < need {
+		t.Errorf("the largest ledger the module's cap allows is %d bytes and maxLedgerBytes is %d: the read bound must cover what the writer can produce, escapes and all",
+			need, maxLedgerBytes)
+	}
+
+	// Written through the real path — Perform commits, escaping as it goes — and
+	// read back by a fresh OpenLedger, which is the restart that would refuse it.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ledger.json")
+	l := openLedger(t, dir)
+	got, err := l.Perform(ledgerMessage(worst.ID, worst.Sender, "hi", testNow-1_000), KindCommand, testNow, nil)
+	if err != nil {
+		t.Fatalf("delivering: %v", err)
+	}
+	if got.Outcome != OutcomeActed {
+		t.Fatalf("the delivery answered %+v", got)
+	}
+	raw := ledgerBytes(t, path)
+	// The spellings json.Marshal writes for `<` and `&`, six bytes each, which is
+	// what the bound is computed from. Named without the leading backslash so
+	// this file needs no escape of its own: `u003c` cannot occur in a literal
+	// `<`, and every code unit of the id is one.
+	for _, escape := range []string{"u003c", "u0026"} {
+		if !strings.Contains(raw, escape) {
+			t.Errorf("the ledger on disk (%d bytes) does not hold the six-byte escape %q the bound is computed from; it begins %q",
+				len(raw), escape, raw[:60])
+		}
+	}
+	reopened, err := OpenLedger(ledgerOptions(path))
+	if err != nil {
+		t.Fatalf("the ledger this package just wrote was refused by its own reader: %v", err)
+	}
+	entries := reopened.Entries()
+	if len(entries) != 1 {
+		t.Fatalf("the restarted ledger holds %d records and one was written", len(entries))
+	}
+	if entries[0].Sender != worst.Sender || entries[0].ID != worst.ID || entries[0].At != testNow-1_000 {
+		t.Errorf("the record came back as %+v, and it went in as sender %d code units of `&` and id %d of `<` at %d",
+			entries[0], utf16Len(worst.Sender), utf16Len(worst.ID), testNow-1_000)
+	}
+}
+
 // in `shared/mailbox` compares `sender` and `id` with JavaScript's `<`, which is
 // **UTF-16 code unit** order, while Go's `<` on a string is code point order
 // (equivalently, UTF-8 byte order). The two disagree for exactly one pair of
