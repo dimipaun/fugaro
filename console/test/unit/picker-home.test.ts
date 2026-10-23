@@ -50,6 +50,7 @@ import { PICKER_ENTRY_URL, installInstallationPicker } from '../../src/main/pick
 import { FUGARO_BINARY_NAME, isExecutableFile, locationsFor } from '../../src/main/spawn'
 import { CLI_VERSION_BUILT_AGAINST } from '../../src/shared/version'
 import { installStub } from './stub'
+import type { Stub } from './stub'
 
 const CONSOLE_DIR = fileURLToPath(new URL('../..', import.meta.url))
 
@@ -75,8 +76,8 @@ function accountHome(name: string): string {
  * fake, so the console can spawn it: it answers the version handshake and the
  * picker's one read (`config list --json`, with no installations), and refuses
  * everything else. */
-function installableStub(envHome: string): void {
-  installStub(join(envHome, '.local', 'bin'), {
+function installableStub(envHome: string): Stub {
+  return installStub(join(envHome, '.local', 'bin'), {
     commands: {
       version: { stdout: `${CLI_VERSION_BUILT_AGAINST}\n` },
       'config list': { stdout: '{"installations":[],"warnings":[]}\n' },
@@ -147,22 +148,27 @@ function pickerOver(options: {
 
 describe('the picker’s home', () => {
   it('is the app’s own environment’s, asked of the path rule that refuses the CLI’s own config directory', () => {
-    // `$FUGARO_CONFIG` at `$HOME/fugaro.yaml` makes the *environment's* home the
-    // CLI's configuration directory, and this profile is inside it -- so the
-    // console must start with no store and say why (review S7) rather than write
-    // `installations.json` where the operator's CLI reads. A picker that asked
-    // Electron for `home` would look in the account home instead, find nothing
-    // to refuse, and write the file: that is the assertion below, and it fails
-    // on the code before this file's reason existed.
+    // `~/.config/fugaro` is the one entry of that rule the home decides -- the
+    // other two are `$XDG_CONFIG_HOME` and `$FUGARO_CONFIG`, which come out of
+    // this same environment -- so a profile *inside the environment's home's*
+    // `.config/fugaro` must be refused: the console starts with no store and
+    // says why (review S7) rather than write `installations.json` where the
+    // operator's CLI reads. A picker that asked Electron for `home` would look
+    // in the account home instead, find nothing to refuse, and go on to write
+    // the file: that is the assertion below, and it fails on the code before
+    // this file's reason existed.
     const envHome = accountHome('refused-home')
-    const userData = join(envHome, 'Library', 'Application Support', 'fugaro-console')
+    const userData = join(envHome, '.config', 'fugaro', 'console')
     const picker = pickerOver({
       envHome,
       accountHome: accountHome('refused-account-home'),
       userData,
-      appEnv: { FUGARO_CONFIG: join(envHome, 'fugaro.yaml') },
     })
-    expect(picker.refusal).toContain('refuses to keep its installations')
+    // The `??` is so that a picker which refused nothing fails with the
+    // sentence it did not print, rather than with an assertion about `null`.
+    expect(picker.refusal ?? '(nothing refused: the store was written)').toContain(
+      'refuses to keep its installations',
+    )
     expect(existsSync(join(userData, INSTALLATIONS_FILE_NAME))).toBe(false)
   })
 
@@ -174,14 +180,18 @@ describe('the picker’s home', () => {
     // to a path under the *working directory*. Electron's own answer is the home
     // the account actually has, so it is the one to fall back to.
     const account = accountHome('fallback-account-home')
-    const userData = join(account, 'Library', 'Application Support', 'fugaro-console')
+    const userData = join(account, '.config', 'fugaro', 'console')
     const picker = pickerOver({
       envHome: accountHome('fallback-home'),
       accountHome: account,
       userData,
-      appEnv: { HOME: undefined, FUGARO_CONFIG: join(account, 'fugaro.yaml') },
+      appEnv: { HOME: undefined },
     })
-    expect(picker.refusal).toContain('refuses to keep its installations')
+    // The `??` is so that a picker which refused nothing fails with the
+    // sentence it did not print, rather than with an assertion about `null`.
+    expect(picker.refusal ?? '(nothing refused: the store was written)').toContain(
+      'refuses to keep its installations',
+    )
     expect(existsSync(join(userData, INSTALLATIONS_FILE_NAME))).toBe(false)
   })
 })
@@ -216,7 +226,7 @@ describe('the picker’s resolution of the well-known `~` prefix', () => {
       // every child do finds the stub, and the invitation it draws is the
       // machine having no installation -- the state the e2e asserts.
       const envHome = accountHome('resolution-home')
-      installableStub(envHome)
+      const stub = installableStub(envHome)
       const userData = join(scratch, 'resolution-profile')
       mkdirSync(userData, { recursive: true })
       const picker = pickerOver({
@@ -238,6 +248,11 @@ describe('the picker’s resolution of the well-known `~` prefix', () => {
       expect(data.rows).toEqual([])
       expect(data.onboard.kind).not.toBe('install-cli')
       expect(data.onboard.kind).toBe('first-installation')
+      // And the CLI that answered is *this* stub, read off the stub's own
+      // report: the claim is not only that some binary was found, but that the
+      // one in the environment home's `~/.local/bin` was, which is what a home
+      // resolved anywhere else cannot produce.
+      expect(stub.calls()).toBeGreaterThan(0)
     },
   )
 })
