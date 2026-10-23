@@ -357,6 +357,10 @@ func TestPlanGraphRefusesADoneSetItCannotPlace(t *testing.T) {
 	}{
 		{"a task that is not there", []string{"ghost"}, `"ghost"`},
 		{"an empty id", []string{"a,"}, "empty task id"},
+		// `--done ""` is pflag's empty list rather than a done set, and the
+		// contract (§6.9) promises an empty id is refused: it must not be read
+		// as "no tasks are done".
+		{"an empty flag", []string{""}, "names no task"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			args := append([]string{"plan", "graph", "--plan", planPath, "--json"}, "--done", strings.Join(tc.done, ","))
