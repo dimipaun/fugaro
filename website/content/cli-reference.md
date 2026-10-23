@@ -1785,7 +1785,13 @@ docs/plans/ is read; more than one is refused rather than guessed at.
 
 A graph this build does not understand is refused rather than rendered: a
 future schema version, a malformed document, an edge to a node that is not
-there, or a cycle. This is a local read and it writes nothing.
+there, or a cycle.
+
+The read also answers what the planner cannot: each task's level, whether it
+is ready or blocked, and the plan's critical path. A task is ready when every
+task it needs is done, so --done names the tasks that are — an id the graph
+does not carry is refused rather than ignored. This is a local read and it
+writes nothing.
 
 Usage: `fugaro plan graph`
 
@@ -1793,6 +1799,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--done` | stringSlice | `[]` | no | the tasks whose work is done, by id (comma-separated or repeated); a task is ready when every task it needs is done |
 | `-h`, `--help` | bool | `false` | no | help for graph |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--plan` | string | "" | no | the plan document the graph sits beside (default: the one graph artifact under docs/plans) |

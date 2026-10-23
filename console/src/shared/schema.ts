@@ -62,6 +62,19 @@ import type { TextClass } from './sanitize'
  * WIRE_TEXT_CLASSES is the class of every string key the wire carries that is
  * *text*: something a job or an installation wrote, which must be sanitized
  * before it is drawn.
+ *
+ * A screen draws a key in the class this map gives it (`app.ts`'s `putText`),
+ * **with one deliberate exception, and it is `launched_by`**: the Live and
+ * Projects rows draw its *short form* -- the CLI's own cut, the part before an
+ * address's first `@` (`shared/launcher.ts`) -- through the `label` class. The
+ * class below is a validating one and refuses a dotted local part
+ * (`dana.lopez@example.com`, the commonest corporate shape) along with every
+ * display name, so the column the owner asked for on 2026-10-18 would read `n/a`
+ * for most of the people who use it. The **whole** recorded value is drawn in
+ * the Run screen's header, in `person`, exactly as this map says -- so no
+ * address is drawn anywhere. `console/README.md`'s class table and
+ * `docs/design/desktop-console.md` §6.2 record the decision; `launcher.ts` is
+ * the module and carries the reasoning.
  */
 export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.freeze({
   // The document's own fields.
@@ -498,6 +511,12 @@ export interface RunView {
   readonly stuck: boolean
   readonly workflow: string
   readonly requestedBy: string
+  /** launchedBy is who started the run, as its own `launch.json` recorded the
+   * launcher (0.9.0). It is the **whole** recorded value and not the short form
+   * a column has room for: the cut belongs to the screen that draws a column
+   * (`shared/launcher.ts`), so the document's own text stays whole for the Run
+   * screen and for a reader of the model. */
+  readonly launchedBy: string
 }
 
 /**
@@ -575,6 +594,9 @@ export interface RecordView {
   readonly outcome: string
   readonly prUrl: string | null
   readonly requestedBy: string
+  /** launchedBy is who started the run, whole, as on `RunView`: the Run screen's
+   * header draws it (`shared/launcher.ts`'s `launcherFull`). */
+  readonly launchedBy: string
   readonly logUrl: string
   readonly created: string
   readonly cost: CostView
@@ -699,8 +721,10 @@ export const REPO_KEYS = [
  * **`job`, `profile`, `provider`, `account` and `launched_by` arrived with
  * 0.9.0** (the project-centric job triple, and who launched a run), and this
  * list did not have them: every 0.9.0 `watch --json` document was refused whole
- * as `runs[0].launched_by`. They are accepted and not read, like `title` on
- * `runview.Row`: no Live-screen column draws them yet. They are classified in
+ * as `runs[0].launched_by`. **`launched_by` is read now** -- the Live row draws
+ * it as its Started-by cell (`shared/launcher.ts`, owner request 2026-10-18) --
+ * and the other four are accepted and not read, like `title` on `runview.Row`:
+ * no Live-screen column draws them yet. They are classified in
  * `WIRE_TEXT_CLASSES` all the same -- `job`, `profile` and `provider` as
  * labels, `account` and `launched_by` as people -- because a string this shape
  * may carry is a string the sanitizer must have a class for the moment a screen
@@ -789,7 +813,7 @@ const TOTALS_KEYS = ['runs', 'model_usd', 'model_notional_usd', 'compute_usd', '
  * console happens to read, and a key the CLI adds in a later version is *still*
  * refused -- which is the point of closing the shape: a document the console
  * does not fully understand becomes Task 3.2's skew state, not a half-drawn
- * list. Keys accepted and not read (`title`, `launched_by`, `project_layer`,
+ * list. Keys accepted and not read (`title`, `project_layer`,
  * `config_sha256`, `image_age_s`, `changed_files`, `artifact_count`, `artifact_bytes`,
  * `task_pr`, `record_pr`, `pr`, `pushed_head`, `started_at`, `draft_fallback`,
  * `pr_status_at`, `stale_draft`, `execution`, `batch`, `halt`, `previous_run`,
@@ -827,10 +851,11 @@ const TOTALS_KEYS = ['runs', 'model_usd', 'model_notional_usd', 'compute_usd', '
  * the struct, and is written on every row whose `launch.json` recorded a
  * launcher -- which is every launched run. This is `title`'s omission again,
  * and it fails the same way: a list without the key refuses a real
- * `runs ls --json` document whole, as `runs[0].launched_by`. It is accepted
- * and not read (no screen draws who launched a run yet), and it is classified
- * as a person's text in `WIRE_TEXT_CLASSES` -- the class `requested_by`
- * carries, and the class the recorder already gives it by its `_by` suffix.
+ * `runs ls --json` document whole, as `runs[0].launched_by`. **It is read
+ * now** -- the Run screen's header draws it and the Projects job row draws its
+ * short form (`shared/launcher.ts`, owner request 2026-10-18) -- and it is
+ * classified as a person's text in `WIRE_TEXT_CLASSES`, the class `requested_by`
+ * carries and the class the recorder already gives it by its `_by` suffix.
  */
 export const RECORD_KEYS = [
   'run',
@@ -967,6 +992,7 @@ function runAt(raw: unknown, index: number, where: string): RunView {
     stuck: optionalBool(run, 'stuck', field, where),
     workflow: optionalText(run, 'workflow', field, where),
     requestedBy: optionalText(run, 'requested_by', field, where),
+    launchedBy: optionalText(run, 'launched_by', field, where),
   }
 }
 
@@ -1031,6 +1057,7 @@ function recordAt(raw: unknown, index: number, where: string): RecordView {
     outcome: optionalText(record, 'outcome', field, where),
     prUrl: prUrl === undefined || prUrl === null ? null : stringAt(prUrl, `${field}.pr_url`, where),
     requestedBy: optionalText(record, 'requested_by', field, where),
+    launchedBy: optionalText(record, 'launched_by', field, where),
     logUrl: optionalText(record, 'log_url', field, where),
     created: stringAt(required(record, 'created', field, where), `${field}.created`, where),
     cost: costAt(required(record, 'cost', field, where), `${field}.cost`, where),
