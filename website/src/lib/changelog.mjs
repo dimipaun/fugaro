@@ -172,9 +172,15 @@ function splitSections(lines) {
 export function buildChangelog({ releasesDir = RELEASES_DIR, pluginFile = PLUGIN_FILE } = {}) {
   const published = releasedVersion(pluginFile)
 
-  const files = readdirSync(releasesDir)
-    .filter((fileName) => fileName !== NON_RELEASE)
-    .map((fileName) => {
+  // Directories are skipped rather than refused: `docs/releases/console/` holds the desktop
+  // console's release notes, which are the console's own stream (its own tag, its own version
+  // line, its own notes -- docs/release.md, "Console releases") and not entries of the CLI's
+  // changelog. Every *file* here is still held to the rule below: a name that is not
+  // `vX.Y.Z.md` is a mistake in the tree and throws, and only README.md is skipped by name.
+  const files = readdirSync(releasesDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name !== NON_RELEASE)
+    .map((entry) => {
+      const fileName = entry.name
       const version = versionOf(fileName)
       if (version === null) {
         throw new Error(

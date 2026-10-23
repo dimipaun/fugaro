@@ -110,8 +110,9 @@ type CatalogPrice struct {
 // there is one: a dimension whose dearest endpoint prices what is already
 // charged gets no "1x" clause, which would read as a warning with no number
 // behind it. Each multiple is rounded to one decimal, the precision the docs
-// quote (37.9x on input, 13.3x on output), so the surface and the documents
-// cannot disagree about the figure.
+// quote (8.6x on input, 13.3x on output for the row shipping at 2026-10-23;
+// 37.9x on input for the 2026-10-14 row the figure was first written for),
+// so the surface and the documents cannot disagree about the figure.
 func (m Model) CatalogRange() string {
 	c := m.Catalog
 	if c == nil || c.Bound != "min" || c.TierInputMax <= 0 || m.Rates.InputPerM <= 0 {

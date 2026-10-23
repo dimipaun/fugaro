@@ -422,6 +422,12 @@ const markRefusal = "the credential's state could not be recorded"
 // hands), so what fail-closed withholds is its effect: no byte of the answer
 // reaches the run and the run halts on the refusal.
 //
+// The issuance's line says the credential answered, which is all that was known
+// when it was written, and the answer's own outcome is the second line this
+// function writes: the stream either ended or it did not (gateway.Pump's own
+// bool), and a stream that did not end leaves a line with this call's failure
+// on it — a call cut in half is not a call that reads ok.
+//
 // The headers are built and validated before any of them is written, so an
 // answer that cannot carry them is a typed refusal with no upstream header
 // leaking onto it — and, since the line is written after them, a refusal with
@@ -518,14 +524,42 @@ func (s *Server) answer(ctx context.Context, w http.ResponseWriter, id Identity,
 	}
 	// Pump never buffers and flushes after every write, which is what makes
 	// the answer reach the run as it arrives (C1.8). Its bool says the stream
-	// ended rather than failed; nothing here acts on it, because the client's
-	// connection is the client's.
-	gateway.Pump(out, http.NewResponseController(w), ans.resp.Body, tee)
+	// ended rather than failed, and that answer is recorded below: a stream that
+	// failed is a call that did not finish, and the line written above says the
+	// credential answered — which it did, and which is why it had to be written
+	// before the answer — so without a second line the log of a call cut in half
+	// would read ok and nothing else (C1.13).
+	ended := gateway.Pump(out, http.NewResponseController(w), ans.resp.Body, tee)
 	// Innermost last: a writer's tail is not its value after all, so it is the
 	// tail of the answer and it is written — into the writer below it, which
 	// then has the same chance to find a value in what it is handed.
 	for i := len(rw) - 1; i >= 0; i-- {
 		_ = rw[i].Close()
+	}
+	if ended {
+		return
+	}
+	// The stream did not end, so the answer did not arrive whole: the upstream's
+	// body failed mid-stream, or the client's own connection did. Either way the
+	// outcome is the call's and not the client's, which is why the context is
+	// stripped of its cancellation (the rule the usage-limit scan below follows
+	// for the same reason): the failure is a fact about this call whether or not
+	// the caller stayed to read it, and an operator reading the log has to see
+	// the call that got no whole answer rather than one that looks served.
+	//
+	// The status is the service's own word for a call it could not complete
+	// (state_unavailable), which is the refusal class the runner halts on and
+	// the same word every other failure on this path is recorded with. The
+	// credential and the tier are named as they are on the issuance's line: the
+	// credential that answered is the one whose answer did not arrive, and that
+	// is what an operator acts on.
+	//
+	// A line that cannot be written is the service's log line and nothing else:
+	// the answer has left, the credential is spent, and there is no call left to
+	// refuse — unlike the issuance's own line above, whose failure withholds the
+	// answer, this one records an outcome that has already happened.
+	if err := s.auditCall(context.WithoutCancel(ctx), id, PurposeForward, c.Name, wireTier(c.Tier), ErrorStateUnavailable); err != nil {
+		s.log.Error("credsvc: the failed stream could not be audited", "error", err)
 	}
 }
 
