@@ -578,10 +578,11 @@ a stage counts once it recorded a cost. A kind the window has no cost
 for on that model leaves the line out and names the model, rather than
 pricing the pinned model with what another one cost. Runs the figure
 cannot use are said to be left out, never counted as runs that cost
-nothing: a run on a subscription (agent.auth oauth), whose model_usd is
-notional rather than charged, a result.json that is missing or
-unreadable, and a record with no per-stage cost at all (one from before
-the runner kept it, or stages that all cost nothing).
+nothing: a run whose model_usd was a subscription's rather than a bill
+(agent.auth oauth, or a cascade run the plan served in full), a
+result.json that is missing or unreadable, and a record with no
+per-stage cost at all (one from before the runner kept it, or
+stages that all cost nothing).
 
 The recipe resolves as it does for a run: the repository's
 .fugaro/recipes, the project's published recipes, then the catalog. The
