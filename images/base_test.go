@@ -236,6 +236,65 @@ func TestFetchRefusesHTTPAndBadSums(t *testing.T) {
 	}
 }
 
+// Every curl in the base image's download scripts retries a transient
+// failure, and every download has an HTTP/1.1 fallback. One "curl: (92)
+// HTTP/2 stream was not closed cleanly" failed the fugaro-base amd64 build
+// on PR #903 and the docker-tests job on PR #896, and both passed on a
+// rerun: the base was failing builds on a connection the next attempt would
+// have carried, so a retry belongs in the script and not in a reviewer's
+// rerun.
+//
+// The retries change nothing about the checks that follow them: fetch.sh
+// still removes a download whose pinned sha256 does not match and exits 1,
+// and install-node.sh still verifies SHASUMS256.txt against its OpenPGP
+// signature and still checks the tarball against SHASUMS256.txt, so a
+// retried download carries no byte the untried one could not, and a failure
+// still fails the build closed.
+//
+// The HTTP/1.1 attempt is only ever the second half of an "||" fallback: a
+// first attempt that spoke HTTP/1.1 outright would give up the HTTP/2 the
+// retried attempt uses, and retrying is what actually fixes a connection
+// that was reset rather than an HTTP/2 framing failure that was not.
+func TestBaseFetchScriptsRetryDownloads(t *testing.T) {
+	paths, err := filepath.Glob("base/*.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) == 0 {
+		t.Fatal("no scripts under base/ to check: has fetch.sh moved?")
+	}
+	curlRe := regexp.MustCompile(`(^|[\s|(&])curl\s`)
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		calls, fallbacks := 0, 0
+		for i, line := range strings.Split(string(data), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "#") || !curlRe.MatchString(line) {
+				continue
+			}
+			calls++
+			for _, flag := range []string{"--retry 5", "--retry-all-errors", "--retry-delay 2"} {
+				if !strings.Contains(line, flag) {
+					t.Errorf("%s:%d: curl without %s: %s", path, i+1, flag, trimmed)
+				}
+			}
+			if !strings.Contains(line, "--http1.1") {
+				continue
+			}
+			fallbacks++
+			if !strings.Contains(trimmed, "||") {
+				t.Errorf("%s:%d: --http1.1 is the fallback attempt, so it belongs behind \"||\": %s", path, i+1, trimmed)
+			}
+		}
+		if calls > 0 && fallbacks == 0 {
+			t.Errorf("%s downloads over curl with no HTTP/1.1 fallback", path)
+		}
+	}
+}
+
 // aptPackages returns the names in the base Dockerfile's
 // "apt-get install -y --no-install-recommends" list.
 func aptPackages(t *testing.T, df string) map[string]bool {
