@@ -527,19 +527,19 @@ func TestTheSignerNeverPrintsTheKey(t *testing.T) {
 	}
 	var nilSigner *Signer
 	printings := map[string]string{
-		"the signer, %v":          fmt.Sprintf("%v", signer),
-		"the signer, %+v":         fmt.Sprintf("%+v", signer),
-		"the signer, %#v":         fmt.Sprintf("%#v", signer),
-		"the signer, %s":          fmt.Sprintf("%s", signer),
-		"the signer's JSON":       string(doc),
-		"a nil signer, %v":        fmt.Sprintf("%v", nilSigner),
-		"a nil signer's tag":      tagOrError(nilSigner),
-		"the signer's error":      signErr.Error(),
-		"the signer's error, %v":  fmt.Sprintf("%v", signErr),
-		"a heartbeat it refuses":  heartbeatOrError(signer, Heartbeat{At: leaseAt, Boot: leaseHolder}),
-		"a log line about them":   fmt.Sprintf("the reply could not be signed: %v", signErr),
-		"the keychain's own Key":  keychain.NewKey([]byte(material)).String(),
-		"the signer's direction":  signer.Direction(),
+		"the signer, %v":         fmt.Sprintf("%v", signer),
+		"the signer, %+v":        fmt.Sprintf("%+v", signer),
+		"the signer, %#v":        fmt.Sprintf("%#v", signer),
+		"the signer, %s":         fmt.Sprintf("%s", signer),
+		"the signer's JSON":      string(doc),
+		"a nil signer, %v":       fmt.Sprintf("%v", nilSigner),
+		"a nil signer's tag":     tagOrError(nilSigner),
+		"the signer's error":     signErr.Error(),
+		"the signer's error, %v": fmt.Sprintf("%v", signErr),
+		"a heartbeat it refuses": heartbeatOrError(signer, Heartbeat{At: leaseAt, Boot: leaseHolder}),
+		"a log line about them":  fmt.Sprintf("the reply could not be signed: %v", signErr),
+		"the keychain's own Key": keychain.NewKey([]byte(material)).String(),
+		"the signer's direction": signer.Direction(),
 	}
 	for what, got := range printings {
 		if strings.Contains(got, material) {
