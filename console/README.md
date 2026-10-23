@@ -2702,30 +2702,6 @@ a scratch copy of the staged file and turned the named test red:
 | `curl … | sh`, `eval`, `env`, `printenv | sort`, `set | grep` added | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the download-and-run and environment-dump scans |
 | the publish job's `sha256sum --strict --check` removed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the publish job's steps |
 | the upload-artifact pin changed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the repository's existing pin |
-
-## The e2e goldens, as recorded (2026-10-18)
-
-The eight golden screenshots are committed under `test/e2e/__screenshots__/`
-(`live-{light,dark}-darwin.png`, and `{projects,spend,run}/{light,dark}-darwin.png`),
-**darwin only**. They were recorded on the owner's machine: macOS 26.7 (Darwin
-25.6.0, x64), Node 22.23.3, `@playwright/test` 1.64.1, Electron 44.7.2 (the
-lockfile's versions), device scale factor 1 as the specs launch the window (the
-PNGs are 1164 px wide), at main `82ba600d`, with `npm run build` then
-`playwright test --workers=1 --update-snapshots`. They were then compared twice in a
-plain run (`playwright test --workers=1`, 93 passed both times). Every frame is
-drawn from the specs' own invented documents (`example-owner/...`, `acme/...`,
-`redacted@example.invalid`); none holds a real name.
-
-**Linux baselines are not committed.** The name carries the platform
-(`{arg}-{platform}{ext}`), and Linux draws different pixels, so
-`live-light-linux.png` and the rest must be recorded on Linux, under
-`xvfb-run --auto-servernum`. **CI does not compare any golden today**:
-`.github/workflows/console-tests.yml` sets `FUGARO_CONSOLE_GOLDENS: skip` at job level
-(line 90), so on both `console (ubuntu-latest)` and `console (macos-latest)` the
-golden tests are skipped and the committed darwin files are compared only on a
-developer's Mac, never on the macos runner, whose rendering has not been compared
-with these files.
-||||||| 82ba600d9
 | `retry_apple_network` removed from `console/scripts/notarize-and-staple.sh` or from the verification step | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the helper's definition in each of the two places and on every call site it must have |
 | the retry wrapped around a step's `codesign --sign`, or around the script's `xcrun notarytool submit` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the only-lines-that-may-name-the-helper clause ("retries … the helper wraps the `xcrun stapler` calls this pipeline makes and nothing else") |
 | the script's `xcrun stapler staple` or `xcrun stapler validate` left unwrapped | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the two retried calls the script must run |
@@ -2746,6 +2722,92 @@ with these files.
 | the `ditto -c -k --keepParent` zip of the bundle dropped | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on that line; and `TestDocsConsoleNotarizeAndStapleScript`, on the calls the fake `xcrun` and `ditto` log |
 | the script left non-executable | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on its file mode (the signing step runs it directly) |
 | the "Re-copy required" note deleted from `docs/pending-workflows/README.md` while the staged and applied files differ | `TestDocsConsoleReleaseStagedChangeSaysItNeedsACopyIn`: the owner is the one who has to copy the file in, and that section is where they read it |
+
+## The e2e goldens: how to re-record them, and what is committed today
+
+The eight golden screenshots are committed under `test/e2e/__screenshots__/`, one
+per screen per theme per platform (`playwright.config.ts`'s
+`snapshotPathTemplate` adds `-{platform}`):
+
+| Screen | Spec | Files on one platform |
+|---|---|---|
+| Live | `test/e2e/live.spec.ts` | `live-light-<platform>.png`, `live-dark-<platform>.png` |
+| Spend | `test/e2e/spend.spec.ts` | `spend/light-<platform>.png`, `spend/dark-<platform>.png` |
+| Projects | `test/e2e/projects.spec.ts` | `projects/light-<platform>.png`, `projects/dark-<platform>.png` |
+| Run detail | `test/e2e/run.spec.ts` | `run/light-<platform>.png`, `run/dark-<platform>.png` |
+
+`<platform>` is `process.platform` — `darwin` or `linux`. macOS and Linux draw
+different pixels, so **each platform's set is recorded on that platform**, and
+`updateSnapshots: 'none'` means a missing baseline fails the test rather than
+being written by a run. Recording is an explicit act:
+
+```
+cd console && npm run build && npx playwright test live.spec.ts --update-snapshots
+cd console && npm run build && npx playwright test spend.spec.ts --update-snapshots
+cd console && npm run build && npx playwright test projects.spec.ts --update-snapshots
+cd console && npm run build && npx playwright test run.spec.ts --update-snapshots
+```
+
+On Linux, Electron needs a display, so each line takes `xvfb-run --auto-servernum`
+before `npx playwright test`. **`npm run build` is part of the command, not a
+convenience**: the specs load the compiled renderer and the served bundle out of
+`dist/`, and `npx playwright test` does not build, so a re-record run without it
+photographs whatever `dist/` happened to hold. `--update-snapshots` is what
+overrides `updateSnapshots: 'none'` for that one run. Add `--workers=1` for a
+recording run: `fullyParallel: false` keeps one file's tests in one worker, and
+one worker keeps the whole run in one.
+
+`test/support/goldens.ts` is what the four specs share, and it is why a golden
+fails legibly rather than with a bare pixel diff:
+
+- **`expectGolden`** takes every recording. Before comparing, `assertGoldenFresh`
+  refuses a golden that is **missing** or **older than the theme directory**
+  (compared by the commit that last touched each, which is the only clock a
+  checkout carries — a clone writes every file at the same moment), and prints the
+  exact command above, for that spec, for the platform it is running on. A
+  comparison that then fails is re-reported with Playwright's own message kept and
+  the same command appended: the matcher's own suggestion
+  (`npx playwright test <file> --update-snapshots`) is not that command.
+- **`expectGrounded`** is the assertion that the screens are painted at all. It
+  draws each screen once per theme and holds the app's ground
+  (`getComputedStyle(document.body).backgroundColor`), the screen's own `h1`
+  colour and the two tokens they are painted from (`--ground`, `--text`) to the
+  literals `src/renderer/theme/palette.css` ships, and — because one value set
+  ships (the owner's Q1 ruling of 2026-10-19) — holds the two runs to the same
+  ground as each other. **It is not a golden test and
+  `FUGARO_CONSOLE_GOLDENS=skip` does not skip it**: it reads no PNG, and it is the
+  one case that is red when the stylesheet stops being served, linked or applied —
+  the regression that could otherwise be recorded as a fresh golden and never
+  noticed. (Every other read in those specs passes on a tree nothing paints: the
+  theme travels as a `data-theme` attribute the renderer stamps.)
+
+**What is committed today is darwin only, and it is superseded.** The eight
+`*-darwin.png` files are the recording of **2026-10-18**: macOS 26.7 (Darwin
+25.6.0, x64), Node 22.23.3, `@playwright/test` 1.64.1, Electron 44.7.2 (the
+lockfile's versions), device scale factor 1 as the specs launch the window (the
+PNGs are 1164 px wide), at main `82ba600d`, recorded with `npm run build` then
+`playwright test --workers=1 --update-snapshots`, and compared twice in a plain
+run (93 passed both times). Every frame is drawn from the specs' own invented
+documents (`example-owner/...`, `acme/...`, `redacted@example.invalid`); none
+holds a real name. **They are pictures of the unstyled tree**: they were taken
+before `src/renderer/theme/` existed, so the two themes' frames of one screen are
+byte-identical pictures of markup with no CSS at all, and each light/dark pair is
+the same file. The theme landed after them (Tasks 6.1-6.5; the newest file in
+`src/renderer/theme/`, `base.css`, was last touched by `6d107527` on 2026-10-19),
+which is why they are superseded: re-record them on the Mac with the command above
+and commit the result. Until that is done the four golden tests fail on darwin
+with that command in the message rather than with a bare pixel diff — which is
+the intended state, and not a regression to chase. **Linux baselines are not
+committed** and have never been recorded; they need a Linux machine with a
+display (`xvfb-run`).
+
+**CI does not compare any golden today.** `.github/workflows/console-tests.yml`
+sets `FUGARO_CONSOLE_GOLDENS: skip` at job level, so on both
+`console (ubuntu-latest)` and `console (macos-latest)` the golden tests are
+skipped. That stays until both platforms' sets are committed: a skip that hides a
+comparison is better than a comparison against a picture of a tree that no longer
+exists, and the computed-ground assertion above is not skipped, so a tree with no
+styling is still red in CI.
 
 ## The theme's tokens, and the palette they are painted in (Task 6.1)
 
