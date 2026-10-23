@@ -769,11 +769,12 @@ func TestManagedInitWritesTheDeployerScopeFromTheCreationFact(t *testing.T) {
 	}
 }
 
-// TestForgetRefusesAManagedInstallation: the rollback stops on a managed
-// installation, and it stops before anything of the installation is read,
-// planned or written. (The run's own preflight has already read the project's
-// number by then, as every run of this door does; what the sentence refuses to
-// touch is the installation.)
+// TestForgetRefusesAManagedInstallation: the rollback stops on an installation
+// whose project reads managed — the live creation fact is one of the two
+// records the refusal is decided from — and it stops before anything of the
+// installation is read, planned or written. (The run's own preflight has already
+// read the project's number by then, as every run of this door does; what the
+// sentence refuses to touch is the installation.)
 //
 // The installation's own resources include the managed deployer's fence — the
 // seven scoped roles and their seven conditioned bindings, created by the same
@@ -787,11 +788,12 @@ func TestManagedInitWritesTheDeployerScopeFromTheCreationFact(t *testing.T) {
 // the one thing in the project that is there BECAUSE the project is managed, so
 // forgetting the installation is not something a managed project has.
 //
-// The refusal names the two marks that make the project managed and the
-// owner-run step that removes them — what docs/gcp-setup.md ("What makes a
-// project managed") documents as the undo of managed mode — and it offers no
-// flag: there is nothing to pass to get past it, which is the same reason the
-// guard's own managed refusal names none (Task 3.2).
+// The refusal names the record that says the installation holds the fence — the
+// project's two marks here — and it offers no flag: there is nothing to pass to
+// get past it, which is the same reason the guard's own managed refusal names
+// none (Task 3.2). The other record it can be decided from, and the one the live
+// fact cannot answer for, is the installation's own tfvars
+// (TestForgetRefusesAFenceTheMarksNoLongerAdmitTo).
 //
 // Mutation (run, restore): drop the refusal from forget: the run reads the
 // state bucket, plans, applies and runs state rm on the fence, and every
@@ -837,13 +839,104 @@ func TestForgetRefusesAManagedInstallation(t *testing.T) {
 	}
 }
 
+// TestForgetRefusesAFenceTheMarksNoLongerAdmitTo: the same refusal for the
+// installation the live creation fact does NOT admit to — the project's marks
+// have come off, and what still records the fence is the installation's own
+// tfvars, which every rewrite carries the key into.
+//
+// This is the run the refusal would otherwise miss, and it is the one the
+// guide's undo of managed mode used to lead an owner into: the live fact answers
+// "not managed", prepare carries managed_deployer_scoped = true out of the
+// document the workdir holds, the plan therefore declares the fourteen and
+// deletes none of them — so the guard has no deletion to refuse — and the second
+// phase's unconditional `terraform state rm module.installation` takes the fence
+// out of Terraform's state while it stays live in the project and accounted for
+// by nothing. Flags the project a managed apply would then find unaccounted for
+// on every later run.
+//
+// Mutation (run, restore): decide the refusal from the live fact alone (drop
+// managedFenceRecorded from forget): the run exits 0 and runs state rm on the
+// installation, and this fails.
+func TestForgetRefusesAFenceTheMarksNoLongerAdmitTo(t *testing.T) {
+	r := newInitRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	// The fixture's own run writes the fence into the installation's document,
+	// which is the record this test is about; without it the second run has
+	// nothing to refuse for and this test would pass for the wrong reason.
+	if out, _, err := executeStdin(t, "", "setup", "--yes"); err != nil {
+		t.Fatalf("the fixture's setup of a managed project: %v\n%s", err, out)
+	}
+	if got := r.tfvars(t)["managed_deployer_scoped"]; got != true {
+		t.Fatalf("the fixture's setup wrote tfvars[managed_deployer_scoped] = %v, want true", got)
+	}
+	// The marks come off the project — the object here, which alone is enough,
+	// because the read requires both halves (docs/gcp-setup.md, "What makes a
+	// project managed" is the same step by hand).
+	if err := r.gcs.Bucket(t, initRunsBucket).Delete(context.Background(), managed.MarkerObject); err != nil {
+		t.Fatal(err)
+	}
+	// The rollback's own terraform calls are counted from here, because the
+	// fixture's setup above is a converge and its init, plan, show and apply are
+	// in the same log.
+	steps := []string{"init", "output", "plan", "show", "apply", "state rm"}
+	before := map[string]int{}
+	for _, sub := range steps {
+		before[sub] = len(r.ran(t, sub))
+	}
+	// A state bucket, so that a run which did NOT refuse would go on and run
+	// terraform: the assertions below are what make the mutation loud, and one
+	// that stopped for a missing bucket would not.
+	r.stateBucket()
+	r.setPlan(t, forgetPlan()...)
+	out, _, err := executeStdin(t, "", "update", "--forget", "--yes")
+	if err == nil {
+		t.Fatalf("the rollback of an installation whose marks no longer admit to the fence ran:\n%s", out)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err %v; want the refusal (exit 1)", ExitCode(err), err)
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		initProject,
+		"seven scoped roles",
+		// The record that said so, so a reader can check the one that answers
+		// when the marks do not.
+		"managed_deployer_scoped",
+		// And that un-managing is not the way past it.
+		"taking the project out of managed mode does not remove it",
+		"docs/gcp-setup.md",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the refusal does not carry %q:\n%s", want, msg)
+		}
+	}
+	// And it must not claim the project's marks say so: they do not, and a
+	// refusal that misnames its record is one an operator goes looking in the
+	// wrong place for.
+	if strings.Contains(msg, managed.MarkerObject) {
+		t.Errorf("the refusal says the project's marks record the fence, and they have been removed:\n%s", msg)
+	}
+	for _, sub := range steps {
+		if ran := r.ran(t, sub); len(ran) != before[sub] {
+			t.Errorf("a refused rollback ran terraform %s: %q", sub, ran[before[sub]:])
+		}
+	}
+	// Nothing rewrote the document either: the installation's record of the
+	// fence is what the next run is refused from, and a refused rollback leaves
+	// it as it found it.
+	if got := r.tfvars(t)["managed_deployer_scoped"]; got != true {
+		t.Errorf("a refused rollback rewrote the installation's tfvars: managed_deployer_scoped = %v, want true", got)
+	}
+}
+
 // TestForgetKeepsTheManagedDeployerScope used to stand here: it pinned the
 // rollback's own read of the creation fact (forget planned this root the way
 // installRoot does, so a forget run of a managed installation kept the key and
-// its plan deleted no role and no binding). The refusal above is what replaced
-// it — a managed project never reaches the plan this command makes — and the
-// key's own two halves keep their tests elsewhere, on the paths that still plan
-// or re-serialize this root: installRoot writes it from the fact
+// its plan deleted no role and no binding). The two refusals above are what
+// replaced it — an installation that holds the fence never reaches the plan this
+// command makes, whether the project reads managed or not — and the key's own
+// two halves keep their tests elsewhere, on the paths that still plan or
+// re-serialize this root: installRoot writes it from the fact
 // (TestManagedInitWritesTheDeployerScopeFromTheCreationFact), prepare carries it
 // (TestConfigOnlyKeepsTheManagedDeployerScope) and --print-vars prints it
 // (TestPrintVarsKeepsTheManagedDeployerScope).
