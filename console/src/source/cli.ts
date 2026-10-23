@@ -249,7 +249,7 @@ export interface CliSourceOptions {
 
 /**
  * CliSource is a `FugaroSource` and a little more: `installation` is the resolved
- * header, and `close` stops the feeds. The eleven reads are one-liners over
+ * header, and `close` stops the feeds. The twelve reads are one-liners over
  * `readDocument` and `readText`.
  */
 export class CliSource implements FugaroSource {
@@ -449,6 +449,13 @@ export class CliSource implements FugaroSource {
 
   listRuns(args: ValidatedArguments): Promise<Snapshot> {
     return this.#readDocument('runs.list', args)
+  }
+
+  /** statsRuns reads `runs stats --json`: one indented document, like every
+   * other one-shot read (`console/docs/json-contract.md` section 9.2 -- the two
+   * line-delimited ones are `watch --json` and `logs RUN --json`). */
+  statsRuns(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('runs.stats', args)
   }
 
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot> {
@@ -894,6 +901,7 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     showBudget: (args) => read('budget.show', (source) => source.showBudget(args)),
     runReport: (args) => read('spend.report', (source) => source.runReport(args)),
     listRuns: (args) => read('runs.list', (source) => source.listRuns(args)),
+    statsRuns: (args) => read('runs.stats', (source) => source.statsRuns(args)),
     diagnoseRun: (args) => read('run.diagnose', (source) => source.diagnoseRun(args)),
     readRunLogs: (args) => read('run.logs', (source) => source.readRunLogs(args)),
     runLogLink: (args) => read('run.logLink', (source) => source.runLogLink(args)),

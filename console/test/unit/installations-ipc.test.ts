@@ -1081,7 +1081,7 @@ describe('the picker’s window', () => {
     expect(windows).toHaveLength(1)
     // The picker's own document, on the console's own origin, and the preload is
     // the picker's -- a window that got the dashboard's preload would expose
-    // fourteen CLI reads to a document whose whole job is to draw a list.
+    // fifteen operations to a document whose whole job is to draw a list.
     expect(windows[0]?.loaded).toEqual([PICKER_ENTRY_URL])
     expect(PICKER_ENTRY_URL).toBe('app://console/installations.html')
     // A second `open()` focuses rather than building a second window.

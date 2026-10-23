@@ -628,6 +628,19 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     dirFlag: false,
   },
   {
+    // The Spend screen's by-person view (console L5b). One declared argument,
+    // `--since`, in `runs stats`'s own grammar: the row cannot emit
+    // `--all-users` (so no spawn can widen the view the CLI resolved to the
+    // caller), and `--by`, `--max-runs`, `--repo` and `--all` are no part of the
+    // operation's schema, so `argvFor` refuses them by name before this row is
+    // reached with them.
+    operation: 'runs.stats',
+    words: ['runs', 'stats', '--json'],
+    takesProject: true,
+    args: [{ key: 'since', flag: '--since', kind: 'value' }],
+    dirFlag: false,
+  },
+  {
     operation: 'run.diagnose',
     words: ['diagnose', '--json'],
     takesProject: true,

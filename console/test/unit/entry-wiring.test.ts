@@ -84,7 +84,7 @@ import {
  * and the built tree are read from. */
 const CONSOLE_ROOT = join(__dirname, '..', '..')
 
-/** READ_METHODS is the seven reads `entry.ts` may reach for, by the name the
+/** READ_METHODS is the eight reads `entry.ts` may reach for, by the name the
  * preload exposes. Every one of them is on the fake bridge below, and every one
  * records its call -- so "this read was never made" is a claim this suite can
  * make about any of them. */
@@ -93,6 +93,7 @@ const READ_METHODS = [
   'showBudget',
   'runReport',
   'listRuns',
+  'statsRuns',
   'diagnoseRun',
   'readRunLogs',
   'runLogLink',
@@ -102,7 +103,7 @@ const READ_METHODS = [
 type AReply = (args: unknown) => unknown
 
 /** FakeBridge is the preload seam, recorded: the handshake, the installation,
- * and the seven reads, each answering what the case told it to and appending its
+ * and the eight reads, each answering what the case told it to and appending its
  * own call to `calls`. */
 interface FakeBridge {
   readonly bridge: Record<string, unknown>
@@ -684,6 +685,104 @@ describe('the dashboard the entry mounts', () => {
       await flush()
       expect(panel.children[0]?.attributes.get('class')).toBe(chosen)
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The Spend screen's by-person read (console L5b), through the entry's own
+// `peopleReader`: the knob turns it on, the document reaches the panel, and a
+// refusal becomes the panel's own sentence rather than the screen's.
+// ---------------------------------------------------------------------------
+
+describe('the by-person read the entry wires', () => {
+  /** STATS is an operator's `runs stats --json` document, as the CLI writes it. */
+  const STATS: Readonly<Record<string, unknown>> = {
+    project: 'acme',
+    by: 'user',
+    view: 'all',
+    you: 'ada',
+    operator: true,
+    since: '2026-09-23',
+    until: '2026-10-23',
+    max_runs: 5000,
+    truncated: false,
+    rows: [
+      { user: 'ada', currency: 'USD', runs: 2, succeeded: 2, counted_usd: 1.5, notional_usd: 0, counted_runs: 2, avg_counted_usd: 0.75 },
+      { user: 'bob', currency: 'USD', runs: 1, failed: 1, counted_usd: 0.25, notional_usd: 0, counted_runs: 1, avg_counted_usd: 0.25 },
+    ],
+    totals: [
+      { user: '', currency: 'USD', runs: 3, succeeded: 2, failed: 1, counted_usd: 1.75, notional_usd: 0, counted_runs: 3, avg_counted_usd: 0.58 },
+    ],
+    unlaunched: 0,
+    notes: [],
+  }
+
+  /** spendWithPeople boots the dashboard, opens Spend and turns the person
+   * knob on, with `statsRuns` answering `stats`. */
+  async function spendWithPeople(stats: AReply) {
+    const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
+    const fake = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(frame),
+        showBudget: () => ({ ok: true, data: { document: {} } }),
+        runReport: () => ({ ok: true, data: { document: {} } }),
+        statsRuns: stats,
+      },
+    })
+    const document = await boot(fake.bridge, new FakeDocument())
+    const panel = panelOf(document)
+    buttonFor(document, 'spend').click()
+    await flush()
+    // The knob off is no by-person read at all (D15).
+    expect(fake.calls.filter((call) => call.name === 'statsRuns')).toEqual([])
+    const knob = classed(panel, 'spend-persons')[0]
+    expect(knob, 'the spend screen drew no person knob: the case proves nothing').toBeDefined()
+    knob?.click()
+    await flush()
+    await flush()
+    return { panel, calls: fake.calls }
+  }
+
+  it('reads `statsRuns` with the picker’s window once the knob is on, and draws its document', async () => {
+    const { panel, calls } = await spendWithPeople(() => ({ ok: true, data: { document: STATS } }))
+    expect(calls.filter((call) => call.name === 'statsRuns').map((call) => call.args)).toEqual([
+      { since: '30d' },
+    ])
+    const people = classed(panel, 'spend-people')
+    expect(people).toHaveLength(1)
+    expect(people[0]?.attributes.get('data-available')).toBe('true')
+    expect(people[0]?.attributes.get('data-view')).toBe('all')
+    const rows = classed(panel, 'spend-people-rows')[0]
+    expect(rows?.children.length).toBe(2)
+    expect(classed(panel, 'spend-people-reason')).toEqual([])
+  })
+
+  it('turns a refused by-person read into the panel’s own sentence, and still draws the report', async () => {
+    const { panel } = await spendWithPeople(() => ({
+      ok: false,
+      reason: 'runs stats: cannot tell who you are, and this view shows your own row alone',
+    }))
+    const drawn = panel.children[0] as FakeNode
+    // The screen is Spend, not the console's refusal screen: the refusal is the
+    // panel's alone.
+    expect(drawn.attributes.get('class')).not.toBe('console-unavailable')
+    const people = classed(panel, 'spend-people')
+    expect(people).toHaveLength(1)
+    expect(people[0]?.attributes.get('data-available')).toBe('false')
+    expect(classed(panel, 'spend-people-reason').map((node) => node.textContent)).toEqual([
+      'runs stats: cannot tell who you are, and this view shows your own row alone',
+    ])
+    expect(classed(panel, 'spend-person')).toEqual([])
+  })
+
+  it('draws the console’s own sentence for a by-person answer that is not a snapshot', async () => {
+    // `documentOf` refuses the shape, and the throw carries *its* sentence: the
+    // panel draws that, not an empty list.
+    const { panel } = await spendWithPeople(() => ({ ok: true, data: { document: [] } }))
+    expect(classed(panel, 'spend-people')[0]?.attributes.get('data-available')).toBe('false')
+    expect(classed(panel, 'spend-people-reason').map((node) => node.textContent)).toEqual([
+      READ_UNREADABLE,
+    ])
   })
 })
 

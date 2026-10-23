@@ -126,10 +126,10 @@ const PROJECT = 'fugaro'
 const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
 
 /**
- * COMMANDS_TAKING_PROJECT is the plan's own list, hard-coded: the ten
+ * COMMANDS_TAKING_PROJECT is the plan's own list, hard-coded: the eleven
  * operations `addCloudFlags` gives `--project` to (`internal/cli/cloud.go:51`,
  * called from each of those constructors), including the two log operations
- * that share the `logs` command. The complement -- the commands that take no
+ * that share the `logs` command -- console L5b's `runs.stats` is the eleventh. The complement -- the commands that take no
  * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
  * command words the CLI itself uses (`version`, and the picker's `config list`),
  * which is the same list `assertSpawnSurface` holds the table to; this file
@@ -144,6 +144,7 @@ const COMMANDS_TAKING_PROJECT: readonly (OperationName | 'installation.list')[] 
   'budget.show',
   'spend.report',
   'runs.list',
+  'runs.stats',
   'run.diagnose',
   'run.logs',
   'run.logLink',
@@ -410,19 +411,21 @@ describe('the spawn table and the argv it builds', () => {
     }).toThrow(/picker/)
   })
 
-  it('fixes the design allow-list’s dashboard half: eleven argvs, ten commands, nine of them with --project', () => {
-    // The design's §5.1 rule 6 table is the whole allow-list -- twelve argvs
-    // since round 5, because the picker's own read (`config list --json`, the
-    // case above) is on it too -- and this table is the eleven the dashboard
-    // spawns. The two are held in step by hand on purpose: the Go side pins the
-    // document's twelve (`internal/cli/docs_desktop_console_test.go`,
+  it('fixes the design allow-list’s dashboard half: twelve argvs, eleven commands, ten of them with --project', () => {
+    // The design's §5.1 rule 6 table is the whole allow-list -- thirteen argvs
+    // since round 5 and console L5b, because the picker's own read
+    // (`config list --json`, the case above) is on it too -- and this table is
+    // the twelve the dashboard spawns. The two are held in step by hand on
+    // purpose: the Go side pins the document's thirteen
+    // (`internal/cli/docs_desktop_console_test.go`,
     // TestDocsDesktopConsoleDesignAllowListIsExactArgv) and these cases pin the
-    // console's eleven plus the picker's one.
+    // console's twelve plus the picker's one.
     expect([...SPAWN_COMMANDS].map((row) => row.words.join(' '))).toEqual([
       'watch --json',
       'budget show --json',
       'report --json',
       'runs ls --json',
+      'runs stats --json',
       'diagnose --json',
       'logs --json',
       'logs --url',
@@ -431,16 +434,27 @@ describe('the spawn table and the argv it builds', () => {
       'version',
       'doctor --json',
     ])
-    // The nine *commands* that take the flag (addCloudFlags, internal/cli/
-    // cloud.go:51) are nine rows plus one: `logs` has two rows, `--json` and
+    // The ten *commands* that take the flag (addCloudFlags, internal/cli/
+    // cloud.go:51) are ten rows plus one: `logs` has two rows, `--json` and
     // `--url`, and neither of them may be the one that forgets --project.
     const commandsWithProject = SPAWN_COMMANDS.filter((row) => row.takesProject).map((row) =>
       row.words.filter((word) => !word.startsWith('--')).join(' '),
     )
     expect(new Set(commandsWithProject)).toEqual(
-      new Set(['watch', 'budget show', 'report', 'runs ls', 'diagnose', 'logs', 'secrets ls', 'accounts ls', 'doctor']),
+      new Set([
+        'watch',
+        'budget show',
+        'report',
+        'runs ls',
+        'runs stats',
+        'diagnose',
+        'logs',
+        'secrets ls',
+        'accounts ls',
+        'doctor',
+      ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(10)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(11)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))

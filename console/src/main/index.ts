@@ -406,7 +406,9 @@ async function openExternalFromShell(raw: unknown): Promise<void> {
 
 /**
  * gated is the whole surface, and it is the join the two modules describe:
- * `handlersFor` answers the twelve operations that read the CLI (over
+ * `handlersFor` answers the twelve operations that read the CLI -- eleven
+ * before console L5b added `runs.stats` (`src/source/source.ts`'s
+ * `FugaroSource` lists them) -- over
  * `boundSource`, so each of them reaches the active installation's own binary
  * and nothing else), and `startup.compatibility` is joined in here because it is
  * the one operation whose answer is the console's own state rather than a read
