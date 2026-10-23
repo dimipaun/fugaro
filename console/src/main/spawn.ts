@@ -1040,7 +1040,23 @@ function dedupe(values: readonly string[]): string[] {
 
 /** isExecutableFile answers whether a path is a regular file with an execute
  * bit. A directory named `fugaro` is not a candidate, and neither is a path the
- * process may not stat. */
+ * process may not stat.
+ *
+ * **It is a question about this host's filesystem, and it is only ever asked
+ * about a path on it** (F4, T-C6). The one path in this work that is not: a
+ * stored installation's `binaryPath` under a `distro`, which is a Linux spelling
+ * *inside* a distribution and which Windows cannot `stat` at all. Asking this
+ * function about it would answer "not executable" about a CLI that is there and
+ * works -- so that route does not ask it (`resolveInstalledBinary`'s WSL branch,
+ * and `installations.ts`'s `validateInstallation`, which skips the same question
+ * about the checkout). The distribution answers instead, through the same
+ * `version` probe every other route uses.
+ *
+ * `T-C7` gives it a platform argument, whose `win32` answer is "a regular file":
+ * Windows reports two file modes, so the execute bit is never set there and the
+ * POSIX question cannot be asked of a Windows path. That is a *different*
+ * question from this one -- the host's own paths, on a host that has no execute
+ * bit -- and neither replaces the other. */
 export function isExecutableFile(path: string): boolean {
   try {
     if (!existsSync(path)) return false
