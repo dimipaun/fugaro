@@ -133,8 +133,8 @@ export const LIVE_REVIEW_CAP = 50
 /**
  * LIVE_REVIEW_TITLE is the section's heading, quoted from the CLI's own text
  * view (`internal/watch/render.go`'s `readyForReview`: `Ready for your
- * review (%d)`). The count beside it is a *reading* rather than part of this
- * string, so the number cannot be drawn without its state (see `numberCell`).
+ * review (%d)`). It is the words alone: the count is not part of this string,
+ * and `reviewSection` is where the two are joined into the CLI's one line.
  */
 export const LIVE_REVIEW_TITLE = 'Ready for your review'
 
@@ -1256,16 +1256,19 @@ function total(factory: ScreenFactory, model: LiveModel): ScreenElement {
  */
 function reviewSection(factory: ScreenFactory, model: LiveModel): ScreenElement {
   const element = make(factory, 'section', 'live-review')
-  const heading = make(factory, 'h2', 'live-review-title')
-  literal(cell(heading, factory, 'span', 'live-review-word'), LIVE_REVIEW_TITLE)
-  // The count is the CLI's own `len(ReadyRowsOf(v))` over the list before the
-  // cap, drawn as a reading: it is this console's count of a list the document
-  // carries, so it is measured, and a document that somehow carried no list at
-  // all is refused by `schema.ts` before a screen ever sees it.
-  literal(cell(heading, factory, 'span', 'live-review-open'), '(')
-  numberCell(heading, factory, 'span', measured(model.reviewCount), 'count', 'live-review-count')
-  literal(cell(heading, factory, 'span', 'live-review-close'), ')')
-  element.append(heading)
+  // **The heading is one text run, and the parentheses hug the number.** It is
+  // the CLI's own line, `Ready for your review (%d)`, and the four elements a
+  // word-plus-`(`-plus-count-plus-`)` drawing needs are four flex items -- the
+  // heading's `gap` then spaces them out to `( 52 )`, which is text the CLI
+  // never prints and both design docs disagree with (review of 0.10.1). One
+  // run cannot be spaced out, and there is nothing to lose by it: the count is
+  // a *reading* and it is drawn as one -- through `formatReading`, the only
+  // function that turns a reading into the text a person reads -- but it is
+  // `measured` and can be nothing else, because `reviewCount` is this
+  // console's count of the list the document carries, and a document that
+  // carried no list at all is refused by `schema.ts` before a screen sees it.
+  const heading = cell(element, factory, 'h2', 'live-review-title')
+  literal(heading, `${LIVE_REVIEW_TITLE} (${formatReading(measured(model.reviewCount), 'count')})`)
 
   const list = cell(element, factory, 'ol', 'live-review-list')
   for (const row of model.review) list.append(reviewRow(factory, row))

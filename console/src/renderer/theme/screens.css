@@ -538,20 +538,15 @@ li.live-repo[data-killed='true'] {
  * the pull request's number and URL are drawn as text, and `data-href` -- the
  * one attribute `link.openExternal` acts on -- is written nowhere in this
  * section (`review.test.ts` walks it and asserts exactly that). */
+/* The heading is **one text run** (`reviewSection`): the CLI's own line,
+ * `Ready for your review (52)`, with its parentheses hugging the number. It is
+ * not laid out as a flex row of pieces -- a `display: flex` here is what spaced
+ * a word, a `(`, a count and a `)` apart into `( 52 )`, text the CLI never
+ * prints and both design docs disagree with (review of 0.10.1) -- so this rule
+ * carries the type and nothing that can space it. */
 h2.live-review-title {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2xs) var(--space-xs);
   font-size: var(--font-size-md);
   font-weight: var(--weight-semibold);
-}
-
-/* The count's parentheses are drawn elements rather than CSS punctuation, so
- * what the heading reads is in the document rather than in the stylesheet. */
-span.live-review-open,
-span.live-review-close {
-  color: var(--text-muted);
 }
 
 /* The title is a job's own sentence, so it takes the readable size the run
