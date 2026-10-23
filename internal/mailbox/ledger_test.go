@@ -33,13 +33,25 @@ import (
 // *outcomes* for a schedule are T8's corpus; this file pins the rules the ledger
 // applies on its own.
 //
-// **The two red steps that were run and watched fail** (T4's, and the reason the
-// commit lives inside Perform rather than in its caller): move the commit after
-// the `perform` call in ledger.go and TestRestartDoesNotRePerform fails with the
-// action performed a second time across the restart; make commit truncate in
-// place (`os.WriteFile(l.path, body, 0o600)`) and TestLedgerWriteIsAtomic fails
-// with the ledger already rewritten while the temporary file is still in the
-// directory. Restored; see the pull request.
+// **Four mutations were run and watched fail**, and they are the guards this
+// file is security-relevant for:
+//
+//   - Move the commit after the `perform` call in ledger.go (T4's red step, and
+//     the reason the commit lives inside Perform rather than in its caller):
+//     TestRestartDoesNotRePerform fails on both halves — the killed pass left
+//     nothing on disk, and the restart then re-performed `m-1`, and answered
+//     "acted" where the ledger's record would have made it a "duplicate".
+//   - Make commit truncate in place (`os.OpenFile(l.path, O_TRUNC)` and write
+//     into it, the seam still called): TestLedgerWriteIsAtomic fails with the
+//     ledger already holding the new bytes, and no temporary file in the
+//     directory, while a reader mid-write should still see the previous ledger.
+//   - Read an unreadable file as an empty ledger instead of refusing it:
+//     every case of TestLedgerUnreadableFileIsRefused fails. This is the one
+//     that re-performs a phone's action, so it is the one that matters most.
+//   - Drop the held-pair check from `deliver`: TestLedgerDuplicateIsNotActedOnTwice
+//     fails with the action run twice, and with two records for one pair.
+//
+// Every one restored; see the pull request.
 
 const (
 	// testNow is the instant every test judges at. The module reads no clock and
@@ -80,6 +92,22 @@ func ledgerBytes(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)
 	if err != nil {
+		t.Fatalf("reading the ledger file: %v", err)
+	}
+	return string(b)
+}
+
+// ledgerBytesOrEmpty is ledgerBytes where a *missing* file is an answer rather
+// than a stop: the restart test wants to report both what the killed pass left
+// on disk and what the restart did with it, and the mutation it pins leaves no
+// file at all.
+func ledgerBytesOrEmpty(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ""
+		}
 		t.Fatalf("reading the ledger file: %v", err)
 	}
 	return string(b)
@@ -417,8 +445,11 @@ func TestRestartDoesNotRePerform(t *testing.T) {
 	}
 
 	// What the killed process left behind: the record, committed, as acted.
-	if got := ledgerBytes(t, path); !strings.Contains(got, `"status":"acted"`) {
-		t.Fatalf("the ledger does not hold the delivery as acted: %s", got)
+	// Reported rather than fatal, so the mutation this test pins — a commit that
+	// happens after the action — fails on both halves: no record on disk, and a
+	// restart that performs the delivery again.
+	if got := ledgerBytesOrEmpty(t, path); !strings.Contains(got, `"status":"acted"`) {
+		t.Errorf("the killed pass left %q on disk, and the record of the delivery must be committed before the action runs", got)
 	}
 
 	// The restart. The same message, delivered again — and nothing performed.
