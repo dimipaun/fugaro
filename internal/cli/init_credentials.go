@@ -36,14 +36,33 @@ import (
 // moving the shared jobs over is C3.9, and it is not in this release. An
 // owner consenting to this step is consenting to what it really covers.
 //
-// What it does NOT yet do — and what its confirmation and the flag's help say
-// in as many words — is hand a run that credential either: the repository
-// roots' half (this release's: those jobs stop mounting their model
-// credential) is in, the runner's half (C1.19, the wiring that fetches one
-// from the service at call time) is not. So on an installation whose roots
-// have been re-applied since the opt-in, no re-applied repository job has a
-// model credential at all until C1.19 lands. Turning it on early costs
-// exactly that, and the owner is told so before they type the project's name.
+// What it does with that credential — and what its confirmation and the flag's
+// help say in as many words — is two halves that landed one release apart. The
+// mounts' half is the paragraph above: a re-applied repository job declares no
+// model credential. The runner's half is this release's, and it is the wiring
+// in this same stage plus the launch: recordURL below writes the service's URL
+// into the project's config, the published shared config carries it to every
+// machine of the installation, and internal/cli/run.go puts it on the
+// execution's environment — so a `cascade` run's gateway carries its calls to
+// the service, which attaches the credential (C1.15), and the keyless GitHub
+// path is switched on with it (C2.2: the run mints its installation tokens at
+// the service and reads no App key in-job). An installation that has not opted
+// in gets none of this: no block, no variable, byte for byte the launch it had.
+//
+// What is still not wired, and is not this release's: a repository job in
+// another agent.auth mode. The mount drop is auth-blind (dropModelMounts
+// removes CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY and each provider key
+// whatever the workflow's auth is), while only the cascade's calls go through
+// the service — so an opted-in installation's oauth and api-key repository jobs
+// have no model credential until their own half lands, and a project that opts
+// in runs its workflows with agent.auth: cascade. The owner is told both
+// before they type the project's name.
+//
+// And the service's own bundle is what makes any of it work: the GitHub mint
+// signs with the App key the bundle holds (C2.1, `fugaro creds set
+// github-app-key`), and a bundle without one is a named refusal rather than a
+// fall back to the job's copy (D143). The confirmation says so, because the
+// opt-in is what switches that mint on.
 //
 // That is why, exactly as the compute backend's provisioning is,
 // it is registered noYes, its confirmation is the project's name typed at a
@@ -253,7 +272,7 @@ func (s *credentialsStage) Apply(ctx context.Context, _ initflow.Env) (out initf
 
 	// The confirmation, typed at a real terminal: --yes never covers this
 	// stage, and a run that cannot ask leaves it for the owner.
-	what := fmt.Sprintf("turns ON the credentials service in GCP project %s: a Cloud Run service (%s) running the image %s, its own service account, and one Secret Manager bundle secret whose accessor grant is the service's alone. It is the identity the REPOSITORY jobs' model credentials move to: every workflow job of every repository root re-applied after this drops its model credential — in every agent.auth mode, oauth and api-key as much as cascade — and its account's accessor on it, and gets an invoker grant on the service instead. It does NOT reach the shared project jobs, which keep mounting their provider keys and CLAUDE_CODE_OAUTH_TOKEN with their grants (C3.9 moves those). And the part that would give a run a credential from this service instead is NOT in this release yet, so until it lands no re-applied repository job has a model credential at all (%s)",
+	what := fmt.Sprintf("turns ON the credentials service in GCP project %s: a Cloud Run service (%s) running the image %s, its own service account, and one Secret Manager bundle secret whose accessor grant is the service's alone. It is the identity the REPOSITORY jobs' model credentials move to: every workflow job of every repository root re-applied after this drops its model credential — in every agent.auth mode, oauth and api-key as much as cascade — and its account's accessor on it, and gets an invoker grant on the service instead. It does NOT reach the shared project jobs, which keep mounting their provider keys and CLAUDE_CODE_OAUTH_TOKEN with their grants (C3.9 moves those). And it is wired now, from this run: the service's address is recorded in this project's config, and every launch of a per-repository job hands it to the job — so a cascade run takes its model credential from the service, and a GitHub run has its installation token minted there rather than in the job. Two things that leaves: a repository job in another agent.auth mode has no model credential of its own and nothing yet to replace it (that half is not in this release, so a project that opts in runs its workflows with agent.auth: cascade), and the service's bundle has to hold the GitHub App's key (fugaro creds set github-app-key) before any GitHub run of this installation can mint, because a mint that finds no key is a refusal and never a fall back to the job's own copy (%s)",
 		e.lc.GCPProject, infra.CredentialsServiceName, s.image, counts.String())
 	confirmed, reachable, err := r.askTyped(what)
 	if err != nil {

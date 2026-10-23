@@ -86,18 +86,68 @@ func TestAnInstallationWithoutTheServiceSetsNoCredentialsServiceVariable(t *test
 // refuses the last of those (localcfg's validCredentialsServiceURL), so it can
 // only be reached by a Config built in Go, and reading it as "off" is the
 // fail-closed direction: the job gets no address rather than an empty one.
+//
+// A SHARED PROJECT JOB is off whatever the config says, and that is the third
+// argument's whole job: the service refuses an account that belongs to one
+// (internal/credsvc/auth.go's verifyJob, Global Constraint 6, C3.9), so the
+// address would buy such a job nothing — and it would cost it its git
+// credentials, because the same variable is what opens the provider keyless
+// (internal/gitprov/providers/providers.go) and the mint that replaces the
+// key it still mounts would be refused. The shared jobs keep their own
+// credentials until C3.9 moves them.
 func TestCredentialsServiceLaunchEnv(t *testing.T) {
+	optedIn := &localcfg.Config{CredentialsService: &localcfg.CredentialsService{URL: launchCredsURL}}
 	for name, lc := range map[string]*localcfg.Config{
 		"no config":       nil,
 		"no block":        {},
 		"a block, no url": {CredentialsService: &localcfg.CredentialsService{}},
 	} {
-		if got := credentialsServiceLaunchEnv(lc); got != nil {
+		if got := credentialsServiceLaunchEnv(lc, ""); got != nil {
 			t.Errorf("%s: credentialsServiceLaunchEnv = %v, want nil", name, got)
 		}
 	}
-	got := credentialsServiceLaunchEnv(&localcfg.Config{CredentialsService: &localcfg.CredentialsService{URL: launchCredsURL}})
+	got := credentialsServiceLaunchEnv(optedIn, "")
 	if len(got) != 1 || got[0] != envCredentialsServiceURL+"="+launchCredsURL {
 		t.Errorf("credentialsServiceLaunchEnv = %v, want [%s=%s]", got, envCredentialsServiceURL, launchCredsURL)
+	}
+	for _, lc := range []*localcfg.Config{optedIn, nil} {
+		if got := credentialsServiceLaunchEnv(lc, "fugaro-standard-github"); got != nil {
+			t.Errorf("a launch on the shared project job put %v in the execution's plain Env, want none: the credentials service refuses a shared project job's account whole (internal/credsvc/auth.go's verifyJob), and telling that job where the service is would open its git provider keyless (internal/gitprov/providers/providers.go) for a mint the service refuses — every GitHub run of such a job would break", got)
+		}
+	}
+}
+
+// TestASharedProjectJobIsNotToldAboutTheCredentialsService is the same rule
+// through the launch itself, because the helper's third argument is the
+// launcher's to get right and a helper test cannot see the call site: this is
+// the arm that would break an opted-in installation's shared project jobs.
+//
+// The fixture is a real shared-job launch (projectJobFixture: the profile, the
+// published policy, the job the installation deployed) with the opt-in on, and
+// the checkout selects the clone workflow that resolves it — asserted, so the
+// test cannot pass by launching the per-repository job instead.
+//
+// Mutation (verified, run and restored): pass "" for job in run.go's launch
+// call — this fails on the credentials entry, and
+// TestTheCredentialsServiceURLReachesTheJobEnv still passes, which is why the
+// two exist together.
+func TestASharedProjectJobIsNotToldAboutTheCredentialsService(t *testing.T) {
+	f := newProjectJobFixture(t)
+	f.appendConfig(t, "credentials_service:\n  url: "+launchCredsURL+"\n")
+	projectJobCheckoutYAML(t, projectJobRepoYAML)
+	env := memEnv(t, f.cloudFixture)
+	rec := &envRecorder{Backend: env.be}
+	env.be = rec
+	if _, err := launchRun(context.Background(), env, appSlug, raceSpec(t, env), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	calls := f.run.RunRequests()
+	if len(calls) != 1 || calls[0].Job != f.job {
+		t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the shared job %s: without that this test says nothing about a shared project job", len(calls), calls, f.job)
+	}
+	for _, kv := range append(append([]string{}, rec.env...), rec.secretEnv...) {
+		if strings.HasPrefix(kv, envCredentialsServiceURL+"=") {
+			t.Fatalf("a launch on the shared project job %s carried %q: the service refuses a shared project job's account whole, so this entry is an address such a job can never use — and it is what opens the git provider keyless, for a mint the service refuses", f.job, kv)
+		}
 	}
 }

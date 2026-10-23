@@ -671,9 +671,13 @@ func TestProvisionCredentialsAndBatchAreIndependentApplies(t *testing.T) {
 //   - what the opt-in removes is every REPOSITORY job's model credential, in
 //     EVERY agent.auth mode (internal/infra/spec.go's dropModelMounts, which
 //     the repository roots run for oauth and api-key as much as for cascade),
-//   - the runner half that would fetch one from the service at call time
-//     (C1.19) is not in this release, so until it lands no re-applied
-//     repository job has a model credential at all, and
+//   - the runner half is in, and it is the cascade's and the GitHub mint's:
+//     the launch puts the service's address on a per-repository job
+//     (internal/cli/run.go's credentialsServiceLaunchEnv), so a cascade run
+//     takes its credential from the service and a GitHub run mints there —
+//     while an oauth or api-key repository job has nothing to replace the
+//     mount that went, and the bundle has to hold the App key before a GitHub
+//     run can mint at all, and
 //   - the SHARED project jobs are outside it: credentials_service reaches the
 //     installation and workflow modules only, so modules/project keeps
 //     mounting its provider keys and CLAUDE_CODE_OAUTH_TOKEN with their
@@ -689,8 +693,9 @@ func TestProvisionCredentialsAndBatchAreIndependentApplies(t *testing.T) {
 // Mutation (verified, run and restored): restore either old sentence ("stops
 // mounting one and asks this service instead" in the confirmation, "stops
 // mounting each job's model credential and asks the service instead" in the
-// flag's help), or drop the shared-jobs sentence from either text: this test
-// fails.
+// flag's help), drop the shared-jobs sentence from either text, or put back
+// the dormancy sentence this release retires ("the part that ... is not in
+// this release yet"): this test fails.
 func TestCredentialsStageTextsSayWhatTheOptInDoes(t *testing.T) {
 	r := credentialsStageRig(t)
 	r.setPlanAt(t, "installation")
@@ -710,8 +715,16 @@ func TestCredentialsStageTextsSayWhatTheOptInDoes(t *testing.T) {
 		"oauth and api-key as much as cascade",
 		"does NOT reach the shared project jobs",
 		"CLAUDE_CODE_OAUTH_TOKEN",
-		"in this release yet",
-		"no re-applied repository job has a model credential at all",
+		// What this release wires, which is the cascade's half and the
+		// GitHub mint's — and what it leaves unwired, which is every other
+		// agent.auth mode's own credential (the mount drop is auth-blind
+		// while only the cascade's calls reach the service).
+		"And it is wired",
+		"a cascade run takes its model credential from the service",
+		"its installation token minted there",
+		"fugaro creds set github-app-key",
+		"no model credential of its own and nothing yet to replace it",
+		"agent.auth: cascade",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("the confirmation does not say %q:\n%s", want, s)
@@ -720,6 +733,12 @@ func TestCredentialsStageTextsSayWhatTheOptInDoes(t *testing.T) {
 	for _, unwanted := range []string{
 		"asks this service instead",
 		"every model credential the installation holds",
+		// The two claims this release retires: the runner's half is here,
+		// and "no re-applied repository job has a model credential at all"
+		// is false of a cascade job now that the launch hands the job the
+		// service's address.
+		"not in this release yet",
+		"no re-applied repository job has a model credential at all",
 	} {
 		if strings.Contains(s, unwanted) {
 			t.Errorf("the confirmation still says %q:\n%s", unwanted, s)
@@ -743,15 +762,25 @@ func TestCredentialsStageTextsSayWhatTheOptInDoes(t *testing.T) {
 		"oauth and api-key as much as cascade",
 		"does NOT reach the shared project jobs",
 		"CLAUDE_CODE_OAUTH_TOKEN",
-		"in this release yet",
-		"no re-applied repository job has a model credential to use",
+		"And it is wired",
+		"a cascade run takes its model credential from the service",
+		"its installation token minted there",
+		"fugaro creds set github-app-key",
+		"has no model credential to use and nothing yet to replace it",
+		"agent.auth: cascade",
 	} {
 		if !strings.Contains(f.Usage, want) {
 			t.Errorf("the flag's help does not say %q:\n%s", want, f.Usage)
 		}
 	}
-	if strings.Contains(f.Usage, "asks the service instead") {
-		t.Errorf("the flag's help still promises that a job asks the service instead:\n%s", f.Usage)
+	for _, unwanted := range []string{
+		"asks the service instead",
+		"not in this release yet",
+		"no re-applied repository job has a model credential to use",
+	} {
+		if strings.Contains(f.Usage, unwanted) {
+			t.Errorf("the flag's help still says %q:\n%s", unwanted, f.Usage)
+		}
 	}
 }
 
