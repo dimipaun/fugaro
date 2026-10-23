@@ -76,10 +76,12 @@ import {
   PRIVATE_DIR_LEAF,
   PRIVATE_DIR_NAME,
   privateWorkingDirectory,
+  shellQuoteWord,
   probeVersion,
   resolveBinary,
   resolveHandshakeBinary,
   resolveInstalledBinary,
+  wslUncPath,
   runToCompletion,
   restartDecision,
   spawnCommandFor,
@@ -1124,6 +1126,38 @@ describe('the private working directory', () => {
     const path = privateWorkingDirectory({ base })
     expect(realpathSync(path)).toBe(path)
   })
+
+  it('creates a directory on Windows that makes no mode claim at all (F12, T-D4)', () => {
+    // F12: the POSIX guarantees are POSIX-only, and the defect is stating them
+    // anyway. NTFS reports two modes and neither is a POSIX one; `chmodSync` is
+    // a no-op there and `process.getuid` does not exist, so a `0700` description
+    // -- or an ACL -- would be a promise the filesystem does not keep. What the
+    // Windows branch promises is what it can: a directory, empty, at the same
+    // name every time, refusing a link or a file someone else planted there.
+    //
+    // The name is the red step: the Windows branch asks the process for **no
+    // uid**, so the base is the shared `fugaro-console` and not
+    // `fugaro-console-<uid>`. A branch that kept the POSIX name would fail here
+    // on this machine, where `process.getuid` exists and would answer.
+    const owned = ownTemporaryDirectory()
+    const path = privateWorkingDirectory({ platform: 'win32' })
+    expect(dirname(path)).toBe(join(owned, PRIVATE_DIR_NAME))
+    expect(basename(path)).toBe(PRIVATE_DIR_LEAF)
+    expect(statSync(path).isDirectory()).toBe(true)
+    expect(readdirSync(path)).toEqual([])
+    expect(privateWorkingDirectory({ platform: 'win32' })).toBe(path)
+    // ...and a caller that passes a uid anyway does not get one: there is no
+    // such thing to carry here, so `platform` decides and the uid is ignored.
+    expect(privateWorkingDirectory({ platform: 'win32', uid: 4242 })).toBe(path)
+  })
+
+  it('still refuses a file or a link planted at the Windows name (F12, T-D4)', () => {
+    const base = freshDirectory()
+    writeFileSync(join(base, PRIVATE_DIR_LEAF), '')
+    // A file at the name is not a directory this console will spawn from, on
+    // Windows exactly as on POSIX: this is the check the Windows branch keeps.
+    expect(() => privateWorkingDirectory({ base, platform: 'win32' })).toThrow(/not a directory/)
+  })
 })
 
 describe('binary resolution', () => {
@@ -2038,6 +2072,122 @@ describe('the WSL resolution path', () => {
     expect(resolution.kind).toBe('no-distro')
     // The host's `fugaro` was never asked: `resolveBinary` was not reached.
     expect(hostStub.calls()).toBe(0)
+  })
+})
+
+describe('the spelling each side gets (Part D, T-D3, D3(a))', () => {
+  // D3(a): **one thing, one spelling, said out loud.** A path the console
+  // *states* or *passes into the distribution* is the distribution's Linux
+  // spelling; the UNC spelling (`wslUncPath`) exists only where Windows opens a
+  // path itself. T-A2's fake refuses a Windows spelling in `--cd` by name, and
+  // the refusals below happen before any process exists -- so the failure names
+  // the rule rather than arriving as an `ENOENT` from inside a distribution.
+  const UBUNTU: WslRoute = { distro: 'Ubuntu', directory: '/home/dimi/src' }
+
+  it('refuses a project name the distribution’s shell would read as syntax', () => {
+    // The carry-over from Part C's review, and the reason it binds this part:
+    // the CLI runs through the distribution's own shell, so every word after
+    // `--` that is not a fixed constant is shell syntax until it is proved
+    // otherwise. A project named `$(touch x)` must never reach a shell.
+    const hostile = ['$(touch x)', '`touch x`', 'a;rm -rf /', 'a|b', 'a&b', 'a>b', "a'b"]
+    for (const project of hostile) {
+      expect(() => planFor('budget.show', {}, safeContext({ project, wsl: UBUNTU })), project).toThrow(
+        /shell/,
+      )
+    }
+    // A newline never gets as far as the shell check: it is refused as a name
+    // before the argv is built. The rule is "refused", and this is the other
+    // reader of it -- what matters is that it is not passed on.
+    expect(() => planFor('budget.show', {}, safeContext({ project: 'a\nb', wsl: UBUNTU }))).toThrow(
+      /not a value this console will pass/,
+    )
+    // ...and the same word is refused in every other value too, by whichever
+    // reader sees it first: an argument's own value check, or this one. What
+    // matters is that it is refused, and that both sentences exist.
+    expect(() =>
+      planFor('budget.show', { repo: 'acme/$(touch x)' }, safeContext({ wsl: UBUNTU })),
+    ).toThrow(/not a value this console will pass|shell/)
+  })
+
+  it('builds the plan for a safe word, so the refusal is a filter and not a wall', () => {
+    // The other direction of the red step: a project name inside the alphabet
+    // still plans, and its Linux directory is what the wrapper names.
+    const plan = planFor('budget.show', {}, safeContext({ project: 'acme-widgets', wsl: UBUNTU }))
+    expect([...plan.argv]).toEqual([FUGARO_BINARY_NAME, 'budget', 'show', '--json', '--project', 'acme-widgets'])
+    expect([...plan.prefix]).toEqual(['-d', 'Ubuntu', '--cd', '/home/dimi/src', '--'])
+  })
+
+  it('refuses a Windows spelling rather than the directory the distribution has', () => {
+    // D3(a) from the other side: a `C:\...` spelling in the wrapper's `--cd` is
+    // a directory that does not exist inside the distribution. The console
+    // refuses it rather than translating it here -- the translation is
+    // `wslpath`'s (T-D2), and a path this function composed would be right for
+    // `C:` and wrong for every custom mount (D4(b)).
+    expect(() =>
+      planFor('budget.show', {}, safeContext({ wsl: { distro: 'Ubuntu', directory: 'C:\\Users\\dimi\\src' } })),
+    ).toThrow(/Windows spelling/)
+    // ...and the config path is the same rule: it is passed *into* the
+    // distribution, so it is the distribution's spelling.
+    expect(() =>
+      planFor(
+        'budget.show',
+        {},
+        safeContext({
+          configPath: 'C:\\Users\\dimi\\.config\\fugaro\\config.yaml',
+          wsl: UBUNTU,
+        }),
+      ),
+    ).toThrow(/Windows spelling/)
+    // With the distribution's spelling both are passed through verbatim.
+    const plan = planFor(
+      'budget.show',
+      {},
+      safeContext({ configPath: '/home/dimi/.config/fugaro/config.yaml', wsl: UBUNTU }),
+    )
+    expect([...plan.argv]).toContain('/home/dimi/.config/fugaro/config.yaml')
+  })
+
+  it('refuses a distribution name that is not a name, before anything runs', () => {
+    // The name decides **where the shell runs**, and it arrives from a document
+    // (D2(a)); `planFor` is the last place it is still a string, and this is
+    // what "planFor checks the distro itself" means for a function that starts
+    // no process.
+    for (const distro of ['Ubuntu; touch /tmp/x', 'Ubuntu\n', 'a b', '-Ubuntu', '', 'Ubuntu$(id)']) {
+      expect(() => planFor('budget.show', {}, safeContext({ wsl: { distro, directory: '/home/dimi/src' } })), distro).toThrow(
+        /WSL distribution name|shell/,
+      )
+    }
+    // A name inside the alphabet plans: `Ubuntu-22.04` and `Ubuntu_2` are real
+    // distribution names, and a check that refused them would refuse the machine.
+    for (const distro of ['Ubuntu', 'Ubuntu-22.04', 'Ubuntu_2', 'kali.rolling']) {
+      expect(() =>
+        planFor('budget.show', {}, safeContext({ wsl: { distro, directory: '/home/dimi/src' } })),
+      ).not.toThrow()
+    }
+  })
+
+  it('is the only spelling Windows needs, and it is only for Windows opening a path', () => {
+    // `wslUncPath` is the one place a Windows spelling is *produced*, and it
+    // exists for the paths Windows itself opens -- never for a word the console
+    // states or passes into the distribution.
+    expect(wslUncPath('Ubuntu', '/home/dimi/src')).toBe('\\\\wsl.localhost\\Ubuntu\\home\\dimi\\src')
+    expect(wslUncPath('Ubuntu-22.04', '/home/dimi/.local/share/fugaro')).toBe(
+      '\\\\wsl.localhost\\Ubuntu-22.04\\home\\dimi\\.local\\share\\fugaro',
+    )
+    expect(wslUncPath('Ubuntu', '/')).toBe('\\\\wsl.localhost\\Ubuntu\\')
+  })
+
+  it('quotes a word for a POSIX shell, and refuses the one it cannot quote', () => {
+    // `shellQuoteWord` is Part F's, exported now so that the `sh -c` wrapper
+    // quotes rather than concatenates. Until then the WSL route **refuses** a
+    // dangerous word (above), which is the safe half of the same rule.
+    expect(shellQuoteWord('fugaro')).toBe("'fugaro'")
+    expect(shellQuoteWord('a b')).toBe("'a b'")
+    expect(shellQuoteWord("a'b")).toBe("'a'\\''b'")
+    expect(shellQuoteWord('$(touch x)')).toBe("'$(touch x)'")
+    // A NUL cannot be passed to a process at all, so there is nothing to quote:
+    // a quote that dropped it would hand the child a different word.
+    expect(() => shellQuoteWord('a\u0000b')).toThrow()
   })
 })
 
