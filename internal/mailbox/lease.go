@@ -408,25 +408,13 @@ func validateLeaseHolder(holder string) Code {
 // HeartbeatPath is the one node the lease lives in: `mailbox/<mailbox>/heartbeat`
 // (M1 — no fourth node). The mailbox is the account's own key — the rules bind
 // `$mb == auth.uid` — so the name is validated as what the database will treat
-// it as: **a node key**. A name carrying one of the characters the database
-// refuses in a key (`.`, `$`, `#`, `[`, `]`, `/`, `%`, or a control character)
-// is refused here rather than escaped or sent, because an escaped path would
-// name a different node than the rules grant.
-//
-// The bound is SenderMax, not the schema's IDMax: a mailbox is a Firebase uid
-// (at most 128 characters), and it is also the `sender` of every message it
-// writes, which is the string that bound is the tree's (MaxString, 200).
+// it as, by the one function that validates it for both paths this package builds
+// (mailboxKey, outbox.go): a name carrying one of the characters the database
+// refuses in a key is refused rather than escaped or sent, because an escaped
+// path would name a different node than the rules grant.
 func HeartbeatPath(mailbox string) (string, error) {
-	if strings.TrimSpace(mailbox) == "" {
-		return "", errors.New("mailbox: a mailbox name is the account's key, and it is blank")
-	}
-	if utf16Len(mailbox) > SenderMax {
-		return "", fmt.Errorf("mailbox: a mailbox name is at most %d characters", SenderMax)
-	}
-	for _, r := range mailbox {
-		if forbiddenKeyChars[r] || r < 0x20 || r == 0x7f {
-			return "", fmt.Errorf("mailbox: a mailbox name is a database key, and it may not contain %q", r)
-		}
+	if err := mailboxKey(mailbox); err != nil {
+		return "", err
 	}
 	return "mailbox/" + mailbox + "/heartbeat", nil
 }
@@ -736,7 +724,14 @@ func signedHeartbeat(opts LeaseOptions) (Record, error) {
 	}
 	mac, err := opts.Sign(Heartbeat{At: opts.At, Boot: opts.Holder})
 	if err != nil {
-		return nil, fmt.Errorf("mailbox: the heartbeat could not be signed, so nothing is written and no lease is taken: %w", err)
+		// M4's third row in ErrUnsignable's shape (T2a): the key is loaded and
+		// it is **this value** the signer errored on, so nothing is written and
+		// no lease is taken — a per-write refusal inside a running pass, which a
+		// caller tells apart from §8.3's startup exit by errors.Is (§4.4, M4's
+		// table). The signer's own error is kept as the inner error: the reason a
+		// value could not be signed is the operator's to see, and it is a reason
+		// and never a key.
+		return nil, fmt.Errorf("%w: the heartbeat could not be signed, so nothing is written and no lease is taken: %w", ErrUnsignable, err)
 	}
 	value := Record{"at": opts.At, "boot": opts.Holder, "mac": mac}
 	if _, refusal := ValidateHeartbeat(value); refusal != nil {
