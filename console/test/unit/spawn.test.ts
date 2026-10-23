@@ -1180,6 +1180,20 @@ describe('binary resolution', () => {
     expect(() => locationsFor('sunos')).toThrow(/sunos/)
     expect(() => locationsFor('aix')).toThrow(/aix/)
     expect(() => locationsFor('')).toThrow(/platform/)
+    // And with no argument at all. `locationsFor()` means "this machine's
+    // platform", so a machine running a platform nobody decided is refused by
+    // the same lookup rather than answered with Linux's directories -- which is
+    // the case the old fallback was written for, and the case it got wrong.
+    // `process.platform` is the only place that value comes from and it is
+    // configurable, so the test states it and puts it back.
+    const machine = process.platform
+    Object.defineProperty(process, 'platform', { value: 'freebsd', configurable: true })
+    try {
+      expect(() => locationsFor()).toThrow(/freebsd/)
+      expect(() => locationsFor(undefined)).toThrow(/freebsd/)
+    } finally {
+      Object.defineProperty(process, 'platform', { value: machine, configurable: true })
+    }
     // and the three rows that were decided still answer, `win32` included: the
     // refusal is about the platforms *nobody* decided, not about the new one.
     expect(locationsFor('darwin')).toBe(DARWIN_LOCATIONS)
