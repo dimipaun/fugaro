@@ -57,10 +57,16 @@ var pipeIntoPythonHeredocRE = regexp.MustCompile(`\|\s*python3?\s[^\n]*<<`)
 //     now — the seven names credentials.tf sets are what C1.14's builder reads,
 //     so a revision starts and serves — and its account holds exactly one grant,
 //     the bundle's accessor (Q6), and no role on the installation's database, so
-//     the first read a call makes (the operator's stop switches) is denied and
-//     the call is answered `state_unavailable` rather than served. The check has
-//     to say so, and it has to keep saying so for exactly as long as
-//     credentials.tf grants that account no `firebasedatabase` role.
+//     the first read a call makes is denied and the call is answered
+//     `state_unavailable` rather than served. That first read is NOT the
+//     operator's stop switches: it is the identity verification's own read of
+//     the run's write-once outcome (auth.go's checkLive, reached from
+//     Auth.Verify), which the stop switches, the policy and the bundle all come
+//     after — and because the pairing question of step 4 is asked only after
+//     Auth.Verify returned a whole identity, that denied read is what stops step
+//     4's two refusals as well. The check has to say so, and it has to keep
+//     saying so for exactly as long as credentials.tf grants that account no
+//     `firebasedatabase` role.
 //
 // One more thing is held to the code rather than to the prose: step 4's pass
 // condition. The pairing refusal is made in ServeHTTP after Auth.Verify returned
@@ -100,8 +106,26 @@ var pipeIntoPythonHeredocRE = regexp.MustCompile(`\|\s*python3?\s[^\n]*<<`)
 // whose refusal is recorded by refuseCall); the pairing refusal's line moved
 // out of server.go's refuseCall and into refuse → FAIL in the other direction
 // (the check's expectation is held to refuseCall's body and to auditCall's
-// being written before the answer); and a mint's own refusals moved off
-// refuseMint/auditMint → FAIL (the check states those as audited too).
+// being written before the answer); a mint's own refusals moved off
+// refuseMint/auditMint → FAIL (the check states those as audited too); the
+// check's "the first read a call makes — **not** the stop switches, but the
+// identity verification's own read of the run's write-once outcome" put back to
+// the draft's "the first read a call makes, the operator's stop switches, is
+// denied" → FAIL (that order is not the code's: auth.go's checkLive is reached
+// from Auth.Verify, and Kills.Stop is asked only after it — and the check's
+// account of `state_unavailable`, and of why step 4's refusals cannot be
+// reached on this tree, rest on that order); that paragraph's "**nor can step
+// 4's two refusals be observed**" deleted → FAIL (the check would claim a
+// deployed service answers the pairing refusal on a tree where the denied
+// database read is the verification's own); the check's "that refusal **is**
+// audited" put back to the draft's "a refusal taken before the mint is reached
+// is NOT audited on this tree" → FAIL (the pairing refusal is made after
+// Auth.Verify returned a whole identity, so refuseCall records it — a check
+// that said otherwise would fail a correct release and contradict its own step
+// 4); and the register's row 99's "**The service's issuance audit line on the
+// answer path IS wired** (#902)" put back to "nothing on the forward path calls
+// `audit.Write`" → FAIL (cascade.go's answer writes that line, so the row would
+// send a reader looking for a missing line that is not missing).
 func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	check := check96Section(t)
 
@@ -159,6 +183,31 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	}
 	if !strings.Contains(check, "# 0") {
 		t.Errorf("docs/gcp-live-checklist.md's Check 96 no longer reads its own scratch directory back to 0: the Restore's final assertion is that no file the check wrote survives it")
+	}
+
+	// The register's row 96 carries two of the same claims, and two reviews found
+	// both of them false the same way the section's were: the pairing refusal is
+	// recorded (it is made after Auth.Verify returned a whole identity), and the
+	// first database read of a call is the identity verification's own read of
+	// the run's outcome, not the operator's stop switches. The row is where a
+	// reader meets the check first, so it is held to the same two facts.
+	row := registerRow(t, whole, "96")
+	for _, want := range []string{
+		"that refusal **is** audited",
+		"the first read a call makes — **not** the stop switches, but the identity verification's own read of the run's write-once outcome",
+	} {
+		if !strings.Contains(row, want) {
+			t.Errorf("docs/gcp-live-checklist.md's row 96 does not say %q: the row is where the check's three claims are read first, and this is one of the two a review found it stating falsely", want)
+		}
+	}
+	for _, notWant := range []string{
+		"a refusal taken before the mint is reached is NOT audited",
+		"the first read a call makes, the operator's stop switches, is denied",
+		"nothing on the forward path calls `audit.Write`",
+	} {
+		if strings.Contains(row, notWant) {
+			t.Errorf("docs/gcp-live-checklist.md's row 96 still states %q: that reading is not the code's — auth.go's checkLive is the first database read, the pairing refusal is audited through refuseCall, and cascade.go's answer writes the issuance line — and a row that keeps it contradicts the section below it", notWant)
+		}
 	}
 
 	// The code each claim is read out of, so that a rename or a widening on
@@ -250,9 +299,11 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	// credentials.tf sets are exactly what C1.14's builder reads, and
 	// TestCredentialsServiceEnvIsTheDeploymentsOwn is what holds that pair — and
 	// what still stops it serving is that its account holds no role on the
-	// installation's database. The first read a call makes is the operator's stop
-	// switches, so the call is refused `state_unavailable` rather than served, and
-	// the check has to say that instead of the refusal that was lifted.
+	// installation's database. The first read a call makes is the identity
+	// verification's own read of the run's write-once outcome (auth.go's
+	// checkLive, reached from Auth.Verify), not the operator's stop switches,
+	// so the call is refused `state_unavailable` rather than served, and the
+	// check has to say that instead of the refusal that was lifted.
 	//
 	// The claim is read against the module's own role lines, so the day the
 	// credentials account is granted a database role the sentence is the one that
@@ -266,7 +317,36 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 			t.Errorf("deploy/terraform/gcp/modules/installation/credentials.tf now grants a database role to the credentials service's account — the service can serve — and Check 96 still says every call is refused: the gap was closed and this check did not notice")
 		}
 	} else if !strings.Contains(check, cannotServe) {
-		t.Errorf("deploy/terraform/gcp/modules/installation/credentials.tf grants the credentials service's account no role on the installation's database (its one grant is the bundle's accessor, Q6), so the first read a call makes — the operator's stop switches — is denied and the call is refused `state_unavailable` rather than served, and Check 96 does not say so: that is what decides whether the mint of step 3 can be made at all")
+		t.Errorf("deploy/terraform/gcp/modules/installation/credentials.tf grants the credentials service's account no role on the installation's database (its one grant is the bundle's accessor, Q6), so the first read a call makes — the identity verification's own read of the run's outcome (auth.go's checkLive) — is denied and the call is refused `state_unavailable` rather than served, and Check 96 does not say so: that is what decides whether the mint of step 3 can be made at all")
+	}
+
+	// And the order that sentence rests on, in both directions: the check has to
+	// name the identity verification's read as the first database read of a call
+	// and must not put the stop switches there. Three reviews of this section
+	// found the stop switches named as the first read; the code has never read it
+	// that way — auth.go's checkLive is what Auth.Verify reaches, and
+	// server.go's Kills.Stop is asked after ServeHTTP has a whole identity in
+	// hand — so a check that put them first would have reported a mechanism no
+	// release has.
+	if !strings.Contains(check, "the first one is **not** the stop switches but the identity verification's own read of the run's write-once outcome") {
+		t.Errorf("Check 96 no longer states the first database read of a call as the identity verification's own read of the run's outcome: that order is what the check's account of `state_unavailable` rests on, and it is read out of internal/credsvc/auth.go's checkLive")
+	}
+	if !strings.Contains(check, "**nor can step 4's two refusals be observed**") {
+		t.Errorf("Check 96 no longer says step 4's two refusals are unreachable on this tree: the pairing question is asked only after Auth.Verify returned a whole identity, and on this tree that verification is stopped by the denied database read, so a deployed service does not answer the pairing refusal at all — the check's claim that it still answers them was false")
+	}
+	if body := check96FuncBody(t, readDoc(t, "internal/credsvc/server.go"), "func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request)"); !strings.Contains(body, "id, err := s.cfg.Auth.Verify(ctx, req)") || !strings.Contains(body, "s.cfg.Kills.Stop(ctx, id.Slug)") {
+		t.Errorf("internal/credsvc/server.go's ServeHTTP no longer verifies the identities before it reads the stop switches (%q): Check 96 states that order — the identity verification's own database read comes first — and that is what it is read out of", strings.TrimSpace(body))
+	} else if strings.Index(body, "s.cfg.Auth.Verify(ctx, req)") > strings.Index(body, "s.cfg.Kills.Stop(ctx, id.Slug)") {
+		t.Errorf("internal/credsvc/server.go's ServeHTTP now reads the stop switches before it verifies the identities: Check 96 states the opposite order (the identity verification's database read is the first read of a call), so the check and the code have moved apart")
+	}
+	// The same order inside the verifier: checkLive's outcome read is what
+	// Auth.Verify reaches, and it is a database read (RTDBOutcomes.OutcomeExists).
+	authSrc := readDoc(t, "internal/credsvc/auth.go")
+	if !strings.Contains(authSrc, "if err := a.checkLive(ctx, slug, run, now); err != nil {") {
+		t.Errorf("internal/credsvc/auth.go's verifyRun no longer calls checkLive: Check 96 states the identity verification's own database read as the first read of a call, and that call is the read")
+	}
+	if !strings.Contains(authSrc, "a.cfg.Outcomes.OutcomeExists(ctx, day, slug, run)") {
+		t.Errorf("internal/credsvc/auth.go's checkLive no longer reads the run's outcome through Outcomes.OutcomeExists: Check 96 states that read as the first database read a call makes")
 	}
 	// And the half of the same sentence that names the configuration: the check
 	// states it as the deployment's own seven names, so the list it names has to
