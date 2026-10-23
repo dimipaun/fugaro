@@ -1267,17 +1267,20 @@ var (
 	// one member its bundle's secretAccessor grant names.
 	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials)\[0\]\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|installation\.scheduler_service_account)\}")$`)
 
-	// A custom role of this project, spelled as the literal path
-	// "projects/${var.project}/roles/<id>" rather than read from the role
+	// A custom role of one of this run's projects, spelled as the literal path
+	// "projects/${var.<project>}/roles/<id>" rather than read from the role
 	// resource's own name attribute. Task 1.5 step 5: the creating apply plans
 	// the deployer's eight roles, and a project grant whose role is computed
 	// cannot be told from a conditioned one, whose IAM condition is the whole
 	// fence around the account — so the project grants planned by that same
 	// apply (the deployer's eight, the launchers', the build submitters' and
-	// the history account's) name their role literally instead. var.project
-	// is known at plan time, and the ID must be one the modules create
-	// (tf.FugaroRoles), checked below.
-	projectRoleLiteralRE = regexp.MustCompile(`^"projects/\$\{var\.project\}/roles/([A-Za-z0-9_.]+)"$`)
+	// the history account's) name their role literally instead. Both project
+	// variables are accepted because the credentials service's database role
+	// lives in the Firebase project (credentials.tf, and the reason is the same
+	// one: an unknown role is a grant the cover cannot read). Both are known at
+	// plan time, and the ID must be one the modules create (tf.FugaroRoles),
+	// checked below.
+	projectRoleLiteralRE = regexp.MustCompile(`^"projects/\$\{var\.(project|credentials_service\.firebase_project)\}/roles/([A-Za-z0-9_.]+)"$`)
 
 	// Roles that reach the budget backend (RTDB, Firestore, Identity
 	// Platform, API keys, the token signer, IAM or project policy), or that
@@ -1319,8 +1322,8 @@ func TestIAMResourcesUseKnownExpressions(t *testing.T) {
 				t.Errorf("%s: %s has no role attribute the scan can read", path, blk.name)
 			case strings.HasPrefix(role, `"`):
 				if m := projectRoleLiteralRE.FindStringSubmatch(role); m != nil {
-					if !slices.Contains(tf.FugaroRoles, m[1]) {
-						t.Errorf("%s: %s: role %s names the custom role %s, which the modules do not create", path, blk.name, role, m[1])
+					if !slices.Contains(tf.FugaroRoles, m[2]) {
+						t.Errorf("%s: %s: role %s names the custom role %s, which the modules do not create", path, blk.name, role, m[2])
 					}
 					break
 				}
@@ -1580,6 +1583,31 @@ func TestCustomRolesNeverReachTheBackend(t *testing.T) {
 			// deployer is not an installation role: it holds nothing
 			// project-wide but creation and reads.
 			if strings.HasPrefix(blk.name, "google_project_iam_custom_role.fugaro_deployer") {
+				continue
+			}
+			// The credentials service's database role (installation/
+			// credentials.tf, 0.10.1, ledger #903): the one knowing exception
+			// that holds a firebasedatabase permission, because the service
+			// reads the kill switches, the project policy, a run's outcome node
+			// and the credential state another revision wrote, and writes the
+			// creds/ nodes it owns. Realtime Database IAM has no path-level
+			// scope, so the two instance DATA permissions are the whole of the
+			// narrowest grant that can do that — nothing else is allowed here,
+			// so no lifecycle permission (create, delete, disable, reenable,
+			// undelete) and no list may appear, and the role is bound to the
+			// service's own account alone (tf's toCredentials rows). The exact
+			// list is pinned by TestCredentialsDatabaseRoleIsTheTwoDataPermissions
+			// below; the ban this continues past is about roles whose
+			// permissions reach further than the account's work needs.
+			if blk.name == "google_project_iam_custom_role.credentials_database" {
+				if !strings.HasPrefix(path, "gcp/modules/installation/credentials") {
+					t.Errorf("%s: %s is not in the installation module's credentials.tf", path, blk.name)
+				}
+				for _, p := range quotedPerm.FindAllStringSubmatch(m[1], -1) {
+					if !slices.Contains(credentialsDatabasePermissions, p[1]) {
+						t.Errorf("%s: %s holds %s: the service's database role is its two data permissions and nothing else (no lifecycle, no list)", path, blk.name, p[1])
+					}
+				}
 				continue
 			}
 			if blk.name == "google_project_iam_custom_role.token_minter" {
@@ -3762,7 +3790,15 @@ func squash(s string) string { return strings.Join(strings.Fields(s), " ") }
 // The mutation is any of the shapes Q6 replaced: a second
 // google_secret_manager_secret_iam_member (the per-credential grants of the
 // earlier attempt, PR #674), a `condition` block on the one grant, or a
-// project-level role for the service's account.
+// Secret Manager container or version the service has no business reading.
+//
+// The service's OTHER reach — the realtime database — is deliberately not a
+// mutation here any more (0.10.1, ledger #903): the file grants exactly one
+// project role, the service's own database role, and
+// TestCredentialsDatabaseRoleIsTheTwoDataPermissions pins that grant's role,
+// permissions, project and member. What this test still refuses is every
+// SECOND way to reach the project: an authoritative binding or policy, an
+// audit config, a key.
 func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 	const path = "gcp/modules/installation/credentials.tf"
 	b, err := os.ReadFile(path)
@@ -3813,7 +3849,10 @@ func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 		{"allAuthenticatedUsers", "an invoker on the service for every Google account"},
 		{"google_cloud_run_v2_service_iam_member", "an invoker grant here: the job accounts' grants live in modules/workflow/sa.tf, one per job, and the installation root grants nobody"},
 		{"google_service_account_iam_member", "an actAs grant on the service's account: anyone who could deploy a revision as it could read every model credential the installation holds"},
-		{"google_project_iam_member", "a project-level role for the service's account: it reads one secret and nothing else"},
+		{"google_project_iam_binding", "an authoritative project binding: one binding owns the project's whole policy for its role and takes every other member off it"},
+		{"google_project_iam_policy", "an authoritative project policy"},
+		{"google_project_iam_audit_config", "an audit config for the service's account"},
+		{"google_service_account_key", "a key for the service's account"},
 		{"google_secret_manager_secret_version", "a version: values are written by the owner-run fugaro creds set, never by Terraform"},
 	} {
 		if strings.Contains(code, bad.needle) {
@@ -3837,7 +3876,7 @@ func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 	}
 
 	// Every resource in the file is gated on the one boolean, which is what the
-	// header's "keeps the four resources of this file in step" means: a resource
+	// header's "keeps the six resources of this file in step" means: a resource
 	// added without it is created in an installation that never opted in.
 	// TestCredentialsServiceResourcesAreCounted reads the same promise from the
 	// other end — the sentence's number against the file — and this sweep is
@@ -3872,7 +3911,7 @@ func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 }
 
 // TestCredentialsServiceResourcesAreCounted reads the sentence that counts
-// this file's own resources — locals' "a single boolean keeps the four
+// this file's own resources — locals' "a single boolean keeps the six
 // resources of this file in step" — against the file. It said five while the
 // file declared four, and nothing read it: a number a reader is meant to trust
 // is a claim, and this is where it is checked rather than believed.
@@ -3883,9 +3922,9 @@ func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 // var.credentials_service null it creates nothing (D147) — so every resource in
 // it must be gated on the one boolean, and the count must be the whole file's.
 //
-// Mutation (run, restore): a fifth resource block in credentials.tf fails both
-// assertions ("declares 5 ... and says four", and the ungated one), and
-// reverting the word to "five" fails the count.
+// Mutation (run, restore): a seventh resource block in credentials.tf fails
+// both assertions ("declares 7 ... and says six", and the ungated one), and
+// reverting the word to "seven" fails the count.
 func TestCredentialsServiceResourcesAreCounted(t *testing.T) {
 	const path = "gcp/modules/installation/credentials.tf"
 	b, err := os.ReadFile(path)
@@ -3932,6 +3971,152 @@ func TestCredentialsServiceResourcesAreCounted(t *testing.T) {
 		if body := code[open+1 : end]; !strings.Contains(body, "local.credentials_service_on") {
 			t.Errorf("%s: %s is not gated on local.credentials_service_on, so a null var.credentials_service does not leave the file creating nothing (D147):\n%s", path, name, squash(body))
 		}
+	}
+}
+
+// credentialsDatabasePermissions are the ONLY permissions the credentials
+// service's database role may hold (installation/credentials.tf): the
+// instance's two data permissions. See
+// TestCredentialsDatabaseRoleIsTheTwoDataPermissions for what each one is for
+// and why the two predefined roles are both wrong.
+var credentialsDatabasePermissions = []string{"firebasedatabase.instances.get", "firebasedatabase.instances.update"}
+
+// The credentials service's database role: the two DATA permissions of the
+// instance, the Firebase project, the service's own account as the only
+// member, and no condition (0.10.1, ledger #903 — before this the account had
+// no realtime-database role at all, so in production the service failed closed
+// and refused every call).
+//
+// Why these two. The service reads the kill switches (config/kill/global,
+// config/kill/repos/$slug), the project policy (config/policy/shared,
+// config/policy/repos/$slug), a run's outcome node (outcomes/$day/$slug/$run)
+// and the credential state another revision wrote (creds/ — marks, current
+// nodes, leases, probe leases), and writes the creds/ nodes it owns by
+// compare-and-set. Realtime Database IAM has NO path-level scope: a binding is
+// per instance and reaches the whole database, so the only question a role can
+// answer is which OPERATIONS the account may make, and there are exactly two
+// predefined answers:
+//
+//   - roles/firebasedatabase.viewer is get+list: it cannot write creds/ at
+//     all, so the service could not serve a single run.
+//   - roles/firebasedatabase.admin is all eight firebasedatabase.instances.*
+//     permissions (deploy/terraform/testdata/custom-role-permissions.txt): the
+//     two data permissions PLUS list and the instance lifecycle — create,
+//     delete, disable, reenable, undelete. The service never creates, deletes
+//     or disables a database, and an identity that holds every model
+//     credential of the installation must not be able to delete the
+//     installation's database.
+//
+// So the role is the intersection: get (the only read — the same permission
+// the viewer grant above relies on, modules/firebase/iam.tf) and update (the
+// only write — a realtime-database node has no separate create or delete, and
+// update is what admin carries for the budget admins who write /config). A
+// third permission is a decision, and this test is where it is made.
+//
+// The project matters as much as the permissions: the role is declared in the
+// FIREBASE project, because that is where the database is (D6), while the
+// account is created in the installation's project. A grant in one project to
+// a member of another is ordinary cross-project IAM, and it is the shape the
+// Firebase module's existing database grants have.
+func TestCredentialsDatabaseRoleIsTheTwoDataPermissions(t *testing.T) {
+	const path = "gcp/modules/installation/credentials.tf"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roles := resourceBlocks(t, path, b, "google_project_iam_custom_role")
+	if len(roles) != 1 {
+		t.Fatalf("%s declares %d custom roles, want the one database role", path, len(roles))
+	}
+	role := squash(roles[0].body)
+	for _, want := range []string{
+		"project = var.credentials_service.firebase_project", // the database's project, not the installation's
+		`role_id = "` + tf.CredentialsDatabaseRole + `"`,
+		"count = local.credentials_service_on ? 1 : 0",
+	} {
+		if !strings.Contains(role, want) {
+			t.Errorf("%s: the database role does not hold %q:\n%s", path, want, role)
+		}
+	}
+	// Only the permissions list, so the role's title and role_id cannot stand
+	// in for a permission.
+	list := regexp.MustCompile(`(?s)permissions\s*=\s*\[([^\]]*)\]`).FindStringSubmatch(roles[0].body)
+	if list == nil {
+		t.Fatalf("%s: the database role has no permissions list:\n%s", path, role)
+	}
+	var got []string
+	for _, p := range quotedPerm.FindAllStringSubmatch(list[1], -1) {
+		got = append(got, p[1])
+	}
+	want := slices.Clone(credentialsDatabasePermissions)
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("%s: the database role holds %v, want exactly %v: get is the only read and update the only write, and every other firebasedatabase permission is instance lifecycle the service never uses", path, got, want)
+	}
+	// The same two, on the Go side, so a cover that accepted a third
+	// permission and a module that granted one cannot drift apart: the pin
+	// internal/infra/tf keeps (RolePermissions) is the one the confirmation
+	// reads.
+	if pin := tf.RolePermissions[tf.CredentialsDatabaseRole]; !slices.Equal(pin, want) {
+		t.Errorf("tf.RolePermissions[%s] = %v, want exactly %v", tf.CredentialsDatabaseRole, pin, want)
+	}
+	if !slices.Contains(tf.FugaroRoles, tf.CredentialsDatabaseRole) {
+		t.Errorf("tf.FugaroRoles does not name %s, so a grant of this role is refused", tf.CredentialsDatabaseRole)
+	}
+
+	// The one binding: on that role, in that project, to the service's own
+	// account, with no condition and no second member.
+	grants := resourceBlocks(t, path, b, "google_project_iam_member")
+	if len(grants) != 1 {
+		t.Fatalf("%s declares %d project grants, want exactly one — the database role, to the service's own account", path, len(grants))
+	}
+	grant := squash(grants[0].body)
+	for _, want := range []string{
+		"project = var.credentials_service.firebase_project",
+		`role = "projects/${var.credentials_service.firebase_project}/roles/` + tf.CredentialsDatabaseRole + `"`,
+		"member = google_service_account.credentials[0].member",
+		"count = local.credentials_service_on ? 1 : 0",
+	} {
+		if !strings.Contains(grant, want) {
+			t.Errorf("%s: the database grant does not hold %q:\n%s", path, want, grant)
+		}
+	}
+	if strings.Contains(grant, "condition") {
+		t.Errorf("%s: the database grant carries a condition: Realtime Database IAM has no path-level scope, so a condition here would be a fence that looks like one and is not (the reasoning Q6 used for the bundle's accessor):\n%s", path, grant)
+	}
+	// The role is named literally rather than read from the role resource:
+	// google_project_iam_custom_role's name is computed, so the reference
+	// reaches a plan as an unknown role and the cover could no longer say which
+	// role the grant is (tf's checkGrant, the unknown-role arm).
+	if roleAttr := firstAttr(grants[0].body, "role"); strings.Contains(roleAttr, "google_project_iam_custom_role.") {
+		t.Errorf("%s: the database grant reads its role from the role resource (%s), which a plan sees as unknown:\n%s", path, roleAttr, grant)
+	}
+
+	// No predefined database role anywhere in the tree is granted to this
+	// service's account: the whole point of the custom role is that the two
+	// predefined ones are wrong for it, and a second binding of
+	// roles/firebasedatabase.admin would hand it the instance lifecycle.
+	n := 0
+	walk(t, func(p string, fb []byte) {
+		if !strings.HasSuffix(p, ".tf") {
+			return
+		}
+		for _, blk := range allResourceBlocks(t, p, fb) {
+			if !strings.HasPrefix(blk.typ, "google_project_iam_") || !strings.Contains(blk.body, "credentials") {
+				continue
+			}
+			if !regexp.MustCompile(`credentials(_database|\[0\])`).MatchString(blk.body) {
+				continue
+			}
+			n++
+			if !strings.HasPrefix(p, "gcp/modules/installation/credentials.tf") {
+				t.Errorf("%s: %s grants a project role to the credentials service (%s): its whole reach is the bundle's accessor and its own database role, both in credentials.tf", p, blk.name, squash(blk.body))
+			}
+		}
+	})
+	if n == 0 {
+		t.Errorf("no project grant naming the credentials service was found: this test is not reading the tree")
 	}
 }
 

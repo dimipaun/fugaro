@@ -540,7 +540,7 @@ func TestRolePinsAreTheModules(t *testing.T) {
 	strRE := regexp.MustCompile(`"([^"]+)"`)
 	// resource name -> the role ID the modules give it (names.role_ids and the
 	// literals in history.tf and the Firebase module's names.minter_role_id).
-	ids := map[string]string{"launcher": "fugaroLauncher", "job_runner": "fugaroJobRunner", "build_submitter": "fugaroBuildSubmitter", "tag_mover": "fugaroTagMover", "cloud_asset_reader": CloudAssetRole, "token_minter": "fugaroTokenMinter", "history": "fugaroHistory", "reaper": "fugaroReaper", "preload_builder": "fugaroPreloadBuilder", "fugaro_deployer": DeployerRole}
+	ids := map[string]string{"launcher": "fugaroLauncher", "job_runner": "fugaroJobRunner", "build_submitter": "fugaroBuildSubmitter", "tag_mover": "fugaroTagMover", "cloud_asset_reader": CloudAssetRole, "token_minter": "fugaroTokenMinter", "history": "fugaroHistory", "reaper": "fugaroReaper", "preload_builder": "fugaroPreloadBuilder", "fugaro_deployer": DeployerRole, "credentials_database": CredentialsDatabaseRole}
 	for role, label := range deployerRoleLabel {
 		ids[label] = role
 	}
