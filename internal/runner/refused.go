@@ -66,10 +66,21 @@ func (r *run) runCommits(ctx context.Context) (int, error) {
 }
 
 // guardBounds are the two revisions the run's own work is read between: the
-// commit the run was cut from (workBase), and the base branch, whose own
-// commits are the base's even when the agent merged or rebased them in.
+// commit the run was cut from (workBase), and the base of the run's work,
+// whose own commits are the base's even when the agent merged or rebased
+// them in.
 //
-// The base branch is read from the remote, as a commit SHA, at the moment
+// That base is the one the review stage diffs against (diffbase.go,
+// diffBase) — the ref a first run was cut from, the branch a follow-up's
+// pull request targets now — and not the configuration's base branch, which
+// is another branch whenever the run was started from one. Excluding the
+// wrong branch's commits does not shorten the range, it only misses the ones
+// it was there for: a run cut from integration that merged integration in
+// while it worked was refused for the workflow file integration's own commit
+// added, a change the review stage (which diffs origin/integration) never
+// sees (diffbase_matrix_test.go, cell (d)).
+//
+// The base is read from the remote, as a commit SHA, at the moment
 // of the check — never the checkout's origin/<base>, which the agent's own
 // git can repoint (at the run's own tip, say, which would subtract every
 // commit the run made and pass any workflow change). It can only ever make
@@ -83,7 +94,7 @@ func (r *run) guardBounds(ctx context.Context) (since, except string) {
 	if since == r.baseRef() {
 		return since, ""
 	}
-	tip, err := r.repo.RemoteTip(ctx, r.cfg.Git.BaseBranch)
+	tip, err := r.repo.RemoteTip(ctx, r.diffBase())
 	if err != nil || !gitops.IsFullSHA(tip) {
 		if err != nil {
 			r.d.Log.Warn("reading the base branch on origin failed; the run's work is measured against the commit it was cut from alone", "err", r.redact(err.Error()))
