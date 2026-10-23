@@ -3147,7 +3147,10 @@ backend by accident. A first installation is fugaro setup.
 --forget is update's own: it is the rollback, and it turns log isolation and
 registry cleanup off with a guarded apply before it removes every address from
 Terraform's state — in a checkout, the repository's addresses with them —
-destroying nothing else.
+destroying nothing else. A managed project has no rollback: it is refused there,
+because the installation's own resources include the managed deployer's fence,
+which the state removal would leave live in the project and accounted for by
+nothing (docs/gcp-setup.md, "Rolling back").
 
 Everything else is setup's help word for word, because it is the same
 converge: the review screen and the one typed project name in a project Fugaro
@@ -3189,7 +3192,7 @@ Flags:
 | `--config-only` | bool | `false` | no | only write the local config, from the installation's outputs (else the flags) |
 | `--expect-digest` | stringArray | `[]` | no | pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it update trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag |
 | `--firebase-project` | string | "" | no | build the budget backend in this Firebase project: the run's Firebase project is the installation's own --gcp-project by default (one id for both, D7), so this is the advanced flag, for a Firebase project of its own (one you created and linked to billing, or created with --create-project). It is also the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: typed where it is a first-time question, covered by --yes where the run re-converges an installation that is already there) and the config |
-| `--forget` | bool | `false` | no | roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state |
+| `--forget` | bool | `false` | no | roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state. A managed project has no rollback and this is refused there: the installation holds the managed deployer's fence, which leaving Terraform's state would orphan (docs/gcp-setup.md, "Rolling back") |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `--github-app-id` | string | "" | no | the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; update asks once at a terminal, and --non-interactive needs it) |
 | `-h`, `--help` | bool | `false` | no | help for update |

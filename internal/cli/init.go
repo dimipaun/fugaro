@@ -378,7 +378,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.BoolVar(&o.configOnly, "config-only", false, "only write the local config, from the installation's outputs (else the flags)")
 	f.BoolVar(&o.publishConfig, "publish-config", false, "publish the shared config to the runs bucket and stop ("+d.name+" does it after it writes the local config)")
 	f.BoolVar(&o.anchor, "anchor", false, "in a checkout of an onboarded repository, only write the gcp_project line into its fugaro.yaml, after checking that every workflow's job image was submitted by fugaro "+gcpProjectFieldSince+" or later and built FROM a release base image of "+gcpProjectFieldSince+" or later, and that no base image the local config sets is a development or older one (no Terraform, no publish, no image copy; the diff, then --yes writes or a terminal asks)")
-	f.BoolVar(&o.forget, "forget", false, "roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state")
+	f.BoolVar(&o.forget, "forget", false, "roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state. A managed project has no rollback and this is refused there: the installation holds the managed deployer's fence, which leaving Terraform's state would orphan (docs/gcp-setup.md, \"Rolling back\")")
 	f.StringArrayVar(&o.allowDelete, "allow-delete", nil, "a resource address the plan may delete or replace (repeatable)")
 	f.BoolVar(&o.provisionBatch, "provision-batch", false, "after the installation's ordinary steps, provision the Batch compute backend into a state of its own (design docs/design/compute-backend.md §8.1 task 6): the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router, and a preloaded boot image rebuilt on a schedule. It is money (a billable build, a NAT's hours) and permanent, so --yes never covers it and it is typed at a real terminal; nothing runs it by default, and no run can use the backend until the enable task. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor)")
 	// D12's answer of 2026-10-20 (docs/setup-wizard/reconciliation.md §5, and
@@ -2466,9 +2466,54 @@ func splitLines(s string) []string {
 	return strings.Split(s, "\n")
 }
 
+// managedForgetRefusal is the sentence `fugaro update --forget` stops with in a
+// managed project: the rollback is not a command a managed installation has,
+// and the next step it names is the owner's.
+//
+// Why it is refused rather than run, and why no flag gets past it: the
+// installation's own resources include the managed deployer's fence — seven
+// scoped roles and their seven conditioned bindings, created by the same apply
+// because the project is managed — and the rollback's second phase is one
+// `terraform state rm module.installation` over every address the installation
+// holds. The fourteen would leave Terraform's state with the rest, live in the
+// project and accounted for by nothing: the whole-project inventory the managed
+// apply reads before it plans compares the live project with what the
+// installation's states hold, so every later run of the project would find the
+// fence unaccounted for, and a converge could not put it back — its plan
+// creates roles that already exist. That is the one thing in a managed project
+// that is there BECAUSE the project is managed, and it is not this command's to
+// leave behind.
+//
+// The alternative is not a flag but the owner's own step: the two marks that
+// make the project managed come off in the owner's terminal, which is the undo
+// docs/gcp-setup.md writes out ("What makes a project managed"). It is
+// deliberately spelled here rather than left to a document: a reader who asked
+// for the rollback of a managed installation has to be told what to do
+// instead, and the two commands are the same ones `fugaro managed flag` prints
+// beside the marker object as the undo of what it wrote.
+func managedForgetRefusal(project string) error {
+	return userErr("fugaro update --forget is the rollback of an installation from before managed projects, and %s is a managed project, so this run stops here: the installation's own resources include the managed deployer's fence — the seven scoped roles and their seven conditioned bindings — and the rollback's second phase removes every address of the installation from Terraform's state, the fourteen with them, which would leave them live in the project with nothing accounting for them (the inventory the managed apply reads before it plans would find them unaccounted on every later run) and no way to put them back, because a converge's plan creates roles that already exist. Nothing was read, planned or forgotten. Take the project out of managed mode first, in your own terminal: gcloud projects update %s --remove-labels=fugaro_managed, and delete the runs bucket's fugaro/managed.json beside it (docs/gcp-setup.md, \"What makes a project managed\"); the project is an ordinary one again and fugaro update converges it",
+		project, project)
+}
+
 // forget is the rollback: a guarded apply that turns the log isolation and
 // registry cleanup off, then state rm of everything, each confirmed.
 func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, spec infra.InstallationSpec) error {
+	// A managed project's rollback stops before the state bucket is read, the
+	// plan made or the tfvars written: what this command forgets is the
+	// installation, and in a managed project the installation's own resources
+	// include the fence (managedForgetRefusal says why that is not forgettable).
+	// The read is the same one installRoot makes, and it is made once — the
+	// value it answers with decides whether the run proceeds at all — so a
+	// project whose managed status cannot be read stops here with its own
+	// error, exactly as it did when the same read was the run's last step.
+	managed, err := r.managedScope(ctx, c)
+	if err != nil {
+		return err
+	}
+	if managed {
+		return managedForgetRefusal(spec.Project)
+	}
 	exists, err := infra.CheckStateBucket(ctx, c, spec.Project, spec.StateBucket)
 	if err != nil {
 		return initErr(err)
@@ -2484,16 +2529,10 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 		return userErr("the state bucket still holds repository state (%s; only *.tfstate objects count, not locks): run fugaro update --repo --forget for each repository first", strings.Join(repos, ", "))
 	}
 	fs := infra.ForgetSpec(spec)
-	// The rollback plans the installation root, so it decides the deployer's
-	// scope the way installRoot does and not from the spec it was handed —
-	// that spec is built from the options and never carries the key. Without
-	// this the rollback of a managed installation plans the deletion of the
-	// seven scoped roles and their seven conditioned bindings, which the guard
-	// then refuses: the owner's own rollback stops on a fence the run itself
-	// took out of the tfvars.
-	if fs.ManagedDeployerScoped, err = r.managedScope(ctx, c); err != nil {
-		return err
-	}
+	// fs.ManagedDeployerScoped stays the zero value: the refusal above is the
+	// only answer a managed project gets from this command, so the plan made
+	// here is never a managed installation's — and the paths that do plan one
+	// write the key from the fact (installRoot) or carry it (prepare).
 	backend, err := prepare(wd, fs, infra.Imports{})
 	if err != nil {
 		return err

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -768,37 +769,81 @@ func TestManagedInitWritesTheDeployerScopeFromTheCreationFact(t *testing.T) {
 	}
 }
 
-// TestForgetKeepsTheManagedDeployerScope: the rollback plans the installation
-// root too, so it decides the deployer's scope the way installRoot does — from
-// the project's own creation fact — and not from the spec the run was handed,
-// which is built from the options and never carries the key. A forget run that
-// wrote the document without it would plan the deletion of the seven scoped
-// roles and their seven conditioned bindings, and the guard refuses a plan
-// like that: the owner's own rollback would stop on a fence the run itself
-// took out of the tfvars.
+// TestForgetRefusesAManagedInstallation: the rollback stops on a managed
+// installation, and it stops before anything is read, planned or written.
 //
-// The assertion is on the document the plan is made from. The rig's terraform
-// is scripted (setPlan), so what a real one would plan is read here as the
-// variables that plan would carry — the fourteen resources exist in the config
-// exactly when managed_deployer_scoped is true.
+// The installation's own resources include the managed deployer's fence — the
+// seven scoped roles and their seven conditioned bindings, created by the same
+// apply because the project is managed — and this command's second phase is one
+// `terraform state rm module.installation` over every address the installation
+// holds: the fourteen would leave Terraform's state with the rest, live in the
+// project and tracked by nothing. What the managed apply reads before it plans
+// (the whole-project inventory against what the installation's states account
+// for) would then find them unaccounted on every later run, and no converge
+// could put them back: its plan creates roles that already exist. The fence is
+// the one thing in the project that is there BECAUSE the project is managed, so
+// forgetting the installation is not something a managed project has.
 //
-// Mutation (run, restore): drop the managedScope read from forget: the key is
-// gone after the run and this fails.
-func TestForgetKeepsTheManagedDeployerScope(t *testing.T) {
+// The refusal names the two marks that make the project managed and the
+// owner-run step that removes them — what docs/gcp-setup.md ("What makes a
+// project managed") documents as the undo of managed mode — and it offers no
+// flag: there is nothing to pass to get past it, which is the same reason the
+// guard's own managed refusal names none (Task 3.2).
+//
+// Mutation (run, restore): drop the refusal from forget: the run reads the
+// state bucket, plans, applies and runs state rm on the fence, and every
+// assertion here fails.
+func TestForgetRefusesAManagedInstallation(t *testing.T) {
 	r := newInitRig(t)
 	r.managedRuns(t, initProjectName, initProject)
 	r.setPlan(t, forgetPlan()...)
 	out, _, err := executeStdin(t, "", "update", "--forget", "--yes")
-	if err != nil {
-		t.Fatalf("the rollback of a managed installation failed: %v\n%s", err, out)
+	if err == nil {
+		t.Fatalf("the rollback of a managed installation ran:\n%s", out)
 	}
-	if len(r.ran(t, "state rm")) != 1 {
-		t.Fatalf("calls = %q", r.calls(t))
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err %v; want the refusal (exit 1)", ExitCode(err), err)
 	}
-	if got := r.tfvars(t)["managed_deployer_scoped"]; got != true {
-		t.Errorf("tfvars[managed_deployer_scoped] = %v, want true: the rollback's plan is made from this document, and without the key it deletes the deployer's seven scoped roles and their seven conditioned bindings", got)
+	msg := err.Error()
+	for _, want := range []string{
+		initProject,
+		"managed",
+		"seven scoped roles",
+		"fugaro_managed",
+		"fugaro/managed.json",
+		"docs/gcp-setup.md",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the refusal does not carry %q:\n%s", want, msg)
+		}
+	}
+	if strings.Contains(msg, "--allow-delete") {
+		t.Errorf("the refusal offers --allow-delete, which --forget never takes and a managed project never needs:\n%s", msg)
+	}
+	// Nothing of the rollback ran: not the init, not the read of the state's
+	// outputs, not the plan, not the apply and not the state rm. (The rig's
+	// terraform answers `version -json` before a stage's own work; that one is
+	// the CLI's own preflight and not a step of this command.)
+	for _, sub := range []string{"init", "output", "plan", "show", "apply", "state rm"} {
+		if ran := r.ran(t, sub); len(ran) != 0 {
+			t.Errorf("a refused rollback ran terraform %s: %q", sub, ran)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(r.root(), infra.VarsFile)); err == nil {
+		t.Errorf("a refused rollback wrote the installation's tfvars: %s", filepath.Join(r.root(), infra.VarsFile))
 	}
 }
+
+// TestForgetKeepsTheManagedDeployerScope used to stand here: it pinned the
+// rollback's own read of the creation fact (forget planned this root the way
+// installRoot does, so a forget run of a managed installation kept the key and
+// its plan deleted no role and no binding). The refusal above is what replaced
+// it — a managed project never reaches the plan this command makes — and the
+// key's own two halves keep their tests elsewhere, on the paths that still plan
+// or re-serialize this root: installRoot writes it from the fact
+// (TestManagedInitWritesTheDeployerScopeFromTheCreationFact), prepare carries it
+// (TestConfigOnlyKeepsTheManagedDeployerScope) and --print-vars prints it
+// (TestPrintVarsKeepsTheManagedDeployerScope).
 
 // TestConfigOnlyKeepsTheManagedDeployerScope: --config-only rewrites the
 // installation root's tfvars from a spec that never carries the deployer's
@@ -1048,8 +1093,30 @@ func TestManagedInitRefusalAtEveryCallSite(t *testing.T) {
 		r := newInitRig(t)
 		r.stateBucket()
 		r.setPlan(t, append(forgetPlan(), change("module.installation.google_service_account.scheduler", "delete"))...)
-		_, _, err := executeStdin(t, "", "update", "--forget", "--yes")
-		managedRefusal(t, err, "module.installation.google_service_account.scheduler", true)
+		out, _, err := executeStdin(t, "", "update", "--forget", "--yes")
+		if err == nil {
+			t.Fatalf("the rollback of a managed project ran:\n%s", out)
+		}
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("exit %d, err %v; want the refusal (exit 1)", ExitCode(err), err)
+		}
+		// A managed project's rollback is refused before the plan exists, so
+		// the guard's own managed sentence is not what this call site answers
+		// with any more: what it answers with is the refusal that names the
+		// fence and the owner's step out of managed mode
+		// (TestForgetRefusesAManagedInstallation). It is held to the same rule
+		// the guard's managed refusals are, with the one exception that rule
+		// exists for: it offers no fugaro flag and no agent marker, and the only
+		// `--` in it is the owner's own gcloud line, which is a write this
+		// session cannot make.
+		if strings.Contains(err.Error(), "fugaro --") {
+			t.Errorf("the refusal offers a fugaro flag:\n%s", err)
+		}
+		for _, never := range []string{"--allow-delete", "--allow-job-delete", "--managed", "--yes", "--non-interactive", "hint: "} {
+			if strings.Contains(err.Error(), never) {
+				t.Errorf("the refusal carries %q:\n%s", never, err)
+			}
+		}
 		if len(r.ran(t, "apply"))+len(r.ran(t, "state rm")) != 0 {
 			t.Fatalf("calls = %q", r.calls(t))
 		}

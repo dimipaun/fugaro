@@ -37,7 +37,10 @@ backend by accident. A first installation is fugaro setup.
 --forget is update's own: it is the rollback, and it turns log isolation and
 registry cleanup off with a guarded apply before it removes every address from
 Terraform's state — in a checkout, the repository's addresses with them —
-destroying nothing else.
+destroying nothing else. A managed project has no rollback: it is refused there,
+because the installation's own resources include the managed deployer's fence,
+which the state removal would leave live in the project and accounted for by
+nothing (docs/gcp-setup.md, "Rolling back").
 
 Everything else is setup's help word for word, because it is the same
 converge: the review screen and the one typed project name in a project Fugaro
