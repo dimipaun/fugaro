@@ -574,6 +574,17 @@ func TestHelpNamesFilterToggleAndDismiss(t *testing.T) {
 	if !strings.Contains(help, "dismiss the selected finished run") {
 		t.Fatalf("help must describe the x key:\n%s", help)
 	}
+	// The flags that move the window are named where a viewer looks for the
+	// keys, and the line saying so fits an 80-column screen whole (the
+	// renderer clips, it does not wrap): a screen left open all afternoon is
+	// exactly where someone wonders why a failure disappeared, so the answer
+	// must not be the part the clip takes away.
+	narrow := frame(fixture(), 80, 0, func(o *RenderOptions) { o.Help = true })
+	for _, want := range []string{"--keep and --keep-count move that window", "failed runs included, never for less"} {
+		if !strings.Contains(narrow, want) {
+			t.Fatalf("the help must name the keep flags in full at 80 columns (%q missing):\n%s", want, narrow)
+		}
+	}
 }
 
 // The finished-run filter's state leads the key line and is never the part a

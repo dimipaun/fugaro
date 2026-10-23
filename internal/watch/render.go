@@ -465,9 +465,18 @@ func (r *rend) helpLines(keys bool) []string {
 		out = append(out, r.line(seg{"  " + r.fit(kv[0], 13), cBold}, seg{kv[1], ""}))
 	}
 	// The rule behind the a and x keys, where a viewer looks for the keys
-	// themselves: a finished run leaves the list on its own, and a brings the
-	// ones it took away back (owner spec 2026-10-22, items 3 and 5).
+	// themselves: a finished run leaves the list on its own, whatever its
+	// status, and a brings the ones it took away back (owner spec 2026-10-22,
+	// items 3 and 5). The two flags that move the window are named, since a
+	// screen left open is where a person looks for them; both reach a failed
+	// row like any other, so raising --keep never hides a failure a success
+	// of the same age still shows.
 	out = append(out, r.line(seg{"A finished run leaves the list " + durText(FinishedKeep) + " after it finishes; a shows them all again.", cFaint}))
+	// The flags that move the window, on a line of their own: both reach a
+	// failed row like any other, and a failure is never kept for a shorter
+	// time than a success, so raising --keep shows more failures, not fewer
+	// (0.10.2 fix of #950).
+	out = append(out, r.line(seg{"--keep and --keep-count move that window; failed runs included, never for less.", cFaint}))
 	if keys {
 		out = append(out, r.line(seg{"Kill and resume are off while the data is stale or offline.", cFaint}))
 	}
