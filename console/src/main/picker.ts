@@ -853,10 +853,10 @@ export function installInstallationPicker(options: {
 }): InstallationPicker {
   const { electron } = options
   // **The home is this app's own environment's, and not `app.getPath('home')`.**
-  // On Linux and on Windows the two are the same directory. On macOS they are
-  // not: Electron answers `home` with Chromium's `base::GetHomeDir()`, whose
-  // Apple implementation is Foundation's `NSHomeDirectory()`, which reads the
-  // user *record* and ignores `HOME` -- while `homedir()` (libuv) answers with
+  // On Linux the two agree -- both read `HOME`. On macOS they do not: Electron
+  // answers `home` with Chromium's `base::GetHomeDir()`, whose Apple
+  // implementation is Foundation's `NSHomeDirectory()`, which reads the user
+  // *record* and ignores `HOME` -- while `homedir()` (libuv) answers with
   // `HOME` first. So a launch whose `HOME` is not the account's (`test/e2e`'s
   // stub does exactly that: `test/support/cliStub`) had this picker resolve
   // `/Users/<owner>/.local/bin` while the same process's own `homedir()` -- and

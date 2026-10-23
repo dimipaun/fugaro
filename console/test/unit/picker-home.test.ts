@@ -1,9 +1,9 @@
 // The picker's home: the app's own environment's `HOME`, never Electron's
 // `app.getPath('home')`.
 //
-// The two are the same directory on Linux and on Windows. **On macOS they are
-// not.** Electron answers `home` with Chromium's `base::GetHomeDir()`, whose
-// Apple implementation is Foundation's `NSHomeDirectory()`, which reads the user
+// On Linux the two agree -- both read `HOME`. **On macOS they do not.** Electron
+// answers `home` with Chromium's `base::GetHomeDir()`, whose Apple
+// implementation is Foundation's `NSHomeDirectory()`, which reads the user
 // *record* and ignores `HOME`; `homedir()` (libuv) answers with `HOME` first. So
 // a launch whose `HOME` is not the account's -- every e2e launch, because
 // `test/support/cliStub` hands the app a scratch home so that the stub is what
