@@ -469,20 +469,21 @@ func CarriedCredentialsService(vars, prev []byte) ([]byte, error) {
 // prev is the same pair of documents CarriedCredentialsService takes — the
 // workdir's snapshot from before the run and the tfvars it holds now — and nil
 // when neither holds any. vars carry a value of their own only when the caller
-// decided it from the project's own creation fact (installRoot and --forget
-// read managed.IsManaged), which is the authority: this never overwrites one.
+// decided it from the project's own creation fact (installRoot reads
+// managed.IsManaged), which is the authority: this never overwrites one.
 //
 // The variable is what creates the managed deployer's seven scoped roles and
 // their seven conditioned bindings, and every path that serializes the
 // installation root's tfvars rebuilds them from a spec that does not carry it
 // (the spec is built from the options, and only the fact read sets the field).
 // Carried forward as it is found, present or absent, an installation that has
-// them keeps them across any such rewrite — `fugaro update --forget` above
-// all, whose plan would otherwise delete all fourteen and be refused by the
-// guard, and `--config-only`, the compute stage's read of the installation's
-// outputs and `--print-vars`, whose document is a reading of the installation
-// the owner has to be able to trust. An installation that never used managed
-// projects carries no key and is unchanged.
+// them keeps them across any such rewrite — `--config-only`, the compute
+// stage's read of the installation's outputs and `--print-vars`, whose
+// document is a reading of the installation the owner has to be able to
+// trust. (`fugaro update --forget` rewrites the same document and would
+// otherwise delete all fourteen; it is refused in a managed project before it
+// gets here, so it no longer reaches this.) An installation that never used
+// managed projects carries no key and is unchanged.
 //
 // The creation fact is one-way — nothing in this tree removes the marker
 // object or the project label — so an entry found here is not a stale opt-in

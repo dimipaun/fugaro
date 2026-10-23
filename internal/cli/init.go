@@ -1748,10 +1748,11 @@ func (r *initRun) managedProject(ctx context.Context, c *infra.Clients) (bool, e
 // managedScope is whether the installation uses managed projects, decided from
 // the project's own creation fact: the module's managed_deployer_scoped, which
 // is what creates the managed deployer's seven scoped roles and their seven
-// conditioned bindings. Every path that plans the installation root decides it
-// here — installRoot, which writes the variable into the tfvars the plan is
-// made from, and --forget, whose plan is the installation root's too and would
-// otherwise delete all fourteen.
+// conditioned bindings. installRoot is the path that plans the installation
+// root with it, and it writes the variable into the tfvars the plan is made
+// from. (--forget read it here too, so that its plan kept the fourteen rather
+// than deleting them; it refuses a managed project outright now, before this
+// second meaning of the answer would matter — managedForgetRefusal.)
 //
 // A failure is the run's own and not a refusal: there is no plan to refuse
 // yet, and a run that cannot tell whether the variable belongs on or off plans
@@ -1814,13 +1815,16 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports) (
 	// The other key this spec never carries, and for a sharper reason than the
 	// opt-in above: it is the deployer's scope, which is what creates the seven
 	// scoped roles and their seven conditioned bindings, and a document that
-	// loses it plans all fourteen away. The paths that plan the installation
-	// root decide it from the project's creation fact (installRoot and
-	// --forget, both through managedScope), and there this carry is a no-op
-	// because the spec it was handed already carries the answer; it is the
-	// paths that only re-serialize the root — --config-only, the compute
-	// stage's read of the installation's outputs, adopt — that would otherwise
-	// write a document that reads as an installation without the fence.
+	// loses it plans all fourteen away. installRoot is the path that plans the
+	// installation root with it, deciding it from the project's creation fact
+	// (through managedScope), and there this carry is a no-op because the spec
+	// it was handed already carries the answer; it is the paths that only
+	// re-serialize the root — --config-only, the compute stage's read of the
+	// installation's outputs, adopt — that would otherwise write a document
+	// that reads as an installation without the fence. --forget rebuilds the
+	// same document from a spec that carries nothing, so this carry is what
+	// keeps the fourteen in it; a managed project never gets that far, because
+	// the rollback is refused there outright (managedForgetRefusal).
 	for _, prev := range documents {
 		if vars, err = infra.CarriedManagedDeployerScoped(vars, prev); err != nil {
 			return nil, userErr("reading the installation's tfvars: %v", err)
