@@ -12,14 +12,14 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
-// The converge (internal/initflow) over the engines fugaro init already
-// has. The stages here only call them: what init, init --firebase and the
+// The converge (internal/initflow) over the engines the converge already
+// has. The stages here only call them: what init, update --firebase-project and the
 // rest do, their flags, confirmations and messages, are the engines' own.
 // Stages that have no engine yet (project, services, images, the history
 // job's second pass, secrets, plugin wiring, repository) are registered
 // when the tasks that write them land.
 
-// initEngine is what the engines need, built in the order fugaro init has
+// initEngine is what the engines need, built in the order the converge has
 // always built it: the environment check, then the Terraform workdir, the
 // Google clients and the Cloud Resource Manager readiness.
 type initEngine struct {
@@ -99,16 +99,6 @@ func (e *initEngine) setup(ctx context.Context) error {
 // replace it.
 var secretsHeld = func() []string { return nil }
 
-// loopProgram is the command every line the converge loop prints names
-// (initflow's Options.Program, task W1.1): the front door this run is. The
-// loop is behind both front doors and cannot know which one is running, so it
-// falls back to the program alone — and a fix that reads "rerun fugaro" is one
-// nobody can act on, which is why this is set and not left empty.
-//
-// There is one front door today. W1.2 splits the command into `fugaro setup`
-// and `fugaro update` and passes whichever one is running here.
-const loopProgram = "fugaro init"
-
 // options is the loop's configuration from the flags.
 func (e *initEngine) options() initflow.Options {
 	r, o := e.r, e.r.o
@@ -120,7 +110,7 @@ func (e *initEngine) options() initflow.Options {
 	return initflow.Options{
 		Yes: o.yes, NonInteractive: o.nonInteractive, PlanOnly: o.planOnly,
 		Terminal: stdinIsTerminal(r.cmd.InOrStdin()), JSON: o.asJSON, Agent: agentMarker(os.Getenv), Out: r.w,
-		Program: loopProgram,
+		Program: o.loopProgram(),
 		Project: r.projectName, GCPProject: r.gcpProject, Region: e.lc.Region,
 		Redact: e.redact, OnPreview: func(rs []initflow.StageResult) { e.previewed = rs },
 	}
@@ -132,9 +122,26 @@ func (e *initEngine) options() initflow.Options {
 // the confirmation matrix's rows (setup_refusals_test.go, which calls this
 // with an engine and reads the list back). The engines' own behaviour is
 // theirs; this function is only who is in the run.
+//
+// Both front doors run this one list, and the door only removes: `update` is
+// everything `setup` registers, minus the project stage's creation path (a
+// project it never creates) and minus the Batch backend's (the stage is
+// behind --provision-batch, which update refuses). So update's stages are
+// preflight, installation, Firebase, images, installation a second time,
+// secrets, plugin and the repository of the checkout it is run in (W5.1).
+// There is no services stage in either list: initflow.Services is a slot in
+// the canonical order nothing registers.
 func initStages(e *initEngine) []initflow.Stage {
 	e.images, e.repo = newImagesStage(e), newRepositoryStage(e)
 	stages := []initflow.Stage{&preflightStage{e}, newInstallationStage(e), newFirebaseStage(e), e.images, newInstallation2Stage(e)}
+	// The credentials service is turned on by its own owner-run flag and by
+	// nothing else, and the stage comes BEFORE the repository stage: a
+	// repository root reads the installation's credentials_service output to
+	// decide whether its jobs mount a model credential at all, and grants each
+	// job's account an invoker on the service (C1.20).
+	if e.r.o.provisionCredentials {
+		stages = append(stages, newCredentialsStage(e))
+	}
 	stages = append(stages, newSecretsStage(e), newPluginStage(e), e.repo)
 	// The Batch backend's provisioning is the owner's step and nothing else
 	// reaches it: the stage is registered only under its own flag, and
@@ -143,15 +150,31 @@ func initStages(e *initEngine) []initflow.Stage {
 	if e.r.o.provisionBatch {
 		stages = append(stages, newComputeStage(e))
 	}
-	if e.r.o.createProject {
+	// The project stage, which is the one stage that may create the GCP
+	// project. `setup` registers it on a first run whether or not
+	// --create-project was given: the wizard's first question is whether to
+	// create the project or adopt one, and the answer (recorded on the same
+	// field the flag sets, askProjectAnswer) is what the stage acts on — a run
+	// whose answer was adoption has nothing to create. `update` never
+	// registers it, and neither does a `setup` whose installation is already
+	// there: e.old is the project config's file, and a run that has one
+	// converges as update does (D11, reconciliation F24).
+	if e.r.o.createProject || (e.r.o.door == setupDoor.name && e.old == nil) {
 		stages = append(stages, newProjectStage(e))
 	}
 	return stages
 }
 
-// converge runs fugaro init's default and --firebase modes through the
+// converge runs the converge's default and --firebase-project modes through the
 // loop and maps its result to what init returns.
+//
+// This is the apply phase (W3.5, reconciliation F12): the wizard's questions
+// were the input phase, one run of the loop over wizard_stage.go's stage, and
+// they are all answered by the time runInit gets here. What this run's order
+// decides is what is applied and in what order — the canonical one
+// (initflow.Names), not the order the questions were asked in.
 func (e *initEngine) converge(ctx context.Context) error {
+	e.announceAlreadySetUp()
 	stages := initStages(e)
 	e.r.review = &runReview{cover: e.cover, firebase: e.firebaseVerified, owner: e.owner, screen: e.reviewScreen}
 	e.gateEarly(ctx)
@@ -198,7 +221,7 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 		return err
 	}
 	if len(res.Left) > 0 && !o.planOnly {
-		return userErr("fugaro init is not finished: %d step(s) left for you, listed above", len(res.Left))
+		return userErr("%s is not finished: %d step(s) left for you, listed above", o.doorProgram(), len(res.Left))
 	}
 	return nil
 }
@@ -235,8 +258,8 @@ func (preflightStage) Apply(context.Context, initflow.Env) (initflow.Outcome, er
 	return initflow.Outcome{}, errors.New("the environment check changes nothing")
 }
 func (preflightStage) Verify(context.Context) error { return nil }
-func (preflightStage) Left() initflow.Left {
-	return initflow.Left{Stage: initflow.Preflight, Kind: initflow.LeftConsole, Text: "fix the environment problem named above, then rerun", Commands: []string{selfCommand() + " init"}}
+func (s preflightStage) Left() initflow.Left {
+	return initflow.Left{Stage: initflow.Preflight, Kind: initflow.LeftConsole, Text: "fix the environment problem named above, then rerun", Commands: []string{selfCommand() + " " + s.e.r.o.doorName()}}
 }
 
 // engineStage is a stage that calls one of init's engines. The engines read
@@ -334,7 +357,7 @@ func (s *engineStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 }
 
 // newInstallationStage is stage 3: init's installation engine. With
-// --firebase the installation is the Firebase engine's first apply, so the
+// --firebase-project the installation is the Firebase engine's first apply, so the
 // stage is skipped.
 func newInstallationStage(e *initEngine) *engineStage {
 	return &engineStage{e: e, name: initflow.Installation, did: func() string { return e.adopted },
@@ -361,11 +384,11 @@ func newInstallationStage(e *initEngine) *engineStage {
 			}
 			return e.r.install(ctx, e.c, e.t, e.wd, e.lc, e.spec, e.path, e.old)
 		},
-		left: promptLeft(initflow.Installation, "type the project's name to apply", "init"),
+		left: promptLeft(initflow.Installation, "type the project's name to apply", e.r.o.doorName()),
 	}
 }
 
-// newFirebaseStage is stage 4: init --firebase's engine, which is two
+// newFirebaseStage is stage 4: update --firebase-project's engine, which is two
 // confirmed applies (the installation's history account, the Firebase root)
 // and the database steps. The installation again, for the history job, is
 // the installation-2 stage, after the images stage has mirrored the image.
@@ -373,7 +396,7 @@ func newFirebaseStage(e *initEngine) *engineStage {
 	return &engineStage{e: e, name: initflow.Firebase,
 		skip: func() string {
 			if e.r.o.firebase == "" {
-				return "no --firebase given"
+				return "no --firebase-project given"
 			}
 			return ""
 		},
@@ -381,7 +404,7 @@ func newFirebaseStage(e *initEngine) *engineStage {
 			if err := e.setup(ctx); err != nil {
 				return err
 			}
-			if e.old == nil { // a first run with --firebase: the same default, unless the installation exists
+			if e.old == nil { // a first run with --firebase-project: the same default, unless the installation exists
 				if ok, err := e.r.installationExists(ctx, e.c, e.spec); err != nil {
 					return err
 				} else if !ok {
@@ -392,19 +415,19 @@ func newFirebaseStage(e *initEngine) *engineStage {
 			}
 			return e.r.initFirebase(ctx, e.c, e.t, e.wd, e.bin, e.lc, e.spec, e.path, e.old)
 		},
-		left: promptLeft(initflow.Firebase, "type the project's name at each apply", "init", "--firebase", "<firebase-project-id>"),
+		left: promptLeft(initflow.Firebase, "type the project's name at each apply", e.r.o.doorName(), "--firebase-project", "<firebase-project-id>"),
 	}
 }
 
 // newInstallation2Stage is stage 6: the installation root once more, which
 // deploys the history job with the Firebase outputs now that the images
-// stage has put its image in the registry. Only --firebase has a history
+// stage has put its image in the registry. Only --firebase-project has a history
 // job to deploy.
 func newInstallation2Stage(e *initEngine) *engineStage {
 	return &engineStage{e: e, name: initflow.Installation2, isolate: true,
 		skip: func() string {
 			if e.r.o.firebase == "" {
-				return "no --firebase given: nothing to deploy the history job with"
+				return "no --firebase-project given: nothing to deploy the history job with"
 			}
 			return ""
 		},
@@ -414,6 +437,6 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 			}
 			return e.r.firebaseHistory(ctx, e.c, e.t, e.wd, e.lc, e.spec)
 		},
-		left: promptLeft(initflow.Installation2, "type the project's name to apply the history job", "init", "--firebase", "<firebase-project-id>"),
+		left: promptLeft(initflow.Installation2, "type the project's name to apply the history job", e.r.o.doorName(), "--firebase-project", "<firebase-project-id>"),
 	}
 }

@@ -369,6 +369,7 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(doctorCheck{}),
 		reflect.TypeOf(configListDoc{}),
 		reflect.TypeOf(configListInstallation{}),
+		reflect.TypeOf(configListCheckout{}),
 		reflect.TypeOf(plan.Document{}),
 		reflect.TypeOf(plan.Node{}),
 		reflect.TypeOf(plan.Edge{}),
@@ -433,6 +434,60 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 	}
 }
 
+// TestDocsDesktopConsoleContractNamesEveryReasonCode: §6.8 of the contract is
+// what the console is written against, so the list of reasons it gives must be
+// exactly the reasons `config list --json` can emit, and in the order it gives
+// them — the order is what a reader uses to say which of a row's problems is
+// *the* reason it is not valid. (An earlier revision of that block got the
+// order wrong and omitted `unreadable` entirely, which is the drift this pins.)
+//
+// The list is read out of the numbered block §6.8 introduces ("One row carries
+// one reason, and which one it is is fixed. In order:"), not searched for in
+// the prose: the field table further up names the codes too, so a `Contains`
+// over the whole document would pass with the ordered list wrong or a code
+// missing from it.
+//
+// Mutations (run, restore): delete the `unreadable` item, or move
+// `not_enrolled` off the end; each fails here. (Both leave the field table, and
+// so a whole-document search, untouched.)
+func TestDocsDesktopConsoleContractNamesEveryReasonCode(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	doc := readDoc(t, path)
+	const intro = "**One row carries one reason, and which one it is is fixed.** In order:"
+	i := strings.Index(doc, intro)
+	if i < 0 {
+		t.Fatalf("%s no longer states the order the reasons are reported in", path)
+	}
+	// The items that follow, up to the first line that is neither one nor a
+	// wrapped continuation of one (an item's prose is indented under it).
+	var got []string
+	for _, line := range strings.Split(doc[i+len(intro):], "\n") {
+		if line == "" || line[0] == ' ' || line[0] == '\t' {
+			continue
+		}
+		m := reasonItemRE.FindStringSubmatch(line)
+		if m == nil {
+			break
+		}
+		got = append(got, m[1])
+	}
+	want := []string{
+		checkoutNotRepresentable,
+		checkoutMissing,
+		checkoutUnreadable,
+		checkoutNotACheckout,
+		checkoutOtherProject,
+		checkoutOtherRepository,
+		checkoutNotEnrolled,
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("%s's ordered reason list = %v, want %v", path, got, want)
+	}
+}
+
+// reasonItemRE is one numbered item of §6.8's ordered list: "3. `unreadable` …".
+var reasonItemRE = regexp.MustCompile("^[0-9]+\\. `([a-z_]+)`")
+
 // jsonCellRE is a backticked identifier in a field table's first cell: the
 // field names of one row, one or more of them.
 var jsonCellRE = regexp.MustCompile("`([A-Za-z_][A-Za-z0-9_]*)`")
@@ -467,6 +522,7 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(report.JSONDoc{}), reflect.TypeOf(report.JSONLine{}),
 		reflect.TypeOf(report.JSONTokens{}), reflect.TypeOf(Diagnosis{}),
 		reflect.TypeOf(configListDoc{}), reflect.TypeOf(configListInstallation{}),
+		reflect.TypeOf(configListCheckout{}),
 		reflect.TypeOf(plan.Document{}), reflect.TypeOf(plan.Node{}),
 		reflect.TypeOf(plan.Edge{}), reflect.TypeOf(plan.Footprint{}),
 		reflect.TypeOf(runstore.ChangedFiles{}),
@@ -651,9 +707,13 @@ func TestDocsDesktopConsoleContractStatesWhichDocumentsAreLineDelimited(t *testi
 
 // TestDocsDesktopConsoleContractNamesTheFlagInventory: the spawn contract's
 // one flag fact (design section 3.4 rule 3) must be the cobra commands', not
-// the document's word for it. Every command the console spawns except the
+// the document's word for it. Every command the dashboard spawns except the
 // version handshake carries --project and --config; version takes no flags at
 // all, so a console that appended --project to it would fail on every machine.
+// The map is the dashboard's commands, and deliberately not the picker's own
+// read: `config list --json` takes neither flag (it prints the installations,
+// so there is no project to name), which is why this inventory -- an inventory
+// of the flags a project read carries -- must not gain it (§5.1 rule 6).
 func TestDocsDesktopConsoleContractNamesTheFlagInventory(t *testing.T) {
 	const path = "console/docs/json-contract.md"
 	doc := readDoc(t, path)
@@ -707,10 +767,16 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	"cancel":      newCancelCmd,
 	"secrets ls":  newSecretsLsCmd,
 	"accounts ls": newAccountsLsCmd,
-	"doctor":      newDoctorCmd,
-	"version":     newVersionCmd,
-	"config list": newConfigListCmd,
-	"plan graph":  newPlanGraphCmd,
+	// §6.5a documents the operator's write to the cascade's state
+	// (credentials-service C1.21). It is deliberately NOT on the design's
+	// spawn allow-list — the console never writes — but the document
+	// describes its flags, so they are checked against this constructor like
+	// any other's.
+	"accounts clear": newAccountsClearCmd,
+	"doctor":         newDoctorCmd,
+	"version":        newVersionCmd,
+	"config list":    newConfigListCmd,
+	"plan graph":     newPlanGraphCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document
@@ -738,8 +804,11 @@ func TestDocsDesktopConsoleContractNamesOnlyRealFlags(t *testing.T) {
 		cmd.Flags().VisitAll(func(f *pflag.Flag) { all[f.Name] = true })
 	}
 	// A documented negative: the document names --version in order to say the
-	// root command has no cobra Version field and `fugaro --version` fails
-	// (section 7), so it is checked for absence, the opposite of the rest.
+	// `version` subcommand has no flag of its own and that the root command's
+	// --version is the root's, never the handshake's (§6.7, §8), so it is
+	// checked for absence, the opposite of the rest. The root command is not
+	// one of the commands this document describes -- the console spawns
+	// subcommands -- so its own flag is not in `all` either.
 	documentedAbsent := map[string]bool{"version": true}
 
 	// (1) Every flag token in the document.
@@ -963,9 +1032,13 @@ func firstBacktick(cell string) string {
 // the bare substring "watch --json" is satisfied by a sentence about it, which
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
-// §5.1 rule 6 carries and compares their first cells exactly:
-// the allow-list is the eleven argvs and nothing else, and the "never" table
-// still names the two entries that make a name-based list a hole.
+// §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
+// the twelve argvs and nothing else -- the console's dashboard table
+// (SPAWN_COMMANDS) and its picker table (PICKER_COMMANDS) are together the
+// eleven it fixes, and a review of an earlier revision found the picker's own
+// read, `config list --json`, absent here, which left the specification
+// forbidding the one read the picker depends on -- and the "never" table still
+// names the two entries that make a name-based list a hole.
 func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 	const path = "docs/design/desktop-console.md"
 	doc := readDoc(t, path)
@@ -982,6 +1055,11 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		"accounts ls --json",
 		"version",
 		"doctor --json",
+		// The picker's own read: the twelfth argv, and the only one that
+		// belongs to the installations picker rather than the dashboard. It
+		// carries no --project and no --config, so it is absent from the
+		// contract document's flag inventory below, which is about flags.
+		"config list --json",
 	}
 	rows := docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |")
 	got := map[string]bool{}
@@ -1025,6 +1103,63 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 	for _, argv := range []string{"doctor --check-github-app", "logs --follow"} {
 		if !never[argv] {
 			t.Errorf("%s: the never table no longer names %q", path, argv)
+		}
+	}
+}
+
+// TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode: §5.1 rule 6's
+// table is the console's whole read-only guarantee — D14 rests it on the
+// exact-argv table, because the CLI cannot tell an admin's identity from
+// anyone else's — and a read changes nothing on the machine. The remembered
+// checkouts are a file this machine keeps and the resolver every cloud
+// command goes through is what writes it, so the code has to know which
+// commands are console reads: consoleReadPaths (internal/cli/project.go) is
+// that knowledge, and this test reads it back off the design's own table, so
+// the two cannot drift. Adding an argv to §5.1 without adding its command
+// here fails, and so does a command on the list that the design does not
+// allow (bar the one read the design names for the console and §5.1 has no
+// row for yet).
+func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
+	const path = "docs/design/desktop-console.md"
+	doc := readDoc(t, path)
+	allowed := map[string]bool{}
+	argvs := 0
+	for _, cells := range docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |") {
+		argv := firstBacktick(cells[0])
+		if argv == "" {
+			continue
+		}
+		argvs++
+		// "budget show --json" is the command `fugaro budget show`: its own
+		// words, up to its first flag or its first ARGUMENT (the RUN a
+		// diagnose or a logs row takes, spelled in capitals in the table).
+		var words []string
+		for _, tok := range strings.Fields(argv) {
+			if strings.HasPrefix(tok, "-") || tok == strings.ToUpper(tok) {
+				break
+			}
+			words = append(words, tok)
+		}
+		cmdPath := "fugaro " + strings.Join(words, " ")
+		allowed[cmdPath] = true
+		if !consoleReadPaths[cmdPath] {
+			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
+		}
+	}
+	// Eleven commands: the ten dashboard reads (logs has two argvs) and the
+	// picker's `config list --json` (D13's amendment of 2026-10-20).
+	if len(allowed) != 11 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 11 (logs has two argvs)", path, argvs, len(allowed))
+	}
+	// The other direction: the list carries §5.1's commands and nothing else,
+	// except the one read the design names for the console and §5.1 has not
+	// grown a row for yet (V2.2.1, the graph document). A second name is a
+	// command someone decided the console spawns, and that is a design change,
+	// not a table entry.
+	namedNotAllowed := map[string]bool{"fugaro plan graph": true}
+	for cmdPath := range consoleReadPaths {
+		if !allowed[cmdPath] && !namedNotAllowed[cmdPath] {
+			t.Errorf("consoleReadPaths carries %q, which is neither an argv §5.1 allows nor the one read the design names for the console (%v): the read-only list is the design's, not this file's", cmdPath, namedNotAllowed)
 		}
 	}
 }
@@ -6372,6 +6507,62 @@ func TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere(t *testing.T) {
 		}
 	}
 
+	// The two pairs that section prints are the sentences the owner writes when
+	// they apply this file, one per state `mobile-release.yml` can be in, and
+	// until this test read them nothing did: the copy-in proof splices the Linux
+	// pair's, out of `## console-release-linux.yml`. A pair whose names or count
+	// have drifted from the state its label describes is a sentence that reddens
+	// the two checks below in the owner's commit -- this file replaced in the
+	// opening line, and a count and a set the directory does not hold -- so each
+	// is held here to the directory that state leaves.
+	//
+	// The set each pair describes is stated rather than observed, because one of
+	// the two states is not this tree's: the pending set with this file gone, and
+	// with `mobile-release.yml` in it or out of it. Both are read in every tree,
+	// so neither pair can rot while the other is the one the repository is in.
+	if docExists(t, consoleLinuxWorkflowPath) {
+		const what = "docs/pending-workflows/README.md's `console-linux.yml` section"
+		withMobile := pendingWorkflows(t)
+		if !slices.Contains(withMobile, filepath.Base(stagedMobileReleaseWorkflowPath)) {
+			withMobile = append(withMobile, filepath.Base(stagedMobileReleaseWorkflowPath))
+		}
+		slices.Sort(withMobile)
+		for _, c := range []struct {
+			name, label, to string
+			want            []string
+		}{
+			{
+				name:  "already applied",
+				label: consoleLinuxCopyInMobileAppliedLabel,
+				to:    consoleLinuxCopyInMobileStagedLabel,
+				want: slices.DeleteFunc(slices.Clone(withMobile), func(n string) bool {
+					return n == filepath.Base(consoleLinuxWorkflowPath) || n == filepath.Base(stagedMobileReleaseWorkflowPath)
+				}),
+			},
+			{
+				name:  "still staged",
+				label: consoleLinuxCopyInMobileStagedLabel,
+				to:    consoleLinuxCopyInOtherOrderLabel,
+				want:  slices.DeleteFunc(slices.Clone(withMobile), func(n string) bool { return n == filepath.Base(consoleLinuxWorkflowPath) }),
+			},
+		} {
+			pair := readmeSectionPart(t, what, build, c.label, c.to)
+			for _, p := range []struct{ what, block, pattern string }{
+				{"the opening line", fencedBlockContaining(t, what, pair, "files are pending"), consolePendingBoldPattern},
+				{"the site's last paragraph", fencedBlockContaining(t, what, pair, "now holds"), consolePendingPathsPattern},
+			} {
+				names, count := consolePendingSentence(t, "the pair in `"+what+"` for `mobile-release.yml` "+c.name+", "+p.what, p.block, p.pattern)
+				slices.Sort(names)
+				if !slices.Equal(names, c.want) {
+					t.Errorf("the pair `%s` hands the owner in `%s` names %q, and applying `console-linux.yml` with `mobile-release.yml` %s leaves the directory holding %q: the sentences are held to the directory, and one that named a file that is not pending would be red in the owner's commit", c.label, what, names, c.name, c.want)
+				}
+				if count != len(c.want) {
+					t.Errorf("the pair `%s` hands the owner in `%s` says %d pending workflow(s), and applying `console-linux.yml` with `mobile-release.yml` %s leaves %d (%q): the count and the names are one claim", c.label, what, count, c.name, len(c.want), c.want)
+				}
+			}
+		}
+	}
+
 	// The release file's section: the three commands, in order, and the reason
 	// there are three.
 	release := consoleReadmeSection(t, doc, "## `console-release-linux.yml`")
@@ -6445,6 +6636,69 @@ func TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere(t *testing.T) {
 	}
 }
 
+// TestDocsPendingWorkflowsReadmeFencesCarryNoBlankLine: each of those sentences is handed
+// to the owner **inside a fenced block as the exact text to paste** -- one for
+// the opening line, one for the site's paragraph, in every state the two
+// copy-ins leave the directory in -- and a blank line inside such a block is a
+// paragraph break the owner's paste would carry into the sentence. It splits the
+// sentence in two when the README is read on GitHub, and nothing caught it: the
+// check above flattens whitespace before it reads a sentence, and
+// `website/test/readme.mjs` does the same, so a fence broken mid-sentence reads
+// exactly like an intact one to both. (One had: "(mobile plan Task" and "P4.3)"
+// were two paragraphs in the block for `console-release-linux.yml`'s copy-in.)
+//
+// A fence is one of these when its first line is one of the two sentence heads:
+// the opening line's `**N files are pending: …**`, or the site paragraph's
+// `\`docs/pending-workflows/\` now holds …`. The blocks of shell commands beside
+// them are left alone -- a blank line between two commands is ordinary, and the
+// rule would be about punctuation rather than about text a reader pastes.
+func TestDocsPendingWorkflowsReadmeFencesCarryNoBlankLine(t *testing.T) {
+	const path = "docs/pending-workflows/README.md"
+	doc := readDoc(t, path)
+
+	var blocks [][]string
+	var current []string
+	inFence := false
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			if inFence {
+				blocks = append(blocks, current)
+				current = nil
+			}
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			current = append(current, line)
+		}
+	}
+	if inFence {
+		t.Fatalf("%s has an unclosed fenced block: the sentences the owner pastes are read from these", path)
+	}
+
+	sentences := 0
+	for _, block := range blocks {
+		if len(block) == 0 {
+			continue
+		}
+		head := block[0]
+		if !consolePendingSentenceHeadRE.MatchString(head) && !strings.HasPrefix(head, "`docs/pending-workflows/` now holds") {
+			continue
+		}
+		sentences++
+		for i, line := range block {
+			if strings.TrimSpace(line) != "" {
+				continue
+			}
+			t.Errorf("%s: the sentence the owner pastes, starting %q, has a blank line at line %d of its fenced block: the block is the exact text, and a blank line is a paragraph break the paste carries into a sentence -- the whitespace-flattening checks above and in website/test/readme.mjs read a broken fence and an intact one the same", path, head, i+1)
+			break
+		}
+	}
+	if sentences == 0 {
+		t.Fatalf("%s hands the owner no fenced sentence: the copy-in sections carry the text to paste, and this test reads those blocks", path)
+	}
+}
+
 // pendingWorkflows is the workflows docs/pending-workflows/ still holds as
 // pending changes, sorted: every `.yml` in it except the two whose staged copies
 // are kept after their copy-in on purpose (`console-tests.yml` and
@@ -6500,11 +6754,11 @@ func pendingReadmeOpening(t *testing.T, doc string) string {
 func consolePendingSentence(t *testing.T, what, text, namePattern string) ([]string, int) {
 	t.Helper()
 	flat := strings.Join(strings.Fields(text), " ")
-	words := map[string]int{"no": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
+	words := map[string]int{"no": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6}
 	count := -1
 	for _, pattern := range []*regexp.Regexp{
 		// "**Three files are pending: `shared-tests.yml`** ..."
-		regexp.MustCompile(`\*\*(\w+) files? (?:is|are) pending`),
+		consolePendingSentenceHeadRE,
 		// "`docs/pending-workflows/` now holds three pending workflows,"
 		regexp.MustCompile(`\b(?:holds|names)\s+(\w+) pending`),
 	} {
@@ -6560,6 +6814,13 @@ const (
 	consolePendingPathsPattern = "`docs/pending-workflows/([\\w.-]+\\.ya?ml)`"
 	consolePendingBoldPattern  = "bold"
 )
+
+// consolePendingSentenceHeadRE matches the head of the opening-line sentence
+// ("**Three files are pending: `shared-tests.yml`** ..."), which is also how
+// TestDocsPendingWorkflowsReadmeFencesCarryNoBlankLine recognises a fenced block that holds
+// a sentence rather than a list of commands. The two share it deliberately: a
+// sentence the parser reads has to be a sentence whose fence is checked.
+var consolePendingSentenceHeadRE = regexp.MustCompile(`\*\*(\w+) files? (?:is|are) pending`)
 
 // TestConsoleReleaseLinuxStagedFileIsNotTheAppliedOne keeps the files this
 // change moves in the relation it claims for them, in both of the states the
@@ -6816,6 +7077,51 @@ type copyInSentences struct {
 	opening, site string
 }
 
+// The `## console-release-linux.yml` section prints two pairs of follow-up
+// sentences, each under the sentence that says when it is the one to write,
+// because the two copy-ins of 2026-10-20 can be made in either order: the third
+// file staged that day, `mobile-release.yml`, has a copy-in of its own, and the
+// pair a commit needs names what the directory is left holding.
+const (
+	consoleCopyInMobileStagedLabel  = "**If `mobile-release.yml` is still staged when you make this copy-in**"
+	consoleCopyInMobileAppliedLabel = "**If it has already been copied in**"
+)
+
+// The `## console-linux.yml` section prints a pair of its own for each of the
+// same two states, under labels of its own: applying that file leaves a
+// different directory than applying the release file does, so the sentences it
+// hands the owner cannot be the Linux pair's. Nothing else read those two pairs
+// until TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere did, and a pair that
+// has drifted from its state is a sentence the owner writes into a red tree --
+// the two sentences it replaces are what that test checks against this
+// directory. The third marker is the paragraph that follows the second pair, and
+// it is what tells the two parts apart when they are read one at a time.
+const (
+	consoleLinuxCopyInMobileStagedLabel  = "**If `mobile-release.yml` is still staged**, it leaves four"
+	consoleLinuxCopyInMobileAppliedLabel = "**If `mobile-release.yml` has already been copied in**, applying this file leaves"
+	consoleLinuxCopyInOtherOrderLabel    = "**If the console's other two have been applied first**"
+)
+
+// readmeSectionPart returns the part of text that runs from `from` to the start
+// of the first `to` after it, or to the end of text when `to` is empty. A pair
+// of follow-up sentences is read out of the part its own label introduces, so a
+// pair printed under the wrong label -- or a label that lost its pair -- fails
+// where it is read.
+func readmeSectionPart(t *testing.T, what, text, from, to string) string {
+	t.Helper()
+	start := strings.Index(text, from)
+	if start < 0 {
+		t.Fatalf("%s no longer prints %q, the sentence that says when its pair of follow-up sentences is the one to write", what, from)
+	}
+	rest := text[start+len(from):]
+	if to != "" {
+		if end := strings.Index(rest, to); end >= 0 {
+			rest = rest[:end]
+		}
+	}
+	return rest
+}
+
 // releaseLinuxCopyInSentences reads those two sentences out of
 // `## console-release-linux.yml`'s fenced blocks -- the section that describes
 // the commit both copy-ins land in -- and checks the four commands that commit
@@ -6823,8 +7129,14 @@ type copyInSentences struct {
 // both are the README's claim about the tree: a prescribed sentence that the
 // directory would contradict is not something this test should paper over by
 // writing its own.
+//
+// The section prints a pair for each of the two orders the copy-ins can be made
+// in, and this reads the pair for the tree it is run in: `mobile-release.yml`
+// staged beside this section's files means the console copy-in is the first of
+// the two, and the pair that names it is the one this copy-in leaves.
 func releaseLinuxCopyInSentences(t *testing.T) copyInSentences {
 	t.Helper()
+	const what = "docs/pending-workflows/README.md's `console-release-linux.yml` section"
 	doc := readDoc(t, "docs/pending-workflows/README.md")
 	section := consoleReadmeSection(t, doc, "## `console-release-linux.yml`")
 	for _, command := range []string{
@@ -6845,9 +7157,18 @@ func releaseLinuxCopyInSentences(t *testing.T) copyInSentences {
 			t.Fatalf("docs/pending-workflows/README.md's `console-linux.yml` section no longer prints %q, which is a command this test just ran", command)
 		}
 	}
+	pair := readmeSectionPart(t, what, section, consoleCopyInMobileStagedLabel, consoleCopyInMobileAppliedLabel)
+	if !docExists(t, stagedMobileReleaseWorkflowPath) {
+		pair = readmeSectionPart(t, what, section, consoleCopyInMobileAppliedLabel, "")
+	}
 	return copyInSentences{
-		opening: fencedBlockContaining(t, "docs/pending-workflows/README.md", section, "files are pending"),
-		site:    fencedBlockContaining(t, "docs/pending-workflows/README.md", section, "now holds"),
+		// The marker is the count-free head of the opening-line block rather
+		// than a whole phrase of it: the block states a count ("One file is
+		// pending", "Two files are pending", ...), and a marker that spelled the
+		// count would have to be edited every time a file is staged or applied
+		// -- which is the edit the block itself exists to make in one place.
+		opening: fencedBlockContaining(t, what, pair, "files are pending"),
+		site:    fencedBlockContaining(t, what, pair, "now holds"),
 	}
 }
 

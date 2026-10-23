@@ -60,6 +60,8 @@ budget:
   token_signer: signer@my-fp1.iam.gserviceaccount.com
 watch:
   burn_alert_usd_per_hour: 2
+mailbox:
+  keychain_item: fugaro-mailbox-aurora
 user: someone@example.com
 providers:
   openrouter:

@@ -69,11 +69,13 @@ const ServiceCloudAsset = "cloudasset.googleapis.com"
 // identity that makes the read. The module grant and this role's entry in
 // internal/infra/tf's grantRules landed together, because that table is an
 // allowlist — an installation grant of a role the table does not name makes
-// fugaro init refuse the installation's own plan.
+// fugaro update refuse the installation's own plan.
 //
 // The impersonated deployer is NOT an identity that holds it, and nothing
-// here may assume one. The deployer is created with its two custom roles and
-// no other (D75, Task 1.5; deployer.tf), and the table above grants this
+// here may assume one. The deployer is created with its own deployer roles
+// and no other (D75, Task 1.5; deployer.tf; seven of them per-service and
+// fenced, only where the installation opts in), and the table above grants
+// this
 // role to people only, so a managed plan cannot grant it to an account either:
 // a read made under the deployer's credential answers CauseRoleMissing and
 // falls the run back to its confirmations, which is the fail-closed direction
@@ -212,7 +214,7 @@ const (
 	// CauseForeign is a resource the state does not account for.
 	CauseForeign Cause = "a resource the state does not account for"
 	// CauseAPIDisabled is the Cloud Asset API not enabled in the project, which
-	// fugaro init enables with the installation's other APIs.
+	// fugaro update enables with the installation's other APIs.
 	CauseAPIDisabled Cause = "the Cloud Asset API is disabled in the project"
 	// CauseRoleMissing is the identity running the read without
 	// RoleCloudAssetReader.
@@ -323,11 +325,11 @@ func (in Inventory) foreign(listed []Asset) []Asset {
 // provisions with it is in no state either.
 //
 // The Firebase project is the one a creating run always adds and a root only
-// sometimes declares: `fugaro init --create-project` adds Firebase to every
+// sometimes declares: `fugaro setup --create-project` adds Firebase to every
 // project it makes (init_project.go's addFirebase), while the Firebase ROOT —
 // which holds google_firebase_project, the resource a state would account for
-// — runs only under --firebase (init_stages.go). So a managed project created
-// without --firebase holds a Firebase project no state has ever seen, and an
+// — runs only under --firebase-project (init_stages.go). So a managed project created
+// without --firebase-project holds a Firebase project no state has ever seen, and an
 // inventory that did not name it here would read every such project as
 // foreign and keep the confirmations of every apply forever. The
 // whole-project read lists all of them, so without this the accounted side
@@ -426,7 +428,7 @@ func (in Inventory) gcpCreated(a Asset) bool {
 		// Created by whoever created the project, and the resource the whole
 		// read is made about.
 		"cloudresourcemanager.googleapis.com/Project",
-		// The services the project has enabled, which fugaro init enables with
+		// The services the project has enabled, which fugaro update enables with
 		// the installation and which the deployment in progress enables for
 		// itself: "//serviceusage.googleapis.com/projects/<number>/services/<api>".
 		// Named by the project NUMBER, never by its id.
@@ -670,7 +672,7 @@ func (in Inventory) what() string {
 }
 
 // classify says which of the read's failures this is, because the three are
-// three different things for an operator to do: enable the API (fugaro init
+// three different things for an operator to do: enable the API (fugaro update
 // does), grant RoleCloudAssetReader, or wait out a quota. It reads the
 // structured answer, not the message, in the discipline internal/infra's own
 // serviceDisabled keeps (apis.go): a 403 whose details carry an ErrorInfo with
@@ -681,7 +683,7 @@ func (in Inventory) what() string {
 // the part of that discipline a message-level reading gets wrong: a project can
 // have a dozen APIs disabled, and answering "the Cloud Asset API is disabled in
 // the project" for a SERVICE_DISABLED about another service is a wrong sentence
-// about the operator's project — one that sends them to fugaro init for
+// about the operator's project — one that sends them to fugaro update for
 // something that is not the read's problem. So a SERVICE_DISABLED naming
 // another service is neither this API's answer nor a missing role, and it is
 // reported as what it is: the read failed, with the answer's own words in the

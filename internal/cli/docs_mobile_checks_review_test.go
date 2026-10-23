@@ -506,7 +506,7 @@ func TestGcpSetupDatabaseStepOrderIsTheCodes(t *testing.T) {
 	if !strings.Contains(bullet, settled) {
 		t.Errorf("%s: the bullet does not quote %q, the line a database step with nothing pending prints: it is the line the reader is told to expect, and the page's account of the step is what they compare their run against", path, settled)
 	}
-	if !strings.Contains(bullet, "`No changes` is `fugaro init`'s line for a stage with nothing to do, not this step's") {
+	if !strings.Contains(bullet, "`No changes` is `fugaro setup`'s line for a stage with nothing to do, not this step's") {
 		t.Errorf("%s: the bullet does not say that `No changes` is a stage's line rather than the database step's (internal/cli's `init_firebase.go` prints it for a Terraform root with an empty plan, and the database step's own no-op sentence is %q): the sentence it replaced said a database whose rules match \"reports `No changes`\", which no run of the step prints", path, settled)
 	}
 	if !strings.Contains(bullet, "**no rules line**") || !strings.Contains(bullet, "the **marker** write") {
@@ -524,12 +524,12 @@ func TestGcpSetupDatabaseStepOrderIsTheCodes(t *testing.T) {
 }
 
 // TestDocsCheck82PrintVarsKeys: check 82 step 2 tells the owner to read the
-// resolved Firebase project and the region out of `init --firebase
-// --print-vars`. That output is one JSON object, `{"installation": ...,
-// "firebase": ...}` (`init_firebase.go`'s firebaseVars), where the project is
-// `firebase.project` and the region `installation.region`; the name
-// `firebase_project` is the local config's key and the Firebase root's output,
-// not a key of this document. The step names the two keys it means.
+// resolved Firebase project and the region out of `fugaro update
+// --firebase-project --print-vars`. That output is one JSON object,
+// `{"installation": ..., "firebase": ...}` (`init_firebase.go`'s firebaseVars),
+// where the project is `firebase.project` and the region `installation.region`;
+// the name `firebase_project` is the local config's key and the Firebase root's
+// output, not a key of this document. The step names the two keys it means.
 func TestDocsCheck82PrintVarsKeys(t *testing.T) {
 	const path = "docs/gcp-live-checklist.md"
 	doc := readDoc(t, path)

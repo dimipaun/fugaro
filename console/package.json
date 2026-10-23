@@ -3,6 +3,11 @@
   "private": true,
   "version": "0.0.0",
   "description": "The Fugaro desktop console: the Electron application under console/, never published to npm and never importable by the Go module. Every specifier here is an EXACT version (desktop-console plan Task 1.0, design section 5.2), enforced by test/unit/pinning.test.ts; Electron in particular is pinned on purpose and bumped on purpose, with the toolchain task, exactly as internal/budget/rules/emulator/package.json pins firebase-tools.",
+  "homepage": "https://fugaro.dev",
+  "author": {
+    "name": "The Fugaro project",
+    "email": "noreply@fugaro.dev"
+  },
   "engines": {
     "node": "22.23.3"
   },
@@ -13,6 +18,7 @@
     "test:e2e": "npm run build && playwright test --pass-with-no-tests",
     "typecheck": "tsc --noEmit",
     "record-fixture": "tsc -p tsconfig.record-fixture.json && node .record-fixture/tools/record-fixture/index.js",
+    "screenshots": "npm run build && tsc -p tsconfig.screenshots.json && node .screenshots/tools/screenshots/capture.js",
     "package": "npm run build && electron-builder --mac --universal --publish never",
     "package:targets": "electron-builder --mac --universal --publish never",
     "package:linux": "electron-builder --linux --publish never"

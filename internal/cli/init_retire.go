@@ -233,7 +233,7 @@ func (r *initRun) printRetirements(spec infra.RepoSpec, rets []infra.Retirement)
 		n, plural(n, "address", "addresses"), plural(n, "it", "them"))
 	fmt.Fprintln(r.w, "  2. plan, show the plan's own counts and its full delete list, and ask again — the project's name typed at a real terminal, never --yes.")
 	fmt.Fprintf(r.w, "  3. apply, then delete the %d orphaned Cloud Run %s through the API.\n", len(api), plural(len(api), "job", "jobs"))
-	fmt.Fprintln(r.w, "\nNext command:\n  fugaro init --repo . --retire")
+	fmt.Fprintln(r.w, "\nNext command:\n  fugaro update --repo . --retire")
 	return nil
 }
 
@@ -320,7 +320,7 @@ func blockingJobs(stateAddrs []string, rets []infra.Retirement) []infra.Retireme
 }
 
 // retireNextCommand is the command the summary and both refusals name.
-const retireNextCommand = "fugaro init --repo . --retire"
+const retireNextCommand = "fugaro update --repo . --retire"
 
 // retireRefusal is the gate's refusal: the run stops before the apply it
 // cannot finish, names the addresses and the one command that can.
@@ -785,13 +785,13 @@ func retireAborted(rets []infra.Retirement, addr, workdir string) error {
 		return userErr("the plan was refused: %s carries lifecycle.prevent_destroy, so Terraform will not plan its destruction, and this change retires it.%s\nRerun with --retire: it removes the protected addresses from Terraform's state (destroys nothing), applies, and deletes the orphaned jobs through the Cloud Run API:\n  %s", addr, where, retireNextCommand)
 	}
 	if keeps, never := neverDestroyed(addr); never {
-		return userErr("the plan was refused: %s carries lifecycle.prevent_destroy, so Terraform will not plan its destruction.%s\nfugaro read no retirement for this address, so --retire would remove nothing here and the same plan would abort in the same place. Fugaro never destroys this resource -- the block is that promise, not a line to delete -- so only you can say which side is wrong:\n  - Terraform is holding a resource that should go: leave it in GCP and take it out of Terraform's state: `terraform state rm '%s'` in %s destroys nothing and keeps %s; then rerun `fugaro init --repo`.\n  - the resource should stay: revert the configuration change that asked for its destruction, then rerun.", nonEmpty(addr, "a resource"), where, addr, workdir, keeps)
+		return userErr("the plan was refused: %s carries lifecycle.prevent_destroy, so Terraform will not plan its destruction.%s\nfugaro read no retirement for this address, so --retire would remove nothing here and the same plan would abort in the same place. Fugaro never destroys this resource -- the block is that promise, not a line to delete -- so only you can say which side is wrong:\n  - Terraform is holding a resource that should go: leave it in GCP and take it out of Terraform's state: `terraform state rm '%s'` in %s destroys nothing and keeps %s; then rerun `fugaro update --repo`.\n  - the resource should stay: revert the configuration change that asked for its destruction, then rerun.", nonEmpty(addr, "a resource"), where, addr, workdir, keeps)
 	}
 	rm := "the address named in Terraform's error"
 	if addr != "" {
 		rm = "'" + addr + "'"
 	}
-	return userErr("the plan was refused: %s carries lifecycle.prevent_destroy, so Terraform will not plan its destruction.%s\nfugaro read no retirement for this address, so --retire would remove nothing here and the same plan would abort in the same place. Only you can say which side is wrong:\n  - Terraform is holding a resource that should go: take it out of Terraform's state with `terraform state rm %s` in %s -- that destroys nothing; then rerun `fugaro init --repo`.\n  - the resource should stay: revert the configuration change that asked for its destruction, then rerun.", nonEmpty(addr, "a resource"), where, rm, workdir)
+	return userErr("the plan was refused: %s carries lifecycle.prevent_destroy, so Terraform will not plan its destruction.%s\nfugaro read no retirement for this address, so --retire would remove nothing here and the same plan would abort in the same place. Only you can say which side is wrong:\n  - Terraform is holding a resource that should go: take it out of Terraform's state with `terraform state rm %s` in %s -- that destroys nothing; then rerun `fugaro update --repo`.\n  - the resource should stay: revert the configuration change that asked for its destruction, then rerun.", nonEmpty(addr, "a resource"), where, rm, workdir)
 }
 
 // neverDestroyedTypes are the resource types fugaro never destroys, each

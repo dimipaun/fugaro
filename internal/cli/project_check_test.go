@@ -46,7 +46,7 @@ func TestOpenCloudMissingMarker(t *testing.T) {
 	if ExitCode(err) != ExitUserError || err == nil {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
-	for _, want := range []string{"project aurora's installation has no project name yet", "fugaro init --name aurora"} {
+	for _, want := range []string{"project aurora's installation has no project name yet", "fugaro setup --name aurora"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("err %q lacks %q", err, want)
 		}

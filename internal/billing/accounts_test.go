@@ -530,8 +530,14 @@ func TestListSkipsAnAccountWhoseIDIsNotOne(t *testing.T) {
 // below. W4.3 is that one place — internal/cli's billing question — and adding
 // it here is a deliberate change to the privacy story, not a step a new
 // importer takes on its own.
+//
+// The list is by directory, so it allows internal/cli's other files to import
+// this package too. W4.3 adds two of them, and both are the one place: the
+// question itself (billing_prompt.go) and the project stage's guided line,
+// which is billing.Guided's own words (init_project.go) — the same line the
+// question leaves when it has no account to offer.
 func TestOnlyTheWizardMayImportThisPackage(t *testing.T) {
-	allowed := map[string]bool{}
+	allowed := map[string]bool{"internal/cli": true}
 	root := filepath.Join("..", "..") // internal/billing -> the module root
 	const self = "github.com/dimipaun/fugaro/internal/billing"
 	importers := map[string]bool{}

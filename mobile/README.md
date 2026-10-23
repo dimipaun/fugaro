@@ -49,6 +49,43 @@ bundle. `npx expo export` builds a JavaScript bundle for both platforms; a
 native build is still owner-run — see "Building for internal testing" and "What
 is not verified here".
 
+**The Android launch crash, and the two things that came out of it (added
+2026-10-21).** The owner installed the `preview` APK on Android on 2026-10-21
+and it **opened and closed with no screen at all**. The cause was a `TypeError`
+thrown while `index.js` was being *evaluated*: `expoSecureStorePort` required
+`SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY`, and that constant **does not exist
+on Android** — `expo-secure-store`'s `ios/SecureStoreModule.swift` registers
+seven `Constant(...)` entries and its
+`android/.../SecureStoreModule.kt` registers **none**, so the SDK's own
+`export const WHEN_UNLOCKED_THIS_DEVICE_ONLY = ExpoSecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY`
+is `undefined` there. Nothing else about the build was wrong:
+`expo-secure-store` 58.0.2 is the version `node_modules/expo/bundledNativeModules.json`
+pins for SDK 58, its config plugin is listed in `app.json`, and its native
+module is linked and works on Android — it simply has no accessibility levels to
+name. Two changes answer it:
+
+* **the port takes the platform** (`expoSecureStorePort(SecureStore, { platform:
+  Platform.OS })`). On iOS the constant is still required, so a rename is a loud
+  refusal rather than a silent downgrade to `WHEN_UNLOCKED` — the item that
+  rides an iCloud backup onto another phone; on Android no constant is asked for
+  and the write carries no `keychainAccessible`, which the Kotlin
+  `SecureStoreOptions` record has no field for. `src/accounts/expo-secure-store.js`
+  has the full account, `src/accounts/expo-secure-store.test.js` the tests.
+* **the startup is guarded** (`src/app/startup.js`, wired in `index.js`). The
+  whole of the wiring — both ports, the store, the demo, the screens, the shell
+  — is built inside `startup.root(build)`, so a throw from any of it renders a
+  plain screen: what failed, the error's message, and a **"Copy details"** line
+  a reviewer can long-press and paste. A root error boundary catches a
+  render-time throw the same way, and `startup.guard(what, run)` — built on
+  `report(error, what)` — is the door for a failure that arrives *after* a
+  successful start, catching **both** halves: a rejected promise (its `try`
+  cannot see what happens after an `await`) and a **synchronous** throw (a tap
+  handler runs from the platform's event loop, not from `root`'s `try`, so a
+  throw there is an uncaught error in a release build; the demo's entry is the
+  app's first guarded step today, and a future SecureStore read, listener or
+  fetch joins it). A release build on a phone has no terminal and no
+  red box, so a startup failure that is not *drawn* is one nobody can report.
+
 **Two audio seams, and now one of them is wired.** P3.6 defined the one audio
 seam it needed -- `src/mailbox/speaker.js`, `speak(text)` answering whether the
 utterance was spoken, which is what the ack's rule is written against -- before
@@ -119,21 +156,23 @@ fences, are `src/demo/`'s; the words the owner pastes into the Play form are
 
 | Path | What it is |
 | --- | --- |
-| `index.js` | The entry. The one file that knows what a device is: it imports `expo`, `expo-secure-store`, `@react-native-async-storage/async-storage`, `react` and `react-native`, builds the two ports, the store and the demo controller, wires the two screens and registers the root. No decisions of its own, and no test (see "What is not verified"). |
-| `package.json`, `package-lock.json` | The manifest and the tree `npm ci` installs. The dependencies are the packages `index.js` and `src/` actually import — `expo`, `react`, `react-native`, `expo-secure-store` and `@react-native-async-storage/async-storage` — and no more: `src/dependencies.test.js` fails on an undeclared import and on a manifest that lacks `expo`, `react` or `react-native`. |
+| `index.js` | The entry. The one file that knows what a device is: it imports `expo`, `expo-secure-store`, `@react-native-async-storage/async-storage`, `react` and `react-native`, builds the two ports (the Keychain one with `Platform.OS`, the constant that decides its rule being iOS's), the store and the demo controller, wires the two screens, and registers the root **inside the guarded startup**. No decisions of its own, and no test (see "What is not verified"). |
+| `package.json`, `package-lock.json` | The manifest and the tree `npm ci` installs. The dependencies are the packages `index.js` and `src/` actually import — `expo`, `react`, `react-native`, `expo-secure-store` and `@react-native-async-storage/async-storage` — plus `expo-splash-screen`, which nothing imports and which `app.json` names as a **config plugin** (a plugin that is not installed is a prebuild that stops): `src/dependencies.test.js` fails on an undeclared import and on a manifest that lacks `expo`, `react` or `react-native`. |
 | `metro.config.cjs` | Metro's config, and the one entry in it that matters: `watchFolders` includes the **repository root**, because the app imports `shared/` (`../../../shared/confirm/index.js` and its siblings) and Metro's project root is `mobile/`. Without it the bundle fails to resolve them — `npx expo export` stops at `Unable to resolve module ../../../shared/confirm/index.js` — so it is not removable, and `src/dependencies.test.js` fails if it goes. `.cjs`, because `package.json` is `"type": "module"`. |
-| `app.json` | The Expo config. No credential, no installation, no bundle identifier, no Android package — see `src/app-config.test.js`. Two fields are what SDK 58 needs: `plugins: ["expo-secure-store"]` (the module that holds D111's two items, whose config plugin is what configures it for a native build — `npx expo install` asks for it) and **no `edgeToEdgeEnabled` and no `newArchEnabled`**: `npx expo-doctor` reports each of the two as `Additional property "…" is not allowed` against the SDK 58 schema (one error per run, so removing the first is what makes the second visible — 19/20, then 19/20, then 20/20). Both flags ask for what SDK 58 builds anyway: edge-to-edge is mandatory from Android 16 (Expo's own `withEdgeToEdge` says so), and the new architecture is the only architecture. |
+| `app.json` | The Expo config. No credential, no installation, no bundle identifier, no Android package — see `src/app-config.test.js`. Three fields are what SDK 58 needs: `icon` and `android.adaptiveIcon` (`./assets/icon.png` and `./assets/adaptive-icon.png`, the two brand masters copied in — see `assets/` below and `src/app-config.icons.test.js`), `plugins: ["expo-secure-store", ["expo-splash-screen", …]]` (the module that holds D111's two items, whose config plugin is what configures it for a native build — `npx expo install` asks for it — and the splash SDK 58 has no top-level key for) and **no `edgeToEdgeEnabled` and no `newArchEnabled`**: `npx expo-doctor` reports each of the two as `Additional property "…" is not allowed` against the SDK 58 schema (one error per run, so removing the first is what makes the second visible — 19/20, then 19/20, then 20/20). Both flags ask for what SDK 58 builds anyway: edge-to-edge is mandatory from Android 16 (Expo's own `withEdgeToEdge` says so), and the new architecture is the only architecture. |
 | `app.config.js` | **The build-time config** (P4.4), and the one place the two release identities come from: it resolves `FUGARO_IOS_BUNDLE_ID` and `FUGARO_ANDROID_PACKAGE` from the environment over `app.json`'s `expo` object — see "Building for internal testing" and `src/app-config.ids.test.js`. |
 | `eas.json` | The EAS profiles: `development`, `preview` and `internal` (the store profile Check 89 builds and submits with). It carries exactly one store-side **identifier** — `ascAppId`, the App Store Connect app record's own public number, so EAS is never asked for it (the submit track, the store distribution and the AAB build type are store-side *settings*, not identifiers, and "Building for internal testing" below is where the track is called C8's whole content) — and no credential path, no credential value and no identity value — see `src/eas-config.test.js`. |
+| `assets/` | The app's icons (the owner's task of 2026-10-21): `icon.png` and `adaptive-icon.png` are **byte copies** of `brand/app-icon-1024.png` (the opaque master — iOS refuses an icon with transparency) and `brand/app-icon-android-foreground-1024.png` (the transparent adaptive-icon foreground), which `scripts/gen-brand-icons.py` writes from `brand/fugaro-logo.png` alone — the masters are never edited by hand, and neither is this copy: change an icon by re-running the script and copying again, and `src/app-config.icons.test.js` fails on the bytes if it is forgotten. The splash shows the same `icon.png` over the masters' own ground colour, so the app's first screen is the logo on the brand's dark ground. |
 | `src/accounts/` | The account store: the installation tuple (`account.js`), the two items (`secret.js`), the secure store (`secure-store.js`), the settings store and its fences (`settings.js`), the per-account listeners and caches (`resources.js`), the store itself (`store.js`), and the two device ports (`expo-secure-store.js`, `expo-async-storage.js`). `index.js` is the one door. |
 | `src/app/root.js` | The root shell. Renders the current account's id, and nothing else an installation was built from; while demo mode is on it draws the banner and the way out on **every** screen, above whatever the screen holds. |
+| `src/app/startup.js` | The guarded startup and the root error boundary (added 2026-10-21, after the Android launch crash): `startup.root(build)` builds the app inside a `try` and renders the failure screen if it throws, `report(error, what)` is the same door for a failure that arrives later, `guard(what, run)` wraps one step the app runs later -- a tap handler, an async startup step -- and catches **both** its synchronous throw and its rejected promise, because a handler runs from the platform's event loop and not from any `try` in this file, and `failureDetails`/`createFailureScreen` turn anything thrown -- a string, `undefined`, a circular object -- into what the phone shows: the step, the message, and a selectable "Copy details" line. `React` arrives as an argument that must carry `Component`, because an error boundary is a class. `src/app/startup.test.js` drives it with a fake React, a renderer and all. |
 | `src/app/first-screen.js` | The first screen: what the app is waiting for, the "Try the demo" control, and the slot (`pairingScreen`) where P6.8's pairing screen goes -- above the demo control, never instead of it. |
 | `src/demo/` | Demo mode (the owner's ruling of 2026-10-19): the fixed sample data (`sample.js`), the placeholder key source (`keys.js`), the transport that plants the consumer's side in the port double (`transport.js`), the controller (`index.js`) and the screen (`screen.js`). `safety.test.js` is the scan that holds the three fences (no network, no secure storage, no credential). |
-| `src/mailbox/` | The mailbox client: the write paths and their key rules (`paths.js`), the app's SHA-256 and HMAC (`sha256.js`, `mac.js`), the redactor's seam (`redact.js`), the database port and its double (`store.js`), the audio stub (`speaker.js`) and the client itself (`client.js`). `index.js` is the one door; `write-path.test.js` is the scan that enforces the one-write-path claim; `mutation-proof.sh` proves the guards; `README.md` is the module's own rule sheet. |
+| `src/mailbox/` | The mailbox client: the write paths and their key rules (`paths.js`), the app's SHA-256 and HMAC (`sha256.js`, `mac.js`), the redactor's seam (`redact.js`), the database port and its double (`store.js`), the connection port and its double and the offline gate's decision (`connection.js`, `gate.js` — P6.10/D167), the audio stub (`speaker.js`) and the client itself (`client.js`). `index.js` is the one door; `write-path.test.js` is the scan that enforces the one-write-path claim; `mutation-proof.sh` proves the guards; `README.md` is the module's own rule sheet. |
 | `src/feed/` | The feed reader: the four granted families and the gate every read passes (`paths.js`), the wire node shapes (`nodes.js`), the contract's document rules (`document.js`) and the two figures the phone recomputes (`recompute.js`), the screen's rules (`view.js`) and the reader itself (`reader.js`). `index.js` is the one door; `fixtures/nodes.js` is the synthetic recording the tests read. |
 | `src/jobs/` | The job list (P3.3): the field table (`fields.js`), the project's row (`row.js`), the heartbeat line (`heartbeat.js`), the list and its wiring (`list.js`), what the screen says (`lines.js`) and the scope scan (`scope.test.js`). `index.js` is the one door; the section below is the rule sheet. |
 | `src/audio/` | The voice ports and their fakes (P3.4): the capture path (`audio-in.js`), transcription (`stt.js`), speech output (`tts.js`), the transcript-to-message rule (`message.js`) and the pipeline that wires them (`pipeline.js`). **No engine, no device, no SDK**: `index.js` is the one door, and its test scans the directory for exactly that. |
-| `src/voice/` | The voice screen (P3.5): the interrupt switch and the pure decision it gates (`interrupt.js`), the screen itself — the queue, P1.4's offline refusal, P1.2's lease and D122's microphone state (`screen.js`) — and the adapter that puts P3.4's pipeline behind P3.6's speaker port (`speaker.js`). **No engine, no device, no database**: `index.js` is the one door, and its test scans the directory for exactly that. |
+| `src/voice/` | The voice screen (P3.5) and the spoken confirmation (P6.12): the interrupt switch and the pure decision it gates (`interrupt.js`), the screen itself — the queue, P1.4's offline refusal, P1.2's lease and D122's microphone state (`screen.js`) — the adapter that puts P3.4's pipeline behind P3.6's speaker port (`speaker.js`), and the dialogue that routes a transcript, speaks a read-back and waits (`dialogue.js`). **No engine, no device, no database**: `index.js` is the one door, and its test scans the directory for exactly that. |
 | `src/boundary.test.js` | The scan that says **which files may write a credential** (below). |
 | `src/dependencies.test.js` | The scan that says **which packages the app is made of**: `expo`, `react` and `react-native` are declared, every bare import under `index.js` and `src/` is declared, and `package-lock.json` is the lockfile `npm ci` installs. It is what makes `eas build` able to find an SDK. |
 | `src/skeleton/` | The trivial module and test that proved the runner runs (P3.1's red step). |
@@ -384,13 +423,31 @@ storage (Keychain on iOS, Keystore-backed storage on Android) via
 
 They are written under `fugaro.account.<accountId>.<item>`, one Keychain item
 per account per item, with `keychainAccessible:
-WHEN_UNLOCKED_THIS_DEVICE_ONLY` (`src/accounts/expo-secure-store.js`). That
+WHEN_UNLOCKED_THIS_DEVICE_ONLY` **on iOS** (`src/accounts/expo-secure-store.js`;
+Android's store is SharedPreferences behind the Keystore, declares no
+accessibility constant and takes no such option, which is the platform split
+the 2026-10-21 crash was about). That
 choice is the one security decision the port makes, and it has its own test: it
 keeps an item out of an **iCloud Keychain backup** and off a **restored-to-
 another-phone** device. The MAC key proves possession of the pairing, so a key
 that could be restored anywhere would restore the ability to speak as this
-installation — `per-pairing` in name only. It is also not readable while the
-phone is locked. `requireAuthentication` (a Face ID prompt on every read) is
+installation — `per-pairing` in name only. **On iOS** it is also not readable
+while the phone is locked, which is what `WHEN_UNLOCKED` rather than
+`AFTER_FIRST_UNLOCK` buys and what the voice-session reconciliation's **F24**
+(and VS5.1, a paused session touches no credential) rests on. **That sentence is
+iOS's, and this branch has just made that distinction load-bearing**: Android's
+store is SharedPreferences behind the Keystore, has no accessibility constant to
+set, and its key is **not** unlock-gated, so F24 is **not** a property of the
+Android build — an Android session paused on a call can still read its pairing
+key. That is read off the installed module, not assumed:
+`expo-secure-store/android/.../encryptors/AESEncryptor.kt:64` is
+`.setUserAuthenticationRequired(options.requireAuthentication)`, and this app
+never sets `requireAuthentication`, so the Android key is generated
+authentication-free (there is no `setUnlockedDeviceRequired` call either).
+Nothing in this repository asserts a cross-platform version of F24: F24's own
+evidence is the port's **iOS** rule, and neither platform's constant has been
+exercised on a device (see the unverified list below).
+`requireAuthentication` (a Face ID prompt on every read) is
 deliberately **not** set: the ID token is refreshed and read in the background,
 and a prompt per refresh is a prompt the owner switches off.
 
@@ -857,6 +914,14 @@ sign on them, and for `clock-differs` the age is not a fact this phone can state
 at all. The sign is P1.4's arithmetic; the state is the fact. A reading with an
 age the phone *can* state keeps it — `stale (190s ago)`.
 
+**And a value that is not a number is not a duration either.** `heartbeatRow`
+refuses one, so no reading the wiring makes can carry it — but `lines()` sits on
+the screen's edge and asks only that the list be `jobList`-**shaped**, so a list
+assembled by hand reaches `ageText` with anything in the heartbeat. `NaN < 0` is
+false and `'3s' < 0` is false, so a sign test alone let both through to the
+arithmetic and the line read `live (NaNs ago)`. The state is printed alone
+there too, and the test is `Number.isFinite` so that `Infinity` goes with them.
+
 ### The scan: the resolution's "not shown" as rules
 
 `scope.test.js` holds what no behavioural test can hold on its own — that no
@@ -876,7 +941,12 @@ so a mistyped pattern cannot pass for a clean tree, and with test files exempt
 
 Two rules are not token rules. The door's surface is asserted as an **exact set**
 (the rule P3.2's `index.test.js` gives) and **no name on it may be dead** — used
-nowhere. The first version of that rule counted a name's own declaration as a use
+nowhere. The set is read from the **module** (`import()` the door, `Object.keys`),
+not from its text: the first version collected `export { … } from '…'` blocks out
+of the source, which is one of the forms an export can be written in, so an
+`export const GHOST = 1` appended to the door was reachable from a screen and
+invisible both to that rule and to the dead-name rule below it — one blind spot
+shared by two rules. The first version of that rule counted a name's own declaration as a use
 and the scan file's own enumeration of the names as another, so it could not fail
 and three dead exports (`NO_VALUE`, `PRINTED_FIELDS`, `jobField`) were on the door
 behind it. The declarations are stripped before the search now, the scan file is
@@ -929,6 +999,9 @@ planted dead export, that being the finding that the rule could not fail.
 | the degraded document's project is discarded | `a degraded read still says which project it is about, and why` |
 | the degraded document's notice is discarded | the same test |
 | a refusal code nothing produces is declared again (`BAD_NOW`) | `every member of an exported vocabulary is produced somewhere` |
+| an age that is not a number is printed as one (`live (NaNs ago)`) | `an age the phone cannot state is not printed as one` |
+| a name is added to the door as `export const GHOST = 1` (a form the old scanner could not see) | `the door carries the module's surface, and no dead name` |
+| a name is added to the door as `export function GHOST() {}`, and as `export { LOCAL as GHOST }` | the same test |
 
 ## Which files may write a credential
 
@@ -1304,9 +1377,12 @@ sentence the plan writes for this task and nothing else, and says so in
 table is the thing to compose with, deliberately and with its own tests. The
 same is true of P6.10, which widens the offline refusal later.
 
-**P6.12's seam is left and none of it is implemented.** The spoken confirmation
-builds on this task later: the seam is `accept` (the one door a message goes
-through) and the pipeline's events, and nothing here reads a message back.
+**P6.12's seam is `accept` and the pipeline's events, and it is taken.**
+P3.5 left the screen with one door for a message and no speech of its own; P6.12
+(below) passes the screen an optional `utterance` delegate, so a final
+transcript is routed instead of accepted, and the words the router calls agent
+text go back through `accept` -- which is why the offline refusal still stands
+over the voice path. Absent the delegate the screen is what P3.5 shipped.
 
 **The scan, and what it keeps true.** `src/voice/index.test.js` pins the
 module's files **at every depth** (the walk is recursive and the recursion has
@@ -1356,8 +1432,9 @@ dropped by name now, and the two reporters (TAP's `not ok N - name` and the spec
 reporter's `✖ name`) yield the same list. And the table itself had gone stale:
 two rows named two of the three tests their mutation really reddens, because the
 third test was added to the suite after those rows were written. The whole table
-was regenerated from the script's output, and all 42 rows now agree with it
-name for name -- which is the comparison a reader can repeat, so it is worth
+was regenerated from the script's output, and all 49 rows now agree with it
+name for name (the last seven are P6.12's, added with
+the dialogue below) -- which is the comparison a reader can repeat, so it is worth
 repeating after any change to this suite. That script runs this module's own
 suite (`node --test 'src/voice/*.test.js'`, from `mobile/`) and not the app's
 whole one, because the mutations are all here and a failure in a neighbouring
@@ -1367,7 +1444,7 @@ node** rather than assuming one (this repository's base image keeps node off
 the pristine suite must pass first, with a test count, because `node --test`
 exits 0 over a glob that matched nothing, and then a mutation that *must* be
 caught is planted before any real one is trusted. `npm test` --
-`node --test "src/**/*.test.js"`, the app's whole suite, **430 tests, all
+`node --test "src/**/*.test.js"`, the app's whole suite, **667 tests, all
 passing** -- is what the pull request reports as the module's verification.
 
 **The column names the tests that went red; it does not count them**, for the
@@ -1398,7 +1475,7 @@ the two apart -- so it is written down here rather than claimed as a kill.
 | `a full queue refuses rather than evicting` | `the queue is bounded, and refuses rather than dropping what is in it` |
 | `the utterance ending is a boundary` | `with the switch on, an update waits for the boundary and is never spoken over an utterance` and `one utterance at a time: two queued updates are spoken one after the other, not together` |
 | `the turn's final is a boundary` | `with the switch on, an update waits for the user's turn to close, and is spoken after it` |
-| `the turn's final is a message the app accepts` | `with the switch on, an update waits for the user's turn to close, and is spoken after it` and `a transcript that arrives while offline is refused too, and nothing is written` |
+| `the turn's final is a message the app accepts` | `with the switch on, an update waits for the user's turn to close, and is spoken after it` and `a transcript that arrives while offline is refused too, and nothing is written` and `a final transcript goes to the spoken dialogue when the app wires one in (P6.12)` |
 | `the OS's refusal of the microphone is recorded` | `D122: a refused microphone is shown, and the screen keeps working without it` |
 | `the app refuses to accept a message while offline` | `the plan, sentence two: the offline state shows from P1.4, and the app refuses to accept a message` and `the refusal a screen shows is the last one, and the message that is accepted clears it` and `a transcript that arrives while offline is refused too, and nothing is written` |
 | `the refusal is shown, not only returned` | `the plan, sentence two: the offline state shows from P1.4, and the app refuses to accept a message` and `the refusal a screen shows is the last one, and the message that is accepted clears it` and `a transcript that arrives while offline is refused too, and nothing is written` |
@@ -1426,6 +1503,108 @@ the two apart -- so it is written down here rather than claimed as a kill.
 | `the README's tokens are in the scan's order` | `the README's rule table and the scan are the same list` |
 | `the README names every token the scan carries` | `the README's rule table and the scan are the same list` |
 | `the README loses no rule row` | `the README's rule table and the scan are the same list` |
+| `an unheard read-back is dropped, and cannot be confirmed later` (P6.12) | `the plan, sentence one: a destructive command speaks the read-back from the resolved target and waits` and `the read-back names the resolved target, never the words the speaker used` and `the plan, sentence three: a misheard confirm is refused` and `the plan, sentence four: a timeout says so and drops the action` and `the plan, sentence five: a merge read back at one head speaks the head that is there now` and `the plan, sentence six: a queued prompt is not spoken over the user` and `the pause speaks the interrupt policy’s reason, in the phone’s words` and `a sentence that did not play out marks nothing heard` and `an unheard read-back cannot be confirmed, and nothing is sent on an unconfirmed transcript` and `the three routes are kept apart: agent text is sent, an app command is not, an unmatched word is not` and `a launch is not confirmed and does travel: it goes as the owner’s own words (D162)` and `the offline refusal stays the client’s, and the command still does not travel` and `cancel that drops the read-back, and bad input is refused without throwing` |
+| `an app command is never forwarded as text` (P6.12) | `the plan, sentence three: a misheard confirm is refused` and `the plan, sentence four: a timeout says so and drops the action` and `the plan, sentence five: a merge read back at one head speaks the head that is there now` and `an unheard read-back cannot be confirmed, and nothing is sent on an unconfirmed transcript` and `the three routes are kept apart: agent text is sent, an app command is not, an unmatched word is not` and `cancel that drops the read-back, and bad input is refused without throwing` |
+| `a launch is sent as the owner's own words` (P6.12) | `the three routes are kept apart: agent text is sent, an app command is not, an unmatched word is not` and `a launch is not confirmed and does travel: it goes as the owner’s own words (D162)` |
+| `a command that carried its own confirmation is refused` (P6.12) | `the plan, sentence two: a confirm in the same utterance as the command is refused` and `the plan, sentence three: a misheard confirm is refused` and `the plan, sentence four: a timeout says so and drops the action` and `the plan, sentence five: a merge read back at one head speaks the head that is there now` and `the plan, sentence six: a queued prompt is not spoken over the user` and `the pause speaks the interrupt policy’s reason, in the phone’s words` and `a sentence that did not play out marks nothing heard` and `an unheard read-back cannot be confirmed, and nothing is sent on an unconfirmed transcript` and `the three routes are kept apart: agent text is sent, an app command is not, an unmatched word is not` and `a launch is not confirmed and does travel: it goes as the owner’s own words (D162)` and `the offline refusal stays the client’s, and the command still does not travel` and `cancel that drops the read-back, and bad input is refused without throwing` |
+| `a timed-out read-back is not offered again` (P6.12) | `the plan, sentence four: a timeout says so and drops the action` |
+| `a moved target is re-proposed and read back again` (P6.12) | `the plan, sentence five: a merge read back at one head speaks the head that is there now` |
+| `a question is marked heard only when its announcement played out` (P6.12) | `the pause speaks the interrupt policy’s reason, in the phone’s words` and `a sentence that did not play out marks nothing heard` |
+
+### The spoken confirmation (P6.12)
+
+`src/voice/dialogue.js` is the speech P6.1's router, P6.2's machine and P6.5's
+prompt queue are wired into, and it is the spoken half of the path
+`src/text/input.js` (P6.9) built for a keyboard. `createVoiceDialogue({ pipeline,
+send, now, newId, router?, confirm? })` — `send` is the sink for **agent text**,
+and the app wires it to the screen's own `accept`, so the offline refusal and the
+app's one write path still stand over the voice path.
+
+**The routing.** One final transcript goes through `routeUtterance`: agent text
+is the client's, an app command is this module's, and a wake-word utterance that
+matched no command is answered with P6.1's own sentence and **never forwarded**
+(D164's fail-closed half). The four app commands this screen does not own —
+switch-project, talk-to-agent, where-am-i and list — answer `elsewhere` rather
+than being re-implemented here: they are P6.8's and P3.3's.
+
+**A destructive command is a resolved target, never a parse.** P6.1's grammar
+holds no destructive row at all, deliberately, and nothing in the merged tree
+resolves a verb and a target from an utterance — `Fugaro, cancel run 42` is *not
+understood*, and a test asserts exactly that. So `propose({ text, verb, target,
+actionId })` takes the command the app has already resolved — the run id it
+looked up, or the repository, PR and head it read — and does the half that is
+the phone's: run it through the machine and **speak** P6.2's read-back, built
+from the resolved target and nothing else. A target guessed from the speaker's
+own words would be the paraphrase D47's Rule forbids, so
+`Fugaro, cancel the docs refactor` against `run-42` is read back as `run-42`.
+
+**An unheard read-back is dropped, and that is this task's headline rule.** The
+read-back is the whole of D47's Rule: the speaker confirms what they *heard*.
+So the speech is awaited, and a read-back that did not play to the end — the
+output port refused it, or the user barged in mid-sentence — is **aborted in the
+machine before `propose` answers**, with the honest code
+`read-back-not-spoken`. Leaving it pending is the failure D169 exists to
+prevent: a question the speaker was never told, still answerable by saying the
+phrase. `src/voice/mutation-proof.sh` proves this one by inverting the condition.
+
+**A confirmation is one utterance, later, and about a target that still holds.**
+The phrase must be its own utterance (the machine refuses the utterance that
+issued the command, and one carrying a command *and* the phrase); the phrase is
+P6.2's answer rather than a grammar here, so "confirm it", "conform" and a bare
+"yes" confirm nothing — with the wake word they are `not-understood`, and
+without it P6.1 forwards them to the agent as text (D164); and one confirmation
+authorises one action, so a replay is refused by the machine's ledger. The
+timeout is P6.2's, measured on D117's injected clock, and it **names itself**:
+`confirmation-expired` with the action dropped, not `no-pending-action`.
+
+**A merge is re-read at confirmation time, and the read-back says so.** D168's
+amendment is the reason — a prompt can be answered days later, and "approve the
+merge" answered days later approves whatever the PR then holds. So a caller may
+pass the target **as it is now** when the phrase arrives: the head it has just
+re-read. A head that moved is `different-target`, nothing is authorised, and the
+dialogue proposes the command again against the fresh target so the sentence
+spoken next names the head that is there now. The speaker hears the current head
+and confirms again; nothing is ever merged against a head they did not hear.
+
+**A launch is not confirmed, and it does travel (D162).** `propose` answers a
+launch with `sent`: the owner's own words go to the same `send` sink agent text
+goes to, which is what "no confirmation" means on the wire. It is the one command
+that skips the read-back, because there is no destructive effect to read back,
+and it is the same call P6.9's typed path makes for the same verb
+(`return send(text)` in `src/text/input.js`). The result carries `verb` and
+`actionId: null` — nothing was proposed, so nothing can be confirmed. What is
+unwritten for a launch is the same *record* the paragraph below is about, not the
+launch itself.
+
+**A question is marked heard only when it was.** `pause({ queues, active, digest,
+presence, caps, switch })` composes P6.5: nothing is spoken while the assistant
+is speaking, while a turn is open, or while a read-back is outstanding — a
+question is not read over the user *or* over the question they still have to
+answer. At a real pause one sentence is spoken: the interrupt reason's (P6.5's
+policy, D160's wider table read through D127's switch) or P6.5's own count
+("One question waiting"). The answer's `queue` has the active installation's due
+prompts marked heard — `announcedAt` is when the user last *heard* the question,
+so `marked: true` is said only when the sentence spoken was their own
+announcement **and** it played out. A pause that spoke the kill switch's sentence
+instead, a barge-in, and a port that refused the sentence all answer
+`marked: false` with the queue exactly as it was, so the questions are announced
+at the next pause rather than recorded as told to someone who never heard them.
+
+**What a confirmed action does not do, stated rather than left to be found.**
+The machine's record is **returned, not written**: `delivered: false` with
+`no-action-write`. The client this app ships has one send — `send(text)` — which
+writes `{ id, sender, text, at, mac }` and cannot carry an action, and sending a
+destructive command as its own text is exactly what D169 forbids. So nothing is
+written rather than the wrong thing; carrying the record is P6.7's (the
+consumer) and P6.10's (the offline gate), and P6.9's typed path makes the same
+call in the same words.
+
+**Nothing is sent on an unconfirmed transcript**, and the tests say so in the
+form that can be checked: `send` is a spy, every test that proposes, confirms or
+expires a destructive command asserts it was never called, and the tests that do
+see it called (`dialogue.test.js`'s routing test) assert its contents exactly —
+agent text, and nothing else but D162's launch. No transcript is ever sent
+because a phrase was expected.
 
 ## What is not verified here
 
@@ -1440,6 +1619,13 @@ the two apart -- so it is written down here rather than claimed as a kill.
   bundle `index.js` and everything it reaches, `shared/` included, with no
   unresolved import. That is a **JavaScript** proof: Metro resolved the graph
   and produced a bundle.
+  **Re-run on 2026-10-21**, after the Android launch crash, in the same
+  toolchain (Node 22.23.3, npm 10.9.9): `npx expo-doctor` **20/20**,
+  `npx expo install --check` → *Dependencies are up to date* (so every
+  installed package matches the SDK 58 `bundledNativeModules.json`), and
+  `npx expo export --platform android` produced an Android bundle of
+  **655 modules** (654 before the guard was added). `npm test` was **640/640**
+  green. None of that is a device: the bundle *builds*, it has not been *run*.
   **Still not run, and it is the larger half:** no `expo start`, no `expo lint`,
   no `eas build`, no `expo prebuild`, no Xcode or Gradle run, no simulator and
   no device. So a **native** iOS or Android build — the pods, the Gradle
@@ -1480,8 +1666,11 @@ the two apart -- so it is written down here rather than claimed as a kill.
   `@react-native-async-storage/async-storage`, `react` and `react-native` are
   faked in every test that touches them: what is tested is the shape of the
   calls this repository makes (including the accessibility constant, read off
-  the module rather than guessed), not what the modules do. `index.js`, which
-  imports the real ones, is untested for that reason.
+  the module **when the platform has one** — the Android half of that was the
+  2026-10-21 crash), not what the modules do. `index.js`, which imports the
+  real ones, is untested for that reason, and the guard around it
+  (`src/app/startup.js`) is what turns the next untested import into a screen
+  somebody can read instead of an app that closes.
 * **`useSyncExternalStore`, and the demo as a running app.** The demo's
   subscription is `React.useSyncExternalStore(demo.subscribe, demo.state)`,
   passed into the shell as the `useDemo` hook (`index.js`); every test supplies
@@ -1491,9 +1680,27 @@ the two apart -- so it is written down here rather than claimed as a kill.
   and no device run, which is the first bullet in this list.
 * **`WHEN_UNLOCKED_THIS_DEVICE_ONLY`'s name and value**, which come from the
   documented `expo-secure-store` API and are not exercised against the package.
-  The port refuses to construct if the constant is missing, so an SDK rename is
-  a loud failure rather than a silent downgrade to the platform default — but
-  the constant has not been seen on a device here.
+  The port requires the constant **where the platform declares it** (iOS) and
+  refuses to construct if it is missing, so an SDK rename is a loud failure
+  rather than a silent downgrade to the platform default — but the constant has
+  not been seen on a device here. That requirement is now **per platform**,
+  which is the 2026-10-21 fix: `expo-secure-store`'s Kotlin module registers no
+  `Constant(...)` at all (`mobile/src/accounts/expo-secure-store.js` has the
+  grep), so requiring it everywhere was a `TypeError` at module scope on
+  Android — which is the crash — and requiring it nowhere would silently drop
+  the iOS accessibility level. Both halves are tested against a fake module on
+  each platform; neither has been run on either.
+* **The voice-session reconciliation's F24, on Android.** F24 says the secure
+  store is unreadable while the phone is locked, and that is a property of the
+  **iOS** Keychain item (`WHEN_UNLOCKED_THIS_DEVICE_ONLY` and nothing to do with
+  this app's code). Its Android half is a claim **read off the installed
+  module's source** — `AESEncryptor.kt:64` sets `setUserAuthenticationRequired`
+  from the caller's `requireAuthentication`, which this app never passes — and
+  never observed: no device here has been locked mid-session with the store
+  open. A test on a device, or a design that does not lean on unlock-gating on
+  Android, is what would make VS5.1's "a paused session touches no credential"
+  true on both platforms rather than on one.
+  (O7 in the reconciliation's open list tracks the same gap.)
 * **Every speech engine, and every acoustic behaviour.** Nothing under
   `src/audio/` is an engine: the ports are contracts and the tests drive them
   with fakes, which is D52's rule and P3.4's whole scope. Which engine is
@@ -1509,9 +1716,11 @@ the two apart -- so it is written down here rather than claimed as a kill.
   pipeline, so "ack only after it has spoken" now runs over the real audio
   ports. What is still not exercised: **a real engine** (the first store build
   is voiceless, and the pipeline is driven by P3.4's fakes), **P6.12's spoken
-  confirmation** (the seam is left, and nothing of it is implemented) and
-  **P6.5's wider interrupt table**, which the screen deliberately does not
-  compose with -- `src/voice/interrupt.js` and the P3.5 section above say so.
+  confirmation as a device feature** (the logic is below and is tested over the
+  fakes; what a real engine hears and how a real voice sounds is check 85/86)
+  and **P6.5's wider interrupt table**, which the screen deliberately does not
+  compose with -- `src/voice/interrupt.js` and the P3.5 section above say so
+  (P6.12's dialogue composes with it, in the pause below).
   The pipeline takes the message's `sender`, `newId` and `now` as injected
   values precisely because P3.6 owns them (D117's server-anchored clock, the
   account's identity), and **redaction, the MAC and the write are P3.6's**:
@@ -1535,10 +1744,15 @@ the two apart -- so it is written down here rather than claimed as a kill.
   message and cannot make anything act.
 * **The mailbox against a real database, and its deployed rules.** P3.6's client
   is tested against the port's double, which models the two rules a re-send
-  meets and nothing else: no auth, no listeners, no quota, no project. Checks
-  **81** and **82** (the deployed rules' fence and the rules deploy) are
-  owner-run and have not been run, so *what the deployed rules do with a
-  re-write* is asserted here only as the double's model of them.
+  meets and, since P6.10, the SDK's **offline write queue** (`setOffline`,
+  `pendingWrites`, `flushQueue`, `cancelPending`) — which is not a rule of the
+  tree at all but a behaviour of the client library — and nothing else: no auth,
+  no listeners, no quota, no project. Checks **81** and **82** (the deployed
+  rules' fence and the rules deploy) are owner-run and have not been run, so
+  *what the deployed rules do with a re-write* is asserted here only as the
+  double's model of them. **No adapter is wired for either new port**: the
+  connection the gate reads is `MemoryConnection`, so the Firebase SDK's own
+  connection state is unverified here (no project, Global Constraint 10).
 * **Metro, and the `shared/` imports.** `src/mailbox/` imports
   `../../../shared/mailbox-schema/index.js`, `../../../shared/presence/index.js`
   and `../../../shared/digest/redact.js`; node resolves them (the tests run), the

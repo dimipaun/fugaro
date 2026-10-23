@@ -20,7 +20,7 @@
 // request you merge": `SECURITY.md` makes neither claim, and a label the policy does not state
 // is the defect this gate exists for (D99).
 //
-// Six things are checked, and each one is the mechanical form of a sentence in the brief:
+// Eight things are checked, and each one is the mechanical form of a sentence in the brief:
 //
 //   1. **The page carries its four regions and no other text** (the brief: "Nothing else").
 //      Everything a reader sees inside the page's own `<article>` is its `h1`, the diagram,
@@ -34,7 +34,9 @@
 //   2. **The diagram is one named picture, and its labels are the document's own words** (the
 //      brief: "ONE inline-SVG diagram (`role="img"` with an `aria-label`, plus the same facts
 //      as a short list under it)", and "EVERY label must follow SECURITY.md's 'In short'
-//      section"). One `<svg>`, named, carrying the drawing's labels; the facts as one list
+//      section"). One named picture — two `<svg>`s carrying the same words in the same order,
+//      one per layout, which is one picture drawn twice (item 8 below) — with the facts as one
+//      list
 //      under it and the two limit lines below that; every label of the picture present in the
 //      document's "In short" section or in the words the region carries beside the picture —
 //      its heading, those facts and those lines, and not the rest of the page; every word the
@@ -72,6 +74,37 @@
 //      The one hint the layout composes is the sitemap, and whether the build ships one is
 //      read from the resolved `astro.config.mjs` — imported, not pattern-matched, which is the
 //      same rule `website/test/readme.mjs` applies to the same file.
+//   7. **The page is drawn in the site's bold look** (the owner's brief of 2026-10-21): the
+//      same look the owner approved on the homepage and the product pages, which is one set of
+//      shapes in `src/styles/base.css` and not a look each page invents. The page's title is
+//      the display scale's largest step with the accent's gradient over it, each section
+//      heading is the step below, the page's four blocks are the site's card, and the room
+//      between them is a step of the site's own spacing scale. This is the one check here
+//      that is about how the page looks rather than about what it says, and it is written
+//      because the page's shape is held by five gates that read its words: a restyle that
+//      dropped the shared classes would leave every one of them green. **The visual match to
+//      the owner's boards is the owner's check at the preview** (the redesign's 70a–70c, P9):
+//      what this holds is that the page wears the site's shapes, not that it wears them well.
+//   8. **The drawing is one picture at two layouts, and the wide one fits the first screen**
+//      (the owner's feedback of 2026-10-21: "The image is tall (works well in mobile) but on
+//      desktop doesn't fit above the fold, can we do it more horizontally for desktop?"). The
+//      tall drawing is the phone's and the wide one is the desktop's: the stylesheet is read to
+//      find which of the two it renders outside every media query (the tall one is `display:
+//      none`, falling back to the shared class's own rule the way a browser resolves it), the
+//      `hidden` attribute has to sit on the drawing the stylesheet turns off, the changeover
+//      has to be one width with the tall drawing block below it and the wide one above it, the
+//      wide drawing's smallest label has to stay legible in the box it is drawn in at that
+//      width, and the headline plus the whole wide drawing has to fit 1440 × 800. **Both of
+//      those numbers are taken in the box the drawing is rendered in and not in the column the
+//      page gives it**: the shared class both layouts carry has to lay the drawing out in the
+//      column (`width: 100%` and no ceiling of the site's own), and a layout class may cap its
+//      own drawing under that — the tall one does — so a cap is read and the arithmetic taken in
+//      the capped box (the review of 2026-10-21: a `max-width` that shrinks the drawing leaves
+//      the column the wrong box to measure, and a label at 14 units renders at 7 px in one).
+//      **The fold itself is the owner's live-browser check** (D187, the redesign's 70b): nothing
+//      here can see a viewport, so what this holds is the arithmetic the layout rests on — the
+//      box the drawing is drawn in, the drawing's own aspect ratio, and the room above it, each
+//      read from the built page's own stylesheet and the drawing's own `viewBox`.
 //
 // **Two readers, and why the text is read the hard way** (round 3 of the review, findings 3 and
 // 4). The text of the page is read with `test/lib/html.mjs`'s `verbatimText`, which invents
@@ -104,7 +137,7 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { DIST, REPO, SITE, findAll, parse, verbatimText } from './lib/html.mjs'
+import { DIST, REPO, SITE, cssDeclarations, cssRules, findAll, parse, verbatimText } from './lib/html.mjs'
 // The builds the two cases below need: a copy of the repository in a temp directory with one
 // edit planted in it, built with the site's own Astro (`buildCopy`), because the page's
 // refusals are the build's and a refusal nobody has seen fire is a refusal nobody knows the
@@ -520,7 +553,7 @@ function drawnBox(node) {
  * it, because the geometry is written by hand in the page rather than generated from the same
  * numbers.
  */
-function checkLabelBoxes(picture, drawn, fail) {
+function checkLabelBoxes(picture, drawn, fail, where = 'the drawing') {
   const view = (picture.attrs.get('viewbox') ?? '').trim().split(/\s+/).map(Number)
   const cards = findAll(picture, 'rect').map((el) => ({
     x: Number(el.attrs.get('x')),
@@ -530,7 +563,7 @@ function checkLabelBoxes(picture, drawn, fail) {
     pad: Number(el.attrs.get('data-pad')),
   }))
   for (const [i, node] of drawn.entries()) {
-    const what = `the drawing's label ${i + 1}`
+    const what = `${where}'s label ${i + 1}`
     const label = drawnBox(node)
     if (label === null) {
       fail(
@@ -579,6 +612,488 @@ function checkLabelBoxes(picture, drawn, fail) {
   }
 }
 
+// ---------------------------------------------------------------------------------------
+// The drawing's two layouts (the owner's feedback of 2026-10-21).
+// ---------------------------------------------------------------------------------------
+
+/**
+ * The two layouts the boundary drawing is drawn in, by the class that marks each `<svg>`. The
+ * wide one is the run read left to right, which is what a desktop shows; the tall one is the
+ * same run read top to bottom at a phone's own width, which is what a phone shows. The owner's
+ * feedback of 2026-10-21 is why there are two: the tall drawing "works well in mobile", but "on
+ * desktop doesn't fit above the fold", so a desktop asks for "a horizontal layout of the same
+ * drawing". `what` is what the refusals below call each of them by, so a failure names the
+ * drawing a reader would have to look at.
+ */
+const LAYOUTS = [
+  { key: 'wide', klass: 'boundary-drawing-wide', what: 'the wide drawing' },
+  { key: 'tall', klass: 'boundary-drawing-tall', what: 'the tall drawing' },
+]
+
+/**
+ * The first screen the owner's feedback names: a 1440-wide desktop, 800 tall, with the headline
+ * over the drawing inside it. **The fold itself is still the owner's check on a real browser**
+ * (the redesign's 70b, D187: no test in this repository can see a viewport). What this file
+ * reads is the arithmetic the layout rests on, all of it off the built page's own stylesheet:
+ * the room between the top of that screen and the drawing, the width the page gives the drawing,
+ * and the height the drawing's own `viewBox` sets it at.
+ */
+const FIRST_SCREEN = { width: 1440, height: 800 }
+
+/**
+ * The smallest label a reader reads, in px. The width at which the two drawings change over is
+ * derived from it — the wide drawing is shown from the width at which its own smallest label
+ * reaches it, which is the whole of what the changeover buys — so a wide drawing nobody can read
+ * is the defect this floor exists for, and it is the same floor the How It Works drawing's wide
+ * layout is held to (`website/test/how-it-works.mjs`).
+ */
+const MIN_LABEL_PX = 12
+
+/** The width a media query's conditions name, in px, or `null` for conditions that name no width
+ *  or name two that disagree. The built stylesheet writes `max-width: 70rem` as
+ *  `(width<=70rem)`, so the comparison and its operands are what is read rather than a form of
+ *  words. `website/test/how-it-works.mjs` reads the run drawing's queries this way, off the same
+ *  parser (`test/lib/html.mjs`'s `cssRules`), because the width alone cannot say which drawing a
+ *  reader gets: a query read from the wrong side is the same width and another page. */
+function queryWidth(conditions) {
+  let found = null
+  for (const [, minimum, maximum, kind, value, unit] of (conditions ?? '').matchAll(
+    /(min-)?(max-)?width\s*(:|<=|>=|<|>)\s*([\d.]+)(rem|px)/g,
+  )) {
+    const at = Number(value) * (unit === 'rem' ? 16 : 1)
+    if (kind !== ':') found = at
+    else if (maximum) found = at
+    else if (minimum) found = at
+    else found = null
+  }
+  return found
+}
+
+/** Which side of the width a media query's condition is on: `'below'` for one that holds at the
+ *  widths up to the one it names (`max-width`), `'above'` for one that holds from that width up
+ *  (`min-width`), and `null` for a condition this check cannot place. */
+function querySide(conditions) {
+  let side = null
+  for (const [, minimum, maximum, kind] of (conditions ?? '').matchAll(
+    /(min-)?(max-)?width\s*(:|<=|>=|<|>)\s*([\d.]+)(rem|px)/g,
+  )) {
+    const here =
+      kind === '>=' || kind === '>' || (kind === ':' && minimum)
+        ? 'above'
+        : kind === '<=' || kind === '<' || (kind === ':' && maximum)
+          ? 'below'
+          : null
+    if (here === null || (side !== null && side !== here)) return null
+    side = here
+  }
+  return side
+}
+
+/**
+ * Every value a built stylesheet gives one class for one property, in the order the cascade has
+ * them, each with the media query it sits in: the conditions as written, the width they name and
+ * the side they read from. Only a rule whose **subject** is the class counts — the last compound
+ * of each comma-separated alternative — so a rule that names the class as an ancestor (the shared
+ * `.boundary-drawing` rule, or anything above it in a descendant selector) is not read as a
+ * declaration about this layout. `website/test/spacing.mjs` reads a class's own `display` the
+ * same way, for the same reason: a declaration belongs to the selector's subject.
+ *
+ * `display` is what this file spent its first round reading; the width a layout draws its
+ * `<svg>` at is read with the same walk, because both are one declaration of the class the
+ * layout is marked by and both are only true of the rules whose subject that class is.
+ */
+function declarationsFor(css, klass, property) {
+  const out = []
+  for (const rule of cssRules(css)) {
+    const subject = (rule.selector ?? '')
+      .split(',')
+      .map((part) => part.trim().split(/[\s>+~]+/).filter(Boolean).pop() ?? '')
+    if (!subject.some((compound) => new RegExp(`\\.${klass}(?![\\w-])`).test(compound))) continue
+    const value = cssDeclarations(rule.body ?? '').find(([name]) => name === property)?.[1]
+    if (value === undefined) continue
+    const conditions = (rule.conditions ?? []).join(' ')
+    out.push({ display: value.trim(), query: conditions, at: queryWidth(conditions), side: querySide(conditions) })
+  }
+  return out
+}
+
+/** Every `display` a built stylesheet gives one class, the way the reading above reads any other
+ *  property of it. */
+function displayDeclarations(css, klass) {
+  return declarationsFor(css, klass, 'display')
+}
+
+/** One property of a class as the value in force **outside every media query** — the value a
+ *  reader whose width no query of the page's holds gets — or `null` when no unqueried rule
+ *  declares one. */
+function unconditional(css, klass, property) {
+  return declarationsFor(css, klass, property).filter((rule) => rule.query === '').at(-1) ?? null
+}
+
+/** The `display` in force for a class outside every media query. */
+function unconditionalDisplay(css, klass) {
+  return unconditional(css, klass, 'display')
+}
+
+/** A `display` declaration, as the sentence a refusal names it by. */
+function described(rule) {
+  return `\`display: ${rule.display}\` ${rule.query === '' ? 'outside every media query' : `in \`${rule.query}\``}`
+}
+
+/** A selector list split on its top-level commas: a comma inside `()` or `[]` is part of the
+ *  selector and not a separator (the site writes `:where(p, ul, ol)` in its prose rule). */
+function selectorParts(selector) {
+  const parts = []
+  let depth = 0
+  let start = 0
+  for (let i = 0; i < selector.length; i += 1) {
+    const ch = selector[i]
+    if (ch === '(' || ch === '[') depth += 1
+    else if (ch === ')' || ch === ']') depth -= 1
+    else if (ch === ',' && depth === 0) {
+      parts.push(selector.slice(start, i))
+      start = i + 1
+    }
+  }
+  parts.push(selector.slice(start))
+  return parts
+}
+
+/**
+ * A length as px at a viewport: the forms the page's own stylesheet writes — a bare zero, a
+ * token, a number with a unit, and a `clamp()` of the three. A `vw` is a different number at the
+ * first screen than at the width a type step was written for, which is why the viewport is part
+ * of the reading. `null` for a value this check cannot turn into pixels, which the callers report
+ * rather than comparing a first screen against a guess. `em` is read at the root, the same 16 px
+ * `lengthPx` and the drawing's own geometry are read at.
+ */
+function lengthAtViewport(css, value, viewport) {
+  const v = value.trim()
+  const clamp = /^clamp\(([\s\S]+)\)$/.exec(v)
+  if (clamp !== null) {
+    const parts = selectorParts(clamp[1])
+    if (parts.length !== 3) return null
+    const px = parts.map((part) => lengthAtViewport(css, part, viewport))
+    if (px.some((one) => one === null)) return null
+    return Math.min(Math.max(px[0], px[1]), px[2])
+  }
+  const resolved = v.replace(/var\(--([\w-]+)\)/g, (whole, name) => {
+    const declared = new RegExp(`--${name}:\\s*([^;}]+)`).exec(css)
+    return declared === null ? whole : declared[1].trim()
+  })
+  if (/^0[a-z%]*$/.test(resolved)) return 0
+  const length = /^(-?[\d.]+)(rem|px|em|vw)$/.exec(resolved)
+  if (length === null) return null
+  const unit = length[2]
+  const number = Number(length[1])
+  if (unit === 'rem' || unit === 'em') return number * 16
+  if (unit === 'vw') return (number / 100) * viewport
+  return number
+}
+
+/** The value a built stylesheet declares for one property of one selector, or `null` when no
+ *  rule for that selector declares one. Every rule for the selector is read in the stylesheet's
+ *  own order and the last declaration wins: the minifier splits a class's declarations across
+ *  rules (`.display-md` carries its `line-height` in the shared display rule and its `font-size`
+ *  in its own), so a reading that stopped at the first rule would miss the half it came for. A
+ *  rule that names the selector as one of several in a list is a rule about it, so the
+ *  alternatives are compared one at a time. */
+function declaredValue(css, selector, property) {
+  const wanted = selector.replace(/\s+/g, '')
+  let found = null
+  for (const rule of cssRules(css)) {
+    const alternatives = selectorParts(rule.selector ?? '').map((part) => part.replace(/\s+/g, ''))
+    if (!alternatives.includes(wanted)) continue
+    for (const [name, value] of cssDeclarations(rule.body ?? '')) if (name === property) found = value
+  }
+  return found
+}
+
+/** A shorthand's four sides as the values it writes: `a` is all four, `a b` is vertical and
+ *  horizontal, `a b c` is top, horizontal, bottom. Read for `padding` and for `margin`, which
+ *  are written the same way. */
+function boxSides(value) {
+  const parts = value.trim().split(/\s+/)
+  if (parts.length === 1) return [parts[0], parts[0], parts[0], parts[0]]
+  if (parts.length === 2) return [parts[0], parts[1], parts[0], parts[1]]
+  if (parts.length === 3) return [parts[0], parts[1], parts[2], parts[1]]
+  return [parts[0], parts[1], parts[2], parts[3]]
+}
+
+/** A unitless factor a stylesheet declares — a line height — as a number, or `null` for a value
+ *  this check cannot read. The site's type scale writes them as tokens
+ *  (`line-height: var(--leading-display)`), so the token is resolved before the value is read. */
+function factorOf(css, value) {
+  if (value === null || value === undefined) return null
+  const resolved = value.trim().replace(/var\(--([\w-]+)\)/g, (whole, name) => {
+    const declared = new RegExp(`--${name}:\\s*([^;}]+)`).exec(css)
+    return declared === null ? whole : declared[1].trim()
+  })
+  const number = Number(resolved)
+  return Number.isFinite(number) ? number : null
+}
+
+/**
+ * The width of the column the page gives the drawing at a viewport, out of its own stylesheet:
+ * the page's ceiling for the column (`--page-max`), the gutter inside it (the article's own
+ * padding, which is what `main` does not add because this page's article takes it over) and the
+ * padding of the card the figure sits on. The shared `.boundary-drawing` rule lays a drawing out
+ * at `width: 100%` of that box, so this is the column a drawing fills unless its own layout class
+ * caps it — which is what `drawingBox` below reads, and which is why neither number the check
+ * holds is taken here. `null` when any part of it cannot be turned into pixels, which the caller
+ * reports rather than measuring against a guess.
+ */
+function drawingColumn(css, viewport) {
+  const px = (value) => (value === null ? null : lengthAtViewport(css, value, viewport))
+  const padding = declaredValue(css, '[data-security-page]', 'padding')
+  const card = declaredValue(css, '.card', 'padding')
+  const ceiling = px(declaredValue(css, '[data-security-page]', 'max-width'))
+  const gutter = padding === null ? null : px(boxSides(padding)[1])
+  const inset = card === null ? null : px(boxSides(card)[1])
+  if (ceiling === null || gutter === null || inset === null) return null
+  return Math.min(viewport, ceiling) - 2 * gutter - 2 * inset
+}
+
+/**
+ * The width one layout actually renders its drawing at, in px: the column above, as the layout's
+ * own class resizes it. The class may declare a `width` under the shared `100%` and a `max-width`
+ * over it — the tall drawing declares `max-width: 22.5rem` — and **the drawing is scaled into
+ * that box, not into the column**: a `<svg>` capped at 600 px in a 1056 px column draws its
+ * labels at the 600 px, so a label floor or a fold height taken against the column would pass a
+ * drawing a reader cannot read and a drawing taller than the screen it was measured for. Both of
+ * those are what this box exists to prevent, and both are taken in it below.
+ *
+ * Read off the layout's own class alone, because that is the only place a cap can come from: the
+ * shared class both layouts carry is pinned to `width: 100%` and `max-width: 100%` by rule 4a
+ * below, so a class that declares neither is the column. `100%` is the column by definition; any
+ * other percentage is a box this check cannot turn into pixels. `null` for a declaration it cannot
+ * read, which the caller reports rather than measuring a first screen against a guess.
+ */
+function drawingBox(css, klass, column, viewport) {
+  if (column === null) return null
+  let box = column
+  for (const property of ['width', 'max-width']) {
+    const rule = unconditional(css, klass, property)
+    if (rule === null) continue
+    const value = rule.display
+    const drawn = value === '100%' ? column : lengthAtViewport(css, value, viewport)
+    if (drawn === null) return null
+    // `max-width` is the cap on whatever `width` resolved to, so it is applied to the box the
+    // width left rather than replacing it.
+    box = property === 'max-width' ? Math.min(box, drawn) : drawn
+  }
+  return box
+}
+
+/**
+ * The room between the top of a first screen and the top of the drawing, out of the built page's
+ * own stylesheet: the site header's box and the control inside it, the title band's padding and
+ * the headline that fills it, the step between the page's two blocks, the card's padding, and the
+ * section heading over the picture with the room under it. Every part is a declaration of the
+ * site's or of the page's own — `base.css` is inlined into the page, so the display scale, the
+ * card and the header are read from the same stylesheet as the page's own rules — and every part
+ * is turned into pixels at the viewport of the screen being measured, because a `clamp()` with a
+ * `vw` step in it is not the same number at 1440 as at the width it was written for.
+ *
+ * The header is the site's chrome and not this page's, so its height is read from the two things
+ * the site declares for it: `.site-header`'s own padding and border, and the `min-height` of the
+ * tallest control in it, the nav's own disclosure. **A part this check cannot read is a refusal
+ * and never a zero**: a header measured as nothing is a fold claim about a page nobody has.
+ */
+function roomAbove(css, viewport) {
+  const px = (value) => (value === null ? null : lengthAtViewport(css, value, viewport))
+  const total = (parts) => (parts.some((part) => part === null || !Number.isFinite(part)) ? null : parts.reduce((a, b) => a + b, 0))
+  const sides = (selector, property) => boxSides(declaredValue(css, selector, property) ?? '')
+
+  // The header: its own padding-block on both sides, its bottom border, and the row inside it.
+  const headerPadding = px(declaredValue(css, '.site-header', 'padding-block'))
+  const border = (declaredValue(css, '.site-header', 'border-bottom') ?? '').trim().split(/\s+/)[0]
+  const header = total([headerPadding, headerPadding, border === undefined ? null : px(border), px(declaredValue(css, '.site-nav-group>details>summary', 'min-height'))])
+
+  // The title band: its top padding, the headline it holds at the size the display scale sets it
+  // at this viewport, and its bottom padding.
+  const hero = sides('[data-security-page] .security-hero', 'padding')
+  const title = factorOf(css, declaredValue(css, '.display-xl', 'line-height'))
+  const titleSize = px(declaredValue(css, '.display-xl', 'font-size'))
+  const band = total([px(hero[0]), title === null || titleSize === null ? null : titleSize * title, px(hero[2])])
+
+  // The step between the two blocks, the card's own padding, and the section heading: its own
+  // height at this viewport and the room below it.
+  const gap = px(declaredValue(css, '[data-security-page]', 'gap'))
+  const card = sides('.card', 'padding')
+  const heading = factorOf(css, declaredValue(css, '.display-md', 'line-height'))
+  const headingSize = px(declaredValue(css, '.display-md', 'font-size'))
+  const margin = sides('[data-security-page] h2', 'margin')
+  return total([
+    header,
+    band,
+    gap,
+    px(card[0]),
+    heading === null || headingSize === null ? null : headingSize * heading,
+    px(margin[2]),
+  ])
+}
+
+/**
+ * The two layouts as the built page renders them: **one picture drawn twice and read once** (the
+ * owner's feedback of 2026-10-21). The rules are the four things the arrangement has to be for
+ * that to hold, and each is read off the page's own markup and stylesheet:
+ *
+ *   1. **Each layout is switched by the page's stylesheet.** Both classes carry a `display`, and
+ *      one of the two is `none` outside every media query while the other is not: a drawing the
+ *      stylesheet never turns off is the same picture rendered twice, and a drawing that is off
+ *      everywhere is a layout nothing shows.
+ *   2. **The drawing the stylesheet turns off is the drawing marked `hidden`.** `hidden` is what
+ *      a reader whose stylesheet never arrives gets, so the attribute and the CSS have to say the
+ *      same thing; a `hidden` drawing the stylesheet renders anyway is an attribute that draws
+ *      nothing.
+ *   3. **They change over at one width, and the tall one is the one below it.** A phone gets the
+ *      drawing at its own scale rather than a shrunk desktop one, and the width is read from
+ *      below (`max-width`) — a query naming the same width from above shows the tall drawing to a
+ *      desktop and the shrunk wide one to the phone it cannot be read on.
+ *   4. **The wide drawing is readable where it is shown, and it fits the first screen.** Both of
+ *      those are claims about the drawing **as it is rendered**, so both are taken in the box the
+ *      page draws it in rather than in the column the page gives it: the shared `boundary-drawing`
+ *      rule has to lay the drawing out in the column (`width: 100%`, `max-width: 100%`), and the
+ *      layout's own class may cap its drawing under that, so the box is the column as the class
+ *      resizes it. Its smallest label is at least `MIN_LABEL_PX` in the narrowest box it is shown
+ *      in, and the room above it plus its own height is inside a 1440 × 800 screen — the owner's
+ *      ask, which is the whole reason a desktop layout exists.
+ */
+function checkDrawingLayout(drawings, css, fail) {
+  const wide = drawings.find((drawing) => drawing.key === 'wide')
+  const tall = drawings.find((drawing) => drawing.key === 'tall')
+  if (wide === undefined || tall === undefined) return
+
+  // 1. What the stylesheet says outside every media query: the tall drawing is off, the wide one
+  //    is on, and the class both layouts carry is what renders a drawing at all. The value in
+  //    force for a layout is its own class's declaration where it writes one and the shared
+  //    `.boundary-drawing` rule under it — which is how the page is written, and how a reading
+  //    that demanded a declaration per layout would refuse the stylesheet the run drawing is
+  //    built to as well (`website/test/how-it-works.mjs`).
+  const shared = unconditionalDisplay(css, 'boundary-drawing')
+  const own = {
+    wide: unconditionalDisplay(css, 'boundary-drawing-wide'),
+    tall: unconditionalDisplay(css, 'boundary-drawing-tall'),
+  }
+  const plain = { wide: own.wide ?? shared, tall: own.tall ?? shared }
+  if (plain.wide === null || plain.tall === null) {
+    fail(
+      `the page's stylesheet declares no \`display\` for ${plain.wide === null ? 'the wide drawing' : 'the tall drawing'} outside a media query — neither on its own class nor on the \`boundary-drawing\` class both layouts carry — so which of the two a reader at a width no query names gets is the browser's own rendering of an \`<svg>\` rather than the page's: the two drawings are one picture with exactly one of them rendered, and that is a rule the page's stylesheet has to make (the owner's feedback of 2026-10-21)`,
+    )
+  } else {
+    if (plain.tall.display !== 'none') {
+      fail(
+        `the tall drawing is ${described(plain.tall)} outside every media query, and the tall drawing is the layout the changeover turns on for a phone: leaving it rendered where no query holds is both layouts at once — the picture drawn twice and read twice (the owner's feedback of 2026-10-21)`,
+      )
+    }
+    if (plain.wide.display === 'none') {
+      fail(
+        `the wide drawing is ${described(plain.wide)} outside every media query, and the wide drawing is what a desktop is: turned off where no query holds, a reader at a width no query names is left with no drawing at all — both layouts off at once is the picture drawn nowhere (the owner's feedback of 2026-10-21)`,
+      )
+    }
+  }
+
+  // 2. And the attribute agrees with the stylesheet: `hidden` on the drawing that is off.
+  for (const layout of LAYOUTS) {
+    const hidden = layout.key === 'wide' ? wide.picture.attrs.has('hidden') : tall.picture.attrs.has('hidden')
+    const switchedOff = plain[layout.key]?.display === 'none'
+    if (hidden && !switchedOff) {
+      fail(
+        `${layout.what} carries the \`hidden\` attribute and the page's stylesheet renders it (${plain[layout.key] === null ? 'it declares no display for it outside a media query' : described(plain[layout.key])}): \`hidden\` is what a reader whose stylesheet never arrives gets, so the attribute and the stylesheet have to say the same thing, and an attribute the page's own CSS overrides draws nothing (the owner's feedback of 2026-10-21)`,
+      )
+    }
+    if (!hidden && switchedOff) {
+      fail(
+        `${layout.what} is ${described(plain[layout.key])} and does not carry the \`hidden\` attribute: the drawing the stylesheet turns off is the one marked \`hidden\`, so that a reader whose stylesheet never arrives is left with the layout that carries the whole picture rather than with both of them or with none (the owner's feedback of 2026-10-21)`,
+      )
+    }
+  }
+
+  // 3. The changeover: one width, read from below, the tall drawing on at it and the wide off.
+  const switches = new Set()
+  for (const layout of LAYOUTS) {
+    for (const rule of displayDeclarations(css, layout.klass)) {
+      if (rule.query !== '' && rule.at !== null && rule.side !== null) switches.add(rule.at)
+    }
+  }
+  const at = switches.size === 1 ? [...switches][0] : null
+  if (at === null) {
+    fail(
+      `the page's stylesheet ${switches.size === 0 ? 'has no media query that declares either drawing, so the two layouts never change over' : `switches the two drawings at ${switches.size} different widths (${[...switches].map((px) => `${Math.round(px)} px`).join(', ')})`}: the changeover is one width, the one a phone is met with the tall drawing below and a desktop the wide one above (the owner's feedback of 2026-10-21)`,
+    )
+  } else {
+    const tallShown = displayDeclarations(css, 'boundary-drawing-tall')
+    const wideShown = displayDeclarations(css, 'boundary-drawing-wide')
+    if (!tallShown.some((rule) => rule.display === 'block' && rule.at === at && rule.side === 'below')) {
+      fail(
+        `the tall drawing is ${tallShown.filter((rule) => rule.query !== '').map(described).join(', ') || 'not declared inside a media query'}, and a phone is met with the tall drawing rather than with the shrunk wide one: the query at ${Math.round(at)} px is the one that shows it, read from below — a query naming the same width from above shows the tall drawing to a desktop and the shrunk wide one to the phone it cannot be read on (the owner's feedback of 2026-10-21)`,
+      )
+    }
+    if (!wideShown.some((rule) => rule.display === 'none' && rule.at === at && rule.side === 'below')) {
+      fail(
+        `the wide drawing is ${wideShown.filter((rule) => rule.query !== '').map(described).join(', ') || 'not declared inside a media query'}, and it is turned off below the same width the tall one is turned on below: both layouts on at once is the picture drawn twice and read twice, and a query naming the same width from above turns the wide one off for the desktop it is drawn for (the owner's feedback of 2026-10-21)`,
+      )
+    }
+
+    // 4a. The box the two numbers below are taken in: the shared rule lays the drawing out in the
+    //     column — `width: 100%` of the card's content box and no ceiling of the site's own
+    //     (`max-width: 100%`) — and a layout class may still cap its own drawing under that. The
+    //     floor and the fold are claims about the drawing as it is rendered, so they are taken in
+    //     that box, and the shared pair is what says the box is the column every time.
+    const sharedWidth = unconditional(css, 'boundary-drawing', 'width')
+    const sharedCeiling = unconditional(css, 'boundary-drawing', 'max-width')
+    if (sharedWidth?.display !== '100%' || sharedCeiling?.display !== '100%') {
+      fail(
+        `the \`boundary-drawing\` class both layouts carry declares ${sharedWidth === null ? 'no `width`' : `\`width: ${sharedWidth.display}\``} and ${sharedCeiling === null ? 'no `max-width`' : `\`max-width: ${sharedCeiling.display}\``} outside every media query, and the drawing is laid out in the column the page gives it: the box the label floor and the fold below are both taken in is that box, so a layout that does not fill the column is a label size and a height this check would otherwise take against a width the drawing is never drawn at (the owner's feedback of 2026-10-21; the How It Works drawing is held to the same pair, \`website/test/how-it-works.mjs\`)`,
+      )
+    }
+
+    // 4b. The floor: the smallest label of the wide drawing, in the narrowest box the page draws
+    //     it in — the box at the width the two change over at.
+    const units = wide.viewBox.split(/\s+/).map(Number)
+    const column = drawingColumn(css, at)
+    const box = drawingBox(css, 'boundary-drawing-wide', column, at)
+    const sizes = findAll(wide.picture, 'text').map((node) => Number(node.attrs.get('font-size')))
+    const smallest = sizes.filter(Number.isFinite).sort((a, b) => a - b)[0]
+    if (box === null) {
+      fail(
+        `the box the page draws the wide drawing in at ${Math.round(at)} px — the width the two layouts change over at, and the narrowest viewport the wide drawing is shown at — cannot be read out of the page's own stylesheet (\`[data-security-page]\`'s \`max-width\` and padding, the card's own padding, and the \`width\`/\`max-width\` the wide drawing's own class declares): that box is where the wide drawing's label size is taken, and a width this check cannot turn into pixels is a floor it cannot take (the owner's feedback of 2026-10-21)`,
+      )
+    } else if (!Number.isFinite(units[2]) || units[2] <= 0 || smallest === undefined) {
+      fail(
+        `the wide drawing declares \`viewBox="${wide.viewBox}"\` and ${sizes.length} label sizes this check cannot read, so the size its labels are rendered at is not a number anything here can take: the drawing's units are what its labels scale by, and an unreadable one is a floor nothing holds (the owner's feedback of 2026-10-21)`,
+      )
+    } else if (smallest * (box / units[2]) < MIN_LABEL_PX) {
+      fail(
+        `the wide drawing's smallest label is ${smallest} units, which is ${(smallest * (box / units[2])).toFixed(2)} px in the ${Math.round(box)} px box the page draws it in at ${Math.round(at)} px — the narrowest viewport it is shown at${box < column ? `, the ${Math.round(column)} px column capped by the wide drawing's own \`max-width\`` : ''}: a label under ${MIN_LABEL_PX} px is a label a reader cannot read, and the wide drawing is shown from the width its own labels fit at or it is shown to a reader who cannot read it (the owner's feedback of 2026-10-21)`,
+      )
+    }
+
+    // 4c. And the fold: the room above the drawing plus the drawing itself, inside the owner's
+    //     1440 × 800 screen. All four numbers are the page's own — the room and the box out of
+    //     its stylesheet, the height out of the drawing's own `viewBox`.
+    const room = roomAbove(css, FIRST_SCREEN.width)
+    const across = drawingBox(css, 'boundary-drawing-wide', drawingColumn(css, FIRST_SCREEN.width), FIRST_SCREEN.width)
+    if (room === null || across === null) {
+      fail(
+        `the room above the drawing and the box it is drawn in at ${FIRST_SCREEN.width} px cannot be read out of the page's own stylesheet: the header's padding and border and the control inside it, the title band's padding and the headline's size, the step between the page's blocks, the card's padding and the section heading are what the fold is measured against, and one of them is a value this check cannot turn into pixels (the owner's feedback of 2026-10-21)`,
+      )
+    } else if (Number.isFinite(units[3]) && units[3] > 0) {
+      const height = across * (units[3] / units[2])
+      if (room + height > FIRST_SCREEN.height) {
+        fail(
+          `the drawing is drawn ${units[2]} × ${units[3]} units, which the ${Math.round(across)} px box the page draws it in renders ${Math.round(height)} px tall, and the page carries ${Math.round(room)} px of header, title band, step, card padding and section heading above it: the headline and the whole drawing do not fit a ${FIRST_SCREEN.width} × ${FIRST_SCREEN.height} first screen — the layout the owner asked for is one a desktop reads whole, which is why the wide drawing exists at all (the owner's feedback of 2026-10-21, D187: the fold itself is the owner's check on a real browser, and this is the arithmetic it rests on)`,
+        )
+      }
+    } else {
+      fail(
+        `the wide drawing declares \`viewBox="${wide.viewBox}"\` with no height this check can read, so nothing here can say whether it fits a first screen: the drawing's own \`viewBox\` is its shape, and the fold is a claim about that shape (the owner's feedback of 2026-10-21)`,
+      )
+    }
+  }
+}
+
 /**
  * The boundary diagram, held to the brief's own rules (the owner's brief of 2026-10-20).
  *
@@ -610,7 +1125,7 @@ function checkDiagram(region, { document, beside, fail }) {
     fail(
       `the diagram carries ${figures.length} figures where the boundary diagram is one picture with the facts under it: the brief asks for one inline SVG and one list of the document's own facts (the owner's brief of 2026-10-20)`,
     )
-    return
+    return []
   }
   const figure = figures[0]
 
@@ -618,47 +1133,84 @@ function checkDiagram(region, { document, beside, fail }) {
   // then the two lines. The brief names all three, and a list above the picture, or a third
   // line, is text the reader meets in an order nobody chose.
   const inner = childElements(figure)
-  const wanted = ['svg', 'ul', 'p', 'p']
+  const wanted = ['svg', 'svg', 'ul', 'p', 'p']
   if (inner.length !== wanted.length || inner.some((child, i) => child.name !== wanted[i])) {
     fail(
-      `the boundary diagram's figure carries ${inner.map((child) => `<${child.name}>`).join(' ') || 'nothing'} where the brief asks for the picture, the facts as one list under it, and the two lines below that — what the boundaries stop and what nothing stops (the owner's brief of 2026-10-20)`,
+      `the boundary diagram's figure carries ${inner.map((child) => `<${child.name}>`).join(' ') || 'nothing'} where the brief asks for the picture — one drawing, one \`<svg>\` for each of its two layouts — the facts as one list under it, and the two lines below that: what the boundaries stop and what nothing stops (the owner's brief of 2026-10-20; the owner's feedback of 2026-10-21)`,
     )
   }
 
-  // The picture: one drawing, with a name a screen reader reads before the facts beside it.
+  // The picture: one drawing at two layouts, each with the name a screen reader reads before the
+  // facts beside it, and the two of them carrying the same words — the same picture, so that
+  // whichever layout the width gives a reader, the drawing says the same thing.
   const pictures = findAll(figure, 'svg')
   const labels = []
-  if (pictures.length !== 1) {
+  const drawings = []
+  if (pictures.length !== LAYOUTS.length) {
     fail(
-      `the diagram carries ${pictures.length} drawings where the boundary diagram is one picture: the brief asks for ONE inline-SVG diagram (the owner's brief of 2026-10-20)`,
+      `the diagram carries ${pictures.length} drawings where the boundary diagram is one picture drawn twice — a tall layout a phone reads top to bottom and a wide one a desktop reads left to right — with the stylesheet rendering exactly one of them at a time: the brief asks for ONE inline-SVG diagram, and the owner's feedback of 2026-10-21 asks for its desktop layout beside the phone's (the owner's brief of 2026-10-20; the owner's feedback of 2026-10-21)`,
     )
   } else {
-    const picture = pictures[0]
-    const name = prose(picture.attrs.get('aria-label') ?? '')
-    if (picture.attrs.get('role') !== 'img' || name === '') {
-      fail(
-        `the boundary diagram's drawing carries role=${JSON.stringify(picture.attrs.get('role') ?? '')} and an aria-label of ${JSON.stringify(name)}: the drawing is one image with a name, so a screen reader reads what the picture is before it reads the facts beside it (the owner's brief of 2026-10-20)`,
-      )
-    } else {
-      labels.push({ what: "the drawing's accessible name", text: name })
-    }
-    const drawn = findAll(picture, 'text')
-    for (const [i, node] of drawn.entries()) {
-      const said = prose(text(node))
-      if (said === '') {
+    for (const layout of LAYOUTS) {
+      const found = pictures.filter((picture) => classList(picture).has(layout.klass))
+      if (found.length !== 1) {
         fail(
-          `the drawing's label ${i + 1} is empty: every label of the drawing is a phrase of ${SOURCE}, and a blank one draws nothing a reader can read (the owner's brief of 2026-10-20)`,
+          `the diagram carries ${found.length} drawings marked \`${layout.klass}\` where the picture is one drawing at two layouts: ${layout.what} is ${
+            layout.key === 'wide'
+              ? 'the run read left to right, which is what a desktop shows'
+              : "the run read top to bottom at a phone's own width, which is what a phone shows"
+          } (the owner's feedback of 2026-10-21)`,
         )
         continue
       }
-      labels.push({ what: `the drawing's label ${i + 1}`, text: said })
+      const picture = found[0]
+      const drawing = { ...layout, picture, viewBox: (picture.attrs.get('viewbox') ?? '').trim(), drawn: findAll(picture, 'text') }
+      const name = prose(picture.attrs.get('aria-label') ?? '')
+      if (picture.attrs.get('role') !== 'img' || name === '') {
+        fail(
+          `${layout.what} carries role=${JSON.stringify(picture.attrs.get('role') ?? '')} and an aria-label of ${JSON.stringify(name)}: each layout of the drawing is one image with a name, so a screen reader reads what the picture is before it reads the facts beside it, whichever layout the width renders (the owner's brief of 2026-10-20)`,
+        )
+      } else {
+        labels.push({ what: `${layout.what}'s accessible name`, text: name })
+      }
+      for (const [i, node] of drawing.drawn.entries()) {
+        const said = prose(text(node))
+        if (said === '') {
+          fail(
+            `${layout.what}'s label ${i + 1} is empty: every label of the drawing is a phrase of ${SOURCE}, and a blank one draws nothing a reader can read (the owner's brief of 2026-10-20)`,
+          )
+          continue
+        }
+        labels.push({ what: `${layout.what}'s label ${i + 1}`, text: said })
+      }
+      if (drawing.drawn.length < MIN_DIAGRAM_LABELS) {
+        fail(
+          `${layout.what} carries ${drawing.drawn.length} labels where the boundary diagram draws the trust boundary: the picture is this page's own, and a drawing with ${drawing.drawn.length} of them has stopped drawing what the document describes (the owner's brief of 2026-10-20)`,
+        )
+      }
+      checkLabelBoxes(picture, drawing.drawn, fail, layout.what)
+      drawings.push(drawing)
     }
-    if (drawn.length < MIN_DIAGRAM_LABELS) {
-      fail(
-        `the drawing carries ${drawn.length} labels where the boundary diagram draws the trust boundary: the picture is this page's own, and a drawing with ${drawn.length} of them has stopped drawing what the document describes (the owner's brief of 2026-10-20)`,
-      )
+
+    // The two layouts are one picture: the same accessible name, and the same words in the same
+    // order. A label that moved in one of them and not the other is a claim the document makes in
+    // one layout and not the other, which is the one thing a reader must not be able to get
+    // depending on the width of their window.
+    if (drawings.length === LAYOUTS.length) {
+      const said = (drawing) => drawing.drawn.map((node) => prose(text(node))).join(' ')
+      const [first, second] = drawings
+      if (said(first) !== said(second)) {
+        fail(
+          `${first.what} and ${second.what} do not say the same thing: the first reads ${JSON.stringify(said(first))} and the second ${JSON.stringify(said(second))} — they are one picture drawn twice, so the same labels in the same order, or a reader gets one claim on a phone and another on a desktop (the owner's feedback of 2026-10-21)`,
+        )
+      }
+      const names = drawings.map((drawing) => prose(drawing.picture.attrs.get('aria-label') ?? ''))
+      if (names[0] !== names[1]) {
+        fail(
+          `the two layouts of the drawing carry different accessible names (${names.map((name) => JSON.stringify(name)).join(' and ')}): the drawing is one image with one name, and the name is what a screen reader reads instead of the labels, so two names are two pictures (the owner's brief of 2026-10-20)`,
+        )
+      }
     }
-    checkLabelBoxes(picture, drawn, fail)
   }
 
   const facts = findAll(figure, 'li')
@@ -709,6 +1261,10 @@ function checkDiagram(region, { document, beside, fail }) {
       )
     }
   }
+
+  // The two layouts come back to the caller, which is where the rest of what they are is read:
+  // which of them the stylesheet renders, at which width, and at what size (`checkDrawingLayout`).
+  return drawings
 }
 
 // ---------------------------------------------------------------------------------------
@@ -808,11 +1364,18 @@ export function securityFailures(dist = DIST) {
   //     own words with the picture taken out — the heading, the facts and the two lines — and
   //     not the rest of the page: the rule reads the words the drawing sits among, so a label
   //     the page carries only in another region is refused.
-  checkDiagram(diagram, {
+  const drawings = checkDiagram(diagram, {
     document: sourceDocument(),
     beside: prose(text(without(diagram, 'svg'))),
     fail,
   })
+
+  // 1d. And the two layouts of that picture: one of them rendered at a time, the tall one below
+  //     the width they change over at, the wide one above it, and the wide one readable and
+  //     inside the first screen the owner's feedback of 2026-10-21 names. The drawing's own
+  //     geometry is `checkLabelBoxes`' business above; this is the page's stylesheet and the
+  //     arithmetic the desktop layout rests on.
+  checkDrawingLayout(drawings, pageCSS(html, dist), fail)
 
   // 2. The summary is the document's own "In short" section, bullet for bullet.
   checkSection(summary, {
@@ -900,15 +1463,319 @@ function checkSection(region, { document, heading, id, fail, what, kind, label }
   }
 }
 
+// ---------------------------------------------------------------------------------------
+// The page in the site's bold look (the owner's brief of 2026-10-21).
+// ---------------------------------------------------------------------------------------
+
+/** The CSS a built page carries: its inline `<style>` blocks, and any first-party stylesheet
+ *  it links. Astro inlines today (`build.inlineStylesheets: 'always'`) and this reader does
+ *  not depend on which of the two the build emits — `website/test/base-styles.mjs` reads the
+ *  same pair the same way. The tokens are in it, so a step of the spacing scale is read from
+ *  the artifact rather than from a second copy of the number here. */
+function pageCSS(html, dist = DIST) {
+  const inline = [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1])
+  const linked = [...html.matchAll(/<link[^>]*rel="stylesheet"[^>]*href="(\/[^"]+)"/g)].map((m) =>
+    readFileSync(path.join(dist, m[1]), 'utf8'),
+  )
+  return [...inline, ...linked].join('\n')
+}
+
+/** An element's class tokens, as the set the built page carries. A class is matched on the
+ *  whole token, because the page's own class and the site's are one attribute. */
+function classList(el) {
+  return new Set((el.attrs.get('class') ?? '').split(/\s+/).filter(Boolean))
+}
+
+/** The rule a built stylesheet carries for one selector, or null. The selectors are compared
+ *  with their whitespace removed, because the minifier rewrites it (`[data-security-page] h1`
+ *  and `[data-security-page]h1` are one selector). */
+function ruleFor(css, selector) {
+  const wanted = selector.replace(/\s+/g, '')
+  return cssRules(css).find((rule) => rule.selector.replace(/\s+/g, '') === wanted) ?? null
+}
+
+/** A length token's value in px, out of the stylesheet that declares it — or null when the
+ *  stylesheet does not declare it, which is a failure the caller reports rather than a zero
+ *  it silently compares with. */
+function tokenPx(css, name) {
+  const m = new RegExp(`--${name}:\\s*([\\d.]+)(rem|px)`).exec(css)
+  return m ? Number(m[1]) * (m[2] === 'rem' ? 16 : 1) : null
+}
+
+/** A length as px: a bare zero, a token reference, or a number with a unit — or null when the
+ *  value is neither, which is a failure the caller reports rather than a zero it compares with.
+ *  `rem` and `em` are read at the 16 px root, the same root `tokenPx` and the drawing's own
+ *  geometry are read at. */
+function lengthPx(css, value) {
+  const v = value.trim()
+  if (/^0[a-z%]*$/.test(v)) return 0
+  const token = /^var\(--([a-z0-9-]+)\)$/.exec(v)
+  if (token !== null) return tokenPx(css, token[1])
+  const len = /^(-?[\d.]+)(rem|px|em)$/.exec(v)
+  return len === null ? null : Number(len[1]) * (len[2] === 'px' ? 1 : 16)
+}
+
+/** One selector's weight in the cascade, as the triple a browser compares: ids, then classes,
+ *  attributes and pseudo-classes, then type selectors. `:where(…)` counts as nothing — that is
+ *  what the wrapper is for — and it is the reason this is read at all: `base.css` gives every
+ *  paragraph a margin below through `:where(p, …)`, which is worth nothing, so the page's own
+ *  `margin: 0` on the pointer is the declaration in force and a reading without specificity
+ *  would report the site's margin as room the page had already taken away. */
+function specificity(selector) {
+  const s = selector.replace(/:where\([^)]*\)/g, '')
+  return [
+    (s.match(/#[\w-]+/g) ?? []).length,
+    (s.match(/\.[\w-]+|\[[^\]]*\]|::?[\w-]+/g) ?? []).length,
+    (s.match(/(?:^|[\s>+~,(])[a-z][\w-]*/g) ?? []).length,
+  ]
+}
+
+function compareSpec(a, b) {
+  for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return a[i] - b[i]
+  return 0
+}
+
+/** Whether a rule's selector can match the block itself. A selector is read one alternative at
+ *  a time, `:where(…)`/`:is(…)` unwrapped first (the site's prose rule is written as a wrapper
+ *  around a list of tags), and the alternative reaches the block when its subject — the last
+ *  compound, the part that says what the rule is about — names the block's marker attribute, a
+ *  class the block carries, or is a bare type selector for the block's tag. A selector with an
+ *  ancestor (`[data-security-policy] p`) is a rule about something *inside* the block and not
+ *  about the block: reading it as the block's own margin would report the room inside a card as
+ *  room between two cards. */
+function reaches(block, selector) {
+  const unwrapped = selector.replace(/:where\(([^)]*)\)|:is\(([^)]*)\)/g, ' $1 $2 ')
+  return unwrapped.split(',').some((part) => {
+    const compounds = part.trim().split(/[\s>+~]+/).filter(Boolean)
+    const subject = compounds[compounds.length - 1] ?? ''
+    // A subject that names a region is about **that** region and no other: the four blocks share
+    // the `card` class, so a reading that stopped at the class would take `[data-security-policy]
+    // .card` — the pointer's own `margin: 0` — for the summary's, and the doubled rhythm the
+    // summary carries would be measured against the pointer's declaration and pass.
+    const named = [...subject.matchAll(/\[(data-security-[\w-]+)\]/g)].map(([, name]) => name)
+    if (named.length > 0) return named.includes(block.marker)
+    if ([...classList(block.node)].some((klass) => new RegExp(`\\.${klass}(?![\\w-])`).test(subject))) return true
+    return compounds.length === 1 && subject === block.node.name
+  })
+}
+
+/** The vertical margin a block carries out of the built stylesheet, as `[edge, value]` pairs for
+ *  the edges something declares. The winner per edge is the cascade's own: the more specific
+ *  rule wins, and between two of one weight the later one does. A block nothing declares a
+ *  margin for has none of its own — which is the answer for a `<section>`, and is why the
+ *  pointer is the block that has to say `margin: 0` out loud. */
+function verticalMargin(css, block) {
+  const held = { top: null, bottom: null }
+  const offer = (edge, value, spec, order) => {
+    const now = held[edge]
+    const weight = now === null ? 1 : compareSpec(spec, now.spec)
+    if (now === null || weight > 0 || (weight === 0 && order >= now.order)) held[edge] = { value, spec, order }
+  }
+  cssRules(css).forEach((rule, index) => {
+    if (!reaches(block, rule.selector)) return
+    const spec = specificity(rule.selector)
+    let top
+    let bottom
+    for (const [property, value] of cssDeclarations(rule.body)) {
+      if (property === 'margin') {
+        const parts = value.trim().split(/\s+/)
+        top = parts[0]
+        bottom = parts.length > 2 ? parts[2] : parts[1] ?? parts[0]
+      } else if (property === 'margin-top') {
+        top = value
+      } else if (property === 'margin-bottom') {
+        bottom = value
+      }
+    }
+    if (top !== undefined) offer('top', top, spec, index)
+    if (bottom !== undefined) offer('bottom', bottom, spec, index)
+  })
+  return ['top', 'bottom'].filter((edge) => held[edge] !== null).map((edge) => [edge, held[edge].value])
+}
+
+/**
+ * Every way the built page departs from the site's bold look, as the sentences a reader of
+ * the failure gets. One function over one artifact, so its refusals are kept with planted
+ * defects rather than argued (the case below).
+ *
+ * The look itself is `src/styles/base.css`'s section 2c — the display scale, the gradient, the
+ * card, the eyebrow, the pill and the step badge — and this gate reads the page against it:
+ * **the page wears the site's shapes rather than shapes of its own**, which is the whole point
+ * of a redesign that is meant to make the site look like one thing. So the rules below name
+ * the shared classes by name, and the rules a class is worth are read out of the page's own
+ * stylesheet (a class the stylesheet does not carry is a name that draws nothing, which is how
+ * a rename in `base.css` would leave this page unstyled and every other gate green).
+ *
+ * The page's words are not this gate's business: `securityFailures` above holds the page to
+ * the document, and the two are deliberately separate readings — a restyle must be able to
+ * change nothing a reader reads.
+ */
+export function boldLookFailures(dist = DIST) {
+  const out = []
+  const fail = (why) => out.push(`security/: ${why}`)
+
+  const html = builtPage(dist)
+  if (html === null) {
+    fail(`${BUILT} is not in the artifact: the page this gate checks is the one \`npm run build\` writes, and \`npm run check\` builds before it runs these checks (W1.8)`)
+    return out
+  }
+
+  let doc
+  try {
+    doc = parse(html)
+  } catch (err) {
+    fail(`the page could not be read as HTML: ${err.message}`)
+    return out
+  }
+  const css = pageCSS(html, dist)
+
+  // The reading is scoped to the page's own `<article>`, exactly as `securityFailures`' is: the
+  // layout draws chrome of its own around every page, and a heading the layout adds is markup
+  // this page cannot change. Reading the whole document would report the site's chrome as this
+  // page's hierarchy and demand `display-md` on a heading the page does not write.
+  const article = findAll(doc, (el) => el.attrs.has('data-security-page'))[0]
+  if (article === undefined) {
+    fail('the page carries no `data-security-page` article, so there is no page here to read the bold look off: the article is the page\'s own markup, and `securityFailures` above reports its absence (the owner\'s brief of 2026-10-21)')
+    return out
+  }
+
+  // The shared shapes have to be the stylesheet's and not only the markup's: a page that names
+  // a class no rule carries is a page drawn by the browser's defaults.
+  for (const [selector, what] of [
+    ['.display-xl', "the display scale's largest step"],
+    ['.display-md', "the display scale's middle step"],
+    ['.gradient-text', "the accent's gradient over a headline's words"],
+    ['.card', 'the card the site draws its blocks on'],
+  ]) {
+    if (ruleFor(css, selector) === null) {
+      fail(`the page's stylesheet carries no \`${selector}\` rule, so ${what} draws nothing here: the bold look is one set of shapes in \`src/styles/base.css\` for the whole site, and a page that wears a name the stylesheet does not carry is a page the browser draws (the owner's brief of 2026-10-21)`)
+    }
+  }
+
+  // 1. The title: the display scale's largest step, with the accent's gradient over the whole
+  //    of it. The gradient is a span inside the heading, which is how `Hero.astro` splits its
+  //    headline — and the whole word and not part of it, because this page's title is one word.
+  const titles = findAll(article, 'h1')
+  if (titles.length !== 1) {
+    fail(`the page carries ${titles.length} <h1> headings, so the bold look's headline has no one title to be drawn on: the display scale is the page's title and nothing else (the owner's brief of 2026-10-21)`)
+  } else {
+    const title = titles[0]
+    const classes = title.attrs.get('class') ?? ''
+    if (!classList(title).has('display-xl')) {
+      fail(`the page's title carries class ${JSON.stringify(classes)} and not the display scale's largest step (\`display-xl\`): the bold look's headline is the site's own display step — oversized, tightly tracked, at the heaviest weight the system stack draws — and a title left to the browser's \`h1\` is the page the redesign replaced (the owner's brief of 2026-10-21)`)
+    }
+    const gradient = findAll(title, (el) => classList(el).has('gradient-text'))
+    const said = prose(text(title))
+    if (gradient.length !== 1) {
+      fail(`the page's title carries ${gradient.length} \`gradient-text\` spans where the bold look draws the headline's words in the accent's gradient, once: the gradient is the accent the redesign moved to the logo's own hue, and a headline without it is the page's title in one flat tone (the owner's brief of 2026-10-21)`)
+    } else if (prose(text(gradient[0])) !== said) {
+      fail(`the gradient covers ${JSON.stringify(prose(text(gradient[0])))} of the page's title ${JSON.stringify(said)}: the accent is the whole headline's, so the page's one word is not half gradient and half plain (the owner's brief of 2026-10-21)`)
+    }
+  }
+
+  // 2. Every section heading under the title is the display scale's middle step, so the page
+  //    has the board's hierarchy — the title at the top step, the sections below it — rather
+  //    than three browser `h2`s.
+  const headings = findAll(article, 'h2')
+  if (headings.length === 0) {
+    fail('the page carries no <h2>, so the hierarchy the bold look draws — a title and the sections under it — is a title over one flat block of text (the owner\'s brief of 2026-10-21)')
+  }
+  for (const heading of headings) {
+    if (!classList(heading).has('display-md')) {
+      fail(`a section heading of the page carries class ${JSON.stringify(heading.attrs.get('class') ?? '')} and not the display scale's middle step (\`display-md\`): the page's sections are set from the site's type scale, one step under its title, and a heading left to the browser's \`h2\` is a section that does not read as one (the owner's brief of 2026-10-21)`)
+    }
+  }
+
+  // 3. The page's four blocks are the site's card — the same box the homepage's run band and
+  //    "what you get" grid are drawn on. The regions are the ones `securityFailures` reads the
+  //    page by, and a missing one is that gate's failure rather than this one's.
+  const blocks = []
+  for (const [marker, what] of [
+    ['data-security-diagram', 'the boundary diagram'],
+    ['data-security-summary', "the document's summary"],
+    ['data-security-reporting', "the document's reporting section"],
+    ['data-security-policy', 'the pointer to the document'],
+  ]) {
+    const found = findAll(article, (el) => el.attrs.has(marker))
+    if (found.length !== 1) continue
+    blocks.push({ marker, what, node: found[0] })
+    if (!classList(found[0]).has('card')) {
+      fail(`${what} carries class ${JSON.stringify(found[0].attrs.get('class') ?? '')} and not the site's card (\`card\`): every block of the bold look is drawn on the same box — one step above the ground, a hairline border and the larger radius — so a block of this page is a card like the homepage's blocks, and not a shape of its own (the owner's brief of 2026-10-21)`)
+    }
+  }
+
+  // 4. The room between the page's blocks is a step of the site's spacing scale, and a
+  //    generous one: the redesign's rhythm is the scale's own steps rather than numbers a page
+  //    picks, and the page's blocks are set apart by at least the scale's `--space-lg`. The
+  //    declaration is read off the page's own container rule, which is the one place the room
+  //    between all four blocks is declared.
+  const page = ruleFor(css, '[data-security-page]')
+  const pageDecls = page === null ? [] : cssDeclarations(page.body)
+  const declared = (property) => pageDecls.find(([name]) => name === property)?.[1]
+  const display = declared('display')
+  const gap = declared('gap')
+  const step = gap === undefined ? null : /^var\(--(space-[a-z0-9]+)\)$/.exec(gap)
+  const gapPx = step === null ? null : tokenPx(css, step[1])
+  if (step === null) {
+    fail(`the page sets the room between its blocks with ${gap === undefined ? 'no declaration this gate can read' : JSON.stringify(gap)} and not with a step of the site's spacing scale: the redesign's rhythm is the scale's — the room one block gives the next is a step, so two blocks' room is comparable — and a number here is the page inventing a rhythm of its own (the owner's brief of 2026-10-21)`)
+  } else {
+    const px = tokenPx(css, step[1])
+    const floor = tokenPx(css, 'space-lg')
+    if (px === null || floor === null) {
+      fail(`the page sets the room between its blocks at \`--${step[1]}\`, and the stylesheet does not declare that step's value, so this gate cannot measure the room the page gives its blocks (the owner's brief of 2026-10-21)`)
+    } else if (px < floor) {
+      fail(`the page sets the room between its blocks at \`--${step[1]}\` (${px}px) where the bold look's blocks are set apart generously: the floor is the scale's \`--space-lg\` (${floor}px), and a page whose blocks sit closer than that is the page the redesign replaced (the owner's brief of 2026-10-21)`)
+    }
+  }
+
+  // 5. And the container is one the `gap` means something in. A `gap` is room between blocks
+  //    only in a flex or a grid box, and only in the direction the blocks are laid out in: on a
+  //    block container the declaration is inert — nothing is spaced — and a page whose blocks
+  //    sit flush against each other would read as one that sets its rhythm. The reading is
+  //    here because the rule above cannot see the difference: it reads the declaration, and
+  //    this one reads whether the declaration draws anything.
+  const flexColumn = /^(column|column-reverse)$/.test(declared('flex-direction') ?? '')
+  if (display !== 'flex' && display !== 'grid') {
+    fail(`the page's container is ${display === undefined ? 'a box whose `display` the page does not declare' : JSON.stringify(display)} where the page's rhythm is a \`gap\`: a \`gap\` is room between blocks only in a flex or a grid container, and on a block container the declaration spaces nothing, so the page's blocks sit flush against each other while the page reads as one that sets the room between them (the owner's brief of 2026-10-21)`)
+  } else if (display === 'flex' && !flexColumn) {
+    fail(`the page's container is a flex row (${JSON.stringify(declared('flex-direction') ?? 'row')}) where its blocks are a column: a row lays the four blocks out side by side and turns the \`gap\` into room between columns, so the page has no vertical rhythm at all (the owner's brief of 2026-10-21)`)
+  }
+
+  // 6. And no block adds room of its own. A margin on a flex item is added to the gap, so a
+  //    block that kept the margin it carried while the page was a plain flow gives the gap
+  //    twice: the page says `--space-xl` between two blocks and a reader gets that step plus
+  //    the block's margin. This is the doubled rhythm `website/test/base-styles.mjs`'s
+  //    `homeRhythmFailures` refuses on the homepage, read the same way — the room between two
+  //    blocks is one step of the scale and not that step plus a block's own margin — and it is
+  //    the one defect the rule above cannot see, because the gap it reads is correct either
+  //    way. A block whose margin is zero is the page keeping its own rhythm; the pointer is the
+  //    one that has to say so, because it is a `<p>` and `base.css` gives every paragraph a
+  //    margin below.
+  for (const block of blocks) {
+    for (const [edge, value] of verticalMargin(css, block)) {
+      const px = lengthPx(css, value)
+      if (px === null) {
+        fail(`${block.what} carries a \`margin-${edge}\` of ${JSON.stringify(value)} this gate cannot measure, so it cannot say whether the block adds room of its own on top of the \`gap\` the container sets between blocks (the owner's brief of 2026-10-21)`)
+      } else if (px !== 0) {
+        const total = gapPx === null ? '' : `, so the room between two blocks renders at ${gapPx + px}px where the page says one step of the scale`
+        fail(`${block.what} carries a \`margin-${edge}\` of ${JSON.stringify(value)} (${px}px) of its own on top of the ${gap === undefined ? 'room the container sets between blocks' : JSON.stringify(gap)}: a margin on a flex item is added to the gap${total} — the doubled rhythm \`website/test/base-styles.mjs\`'s \`homeRhythmFailures\` refuses on the homepage, where the room between two blocks is one step of the scale and not that step plus a block's own margin (the owner's brief of 2026-10-21)`)
+      }
+    }
+  }
+
+  return out
+}
+
 // ---- the refusals, kept ----------------------------------------------------------------
 
-/** A temp dist holding one built page, and the gate's verdict on it. */
-function verdict(t, html) {
+/** A temp dist holding one built page, and the gate's verdict on it — `securityFailures` by
+ *  default, or the checker a case is proving. */
+function verdict(t, html, checker = securityFailures) {
   const dist = mkdtempSync(path.join(tmpdir(), 'fugaro-security-'))
   t.after(() => rmSync(dist, { recursive: true, force: true }))
   mkdirSync(path.join(dist, 'security'), { recursive: true })
   writeFileSync(path.join(dist, BUILT), html)
-  return securityFailures(dist)
+  return checker(dist)
 }
 
 /** The good page, with one edit planted in it. The edit has to land: a fixture that silently
@@ -1127,7 +1994,7 @@ test('the gate refuses each planted defect', (t) => {
   // text, and it is not a phrase of `SECURITY.md` at all.
   const claimed = planted(html, />the agent </, '>the agent can read every secret <')
   const claim = verdict(t, claimed).join('\n')
-  assert.match(claim, /the drawing's label \d+ says "the agent can read every secret"/, 'a drawing label the document does not say is not refused, so the drawing is free to make a security claim of its own')
+  assert.match(claim, /(the tall|wide) drawing's label \d+ says "the agent can read every secret"/, 'a drawing label the document does not say is not refused, so the drawing is free to make a security claim of its own')
   assert.match(claim, /which SECURITY\.md does not say/, 'the label is refused for the wrong reason, or not at all')
 
   // A label drawn from a sentence the page renders, but not beside the picture: the reporting
@@ -1139,7 +2006,7 @@ test('the gate refuses each planted defect', (t) => {
   const faraway = verdict(t, rendered).join('\n')
   assert.match(
     faraway,
-    /the drawing's label \d+ says "Please do not open a public issue"/,
+    /(the tall|wide) drawing's label \d+ says "Please do not open a public issue"/,
     'a label drawn from a sentence the page renders only in another region is not refused, so "the words beside the drawing" is reading the whole page rather than the words the drawing sits among',
   )
   assert.match(
@@ -1156,7 +2023,7 @@ test('the gate refuses each planted defect', (t) => {
   const overwide = planted(html, />the agent </, '>Fugaro runs a coding agent with its permission prompts turned off <')
   assert.match(
     verdict(t, overwide).join('\n'),
-    /the drawing's label \d+ says "Fugaro runs a coding agent with its permission prompts turned off" and is drawn from \d+\.\d+ to \d+\.\d+ units, and the card it is drawn in runs/,
+    /(the tall|wide) drawing's label \d+ says "Fugaro runs a coding agent with its permission prompts turned off" and is drawn from \d+\.\d+ to \d+\.\d+ units, and the card it is drawn in runs/,
     'a label wider than the card it is drawn in is not refused, so a phrase that grows in SECURITY.md overruns the picture with nothing here to notice',
   )
 
@@ -1186,24 +2053,254 @@ test('the gate refuses each planted defect', (t) => {
   // plant is anchored on the drawing's own class, because the layout's own markup carries
   // `aria-label`s of its own (the consent dialog, the sections menu) and an unanchored pattern
   // would take one of those off instead and prove nothing about the drawing.
-  const unnamed = planted(html, /(class="boundary-drawing"[^>]*?) aria-label="[^"]*"/, '$1')
+  const unnamed = planted(html, /(class="boundary-drawing boundary-drawing-tall"[^>]*?) aria-label="[^"]*"/, '$1')
   assert.match(verdict(t, unnamed).join('\n'), /role="img" and an aria-label of ""/, 'a drawing with no accessible name is not refused')
 
   // The picture with its role taken off: the labels become loose text rather than one image.
-  const unroled = planted(html, /(class="boundary-drawing"[^>]*?) role="img"/, '$1')
+  const unroled = planted(html, /(class="boundary-drawing boundary-drawing-tall"[^>]*?) role="img"/, '$1')
   assert.match(verdict(t, unroled).join('\n'), /role="" and an aria-label/, 'a drawing that is not an image to a screen reader is not refused')
 
   // The labels gone: the drawing is still there and draws nothing the document describes.
   const unlabelled = planted(html, /<text[^>]*>[^<]*<\/text>/g, '')
-  assert.match(verdict(t, unlabelled).join('\n'), /the drawing carries 0 labels/, 'a drawing with no labels is not refused')
+  assert.match(verdict(t, unlabelled).join('\n'), /the tall drawing carries 0 labels/, 'a drawing with no labels is not refused')
 
   // The facts gone from under the picture: the brief's "the same facts as a short list".
   const unfacted = planted(html, /<ul class="boundary-facts">[\s\S]*?<\/ul>/, '')
-  assert.match(verdict(t, unfacted).join('\n'), /where the brief asks for the picture, the facts as one list under it/, 'a diagram with the facts taken out from under the picture is not refused')
+  assert.match(verdict(t, unfacted).join('\n'), /where the brief asks for the picture/, 'a diagram with the facts taken out from under the picture is not refused')
 
-  // A second drawing beside the first: the brief asks for one.
-  const twice = planted(html, /<figure>/, '<figure><svg role="img" aria-label="A second drawing"></svg>')
-  assert.match(verdict(t, twice).join('\n'), /carries 2 drawings where the boundary diagram is one picture/, 'a second drawing in the diagram is not refused')
+  // A drawing too many beside the two layouts: the brief asks for one diagram, drawn twice.
+  const twice = planted(html, /<figure>/, '<figure><svg role="img" aria-label="A third drawing"></svg>')
+  assert.match(
+    verdict(t, twice).join('\n'),
+    /carries 3 drawings where the boundary diagram is one picture drawn twice/,
+    'a third drawing in the diagram is not refused, so the figure can carry a picture nobody asked for',
+  )
+
+  // ---- the two layouts (the owner's feedback of 2026-10-21) ----------------------------
+  //
+  // The arrangement the owner asked for is one picture at two layouts with the stylesheet
+  // rendering one of them at a time, so each of the four rules that holds it is planted here and
+  // seen to fire — as the rules that hold the drawing's own geometry are above.
+
+  // A layout with its class taken off: the drawing is there and which of the two it is is a
+  // question nothing can answer, so the changeover and the fold below have no drawing to read.
+  const unclassed = planted(html, 'class="boundary-drawing boundary-drawing-wide"', 'class="boundary-drawing"')
+  assert.match(
+    verdict(t, unclassed).join('\n'),
+    /carries 0 drawings marked `boundary-drawing-wide`/,
+    'a layout with no class of its own is not refused, so a page can carry one drawing and no second layout at all',
+  )
+
+  // The two layouts saying different things: the words are the document's on both sides and
+  // every label is a phrase of it, so the only rule that can see this is the one that holds the
+  // two to the same picture — which is what makes the owner's "the same drawing" true rather
+  // than assumed.
+  const mismatched = planted(html, />turned off </, '>not on by default <')
+  assert.match(
+    verdict(t, mismatched).join('\n'),
+    /do not say the same thing/,
+    'a label changed in one layout and not the other is not refused, so a reader gets one claim on a phone and another on a desktop',
+  )
+
+  // The tall drawing left rendered where no media query holds: both layouts at once. The plant
+  // takes the `display` off the rule that turns it off, which is also what the `hidden` attribute
+  // below is read against.
+  const both = planted(html, 'max-width:22.5rem;display:none', 'max-width:22.5rem')
+  assert.match(
+    verdict(t, both).join('\n'),
+    /the tall drawing is `display: block` outside every media query|the tall drawing is `display: [a-z]+` outside every media query/,
+    'a tall drawing left rendered outside every media query is not refused, so a desktop can be shown both drawings at once',
+  )
+  assert.match(
+    verdict(t, both).join('\n'),
+    /carries the `hidden` attribute and the page's stylesheet renders it/,
+    'the `hidden` attribute and the stylesheet are not held to the same answer, so `hidden` can name one drawing and the CSS render the other',
+  )
+
+  // The changeover read from the wrong side: the same width, and the two layouts swapped for a
+  // desktop and a phone. This is the defect the side is read for.
+  const above = planted(html, '@media (width<=70rem)', '@media (width>=70rem)')
+  assert.match(
+    verdict(t, above).join('\n'),
+    /a phone is met with the tall drawing rather than with the shrunk wide one/,
+    'a changeover read from above is not refused, so the tall drawing is shown to a desktop and the shrunk wide one to the phone it cannot be read on',
+  )
+
+  // The wide drawing turned off where no query holds: a reader above the changeover is left with
+  // no drawing at all.
+  const nothing = planted(
+    html,
+    '.boundary-drawing{width:100%;max-width:100%;height:auto;display:block}',
+    '.boundary-drawing{width:100%;max-width:100%;height:auto;display:none}',
+  )
+  assert.match(
+    verdict(t, nothing).join('\n'),
+    /the wide drawing is `display: none` outside every media query/,
+    'a wide drawing turned off outside every query is not refused, so a desktop above the changeover gets no drawing',
+  )
+
+  // The first rule's other half: the two layouts given no `display` at all outside a media query.
+  // The plant takes the value off the rule both classes fall back to, so which drawing a reader at
+  // a width no query names gets is the browser's own rendering of an `<svg>` rather than the
+  // page's — and the check says that rather than passing the pair.
+  const undeclared = planted(
+    html,
+    '.boundary-drawing{width:100%;max-width:100%;height:auto;display:block}',
+    '.boundary-drawing{width:100%;max-width:100%;height:auto}',
+  )
+  assert.match(
+    verdict(t, undeclared).join('\n'),
+    /declares no `display` for the wide drawing outside a media query/,
+    'a page whose stylesheet gives the layouts no `display` where no query holds is not refused, so which drawing a reader gets can be the browser\'s choice rather than the page\'s',
+  )
+
+  // The second rule's other half: the drawing the stylesheet turns off with nothing on it to say
+  // so. `hidden` is what a reader whose stylesheet never arrives gets, and that reader is left
+  // with whichever drawing the markup and the CSS disagree about.
+  const unmarked = planted(html, 'focusable="false" hidden>', 'focusable="false">')
+  assert.match(
+    verdict(t, unmarked).join('\n'),
+    /the tall drawing is `display: none` outside every media query and does not carry the `hidden` attribute/,
+    'a drawing the stylesheet turns off with no `hidden` on it is not refused, so a reader whose stylesheet never arrives gets no drawing at all',
+  )
+
+  // The third rule with no changeover at all, and with two. The query is the page's own built
+  // text rather than a shape typed here: `planted` refuses an edit that does not land, so a
+  // stylesheet that wrote its query another way fails this fixture rather than passing it.
+  const QUERY =
+    '@media (width<=70rem){[data-security-diagram] .boundary-drawing-wide{display:none}[data-security-diagram] .boundary-drawing-tall{display:block}}'
+  const nowhere = planted(html, QUERY, '')
+  assert.match(
+    verdict(t, nowhere).join('\n'),
+    /has no media query that declares either drawing, so the two layouts never change over/,
+    'a page with no changeover at all is not refused, so a phone is left with the shrunk wide drawing above every width',
+  )
+
+  const two = planted(
+    html,
+    QUERY,
+    `${QUERY}@media (width<=50rem){[data-security-diagram] .boundary-drawing-wide{display:none}}`,
+  )
+  assert.match(
+    verdict(t, two).join('\n'),
+    /switches the two drawings at 2 different widths/,
+    'two changeovers are not refused, so a reader between the two widths gets a layout the page never chose',
+  )
+
+  // And the wide drawing left on below the changeover: both layouts at once, which is the picture
+  // drawn twice and read twice.
+  const wideshown = planted(html, QUERY, QUERY.replace('.boundary-drawing-wide{display:none}', '.boundary-drawing-wide{display:block}'))
+  assert.match(
+    verdict(t, wideshown).join('\n'),
+    /turned off below the same width the tall one is turned on below/,
+    'a wide drawing left on below the changeover is not refused, so a desktop is shown both drawings at once',
+  )
+
+  // And the wide drawing's own two numbers: its labels too small to read where it is shown, and
+  // a picture too tall for the first screen. Both are the arithmetic the desktop layout rests on
+  // rather than anything a reader can see in the markup.
+  const tiny = planted(html, /font-size="14"/g, 'font-size="8"')
+  assert.match(
+    verdict(t, tiny).join('\n'),
+    /the wide drawing's smallest label is 8 units, which is \d+\.\d+ px in the \d+ px box the page draws it in/,
+    'a wide drawing whose labels are too small to read where it is shown is not refused, so the desktop layout can be one nobody can read',
+  )
+
+  const tall = planted(html, 'viewBox="0 0 1180 400"', 'viewBox="0 0 1180 900"')
+  assert.match(
+    verdict(t, tall).join('\n'),
+    /the headline and the whole drawing do not fit a 1440 × 800 first screen/,
+    'a wide drawing too tall for the first screen is not refused, which is the very thing the owner asked for: the drawing does not fit above the fold on a desktop',
+  )
+
+  // And the width the drawing is actually rendered at, which is the box both of those numbers are
+  // taken in. The wide drawing's own class is capped at 600 px while the column the page gives it
+  // stays 1024 px: the drawing is scaled into the 600 px, so its 14-unit labels render at about
+  // 7 px and the fold is measured against a box half the width of the one the check would have
+  // used. The cap is planted on the layout's own class rather than on the shared rule because
+  // that is where a cap belongs — the shared pair is pinned by the two plants below it.
+  const capped = planted(
+    html,
+    '[data-security-diagram] .boundary-drawing-tall{max-width:22.5rem;display:none}',
+    '[data-security-diagram] .boundary-drawing-tall{max-width:22.5rem;display:none}[data-security-diagram] .boundary-drawing-wide{max-width:600px}',
+  )
+  assert.match(
+    verdict(t, capped).join('\n'),
+    /which is 7\.12 px in the 600 px box the page draws it in at 1120 px — the narrowest viewport it is shown at, the 1024 px column capped by the wide drawing's own `max-width`/,
+    'a wide drawing capped narrower than the column is not refused, so the label floor is taken against a box the drawing is never drawn in and a label half the readable size passes',
+  )
+
+  // The pair that says the box the two numbers are taken in is the column every time: the class
+  // both layouts carry gives the drawing `width: 100%` and no ceiling of the site's own, so a cap
+  // is a layout class's own and is read as one. Both halves are planted — a ceiling under the
+  // column, and no width at all — because a shared rule that declares one of them and not the
+  // other is a drawing whose rendered width this check is guessing at.
+  const SHARED = '.boundary-drawing{width:100%;max-width:100%;height:auto;display:block}'
+  const sharedCap = planted(html, SHARED, '.boundary-drawing{width:100%;max-width:600px;height:auto;display:block}')
+  assert.match(
+    verdict(t, sharedCap).join('\n'),
+    /the `boundary-drawing` class both layouts carry declares `width: 100%` and `max-width: 600px` outside every media query/,
+    'a drawing capped under the column by the class both layouts carry is not refused, so the page lays the drawing out in a box neither the label floor nor the fold is taken in',
+  )
+
+  const sharedWidth = planted(html, SHARED, '.boundary-drawing{max-width:100%;height:auto;display:block}')
+  assert.match(
+    verdict(t, sharedWidth).join('\n'),
+    /the `boundary-drawing` class both layouts carry declares no `width` and `max-width: 100%` outside every media query/,
+    "a shared rule that never gives the drawing the column's width is not refused, so the width the drawing is rendered at is the browser's own rendering of an `<svg>` rather than the page's",
+  )
+
+  // The five refusals that are about what this check **cannot read**: the page's own numbers, the
+  // drawing's own shape, or a cap on the drawing, turned into something nothing here can turn back
+  // into pixels. They are guard rails rather than defects a reader meets, and each is planted the
+  // same way — the one value the arithmetic is taken at is made unreadable — because a branch whose
+  // refusal has never been seen to fire is a branch nobody knows the shape of, which is the same
+  // reason every other rule here has a plant.
+  const noCeiling = planted(html, '--page-max:72rem;', '--page-max:fit-content;')
+  assert.match(
+    verdict(t, noCeiling).join('\n'),
+    /that box is where the wide drawing's label size is taken/,
+    'a column this check cannot read is not refused, so the label floor is taken against a guess or against nothing',
+  )
+
+  // The cap read the same way: a `max-width` on the drawing's own class that is not a length this
+  // check can turn into pixels leaves the box the floor and the fold are taken in unknown, which is
+  // a refusal rather than a fall back to the column.
+  const unreadableCap = planted(
+    html,
+    '[data-security-diagram] .boundary-drawing-tall{max-width:22.5rem;display:none}',
+    '[data-security-diagram] .boundary-drawing-tall{max-width:22.5rem;display:none}[data-security-diagram] .boundary-drawing-wide{max-width:thin}',
+  )
+  assert.match(
+    verdict(t, unreadableCap).join('\n'),
+    /that box is where the wide drawing's label size is taken/,
+    'a cap this check cannot turn into pixels is not refused, so the label floor is taken against a box nothing here has',
+  )
+
+  // The plant takes the drawing's own **width** out of its `viewBox`: the labels are still the
+  // page's, and the number they are scaled into is the one nothing here can take. (`nope` in the
+  // height's place is a different refusal — the one below — because a missing height is a fold
+  // nothing can be claimed about while a missing width is a label size nothing can be taken at.)
+  const noNumbers = planted(html, 'viewBox="0 0 1180 400"', 'viewBox="0 0 nope 400"')
+  assert.match(
+    verdict(t, noNumbers).join('\n'),
+    /and \d+ label sizes this check cannot read/,
+    'a drawing whose own units cannot be read is not refused, so the size its labels are rendered at is not a number anything here can take',
+  )
+
+  const noHeight = planted(html, 'viewBox="0 0 1180 400"', 'viewBox="0 0 1180 0"')
+  assert.match(
+    verdict(t, noHeight).join('\n'),
+    /with no height this check can read, so nothing here can say whether it fits a first screen/,
+    'a drawing with no readable height is not refused, so the fold is claimed about a shape nothing here has',
+  )
+
+  const noLeading = planted(html, '--leading-display:.94;', '--leading-display:roomy;')
+  assert.match(
+    verdict(t, noLeading).join('\n'),
+    /the room above the drawing and the box it is drawn in at 1440 px cannot be read out of the page's own stylesheet/,
+    'a part of the room above the drawing that cannot be read is not refused, so the fold is measured with a header, a headline or a heading standing in as nothing',
+  )
 
   // A script in the drawing: the brief's "No JavaScript", and the site loads one first-party
   // file and no other.
@@ -1212,7 +2309,7 @@ test('the gate refuses each planted defect', (t) => {
 
   // A paragraph slipped into the diagram, where the balance counts it as the region's own text
   // and passes it: the shape rule is what sees this one.
-  const inDiagram = planted(html, /(<section data-security-diagram>)/, '$1<p>A friendly note about the model.</p>')
+  const inDiagram = planted(html, /(<section\b[^>]*data-security-diagram[^>]*>)/, '$1<p>A friendly note about the model.</p>')
   assert.match(verdict(t, inDiagram).join('\n'), /the boundary diagram carries a <p> that is not part of it/, 'a paragraph inside the diagram is not refused')
 
   // A second title. This is the one defect that used to switch the gate off: the title rule
@@ -1255,7 +2352,7 @@ test('the gate refuses each planted defect', (t) => {
   // region — the diagram's copy is refused by the diagram's own rule.
   const glued = planted(
     html,
-    /(<section data-security-summary>[\s\S]*?)is listed in <code>followup\.trusted<\/code>/,
+    /(<section\b[^>]*data-security-summary[^>]*>[\s\S]*?)is listed in <code>followup\.trusted<\/code>/,
     '$1is listed infollowup.trusted',
   )
   assert.match(
@@ -1356,6 +2453,119 @@ test('the gate refuses each planted defect', (t) => {
     '$1https://github.com/dimipaun/fugaro/blob/main/docs/design/v1.md"',
   )
   assert.match(verdict(t, elsewhere).join('\n'), /sends a reader to/, 'a policy link to another file is not refused')
+})
+
+test('the page is drawn in the site’s bold look', () => {
+  assert.deepEqual(
+    boldLookFailures(DIST),
+    [],
+    `the security page is not drawn in the bold look the owner approved on the homepage and the product pages (the owner's brief of 2026-10-21):\n  ${boldLookFailures(DIST).join('\n  ')}`,
+  )
+})
+
+test('the bold look refusals fire on the defect each one names', (t) => {
+  const html = builtPage(DIST)
+  assert.ok(html !== null, `${BUILT} is not in the artifact: run \`npm run check\` from website/ so this gate has a page to read`)
+  const refusals = (edited) => verdict(t, edited, boldLookFailures).join('\n')
+
+  // The title back at the browser's `h1`: the page as it was before the redesign.
+  const plainTitle = planted(html, 'class="security-title display-xl"', 'class="security-title"')
+  assert.match(refusals(plainTitle), /and not the display scale's largest step/, 'a title that is not the display scale is not refused')
+
+  // The gradient narrowed to the page's own class rather than the site's — a page that drew
+  // the accent locally is the same defect one level down: the class is named and the rule is
+  // not, so the headline is drawn in one flat tone.
+  const noGradient = planted(html, /<span class="gradient-text">Security<\/span>/, 'Security')
+  assert.match(
+    refusals(noGradient),
+    /carries 0 `gradient-text` spans where the bold look draws the headline's words in the accent's gradient/,
+    'a headline with no gradient accent is not refused, so the page could drop the accent the redesign is built on',
+  )
+
+  // A section heading left to the browser: one of the page's three, because one is enough to
+  // fail the rule it names.
+  const plainHeading = planted(html, /<h2 class="display-md"/, '<h2')
+  assert.match(refusals(plainHeading), /and not the display scale's middle step/, 'a section heading that is not the display scale is not refused')
+
+  // A block that is not the site's card: the summary taken off its box, which the rule reads
+  // by the region's own marker rather than by the class alone.
+  const bareSummary = planted(html, 'class="card security-summary"', 'class="security-summary"')
+  assert.match(
+    refusals(bareSummary),
+    /the document's summary carries class "security-summary" and not the site's card/,
+    'a block that is not drawn on the site\'s card is not refused, so the page could grow a shape of its own beside the homepage\'s',
+  )
+
+  // The room between the blocks cut to a number: the rhythm the gate is here for. The plant is
+  // anchored on the page's own container rule, so it cannot be met by another `gap` in the
+  // stylesheet, and the number it plants is below the floor as well as off the scale.
+  const cramped = planted(
+    html,
+    /(\[data-security-page\]\{[^}]*?)gap:var\(--space-xl\)/,
+    '$1gap:4px',
+  )
+  assert.match(
+    refusals(cramped),
+    /sets the room between its blocks with "4px" and not with a step of the site's spacing scale/,
+    'a page whose blocks are set apart by a number rather than by a step of the scale is not refused',
+  )
+
+  // And the other half of the same rule: a step of the scale that is too small for the bold
+  // look's room. This is the defect the floor exists for — a page that keeps the scale and
+  // loses the room.
+  const tight = planted(
+    html,
+    /gap:var\(--space-xl\)/,
+    'gap:var(--space-3xs)',
+  )
+  assert.match(
+    refusals(tight),
+    /at `--space-3xs` \(\d+px\) where the bold look's blocks are set apart generously/,
+    'a step of the scale below the floor is not refused, so the room the bold look gives its blocks is a taste nothing measures',
+  )
+
+  // The container the `gap` means nothing in: a page whose blocks are laid out in a block box
+  // reads as one that sets its rhythm — the declaration is right there in the stylesheet — and
+  // draws nothing. The rule above cannot see it, because it reads the declaration and not
+  // whether the declaration spaces anything.
+  const inert = planted(html, /(\[data-security-page\]\{[^}]*?)display:flex/, '$1display:block')
+  assert.match(
+    refusals(inert),
+    /is "block" where the page's rhythm is a `gap`/,
+    'a `gap` on a block container is not refused, so the page could carry the declaration that draws nothing and pass as one with a rhythm',
+  )
+
+  // And the container the `gap` is room in the wrong direction for: a flex row lays the four
+  // blocks out side by side and the `gap` becomes room between columns.
+  const row = planted(html, /(\[data-security-page\]\{[^}]*?)flex-direction:column/, '$1flex-direction:row')
+  assert.match(
+    refusals(row),
+    /is a flex row \("row"\) where its blocks are a column/,
+    'a flex row is not refused, so the page could turn its one column into a row and keep the `gap` it measures',
+  )
+
+  // **The doubled rhythm, which is the defect this half of the gate exists for.** A block that
+  // keeps the margin it carried while the page was a plain flow gives the `gap` twice: the page
+  // says `--space-xl` and a reader gets that step plus the block's `--space-lg`. This is the
+  // plant that reddens the margin rule and nothing else — the `gap` it reads is correct.
+  const doubled = planted(html, '[data-security-summary]{margin:0}', '[data-security-summary]{margin:0 0 var(--space-lg)}')
+  assert.match(
+    refusals(doubled),
+    /the document's summary carries a `margin-bottom` of "var\(--space-lg\)" \(32px\)[\s\S]*renders at 80px where the page says one step of the scale/,
+    'a block whose own margin is added to the gap is not refused, so the room between two blocks renders at 80 px where the page says one step — the doubled rhythm the homepage gate refuses',
+  )
+
+  // And the same defect arriving from `base.css` rather than from the page: the pointer is a
+  // `<p>`, so the site's own prose rule gives it a margin below the moment the page stops
+  // saying `margin: 0`. This is why the reading resolves the cascade instead of skipping it —
+  // `:where(p, …)` is worth nothing, so the page's zero is what is in force, and the plant is
+  // the page's zero taken away.
+  const unmargined = planted(html, /(\[data-security-policy\]\.card\{[^}]*?)margin:0\}/, '$1}')
+  assert.match(
+    refusals(unmargined),
+    /the pointer to the document carries a `margin-bottom` of "var\(--space-sm\)" \(16px\)/,
+    "a block whose margin comes from base.css rather than from the page is not refused, so the site's own prose rule could pad the gap behind the page's back",
+  )
 })
 
 test('the page points at no file the build does not produce', () => {

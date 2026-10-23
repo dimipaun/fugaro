@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -83,7 +84,7 @@ func doctorChecksByID(t *testing.T) map[string]doctorCheck {
 // refuses the node), policy-vs-jobs (warning), allow-list-empty (warning) and
 // policy-rules-skew
 // (warning, in all three of the states it exists for: the fixture an older
-// CLI's init --firebase leaves — the marker at RulesVersion and the deployed
+// CLI's update --firebase-project leaves — the marker at RulesVersion and the deployed
 // rules from before the policy nodes — a marker present but below
 // RulesVersion, and a marker above it, which means the deployed rules come
 // from a *newer* Fugaro and this binary must not redeploy its own template
@@ -127,7 +128,7 @@ func doctorChecksByID(t *testing.T) map[string]doctorCheck {
 // shares with the deploy (verified, run and restored): replace infra.SameJSON
 // in doctorRulesSkew with `string(live) == string(want)` — "the deployed rules
 // differ only in formatting" fails, the check warning about the generated rules
-// re-indented, which `fugaro init --firebase` itself (infra.Plan, the same
+// re-indented, which `fugaro update --firebase-project` itself (infra.Plan, the same
 // SameJSON) would leave alone. Mutation for the unknown-key check (verified,
 // run and restored): drop the `len(p.UnknownKeys) > 0` branch from
 // doctorPolicyChecks — "a policy node with a key this Fugaro does not know"
@@ -234,7 +235,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !strings.Contains(c.Problem, "governs nothing") {
 			t.Errorf("doctor reported a node no run reads as the policy in force: %+v", c)
 		}
-		if !strings.Contains(c.Fix, "fugaro init --firebase") {
+		if !strings.Contains(c.Fix, "fugaro update --firebase-project") {
 			t.Errorf("the line does not name what makes the node govern: %+v", c)
 		}
 	})
@@ -333,7 +334,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 	})
 
 	t.Run("rules older than the marker", func(t *testing.T) {
-		// The state an older CLI's `fugaro init --firebase` leaves: it
+		// The state an older CLI's `fugaro update --firebase-project` leaves: it
 		// redeploys rules from before the policy nodes and the marker stays,
 		// so a published policy becomes unreadable and every budget-on run
 		// halts.
@@ -344,10 +345,10 @@ func TestDoctorPolicyChecks(t *testing.T) {
 			t.Fatalf("policy-rules-skew = %+v (present %v), want a warning", c, ok)
 		}
 		if !strings.Contains(c.Problem, "the deployed rules are older than the marker "+projectpolicy.PathRulesMarker()) ||
-			!strings.Contains(c.Problem, "re-run 'fugaro init --firebase' with fugaro >= "+policySince) {
+			!strings.Contains(c.Problem, "re-run 'fugaro update --firebase-project' with fugaro >= "+policySince) {
 			t.Errorf("the check does not print the halt's own sentence: %+v", c)
 		}
-		if !strings.Contains(c.Fix, "fugaro init --firebase") {
+		if !strings.Contains(c.Fix, "fugaro update --firebase-project") {
 			t.Errorf("the check does not name the owner's fix: %+v", c)
 		}
 		if !strings.Contains(c.Fix, "newer Fugaro") {
@@ -361,7 +362,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 	t.Run("the deployed rules differ only in formatting", func(t *testing.T) {
 		// The check must ask the question the deploy asks. The deployed document
 		// comes back as the database holds it, and a document is not a skew for
-		// being spelled with different whitespace: `fugaro init --firebase`
+		// being spelled with different whitespace: `fugaro update --firebase-project`
 		// considers the rules current whenever infra.SameJSON does, so a check
 		// comparing bytes would warn about an installation the deploy itself
 		// leaves alone — and the operator's remedy for this warning is that very
@@ -453,7 +454,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		// The other direction, and the review of PR #402's point: a marker above
 		// this binary's RulesVersion was written by a *newer* Fugaro, so the
 		// deployed rules are a generation this binary does not know. Meeting that
-		// state with "rules older than the marker: re-run init --firebase" sends
+		// state with "rules older than the marker: re-run update --firebase-project" sends
 		// the operator to redeploy this release's template over newer rules — a
 		// downgrade of the rules the policy nodes are protected by.
 		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
@@ -482,7 +483,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !strings.Contains(c.Fix, "upgrade Fugaro") {
 			t.Errorf("the check does not name the fix that does not downgrade: %+v", c)
 		}
-		if strings.Contains(c.Fix, "re-run 'fugaro init --firebase' with fugaro") {
+		if strings.Contains(c.Fix, "re-run 'fugaro update --firebase-project' with fugaro") {
 			t.Errorf("the fix tells this binary to redeploy its own template over newer rules: %+v", c)
 		}
 		// The deploy path refuses this state itself (internal/infra's DB.Plan,
@@ -490,7 +491,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		// does now — refuses — rather than warn about a redeploy the operator
 		// would have to avoid by reading a warning.
 		if !strings.Contains(c.Fix, "refuses this state rather than redeploying generation") {
-			t.Errorf("the fix does not say that init --firebase refuses this state: %+v", c)
+			t.Errorf("the fix does not say that update --firebase-project refuses this state: %+v", c)
 		}
 	})
 
@@ -513,7 +514,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !strings.Contains(c.Problem, "below the generation") || !strings.Contains(c.Problem, "publishing one is refused") {
 			t.Errorf("the check does not say the marker is below the generation a policy is read under: %+v", c)
 		}
-		if !strings.Contains(c.Fix, "fugaro init --firebase") {
+		if !strings.Contains(c.Fix, "fugaro update --firebase-project") {
 			t.Errorf("the check does not name the owner's fix: %+v", c)
 		}
 		// The sentence must not be the other state's. "the deployed rules are
@@ -563,7 +564,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !strings.Contains(c.Problem, "a published policy is read and enforced") {
 			t.Errorf("the between-generations body does not say the policy still governs: %+v", c)
 		}
-		if !strings.Contains(c.Fix, "fugaro init --firebase") {
+		if !strings.Contains(c.Fix, "fugaro update --firebase-project") {
 			t.Errorf("the check does not name the owner's fix: %+v", c)
 		}
 		// Generation 3's new conjunct is a *lockout* for any phone account with
@@ -591,7 +592,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		// predate the policy nodes — while projectpolicy.Read reads the same
 		// node as the hand edit it is (a MarkerError; a launcher's -1 would
 		// otherwise take a published policy out of every run's reach). The
-		// operator told "re-run init --firebase" would redeploy rules that are
+		// operator told "re-run update --firebase-project" would redeploy rules that are
 		// not what is wrong and come back to the same marker, and doctor's own
 		// report would contradict the publish refusal on the very same node
 		// (the review finding on this change). One predicate
@@ -613,7 +614,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if strings.Contains(c.Problem, "older than the marker") {
 			t.Errorf("the hand-edited-marker body reuses the document state's sentence: %+v", c)
 		}
-		if !strings.Contains(c.Fix, "fugaro init --firebase") {
+		if !strings.Contains(c.Fix, "fugaro update --firebase-project") {
 			t.Errorf("the check does not name the fix that writes the marker: %+v", c)
 		}
 		// A model-level fix: the rules and the marker are the model's, so the
@@ -1088,7 +1089,7 @@ func doctorSwitchTo(via string) func(*projectpolicy.Policy) {
 // it" — the opposite of what every run does.
 //
 // The mode the check answers the node's silence with is the job's own: this
-// machine's config, whose ceiling init --repo deploys into the environment, the
+// machine's config, whose ceiling update --repo deploys into the environment, the
 // same reading the drift note compares the deployed job with. Both sides are
 // exercised here, so the check is pinned to that reading rather than to the
 // string "off" happening to be wrong.
@@ -1223,4 +1224,277 @@ func layerBucketWith(t *testing.T, text string) string {
 // providers block is a separate thing, and the check must not resolve over it.
 func doctorRunRoutes(allow, repos string) string {
 	return "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n    auth: bearer\n    secret: openrouter-api-key\n    models: [\"anthropic/claude-sonnet-5.5\"]\n    allow_data_to: " + allow + "\nrepos:\n" + repos
+}
+
+// TestDoctorReportsBroken is C1.21's doctor finding: a credential the service
+// marked broken (a 401, D139) is reported, naming the account, because nothing
+// else in the installation says it — the cascade routes around the account
+// silently, and an operator only finds out from `fugaro accounts ls` or here.
+// An exhausted account is not a broken one and is not reported: its mark ends
+// by itself at the reset time the upstream gave.
+func TestDoctorReportsBroken(t *testing.T) {
+	_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+	now := time.Now().UTC().Truncate(time.Second)
+	db.Set(credsMarkPath("acme-overflow"), map[string]any{
+		"state": "exhausted", "until": now.Add(time.Hour).Format(time.RFC3339Nano)})
+
+	if c, ok := doctorChecksByID(t)["creds-broken"]; ok {
+		t.Fatalf("doctor reported creds-broken with no broken mark: %+v", c)
+	}
+
+	db.Set(credsMarkPath("acme-personal"), map[string]any{
+		"state": "broken", "since": now.Add(-time.Minute).Format(time.RFC3339Nano)})
+	c, ok := doctorChecksByID(t)["creds-broken"]
+	if !ok {
+		t.Fatal("doctor did not report the broken account")
+	}
+	if c.Severity != "warning" {
+		t.Errorf("severity = %q, want warning (--strict must fail on it)", c.Severity)
+	}
+	if !strings.Contains(c.Problem, "acme-personal") {
+		t.Errorf("problem does not name the broken account: %q", c.Problem)
+	}
+	if strings.Contains(c.Problem, "acme-overflow") {
+		t.Errorf("problem names the exhausted account too: %q", c.Problem)
+	}
+	if !strings.Contains(c.Fix, "accounts clear") {
+		t.Errorf("fix does not name the command that clears it: %q", c.Fix)
+	}
+	// The names are database keys and are printed sanitised, like every other
+	// name a bucket or a database carries.
+	db.Set(credsMarkPath("evil\x1b[31mname"), map[string]any{"state": "broken"})
+	if c := doctorChecksByID(t)["creds-broken"]; strings.Contains(c.Problem, "\x1b") {
+		t.Fatalf("a raw control character reached doctor's output: %q", c.Problem)
+	}
+}
+
+// TestDoctorCredsBrokenReadFailure: the marks read can fail — the deployed
+// rules can refuse it, the database can be down, or the subtree can carry a
+// node this release does not model — and doctor must say so. An empty result
+// and a failed read are the same output to an operator, and only one of them
+// is a fact; the branch that reports the failure is also the one an error
+// returning nil would silently delete, because "no broken account" passes every
+// test that only ever seeds a mark that reads.
+func TestDoctorCredsBrokenReadFailure(t *testing.T) {
+	_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+	// A broken mark that a read WOULD have found: the check's silence below is
+	// the refusal, not an empty subtree.
+	db.Set(credsMarkPath("acme-personal"), map[string]any{
+		"state": "broken", "since": time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano)})
+	db.DenyRead("creds")
+
+	c, ok := doctorChecksByID(t)["creds-broken"]
+	if !ok {
+		t.Fatal("doctor reported nothing for a marks read that failed: an empty result reads exactly like 'no admitted account is broken'")
+	}
+	if c.Severity != "info" {
+		t.Errorf("severity = %q, want info (a read that did not answer is not a finding about the installation)", c.Severity)
+	}
+	if !strings.Contains(c.Problem, "could not be read") {
+		t.Errorf("problem does not say the read failed: %q", c.Problem)
+	}
+	if c.Fix == "" {
+		t.Error("fix is empty: doctor's shape for a read that did not answer is a note with a remedy")
+	}
+}
+
+// TestDoctorRefusesAnotherProjectsDatabase: every check doctorPolicyChecks
+// makes reads the budget database as this project's own — the published
+// policy, the rules markers and the credential marks — so a budget.rtdb_url
+// pointing at another project's database must be caught before any of them
+// reads it (checkDBProject, the check every other reader and writer makes).
+// Doctor's shape for a read that did not answer is a note, so the finding is
+// an info check naming the other project, and nothing below it is reported:
+// the other project's broken accounts are not this one's.
+func TestDoctorRefusesAnotherProjectsDatabase(t *testing.T) {
+	cascade := func(p *projectpolicy.Policy) {
+		p.Routing = &projectpolicy.Routing{Claude: &projectpolicy.ClaudeRoute{Via: projectpolicy.RouteCascade}}
+	}
+	_, db := doctorPolicyRig(t, doctorPolicy(cascade), "")
+	db.Set("fugaro/project", "birch") // the database belongs to a different project
+	db.Set(credsMarkPath("acme-personal"), map[string]any{
+		"state": "broken", "since": time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano)})
+
+	checks := doctorChecksByID(t)
+	c, ok := checks["policy-published"]
+	if !ok || c.Severity != "info" || !strings.Contains(c.Problem, "birch") {
+		t.Fatalf("policy-published = %+v, want an info note naming the other project", c)
+	}
+	for _, id := range []string{"creds-broken", "creds-rules", "policy-rules-skew"} {
+		if c, ok := checks[id]; ok {
+			t.Errorf("doctor reported %s from another project's database: %+v", id, c)
+		}
+	}
+}
+
+// TestDoctorReportsAMarkStateItDoesNotRead: the marks subtree is shared with
+// every other release of Fugaro and with whatever writes it by hand, so it can
+// carry a state this one does not read — `quota_hold` here, the shape a newer
+// release's new hold would arrive in. Such a mark is a hold (creds.Usable
+// fails closed on it, and both writers refuse to replace it), so the cascade
+// routes no work to that credential and `fugaro accounts clear` refuses it:
+// nothing an operator can run on this release takes it off, which is exactly
+// the state doctor exists to name. The word is the node's own, and it is
+// printed so the operator can recognise it.
+func TestDoctorReportsAMarkStateItDoesNotRead(t *testing.T) {
+	_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+	now := time.Now().UTC().Truncate(time.Second)
+	db.Set(credsMarkPath("acme-personal"), map[string]any{
+		"state": "quota_hold", "until": now.Add(time.Hour).Format(time.RFC3339Nano)})
+
+	checks := doctorChecksByID(t)
+	c, ok := checks["creds-unknown-state"]
+	if !ok {
+		t.Fatal("doctor said nothing about a mark in a state this release does not read: the credential is held and no command here clears it")
+	}
+	if c.Severity != "warning" {
+		t.Errorf("severity = %q, want warning (a held credential of this installation; --strict must fail on it)", c.Severity)
+	}
+	if !strings.Contains(c.Problem, "acme-personal") {
+		t.Errorf("problem does not name the account: %q", c.Problem)
+	}
+	if !strings.Contains(c.Problem, "quota_hold") {
+		t.Errorf("problem does not name the state it does not read: %q", c.Problem)
+	}
+	if c.Fix == "" {
+		t.Error("fix is empty: doctor's shape for a finding is a note with a remedy")
+	}
+	// The same read answers creds-broken, and the two must not be confused:
+	// quota_hold is not a 401, so the broken finding stays away.
+	if b, ok := checks["creds-broken"]; ok {
+		t.Errorf("creds-broken reported a mark that is not broken: %+v", b)
+	}
+
+	// Every state this release reads is silent, including the empty one a
+	// never-written node carries — the finding is about the state table, not
+	// about a mark existing.
+	for _, state := range []string{"available", "exhausted", "backed_off", "broken", ""} {
+		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+		m := map[string]any{"state": state, "since": now.Format(time.RFC3339Nano),
+			"until": now.Add(time.Hour).Format(time.RFC3339Nano)}
+		if state == "" {
+			m = map[string]any{"since": now.Format(time.RFC3339Nano)}
+		}
+		db.Set(credsMarkPath("acme-personal"), m)
+		if c, ok := doctorChecksByID(t)["creds-unknown-state"]; ok {
+			t.Errorf("state %q is one this release reads, and doctor reported it: %+v", state, c)
+		}
+	}
+
+	// A state word is a value a newer release wrote, so it goes through the
+	// same sanitiser a name does before it reaches doctor's output.
+	_, db = doctorPolicyRig(t, doctorPolicy(nil), "")
+	db.Set(credsMarkPath("acme-personal"), map[string]any{"state": "hold\x1b[31m"})
+	c, ok = doctorChecksByID(t)["creds-unknown-state"]
+	if !ok {
+		t.Fatal("doctor did not report the unknown state, so the sanitiser below was never reached")
+	}
+	if strings.Contains(c.Problem, "\x1b") {
+		t.Fatalf("a raw control character reached doctor's output: %q", c.Problem)
+	}
+}
+
+// TestDoctorBrokenMarkFixRuns: the fix `fugaro doctor` prints for a broken
+// account has to be a command that runs, or --strict can never pass. The marks
+// belong to the project and claude_accounts is per-checkout (the shared config
+// strips it), so a mark can name an account this machine's config does not
+// carry — the ordinary case for a project several checkouts share — and the
+// clear takes any name the database carries a mark for. This is the loop end
+// to end: doctor names it, the command its fix prescribes clears it, and the
+// finding goes away.
+func TestDoctorBrokenMarkFixRuns(t *testing.T) {
+	_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+	db.Set(credsMarkPath("team-shared"), map[string]any{
+		"state": "broken", "since": time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano)})
+
+	c, ok := doctorChecksByID(t)["creds-broken"]
+	if !ok || !strings.Contains(c.Problem, "team-shared") {
+		t.Fatalf("doctor did not name the broken account this machine's config does not carry: %+v", c)
+	}
+	if !strings.Contains(c.Fix, "accounts clear") {
+		t.Fatalf("the fix does not name the command that clears it: %q", c.Fix)
+	}
+
+	// The prescribed command, on the same installation: the name is not in
+	// this machine's claude_accounts (the rig's config has none), and the mark
+	// is what makes it one this installation has.
+	if _, _, err := execute(t, "accounts", "clear", "team-shared", "--yes"); err != nil {
+		t.Fatalf("the fix doctor printed does not run: %v", err)
+	}
+	if m, _ := db.Value(credsMarkPath("team-shared")).(map[string]any); m["state"] != "available" {
+		t.Fatalf("the mark doctor named was not cleared: %v", m)
+	}
+	if c, ok := doctorChecksByID(t)["creds-broken"]; ok {
+		t.Fatalf("doctor still reports the account it named: %+v", c)
+	}
+}
+
+// TestDoctorReportsTheCascadeWithoutTheCredsMarker: the credentials family
+// ships in the same rules document as everything else and does not bump
+// projectpolicy.RulesVersion (budget/rules/marker.go), so `policy-rules-skew`
+// cannot see a deploy that predates it. With the cascade switched on, the
+// missing marker is a finding of its own — a cascade run's first recorded
+// credential is refused mid-run — and with the cascade off it is not a finding
+// at all, because an installation that never opted in needs no marker.
+func TestDoctorReportsTheCascadeWithoutTheCredsMarker(t *testing.T) {
+	cascade := func(p *projectpolicy.Policy) {
+		p.Routing = &projectpolicy.Routing{Claude: &projectpolicy.ClaudeRoute{Via: projectpolicy.RouteCascade}}
+	}
+	_, db := doctorPolicyRig(t, doctorPolicy(cascade), "")
+	c, ok := doctorChecksByID(t)["creds-rules"]
+	if !ok {
+		t.Fatal("doctor did not report the cascade switched on with no credsRules marker")
+	}
+	if c.Severity != "warning" {
+		t.Errorf("severity = %q, want warning", c.Severity)
+	}
+	for _, want := range []string{rules.PathCredsRulesMarker(), "update --firebase-project"} {
+		if !strings.Contains(c.Problem+c.Fix, want) {
+			t.Errorf("the check does not name %q: %q / %q", want, c.Problem, c.Fix)
+		}
+	}
+
+	// The marker this Fugaro writes: no finding.
+	db.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion)
+	if c, ok := doctorChecksByID(t)["creds-rules"]; ok {
+		t.Fatalf("doctor reported creds-rules with the marker at this release's generation: %+v", c)
+	}
+
+	// A marker above this release's generation is the other direction, and its
+	// remedy is the opposite one: a newer Fugaro deployed those rules.
+	db.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion+1)
+	c, ok = doctorChecksByID(t)["creds-rules"]
+	if !ok || !strings.Contains(c.Fix, "upgrade") {
+		t.Fatalf("a marker above this release's generation: %+v (ok=%v), want a warning whose fix is to upgrade", c, ok)
+	}
+
+	// A marker below this release's generation: the deployed document
+	// predates the credentials family, and the remedy is this Fugaro's own
+	// init, not an upgrade. Generation 0 is reachable — it is what a marker
+	// hand-edited to zero (or written by a deploy that recorded nothing)
+	// says, and only a negative one is "cannot be told apart".
+	db.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion-1)
+	c, ok = doctorChecksByID(t)["creds-rules"]
+	if !ok || c.Severity != "warning" || !strings.Contains(c.Fix, "update --firebase-project") {
+		t.Fatalf("a marker below this release's generation: %+v (ok=%v), want a warning whose fix is to re-run init", c, ok)
+	}
+	if strings.Contains(c.Fix, "upgrade") {
+		t.Fatalf("the older-marker fix tells the reader to upgrade: %+v", c)
+	}
+
+	// A marker that is not a generation at all (a negative number is what a
+	// hand-edit leaves): the check says it cannot be told apart rather than
+	// reading it as an older deploy, since a number below zero is not one any
+	// release wrote.
+	db.Set(rules.PathCredsRulesMarker(), -1)
+	c, ok = doctorChecksByID(t)["creds-rules"]
+	if !ok || !strings.Contains(c.Problem, "cannot be told apart") {
+		t.Fatalf("a hand-edited marker: %+v (ok=%v), want the cannot-be-told-apart warning", c, ok)
+	}
+
+	// The cascade off: no marker is needed, and doctor says nothing.
+	doctorPolicyRig(t, doctorPolicy(nil), "")
+	if c, ok := doctorChecksByID(t)["creds-rules"]; ok {
+		t.Fatalf("doctor reported creds-rules with the cascade off: %+v", c)
+	}
 }

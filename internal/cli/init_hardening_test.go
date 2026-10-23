@@ -23,7 +23,7 @@ func grantChange(name, member, role string, actions ...string) planChange {
 // grant, or a member on neither list, is still refused.
 func TestInitHardeningAllowsOnlyTheLauncherGrantDeletes(t *testing.T) {
 	const a, o = "user:a@example.com", "user:o@example.com"
-	args := []string{"init", "--yes", "--launcher", a, "--launcher", o, "--operator", o}
+	args := []string{"setup", "--yes", "--launcher", a, "--launcher", o, "--operator", o}
 
 	r := newInitRig(t)
 	r.stateBucket()
@@ -86,7 +86,7 @@ func TestInitHardeningRefusesAMixedPlan(t *testing.T) {
 		grantChange("runs_reader", a, "roles/storage.objectViewer", "create"),
 		grantChange("runs_launcher", a, "roles/storage.objectUser", "create"),
 		grantChange("state", a, "roles/storage.objectAdmin", "delete"))
-	out, _, err := executeStdin(t, "", "init", "--yes", "--launcher", a)
+	out, _, err := executeStdin(t, "", "setup", "--yes", "--launcher", a)
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), `state["`+a+`"]`) {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -120,7 +120,7 @@ func launcherReplaceChange(bucket, member, beforeTitle, beforeExpr string) planC
 func TestInitAdmitsTheLauncherGrantUpgrade(t *testing.T) {
 	const a, o = "user:a@example.com", "user:o@example.com"
 	bucket := "fugaro-runs-" + initProject
-	args := []string{"init", "--yes", "--launcher", a, "--launcher", o, "--operator", o}
+	args := []string{"setup", "--yes", "--launcher", a, "--launcher", o, "--operator", o}
 
 	r := newInitRig(t)
 	r.stateBucket()

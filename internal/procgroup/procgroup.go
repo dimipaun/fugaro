@@ -1,5 +1,7 @@
 // Package procgroup runs a command in its own process group so that the whole
-// tree, including background daemons it leaves behind, can be killed.
+// tree, including background daemons it leaves behind, can be killed. Where
+// the platform has no process group, only the direct child is killed; that is
+// procgroup_other.go's stated loss, not a silent one.
 package procgroup
 
 import (
@@ -10,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -47,6 +48,11 @@ const outputDrainTimeout = 2 * time.Second
 // and Run returns ctx.Err(). A non-zero exit status is reported through the
 // exit code, not err; a negative exit code means the process was killed by
 // a signal rather than exiting on its own.
+//
+// What "the group" means is the platform's: setProcGroup, terminateGroup and
+// killGroup are the unix/other pair, and where there is no process group
+// (Windows) the second and third reach the direct child only — see
+// procgroup_other.go.
 func Run(ctx context.Context, c Cmd) (int, error) {
 	grace := c.Grace
 	if grace == 0 {
@@ -54,7 +60,7 @@ func Run(ctx context.Context, c Cmd) (int, error) {
 	}
 	cmd := exec.Command(c.Name, c.Args...)
 	cmd.Dir, cmd.Env, cmd.Stdin = c.Dir, c.Env, c.Stdin
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setProcGroup(cmd)
 	cmd.WaitDelay = cmdWaitDelay
 
 	// Our own pipes, rather than exec's, so Wait returns when the command
@@ -114,7 +120,6 @@ func Run(ctx context.Context, c Cmd) (int, error) {
 		}(i, p.r, p.w)
 	}
 
-	pgid := cmd.Process.Pid
 	waited := make(chan error, 1)
 	go func() { waited <- cmd.Wait() }()
 
@@ -123,16 +128,16 @@ func Run(ctx context.Context, c Cmd) (int, error) {
 	case waitErr = <-waited:
 	case <-ctx.Done():
 		ctxErr = ctx.Err()
-		_ = syscall.Kill(-pgid, syscall.SIGTERM)
+		_ = terminateGroup(cmd)
 		select {
 		case waitErr = <-waited:
 		case <-time.After(grace):
-			_ = syscall.Kill(-pgid, syscall.SIGKILL)
+			_ = killGroup(cmd)
 			waitErr = <-waited
 		}
 	}
 	// Reap whatever the command left behind in its group.
-	_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	_ = killGroup(cmd)
 
 	copied := make(chan struct{})
 	go func() { copies.Wait(); close(copied) }()

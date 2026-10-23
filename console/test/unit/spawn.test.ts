@@ -50,8 +50,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   CHILD_ENV_KEYS,
+  COMMANDS_WITHOUT_PROJECT,
   DARWIN_LOCATIONS,
+  INSTALLATION_LIST_COMMAND,
   LINUX_LOCATIONS,
+  PICKER_COMMANDS,
+  PICKER_OPERATION_NAMES,
   PLATFORM_LOCATIONS,
   SPAWN_COMMANDS,
   argvFor,
@@ -99,14 +103,20 @@ const SOURCE_ROOT = fileURLToPath(new URL('../../src', import.meta.url))
 const PROJECT = 'fugaro'
 
 /**
- * COMMANDS_TAKING_PROJECT and COMMANDS_WITHOUT_PROJECT are the plan's own list,
- * hard-coded: the nine commands `addCloudFlags` gives `--project` to
- * (`internal/cli/cloud.go:51`, called from each of those constructors), the two
- * log operations that share the `logs` command, and the one command that takes
- * no flag at all. `newVersionCmd` (`internal/cli/root.go`) is `cobra.NoArgs`
- * with no `Flags()`, so the handshake is exactly `["version"]`.
+ * COMMANDS_TAKING_PROJECT is the plan's own list, hard-coded: the ten
+ * operations `addCloudFlags` gives `--project` to (`internal/cli/cloud.go:51`,
+ * called from each of those constructors), including the two log operations
+ * that share the `logs` command. The complement -- the commands that take no
+ * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
+ * command words the CLI itself uses (`version`, and the picker's `config list`),
+ * which is the same list `assertSpawnSurface` holds the table to; this file
+ * imports it rather than spelling it twice.
+ *
+ * `installation.list` is a *spawn* row the console's own operation table does
+ * not have -- its `OperationName` is the dashboard's -- so the list below names
+ * it as itself plus that one name.
  */
-const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
+const COMMANDS_TAKING_PROJECT: readonly (OperationName | 'installation.list')[] = [
   'live.watch',
   'budget.show',
   'spend.report',
@@ -118,8 +128,6 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'accounts.inventory',
   'environment.report',
 ]
-const COMMANDS_WITHOUT_PROJECT: readonly OperationName[] = ['cli.version']
-
 /** freshDirectory is a temporary directory this test owns, one per call. */
 function freshDirectory(prefix = 'fugaro-console-test-'): string {
   // The canonical spelling: on macOS the temporary directory is reached through
@@ -330,7 +338,50 @@ describe('the spawn table and the argv it builds', () => {
     expect(names).not.toContain('link.openExternal')
   })
 
-  it('fixes the table the design allow-list fixes: eleven commands, nine with --project', () => {
+  it('has the picker’s own read as its own row, and the two tables agree', () => {
+    // The picker's table is exactly one row -- the local `fugaro config list
+    // --json` (`console/docs/json-contract.md` §6.8), which is how the console
+    // discovers the installations on this machine without asking the operator
+    // anything -- and `assertSpawnSurface` is what holds it to that.
+    expect([...PICKER_COMMANDS].map((row) => [row.operation, row.words.join(' ')])).toEqual([
+      ['installation.list', 'config list --json'],
+    ])
+    expect([...PICKER_OPERATION_NAMES]).toEqual(['installation.list'])
+    const first = PICKER_COMMANDS[0]
+    expect(first?.words.slice(0, 2).join(' ')).toBe(INSTALLATION_LIST_COMMAND)
+    // No `--project`, no `--dir`, no arguments: it is a local read that needs
+    // no project selected and opens no bucket (`internal/cli/config_list.go`).
+    expect(COMMANDS_WITHOUT_PROJECT).toContain(INSTALLATION_LIST_COMMAND)
+    expect(() => {
+      assertSpawnSurface(SPAWN_COMMANDS, PICKER_COMMANDS)
+    }).not.toThrow()
+    expect([...argvFor('installation.list', {}, { target: { project: 'acme' }, directory: '/tmp' })]).toEqual([
+      'config',
+      'list',
+      '--json',
+    ])
+    // ...and the read that names an installation the picker never asked for is
+    // refused, so the table cannot grow a second command without this failing.
+    expect(() => {
+      assertSpawnSurface(SPAWN_COMMANDS, [
+        { operation: 'installation.list', words: ['config', 'show', '--json'], takesProject: false, args: [], dirFlag: false },
+      ])
+    }).toThrow(/config show/)
+    expect(() => {
+      assertSpawnSurface(SPAWN_COMMANDS, [
+        { operation: 'config.list', words: ['config', 'list', '--json'], takesProject: false, args: [], dirFlag: false },
+      ] as never)
+    }).toThrow(/picker/)
+  })
+
+  it('fixes the design allow-list’s dashboard half: eleven argvs, ten commands, nine of them with --project', () => {
+    // The design's §5.1 rule 6 table is the whole allow-list -- twelve argvs
+    // since round 5, because the picker's own read (`config list --json`, the
+    // case above) is on it too -- and this table is the eleven the dashboard
+    // spawns. The two are held in step by hand on purpose: the Go side pins the
+    // document's twelve (`internal/cli/docs_desktop_console_test.go`,
+    // TestDocsDesktopConsoleDesignAllowListIsExactArgv) and these cases pin the
+    // console's eleven plus the picker's one.
     expect([...SPAWN_COMMANDS].map((row) => row.words.join(' '))).toEqual([
       'watch --json',
       'budget show --json',
@@ -371,7 +422,10 @@ describe('the spawn table and the argv it builds', () => {
         expect(argv).toContain('--project')
         expect(argv[argv.indexOf('--project') + 1]).toBe('chosen')
       } else {
-        expect(COMMANDS_WITHOUT_PROJECT).toContain(row.operation)
+        // `COMMANDS_WITHOUT_PROJECT` is keyed by the *command*, not by the
+        // operation (`assertSpawnSurface` reads it that way), so the row's own
+        // words are what it is asked about.
+        expect(COMMANDS_WITHOUT_PROJECT).toContain(row.words.filter((word) => !word.startsWith('--')).join(' '))
         expect(argv).not.toContain('--project')
       }
     },
@@ -957,8 +1011,8 @@ describe('binary resolution', () => {
     ])
     // "Never the inherited PATH": every entry of the well-known list is an
     // absolute path or the one `~` form, and none of them is read out of the
-    // app's environment. The `PATH` step is *after* this list and is a separate
-    // thing -- see the test below, which is the same rule from the other side.
+    // app's environment, and there is no `PATH` step after this list -- see the
+    // tests below, which are the same rule from the other side.
     for (const platform of ['darwin', 'linux']) {
       for (const prefix of locationsFor(platform).binaryPrefixes) {
         expect(prefix, `${platform}: ${prefix}`).toMatch(/^(?:~\/|\/)/)
@@ -1013,7 +1067,7 @@ describe('binary resolution', () => {
     // `binDirectories` walks the same table `locationsFor` returns, so the two
     // cannot drift; `platform` is how a test drives it, because the runner this
     // suite executes on is not the machine the app ships to.
-    const linux = binDirectories({ appEnv: {}, home: '/home/owner', platform: 'linux' })
+    const linux = binDirectories({ home: '/home/owner', platform: 'linux' })
     expect([...linux]).toEqual([
       '/usr/local/bin/fugaro',
       '/usr/bin/fugaro',
@@ -1021,7 +1075,7 @@ describe('binary resolution', () => {
       '/home/linuxbrew/.linuxbrew/bin/fugaro',
       '/home/owner/.linuxbrew/bin/fugaro',
     ])
-    const darwin = binDirectories({ appEnv: {}, home: '/Users/owner', platform: 'darwin' })
+    const darwin = binDirectories({ home: '/Users/owner', platform: 'darwin' })
     expect([...darwin]).toEqual([
       '/opt/homebrew/bin/fugaro',
       '/usr/local/bin/fugaro',
@@ -1030,21 +1084,46 @@ describe('binary resolution', () => {
     ])
     // and `~` is the *given* home directory, never the process's own: the
     // resolution is a pure function of its arguments.
-    expect([...binDirectories({ appEnv: {}, home: '/nowhere', platform: 'linux' })]).toContain(
+    expect([...binDirectories({ home: '/nowhere', platform: 'linux' })]).toContain(
       '/nowhere/.local/bin/fugaro',
     )
   })
 
-  it('never takes a relative PATH entry as a place to find the binary', () => {
-    // A relative entry (`bin`, `.`, `./tools`, or the empty entry, which POSIX
-    // reads as the current directory) resolves against whatever the app's own
-    // working directory happens to be, which is nothing the operator chose.
-    const candidates = binDirectories({
-      appEnv: { PATH: 'bin::./tools:.:/usr/sbin' },
-      home: '/Users/owner',
-      prefixes: [],
+  it('never takes the app’s own PATH as a place to find the binary', async () => {
+    // The owner's ruling of 2026-10-20 (design section 3.4 rule 4): the console
+    // resolves the `fugaro` that is *installed*, and the environment the app
+    // happened to be launched with is not a place anything is installed. The
+    // candidate list is the configured path and the well-known prefixes, and a
+    // `fugaro` that exists only on the app's `PATH` is not found at all.
+    const base = freshDirectory()
+    const onPath = join(base, 'path-bin')
+    const stub = installStub(onPath, { commands: { version: { stdout: '9.9.9\n' } } })
+    const resolution = await resolveBinary({
+      appEnv: { PATH: onPath },
+      directory: base,
+      target: { project: PROJECT },
+      prefixes: [join(base, 'prefix-a', 'bin')],
     })
-    expect([...candidates]).toEqual(['/usr/sbin/fugaro'])
+    expect(resolution.ok).toBe(false)
+    // The refusal names the one place it looked, and the app's PATH is not in
+    // it: this is what the absent-binary screen shows as "searched".
+    expect(resolution.ok === false && resolution.reason).toContain(join(base, 'prefix-a', 'bin', 'fugaro'))
+    expect(resolution.ok === false && resolution.reason).not.toContain(onPath)
+    // The stub never ran: it was never a candidate.
+    expect(stub.calls()).toBe(0)
+  })
+
+  it('has no appEnv parameter, so the app’s PATH cannot re-enter the order', () => {
+    // The type is part of the guard: this file's resolution order had a third
+    // step (every absolute entry of the app's own `PATH`) and removing it from
+    // the signature is what keeps it out. A test that only asserted the
+    // candidate list could be satisfied by a `PATH` walk added under another
+    // name; this one fails the day the parameter comes back.
+    const source = readFileSync(new URL('../../src/main/spawn.ts', import.meta.url), 'utf8')
+    const signature = source.slice(source.indexOf('export function binDirectories('))
+    const body = signature.slice(0, signature.indexOf('\n}'))
+    expect(body).not.toContain('appEnv')
+    expect(body).not.toContain('PATH')
   })
 
   it('never lists a relative configured path as a place to find the binary', () => {
@@ -1054,19 +1133,19 @@ describe('binary resolution', () => {
     // installation's. A relative configured path is therefore not a place to
     // look -- and `resolveBinary` refuses it rather than falling through.
     expect([
-      ...binDirectories({ configuredPath: 'bin/fugaro', appEnv: {}, home: '/Users/owner', prefixes: [] }),
+      ...binDirectories({ configuredPath: 'bin/fugaro', home: '/Users/owner', prefixes: [] }),
     ]).toEqual([])
     expect([
-      ...binDirectories({ configuredPath: './tools/fugaro', appEnv: {}, home: '/Users/owner', prefixes: [] }),
+      ...binDirectories({ configuredPath: './tools/fugaro', home: '/Users/owner', prefixes: [] }),
     ]).toEqual([])
     expect([
-      ...binDirectories({ configuredPath: '~/tools/fugaro', appEnv: {}, home: '/Users/owner', prefixes: [] }),
+      ...binDirectories({ configuredPath: '~/tools/fugaro', home: '/Users/owner', prefixes: [] }),
     ]).toEqual([])
   })
 
   it('puts an absolute configured path first, with the well-known prefixes after it', () => {
     expect([
-      ...binDirectories({ configuredPath: '/opt/fugaro/bin/fugaro', appEnv: {}, home: '/Users/owner', prefixes: [] }),
+      ...binDirectories({ configuredPath: '/opt/fugaro/bin/fugaro', home: '/Users/owner', prefixes: [] }),
     ]).toEqual(['/opt/fugaro/bin/fugaro'])
   })
 
@@ -1092,6 +1171,15 @@ describe('binary resolution', () => {
     expect(resolution.ok === false && resolution.path).toBe('bin/fugaro')
     expect(resolution.ok === false && resolution.reason).toMatch(/not absolute/)
     expect(resolution.ok === false && resolution.reason).toContain('bin/fugaro')
+    // The sentence names the store's file and the field it read (review of this
+    // branch): the operator who sees this line has to be able to find the value
+    // that caused it, and after the ruling of 2026-10-20 no screen ever asks for
+    // a binary path -- so the message must not ask for one either.
+    // Spelled out, so a rename of the constant cannot move the message away from
+    // the file the operator actually has on disk.
+    expect(resolution.ok === false && resolution.reason).toContain('installations.json')
+    expect(resolution.ok === false && resolution.reason).toContain('binaryPath')
+    expect(resolution.ok === false && resolution.reason).not.toMatch(/give an absolute path/)
     // Nothing was spawned: the refusal is before the walk, so the stub in the
     // prefix never ran.
     expect(stub.calls()).toBe(0)
@@ -1111,7 +1199,7 @@ describe('binary resolution', () => {
     expect(resolution.ok && resolution.source).toBe('configured')
   })
 
-  it('walks the well-known prefixes in order, and only then the app’s PATH', async () => {
+  it('walks the well-known prefixes in order, and stops there', async () => {
     const base = freshDirectory()
     const first = join(base, 'prefix-a', 'bin')
     const second = join(base, 'prefix-b', 'bin')
@@ -1133,17 +1221,26 @@ describe('binary resolution', () => {
     expect(both.ok && both.version).toBe('3.0.0')
   })
 
-  it('falls through the well-known prefixes to the app’s own PATH, as the last step', async () => {
+  it('refuses when the only `fugaro` is the one the app’s PATH points at', async () => {
+    // The other half of the test above, at the end of the walk rather than in
+    // the middle: every well-known prefix is empty, the app's `PATH` holds a
+    // working stub, and the resolution still refuses. This is the mutation that
+    // matters -- reintroducing the `PATH` step makes this test find the stub.
     const base = freshDirectory()
     const onPath = join(base, 'path-bin')
     const stub = installStub(onPath, { commands: { version: { stdout: '9.9.9\n' } } })
+    const prefix = join(base, 'prefix-a', 'bin')
     const resolution = await resolveBinary({
-      appEnv: { PATH: `${join(base, 'nowhere')}:${onPath}` },
+      appEnv: { PATH: `${join(base, 'nowhere')}:${onPath}`, HOME: base },
+      home: base,
       directory: base,
       target: { project: PROJECT },
-      prefixes: [join(base, 'prefix-a', 'bin')],
+      prefixes: [prefix],
     })
-    expect(resolution.ok && resolution.path).toBe(stub.binary)
+    expect(resolution.ok).toBe(false)
+    expect(resolution.ok === false && resolution.path).toBeNull()
+    expect(resolution.ok === false && resolution.reason).toContain(join(prefix, 'fugaro'))
+    expect(stub.calls()).toBe(0)
   })
 
   it('resolves ~/.local/bin for the home directory it was given', async () => {
@@ -1160,6 +1257,37 @@ describe('binary resolution', () => {
       prefixes: ['~/.local/bin'],
     })
     expect(resolution.ok && resolution.path).toBe(stub.binary)
+  })
+
+  it('takes the home directory from the process environment when the caller passes none', async () => {
+    // **The e2e suite's hermetic override, in the fast suite.** `test/support/
+    // cliStub.ts` chooses the CLI a launch reads the only way rule 4 allows: it
+    // writes the stub into a scratch home's `~/.local/bin` and points the
+    // launch's `HOME` at that home. That only works because the app's handshake
+    // (`resolveHandshakeBinary`) passes **no** `home` -- so `binDirectories`
+    // falls back to `homedir()`, which is the process's `HOME`, which for the
+    // app is the environment `electron.launch` was handed. A resolver that read
+    // the *runner's* home instead would search the operator's real `~/.local/bin`
+    // and the specs would be asserting a fact about the machine.
+    const home = freshDirectory('fugaro-hermetic-home-')
+    const stub = installStub(join(home, '.local', 'bin'), { commands: { version: { stdout: '1.0.0\n' } } })
+    // A decoy where the app's `PATH` points: rule 4 does not search it, so the
+    // helper's `PATH` is a decoy on purpose and a resolver that read it would
+    // find this one instead.
+    const onPath = join(freshDirectory('fugaro-hermetic-path-'), 'bin')
+    const decoy = installStub(onPath, { commands: { version: { stdout: '9.9.9\n' } } })
+    vi.stubEnv('HOME', home)
+    const resolution = await resolveBinary({
+      appEnv: { HOME: home, PATH: onPath },
+      directory: home,
+      target: { project: PROJECT },
+      // The well-known list is injected for the reason the test above gives --
+      // this machine may have a `fugaro` in an earlier prefix -- because what is
+      // under test is which home the tilde is joined to, not the list's order.
+      prefixes: ['~/.local/bin'],
+    })
+    expect(resolution.ok && resolution.path).toBe(stub.binary)
+    expect(decoy.calls(), 'the resolution searched the app’s PATH').toBe(0)
   })
 
   it('refuses a candidate whose version cannot be read, rather than skipping it', async () => {

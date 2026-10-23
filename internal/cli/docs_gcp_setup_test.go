@@ -5,14 +5,19 @@ import (
 	"testing"
 )
 
-// docs/gcp-setup.md is the guide a first-time user follows, and until this file
-// it had no pin of its own: nothing asserted a word of it. The one thing that
-// made that a defect rather than a gap is O3 of docs/windows-cli/reconciliation.md
-// — `grep -n -i windows docs/gcp-setup.md` answered nothing — while two of the
-// commands the page has the user run are shell commands, whose form depends on
-// the shell the reader is in: the ADC login of precondition 1, and the `Fix`
-// lines `init` and `fugaro doctor` print, which say `unset`
-// (internal/preflight/preflight.go) and are POSIX today (F6, F27).
+// docs/gcp-setup.md is the guide a first-time user follows, and it is not an
+// unpinned page: its base-image section
+// (TestGCPSetupBaseImageSectionNamesRealKinds in docs_base_test.go), its
+// readiness-gate wording, its bucket-IAM phrasings, its project-wide git
+// credential paragraph and its update-check section each have a guard that
+// reads it. What none of those guards assert is the *shell* its commands are
+// run in, which is the claim this file adds: two of the commands the page has
+// the user run are shell commands whose form depends on the shell the reader is
+// in — the ADC login of precondition 1, and the `Fix` lines `init` and `fugaro
+// doctor` print, which say `unset` (internal/preflight/preflight.go) and are
+// POSIX today (F6, F27). O3 of docs/windows-cli/reconciliation.md is what made
+// that a defect rather than a gap — at the revision that document reads
+// (`54cb02a8`), `grep -n -i windows docs/gcp-setup.md` answered nothing.
 //
 // The three `Fix` lines are not one line three times: the project-variable
 // check prints the variable's name to substitute, while the impersonation and
@@ -21,7 +26,8 @@ import (
 // Windows reader to substitute a name the CLI never prints would send them
 // looking for one.
 // docs/windows-cli/implementation-plan.md T0.2 is the task; this is its guard,
-// and the guard is the task's first deliverable because the document had none.
+// and the guard is the task's first deliverable because the two shell-dependent
+// forms had none — not because the page had none.
 const gcpSetupDoc = "docs/gcp-setup.md"
 
 // gcpSetupWindowsSection is the heading the two forms live under. The name is

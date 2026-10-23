@@ -816,9 +816,7 @@ func TestDirWritableByBitsOnly(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			st := *(fi.Sys().(*syscall.Stat_t))
-			st.Uid, st.Gid = 1000, 1000
-			if got := dirWritableBy(fi, &st, tc.uid, tc.gid); got != tc.want {
+			if got := dirWritableBy(fi, 1000, 1000, tc.uid, tc.gid); got != tc.want {
 				t.Fatalf("dirWritableBy(mode %04o, uid %d, gid %d) = %v, want %v", tc.mode, tc.uid, tc.gid, got, tc.want)
 			}
 		})

@@ -106,7 +106,7 @@ func setJobConfigCopyEnv(t *testing.T, r *anchorModeRig, workflow string, extra 
 }
 
 // TestUpgradeCloudReportsStaleJobConfigCopy: the deployed job carries no
-// providers or model_prices (an older fugaro init --repo, or none at all),
+// providers or model_prices (an older fugaro update --repo, or none at all),
 // while the local config now has both; the real cloud step's note names
 // both fields, by name, and the one command that fixes it.
 //
@@ -127,7 +127,7 @@ func TestUpgradeCloudReportsStaleJobConfigCopy(t *testing.T) {
 		"note: the deployed job's copy of the local project config is STALE",
 		"providers: added openrouter",
 		"model_prices: added deepseek/deepseek-v4-flash",
-		"fugaro init --repo .",
+		"fugaro update --repo .",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output lacks %q:\n%s", want, out)
@@ -136,7 +136,7 @@ func TestUpgradeCloudReportsStaleJobConfigCopy(t *testing.T) {
 }
 
 // TestUpgradeNoteSaysTheEnvCopyIsInert: once a policy is published, the
-// drift note stops sending the operator to init --repo for the keys the
+// drift note stops sending the operator to update --repo for the keys the
 // policy governs — runs read those from the node, not from the job's
 // environment — and names what a job's environment still has to be
 // refreshed for (plan task 1.6 step 5).
@@ -144,7 +144,7 @@ func TestUpgradeCloudReportsStaleJobConfigCopy(t *testing.T) {
 // Mutation (verified, run and restored): drop the
 // `if p := jobConfigCopyPolicyNote(cctx, lc); p != ""` clause from
 // jobConfigCopyNote: this test fails, finding "use the old copy until you
-// run fugaro init --repo" where the policy clause belongs.
+// run fugaro update --repo" where the policy clause belongs.
 func TestUpgradeNoteSaysTheEnvCopyIsInert(t *testing.T) {
 	r := upgradeRigWithGitHubAppID(t)
 	r.appendConfig(t, providersConfig)
@@ -166,11 +166,11 @@ func TestUpgradeNoteSaysTheEnvCopyIsInert(t *testing.T) {
 	for _, want := range []string{
 		"the deployed job's copy of the local project config is STALE",
 		"the policy published at " + projectpolicy.PathShared() + " now governs",
-		"not a reason to re-run fugaro init --repo",
+		"not a reason to re-run fugaro update --repo",
 		// The providers block is the part of the node a run does not read:
 		// routing by the job's own copy is what the gateway's allow_data_to
 		// gate and the routing switch resolve against, so a changed provider
-		// still needs init --repo, and the note has to say so rather than call
+		// still needs update --repo, and the note has to say so rather than call
 		// the whole copy inert.
 		"providers block is the part the node carries that a run does not read from it",
 		"still a reason to re-run it",
@@ -184,7 +184,7 @@ func TestUpgradeNoteSaysTheEnvCopyIsInert(t *testing.T) {
 	// The whole-copy sentence is what the policy clause replaces: the drift the
 	// note just reported is exactly what the policy now governs.
 	if strings.Contains(out, "use the old copy until you run") {
-		t.Errorf("the note still sends the operator to init --repo for the whole copy:\n%s", out)
+		t.Errorf("the note still sends the operator to update --repo for the whole copy:\n%s", out)
 	}
 }
 
@@ -209,7 +209,7 @@ func TestJobConfigCopyMountNoteIsSilentWithoutAProjectScopeName(t *testing.T) {
 // TestUpgradeNoteNamesTheMountCase (plan Task 2.3 step 2): after D2 a name
 // stored at project scope changes what a job mounts when the project's copy
 // is created or deleted, so the drift note must say that the mounts are
-// still a reason to re-run init --repo — the one thing the policy does not
+// still a reason to re-run update --repo — the one thing the policy does not
 // carry — and that phase 3 moves the mounts to a shared profile.
 //
 // Mutation (verified, run and restored): make jobConfigCopyMountNote return
@@ -236,7 +236,7 @@ func TestUpgradeNoteNamesTheMountCase(t *testing.T) {
 		"what a job mounts is still decided here",
 		"fugaro secrets set NAME",
 		"phase 3 gives the mounts to a shared profile",
-		"fugaro init --repo .",
+		"fugaro update --repo .",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the note lacks %q:\n%s", want, out)
@@ -250,7 +250,7 @@ func TestUpgradeNoteNamesTheMountCase(t *testing.T) {
 // version of that container, or a rotated value, changes nothing at all,
 // because the job mounts the container rather than a copy of the value. A
 // note that named only the first half would read as "any secret change means
-// another fugaro init --repo".
+// another fugaro update --repo".
 //
 // Written first, against the note as it was (the mount clause named only the
 // reason to re-run): it fails, finding no "needs no re-run".
@@ -302,7 +302,7 @@ func TestUpgradeNoteNamesTheMountCaseWithNothingElseStale(t *testing.T) {
 		"what a job mounts is still decided here",
 		"github-app-key",
 		"created or deleted",
-		"fugaro init --repo .",
+		"fugaro update --repo .",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the mount-only note lacks %q:\n%s", want, out)
@@ -419,7 +419,7 @@ func TestUpgradeCloudReportsStaleBudgetConfigCopy(t *testing.T) {
 	for _, want := range []string{
 		"note: the deployed job's copy of the local project config is STALE",
 		"FUGARO_BUDGET_MODE", "FUGARO_MAX_RUN_USD",
-		"fugaro init --repo .",
+		"fugaro update --repo .",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output lacks %q:\n%s", want, out)
@@ -457,21 +457,38 @@ func TestUpgradeCloudCheckCaveatFiresEvenWithAnEmptyLocalConfig(t *testing.T) {
 	}
 }
 
+// jobReadErrorMarker is the text the fake's failed jobs.get carries, and what
+// this test asks the output never to hold. A marker word, not a status
+// number: the first version asserted the output never holds "500" (the status
+// the fake answers), but every rig makes its temp directories under a name
+// derived from the test's own -- `TestUpgradeCloud...NNN` plus random digits
+// -- so a random suffix carrying "500" put "500" in the output on its own and
+// failed the test for no defect at all. That is the flake that blocked the
+// 0.9.6 and 0.9.7 release gates. A word no path and no number can carry
+// cannot arrive that way, so a failure here now means the note really did
+// repeat the error it was handed.
+const jobReadErrorMarker = "kestrel-injected-job-read-failure"
+
 // TestUpgradeCloudCouldNotCheckJobConfigCopyOnAJobReadError: a real error
-// reading the deployed job (here, the fake answering 500 to jobs.get) must
-// not look like "the copies match": it is reported, and the report never
-// repeats the underlying error (which could carry a URL or, from a real
-// client library, a token).
+// reading the deployed job (here, the fake failing jobs.get with
+// jobReadErrorMarker as its message) must not look like "the copies match":
+// it is reported, and the report never repeats the underlying error (which
+// could carry a URL or, from a real client library, a token).
 //
 // Mutation (verified, run and restored): in jobConfigCopyNote, change
 // `if err != nil { return couldNotCheckJobConfigCopy(...) }` after JobFullEnv
 // to `if err != nil && false`: this test fails, finding no note (silence
-// that looks like a match).
+// that looks like a match). Mutation (verified, run and restored), for the
+// leak assertion itself: append the error's own text to the note there
+// (`couldNotCheckJobConfigCopy("reading the deployed job failed") + " " + err.Error()`),
+// which keeps the note's fixed reason and adds jobReadErrorMarker, and fails
+// the test on the marker -- so the marker is text the error really carries,
+// not a string no run can produce.
 func TestUpgradeCloudCouldNotCheckJobConfigCopyOnAJobReadError(t *testing.T) {
 	r := upgradeRigWithGitHubAppID(t)
 	stubCurrentRefresh(t, r)
 	setJobConfigCopyEnv(t, r, "api", nil)
-	r.run.SetJobFaults(gcpfake.JobFaults{GetStatus: 500})
+	r.run.SetJobFaults(gcpfake.JobFaults{GetStatus: 500, GetError: jobReadErrorMarker})
 	fakeSteps(t, "", nil)
 	out, _, err := executeStdin(t, "", "upgrade", "--yes")
 	if err != nil {
@@ -480,7 +497,7 @@ func TestUpgradeCloudCouldNotCheckJobConfigCopyOnAJobReadError(t *testing.T) {
 	if !strings.Contains(out, "note: could not check the job's config copy (reading the deployed job failed)") {
 		t.Fatalf("missing the could-not-check note:\n%s", out)
 	}
-	for _, leak := range []string{"500", "googleapi", "http://", "https://"} {
+	for _, leak := range []string{jobReadErrorMarker, "googleapi", "http://", "https://"} {
 		if strings.Contains(out, leak) {
 			t.Fatalf("the note leaked the underlying error %q:\n%s", leak, out)
 		}

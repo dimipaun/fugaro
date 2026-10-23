@@ -28,10 +28,14 @@
 //      "Home, draft 2 (slider)") and that heading is inside its first panel — which is
 //      what lets that block sit directly under the promise without entering the lead region:
 //      the block the first `h2` belongs to is taken out of the region whole, so a panel that
-//      lost its heading would push the whole of itself into the lead and be refused here. A
-//      hero whose install block sat between the promise and that heading would put the
-//      commands, the slider and the "every install path" link inside the lead, and the page
-//      would say nothing about the promise above them.
+//      lost its heading would push the whole of itself into the lead and be refused here. The
+//      hero's illustration — `figure.hero-shot`, the terminal card the bold redesign draws
+//      beside the copy — is taken out the same way and for the same reason: the request and
+//      the three jobs are drawn inside the picture, the caption says it is an illustration,
+//      and it is not prose the page promises anything with (the owner's approved board,
+//      `website/design-ref/HomeV3.dc.html`). A hero whose install block sat between the
+//      promise and that heading would put the commands, the slider and the "every install
+//      path" link inside the lead, and the page would say nothing about the promise above them.
 //   2. **Getting Started's first section opens with its commands.** Inside `#install`, no
 //      paragraph of the section's own precedes the first command block, and the section's
 //      own sentence is still there, after the paths. P5 moved that sentence from under the
@@ -39,7 +43,7 @@
 //      command they run met a sentence about the page first, which is the ordering the plan
 //      asks this part to fix.
 //   3. **Every page that prints a command prints it under a heading.** The page's first `h2`
-//      comes before its first `pre`, on every route that prints one — three of the eleven
+//      comes before its first `pre`, on every route that prints one — three of the thirteen
 //      today — so no page opens with a command that nothing above it names. This is the
 //      general form of the two cases above and the rule a future page keeps: a command block
 //      belongs to a section, and the section's heading is what a reader reads before it.
@@ -133,15 +137,34 @@ export function foldFailures(dist) {
         // they are the block the page puts directly under the promise (the owner's approved
         // draft of 2026-10-19, "Home, draft 2 (slider)"), and none of them is the lead.
         const owner = blockOf(els[firstH2], main)
-        const lead = els.slice(h1 + 1, firstH2).filter((el) => !within(el, owner))
+        // The hero's illustration is taken out whole as well, on the same principle and by the
+        // same shape: the bold redesign draws the terminal card beside the copy (the owner's
+        // approved board `website/design-ref/HomeV3.dc.html`), so the request a reader types
+        // and the three jobs it starts are *inside* the picture rather than a line of the lead
+        // — the card is captioned as an illustration and it is not prose the page promises
+        // anything with. It is one `figure` the page draws once; the promise, the lead and the
+        // links stay in the region and stay the whole of what it may hold.
+        const picture = els.find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-shot'))
+        const lead = els
+          .slice(h1 + 1, firstH2)
+          .filter((el) => !within(el, owner) && (picture === undefined || !within(el, picture)))
         const shape = lead.map((el) => el.name + (el.attrs.get('class') ? `.${el.attrs.get('class')}` : ''))
-        // What the lead region may hold: the promise, the prompt line the owner's feedback
-        // of 2026-10-19 puts under the headline — with the `>` mark that draws it as something a
-        // reader types, which is a span inside that line rather than a second thing in the
-        // region — the row of links under them, and the links in that row. Nothing else. A
-        // `figure`, an `ol`, a `pre` or a section's own paragraph is what the refusal below is
-        // about, and the first of them is named in it.
-        const allowed = ['p.hero-prompt', 'span.hero-prompt-mark', 'p.hero-lead', 'p.hero-actions', 'a.hero-cta', 'a.hero-cta-quiet']
+        // What the lead region may hold: the promise — including the words of it the stylesheet
+        // paints with the gradient, which are a `span` inside the `h1` rather than a second
+        // thing in the region — the prompt line the owner's feedback of 2026-10-19 puts under
+        // the headline — with the `>` mark that draws it as something a reader types, which is
+        // a span inside that line — the row of links under them, and the links in that row.
+        // Nothing else. A `figure`, an `ol`, a `pre` or a section's own paragraph is what the
+        // refusal below is about, and the first of them is named in it.
+        const allowed = [
+          'span.gradient-text',
+          'p.hero-prompt',
+          'span.hero-prompt-mark',
+          'p.hero-lead',
+          'p.hero-actions',
+          'a.hero-cta',
+          'a.hero-cta-quiet',
+        ]
         const foreign = shape.filter((element) => !allowed.includes(element))
         if (foreign.length > 0) {
           out.push(
@@ -346,10 +369,36 @@ test('the promise, its prompt line and its call to action above the fold are eno
   // a checked rule rather than a description of today's markup.
   const dist = distOf(t, {
     'index.html': page(
-      '<h1>t</h1><p class="hero-prompt"><span class="hero-prompt-mark" aria-hidden="true">&gt;</span> Fan out these three bug fixes.</p><p class="hero-lead">the promise</p><p class="hero-actions"><a class="hero-cta" href="/getting-started/">Get started</a><a class="hero-cta-quiet" href="/how-it-works/">How it works</a></p><section class="home-slider"><ul class="tab-bar"><li><a class="tab" href="#home-panel-easy">Easy to use</a></li></ul><div class="panels"><div class="panel" id="home-panel-easy"><h2 class="panel-title">Easy to use</h2></div></div></section>',
+      '<h1>t</h1><p class="hero-prompt"><span class="hero-prompt-mark" aria-hidden="true">&gt;</span> Fan out these three bug fixes.</p><p class="hero-lead">the promise</p><p class="hero-actions"><a class="hero-cta" href="/getting-started/">Get started</a><a class="hero-cta-quiet" href="/how-it-works/">How it works</a></p><section class="home-slider" data-slider><ul class="slider-dots"><li class="slider-dot-item"><a class="slider-dot" href="#home-panel-easy" aria-label="Slide 1 of 3: Easy to use"></a></li></ul><div class="panels"><div class="panel" id="home-panel-easy"><h2 class="panel-title">Easy to use</h2></div></div></section>',
     ),
   })
   assert.deepEqual(foldFailures(dist), [], 'a homepage that keeps the prompt line, the promise and its call to action as its whole lead region was refused')
+})
+
+test('the hero’s illustration is taken out of the lead region whole, and only it', (t) => {
+  // The bold redesign draws the terminal card in the hero: the request, the three jobs and the
+  // caption are inside one `figure`, and the card is a picture rather than a paragraph of the
+  // lead. The case below is the same page with the picture in it — the region is read exactly
+  // as it was before the card existed, and the card's own elements are neither counted nor
+  // refused. The second half plants the same markup *outside* the figure, which is the defect
+  // the exclusion must not hide: a command block beside the promise rather than inside a
+  // picture is still a command block in the lead.
+  const slider =
+    '<section class="home-slider" data-slider><ul class="slider-dots"><li class="slider-dot-item"><a class="slider-dot" href="#home-panel-easy" aria-label="Slide 1 of 3: Easy to use"></a></li></ul><div class="panels"><div class="panel" id="home-panel-easy"><h2 class="panel-title">Easy to use</h2></div></div></section>'
+  const hero = (picture) =>
+    `<h1>t <span class="gradient-text">coding agents</span></h1><p class="hero-lead">the promise</p><p class="hero-actions"><a class="hero-cta" href="/getting-started/">Get started</a></p>${picture}${slider}`
+  const card =
+    '<figure class="hero-shot"><div class="hero-shot-frame"><p class="hero-prompt"><span class="hero-prompt-mark" aria-hidden="true">&gt;</span> Fan out these three bug fixes.</p><p class="hero-shot-status"><span class="hero-shot-status-mark" aria-hidden="true"></span>Fugaro: launching 3 jobs</p><ol class="hero-shot-jobs"><li class="hero-shot-job">Pull request 1 of 3</li></ol></div><figcaption class="hero-shot-caption">An illustration, not a recording of a session.</figcaption></figure>'
+
+  assert.deepEqual(
+    foldFailures(distOf(t, { 'index.html': page(hero(card)) })),
+    [],
+    'a hero that draws its request inside the illustration card was refused as if the card were prose in the lead',
+  )
+
+  const loose = foldFailures(distOf(t, { 'index.html': page(hero('<p class="hero-prompt">&gt; Fan out these three bug fixes.</p><ol class="hero-shot-jobs"><li>Pull request 1 of 3</li></ol>')) }))
+  assert.equal(loose.length, 1, loose.join('\n'))
+  assert.match(loose[0], /and "ol\.hero-shot-jobs" is not the promise, its prompt line or its call to action/)
 })
 
 test('a homepage with an empty lead, or with no section after its h1, is refused', (t) => {

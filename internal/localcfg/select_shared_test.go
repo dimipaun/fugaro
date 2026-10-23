@@ -56,7 +56,7 @@ func TestSelectFallsBackToTheSharedConfig(t *testing.T) {
 		if err == nil || c != nil {
 			t.Fatalf("err = %v", err)
 		}
-		for _, want := range []string{"there is no project config for aurora", "add `gcp_project: <id>` next to `project:` in fugaro.yaml", "run fugaro init --anchor in the checkout", "fugaro init --config-only --gcp-project <id>"} {
+		for _, want := range []string{"there is no project config for aurora", "add `gcp_project: <id>` next to `project:` in fugaro.yaml", "run fugaro update --anchor in the checkout", "fugaro setup --config-only --gcp-project <id>"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("refusal lacks %q: %v", want, err)
 			}
@@ -112,7 +112,7 @@ func TestSelectFallsBackToTheSharedConfig(t *testing.T) {
 	})
 	t.Run("no hook is today's behavior", func(t *testing.T) {
 		_, _, err := Select(SelectInput{Checkout: &Checkout{Project: "aurora", GCPProject: "aurora-gcp-1"}, GCPProject: "aurora-gcp-1", Getenv: sharedEnv(t)})
-		if err == nil || !strings.Contains(err.Error(), "fugaro init --config-only --gcp-project <id>") || strings.Contains(err.Error(), "add `gcp_project:") {
+		if err == nil || !strings.Contains(err.Error(), "fugaro setup --config-only --gcp-project <id>") || strings.Contains(err.Error(), "add `gcp_project:") {
 			t.Fatalf("err = %v", err)
 		}
 	})

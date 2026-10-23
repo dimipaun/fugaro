@@ -35,7 +35,11 @@
 //      path first -- an absolute one, since a relative path is checked against
 //      the app's working directory and run against the child's, which is a
 //      refusal and not a fallback (review of Task 4.1) -- then the platform's
-//      well-known directories, then `PATH`. **Which directories those are is a
+//      well-known directories, and **nothing else: the app's own inherited
+//      `PATH` is never searched** (owner's ruling of 2026-10-20: the console
+//      asks the operator for nothing, and resolves the `fugaro` that is
+//      *installed*). The configured path is an optional override a store may
+//      already carry, never a question the first run asks. **Which directories those are is a
 //      per-platform list chosen in one place** (`PLATFORM_LOCATIONS`, read
 //      through `locationsFor`): the design's macOS order is
 //      `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `/usr/bin`, and
@@ -43,7 +47,7 @@
 //      `/usr/bin`, `~/.local/bin`, `/home/linuxbrew/.linuxbrew/bin`,
 //      `~/.linuxbrew/bin`. Neither list is ever read out of the app's own
 //      environment -- "never the inherited `PATH`" is a property of the list,
-//      and `PATH` is the separate last step. The path and the version it reported
+//      and there is no step after it. The path and the version it reported
 //      are the header's ("the resolved absolute path and the version it reports
 //      are shown in the header"), and **a candidate that exists but whose version
 //      cannot be read is refused rather than skipped**: falling through to the
@@ -126,9 +130,10 @@ export const DIR_FLAG = '--dir'
  * two constants that have to be kept in step by hand.
  */
 export interface PlatformLocations {
-  /** binaryPrefixes is rule 4's order, minus the last step: a configured path
-   * first (`SpawnTarget.binaryPath`), then these directories in this order, and
-   * only then every absolute entry of the app's own `PATH`. `~/.local/bin` is
+  /** binaryPrefixes is rule 4's order, and it is the whole of it: a configured
+   * path first (`SpawnTarget.binaryPath`, the optional override an installation
+   * may carry), then these directories in this order. The app's own inherited
+   * `PATH` is **not** a step after them (owner's ruling of 2026-10-20). `~/.local/bin` is
    * spelled with `~` and joined with the home directory at resolution time,
    * because the home directory is an argument rather than a constant. */
   readonly binaryPrefixes: readonly string[]
@@ -393,12 +398,39 @@ export interface SpawnArgument {
 }
 
 /**
+ * PickerOperationName is the one spawn that belongs to the **installation
+ * picker** rather than to the dashboard: the local read that lists the
+ * installations this machine has (`fugaro config list --json`,
+ * `internal/cli/config_list.go`; `console/docs/json-contract.md` §6.8).
+ *
+ * It is not a `CONSOLE_OPERATIONS` entry and deliberately so: that table is the
+ * *dashboard's* IPC surface, mirrored one-for-one in `src/preload/index.ts` and
+ * pinned exactly by `test/unit/ipc.test.ts`, and the picker has its own surface
+ * on its own document (`src/preload/installations.ts`). Widening the dashboard's
+ * surface to carry a read only the picker makes would put a command in a
+ * renderer that has no business spawning it.
+ */
+export type PickerOperationName = 'installation.list'
+
+/** PICKER_OPERATION_NAMES is that vocabulary as a value, so the table check and
+ * a test can both read the closed set rather than restating it. */
+export const PICKER_OPERATION_NAMES: readonly PickerOperationName[] = Object.freeze(['installation.list'])
+
+/** INSTALLATION_LIST_COMMAND is the command the one picker row drives, spelled
+ * as the two words `words` starts with. It is here rather than inline so the
+ * check below and the row cannot disagree about which read the picker makes. */
+export const INSTALLATION_LIST_COMMAND = 'config list'
+
+/** SpawnOperationName is every operation this module will build an argv for. */
+export type SpawnOperationName = OperationName | PickerOperationName
+
+/**
  * SpawnCommand is one row of the table: the operation it serves, the argv words
  * the CLI's own command path needs, whether the command accepts `--project`,
  * and its declared arguments in the order they are emitted.
  */
 export interface SpawnCommand {
-  readonly operation: OperationName
+  readonly operation: SpawnOperationName
   readonly words: readonly string[]
   readonly takesProject: boolean
   readonly args: readonly SpawnArgument[]
@@ -520,6 +552,27 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
 ] as const satisfies readonly SpawnCommand[])
 
 /**
+ * PICKER_COMMANDS is the installation picker's own table, and it has exactly one
+ * row: the local read that enumerates the installations on this machine. It is a
+ * separate table rather than a row of `SPAWN_COMMANDS` because that table is
+ * held one-for-one to the dashboard's operation table (`assertSpawnSurface`),
+ * and this read is not one of the dashboard's operations.
+ *
+ * `fugaro config list` is cobra's `NoArgs` with one flag of its own (`--json`);
+ * it takes no `--project`, no `--config` and no `--dir`, and it opens no bucket,
+ * so the row carries the three false columns the check below holds it to.
+ */
+export const PICKER_COMMANDS: readonly SpawnCommand[] = Object.freeze([
+  {
+    operation: 'installation.list',
+    words: ['config', 'list', '--json'],
+    takesProject: false,
+    args: [],
+    dirFlag: false,
+  },
+] as const satisfies readonly SpawnCommand[])
+
+/**
  * ARGUMENT_RE is the alphabet a *renderer* argument may use. It is deliberately
  * a whitelist rather than a blacklist: a repository is `owner/name`, a run id is
  * `YYYYMMDD-HHMMSS-xxxx`, a day is `YYYY-MM-DD`, `--since` is `Nd`/`3h`/`0` or
@@ -571,7 +624,9 @@ function refused(message: string): never {
  * all -- gets an exception here, before any process exists.
  */
 export function spawnCommandFor(operation: string): SpawnCommand {
-  const row = SPAWN_COMMANDS.find((candidate) => candidate.operation === operation)
+  const row =
+    SPAWN_COMMANDS.find((candidate) => candidate.operation === operation) ??
+    PICKER_COMMANDS.find((candidate) => candidate.operation === operation)
   if (row === undefined) {
     return refused(
       `${operation} is not a console operation this process may spawn: the surface is src/main/ipc.ts's table`,
@@ -598,7 +653,7 @@ export function spawnCommandFor(operation: string): SpawnCommand {
  * no row, argument or later edit can emit a flag the console must never reach.
  */
 export function argvFor(
-  operation: OperationName,
+  operation: SpawnOperationName,
   args: ValidatedArguments,
   context: { readonly target: SpawnTarget; readonly directory: string },
 ): readonly string[] {
@@ -701,7 +756,7 @@ export function assertArgvFlags(operation: string, argv: readonly string[]): voi
  * `assertSpawnSurface` holds every row's `takesProject` and `dirFlag` to these,
  * so the columns `argvFor` keys off cannot drift from the rule.
  */
-export const COMMANDS_WITHOUT_PROJECT: readonly string[] = Object.freeze(['version'])
+export const COMMANDS_WITHOUT_PROJECT: readonly string[] = Object.freeze(['version', 'config list'])
 export const COMMANDS_TAKING_DIR: readonly string[] = Object.freeze(['doctor'])
 
 /**
@@ -716,7 +771,10 @@ export const COMMANDS_TAKING_DIR: readonly string[] = Object.freeze(['doctor'])
  * it resolves a binary, so a console that cannot be built with a widened table
  * cannot be talked into spawning one later.
  */
-export function assertSpawnSurface(rows: readonly SpawnCommand[]): void {
+export function assertSpawnSurface(
+  rows: readonly SpawnCommand[],
+  pickerRows: readonly SpawnCommand[] = PICKER_COMMANDS,
+): void {
   const seen = new Set<string>()
   for (const row of rows) {
     if (seen.has(row.operation)) refused(`${row.operation} has two rows in the spawn table`)
@@ -775,17 +833,51 @@ export function assertSpawnSurface(rows: readonly SpawnCommand[]): void {
       refused(`${operation.name} has no row in the spawn table: the console would spawn nothing for it`)
     }
   }
+
+  // The picker's table, held to the same two rules that matter and to the
+  // vocabulary of the picker surface: a row here serves an operation the
+  // picker's own preload exposes (`PICKER_COMMANDS`' names are the whole set
+  // this function admits, and one outside it is refused), it carries no
+  // `--project` and no `--dir`, and it declares no arguments -- because every
+  // value this read takes is one the CLI itself printed.
+  for (const row of pickerRows) {
+    if (seen.has(row.operation)) refused(`${row.operation} has rows in both spawn tables`)
+    seen.add(row.operation)
+    if (!PICKER_OPERATION_NAMES.includes(row.operation as PickerOperationName)) {
+      refused(`${row.operation} is not an operation the installation picker may spawn`)
+    }
+    const command = row.words.filter((word) => !word.startsWith('--')).join(' ')
+    if (command !== INSTALLATION_LIST_COMMAND) {
+      refused(`${row.operation} drives ${command}, which is not the read the picker makes`)
+    }
+    if (row.takesProject !== !COMMANDS_WITHOUT_PROJECT.includes(command)) {
+      refused(
+        `${row.operation} ${COMMANDS_WITHOUT_PROJECT.includes(command) ? 'must not carry' : 'must carry'} ${PROJECT_FLAG}: the read takes no project`,
+      )
+    }
+    if (row.dirFlag !== COMMANDS_TAKING_DIR.includes(command)) {
+      refused(`${row.operation} must not carry ${DIR_FLAG}: it reads no checkout`)
+    }
+    if (row.args.length !== 0) {
+      refused(`${row.operation} declares an argument, and the read takes none`)
+    }
+    assertArgvFlags(row.operation, row.words)
+  }
 }
 
 /**
  * binDirectories is the resolution order of rule 4: the configured path, then
- * the well-known prefixes, then every entry of the app's own `PATH`. It is
- * exported because the order is the rule, and a test that could not read the
- * order could not assert it.
+ * the well-known prefixes -- and there is no third step. It is exported because
+ * the order is the rule, and a test that could not read the order could not
+ * assert it.
+ *
+ * There is deliberately **no `appEnv` parameter**: the app's own inherited
+ * `PATH` used to be the last step here, and taking it out of the signature is
+ * what keeps it out of the order -- a future edit cannot put the app's `PATH`
+ * back without changing every caller as well as this function.
  */
 export function binDirectories(options: {
   readonly configuredPath?: string | undefined
-  readonly appEnv: Readonly<Record<string, string | undefined>>
   /** `home` replaces `homedir()` for the `~` entries. It is an argument so the
    * resolution is a pure function of what it is given. */
   readonly home?: string
@@ -802,8 +894,8 @@ export function binDirectories(options: {
 }): readonly string[] {
   const home = options.home ?? homedir()
   const candidates: string[] = []
-  // Only an absolute one, for the same reason as the `PATH` entries below. This
-  // list is what `isExecutableFile` is asked about, and that question is put to
+  // Only an absolute one, for the same reason as the well-known prefixes below.
+  // This list is what `isExecutableFile` is asked about, and that question is put to
   // the *app's* working directory; the child then runs with the installation's
   // directory as its cwd, and `argv[0]` is this string. A relative configured
   // path would therefore be checked in one place and run in another -- a
@@ -817,13 +909,6 @@ export function binDirectories(options: {
   for (const prefix of wellKnown) {
     const base = prefix.startsWith('~') ? join(home, prefix.slice(2)) : prefix
     candidates.push(join(base, FUGARO_BINARY_NAME))
-  }
-  const path = options.appEnv['PATH'] ?? ''
-  // Only absolute entries: a relative one (`bin`, `.`, or the empty entry,
-  // which POSIX reads as `.`) resolves against the app's own working directory,
-  // which is nothing the operator chose.
-  for (const entry of path.split(':')) {
-    if (entry !== '' && isAbsolute(entry)) candidates.push(join(entry, FUGARO_BINARY_NAME))
   }
   return Object.freeze(dedupe(candidates))
 }
@@ -1093,7 +1178,7 @@ export const nodeSpawner: ChildSpawner = (command, args, options) =>
  * log, and the restart schedule. Nothing in it is read from a document.
  */
 export interface SpawnPlan {
-  readonly operation: OperationName
+  readonly operation: SpawnOperationName
   readonly argv: readonly string[]
   readonly cwd: string
   readonly env: Readonly<Record<string, string>>
@@ -1104,7 +1189,7 @@ export interface SpawnPlan {
 /** planFor assembles a plan from an operation, its validated arguments and
  * main-process state. It is the only producer of a `SpawnPlan`. */
 export function planFor(
-  operation: OperationName,
+  operation: SpawnOperationName,
   args: ValidatedArguments,
   context: {
     readonly target: SpawnTarget
@@ -1311,10 +1396,10 @@ export type BinaryResolution =
       readonly path: string
       readonly version: string
       /** `configured` when the candidate is the path the installation named,
-       * `well-known` for every other candidate rule 4's list produced -- a
-       * prefix or a `PATH` entry, which is one set of "where else it can be"
-       * and stays one word so that no caller can read a distinction the
-       * resolution does not make. */
+       * `well-known` for every other candidate rule 4's list produced -- the
+       * well-known prefixes, which are one set of "where else it can be" and
+       * stay one word so that no caller can read a distinction the resolution
+       * does not make. */
       readonly source: 'configured' | 'well-known'
     }
   | { readonly ok: false; readonly path: string | null; readonly reason: string }
@@ -1331,6 +1416,11 @@ export type BinaryResolution =
  * for the same reason: it would be checked against the app's own working
  * directory and then run against the child's, so the file that answered the
  * version check need not be the file that runs.
+ *
+ * The configured path is a *candidate* and not a decision (owner's ruling of
+ * 2026-10-20, §3.4 rule 4): a store that already carries one is asked first, and
+ * if it has gone the walk carries on to the well-known locations rather than
+ * refusing. The console never asks the operator for a binary path.
  */
 export async function resolveBinary(options: {
   readonly configuredPath?: string | undefined
@@ -1352,12 +1442,15 @@ export async function resolveBinary(options: {
     return {
       ok: false,
       path: options.configuredPath,
-      reason: `the configured binary path is not absolute: ${options.configuredPath} -- give an absolute path, so the file that is checked is the file that runs`,
+      // The sentence names the file and the field, and asks for nothing: the
+      // ruling of 2026-10-20 removed every screen that took a binary path, so
+      // "give an absolute path" would describe an affordance the console no
+      // longer draws. The one place an override can come from is the field.
+      reason: `the binaryPath in installations.json is not absolute: ${options.configuredPath} -- that field names the file the console runs, so it is read as written and never against a working directory`,
     }
   }
   const candidates = binDirectories({
     configuredPath: options.configuredPath,
-    appEnv: options.appEnv,
     ...(options.home === undefined ? {} : { home: options.home }),
     ...(options.prefixes === undefined ? {} : { prefixes: options.prefixes }),
   })
@@ -1388,14 +1481,18 @@ export async function resolveBinary(options: {
  * That is the difference from `resolveBinary` with a `configuredPath`, and it is
  * the whole point (desktop-console plan Task 3.4b, step 4: "its handshake decides
  * the window"). `resolveBinary` skips a configured path that is missing or not
- * executable and carries on to the platform's well-known directories and then
- * `PATH` -- so a stored installation whose binary had gone
- * would have its window decided by some *other* `fugaro`, while the header still
- * named the stored path (review of 3.4b, B1). Here a stored binary that is not
- * there answers `path: null` (the handshake's `not-found`), one that is there
- * but is not an executable regular file answers its own path (`unreadable`), and
+ * executable and carries on to the platform's well-known directories -- so a
+ * stored installation whose binary had gone would be answered by some *other*
+ * `fugaro`. Here a stored binary that is not there answers `path: null`, one
+ * that is there but is not an executable regular file answers its own path, and
  * a probe that fails answers its reason -- and in every case nothing else on the
  * machine is asked.
+ *
+ * The startup handshake no longer calls this (owner's ruling of 2026-10-20: an
+ * installation's binary is an override, not a pin -- see
+ * `resolveHandshakeBinary`). Its remaining caller is the screenshot isolation
+ * check (`tools/screenshots/isolation.ts`), which must prove that exactly the
+ * fixture binary answered and nothing else on the machine did.
  */
 export async function resolveInstalledBinary(options: {
   readonly binaryPath: string
@@ -1432,15 +1529,24 @@ export async function resolveInstalledBinary(options: {
  * place a unit test can drive it (`src/main/index.ts` imports the Electron
  * runtime and cannot be imported under `vitest`).
  *
- * With an active installation it reads that installation's binary and nothing
- * else (`resolveInstalledBinary`), with that installation's project as the
- * target, so the spawn log records which installation the bare `version` was
- * for. With none it is Task 3.3's read: rule 4's resolution with the
- * project-less target -- and **no** project from anywhere else, not
- * `FUGARO_PROJECT`, not the working directory (D13: no guess).
+ * With an active installation it is rule 4's own walk with that installation's
+ * optional override asked first, and that installation's project as the target,
+ * so the spawn log records which installation the bare `version` was for. With
+ * none, the same walk with the project-less target -- and **no** project from
+ * anywhere else, not `FUGARO_PROJECT`, not the working directory (D13: no
+ * guess).
+ *
+ * An installation's binary is an *override* and never a pin (owner's ruling of
+ * 2026-10-20, §3.4 rule 4): the console resolves the `fugaro` that is installed
+ * on this machine, so a store entry that names a path which has since gone is
+ * not a refusal but the next candidate in the order. That replaces the narrower
+ * `resolveInstalledBinary` this function used to call for an active
+ * installation, which stopped at the stored path (review of 3.4b, B1): correct
+ * while the path was the operator's choice and asked for on first run, wrong now
+ * that the first run asks for nothing.
  */
 export async function resolveHandshakeBinary(options: {
-  readonly installation: { readonly binaryPath: string; readonly target: SpawnTarget } | null
+  readonly installation: { readonly binaryPath?: string | undefined; readonly target: SpawnTarget } | null
   readonly appEnv: Readonly<Record<string, string | undefined>>
   readonly directory: string
   readonly spawner?: ChildSpawner
@@ -1453,20 +1559,19 @@ export async function resolveHandshakeBinary(options: {
     directory: options.directory,
     ...(options.spawner === undefined ? {} : { spawner: options.spawner }),
     ...(options.log === undefined ? {} : { log: options.log }),
+    ...(options.home === undefined ? {} : { home: options.home }),
+    ...(options.prefixes === undefined ? {} : { prefixes: options.prefixes }),
   }
   if (options.installation !== null) {
-    return resolveInstalledBinary({
+    return resolveBinary({
       ...shared,
-      binaryPath: options.installation.binaryPath,
+      ...(options.installation.binaryPath === undefined
+        ? {}
+        : { configuredPath: options.installation.binaryPath }),
       target: options.installation.target,
     })
   }
-  return resolveBinary({
-    ...shared,
-    target: NO_INSTALLATION_TARGET,
-    ...(options.home === undefined ? {} : { home: options.home }),
-    ...(options.prefixes === undefined ? {} : { prefixes: options.prefixes }),
-  })
+  return resolveBinary({ ...shared, target: NO_INSTALLATION_TARGET })
 }
 
 /**

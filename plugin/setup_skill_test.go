@@ -63,17 +63,51 @@ func TestSetupSkillMentionsDoctorFirst(t *testing.T) {
 		t.Error("SKILL.md does not give `fugaro doctor --json`")
 	}
 	// Init is an owner command: named for the user in a user-runs block only.
-	if !regexp.MustCompile("(?s)no installation.{0,300}```bash user-runs\nfugaro init( --project <name>)?\n```").MatchString(text) {
-		t.Error("SKILL.md does not say that no installation means the user runs init first, in a user-runs block")
+	if !regexp.MustCompile("(?s)no installation.{0,300}```bash user-runs\nfugaro setup( --project <name>)?\n```").MatchString(text) {
+		t.Error("SKILL.md does not say that no installation means the user runs setup first, in a user-runs block")
 	}
 }
 
-// TestSetupSkillNeverAppliesInit: `fugaro init` appears only as a plan
-// (--plan-only, --print-vars, --help) outside a user-runs block, never with a
-// flag that confirms for the user, and the user-runs blocks name init only as
-// the user's own step.
-func TestSetupSkillNeverAppliesInit(t *testing.T) {
-	initRE := regexp.MustCompile(`fugaro init\b[^\n]*`)
+// TestSetupSkillOpensBySayingWhichCommandItIs: this skill runs AFTER the
+// wizard, and its opening line has to say so — a reader who has not run the
+// first half must learn it here, in one sentence: the cloud side is already
+// done, and this skill writes `fugaro.yaml` and opens the pull request.
+//
+// The line says "the wizard did it" and writes the word the user typed as a
+// bare `setup` span, never as a command line, and the last assertion is why:
+// the plugin lint (skills_lint_test.go, ownerViolation) rejects an applying
+// `fugaro setup` or `fugaro update` anywhere outside a user-runs block, prose
+// and "never" sentences included, so the command appears in the introduction
+// only as `fugaro doctor --json` (step 1's read-only check) and the door the
+// user already ran is named rather than quoted.
+//
+// Mutation (run, restore): delete the opening sentence -- "which command it
+// is" fails; change "the wizard did it" to name the command line instead --
+// "the introduction gives a fugaro command" fails.
+func TestSetupSkillOpensBySayingWhichCommandItIs(t *testing.T) {
+	text := setupFiles(t)["skills/setup/SKILL.md"]
+	intro, _, ok := strings.Cut(text, "\nGround rules:")
+	if !ok {
+		t.Fatal("SKILL.md has no `Ground rules:` list: this test reads the introduction above it")
+	}
+	for _, want := range []string{"cloud side is already done", "wizard", "writes `fugaro.yaml`", "opens the pull request"} {
+		if !strings.Contains(intro, want) {
+			t.Errorf("SKILL.md's introduction never says %q: the skill runs after the wizard, and its opening line has to say which of the two commands it is", want)
+		}
+	}
+	if m := regexp.MustCompile("`fugaro [a-z]").FindString(intro); m != "" {
+		t.Errorf("SKILL.md's introduction gives a fugaro command (%q): the agent's first fugaro command is `fugaro doctor --json` in step 1, and the door the user already ran is named, not quoted, because the plugin lint refuses an applying door outside a user-runs block", m)
+	}
+}
+
+// TestSetupSkillNeverApplies: `fugaro setup` and `fugaro update` appear only
+// as a plan (--plan-only, --print-vars, --help) outside a user-runs block,
+// never with a flag that confirms for the user, and the user-runs blocks name
+// them only as the user's own step. Both doors apply — setup creates and
+// update re-converges — so both are the user's to run, and the read-only plan
+// the agent may run is `fugaro update --repo --plan-only`.
+func TestSetupSkillNeverApplies(t *testing.T) {
+	initRE := regexp.MustCompile(`fugaro (?:setup|update)\b[^\n]*`)
 	yesRE := regexp.MustCompile(`(^|\s)(--yes|-y|--non-interactive|--allow-delete|--forget|--allow-job-delete)(\s|$|\x60)`)
 	sawPlan := false
 	for name, text := range setupFiles(t) {
@@ -84,15 +118,15 @@ func TestSetupSkillNeverAppliesInit(t *testing.T) {
 				inUserRuns = inFence && strings.Contains(tl, "user-runs")
 				continue
 			}
-			if m := yesRE.FindString(line); m != "" && strings.Contains(line, "fugaro init") && !inUserRuns {
-				t.Errorf("%s:%d: init near %q", name, i+1, strings.TrimSpace(m))
+			if m := yesRE.FindString(line); m != "" && (strings.Contains(line, "fugaro setup") || strings.Contains(line, "fugaro update")) && !inUserRuns {
+				t.Errorf("%s:%d: a door near %q", name, i+1, strings.TrimSpace(m))
 			}
 			for _, cmd := range initRE.FindAllString(line, -1) {
 				planOnly := strings.Contains(cmd, "--plan-only") || strings.Contains(cmd, "--print-vars") || strings.Contains(cmd, "--help")
-				// In prose a bare mention ("run `fugaro init` first") names the
+				// In prose a bare mention ("run `fugaro setup` first") names the
 				// user's step; in a block it would be an instruction to the agent.
 				if inFence && !inUserRuns && !planOnly {
-					t.Errorf("%s:%d: an applying init in a block that is not user-runs: %s", name, i+1, cmd)
+					t.Errorf("%s:%d: an applying command in a block that is not user-runs: %s", name, i+1, cmd)
 				}
 				if strings.Contains(cmd, "--plan-only") && strings.Contains(cmd, "--repo") {
 					sawPlan = true
@@ -101,7 +135,7 @@ func TestSetupSkillNeverAppliesInit(t *testing.T) {
 		}
 	}
 	if !sawPlan {
-		t.Error("the skill never gives `fugaro init --repo --plan-only`")
+		t.Error("the skill never gives `fugaro update --repo --plan-only`")
 	}
 }
 
@@ -282,8 +316,8 @@ func TestSetupSkillRulesAreInSkillMd(t *testing.T) {
 		"one topic at a time":             `\*\*one topic at a time\*\*`,
 		"secrets redirected from a file":  `must be redirected from a file with .<.`,
 		"no value in the conversation":    `not to paste one into this conversation`,
-		"the user runs init after merge":  `merge it, then run init`,
-		"init plan refusal is normal":     `a refusal is normal`,
+		"the user runs setup after merge": `merge it, then run setup`,
+		"plan refusal is normal":          `a refusal is normal`,
 		"read, don't run":                 `Read, don't run\.`,
 		"never ask for a value":           `Never ask for a value, never put one on a command line`,
 		"pin downloads":                   `Pin every download by version and checksum\. Don't pipe a download into a shell`,
@@ -321,7 +355,7 @@ func TestSetupSkillContent(t *testing.T) {
 	for file, wants := range map[string][]string{
 		"skills/setup/SKILL.md": {
 			"fugaro doctor --json", "fugaro secrets ls --repo --json", "fugaro image render", "fugaro image build --local --json",
-			"fugaro validate --json", "fugaro init --repo --plan-only", ".fugaro/<workflow>.Dockerfile", "blank Dockerfile",
+			"fugaro validate --json", "fugaro update --repo --plan-only", ".fugaro/<workflow>.Dockerfile", "blank Dockerfile",
 			".github/workflows", "Docker daemon", "`fugaro_yaml`", "WSL2", "agent.instructions",
 			"whole content", "_.source", "[hooks]",
 			"https://github.com/dimipaun/fugaro/blob/main/docs/base-image-migration.md",
@@ -608,7 +642,7 @@ func TestSetupSkillHandlesSeveralProjects(t *testing.T) {
 		"Ask the user which Fugaro project this repository belongs to", "don't open the config directory",
 		"exactly as the user confirmed it", "refuse any that holds a space, a quote or a shell character",
 		"`FUGARO_PROJECT=<name> fugaro validate --json`", "`FUGARO_PROJECT=<name> fugaro config example`",
-		// The init blocks below the paragraph carry `--project <name>` in
+		// The setup blocks below the paragraph carry `--project <name>` in
 		// their `user-runs` fences, and passing it is only theirs to do when a
 		// project had to be chosen here. The sentence that says so keeps an
 		// agent from making the user select a project twice; a trim dropped it
@@ -652,8 +686,8 @@ func TestSetupSkillHandlesSeveralProjects(t *testing.T) {
 	if strings.Contains(skill, "`--project <name>` to every fugaro command") {
 		t.Error("SKILL.md says every fugaro command takes --project")
 	}
-	if !strings.Contains(skill, "fugaro init --project <name>") {
-		t.Error("the init blocks do not show --project")
+	if !strings.Contains(skill, "fugaro setup --project <name>") {
+		t.Error("the setup blocks do not show --project")
 	}
 }
 
@@ -767,8 +801,8 @@ func TestSetupSkillOffersClone(t *testing.T) {
 	// gate is open — the state a reader has to be able to check against the
 	// constant. It does not name the two commands the gate used to refuse:
 	// the plugin lint (skills_lint_test.go, ownerViolation) rejects an
-	// applying `fugaro init` in skill prose, and the claim is the gate's
-	// state, not the command line it is read on.
+	// applying `fugaro setup` or `fugaro update` in skill prose, and the
+	// claim is the gate's state, not the command line it is read on.
 	for _, want := range []string{"cloneShipped", "internal/cli/recipes_skew.go", "is open"} {
 		if !strings.Contains(topic, want) {
 			t.Errorf("decisions.md's checkout topic never says %q", want)
@@ -834,28 +868,24 @@ func TestSetupSkillSaysWhoWritesTheManagedMarks(t *testing.T) {
 	}
 }
 
-// TestSetupSkillSaysManagedIsGatedOff (round-3 review, medium): both the setup
-// skill and its managed reference describe the managed workflow — the apply,
-// the flag, the creation — and every one of those entry points refuses before
-// any cloud call in this release, because `managedDeployerShipped`
-// (internal/cli/recipes_skew.go) is false. A skill that presents the mode as
-// the working path sends the user's agent at a workflow that cannot run, and
-// the plugin's own convention for a gate is to state its state where the
-// feature is described: decisions.md's checkout topic says `cloneShipped` is
-// open, pinned by TestSetupSkillOffersClone. So both files must name the
-// constant, where it lives, that it is false, the refusal a user will see, and
-// when the gate opens: the redesign is planned for 0.9.6, by the owner's ruling
-// of 2026-10-20, which moved it off 0.9.5 (the ruling of 2026-10-19 had moved
-// it off 0.9.0).
-// The release name is the half a reader acts on: without it, "disabled in this
-// release" reads as a temporary state of the tree rather than as 0.9.0's own
-// behaviour, which docs/gcp-setup.md:622, docs/design/managed-projects.md:3 and
-// internal/cli/recipes_skew.go all name as 0.9.6.
+// TestSetupSkillSaysWhereTheManagedGateStands (round-3 review, medium): both
+// the setup skill and its managed reference describe the managed workflow — the
+// apply, the flag, the creation — and the gate those entry points sat behind
+// opened in 0.10.0: `managedDeployerShipped` (internal/cli/recipes_skew.go) is
+// true as of that release (the owner's ruling of 2026-10-22). A skill that
+// still presented the mode as refused sends the user's agent away from a
+// workflow that runs, and the plugin's own convention for a gate is to state
+// its state where the feature is described: decisions.md's checkout topic says
+// `cloneShipped` is open, pinned by TestSetupSkillOffersClone. So both files
+// must name the constant, where it lives, that it is true as of 0.10.0, the
+// refusal a user on an older release will see, and — the half the flip does not
+// settle — that the fence has not been measured live (Check 68, written,
+// owner-run after the release, NOT RUN).
 //
 // Mutations (each verified, planted and reverted): drop the gate paragraph from
-// reference/managed.md, and change SKILL.md's "is false" to "is open" — both
-// fail here. Dropping "planned for 0.9.6" from either file fails it too.
-func TestSetupSkillSaysManagedIsGatedOff(t *testing.T) {
+// reference/managed.md, and change SKILL.md's "is true as of" to "is false" —
+// both fail here. Dropping "NOT RUN" from either file fails it too.
+func TestSetupSkillSaysWhereTheManagedGateStands(t *testing.T) {
 	for name, doc := range map[string]string{
 		"SKILL.md":             setupFiles(t)["skills/setup/SKILL.md"],
 		"reference/managed.md": setupFiles(t)["skills/setup/reference/managed.md"],
@@ -863,13 +893,53 @@ func TestSetupSkillSaysManagedIsGatedOff(t *testing.T) {
 		for _, want := range []string{
 			"managedDeployerShipped",
 			"internal/cli/recipes_skew.go",
-			"is false",
+			"is true as of 0.10.0",
 			"managed projects are disabled in this release",
-			"planned for 0.9.6",
+			"Check 68",
+			"NOT RUN",
 		} {
 			if !strings.Contains(doc, want) {
-				t.Errorf("%s never says %q: the managed mode's gate is closed in this release (managedDeployerShipped is false, internal/cli/recipes_skew.go), so the skill has to say where the gate stands beside the workflow it describes", name, want)
+				t.Errorf("%s never says %q: the managed gate is open as of 0.10.0 (managedDeployerShipped is true, internal/cli/recipes_skew.go) with the fence unmeasured, so the skill has to say where the gate stands beside the workflow it describes", name, want)
 			}
+		}
+	}
+}
+
+// TestSetupSkillSaysWhatTheManagedFenceStillOwes: reference/managed.md carried
+// the pre-redesign reason — the fence the binding carries "is not an IAM
+// condition GCP accepts yet", with the redesign still ahead ("once the fence is
+// redesigned") — while the branch lands exactly that redesign and corrects the
+// reason everywhere else it touches (docs/release.md's bullet,
+// docs/design/managed-projects.md's 0.10.0 note, deployer.tf's header). A skill
+// is what the user's agent repeats, so a reason the branch removed is a reason
+// the agent will state to its user.
+//
+// SKILL.md is not read here: it states the gate's state and the release, and
+// never carried the old reason. The strings
+// TestSetupSkillSaysWhereTheManagedGateStands holds are kept by the reworded
+// sentence.
+//
+// Mutations (verified, run and restored): the old reason sentence put back into
+// reference/managed.md, and "once the fence is redesigned" put back — both fail
+// here.
+func TestSetupSkillSaysWhatTheManagedFenceStillOwes(t *testing.T) {
+	doc := setupFiles(t)["skills/setup/reference/managed.md"]
+	for _, want := range []string{
+		"measured live",
+		"Check 68",
+		"NOT RUN",
+		"owner-run **after** the release",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("reference/managed.md does not say %q: the redesigned fence has not been measured live (Check 68 is written, owner-run after the release and NOT RUN), and the skill is where the agent reads what the fence still owes", want)
+		}
+	}
+	for _, wrong := range []string{
+		"is not an IAM condition GCP accepts",
+		"once the fence is redesigned",
+	} {
+		if strings.Contains(doc, wrong) {
+			t.Errorf("reference/managed.md still states %q: this branch lands the redesign (seven roles, one per service, one binding each), so the fence's old defect is history and what is missing is the live measurement", wrong)
 		}
 	}
 }

@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -46,37 +47,90 @@ func collaborator(association string) bool {
 	return false
 }
 
-// appSlug returns the App's slug, reading it with GET /app (as the App,
-// with its JWT). ok is false when that read failed. A definite answer (the
-// slug, or a 4xx refusal other than 408 and 429) is remembered for the
-// Provider; a passing failure (a cancelled context, a network error, a 408,
-// 429 or 5xx)
-// is not, so the next call asks again. A failure is warned about once.
+// botSuffix is how the REST API spells the App's bot account: the App's
+// slug followed by this. GraphQL names the same account by the bare slug.
+const botSuffix = "[bot]"
+
+// errNoIdentity is an answer that arrived (HTTP 200) and named no identity.
+// It is a definite answer like a 4xx: asking again gets the same, so it is
+// remembered rather than retried.
+var errNoIdentity = errors.New("the answer names no identity")
+
+// appSlug returns the App's slug, the name Fugaro's own identity is spelled
+// with (REST: <slug>[bot], GraphQL: the bare slug). ok is false when that
+// read failed. A definite answer (the slug, or a 4xx refusal other than 408
+// and 429) is remembered for the Provider; a passing failure (a cancelled
+// context, a network error, a 408, 429 or 5xx) is not, so the next call
+// asks again. A failure is warned about once.
+//
+// Which read asks depends on where the App's key is, and neither one hands
+// this process a key (C2.2). When this process holds the key, its JWT reads
+// GET /app, the App's own endpoint. When the key is the credentials
+// service's, there is no JWT here and none is needed: the installation
+// token the run already has -- the one the service minted for it -- reads
+// GET /user, which answers an installation token with the bot account it
+// acts as. Either way a read that fails leaves the identity unknown and
+// every caller that needs it fails closed -- Self stays false
+// (reviewmode.go's trusted gate then wants a collaborator) and a follow-up's
+// comments are not read as Fugaro's.
 func (p *Provider) appSlug(ctx context.Context) (slug string, ok bool) {
 	p.identityMu.Lock()
 	defer p.identityMu.Unlock()
 	if p.identityDone {
 		return p.slug, p.slug != ""
 	}
-	var app struct {
-		Slug string `json:"slug"`
-	}
-	err := p.tokens.app.Do(ctx, "GET", "/app", nil, &app)
+	identity, what, err := p.readAppSlug(ctx)
 	switch {
-	case err == nil && app.Slug != "":
-		p.identityDone, p.slug = true, app.Slug
-		return p.slug, true
 	case err == nil:
-		err = errors.New("the response has no slug")
-		p.identityDone = true
-	case definite(ctx, err):
+		p.identityDone, p.slug = true, identity
+		return p.slug, p.slug != ""
+	case errors.Is(err, errNoIdentity) || definite(ctx, err):
 		p.identityDone = true
 	}
 	if !p.identityWarned {
 		p.identityWarned = true
-		p.warn(fmt.Sprintf("github: could not read the App's identity (GET /app): %v; Fugaro's own comments can't be told apart from others", err))
+		p.warn(fmt.Sprintf("github: could not read the App's identity (%s): %v; Fugaro's own comments can't be told apart from others", what, err))
 	}
 	return "", false
+}
+
+// readAppSlug asks the API who Fugaro is, by the one route this process can
+// take. It returns the slug, the read's name (for the warning), and an error
+// that is nil only when there is a slug to return.
+//
+// The installation-token route is the one C2.2 needs, and it is deliberately
+// strict about the answer: only a bot account is the App's own identity, and
+// anything else is refused rather than compared against, because a login
+// that is not the App's bot would make Self true for an author the run is
+// not. An answer with no bot account in it is not a licence to trust every
+// "<something>[bot]" author instead.
+func (p *Provider) readAppSlug(ctx context.Context) (slug, what string, err error) {
+	if p.app != nil {
+		var app struct {
+			Slug string `json:"slug"`
+		}
+		if err := p.app.Do(ctx, "GET", "/app", nil, &app); err != nil {
+			return "", "GET /app", err
+		}
+		if app.Slug == "" {
+			return "", "GET /app", errNoIdentity
+		}
+		return app.Slug, "GET /app", nil
+	}
+	var bot struct {
+		Login string `json:"login"`
+		Type  string `json:"type"`
+	}
+	if err := p.api.Do(ctx, "GET", "/user", nil, &bot); err != nil {
+		return "", "GET /user", err
+	}
+	if bot.Type != "Bot" {
+		return "", "GET /user", errNoIdentity
+	}
+	if slug := strings.TrimSuffix(bot.Login, botSuffix); slug != "" {
+		return slug, "GET /user", nil
+	}
+	return "", "GET /user", errNoIdentity
 }
 
 // definite reports whether err is an answer worth remembering rather than
@@ -237,7 +291,7 @@ func restComment(f restFields, slug string, known bool) gitprov.Comment {
 	}
 	return gitprov.Comment{
 		ID: id, Kind: f.kind, Author: f.user.login(), AuthorID: f.user.id(), Collaborator: collaborator(f.association),
-		Self: known && f.user != nil && f.user.Login == slug+"[bot]", SelfKnown: known,
+		Self: known && f.user != nil && f.user.Login == slug+botSuffix, SelfKnown: known,
 		Body: f.body, CreatedAt: f.created, URL: f.url,
 	}
 }

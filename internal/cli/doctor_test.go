@@ -107,12 +107,12 @@ func putSecret(t *testing.T, sm *gcpfake.Secrets, project, slug, name string, va
 }
 
 // TestDoctorWithNoInstallationSaysRunInit: with no project config anywhere,
-// doctor says so and names fugaro init as the fix, rather than guessing at
+// doctor says so and names fugaro setup as the fix, rather than guessing at
 // one or crashing.
 func TestDoctorWithNoInstallationSaysRunInit(t *testing.T) {
 	isolateProjects(t, t.TempDir())
 	out, _, err := execute(t, "doctor", "--dir", t.TempDir())
-	if ExitCode(err) != ExitUserError || !strings.Contains(out, "fugaro init") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "fugaro setup") {
 		t.Fatalf("exit %d, err %v, out %q", ExitCode(err), err, out)
 	}
 
@@ -125,7 +125,7 @@ func TestDoctorWithNoInstallationSaysRunInit(t *testing.T) {
 		t.Fatalf("json: %v\n%s", jerr, out)
 	}
 	c, ok := doctorCheckByID(o.Checks, "installation")
-	if !ok || c.OK || !strings.Contains(c.Fix, "fugaro init") {
+	if !ok || c.OK || !strings.Contains(c.Fix, "fugaro setup") {
 		t.Fatalf("installation check = %+v", c)
 	}
 }
@@ -360,7 +360,7 @@ func TestDoctorOpenProvidersIsInformational(t *testing.T) {
 	if !strings.Contains(c.Problem, "provider openrouter has no allow_data_to") || !strings.Contains(c.Problem, "may mount its key") {
 		t.Fatalf("problem = %q", c.Problem)
 	}
-	if !strings.Contains(c.Fix, "allow_data_to") || !strings.Contains(c.Fix, "init --repo") {
+	if !strings.Contains(c.Fix, "allow_data_to") || !strings.Contains(c.Fix, "update --repo") {
 		t.Fatalf("fix = %q", c.Fix)
 	}
 	if !o.OK {
@@ -735,7 +735,7 @@ func TestDoctorGitHubAppCheckRefusesOnGrantMismatch(t *testing.T) {
 	if !ok || c.OK || c.Severity != "warning" {
 		t.Fatalf("github-app:acme/app = %+v (%v)", c, ok)
 	}
-	if !strings.Contains(c.Problem, repoID) || !strings.Contains(c.Problem, projectID) || !strings.Contains(c.Fix, "init --repo") {
+	if !strings.Contains(c.Problem, repoID) || !strings.Contains(c.Problem, projectID) || !strings.Contains(c.Fix, "update --repo") {
 		t.Fatalf("the warning names neither ID nor the fix: %+v", c)
 	}
 }
@@ -1486,7 +1486,7 @@ func TestDoctorZDRCheckSaysUnverified(t *testing.T) {
 
 // addLocalLines appends configuration to the rig's local config file, as an
 // owner's own hand edit would (project_secrets and repos are local-config-only
-// and never written by a Fugaro command other than init --repo).
+// and never written by a Fugaro command other than update --repo).
 func addLocalLines(t *testing.T, r *doctorRig, yaml string) {
 	t.Helper()
 	data, err := os.ReadFile(r.cfgPath)
@@ -1499,7 +1499,7 @@ func addLocalLines(t *testing.T, r *doctorRig, yaml string) {
 }
 
 // repoLabel is the fugaro_repo label of a repository slug, for seeding the
-// fake Secret Manager with a container that looks like init --repo's own.
+// fake Secret Manager with a container that looks like update --repo's own.
 func repoLabel(t *testing.T, slug string) string {
 	t.Helper()
 	l, err := gcp.RepoLabel(slug)
@@ -1516,7 +1516,7 @@ func projectLabels(fugaroProject, name string) map[string]string {
 }
 
 // seedProjectSecret creates the project-wide container of name with no
-// version at all: init --repo created it (or a hand edit did), and nothing
+// version at all: update --repo created it (or a hand edit did), and nothing
 // has ever been stored.
 func seedProjectSecret(t *testing.T, sm *gcpfake.Secrets, fugaroProject, name string) string {
 	t.Helper()
@@ -1567,7 +1567,7 @@ func projectSecretsRig(t *testing.T) *doctorRig {
 func TestDoctorFlagsUnstoredProjectSecret(t *testing.T) {
 	r := projectSecretsRig(t)
 	slug := mustSlug("github", "acme/app")
-	// Both containers exist (init --repo created them) and neither has an
+	// Both containers exist (update --repo created them) and neither has an
 	// enabled version: a container with no version can never be mounted.
 	r.sm.Seed(gcp.SecretID(slug, "github-app-key"), map[string]string{
 		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, slug), gcp.LabelSecret: "github-app-key"}, nil)
@@ -1756,7 +1756,7 @@ func TestDoctorFlagsStaleScope(t *testing.T) {
 	if !strings.Contains(c.Problem, "github-app-key") || !strings.Contains(c.Problem, projID) || !strings.Contains(c.Problem, repoID) {
 		t.Fatalf("problem doesn't name the secret and both copies: %q", c.Problem)
 	}
-	if !strings.Contains(c.Fix, "fugaro init --repo") {
+	if !strings.Contains(c.Fix, "fugaro update --repo") {
 		t.Fatalf("fix doesn't name the command that re-applies it: %q", c.Fix)
 	}
 }
@@ -2049,7 +2049,7 @@ func TestDoctorSecretScopeSaysNoEnabledCopyNotNoCopyStored(t *testing.T) {
 // with an enabled version wins over the project's forever (design
 // project-secrets.md §5, the footgun `fugaro secrets set` warns about at
 // store time), so the project's value never reaches this repository. A
-// warning, not red: the next fugaro init --repo cannot change it, and the
+// warning, not red: the next fugaro update --repo cannot change it, and the
 // value the repository mounts is the one its own copy holds.
 func TestDoctorWarnsOnAShadowedProjectName(t *testing.T) {
 	r := projectSecretsRig(t)
@@ -2197,7 +2197,7 @@ func TestDoctorFlagsExtraProjectSecretAccessor(t *testing.T) {
 	if !strings.Contains(c.Problem, "acme/old") || !strings.Contains(c.Problem, "github-app-key") {
 		t.Fatalf("problem doesn't name the repository and the secret: %q", c.Problem)
 	}
-	if !strings.Contains(c.Fix, "fugaro init --repo") || !strings.Contains(c.Fix, "--allow-delete") {
+	if !strings.Contains(c.Fix, "fugaro update --repo") || !strings.Contains(c.Fix, "--allow-delete") {
 		t.Fatalf("fix doesn't name the follow-up command and its flag: %q", c.Fix)
 	}
 	if strings.Contains(out, "project-value") {

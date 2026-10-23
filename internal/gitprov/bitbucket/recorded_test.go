@@ -167,7 +167,7 @@ func TestRecordedFollowUpReads(t *testing.T) {
 		t.Fatalf("Repository = %+v, %v; the sandbox is private", repo, err)
 	}
 	info, err := p.PullRequest(ctx, recFollowUpPR)
-	want := gitprov.PRInfo{Number: recFollowUpPR, URL: recPRURL + "16", State: gitprov.PROpen, Title: recFollowUpTitle, Body: recBody, AuthorID: recBotID,
+	want := gitprov.PRInfo{Number: recFollowUpPR, URL: recPRURL + "16", State: gitprov.PROpen, Title: recFollowUpTitle, Body: recBody, Base: "master", AuthorID: recBotID,
 		SourceBranch: recFollowUpBranch, SourceRepo: "acme/sandbox", HeadSHA: "3bd808d407ef"}
 	if err != nil || info != want || !recShortSHA.MatchString(info.HeadSHA) {
 		t.Fatalf("PullRequest = %+v, %v\nwant %+v", info, err, want)

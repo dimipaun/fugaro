@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
@@ -22,12 +21,18 @@ import (
 )
 
 // Claude Code keeps each session as ~/.claude/projects/<escaped
-// workdir>/<id>.jsonl. Every run saves the session of its latest implement
-// or fix stage to its prefix (session/<id>.jsonl, then
-// session/session.json), so a follow-up on its pull request can resume
-// it. The session file is written by the agent's own process, so it is
-// read and written as a regular file only, never through a symlink, and
-// redacted before upload.
+// workdir>/<id>.jsonl. Every run saves the session of its work chain — the
+// implement or fix stage's, the conversation that built the branch — to its
+// prefix (session/<id>.jsonl, then session/session.json), so a follow-up on
+// its pull request can resume it. A review stage runs in a session of its
+// own (agentLoop gives each review a fresh ID) and its session is saved too,
+// but beside the work session rather than in its place: a follow-up must
+// continue the work, not the review of it (C1.17, D138). Nothing that
+// resumes a session reads these objects: --resume is given the local file,
+// which is why a stage the credentials cascade interrupted is resumed from
+// ~/.claude, not from the upload. The session file is written by the agent's
+// own process, so it is read and written as a regular file only, never
+// through a symlink, and redacted before upload.
 
 // sessionSaveTimeout bounds the save Run makes when finalize fails, on a
 // context of its own.
@@ -41,21 +46,43 @@ var commitRE = regexp.MustCompile(`^[0-9a-f]{40}$`)
 // errSessionTooLarge means the session file is over MaxSessionBytes.
 var errSessionTooLarge = errors.New("session file is larger than its cap")
 
-// noteSession remembers the session a stage ran in: the one its result
-// reports (the result event's ID, else its init event's, so a stage killed
-// before its result still names it). Claude Code may report another ID
-// than the one it was asked for, and that is the one that holds the
-// conversation. A stage that reported none keeps the one it was asked to
-// resume, if any: that session existed before it ran.
+// noteSession remembers the session a work stage ran in: the one the next fix
+// resumes, and the one writeback saves as the run's session.
 func (r *run) noteSession(req agent.Request, res agent.Result) {
+	if id := r.stageSession(req, res); id != "" {
+		r.sessionID = id
+	}
+}
+
+// noteReviewSession remembers the session a review stage ran in, for the save
+// alone (C1.17, D138). A review runs in a session of its own (agentLoop hands
+// each one a fresh ID), so it is never what the next fix resumes — a fix
+// continues the work, not the review of it — and it is saved beside the work
+// session rather than in its place: what a follow-up must resume is the
+// conversation that built the branch, not the one that read it.
+func (r *run) noteReviewSession(req agent.Request, res agent.Result) {
+	if id := r.stageSession(req, res); id != "" {
+		r.reviewSession = id
+	}
+}
+
+// stageSession is the session a stage ran in: the one its result reports
+// (the result event's ID, else its init event's, so a stage killed before
+// its result still names it). Claude Code may report another ID than the one
+// it was asked for, and that is the one that holds the conversation. A stage
+// that reported none keeps the one it was asked to resume, if any: that
+// session existed before it ran.
+func (r *run) stageSession(req agent.Request, res agent.Result) string {
 	switch {
 	case res.SessionID == "" && req.Resume && agent.ValidSessionID(req.SessionID):
-		r.sessionID = req.SessionID
+		return req.SessionID
 	case res.SessionID == "":
+		return ""
 	case !agent.ValidSessionID(res.SessionID):
 		r.d.Log.Warn("the agent reported a session ID that is not a lower-case UUID; ignoring it")
+		return ""
 	default:
-		r.sessionID = res.SessionID
+		return res.SessionID
 	}
 }
 
@@ -80,15 +107,30 @@ func (r *run) sessionDir() (home, rel string, err error) {
 	return home, rel, nil
 }
 
-// saveSession uploads the session of the latest implement or fix stage.
-// Nothing here fails the run: a session that can't be saved is a
-// warning, and the next follow-up starts fresh.
+// saveSession uploads the run's sessions. The work chain's (implement or fix)
+// goes to session/<id>.jsonl + session/session.json, exactly as before C1.17:
+// it is what a follow-up resumes. A review stage's, which is a session of its
+// own, is saved too (D138), beside it as session/review/<id>.jsonl +
+// session/review.json — never in its place, or a follow-up would continue the
+// reviewer's conversation instead of the work. Nothing here fails the run: a
+// session that can't be saved is a warning, and the next follow-up starts
+// fresh.
 func (r *run) saveSession(ctx context.Context) {
-	if r.sessionID == "" {
+	r.saveOneSession(ctx, r.sessionID, false)
+	r.saveOneSession(ctx, r.reviewSession, true)
+}
+
+// saveOneSession reads, redacts and uploads one session: the work session, or
+// (review) the latest review stage's, under its own two objects.
+func (r *run) saveOneSession(ctx context.Context, id string, review bool) {
+	if id == "" {
 		return
 	}
-	log := r.d.Log.With("session", r.sessionID)
-	data, err := r.readSessionFile(r.sessionID)
+	log := r.d.Log.With("session", id)
+	if review {
+		log = log.With("stage", "review")
+	}
+	data, err := r.readSessionFile(id)
 	switch {
 	case errors.Is(err, errSessionTooLarge):
 		log.Warn("session too large to save; the next follow-up starts fresh", "cap_bytes", runstore.MaxSessionBytes)
@@ -115,9 +157,13 @@ func (r *run) saveSession(ctx context.Context) {
 			return
 		}
 	}
-	m := runstore.SessionMeta{Version: 1, ID: r.sessionID, HeadSHA: head, Pushed: r.rec.PushedHead != "",
+	m := runstore.SessionMeta{Version: 1, ID: id, HeadSHA: head, Pushed: r.rec.PushedHead != "",
 		WorkDir: r.d.WorkDir, Bytes: int64(len(data))}
-	if err := r.d.Store.PutSession(ctx, m, data); err != nil {
+	put := r.d.Store.PutSession
+	if review {
+		put = r.d.Store.PutReviewSession
+	}
+	if err := put(ctx, m, data); err != nil {
 		log.Warn("storing the session failed; the next follow-up starts fresh", "err", r.redact(err.Error()))
 		return
 	}
@@ -144,10 +190,12 @@ func (r *run) readSessionFile(id string) ([]byte, error) {
 	if !li.Mode().IsRegular() {
 		return nil, fmt.Errorf("the session file is not a regular file (%s)", li.Mode().Type())
 	}
-	// O_NOFOLLOW and O_NONBLOCK: a symlink or FIFO swapped in after the
-	// Lstat fails the open, or at least never blocks it; SameFile below
-	// refuses anything that isn't the file Lstat saw.
-	f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	// openRootNoFollow passes O_NOFOLLOW and O_NONBLOCK where the platform
+	// has them: a symlink or FIFO swapped in after the Lstat fails the open,
+	// or at least never blocks it; SameFile below refuses anything that
+	// isn't the file Lstat saw. (openfile_other.go states what the Windows
+	// half of that pair loses.)
+	f, err := openRootNoFollow(root, name)
 	if err != nil {
 		return nil, fmt.Errorf("opening the session file: %w", err)
 	}
@@ -283,6 +331,15 @@ func (r *run) restoreSession(ctx context.Context, prev *runstore.Store, head str
 // writeSessionFile writes data as session id's file through an os.Root on
 // HOME, creating the project directory 0700 and the file 0600, and never
 // replacing a file (or following a symlink) already there.
+//
+// The modes are the POSIX half of what keeps the transcript to its owner — it
+// is redacted, but it is still this run's own turns — and they are not claimed
+// to protect it on Windows: Go's os.Chmod there sets the read-only attribute
+// and nothing else, so what keeps another local user out is the ACL of HOME.
+// **D12 (file modes) is open** in docs/windows-cli/reconciliation.md, the
+// Windows CLI gets its release in **Slice 5**, and docs/windows-cli/README.md
+// records that a Windows release must not ship without that decision. The long
+// form of this note is at the deployer credential in internal/cli/managed_apply.go.
 func (r *run) writeSessionFile(id string, data []byte) error {
 	home, rel, err := r.sessionDir()
 	if err != nil {

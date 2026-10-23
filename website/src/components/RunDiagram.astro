@@ -60,155 +60,7 @@
  * **No font, no colour and no motion is load-bearing.** The text is SVG `<text>` in the
  * body's own font stack, painted from the palette's tokens, and nothing here animates.
  */
-import { readFileSync } from 'node:fs'
-import path from 'node:path'
-import { REPO_ROOT } from '../content.ts'
-
-/** A string with its markdown markers, its apostrophes and its whitespace removed: how a
- * label and the document it claims to come from are compared — the reading the retired flow's
- * build-time guard used, and the one `website/test/how-it-works.mjs` and `website/test/home.mjs`
- * hold this page's labels with. A page may set a document's straight apostrophe in the site's
- * own type, and that is a glyph rather than a word. */
-function comparable(document: string): string {
-  return document.replace(/[`*]/g, '').replace(/[‘’]/g, "'").replace(/\s+/g, '')
-}
-
-function wholeFile(file: string): string {
-  return readFileSync(path.join(REPO_ROOT, file), 'utf8')
-}
-
-/**
- * One section of a document — `<heading>` at whatever level the document writes it, whether
- * `## How it works` in the README or `### Run, watch, diagnose` in `docs/gcp-setup.md` — up
- * to the next heading of the same level or a shallower one, which is where a reader would say
- * that section ends.
- */
-function section(file: string, heading: string): string {
-  const text = wholeFile(file)
-  const at = [...text.matchAll(/^(#+) (.+)$/gm)].find((match) => match[2].replace(/`/g, '') === heading)
-  if (!at || at.index === undefined) {
-    throw new Error(
-      `website/src/components/RunDiagram.astro: ${file} carries no "${heading}" section, and a label of the diagram is quoted from it (the owner's draft of 2026-10-19). Either the section was renamed or the label moved.`,
-    )
-  }
-  const level = at[1].length
-  const rest = text.slice(at.index)
-  const next = [...rest.matchAll(/^(#+) /gm)].find((match) => match.index !== undefined && match.index > 0 && match[1].length <= level)
-  return next && next.index !== undefined ? rest.slice(0, next.index) : rest
-}
-
-const SPEC = 'docs/website/redesign/changes-spec-2026-10-18.md'
-const PARALLELISM = 'plugin/skills/parallelism/SKILL.md'
-const README_HOW = 'README.md#How it works'
-const README_WHY = 'README.md#Why Fugaro'
-const README_SAFETY = 'README.md#Safety and cost controls'
-const README_START = 'README.md#Getting started'
-const GCP_BUDGET = 'docs/gcp-setup.md#Turning the model budget on'
-const GCP_RUN = 'docs/gcp-setup.md#Run, watch, diagnose'
-const DESIGN = 'docs/design/v1.md'
-
-const SOURCES: { [name: string]: string } = {
-  [SPEC]: wholeFile(SPEC),
-  [PARALLELISM]: wholeFile(PARALLELISM),
-  [README_HOW]: section('README.md', 'How it works'),
-  [README_WHY]: section('README.md', 'Why Fugaro'),
-  [README_SAFETY]: section('README.md', 'Safety and cost controls'),
-  [README_START]: section('README.md', 'Getting started'),
-  [GCP_BUDGET]: section('docs/gcp-setup.md', 'Turning the model budget on'),
-  [GCP_RUN]: section('docs/gcp-setup.md', 'Run, watch, diagnose'),
-  [DESIGN]: wholeFile(DESIGN),
-}
-
-/** A line of the diagram: its text, and the document the text is a line of. */
-interface Label {
-  text: string
-  source: string
-}
-
-const LABELS = {
-  // The reader's own agent, asking for the work: the changes spec's item 3 example.
-  request: { text: 'Fan out these three bug fixes.', source: SPEC } as Label,
-  // Fugaro's half of the run: one run per piece, the `parallelism` skill's own rule.
-  perPiece: { text: 'One run per piece, each with a self-contained task', source: PARALLELISM } as Label,
-  // The job: whose project it runs in, what it is, and how long it lives.
-  ownProject: { text: 'in your own cloud project', source: README_WHY } as Label,
-  jobKind: { text: 'Cloud Run job per repository workflow', source: README_HOW } as Label,
-  oneExecution: { text: 'one execution per task, then gone', source: README_HOW } as Label,
-  // The pull request: when it opens and in what state, README.md's own step 4.
-  draft: { text: 'a draft opens at the first push (marked not verified)', source: README_HOW } as Label,
-  // The band: the two caps, and that the run spends the reader's own credential.
-  perRunCap: { text: "A run halts when its next call's worst case would pass the cap", source: GCP_BUDGET } as Label,
-  dailyCap: { text: 'runs also share daily caps per repository and project', source: README_SAFETY } as Label,
-  yourCredential: {
-    text: 'There is no Fugaro service in between: it uses your Google Cloud project and your model credentials',
-    source: README_WHY,
-  } as Label,
-  // The page's facts the diagram does not carry, in the page's own words under it.
-  howItStarts: { text: 'the plugin’s working skill launches, watches and diagnoses runs', source: README_START } as Label,
-  checkpoint: {
-    text: 'The draft appears at the run’s first checkpoint push (within about a minute of its first commit), marked not verified',
-    source: GCP_RUN,
-  } as Label,
-  caches: { text: 'Sync to the exact target commit and restore the dependency caches.', source: README_HOW } as Label,
-  whatRemains: { text: 'The run record and the PR remain; the container does not.', source: README_HOW } as Label,
-  boundary: { text: 'The trust boundary is the container, not the process.', source: DESIGN } as Label,
-}
-
-/** Every label the page renders, held to the document it cites: a paraphrase — or a label
- * that moved to another box — stops the build naming the file rather than reaching a reader
- * as the repository's own words (Global Constraint 6). */
-function hold(labels: { [name: string]: Label }): void {
-  for (const [name, label] of Object.entries(labels)) {
-    const doc = SOURCES[label.source]
-    if (!doc || !comparable(doc).includes(comparable(label.text))) {
-      throw new Error(
-        `website/src/components/RunDiagram.astro: the ${name} label ${JSON.stringify(label.text)} is not a line of ${label.source}, and every label of the diagram is the repository's own words (Global Constraint 6; the owner's draft of 2026-10-19).`,
-      )
-    }
-  }
-}
-
-hold(LABELS)
-
-/**
- * The stages of the run, in order, and the loop the draft asks for: `review` sends a `fix`
- * back round, which is `docs/design/v1.md` §4's own arrow (`[fix ─► review(2)] …`). The
- * names are the run's stages rather than words written for the page, and
- * `website/test/how-it-works.mjs` holds them to the two documents that name them.
- */
-const STAGES = ['bootstrap', 'implement', 'verify', 'review', 'writeback']
-const LOOP = 'fix'
-
-/**
- * The four boxes, and the band, each with the labels it carries. The list under the figure
- * is generated from this — same names, same labels, same order — so the words below the
- * picture cannot say something the picture does not.
- */
-const BOXES: { name: string; labels: Label[]; stages?: boolean }[] = [
-  { name: 'Your agent', labels: [LABELS.request] },
-  { name: 'Fugaro', labels: [LABELS.perPiece] },
-  { name: 'Ephemeral cloud job', labels: [LABELS.ownProject, LABELS.jobKind, LABELS.oneExecution], stages: true },
-  { name: 'Pull request', labels: [LABELS.draft] },
-]
-
-const BAND_NAME = 'Spend caps watch the whole run'
-const BAND: Label[] = [LABELS.perRunCap, LABELS.dailyCap, LABELS.yourCredential]
-
-/**
- * The page's remaining facts, the ones the diagram does not carry: how a run starts, when
- * the draft appears, what a run syncs before it works, what outlives the container, and
- * where the boundary of a run is. Each is quoted like every label above.
- */
-const ALSO: Label[] = [LABELS.howItStarts, LABELS.checkpoint, LABELS.caches, LABELS.whatRemains, LABELS.boundary]
-
-for (const [index, label] of ALSO.entries()) {
-  const doc = SOURCES[label.source]
-  if (!doc || !comparable(doc).includes(comparable(label.text))) {
-    throw new Error(
-      `website/src/components/RunDiagram.astro: line ${index + 1} under the diagram, ${JSON.stringify(label.text)}, is not a line of ${label.source}, and the page's facts are the repository's own words (Global Constraint 6).`,
-    )
-  }
-}
+import { ALSO, BAND, BAND_NAME, BOXES, LABELS, LOOP, SOURCES, SPEC, STAGES } from '../lib/run-labels.mjs'
 
 // ---- the drawing ------------------------------------------------------------------------
 //
@@ -527,9 +379,12 @@ const ALT =
 ---
 
 <section class="run-picture" aria-labelledby="run-picture-title">
-  {/* The picture's own heading, and the page's first `h2`: the diagram is the page's opening
-      block, so it is the block the page's first heading belongs to. */}
-  <h2 class="run-picture-title" id="run-picture-title">How a task becomes a pull request</h2>
+  {/* The picture's own heading, and the page's first `h2`: the diagram is the block the run is
+      drawn in, and the heading is the board's own line over it (the owner's approved board
+      `website/design-ref/HowItWorksV3.dc.html`) — the page's `h1` is the sentence the picture
+      is named with, so the heading over the picture is the board's shorter label rather than
+      that sentence a second time. It is listed in the pull request for the owner to veto. */}
+  <h2 class="run-picture-title eyebrow" id="run-picture-title">The run, end to end</h2>
   <figure class="run-diagram" data-source={SPEC}>
     {/* The wide drawing and the tall one are the same picture at two scales, and the
         stylesheet shows one of them: the other is `display: none`, and `hidden` is what keeps
@@ -542,11 +397,18 @@ const ALT =
 </section>
 
 <section class="run-words" aria-labelledby="run-words-title">
-  <h2 class="run-words-title" id="run-words-title">The same, in words</h2>
+  <h2 class="run-words-title display-md" id="run-words-title">The same, in words</h2>
   <ol class="run-facts">
     {
-      [...BOXES.map((b) => ({ name: b.name, labels: b.labels })), { name: BAND_NAME, labels: BAND }].map((entry) => (
+      [...BOXES.map((b) => ({ name: b.name, labels: b.labels })), { name: BAND_NAME, labels: BAND }].map((entry, index) => (
         <li class="run-fact">
+          {/* The board's step number, drawn as the two digits the board draws. It is
+              `aria-hidden` because the list is ordered: a reader already hears "1", and a
+              number read out is the count said twice (`website/test/a11y.mjs` holds the
+              slider's own numbers to the same rule). */}
+          <span class="run-fact-number" aria-hidden="true">
+            {String(index + 1).padStart(2, '0')}
+          </span>
           <strong class="run-fact-name">{entry.name}</strong>
           {entry.labels.map((label) => (
             <span class="run-fact-text" data-source={label.source}>
@@ -558,7 +420,7 @@ const ALT =
     }
   </ol>
 
-  <h2 class="run-words-title">Also true of a run</h2>
+  <h2 class="run-words-title display-md">Also true of a run</h2>
   <ul class="run-also">
     {
       ALSO.map((label) => (
@@ -573,15 +435,31 @@ const ALT =
 <style>
   /* The figure and the words under it take the page's column, like every other block here.
      The drawing is first-party SVG in the markup: nothing is fetched, nothing is a picture
-     file, and no script measures or moves any of it. */
+     file, and no script measures or moves any of it.
+
+     **The board's panel** (the owner's approved board `website/design-ref/HowItWorksV3.dc.html`,
+     2026-10-20): the drawing is laid on the panel — the step between the ground and the surface
+     — inside the hairline and the larger radius every raised thing on this site has, with the
+     room the panel gives its contents declared as `padding-block` alone. An inline inset here
+     would move the drawing off the title's left edge, which is the second left edge
+     `website/test/base-styles.mjs` refuses. There is no `box-shadow`: a shadow is a colour
+     function, and a colour function outside a palette file is a contrast pair the a11y gate
+     cannot compute. */
   .run-diagram {
+    background: var(--panel);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-xl);
+    padding-block: var(--space-sm);
+    overflow: hidden;
     margin: 0;
   }
 
   /* The heading over the picture, and the room between it and the drawing: the page's own
-     heading spacing, so the block reads as a block rather than as part of the title. */
+     spacing, and the eyebrow `base.css` writes once for the site — a small uppercase label over
+     a section, so the picture reads as a block under the page's title rather than as a second
+     title. */
   .run-picture-title {
-    margin-bottom: var(--space-lg);
+    margin: 0 0 var(--space-lg);
   }
 
   /* The picture scales to the column and never scrolls sideways: the `viewBox` is the
@@ -624,14 +502,29 @@ const ALT =
 
   /* Paint: tokens only (W1.2), and the accent is the structure the draft asks for — the
      arrows, the numbers and the band's rule. The cards are the surface, the names are the
-     page's own text, and the labels under them are the quieter tone. */
-  .run-card {
+     page's own text, and the labels under them are the quieter tone.
+
+     **`:global()` around every shape, because the drawing arrives through `set:html`.** The
+     shapes these rules paint are markup this component generates and hands to `set:html`
+     (`drawWide`/`drawTall` above), and Astro appends the component's `data-astro-cid-…` to
+     **every** compound of a scoped selector: `.run-card` was built as `.run-card[cid]`, and a
+     `<rect>` the drawing writes carries no `cid` for that to match. Every rule of this block
+     was dead, and the drawing shipped as the owner found it on 2026-10-21 — a series of black
+     rectangles: SVG's own default `fill` is black and its default `stroke` is none, so each
+     card and each label painted black and the arrows, which are stroke alone, were not drawn
+     at all. `:global()` opts the shape's own compound out of the scoping and leaves
+     `.run-diagram` scoped to this component, so a rule reaches this drawing and nothing else
+     on the site; `website/test/how-it-works.mjs` reads whether a shape's paint comes from a
+     rule that can reach it rather than whether a rule with that class exists, and refuses a
+     shape left with SVG's own default. The rules above stay scoped: they style elements this
+     component's own template renders, which do carry the scope. */
+  .run-diagram :global(.run-card) {
     fill: var(--surface);
     stroke: var(--border);
     stroke-width: 1.5;
   }
 
-  .run-band {
+  .run-diagram :global(.run-band) {
     fill: var(--surface);
     stroke: var(--accent);
     stroke-width: 1.5;
@@ -642,58 +535,58 @@ const ALT =
      is what `spacing.mjs` reads a page's own stylesheet for. Two labels of the drawing are
      therefore never read as one glued word, and the wrapped rows of one label are as many
      lines as the drawing gives them. */
-  .run-name,
-  .run-band-title {
+  .run-diagram :global(.run-name),
+  .run-diagram :global(.run-band-title) {
     display: block;
     fill: var(--text);
     font-family: var(--font-sans);
     font-weight: var(--weight-semibold);
   }
 
-  .run-text {
+  .run-diagram :global(.run-text) {
     display: block;
     font-family: var(--font-sans);
   }
 
-  .run-number {
+  .run-diagram :global(.run-number) {
     display: block;
     fill: var(--accent-on-dark);
     font-family: var(--font-sans);
     font-weight: var(--weight-semibold);
   }
 
-  .run-small,
-  .run-cap {
+  .run-diagram :global(.run-small),
+  .run-diagram :global(.run-cap) {
     display: block;
     fill: var(--text-muted);
   }
 
-  .run-line,
-  .run-stage {
+  .run-diagram :global(.run-line),
+  .run-diagram :global(.run-stage) {
     display: block;
     fill: var(--text);
   }
 
-  .run-stage-pill {
+  .run-diagram :global(.run-stage-pill) {
     fill: var(--ground);
     stroke: var(--border);
     stroke-width: 1;
   }
 
-  .run-loop {
+  .run-diagram :global(.run-loop) {
     display: block;
     fill: var(--accent-on-dark);
   }
 
-  .run-arrow-line,
-  .run-loop-line {
+  .run-diagram :global(.run-arrow-line),
+  .run-diagram :global(.run-loop-line) {
     stroke: var(--accent);
     stroke-width: 2;
     fill: none;
   }
 
-  .run-arrow-head,
-  .run-loop-head {
+  .run-diagram :global(.run-arrow-head),
+  .run-diagram :global(.run-loop-head) {
     fill: var(--accent);
   }
 
@@ -701,18 +594,63 @@ const ALT =
      run's own order, and then the page's remaining facts. They are the page's lists, so
      `base.css`'s list and heading defaults apply and nothing here is a picture. */
   .run-words {
+    display: flex;
+    flex-direction: column;
     margin-top: var(--space-2xl);
   }
 
-  .run-facts,
-  .run-also {
-    max-width: none;
+  .run-words-title {
+    margin: 0 0 var(--space-lg);
   }
 
-  .run-fact,
-  .run-also-item {
-    margin-bottom: var(--space-2xs);
-    color: var(--text-muted);
+  /* The board's five cards: the four boxes of the drawing and the band, each the panel a run's
+     step is drawn on — the surface, the hairline and the larger radius — under a rule of the
+     accent, which is the colour the site's structure is drawn in. The grid is the same
+     `auto-fit` the site's other card rows use: four across a desktop, two by two on a tablet
+     and one under the other on a phone. */
+  .run-facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+    gap: var(--space-md);
+    max-width: none;
+    margin: 0 0 var(--space-2xl);
+    padding: 0;
+    list-style: none;
+  }
+
+  .run-fact {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    padding: var(--space-lg);
+    border: var(--border-width) solid var(--border);
+    border-top: 3px solid var(--accent);
+    border-radius: var(--radius-xl);
+    background: var(--surface);
+  }
+
+  /* The band's card is the run's own end and not one of its four steps, so it takes the whole
+     row and the warning tone rather than the accent: the colour the site uses where a reader is
+     asked to pay attention, which is what a spend cap is. */
+  .run-fact:last-child {
+    grid-column: 1 / -1;
+    border-top-color: var(--border);
+    border-left: 4px solid var(--warn);
+  }
+
+  /* The step's number, as the board draws it: the largest thing in the card after the name, in
+     the accent — and the warning tone on the band's card, which is the card it belongs to. */
+  .run-fact-number {
+    color: var(--accent);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-3xl);
+    font-weight: var(--weight-black);
+    letter-spacing: var(--tracking-display);
+    line-height: 1;
+  }
+
+  .run-fact:last-child .run-fact-number {
+    color: var(--warn);
   }
 
   /* The name of the thing a run reaches, then what happens to it: the name is a line of its
@@ -721,5 +659,62 @@ const ALT =
   .run-fact-name {
     display: block;
     color: var(--text);
+    font-size: var(--font-size-lg);
+    font-weight: var(--weight-black);
+    letter-spacing: var(--tracking-tight);
+  }
+
+  .run-fact-text {
+    color: var(--text-muted);
+    line-height: var(--leading-normal);
+  }
+
+  /* The facts the picture does not carry: the board's panel list — the panel, the hairline and
+     the larger radius, with a hairline between two rows and none under the last.
+
+     **Every item carries a bullet a reader can see** (the owner's feedback of 2026-10-21: "can
+     we have a bullet point for each of the items?", and again on 2026-10-22: the bullets were
+     not there to read). The board draws a mark of its own per row and this page draws none, so
+     the five facts read as one run-on paragraph; the marker is the list's own and the row's
+     typography is the board's, unchanged. Its colour is the quieter tone `base.css` gives every
+     marker on the site.
+
+     **The room is the list's own, and it is what the first fix left out.** The marker is drawn
+     outside the row's box and in the *list's* inline padding — which is why the browser's own
+     stylesheet gives every list 40 px of it — and this list had none: its padding was `0`, so
+     its markers were drawn to the left of its own padding box, where the panel's
+     `overflow: hidden` (the clip the rounded corners need) took them away. The rows were list
+     items with `list-style: disc` and not a bullet on any of them, which is what the owner read
+     on 2026-10-22 and what settles where the marker is drawn: the row's own start padding
+     (`--space-lg`, 32 px) is not the room it is drawn in. So the inset below is the one
+     `base.css` gives every list on the site (`:where(ul, ol) { padding-left: var(--space-md) }`),
+     the rows keep their own padding, and the bullet is drawn in the list's — pinned by
+     `website/test/how-it-works.mjs`, which refuses a marker drawn outside the list with no room
+     for it, and refuses a list drawn with no marker at all. */
+  .run-also {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    /* The room the markers are drawn in: the same inset `base.css` gives every list on the
+       site. Without it the panel's clip takes them away, and the rows of this list read as the
+       run-on paragraph the owner read twice. */
+    padding-inline-start: var(--space-md);
+    list-style: disc;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-xl);
+    background: var(--panel);
+    overflow: hidden;
+  }
+
+  .run-also-item {
+    padding: var(--space-md) var(--space-lg);
+    border-bottom: var(--border-width) solid var(--border);
+    color: var(--text-muted);
+    font-size: var(--font-size-lg);
+    line-height: var(--leading-normal);
+  }
+
+  .run-also-item:last-child {
+    border-bottom: 0;
   }
 </style>

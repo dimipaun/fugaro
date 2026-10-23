@@ -23,7 +23,7 @@ const deepseek = "deepseek/deepseek-v4-flash"
 const claimedSenior = "anthropic/claude-sonnet-5.5"
 
 // claimPricesJSON is the owner's model_prices row for the claimed ID, as the
-// job's ceiling carries it (FUGARO_MODEL_PRICES, written by init --repo from
+// job's ceiling carries it (FUGARO_MODEL_PRICES, written by fugaro update from
 // the project config): until the price catalog ships an anthropic/<id> row
 // (P11) this override is the only price the ID has, and the price table keys
 // it whatever the routes say (P4). Its rates are deliberately not the direct
@@ -50,7 +50,7 @@ func providerRun(t *testing.T, cfg, mode, capUSD string, script []anthropicfake.
 // model_prices overrides given outright: the provider's fake, the routes as
 // the job's environment carries them (FUGARO_MODEL_PROVIDERS) and the run's
 // price table, built from those same routes and overrides. pricesJSON is
-// FUGARO_MODEL_PRICES as init --repo writes it ("" for none), so the claimed
+// FUGARO_MODEL_PRICES as fugaro update writes it ("" for none), so the claimed
 // fixtures price their ID through the shipped parse path and not around it.
 func routeRun(t *testing.T, cfg, mode, capUSD string, models []string, pricesJSON string, script []anthropicfake.Reply, allow ...string) *gw {
 	t.Helper()
@@ -71,7 +71,7 @@ func wireProviders(t *testing.T, g *gw, script []anthropicfake.Reply, allow ...s
 }
 
 // wireRoutes is wireProviders with the route's models and the owner's
-// model_prices overrides (FUGARO_MODEL_PRICES as init --repo writes it, "" for
+// model_prices overrides (FUGARO_MODEL_PRICES as fugaro update writes it, "" for
 // none) given outright, so a claimed fixture prices its ID through the shipped
 // parse path and not around it.
 func wireRoutes(t *testing.T, g *gw, models []string, pricesJSON string, script []anthropicfake.Reply, allow ...string) {
@@ -83,7 +83,7 @@ func wireRoutes(t *testing.T, g *gw, models []string, pricesJSON string, script 
 		Secret: "openrouter-api-key", Models: models, AllowDataTo: allow,
 	}}
 	g.deps.Providers = providers
-	// The job's environment carries the same routes (init --repo writes
+	// The job's environment carries the same routes (fugaro update writes
 	// FUGARO_MODEL_PROVIDERS from the owner's local config) and the run's
 	// price table is built from them (P5): without a route no model is
 	// claimed, so the built-in catalog has no row for it. newGW built the
@@ -276,7 +276,7 @@ func TestNoCallBeforeRefusal(t *testing.T) {
 	})
 	t.Run("the owner's allow-list does not carry it", func(t *testing.T) {
 		g := providerGW(t, providerPinned(t), "acme/app")
-		// The ceiling the job carries names the routes too (init --repo
+		// The ceiling the job carries names the routes too (fugaro update
 		// writes FUGARO_MODEL_PROVIDERS from the owner's local config): a
 		// ceiling built without them has no price for the route's model and
 		// refuses for that instead, which is not what this case is about.

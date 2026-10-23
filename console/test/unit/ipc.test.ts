@@ -529,10 +529,17 @@ describe('the frozen surface the preload exposes', () => {
  *     operator's machine. `NEVER_REACHABLE` must name it;
  *   - `secret` -- it handles a credential or a secret value. It need not mutate
  *     anything and the console still must never reach it;
+ *   - `retired` -- the tree still defines it, and it does nothing: the old
+ *     first-run `init` is a hidden tombstone that applies nothing and exits 1,
+ *     naming `fugaro setup` and `fugaro update`. It must be on
+ *     `NEVER_REACHABLE` like a writer
+ *     -- a verb that refuses every argv is not a read the console could make --
+ *     but calling it a write would be a lie about the tree, which is the same
+ *     drift the never table exists to catch;
  *   - `unused` -- read-only, and no screen of the console consumes it. It is
  *     simply not on the allow-list, and nothing may drive it.
  */
-type CliCommandClass = 'allowed' | 'mutating' | 'secret' | 'unused'
+type CliCommandClass = 'allowed' | 'mutating' | 'secret' | 'retired' | 'unused'
 
 interface CliCommand {
   readonly command: string
@@ -542,15 +549,21 @@ interface CliCommand {
 
 /**
  * CLI_COMMANDS is every leaf command `internal/cli` had on 2026-10-16
- * (`grep -rn 'Use:' internal/cli/*.go`, parents excluded), classified. It is the
+ * (`grep -rn 'Use:' internal/cli/*.go`, parents excluded), classified. Its three
+ * converge rows were re-read on 2026-10-21, after task W1.2 of
+ * `docs/setup-wizard/implementation-plan.md` split the old first-run `init` into
+ * `fugaro setup` and `fugaro update` and left it a hidden tombstone. It is the
  * other half of the allow-list's invariant: nothing off this list may be driven
  * (there is no command the console could drive that is not here), and nothing on
  * it that is not `allowed` may be driven either. Keeping the list complete is
  * what makes "the console is read-only" a fact about the surface rather than a
- * claim about the eleven commands we happened to think of.
+ * claim about the eleven argvs we happened to think of.
  */
 const CLI_COMMANDS: readonly CliCommand[] = [
-  // The eleven the design's allow-list admits, and the one document each draws.
+  // The ten dashboard commands the design's allow-list admits (eleven argv:
+  // `logs` twice), and the one document each draws. The picker's own read
+  // (`config list --json`) is deliberately not here: it is not a dashboard
+  // operation, and it arrived on 2026-10-18, after this snapshot's date.
   { command: 'watch', kind: 'allowed', where: 'internal/cli/watch.go:134' },
   { command: 'budget show', kind: 'allowed', where: 'internal/cli/budget.go:214' },
   { command: 'report', kind: 'allowed', where: 'internal/cli/report.go:53' },
@@ -564,7 +577,12 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   // Writers.
   { command: 'run', kind: 'mutating', where: 'internal/cli/run.go:134' },
   { command: 'cancel', kind: 'mutating', where: 'internal/cli/cancel.go:72' },
-  { command: 'init', kind: 'mutating', where: 'internal/cli/init.go:103' },
+  // The converge is two doors since W1.2 (`fugaro setup` is the first run and
+  // creates; `fugaro update` re-converges and creates nothing) and both apply
+  // Terraform, so both are writers; the word they replaced is a tombstone.
+  { command: 'setup', kind: 'mutating', where: 'internal/cli/setup.go:235' },
+  { command: 'update', kind: 'mutating', where: 'internal/cli/update.go:58' },
+  { command: 'init', kind: 'retired', where: 'internal/cli/retired.go:39 (hidden)' },
   { command: 'upgrade', kind: 'mutating', where: 'internal/cli/upgrade.go:79' },
   { command: 'exec', kind: 'mutating', where: 'internal/cli/exec.go:52 (hidden)' },
   { command: 'verify', kind: 'mutating', where: 'internal/cli/verify.go:16' },
@@ -621,10 +639,16 @@ const NOT_ON_THIS_TREE: readonly string[] = [
 ]
 
 /**
- * DESIGN_ARGV is design section 5.1 rule 6's allow-list, written as the argv each
- * operation fixes: `RUN` and `--repo R` are arguments the schema carries, and
- * `--dir D` on doctor is main-process state rather than a renderer argument, so
- * both are absent from these strings.
+ * DESIGN_ARGV is the dashboard's half of design section 5.1 rule 6's allow-list,
+ * written as the argv each operation fixes: `RUN` and `--repo R` are arguments
+ * the schema carries, and `--dir D` on doctor is main-process state rather than
+ * a renderer argument, so both are absent from these strings.
+ *
+ * The design's table carries one more row than this list: `config list --json`,
+ * the installations picker's own read, is on the allow-list but is not an
+ * operation of *this* surface (the dashboard's `CONSOLE_OPERATIONS`), so it is
+ * pinned where the picker's table is (`spawn.test.ts`, PICKER_COMMANDS). The
+ * tests below compare this list with that surface, argv for argv.
  */
 const DESIGN_ARGV: readonly string[] = [
   'watch --json',
@@ -877,7 +901,7 @@ describe('the never-reachable table', () => {
     })
   }
 
-  for (const command of ['budget kill', 'budget history', 'secrets set', 'init', 'upgrade', 'exec']) {
+  for (const command of ['budget kill', 'budget history', 'secrets set', 'setup', 'update', 'init', 'upgrade', 'exec']) {
     it(`carries a never-table row for ${command}`, () => {
       const row = NEVER_REACHABLE.find(
         (candidate) => candidate.shape === 'command' && candidate.value === command,

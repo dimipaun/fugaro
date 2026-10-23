@@ -25,7 +25,7 @@ import (
 )
 
 // The job environment variables that point the runner at the project's
-// budget backend, set by fugaro init --firebase on every workflow job
+// budget backend, set by fugaro update --firebase-project on every workflow job
 // whenever the installation has a backend, whatever the job's mode (D11: the
 // mode is policy now, and a run needs the URL and the key to read it — only
 // the grace stays mode-gated, plan R10). Without RTDBURLEnv the runner is
@@ -39,7 +39,7 @@ const (
 	// BudgetTokenEnv is set in a job's environment by the launcher that minted
 	// this run's budget token, and by nothing else: whether a token was minted
 	// is a fact about one launch, so it travels as an execution override
-	// (backend.LaunchSpec.Env) and never through init --repo's deploy-time
+	// (backend.LaunchSpec.Env) and never through fugaro update's deploy-time
 	// environment. It closes a fail-open the security review of PR #379 found:
 	// a run of the same repository could delete a queued run's token object
 	// (before the seal moved it to tokens/, read-only for a job, D16), and a
@@ -264,7 +264,7 @@ func (r *run) refuseStrayToken(ctx context.Context) error {
 	if !present {
 		return nil
 	}
-	return fmt.Errorf("the run was launched with a budget token but this job has no budget backend (%s is not set in its environment): run fugaro init --repo for this repository, then launch the run again", RTDBURLEnv)
+	return fmt.Errorf("the run was launched with a budget token but this job has no budget backend (%s is not set in its environment): run fugaro update for this repository, then launch the run again", RTDBURLEnv)
 }
 
 // freezeHalts is called when the agent loop is over: nothing the backend says
@@ -291,7 +291,7 @@ func (r *run) bootstrapHalt(reason runstore.HaltReason, scope, detail string) er
 // clone — and startBudgetBackend, which met it first and is where a run that
 // answered "no policy" earlier would otherwise stop.
 func strayTokenNoBackend() error {
-	return fmt.Errorf("this run was launched with a budget token, so this repository has a shared budget or a published policy, but its job carries no budget backend (%s is not set in the job's environment): run fugaro init --repo for this repository, then launch the run again", RTDBURLEnv)
+	return fmt.Errorf("this run was launched with a budget token, so this repository has a shared budget or a published policy, but its job carries no budget backend (%s is not set in the job's environment): run fugaro update for this repository, then launch the run again", RTDBURLEnv)
 }
 
 // startBudgetBackend takes the run's Firebase identity and joins the shared
@@ -356,8 +356,13 @@ func (r *run) startBudgetBackend(ctx context.Context) error {
 	r.sess = sess
 	r.mu.Unlock()
 
-	gw := r.cfg.Agent.Auth == "api-key" || r.cfg.Agent.Auth == "vertex"
-	h, err := sess.Admit(ctx, budget.AdmitOptions{Gateway: gw, LocalEnforce: cfg.LocalEnforce, PolicyCap: r.spend.Cap})
+	// Admit is told whether this run's model calls are leased, and it asks the
+	// run's own predicate rather than spelling the auths again: a cascade run
+	// has a gateway and a lease exactly like an api-key one (C1.19), so a
+	// second spelling here read it as an unleased run and admitted it into an
+	// enforcing installation with no caps — to fail call by call instead of
+	// halting no_cap as every other gatewayed run does.
+	h, err := sess.Admit(ctx, budget.AdmitOptions{Gateway: r.gatewayOn(), LocalEnforce: cfg.LocalEnforce, PolicyCap: r.spend.Cap})
 	switch {
 	case errors.Is(err, budget.ErrGraceExpired):
 		return r.bootstrapHalt(runstore.HaltBudgetUnavailable, "run", "the budget backend could not be reached before the run began: "+r.redact(err.Error()))

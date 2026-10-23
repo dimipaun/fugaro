@@ -1,53 +1,76 @@
 ---
 /**
- * website/src/components/HomeSlider.astro — the homepage's one slider (the owner's approved
- * draft "Home, draft 2 (slider)", 2026-10-19).
+ * website/src/components/HomeSlider.astro — the homepage's slider (the owner's approved draft
+ * "Home, draft 2 (slider)", 2026-10-19; the owner's feedback of 2026-10-21, item 3, which
+ * turned the strip of tabs into a slider).
  *
- * **One slider with three tabs, and no JavaScript anywhere in it.** The draft puts the whole
- * of what the page has to show into one block with three tabs — how it is to use, why it is
- * worth it, and what it looks like running — and the tabs are three links to the panels' own
- * ids: the fragment in the address is the state, the stylesheet's `:target` rules are what
- * shows a panel, and the reader's browser is the whole of the mechanism. The site ships one
- * script (`public/scripts/site.js`, the copy control), and this block asks it for nothing:
- * with the script blocked, off, or never delivered, all three tabs still switch and all three
- * panels are in the HTML a reader receives. `website/test/slider.mjs` is the gate — the three
- * panels, one `:target` rule per tab, the opening panel's own rule, and the focus ring the
- * site draws on every control.
+ * **One block, three slides, three dots, two step controls and a clock.** The draft put the
+ * whole of what the page has to show into one block with three tabs, and the owner's reading of
+ * the live site asked for that strip to behave like a slider: it advances by itself every few
+ * seconds, stops while a reader is in it or has asked their system for less motion, steps back
+ * and forward, and shows both where the reader is and how many slides there are. The three
+ * panels are the same three, in the same order, with the same headings.
  *
- * **Fragment links rather than radio inputs, and the site's own privacy page is the reason.**
- * A radio group is the other way to write this pattern and it reads better to a screen reader:
- * the group is announced as three choices and the arrow keys move between them. What it costs
- * is a form control on a page — three of them — and this site states, in `privacy.astro` and
- * in the gate that holds the page to the artifact (`test/consent.mjs`), that it has **no form
- * and asks a reader for nothing**. That claim is about collection, and a radio that switches a
- * panel collects nothing — but it is a form control, and the sentence and the gate are the
- * owner's, not this component's to spend. So the control is a link: `href="#home-panel-…"`,
- * which every browser has understood since HTML 2, no form, no name, nothing submitted.
+ * **The script is an enhancement and nothing is built at runtime.** Every panel is in the HTML
+ * a reader receives, the dots are fragment links to the panels' own ids, and the stylesheet's
+ * `:target` rules are what shows the one a reader chose — so a reader whose browser runs no
+ * script (or whose script never arrives) still has all three slides and a way to open each of
+ * them. What the script adds is the clock, the two step controls and the mark on the current
+ * dot; the two controls are emitted `hidden` and revealed by it, the way the copy control is
+ * (D183's "no broken control": a reader without the script is shown no control that does
+ * nothing). `website/test/slider.mjs` reads both states — the no-script one out of the markup
+ * and the stylesheet, and the script's own out of the file the site ships and out of a run of
+ * it against the built page.
  *
- * **No ARIA tab roles, on purpose.** `role="tab"` and `role="tabpanel"` describe a widget
- * whose selection is scripted: the roles promise a relationship (`aria-selected`,
- * `aria-controls`, the panel that follows the selected tab) that a stylesheet cannot keep and
- * only JavaScript can. The markup says what it is instead — a list of three links named "Easy
- * to use", "Why Fugaro?" and "See it", each pointing at the panel it opens — which is a shape
- * screen readers already know, and the panel a link opens is the element the address names.
- * `website/test/a11y.mjs` reads the links the way it reads every other link on the site.
+ * **Dots rather than radio inputs, and the site's own privacy page is the reason.** A radio
+ * group is the other way to write this pattern and it reads well to a screen reader: the group
+ * is announced as three choices and the arrow keys move between them. What it costs is a form
+ * control on a page — three of them — and this site states, in `privacy.astro` and in the gate
+ * that holds the page to the artifact (`test/consent.mjs`), that it has **no form and asks a
+ * reader for nothing**. That claim is about collection, and a radio that switches a panel
+ * collects nothing — but it is a form control, and the sentence and the gate are the owner's,
+ * not this component's to spend. So every control here is a link or a button:
+ * `href="#home-panel-…"` for the dots, which every browser has understood since HTML 2, no
+ * form, no name, nothing submitted.
+ *
+ * **No ARIA tab roles, on purpose.** `role="tab"` and `role="tabpanel"` describe a widget whose
+ * selection is scripted: the roles promise a relationship (`aria-selected`, `aria-controls`,
+ * the panel that follows the selected tab) that only JavaScript can keep, and the panels here
+ * are reachable with the script off. The markup says what it is instead — three links, each
+ * pointing at the panel it opens, each named for its slide and its place in the three — and the
+ * one state the script does write is `aria-current="true"` on the dot whose slide is showing,
+ * which is a plain statement about a link rather than a promise about a widget.
  *
  * **The three panels.** *Easy to use* is the reader's three steps, numbered, one inline SVG
  * each: tell your agent, Fugaro runs it in your cloud, you get a draft pull request — the
  * draft's own three lines, each with the repository's sentence about it under it, held to
  * README.md at build time the way the flow's captions are held to theirs (Global Constraint
  * 6). *Why Fugaro?* is `Benefits.astro` unchanged: the README's four reasons, with their icons,
- * in the order the README argues them. *See it* is the real `fugaro watch` capture — the
- * owner's own screenshot of the screen running on their installation — with the one command
- * the reader is asked for under it.
+ * in the order the README argues them. *See it* is the console and then the real `fugaro watch`
+ * capture — the owner's own screenshot of the screen running on their installation — with the
+ * one command the reader is asked for under it.
  *
- * **The screenshot is a plain `<img>` and not `ScreenshotSlider.astro`.** That component is
- * the console page's: it renders `website/data/console-screens.yaml`, it carries the console's
- * own heading, ids and captions, and it is a scroller rather than a tab panel. Reusing it here
- * would mean a second reader of a file this page has nothing to do with; the draft asks for one
- * picture, large, and one picture is an `<img>` with its `alt` and its own width and height —
- * 2918 x 882 px taken at 2x, so 1459 x 441 logical, which is what lets the browser reserve the
- * box before the file arrives and the block under it hold still.
+ * **The "See it" panel is a slider of its own, and it is `ScreenshotSlider.astro`** (the brief
+ * of 2026-10-21: "replace the single Fugaro Watch screenshot with a slider"; D246, D251, D252).
+ * The panel used to hold one `<img>` — the owner's `fugaro watch` capture — and it now holds the
+ * console page's component, rendering `website/data/home-screens.yaml`: the console's own three
+ * screenshots first, because the brief asks the desktop console to lead and take the most space,
+ * and the watch capture last as the "for the terminal crowd" slide. That component was the
+ * console page's alone until this round; the three facts about the page it is rendered on — its
+ * heading, its `data-slot` and its slide-id prefix — are props now, and the homepage passes its
+ * own. **What the panel keeps is the slot**: `div[data-slot="watch-screenshot"]` is still the
+ * element after the panel's heading, it is still the one the design record points at, and the
+ * slider renders inside it.
+ *
+ * **Two sliders, one script, and they are told apart by what they hold.** This component's
+ * block is a deck of three panels; the slider inside the third panel is a scroll container of
+ * four slides.
+ * Both are `[data-slider]`, both carry the same interior hooks (`[data-slider-track]`,
+ * `[data-slider-slide]`, `[data-slider-dot]`, the two step controls, the count), and both are
+ * driven by the one file — the console's driver moves the track and reads its position back, and
+ * the homepage's driver moves panels by name. `site.js`'s `own()` is what keeps each driver on
+ * its own block's elements, and `website/test/slider.mjs` reads the block's three panels and
+ * three dots with the same rule, so the case and the script cannot count differently.
  *
  * **Why the panel is the block and the section inside it is not.** The benefits panel renders
  * `Benefits.astro`'s section, which carries its own gutter and its own room below (that is the
@@ -59,9 +82,19 @@
  */
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import { REPO_ROOT } from '../content.ts'
+import { REPO_ROOT, loadHomeScreens } from '../content.ts'
 import { copyControlHTML } from '../lib/copy-control.mjs'
 import Benefits from './Benefits.astro'
+import ScreenshotSlider from './ScreenshotSlider.astro'
+
+/**
+ * The slides the "See it" panel shows, read from `website/data/home-screens.yaml` through the
+ * content pipeline: the console's own three screenshots and then the `fugaro watch` capture,
+ * with each row's `alt`, caption and own pixel size (D246, D251, D252). Read here rather than
+ * handed in as a prop, because the panel is the only caller and the file is the panel's — the
+ * way this component already reads the README.md sections its steps quote.
+ */
+const HOME_SCREENS = loadHomeScreens().screens
 
 /**
  * A string with its markdown markers and its whitespace removed: how a caption and the section
@@ -150,10 +183,14 @@ const GLYPHS: { [name: string]: string } = {
     '<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5v7"/><path d="M18 15.5V11a3 3 0 0 0-3-3h-4"/><path d="m13 6-2 2 2 2"/>',
 }
 
-/** The tabs, in the order the panels are read: the draft's three, and the labels a reader sees.
- *  Each one's `id` is the panel it opens (`#home-panel-<id>`) and the fragment its link carries,
- *  so the tab, the link and the panel are one name rather than three that have to agree. */
-const TABS = [
+/**
+ * The slides, in the order a reader meets them: the draft's three, and the label each one
+ * carries. Each one's `id` is the panel it shows (`#home-panel-<id>`) and the fragment its dot
+ * links to, and the name the script writes on the root when it is the slide on screen — so the
+ * dot, the link, the panel and the script's state are one name rather than four that have to
+ * agree. The label is the panel's own heading and the name its dot is announced with.
+ */
+const SLIDES = [
   { id: 'easy', label: 'Easy to use' },
   { id: 'benefits', label: 'Why Fugaro?' },
   { id: 'see', label: 'See it' },
@@ -218,27 +255,76 @@ if (
 }
 ---
 
-<section class="home-slider" data-slot="home-slider" aria-label="What Fugaro is and does">
-  {/* The three tabs, in the panels' own order: three links to the panels' ids, which is the
-      whole of the switching. A fragment link is the one control a page has had since HTML 2 —
-      no input, no button, no script — and the stylesheet shows the panel the fragment names
-      (`:target`). The first panel is the one a reader arrives on, and the rule below shows it
-      while no fragment is targeted. A list rather than three loose links, because three things
-      a reader chooses between are a list, and the list is what a screen reader announces. */}
-  <ul class="tab-bar">
-    {
-      TABS.map((tab) => (
-        <li class="tab-item">
-          <a class="tab" href={`#home-panel-${tab.id}`}>
-            {tab.label}
-          </a>
-        </li>
-      ))
-    }
-  </ul>
+<section class="home-slider" data-slot="home-slider" data-slider aria-label="What Fugaro is and does">
+  {/* The block's own heading, and the line the board of 2026-10-20 draws over the control:
+      what a reader gets out of the three panels under it. It is the site's own sentence
+      rather than a document's — it names what the block shows, and no document of this
+      repository says it — so it is listed with the page's other new lines in the pull
+      request for the owner to veto. */}
+  <h2 class="slider-title">Say it. Get pull requests.</h2>
+
+  {/* The controls: one step back, one dot per slide, one step on. The dots are the three links
+      the tabs used to be — each one a fragment link to the panel it shows, which is the whole
+      of the switching with no script — and they are the control that says where the reader is,
+      so they carry the slide's own name and its place in the three. The two buttons are the
+      script's: they are emitted `hidden` and revealed by it, because a step control that steps
+      nowhere is the broken control D183 keeps off the site. The whole row is a list of
+      controls and not a list of prose, and it wraps rather than scrolling on a phone. */}
+  <div class="slider-controls">
+    <button type="button" class="slider-step" data-slider-prev aria-label="Previous slide" hidden>
+      <svg
+        class="slider-arrow"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <path d="m15 5-7 7 7 7" />
+      </svg>
+    </button>
+
+    <ul class="slider-dots">
+      {
+        SLIDES.map((slide, index) => (
+          <li class="slider-dot-item">
+            {/* The dot's own mark is the anchor's pseudo-element, so the anchor is the target a
+                reader taps and the mark is the small circle drawn inside it. The name is the
+                slide and the reader's place in the three, which is what a dot shows and what a
+                screen reader cannot see. */}
+            <a
+              class="slider-dot"
+              href={`#home-panel-${slide.id}`}
+              data-slider-dot={slide.id}
+              aria-label={`Slide ${index + 1} of ${SLIDES.length}: ${slide.label}`}
+            />
+          </li>
+        ))
+      }
+    </ul>
+
+    <button type="button" class="slider-step" data-slider-next aria-label="Next slide" hidden>
+      <svg
+        class="slider-arrow"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <path d="m9 5 7 7-7 7" />
+      </svg>
+    </button>
+  </div>
 
   <div class="panels">
-    <div class="panel panel-easy" id="home-panel-easy">
+    <div class="panel panel-easy" id="home-panel-easy" data-slider-slide="easy">
       <h2 class="panel-title">Easy to use</h2>
       <ol class="easy-steps">
         {
@@ -270,13 +356,13 @@ if (
       </ol>
     </div>
 
-    <div class="panel panel-benefits" id="home-panel-benefits">
+    <div class="panel panel-benefits" id="home-panel-benefits" data-slider-slide="benefits">
       {/* `Benefits.astro` renders its own heading and its own section; inside a panel the panel
           is the block, so the section stands its gutter down (see the header). */}
       <Benefits inPanel />
     </div>
 
-    <div class="panel panel-see" id="home-panel-see">
+    <div class="panel panel-see" id="home-panel-see" data-slider-slide="see">
       <h2 class="panel-title">See it</h2>
 
       {/* The slot the owner's capture goes into. `data-slot` is the hook
@@ -286,15 +372,14 @@ if (
           (`public/images/fugaro-watch.txt`), and the declared dimensions are the capture's
           logical size — 2918 x 882 px taken at 2x — so the browser reserves the right box and
           nothing under the picture moves when the file lands. `loading="lazy"`: the panel is
-          the third tab and the picture is not on the first screen. */}
+          the third slide and the picture is not on the first screen. */}
       <div class="watch-shot" data-slot="watch-screenshot">
-        <img
-          src="/images/fugaro-watch.png"
-          alt="The fugaro watch screen: a spend bar at $55.44 counted of $100.00, a burn flagged FAST, a table of seven runs with their stage, age and spend, and four runs ready for review."
-          width="1459"
-          height="441"
-          loading="lazy"
-          decoding="async"
+        <ScreenshotSlider
+          screens={HOME_SCREENS}
+          heading="Screenshots"
+          slot="home-screens"
+          idPrefix="home-screen"
+          label="Screenshots of Fugaro. Scroll sideways to see the rest."
         />
       </div>
 
@@ -328,88 +413,220 @@ if (
     padding: 0 var(--space-md) var(--space-3xl);
   }
 
-  /* The tabs: one row, wrapping rather than scrolling on a phone, and each one a 44 px target
-     (the owner's brief's measurement) whether or not it is the selected one. A list with its
-     markers off, because it is a row of three controls and not a list of prose. */
-  .tab-bar {
+  /* The block's heading, at the display scale's middle step: the board draws the line over the
+     control at the same weight and tracking as the page's other section headings, one step
+     under the hero's own. It carries the room below it that separates it from the control. */
+  .slider-title {
+    margin: 0 0 var(--space-md);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: clamp(var(--font-size-2xl), 4.4vw, var(--font-size-4xl));
+    font-weight: var(--weight-black);
+    letter-spacing: var(--tracking-display);
+    line-height: var(--leading-tight);
+    text-wrap: balance;
+  }
+
+  /* The row the controls stand in: one step back, the three dots, one step on, with the row
+     wrapping rather than scrolling on a phone. `website/test/slider.mjs` reads the wrap and the
+     44 px target every control in it keeps. */
+  .slider-controls {
     display: flex;
     flex-wrap: wrap;
+    align-items: center;
     gap: var(--space-2xs);
     margin: 0 0 var(--space-md);
+  }
+
+  /* The two step controls. They are drawn by the script and `hidden` until it runs, so this
+     rule declares the box the arrow is centred in and the rule below is what keeps the markup's
+     `hidden` in force against it — an author `display` wins over the user agent's `[hidden]`
+     rule, and without that pair a reader whose browser runs no script would be shown two
+     buttons that step nowhere. It is the pair `ConsentBanner.astro` keeps its own banner with,
+     and the reason `base.css`'s `.copy-button` declares no `display` at all. */
+  .slider-step {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-pill);
+    background: var(--panel);
+    color: var(--text-muted);
+  }
+
+  .slider-step[hidden] {
+    display: none;
+  }
+
+  .slider-arrow {
+    width: var(--space-sm);
+    height: var(--space-sm);
+  }
+
+  /* The dots: a list with its markers off, because it is a row of three controls and not a
+     list of prose. */
+  .slider-dots {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2xs);
+    margin: 0;
     padding: 0;
     list-style: none;
   }
 
-  .tab {
+  .slider-dot-item {
+    display: flex;
+  }
+
+  /* A dot is a target a reader taps, so it is at least 44 px of box with the mark drawn inside
+     it: the board draws a 12 px circle, and a 12 px target is not one a finger can hit (the
+     owner's brief of 2026-10-19 measures every control against 44 px). It is written as a
+     minimum rather than a size, because that is the declaration the site's one reading of the
+     brief looks for — `website/test/lib/controls.mjs` — and because the box may grow. The same
+     shape, and the same rule, as the console page's screenshot slider. */
+  .slider-dot {
     display: flex;
     align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    min-width: 44px;
     min-height: 44px;
-    padding: 0 var(--space-md);
+  }
+
+  /* The mark itself, drawn by the anchor's own pseudo-element so that the target above is
+     invisible and what a reader sees is the small circle. */
+  .slider-dot::before {
+    content: '';
+    display: block;
+    width: var(--space-xs);
+    height: var(--space-xs);
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-pill);
-    background: var(--ground);
-    color: var(--text-muted);
-    font-family: var(--font-sans);
-    font-size: var(--font-size-base);
-    font-weight: var(--weight-medium);
-    text-decoration: none;
+    background: var(--surface);
   }
 
-  /* **The selected tab**, by the fragment that selects it: the accent as a fill and the ground
-     as its label, the pair `a11y.mjs` computes at 4.5:1 — the same pair the hero's call to
-     action is set in. One rule per tab rather than one `:nth-child` rule, because the pairing of
-     a tab with the panel it opens is the whole of what makes a tab switch, and a reader of this
-     stylesheet should be able to see which link shows which panel.
-     `website/test/slider.mjs` reads the pairs out of the built stylesheet and refuses a tab
-     whose `:target` rule is missing.
+  /* **The dot of the slide a reader is looking at**, and the two ways it is decided. Without
+     the script it is the fragment's: the panel the address names, or the first one while it
+     names none — the same pair of rules that shows the panel, read on the dot instead. With the
+     script it is the script's own word, `aria-current="true"` on the dot whose slide is
+     showing, which is also what a screen reader reads out.
 
-     The first tab is the selected one while nothing is targeted, which is the page a reader
-     arrives on: the first panel is the one the stylesheet shows then, so the first tab is the
-     one that reads as selected. */
-  .home-slider:not(:has(.panel:target)) .tab[href='#home-panel-easy'],
-  .home-slider:has(#home-panel-easy:target) .tab[href='#home-panel-easy'],
-  .home-slider:has(#home-panel-benefits:target) .tab[href='#home-panel-benefits'],
-  .home-slider:has(#home-panel-see:target) .tab[href='#home-panel-see'] {
+     The first four selectors stand down the moment the script writes `data-active` on the root,
+     and that is not a tidy-up: a reader who arrived on `#home-panel-see` and then let the block
+     advance would otherwise see two dots marked — the fragment's, which does not move, and the
+     script's, which does.
+
+     **They are in an `@supports selector(:has(*))` rule of their own, and the script's own
+     selector is not.** All four of them ask for `:has()`, and a selector list is not forgiving:
+     beside `.slider-dot[aria-current='true']` a browser too old to answer `:has()` would drop the
+     rule and take the script's mark down with it, which is the dot a reader who lets the block
+     advance follows. The same reason, and the same fix, as the first panel's rule below;
+     `website/test/slider.mjs` reads the built stylesheet for both. */
+  @supports selector(:has(*)) {
+    .home-slider:not([data-active]):not(:has(.panel:target)) .slider-dot[href='#home-panel-easy']::before,
+    .home-slider:not([data-active]):has(#home-panel-easy:target) .slider-dot[href='#home-panel-easy']::before,
+    .home-slider:not([data-active]):has(#home-panel-benefits:target) .slider-dot[href='#home-panel-benefits']::before,
+    .home-slider:not([data-active]):has(#home-panel-see:target) .slider-dot[href='#home-panel-see']::before {
+      border-color: var(--accent);
+      background: var(--accent);
+    }
+  }
+
+  .slider-dot[aria-current='true']::before {
     border-color: var(--accent);
     background: var(--accent);
-    color: var(--ground);
   }
 
-  /* **The panels, and the whole of the switching.** Every panel is in the HTML a reader
-     receives; the stylesheet shows the one the address's fragment names and takes the other two
-     out of the layout. A reader with no script gets all three of them behind these rules, which
-     is the point of the pattern — nothing here is built at runtime.
+  /* **The slides, and the whole of the switching.** Every panel is in the HTML a reader
+     receives; the stylesheet shows one and takes the other two out of the layout.
+
+     `display` is the one property these rules decide, at every width and never inside a query
+     (`website/test/base-styles.mjs` refuses a `display` on a panel inside a media query, because
+     the viewport is not what chooses a slide), and the block is read in both of its states:
+     the script's, keyed on the root's `data-active`, and the fragment's, keyed on `:target` and
+     standing down while `data-active` is there.
 
      The focus ring is not declared here: `base.css`'s `:focus-visible` rule draws the site's
-     ring on every control, and a link is one of them, so a tab the keyboard is on carries the
-     ring the rest of the site carries. It is the accent at the token's width and offset, which
-     is visible against the page and against the tab's own ground — and a rule here that removed
-     it would be the one thing `a11y.mjs` refuses. */
+     ring on every control, and a link and a button are both controls, so a dot or a step the
+     keyboard is on carries the ring the rest of the site carries. It is the accent at the
+     token's width and offset, which is visible against the page and against the control's own
+     ground — and a rule here that removed it would be the one thing `a11y.mjs` refuses. */
   .panel {
     display: none;
   }
 
-  .panel:target {
+  /* The script's state: one rule per slide, so the name the script writes on the root and the
+     panel it shows are one name rather than two that have to agree.
+
+     The no-script `:target` rule is in this list rather than beside the `:has()` rule below it,
+     and that placement is load-bearing: a selector list is not forgiving, so one selector a
+     browser cannot read takes the whole rule down with it. Neither of the four names `:has()`, so
+     a browser too old to answer `:has()` still shows the panel a dot opens — and it still shows
+     the panel the script's own name points at, which a list carrying the `:has()` selector would
+     have taken down with it. */
+  .home-slider[data-active='easy'] #home-panel-easy,
+  .home-slider[data-active='benefits'] #home-panel-benefits,
+  .home-slider[data-active='see'] #home-panel-see,
+  .home-slider:not([data-active]) .panel:target {
     display: block;
   }
 
-  /* The page's opening panel, while no tab has been chosen: the first one, because a reader who
-     has clicked nothing is reading the first thing the block has to say. Written on the id, so
-     it is in force whatever order these rules end up in — and out of force the moment any panel
-     is targeted, which is when a tab has been chosen. */
-  .home-slider:not(:has(.panel:target)) #home-panel-easy {
-    display: block;
+  /* The no-script state's other half: the first panel, while the fragment names none — a reader
+     who has clicked nothing is reading the first thing the block has to say. It stands down while
+     the script is driving.
+
+     **It is inside `@supports selector(:has(*))` rather than beside the rule above, and that
+     nesting is load-bearing.** It is the one selector in the block that asks for `:has()`, and a
+     selector list is not forgiving: one selector a browser cannot read takes the whole rule down
+     with it. Written as a sibling of the rule above it is not safe either, because the build
+     merges adjacent rules that carry the same declaration — `display: block` is what both rules
+     say, and the built stylesheet put all five selectors back into one rule when this was tried,
+     which is the defect again with a smaller diff. An at-rule cannot be merged into its sibling,
+     so a browser too old to answer `:has()` drops this rule and nothing else: what such a reader
+     loses is the panel shown before they touch a dot, and never the panel every dot opens, and
+     never the panel the script's own name points at. `website/test/slider.mjs` reads the built
+     stylesheet for exactly that: no rule may carry a `:has()` selector beside one that has none. */
+  @supports selector(:has(*)) {
+    .home-slider:not([data-active]):not(:has(.panel:target)) #home-panel-easy {
+      display: block;
+    }
   }
 
-  /* The panels' own label, at the size the page's other section headings are set in. Each panel
-     carries the label of the tab that opens it, so a reader who arrives on a panel — by tab,
-     by screen reader or in the HTML — reads what they are looking at. */
+  /* The panel's own box: the panel tone, the hairline border and the larger radius, with the
+     room the board gives a panel around its content. It is on every panel rather than on the
+     visible one, so moving on changes the contents and not the box.
+
+     It is a rule of its own, and it names `.panel` and nothing else about the block, for two
+     reasons the readings in `website/test/` make concrete. A selector that named the block
+     would be read by `base-styles.mjs`'s `homeRhythmFailures` as the block's own padding, and
+     the slider would read as a block that opens with its own 48 px over it on top of the room
+     the hero leaves below it. And a selector naming a targeted panel would be read by
+     `slider.mjs` as a second rule showing a panel. */
+  .panel {
+    box-sizing: border-box;
+    min-height: 24rem;
+    padding: var(--space-xl) var(--space-lg);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-xl);
+    background: var(--panel);
+  }
+
+  /* The panels' own label. Each panel carries the label of the slide it is, so a reader who
+     arrives on a panel — by the dots, by the script's clock, by a screen reader or in the HTML —
+     reads what they are looking at; it is set at the display scale's middle step, so the panel
+     opens with a heading rather than with a line of body type. */
   .panel-title {
     margin: 0 0 var(--space-md);
     font-family: var(--font-sans);
-    font-size: var(--font-size-xl);
-    font-weight: var(--weight-semibold);
-    letter-spacing: var(--tracking-tight);
+    font-size: clamp(var(--font-size-xl), 3vw, var(--font-size-3xl));
+    font-weight: var(--weight-black);
+    letter-spacing: var(--tracking-display);
+    line-height: var(--leading-tight);
     color: var(--text);
   }
 
@@ -424,6 +641,11 @@ if (
     list-style: none;
   }
 
+  /* The step is a card on the panel it is drawn in, since the bold redesign: the surface tone
+     one step above the panel, the hairline border and the larger radius the boards give a card.
+     Its grid, its padding and its border width are what `website/test/base-styles.mjs`'s
+     `sliderLayoutFailures` reads to work out whether the longest step name fits a phone, so the
+     restyle is the tones and the radius and nothing else. */
   .easy-step {
     display: grid;
     grid-template-columns: auto auto minmax(0, 1fr);
@@ -432,8 +654,8 @@ if (
     align-items: center;
     padding: var(--space-sm);
     border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-md);
-    background: var(--ground);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
   }
 
   /* The number and the glyph are the row's first two cells and the name and the line are the
@@ -473,25 +695,21 @@ if (
     line-height: var(--leading-normal);
   }
 
-  /* The screenshot's slot, and the picture in it. The slot takes no space while it is empty —
-     the rule the asset's own task left behind, kept so a slot that lost its image again is not
-     a blank rectangle — and the image is the column's width with its own aspect ratio, so a
-     phone scales it down rather than scrolling sideways. */
+  /* The slides' slot, and nothing of its own: the slider inside it is `ScreenshotSlider.astro`,
+     which draws its own frame, its own track, its own dots and its own captions (the owner's
+     feedback of 2026-10-21, D246). The slot takes no space while it is empty — the rule the
+     asset's own task left behind, kept so a slot that lost its slides again is not a blank
+     rectangle — and it is the hook `website/test/home.mjs` reads the rows of. The rule that
+     drew the single `<img>` this slot used to hold is gone with the `<img>`: a picture drawn by
+     a rule nothing renders is a rule that says the panel shows something it does not. */
   .watch-shot:empty {
     display: none;
   }
 
-  .watch-shot > img {
-    display: block;
-    width: 100%;
-    height: auto;
-    margin: 0 0 var(--space-sm);
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-md);
-  }
-
   /* The command bar, and the one bar around it: `base.css`'s `.command-block` lays the command
-     at the left and its control at the right, and this rule is the bar's own look. */
+     at the left and its control at the right, and this rule is the bar's own look — the ground
+     the board draws a terminal on, the hairline border and the radius the site's other command
+     bars carry. */
   .watch-block {
     padding: var(--space-2xs) var(--space-sm);
     border: var(--border-width) solid var(--border);
@@ -501,7 +719,7 @@ if (
 
   .watch-command {
     margin: 0;
-    color: var(--text);
+    color: var(--accent-on-dark);
     font-family: var(--font-mono);
     font-size: var(--font-size-sm);
   }

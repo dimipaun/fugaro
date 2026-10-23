@@ -740,6 +740,56 @@ func TestSecretsSetRefusesCodexOAuthNames(t *testing.T) {
 	}
 }
 
+// TestSecretsSetRefusesTheBundleContainer: `creds-bundle` is the credentials
+// service's own bundle container (config.CredentialsBundleSecret, C1.11's
+// review finding n2), and the one document in it is every model credential
+// the service issues. No spelling of `secrets set` — this repository's copy,
+// another repository's (--repo), or the project's (--project-wide) — stores a
+// value under it: the writer is `fugaro creds set NAME` (C1.25) alone. Like
+// the Codex refusal beside it, this one is made before the value is read,
+// before the checkout is consulted and before any cloud call, and it does not
+// depend on config.Validate having refused a workflow that declares the name.
+func TestSecretsSetRefusesTheBundleContainer(t *testing.T) {
+	for _, tc := range []struct {
+		what string
+		args []string
+	}{
+		{"in a checkout", []string{"secrets", "set", config.CredentialsBundleSecret}},
+		{"with --repo", []string{"secrets", "set", config.CredentialsBundleSecret, "--repo", "acme/app"}},
+		{"project-wide", []string{"secrets", "set", config.CredentialsBundleSecret, "--project-wide"}},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			sm := secretsFixture(t)
+			t.Chdir(t.TempDir())
+			spy := &readerSpy{Reader: strings.NewReader(tokenValue + "\n")}
+			cmd := NewRootCmd()
+			var out, errOut bytes.Buffer
+			cmd.SetIn(spy)
+			cmd.SetOut(&out)
+			cmd.SetErr(&errOut)
+			cmd.SetArgs(tc.args)
+			err := cmd.Execute()
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v (exit %d)", err, ExitCode(err))
+			}
+			for _, want := range []string{"credentials service's own bundle container", config.CredentialsBundleSecret} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not say %q: %v", want, err)
+				}
+			}
+			if strings.Contains(out.String()+errOut.String()+err.Error(), tokenValue) {
+				t.Fatal("the refusal echoed the value")
+			}
+			if spy.read {
+				t.Fatal("the value was read before the refusal")
+			}
+			for _, r := range sm.Requests() {
+				t.Fatalf("a refused command called the API: %s %s", r.Method, r.Path)
+			}
+		})
+	}
+}
+
 // TestSecretsSetRefusesAnotherProvidersConventionalName is the capture this
 // change closes: a configured provider's key is conventionally named after
 // its entry (openrouter -> openrouter-api-key), and that name belongs to that
@@ -1138,6 +1188,55 @@ func TestSecretsLsProjectWideShowsAnyRepository(t *testing.T) {
 	}
 }
 
+// TestSecretsLsProjectWideSkipsAContainerWithNoSecretName: the C1.18
+// credentials bundle is a container of this installation carrying the
+// fugaro/fugaro_project ownership marks and deliberately NO fugaro_secret
+// label — that label is what decides which *logical secret* of the project's
+// secret set a container holds (modules/installation/credentials.tf), and the
+// bundle is not one of those. listRepoScope already skips such a container;
+// listProjectWide must too, or an operator sees a row with NAME "-" and
+// --json emits an entry whose name is omitted, which a script keying on name
+// mis-handles.
+func TestSecretsLsProjectWideSkipsAContainerWithNoSecretName(t *testing.T) {
+	sm := secretsFixture(t)
+	projectSecretFixture(t, listedProvider)
+	if _, _, err := executeStdin(t, "or-not-a-real-key-1234", "secrets", "set", "openrouter-api-key", "--project-wide"); err != nil {
+		t.Fatal(err)
+	}
+	// The bundle container's shape: the two ownership marks, a version, and no
+	// fugaro_secret label at all.
+	bundle := gcp.ProjectSecretID("aurora", "creds-bundle")
+	sm.Seed(bundle, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: "aurora"}, []byte("bundle-document-EXAMPLE"))
+
+	out, _, err := execute(t, "secrets", "ls", "--project-wide")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, bundle) {
+		t.Errorf("ls --project-wide lists the bundle container:\n%s", out)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 2 { // the header and the one real secret
+		t.Errorf("ls --project-wide = %d rows, want 1:\n%s", len(lines)-1, out)
+	}
+	for _, l := range lines[1:] {
+		if strings.HasPrefix(strings.TrimSpace(l), "- ") {
+			t.Errorf("a row has no name:\n%s", l)
+		}
+	}
+	out, _, err = execute(t, "secrets", "ls", "--project-wide", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list []lsEntry
+	if err := json.Unmarshal([]byte(out), &list); err != nil {
+		t.Fatalf("ls --project-wide --json = %s, %v", out, err)
+	}
+	if len(list) != 1 || list[0].Name != "openrouter-api-key" {
+		t.Errorf("ls --project-wide --json = %+v, want the one named secret", list)
+	}
+}
+
 // TestSecretsLsRepoScopeIgnoresProjectCopyItMayNotUse: a repository's
 // listing answers with the plan's own rule (infra.ProjectSecretCandidate),
 // not with "a project-wide copy exists". This repository is on no
@@ -1209,7 +1308,7 @@ func TestSecretsLsScopeIsProjectWhenTheRepoCopyHasNoVersion(t *testing.T) {
 	}
 	// The repository's own container with every version disabled: what
 	// `fugaro secrets set ... --project-wide` leaves behind when a name
-	// moves, and what init --repo's own container looks like before a value
+	// moves, and what update --repo's own container looks like before a value
 	// is ever stored in it.
 	sm.Seed(gcp.SecretID(appSlug, "openrouter-api-key"), map[string]string{
 		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, appSlug), gcp.LabelSecret: "openrouter-api-key"}, nil)
@@ -1452,7 +1551,7 @@ func TestSecretsLsMissingIsAbsentVersionNotAbsentContainer(t *testing.T) {
 	sm := secretsFixture(t)
 	projectSecretFixture(t, "project_secrets:\n  github-app-key: { allow_data_to: [acme/app] }\n")
 	appCheckoutAuth(t, "oauth")
-	// The repository's own container, empty: what init --repo leaves before
+	// The repository's own container, empty: what update --repo leaves before
 	// the value is stored.
 	sm.Seed(gcp.SecretID(appSlug, "claude-oauth-token"), map[string]string{
 		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, appSlug), gcp.LabelSecret: "claude-oauth-token"}, nil)
@@ -2096,8 +2195,8 @@ func TestNormalizeRepoArgs(t *testing.T) {
 			[]string{"secrets", "set", "npm-token", "--", "--repo"}},
 		{"global flags stay put", []string{"--config", "/tmp/c.yaml", "secrets", "set", "npm-token", "--repo"},
 			[]string{"--config", "/tmp/c.yaml", "secrets", "set", "npm-token", "--repo="}},
-		{"init's --repo is a bool", []string{"init", "--repo"},
-			[]string{"init", "--repo"}},
+		{"init's --repo is a bool", []string{"setup", "--repo"},
+			[]string{"setup", "--repo"}},
 		// A flag's *value* is not the command: the scan reads argv the way
 		// cobra's own does, so the first token that spells "secrets" being a
 		// value does not hide the subcommand behind it -- the rewrite would
