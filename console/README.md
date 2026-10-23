@@ -668,7 +668,16 @@ run against the committed tree, and each made a named test red:
   design's eight recordings are still the owner's to make.
 - **`version --json` and a schema version.** The CLI has neither (contract §4.3
   gaps 1 and 3), so the handshake is the one human line and the console refuses a
-  binary whose line it cannot read rather than guessing.
+  binary whose line it cannot read rather than guessing. **The one line it reads
+  without a version in it is `dev`**, which `var Version = "dev"`
+  (`internal/cli/root.go`) prints for a binary built without the release
+  `-ldflags`: that is a *recognised* line and it is not one of the refusals — the
+  console accepts it in the **reduced** mode, with the banner naming it as
+  unplaceable, because refusing it would block the person building the CLI and
+  the console together. Nothing else is guessed at: a word the console does not
+  recognise stays the refusal above (plan open item 3, answered by the owner
+  2026-10-22; `src/shared/version.ts`'s `classifyCliVersion`, pinned in
+  `test/unit/version.test.ts` and `test/unit/window.test.ts`).
 
 ## Recorded, redacted fixtures, and the recorder (Task 1.4)
 

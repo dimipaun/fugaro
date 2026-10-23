@@ -96,6 +96,7 @@ import type { NavigationEvent, VersionRead } from '../../src/main/window'
 import type { CliCompatibility } from '../../src/shared/version'
 import {
   CLI_VERSION_BUILT_AGAINST,
+  REDUCED_VIEWS,
   SKEW_HEADLINES,
   classifyCliVersion,
   hidesView,
@@ -857,6 +858,24 @@ describe('runVersionHandshake', () => {
     expect(hidesView(compatibility, 'spend')).toBe(true)
   })
 
+  it('proceeds in the reduced mode for a dev build, which no comparison can place', async () => {
+    // The other line a `fugaro` binary prints: `var Version = "dev"`
+    // (`internal/cli/root.go`) for a binary built without the release
+    // `-ldflags`, which is the binary the person building the CLI and the console
+    // together runs. It is a *recognised* line and it is not a refusal: refusing
+    // would block exactly that person, and the reduced mode is what keeps the
+    // acceptance from being a silent trust -- every view whose figures nothing
+    // vouched for is withheld, and the banner names the line as unplaceable.
+    const compatibility = await runVersionHandshake({
+      readVersion: async () => ({ ok: true, stdout: 'dev\n' }),
+    })
+    expect(compatibility.mode).toBe('reduced')
+    expect(compatibility.skew).toBe('unplaceable')
+    expect(compatibility.cliVersion).toBe('dev')
+    expect(compatibility.hidden).toEqual([...REDUCED_VIEWS])
+    expect(hidesView(compatibility, 'spend')).toBe(true)
+  })
+
   it('refuses a CLI below the floor', async () => {
     const compatibility = await runVersionHandshake({
       readVersion: async () => ({ ok: true, stdout: '0.5.0\n' }),
@@ -1025,6 +1044,28 @@ describe('startupWindow', () => {
     // bridge away either -- a reduced console draws the views it may draw, which
     // it can only do over IPC.
     expect(factory.options[0]?.webPreferences).toEqual(dashboardWebPreferences(PRELOAD_PATH))
+  })
+
+  it('builds the window for a dev build too, and says on it that the line is unplaceable', async () => {
+    // The wiring half of the plan's open item 3 (`docs/plans/2026-10-15-desktop-console.md`),
+    // answered on 2026-10-22: a dev CLI opens the dashboard in the reduced mode
+    // rather than being refused. So this is the `ok`/reduced path and not the
+    // refusal one -- the window is built, it loads the dashboard document, and
+    // its title carries the reduced banner's headline, which is the header this
+    // tree can put a mode in (the document draws the banner itself).
+    const factory = fakeWindowFactory()
+    const startup = await startupWindow({
+      BrowserWindow: factory.BrowserWindow,
+      session: fakeSession().value, preloadPath: PRELOAD_PATH,
+      readVersion: async () => ({ ok: true, stdout: 'dev\n' }),
+    })
+    expect(startup.compatibility.mode).toBe('reduced')
+    expect(startup.compatibility.skew).toBe('unplaceable')
+    expect(startup.window).not.toBeNull()
+    expect(factory.options).toHaveLength(1)
+    expect(factory.loaded).toEqual([APP_ENTRY_URL])
+    expect(factory.built[0]?.title).toContain(SKEW_HEADLINES.reduced)
+    expect(factory.built[0]?.title).not.toContain(SKEW_HEADLINES.refused)
   })
 
   it('builds no window at all below the floor -- the plan\'s red step', async () => {

@@ -381,6 +381,22 @@ describe('classifyCliVersion', () => {
     expect(compatibility.hidden).toEqual([...REDUCED_VIEWS])
   })
 
+  it('names dev as the one non-version line it accepts, and guesses at no other', () => {
+    // The boundary the plan's open item 3 settles (`docs/plans/2026-10-15-desktop-console.md`,
+    // answered by the owner 2026-10-22): a build without the release `-ldflags`
+    // prints `dev` -- a non-semver string the console *recognises* and reduces --
+    // while any other line that is not a version stays the refusal `refuses a
+    // line it cannot read` asserts. Widening the acceptance to "any non-semver
+    // word" is the mutation this holds back: `dev` is the CLI's own constant
+    // (`internal/cli/root.go`: `var Version = "dev"`), and a console that
+    // accepted a word it does not recognise would be placing a line it cannot
+    // read, which is what D7 forbids.
+    expect(placed('dev'), 'the CLI\'s own dev constant').toMatch(/^reduced\/unplaceable\//)
+    for (const line of ['devel', 'snapshot', 'unknown', 'dev-0.11.0']) {
+      expect(placed(line), line).toMatch(/^refused\/unreadable\//)
+    }
+  })
+
   it('refuses a line it cannot read, and carries no version', () => {
     for (const text of ['', 'usage: fugaro version', 'not a version']) {
       const compatibility = classifyCliVersion(text)

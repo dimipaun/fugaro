@@ -566,8 +566,12 @@ export interface VersionHandshakeDeps {
  *
  * A reader that *throws* is a refusal and not a crash: a console that cannot
  * start because a subprocess misbehaved would be worse than one that says so,
- * and D7's rule is that an unplaceable CLI is one the console will not draw a
- * dashboard for.
+ * and a CLI whose line cannot be read is one the console will not draw a
+ * dashboard for (D7). **An unplaceable line is not that case**: a `dev` build is
+ * *recognised*, so it is reduced rather than refused -- the dashboard is built,
+ * and the views whose figures nothing vouched for are withheld (`classifyCliVersion`
+ * in `src/shared/version.ts`, and the plan's open item 3 as the owner answered it
+ * on 2026-10-22).
  */
 export async function runVersionHandshake(deps: VersionHandshakeDeps): Promise<CliCompatibility> {
   try {
