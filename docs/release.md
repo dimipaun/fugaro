@@ -60,7 +60,7 @@ Homebrew warns that a cask using a `postflight` quarantine removal is deprecated
 - **Run `scripts/bump-plugin-version.sh X.Y.Z` and commit it** (through a PR to main). The release gate refuses a tag whose plugin version or any skill header differs from it, and a repository pinned to the tag would otherwise load a plugin that disagrees with the binary.
 - **Check that each new ghcr.io package is public** (see "Making the image packages public"): a package published from this public repository inherits its visibility (it did for v0.2.0), so this is only a check; `verify-public` passing is the proof.
 - **Turn on tag protection and immutable releases (the repository owner's setting; Fugaro does not change repository settings).** A git tag is mutable, and the plugin pin and the image tags are anchored to it, so: add a GitHub ruleset that restricts updates and deletions of `v*` tags (Settings, Rules, Rulesets, target tags `v*`, restrict updates and deletions), and enable immutable releases. Without them, anyone who can push tags can move `vX.Y.Z` after users pin to it.
-- **The console is its own release, `console-vX.Y.Z`, never an asset of the CLI's** (the owner's ruling of 2026-10-17, "Separate console release"; once `docs/pending-workflows/console-release.yml` is applied as plan Task 4.5). With immutable releases on, GoReleaser's `vX.Y.Z` release cannot take an asset once published, so the console workflow, on the same tag and behind the same gate, builds and signs in a job holding only a read token and hands the assets to a separate `publish` job (the only one with `contents: write`), which re-checks their SHA-256 sums and creates `console-vX.Y.Z` as a draft, uploads the `.dmg`, the `.zip`, `console-verification.txt`, `console-sha256sums.txt` and — once the Linux file below is applied — the AppImage, the `.deb`, `console-linux-verification.txt` and the sums file's Sigstore bundle, and publishes it with `--latest=false`. Before tagging: the tag ruleset must let the workflow create `console-v*` tags, and no `console-vX.Y.Z` release or tag may exist yet (a re-run refuses rather than clobbering; delete a leftover draft first). The console's version is the tag's (`console/package.json` says `0.0.0`; every pack is stamped with `-c.extraMetadata.version=X.Y.Z`), so the `.dmg` and `.zip` names carry X.Y.Z. When approving the `console-release` deployment, confirm the tag's commit is on `main`: the workflow runs as the tagged commit holds it, so the environment's reviewer and the tag ruleset are the real control. The console's Homebrew cask, when it exists, points at the console release. **Since the owner's ruling of 2026-10-20 that release also carries Linux, and the staged file for it is `docs/pending-workflows/console-release-linux.yml`, which supersedes the staged `console-release.yml`** (it is that file plus a third, **secret-less** `linux` job on `ubuntu-24.04`, so it is copied over both the staged copy and `.github/workflows/console-release.yml`). That job packs with the same pinned packer and the same fuses, then verifies **what ships** — the SHA-256 of the `.AppImage` and the `.deb`, the `.deb` through `dpkg-deb`, the AppImage through its own runtime's `--appimage-extract`, and the Electron fuse wire read back out of the executable *inside each artifact* — and the `publish` job merges both legs into **one** `console-sha256sums.txt`, re-checks it in the directory that ships, signs it keyless with cosign (`console-sha256sums.txt.sigstore.json`, `id-token: write`, the same call GoReleaser makes for the CLI's archives) and attaches everything to `console-vX.Y.Z`. So the release's assets are the macOS `.dmg`/`.zip` and `console-verification.txt`, the Linux `Fugaro.Console-X.Y.Z-linux-x64.AppImage`/`.deb` and `console-linux-verification.txt`, and the two shared files: `console-sha256sums.txt` and its bundle. **The Linux artifacts are unsigned, and the release notes must say so in those words**: an AppImage is not code-signed, there is no Linux signing key and none is planned, and nothing in the Linux job reads a secret because there is nothing to sign with (below, "Verifying the console's release"). **Windows is planned and staged, not shipped, and its installer is not an asset of this release.** The owner's ruling of 2026-10-20 gives the console a Windows build — the Fugaro CLI as the *Linux* binary inside WSL ([docs/console-windows/](console-windows/README.md)) — and **that build is a plan**: nothing on Windows has been built, the plan's OWNER APPROVAL GATE is not passed, and its pack is red until the `console/` edits its Parts B and C name have landed. The pack itself is the staged `docs/pending-workflows/console-windows.yml`: one `windows-latest` job holding `contents: read`, **no secret and no environment**, unsigned, outside the release gate — and **it runs at release time only**, on this tag or on a manual dispatch before it, and **never on a pull request**, not even path-filtered. It is not a job of `console-release.yml` and it attaches nothing to anything, so **the Windows installer is not an asset of `console-vX.Y.Z`** — that release carries macOS and Linux and nothing else, and a release note that offers a Windows download is wrong. The `.exe` this job produces is `Fugaro.Console-0.0.0-win-x64.exe` (nothing stamps `console/package.json` here, so the version is `0.0.0` rather than X.Y.Z), it is uploaded as the job's own build artifact with a 90-day retention, and **it is unsigned**: there is no Authenticode identity for this project and none is planned, so Windows SmartScreen warns that the publisher is unknown (*More info → Run anyway*). D10's answer is untouched — no Windows signing key exists and the Windows job reads no secret because there is nothing to sign with. **This paragraph is the dated note this document owes** (O7, F43); [docs/design/desktop-console.md](design/desktop-console.md) §4.2, §7.6's rule 3, the owner-run table's signing row and D10's row, and `console/README.md`'s Linux section still carry the older sentence that Windows stays out, and theirs land with **Part H** of the plan — the two are the older and narrower claim rather than a contradiction, because the ruling is a plan and nothing on Windows has shipped. What is accepted here is the timing: with the pack at release time, **a packaging break shows at release time** and is fixed then.
+- **The console is its own release, `console-vX.Y.Z`, never an asset of the CLI's** (the owner's ruling of 2026-10-17, "Separate console release"; once `docs/pending-workflows/console-release.yml` is applied as plan Task 4.5). With immutable releases on, GoReleaser's `vX.Y.Z` release cannot take an asset once published, so the console workflow, on the same tag and behind the same gate, builds and signs in a job holding only a read token and hands the assets to a separate `publish` job (the only one with `contents: write`), which re-checks their SHA-256 sums and creates `console-vX.Y.Z` as a draft, uploads the `.dmg`, the `.zip`, `console-verification.txt`, `console-sha256sums.txt` and — once the Linux file below is applied — the AppImage, the `.deb`, `console-linux-verification.txt` and the sums file's Sigstore bundle, and publishes it with `--latest=false`. Before tagging: the tag ruleset must let the workflow create `console-v*` tags, and no `console-vX.Y.Z` release or tag may exist yet (a re-run refuses rather than clobbering; delete a leftover draft first). **Since the console's own release stream (below, "Console releases") its version is its own version line rather than the CLI's tag**: `console/package.json`'s `version` is set to X.Y.Z on `main` before the `console-vX.Y.Z` tag, the workflow refuses a tag that disagrees with it, and every pack is stamped from the tag with `-c.extraMetadata.version=X.Y.Z` — so the `.dmg` and `.zip` names carry X.Y.Z. (Until that change is applied, the console still rides the CLI's `vX.Y.Z` tag and `console/package.json` stays `0.0.0` in the tree.) When approving the `console-release` deployment, confirm the tag's commit is on `main`: the workflow runs as the tagged commit holds it, so the environment's reviewer and the tag ruleset are the real control. The console's Homebrew cask, when it exists, points at the console release. **Since the owner's ruling of 2026-10-20 that release also carries Linux, and the staged file for it is `docs/pending-workflows/console-release-linux.yml`, which supersedes the staged `console-release.yml`** (it is that file plus a third, **secret-less** `linux` job on `ubuntu-24.04`, so it is copied over both the staged copy and `.github/workflows/console-release.yml`). That job packs with the same pinned packer and the same fuses, then verifies **what ships** — the SHA-256 of the `.AppImage` and the `.deb`, the `.deb` through `dpkg-deb`, the AppImage through its own runtime's `--appimage-extract`, and the Electron fuse wire read back out of the executable *inside each artifact* — and the `publish` job merges both legs into **one** `console-sha256sums.txt`, re-checks it in the directory that ships, signs it keyless with cosign (`console-sha256sums.txt.sigstore.json`, `id-token: write`, the same call GoReleaser makes for the CLI's archives) and attaches everything to `console-vX.Y.Z`. So the release's assets are the macOS `.dmg`/`.zip` and `console-verification.txt`, the Linux `Fugaro.Console-X.Y.Z-linux-x64.AppImage`/`.deb` and `console-linux-verification.txt`, and the two shared files: `console-sha256sums.txt` and its bundle. **The Linux artifacts are unsigned, and the release notes must say so in those words**: an AppImage is not code-signed, there is no Linux signing key and none is planned, and nothing in the Linux job reads a secret because there is nothing to sign with (below, "Verifying the console's release"). **Windows is planned and staged, not shipped, and its installer is not an asset of this release.** The owner's ruling of 2026-10-20 gives the console a Windows build — the Fugaro CLI as the *Linux* binary inside WSL ([docs/console-windows/](console-windows/README.md)) — and **that build is a plan**: nothing on Windows has been built, the plan's OWNER APPROVAL GATE is not passed, and its pack is red until the `console/` edits its Parts B and C name have landed. The pack itself is the staged `docs/pending-workflows/console-windows.yml`: one `windows-latest` job holding `contents: read`, **no secret and no environment**, unsigned, outside the release gate — and **it runs at release time only**, on this tag or on a manual dispatch before it, and **never on a pull request**, not even path-filtered. It is not a job of `console-release.yml` and it attaches nothing to anything, so **the Windows installer is not an asset of `console-vX.Y.Z`** — that release carries macOS and Linux and nothing else, and a release note that offers a Windows download is wrong. The `.exe` this job produces is `Fugaro.Console-0.0.0-win-x64.exe` (nothing stamps `console/package.json` here, so the version is `0.0.0` rather than X.Y.Z), it is uploaded as the job's own build artifact with a 90-day retention, and **it is unsigned**: there is no Authenticode identity for this project and none is planned, so Windows SmartScreen warns that the publisher is unknown (*More info → Run anyway*). D10's answer is untouched — no Windows signing key exists and the Windows job reads no secret because there is nothing to sign with. **This paragraph is the dated note this document owes** (O7, F43); [docs/design/desktop-console.md](design/desktop-console.md) §4.2, §7.6's rule 3, the owner-run table's signing row and D10's row, and `console/README.md`'s Linux section still carry the older sentence that Windows stays out, and theirs land with **Part H** of the plan — the two are the older and narrower claim rather than a contradiction, because the ruling is a plan and nothing on Windows has shipped. What is accepted here is the timing: with the pack at release time, **a packaging break shows at release time** and is fixed then.
 - **Dry-run the Windows pack before the tag, by hand.** Because `docs/pending-workflows/console-windows.yml` **runs at release time only** — the tag or a manual dispatch, and **never on a pull request**, not even path-filtered — nothing between releases exercises it, and a break in the `win` block, in the fuse table's `win32` row or in a lockfile bump is otherwise found by the release itself. So: once the file has been copied into `.github/workflows/console-windows.yml`, open **Actions → console-windows → Run workflow** on `main`, wait for it to be green, and open its artifact to confirm it holds exactly one `.exe`. That dispatch is the whole of the dry run, and it is the reason the accepted risk above is acceptable. (A red pack does not block the tag: `console-windows` is deliberately not in `scripts/release-gate.sh`'s check list, D8(a).)
 - **Set `expo.version` in `mobile/app.json` to the version being released, in a commit on `main` before the tag.** (Once `docs/pending-workflows/mobile-release.yml` is applied.) The mobile app is versioned with the CLI's tag — plan **C6** ([docs/mobile/implementation-plan.md](mobile/implementation-plan.md): "the app is versioned with the CLI's tag") — and live **Check 89 step 4** ([docs/gcp-live-checklist.md](gcp-live-checklist.md)) reads the version the app reports against the guard's `$TAG`. Nothing in the app's release workflow sets it: the staged `mobile-release.yml` builds whatever `mobile/app.json` says, and `mobile/app.config.js` spreads that file's static config, writing only the two store identities on top of it, so a tag pushed over the checked-in `0.0.0` submits a build that reports `0.0.0` behind a `vX.Y.Z` release — and nothing in the run goes red to say so. Same ordering as the plugin bump and the Highlights file above: on `main` before the tag, never after. `mobile/README.md` says the same from the app's side ("nothing here bumps it for you"). Unlike the console, whose packs are stamped from the tag with `-c.extraMetadata.version=X.Y.Z` (which is why `console/package.json` stays `0.0.0`), the app's version comes from the app's own config, so it **cannot** be stamped from the tag without a change to `mobile/app.config.js`; the step above is what exists until such a change lands, and that change replaces this step rather than adding to it. The `## mobile-release.yml` section of [docs/pending-workflows/README.md](pending-workflows/README.md) carries the same step with its reasons.
 - **Verify `gcpProjectFieldSince`** (`internal/cli/init_fugaroyaml.go`, currently `"0.4.0"`, the release that ships the field) equals the release that ships the `gcp_project:` field. `fugaro update --anchor` (and plain `fugaro setup`'s repository stage, in the checkout) compares each job image's build record and each copied base image with it, refusing (or warning about) images that predate the field; a wrong value warns too late or too early.
@@ -207,10 +207,11 @@ gh release download console-v$V -R dimipaun/fugaro \
   -p "Fugaro.Console-${V}-linux-x64.*" -p console-linux-verification.txt
 
 # The one sums file covers every asset of the release, macOS and Linux alike,
-# and it is signed by the console workflow on that tag (keyless, via OIDC)
+# and it is signed by the console workflow on that tag (keyless, via OIDC).
+# The identity's ref segment is the CONSOLE tag: console-vX.Y.Z, never vX.Y.Z
 cosign verify-blob console-sha256sums.txt \
   --bundle console-sha256sums.txt.sigstore.json \
-  --certificate-identity "https://github.com/dimipaun/fugaro/.github/workflows/console-release.yml@refs/tags/v$V" \
+  --certificate-identity "https://github.com/dimipaun/fugaro/.github/workflows/console-release.yml@refs/tags/console-v$V" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
 # The Linux artifacts match that signed list of hashes -- the signature is over
@@ -225,7 +226,116 @@ grep "linux-x64" console-sha256sums.txt | sha256sum -c -   # shasum -a 256 -c - 
 less console-linux-verification.txt
 ```
 
-**Two things a reader must not conclude.** That the Linux artifacts are signed in any sense — they are not, and a release note or a page that says so is wrong. And that the macOS asset list is what the release carries: since the ruling the release carries a Linux leg as well, and the file that produces it is staged under `docs/pending-workflows/` until the owner copies it in (see "Before you tag" above), so a `console-vX.Y.Z` release cut before that copy has no Linux asset whatever — which is also why the website's downloads data carries no Linux entry yet (console/README.md, the Linux section).
+**Two things a reader must not conclude.** That the Linux artifacts are signed in any sense — they are not, and a release note or a page that says so is wrong. And that the CLI's release carries any of this: the console's assets are on `console-vX.Y.Z` and on no other release, and a console release carries a Linux leg as well as the macOS pair, so the macOS names above are not the whole of what it ships (console/README.md, the Linux section).
+
+## Console releases
+
+The desktop console has **its own release stream**: its own tag, its own version line and its
+own notes, independent of the CLI's. The three streams are the owner's (addendum of
+2026-10-22): **CLI = animals** on `vX.Y.Z`, **Console = fruits** on `console-vX.Y.Z`, **Mobile
+= birds**. `scripts/release.sh` and `scripts/release-gate.sh` are the CLI's and are unchanged
+by this: a `vX.Y.Z` tag releases the CLI and starts no console work, and a `console-vX.Y.Z`
+tag releases the console and no CLI work.
+
+**Tag format.** `console-vX.Y.Z` — strictly `console-v`, then three dot-separated numbers with
+no leading zeros. The workflow triggers on a push of a tag matching exactly that and on
+nothing else (no pull request, no `pull_request_target`, no `workflow_run`, no manual
+dispatch: the signing job reads the Apple certificate and the App Store Connect key from the
+protected `console-release` environment, and a branch of this repository can open a pull
+request). The tag step refuses anything else, **the CLI's own `vX.Y.Z` tags included**. The
+version the release is stamped with is `X.Y.Z` after the `console-v` prefix.
+
+**The version line.** `console/package.json`'s `version` is the console's own version. It is
+set to `X.Y.Z`, on `main`, **in the same commit as the notes below and before the tag is
+pushed** — the same ordering the plugin version and the Highlights file follow. Both build
+legs refuse to run when the tag's `X.Y.Z` differs from that field (or when the field is absent:
+a version line of `null` is not a version). This is the call `release.yml` already makes for
+the plugin's version, one file over. It exists because a version that lives only in its tag is
+one whose file names, update feed and own version line can disagree with the release they were
+built for; and because the console's updater refuses a **downgrade** (Task 4.4 of
+`docs/plans/2026-10-15-desktop-console.md`), a console stamped below the version its
+installation already runs would refuse every update it was offered afterwards. So the version
+line never goes backwards, and the first release on this stream is **`0.11.0` "Cherry"** — see
+below.
+
+**The notes file.** `docs/releases/console/vX.Y.Z.md`, written by hand and merged to `main`
+before the tag, like `docs/releases/vX.Y.Z.md` for the CLI. [`docs/releases/console/README.md`](releases/console/README.md)
+is the format and the naming list. It is the release's **body**: the release job refuses to
+build when it is missing or empty, and the `publish` job — which has no checkout — reads it
+from the tagged commit through the API and passes it as `--notes-file`, after the standing
+sentence about what is and is not signed on each platform.
+
+**The console's end-user summary is the opening sentence of that file**, and it is
+deliberately *not* an entry in `website/data/release-summaries.yaml`: that file is keyed by the
+CLI's `vX.Y.Z` tags and the site's changelog is the CLI's page, so a console release writes no
+line there and appears nowhere on the site. `scripts/release.sh` does not check the console's
+notes and never asks for a summary of them.
+
+**The release names are fruits, used once each, in order.** The list starts **Cherry**
+(`0.11.0`), then **Mango** (`0.12.0`), then **Melon** (`0.13.0`); the name is the heading of
+that version's notes file, and the list is extended by one when the next console release is
+cut. **Apple is avoided** — in any spelling, including its varieties, and most visibly as
+"Apple": the desktop app is not an Apple product and a console release titled after one would
+say it is — and **Lemon is avoided** too, because it reads as a disclaimer on a release that
+has not gone sour. `docs/releases/console/README.md` carries the table.
+
+**What the release gate checks.** Both console legs run the CLI's own
+`scripts/release-gate.sh`, handed **`v` + the version** rather than the console tag, because
+that script is the CLI's and refuses anything that is not a strict `vX.Y.Z`; the console tag's
+own shape was already checked strictly, by prefix, one step earlier. What the gate is asked
+for is the part that is about the commit: the tagged commit **is an ancestor of `origin/main`**
+(and the workflow refetches `main` to check it, with `fetch-depth: 0`), and the required check
+runs on it — **`test`, `terraform`, `rules`, `console (ubuntu-latest)` and `console
+(macos-latest)`** — have all succeeded (a cancelled run is ignored while another run of the
+same name exists; a missing or still-running one makes the gate wait or refuse, and it may
+accept the checks of a merged pull request whose tree is identical).
+
+**To release the console**, in order:
+
+1. Bump `console/package.json`'s `version` to `X.Y.Z` and write `docs/releases/console/vX.Y.Z.md`,
+   in one PR to `main`.
+2. Tag that commit **on `main`** and push the tag:
+
+   ```sh
+   git tag console-vX.Y.Z
+   git push origin console-vX.Y.Z
+   ```
+
+3. Approve the `console-release` deployment when GitHub asks (the environment's required
+   reviewer is the owner). **When approving, confirm the tagged commit is on `main`**: the
+   workflow runs as the tagged commit holds it, so the environment's reviewer and the tag
+   ruleset are the real control, not the file on `main` today.
+4. The workflow builds, signs and notarises the macOS app in a job holding only a read token,
+   builds and verifies the unsigned Linux artifacts beside it, and hands both legs to the
+   `publish` job — the only one with `contents: write` — which re-checks the SHA-256 sums,
+   merges them into one `console-sha256sums.txt`, signs that file keyless with cosign, creates
+   `console-vX.Y.Z` as a draft with every asset, and publishes it with `--latest=false`. The
+   CLI's release stays the repository's latest.
+5. **A re-run never clobbers.** Releases here are immutable: if `console-vX.Y.Z` is already
+   published, or a draft of it is left from an earlier attempt, or the tag exists without a
+   release, the job stops rather than overwriting. Delete a leftover draft
+   (`gh release delete console-vX.Y.Z`) and re-run; a new build needs a new tag.
+
+**The owner's copy-in step, and only the owner's.** The console workflow's tag-based trigger
+is **staged** under `docs/pending-workflows/console-release-tag.yml` until the owner applies
+it; **no agent copies it in** (Fugaro cannot push `.github/workflows/**` at all, and no run
+edits that directory). It supersedes the staged `docs/pending-workflows/console-release.yml`,
+so it is copied over both copies of that file. From the repository root, the owner types
+exactly:
+
+```sh
+cp docs/pending-workflows/console-release-tag.yml docs/pending-workflows/console-release.yml
+cp docs/pending-workflows/console-release.yml .github/workflows/console-release.yml
+git rm docs/pending-workflows/console-release-tag.yml
+git add -A
+git commit -m "console: the console releases from its own console-vX.Y.Z tag"
+```
+
+and that same commit carries the sentence in `docs/pending-workflows/README.md`'s opening line
+and the last section of `website/README.md` that count and name the files still pending there
+(the four-file pair the `console-release-linux.yml` section of that README prints). Until the
+copy-in, a `console-vX.Y.Z` tag starts nothing: the console still releases from the CLI's
+`vX.Y.Z` tag, which is the state `docs/pending-workflows/README.md` describes.
 
 ## Rolling back
 
