@@ -357,6 +357,8 @@ const slideId = (index: number) => `${idPrefix}-${index + 1}`
     display: flex;
     flex-wrap: wrap;
     align-items: center;
+    /* Centred under the frame, on the same axis as the arrows' bar above them. */
+    justify-content: center;
     gap: var(--space-2xs);
     margin: var(--space-sm) 0 0;
     padding: 0;

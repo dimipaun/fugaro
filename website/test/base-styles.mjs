@@ -2461,9 +2461,11 @@ export function navFailures(html, rel) {
   // (Project → Company) keeps the count at two and would leave every gate green while D182's
   // amendment, the fixture below and check 70a's steps all tell the reader to look for
   // "Product" and "Project" — so the names and the routes are held here, with the count.
+  // Why GCP moved from Product to Project, after Security, by the owner's explicit approval of
+  // 2026-10-23 (its label and URL unchanged).
   const GROUPS_WANTED = [
-    ['Product', ['/how-it-works/', '/why-gcp/', '/getting-started/', '/caps-and-costs/', '/console/', '/mobile/']],
-    ['Project', ['/docs/', '/security/', '/faq/', '/community/', '/changelog/']],
+    ['Product', ['/how-it-works/', '/getting-started/', '/caps-and-costs/', '/console/', '/mobile/']],
+    ['Project', ['/docs/', '/security/', '/why-gcp/', '/faq/', '/community/', '/changelog/']],
   ]
   groups.forEach((group, at) => {
     const wanted = GROUPS_WANTED[at]
@@ -2553,8 +2555,8 @@ test('the section nav is a labelled landmark of keyboard-reachable links, with t
 // Reference group: Console under *Product*, Docs and Changelog under *Project*), so a fixture
 // is the real shape and not a smaller one the rule happens to accept.
 const FIXTURE_GROUPS = [
-  ['Product', [['/how-it-works/', 'How it works'], ['/why-gcp/', 'Why GCP'], ['/getting-started/', 'Getting started'], ['/caps-and-costs/', 'Caps and costs'], ['/console/', 'Console'], ['/mobile/', 'Mobile']]],
-  ['Project', [['/docs/', 'Docs'], ['/security/', 'Security'], ['/faq/', 'FAQ'], ['/community/', 'Community'], ['/changelog/', 'Changelog']]],
+  ['Product', [['/how-it-works/', 'How it works'], ['/getting-started/', 'Getting started'], ['/caps-and-costs/', 'Caps and costs'], ['/console/', 'Console'], ['/mobile/', 'Mobile']]],
+  ['Project', [['/docs/', 'Docs'], ['/security/', 'Security'], ['/why-gcp/', 'Why GCP'], ['/faq/', 'FAQ'], ['/community/', 'Community'], ['/changelog/', 'Changelog']]],
 ]
 
 // The wordmark, as the layout writes it: the logo is decoration beside the name, and the name

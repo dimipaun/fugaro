@@ -5522,8 +5522,9 @@ grep -n 'width="47"' website/src/layouts/Base.astro
 
 3. **Every link in the two groups is reachable.** Tab to each group's label, open it, and
    reach each link inside it by keyboard alone, and follow one. The groups are **Product**
-   (How it works, Why GCP, Getting started, Caps and costs, Console, Mobile) and **Project**
-   (Docs, Security, FAQ, Community, Changelog) — eleven links between them, the nine the
+   (How it works, Getting started, Caps and costs, Console, Mobile) and **Project**
+   (Docs, Security, Why GCP, FAQ, Community, Changelog; Why GCP moved here from Product by the
+   owner's approval of 2026-10-23): eleven links between them, the nine the
    Reference group's drop left plus the phone app's page (the zoom-diagrams plan, Part 3) and
    the Why GCP page (its Part 2) — and **Privacy is not among them** — it is a footer link
    (D182). **FACT:** the two group names as rendered, the links under each, and that Privacy
@@ -8707,9 +8708,10 @@ grep -o 'href="/mobile/"' website/dist/index.html
    the captures land, this half is **not run**, and this row stays **NOT RUN**.
 
 7. **The menu gains one item and stays two groups.** Open the menu on any page: **Product** holds
-   *How it works*, *Why GCP*, *Getting started*, *Caps and costs*, *Console* and **Mobile** — six,
-   with the phone app's page last — and **Project** holds its five as before. There is **no third
-   group**.
+   *How it works*, *Getting started*, *Caps and costs*, *Console* and **Mobile** (five, with the
+   phone app's page last), and **Project** holds *Docs*, *Security*, *Why GCP*, *FAQ*, *Community*
+   and *Changelog* (Why GCP moved from Product by the owner's approval of 2026-10-23). There is
+   **no third group**.
    Follow the Mobile item: it lands on `/mobile/`. **FACT:** both groups' items and their order,
    and the page the Mobile item opens. A renamed group, a moved item or a third group is the
    defect; the two groups' contents are held by `website/test/base-styles.mjs`, and what this step

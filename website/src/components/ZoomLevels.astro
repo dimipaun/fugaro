@@ -89,15 +89,15 @@ import { LEVELS } from '../lib/zoom-levels.mjs'
     justify-content: center;
     min-width: 44px;
     min-height: 44px;
-    border: var(--border-width) solid var(--border);
     border-radius: var(--radius-pill);
-    color: var(--text-muted);
+    background: var(--surface);
+    color: var(--text);
     text-decoration: none;
   }
 
   .zoom-marker:hover,
   .zoom-marker:focus-visible {
-    border-color: var(--accent);
+    background: var(--border);
   }
 
   .zoom-figure {
@@ -109,8 +109,7 @@ import { LEVELS } from '../lib/zoom-levels.mjs'
     display: block;
     width: 100%;
     height: auto;
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-sm);
   }
 
   .zoom-caption {

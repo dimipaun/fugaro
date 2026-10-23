@@ -1049,7 +1049,8 @@ added or removed without this sentence moving fails there:
     (28 files, 11 pages): on the merged tree the two rounds together leave `dist/` at **30
     files** and **13 pages**, and *Product* holds **six** items — this round's *Why GCP*
     second, the phone app's *Mobile* last — so the bullet above's "fifth" is where that round
-    put it, not where it sits now.
+    put it, not where it sits now. Since the owner's approval of 2026-10-23, *Why GCP* is a *Project* item,
+    after *Security*, and *Product* holds five.
 
 
   - **The four zoom levels are the owner's four approved boards, redrawn as the site's inline

@@ -147,9 +147,9 @@ const STEPS = [
     display: block;
     width: 100%;
     height: auto;
-    aspect-ratio: 16 / 10;
+    aspect-ratio: 16 / 9;
     object-fit: cover;
-    object-position: center top;
+    object-position: left top;
     border-radius: var(--radius-sm);
     background: var(--ground);
   }
@@ -188,8 +188,8 @@ const STEPS = [
       gap: var(--space-md);
     }
 
-    .home-run-step:nth-child(3) .home-run-image {
-      aspect-ratio: 16 / 8;
+    .home-run-step:nth-child(3) .home-run-figure {
+      max-width: 56rem;
     }
   }
 </style>

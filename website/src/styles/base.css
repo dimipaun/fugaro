@@ -630,9 +630,11 @@ a.skip-link:focus {
  * The owner's ruling of 2026-10-23 (the redesign's Step 3, levers 2 and 5) takes the gradient
  * text off the site: the words keep their class, so every page that marks them still marks
  * them, and the class now draws them in the accent's legible tone, flat. It is a `color` the
- * contrast check reads, rather than a fill it cannot. */
+ * contrast check reads, rather than a fill it cannot. The polish round of the same day draws
+ * them in the headline's own colour, so a page's headline is one colour, as the home page's is
+ * (house rule: no styled accent word); the class stays as the markup's mark of the words. */
 .gradient-text {
-  color: var(--accent-on-dark);
+  color: inherit;
 }
 
 /* The label a few pages still set above a heading. The ruling of 2026-10-23 drops the small
@@ -646,16 +648,17 @@ a.skip-link:focus {
   line-height: var(--leading-snug);
 }
 
-/* The pill: a short status or a badge of one or two words. A filled shape one tone step above
- * the ground, with no outline (the ruling of 2026-10-23, lever 5: 1px outlined boxes become
- * tone steps). */
+/* The pill: a short status of one or two words. Since the polish round of 2026-10-23 it is a
+ * quiet line of text rather than a badge (no fill, no outline, no capsule): the status a card
+ * carries, or the version a page's title sits under, set in the small step. */
 .pill {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2xs);
-  padding: var(--space-3xs) var(--space-xs);
-  border-radius: var(--radius-pill);
-  background: var(--surface);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-muted);
   font-size: var(--font-size-sm);
   line-height: var(--leading-snug);
@@ -751,8 +754,11 @@ a.skip-link:focus {
   font-size: var(--font-size-base);
 }
 
-/* Prose keeps to the measure; a component that wants a wider line sets its own max-width. */
-:where(p, ul, ol, dl, blockquote, figcaption) {
+/* Prose keeps to the measure; a component that wants a wider line sets its own max-width.
+ * A list a component styles (it carries a class: a grid of cards, a row of steps) is a layout
+ * rather than a column of prose, so it takes the width its component gives it (the owner's
+ * polish round of 2026-10-23: grids held to 68ch left the right of every page empty). */
+:where(p, ul:not([class]), ol:not([class]), dl:not([class]), blockquote, figcaption) {
   max-width: var(--measure);
 }
 
