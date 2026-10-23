@@ -22,7 +22,8 @@ Procedure for one Fugaro release. Detail lives in `docs/release.md` (read it fir
 - Main's checks (`test`, `terraform`, `rules` and both console check runs, `console (ubuntu-latest)` and `console (macos-latest)`) green: `gh run list --branch main --limit 5`. The script waits for running ones. The console check runs exist on `main` only once `console` is merged into `main` and a push has run them; before that the gate refuses every tag, so do not release until they have run on main.
 - The version is the next semver after `git tag --list 'v*' --sort=-v:refname | head -1`. New features mean a minor bump (0.y.0), fixes only a patch; ask the user if unclear. Strict `X.Y.Z`, no `v`.
 - `gcpProjectFieldSince` in `internal/cli/init_fugaroyaml.go` must equal the first release containing the `gcp_project:` field (today `"0.4.0"`). If this release is that one, or the value is wrong, fix it in a PR and merge it BEFORE continuing.
-- Other checklist items of `docs/release.md` ("Before you tag"): `internal/pricing` `checkedAt`, tag protection and immutable releases (owner setting, only mention if unset).
+- Other checklist items of `docs/release.md` ("Before you tag"): the plugin tests on a bumped tree (next bullet), the price catalog regeneration with its `testdata/openrouter` snapshots refreshed in the same commit, `internal/pricing` `checkedAt`, tag protection and immutable releases (owner setting, only mention if unset).
+- **Run the plugin tests on a tree with the bump applied.** The bump rewrites two version stamps per skill file, so a version whose component gains a digit can push one over its byte budget by itself: 0.9.5 → 0.10.0 added two bytes and failed `TestPluginSkillsLintClean` on the bump commit, and 0.10.0's tag ended on the follow-up that shortened the file (#929). In a scratch worktree — `git worktree add /tmp/fugaro-bump HEAD`, then `scripts/bump-plugin-version.sh X.Y.Z && GOFLAGS=-p=2 go test ./plugin/ -count=1` in it, then `git worktree remove --force /tmp/fugaro-bump`. `--dry-run` (step 3) runs it too; this manual run is what catches it before the Highlights PR merges.
 
 ## 2. Highlights (required from 0.4.0)
 
@@ -33,11 +34,16 @@ Procedure for one Fugaro release. Detail lives in `docs/release.md` (read it fir
 
 ## 3. Dry run
 
-`scripts/release.sh X.Y.Z --dry-run`: it must pass every precondition (including "docs/releases/vX.Y.Z.md exists and is not empty on main" and "website/data/release-summaries.yaml has a non-empty entry for vX.Y.Z"; both are its own messages, naming the file). Fix what it reports.
+`scripts/release.sh X.Y.Z --dry-run`: it must pass every precondition (including "docs/releases/vX.Y.Z.md exists and is not empty on main" and "website/data/release-summaries.yaml has a non-empty entry for vX.Y.Z"; both are its own messages, naming the file). It also applies the bump to a scratch worktree and runs `go test ./plugin/` there, then removes that worktree however it ends; it needs `go` on `PATH` and refuses without it (the check cannot run, so the plan would vouch for nothing). Read the plan line it prints: it says what the check did, and says so when the check did not run. Fix what it reports: when the plugin tests fail, a skill file is over its byte budget (`plugin/skills_lint_test.go`'s `maxSkillBytes`), so shorten it in a PR to `main` and re-run.
 
 ## 4. Release (needs the user's go-ahead)
 
-`scripts/release.sh X.Y.Z` (no prompt). It waits for checks, opens the bump PR with auto-merge, waits for the merge and for the gate on the merge commit, then tags and pushes. Run it in the background and watch its output; a timeout or failure is reported, not retried blindly (the script is safe to re-run, per `docs/release.md`, but read why it stopped first). Then `git ls-remote https://github.com/dimipaun/fugaro 'refs/tags/vX.Y.Z^{}' 'refs/tags/vX.Y.Z'` must print the released commit.
+`scripts/release.sh X.Y.Z` (no prompt). It waits for checks, opens the bump PR with auto-merge, waits for the merge and for the gate on the merge commit, then tags and pushes. Run it in the background and watch its output; a timeout or failure is reported, not retried blindly (the script is safe to re-run, per `docs/release.md`, but read why it stopped first). Two of its stops have a written recovery there, and neither is a re-run of the same command:
+
+- Auto-merge refused (`Pull request is in clean status`, or auto-merge off): merge the bump PR yourself, then re-run, which resumes at step 4.
+- It refuses at step 4 because `main` moved past the release merge commit ("HEAD … is not the release merge commit"): a re-run refuses the same way, since the PR is merged. Inspect what landed, check the gate on the tip, and tag the tip by hand — 0.10.0's tag is on the fix commit that followed its bump, not on its merge commit.
+
+Then `git ls-remote https://github.com/dimipaun/fugaro 'refs/tags/vX.Y.Z^{}' 'refs/tags/vX.Y.Z'` must print the released commit.
 
 ## 5. Verify
 
