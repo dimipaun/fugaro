@@ -65,8 +65,7 @@
 //      test, and the console's two files, which hold the project's own link and not a service the
 //      software reports to (the note below `HOST_NAMING_CONSOLE` gives the reason and the ruling,
 //      and the case that plants a third file proves the rule still holds for every other source).
-//      The selector
-//      carries `.go`, because the CLI and the server are mostly Go: a scan that reads the tree's
+//      The selector carries `.go`, because the CLI and the server are mostly Go: a scan that reads the tree's
 //      scripts and manifests but not its Go source reads everything except the software this
 //      page is about, and it reads enough files to look busy while doing it. The case below goes
 //      through the selector rather than around it for that reason, and the case above counts the
@@ -1407,19 +1406,17 @@ test('the console’s two recorded exceptions are exactly that, and a third file
     rmSync(tree, { recursive: true, force: true })
   }
 
-  // And the two recorded exceptions are skipped in the real tree while their neighbours are not,
-  // so the exemption is those two files rather than the console.
-  for (const rel of HOST_NAMING_CONSOLE) {
-    assert.ok(repoFile(rel).includes(host), `${rel} no longer names ${host}, so it is no longer a recorded exception`)
-    assert.ok(
-      softwareSources().every((file) => file.rel !== rel),
-      `${rel} is a recorded exception and the scan read it as an ordinary production source`,
-    )
-  }
+  // And in the real tree the exemption is those two files rather than the console: the console's
+  // other sources are still read, and none of them names the host.
   const consoleSources = softwareSources().filter((file) => file.rel.startsWith('console/src/'))
   assert.ok(
     consoleSources.length > 5,
-    `only ${consoleSources.length} console sources were scanned: skipping the two exceptions must not skip the console`,
+    `only ${consoleSources.length} console sources were scanned: skipping the two recorded exceptions must not skip the console`,
+  )
+  assert.deepEqual(
+    consoleSources.filter((file) => file.text.includes(host)).map((file) => file.rel),
+    [],
+    `a console source other than the two recorded exceptions names ${host}: the allow-list is those two files, and nothing about the directory they sit in`,
   )
 })
 
