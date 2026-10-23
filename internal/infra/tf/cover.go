@@ -68,15 +68,29 @@ var allowedTypes = map[string]bool{
 
 // who says what kind of principal a module grants a role to: People are the
 // members the review screen lists (launchers, operators, admins), Accounts the
-// Fugaro service accounts of this run, and Deployer the deployer account of
-// D75 alone — its own kind, so that its eight roles name it and nothing else,
-// and no row meant for Fugaro's accounts accepts it.
+// Fugaro service accounts of this run, Deployer the deployer account of D75
+// alone — its own kind, so that its eight roles name it and nothing else, and
+// no row meant for Fugaro's accounts accepts it — and Credentials the
+// credentials service's account, which is its own kind for the same reason.
+//
+// Why Credentials is not simply one of Accounts (the ledger finding this kind
+// answers, #903). A toAccounts row is the intersection of what the
+// installation's jobs need, so an account merely being Fugaro's own said
+// nothing about which of those roles it may hold: with fugaro-credentials in
+// FugaroAccounts, a plan granting it the history account's datastore.user, a
+// job runner's run.jobs.run or a launcher's role was covered by init's one
+// confirmation — a grant nobody wrote in a module, accepted because the
+// account's NAME was. Its own kind makes every row state, one by one, whether
+// it accepts this account: today exactly two do, the bundle's accessor and its
+// own database role, and a third means editing this table on purpose.
+// TestCredentialsAccountIsItsOwnPrincipalKind is what holds that.
 type who uint8
 
 const (
 	toPeople who = 1 << iota
 	toAccounts
 	toDeployer
+	toCredentials
 )
 
 // customKey is how grantRules names a custom role of the installation (by its
@@ -123,7 +137,12 @@ var grantRules = map[string]map[string]who{
 		// roles/cloudasset.viewer is deliberately absent — a plan granting it,
 		// or any other Cloud Asset role, is refused, because viewer carries
 		// cloudasset.assets.listResource and the read makes no ListAssets call.
-		customKey + CloudAssetRole:                toPeople,
+		customKey + CloudAssetRole: toPeople,
+		// The credentials service's own database role: the account, and
+		// nothing else, in the ONE binding credentials.tf writes (toCredentials
+		// alone — granting it to a job account or to a person is not a grant
+		// the installation makes).
+		customKey + CredentialsDatabaseRole:       toCredentials,
 		"roles/aiplatform.user":                   toAccounts,
 		"roles/batch.agentReporter":               toAccounts,
 		"roles/batch.jobsEditor":                  toPeople, // only under the Fugaro job-name condition (jobsCondition); never an account
@@ -156,7 +175,11 @@ var grantRules = map[string]map[string]who{
 		"roles/artifactregistry.writer": toPeople | toAccounts,
 	},
 	"google_secret_manager_secret_iam_member": {
-		"roles/secretmanager.secretAccessor":     toAccounts,
+		// The credentials service's bundle is read by its own account
+		// (credentials.tf, the Q6 ruling), so this one row accepts the service
+		// account beside the jobs: it is the account's only Secret Manager
+		// reach, and it is on one container.
+		"roles/secretmanager.secretAccessor":     toAccounts | toCredentials,
 		"roles/secretmanager.secretVersionAdder": toPeople,
 		"roles/secretmanager.viewer":             toPeople,
 	},
@@ -242,14 +265,30 @@ type Cover struct {
 // and this one differ.
 const CloudAssetRole = "fugaroCloudAssetReader"
 
+// CredentialsAccountID is the credentials service's fixed service account ID
+// (internal/infra/tfvars.go's CredentialsAccountID, which
+// var.credentials_service.account_id carries) and CredentialsDatabaseRole the
+// custom role credentials.tf creates for it in the run's Firebase project.
+//
+// The account is deliberately NOT among FugaroAccounts, for the deployer
+// account's reason and the ledger finding above: it holds its own role and the
+// bundle's accessor, and nothing a job holds, so every row that would otherwise
+// accept it is refused (toCredentials). TestCoverNamesAreTheCodes and
+// TestCredentialsAccountIsItsOwnPrincipalKind read both halves.
+const (
+	CredentialsAccountID    = "fugaro-credentials"
+	CredentialsDatabaseRole = "fugaroCredentialsDatabase"
+)
+
 // FugaroRoles are the custom role IDs the modules create; FugaroAccounts the
 // fixed service account IDs a toAccounts row accepts. Job and build accounts
-// are fugaro-<readable>-<8 hex>. The deployer account (DeployerAccountID) is
-// deliberately NOT among FugaroAccounts: it holds its roles and nothing else,
-// so it is its own kind of principal (toDeployer).
+// are fugaro-<readable>-<8 hex>. The deployer account (DeployerAccountID) and
+// the credentials service's (CredentialsAccountID) are deliberately NOT among
+// FugaroAccounts: each holds roles of its own and nothing a job holds, so each
+// is its own kind of principal (toDeployer, toCredentials).
 var (
-	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole}
-	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload", "fugaro-credentials"}
+	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole}
+	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
 )
 
 // The deployer account of D75, and the condition that fences the half of it
@@ -539,14 +578,30 @@ func DeployerAccount(gcpProject string) string {
 	return DeployerAccountID + "@" + gcpProject + ".iam.gserviceaccount.com"
 }
 
-// deployerProject is the project whose deployer account this run's plans may
-// name: the installation's (Projects[0]), the one project the installation
-// module — and so deployer.tf — is applied to. "" when the cover has none.
-func (c Cover) deployerProject() string {
+// installationProject is the run's installation project (Projects[0]): the one
+// project the installation module — and so deployer.tf and credentials.tf — is
+// applied to, whatever projects the roles it binds live in. "" when the cover
+// has none.
+func (c Cover) installationProject() string {
 	if len(c.Projects) == 0 || c.Projects[0] == "" {
 		return ""
 	}
 	return c.Projects[0]
+}
+
+// deployerProject is the project whose deployer account this run's plans may
+// name: the installation's, since deployer.tf is that module's. "" when the
+// cover has none.
+func (c Cover) deployerProject() string { return c.installationProject() }
+
+// isCredentialsMember is whether m is exactly the credentials service's
+// account as an IAM member, in the installation's project: the account
+// credentials.tf creates (var.project), whatever project the roles it binds
+// live in — its database role is the Firebase project's, and that does not
+// move the account.
+func (c Cover) isCredentialsMember(m string) bool {
+	p := c.installationProject()
+	return p != "" && m == "serviceAccount:"+CredentialsAccountID+"@"+p+".iam.gserviceaccount.com"
 }
 
 // isDeployerMember is whether m is exactly this run's deployer account as an
@@ -611,6 +666,18 @@ var RolePermissions = map[string][]string{
 	// else — no write, and no cloudasset.assets.listResource, which belongs to
 	// the wider predefined role this replaced.
 	CloudAssetRole: {"cloudasset.assets.searchAllResources"},
+	// The credentials service's database role (0.10.1, ledger #903): the
+	// service reads the kill switches, the project policy, a run's outcome node
+	// and the credential state another revision wrote, and writes the creds/
+	// nodes it owns. Realtime Database IAM has no path-level scope, so the
+	// narrowest role that can do that is the instance's two DATA permissions —
+	// get (the only read) and update (the only write). Both predefined roles
+	// are wrong in opposite directions: viewer is get+list and cannot write at
+	// all, admin adds the instance LIFECYCLE (create, delete, disable,
+	// reenable, undelete) plus list, so the service could delete the
+	// installation's database. credentials.tf lists both permissions with their
+	// reasons; TestCredentialsDatabaseRoleIsTheTwoDataPermissions is the pin.
+	CredentialsDatabaseRole: {"firebasedatabase.instances.get", "firebasedatabase.instances.update"},
 	// The deployer's eight roles (D75, Task 1.5, redesigned for 0.10.0). They
 	// are not installation roles: nothing a run does needs them, and their
 	// bound is the split between them — creation, reads and
@@ -1102,6 +1169,12 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 			// Before the listed people: the deployer is never a person, even
 			// if the review screen listed its address.
 			kind = toDeployer
+		case c.isCredentialsMember(m):
+			// ... and neither is the credentials service's account, for the
+			// same reason: its two rows are what it may hold, and a plan that
+			// listed its address on the review screen would otherwise be able
+			// to grant it a launcher's or an operator's role.
+			kind = toCredentials
 		case slices.Contains(c.Listed, m):
 			if !strings.HasPrefix(m, "user:") && !strings.HasPrefix(m, "group:") && !strings.HasPrefix(m, "serviceAccount:") {
 				return fmt.Sprintf("grants to %s, which is not a user, group or service account", m)
