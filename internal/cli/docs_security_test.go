@@ -379,6 +379,20 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"refused at the gateway rather than answered from the job's own token",
 		// The stop flag.
 		"fugaro budget kill --all",
+		// The database role's reach, said plainly rather than left to be
+		// inferred from the operations named beside it (the 0.10.1 reviews):
+		// Realtime Database IAM has no path-level scope, so the two permissions
+		// the role is made of are the whole installation database's — the
+		// service could in principle write the stop switch and the policy it is
+		// checked against, and the same identity already holds every model
+		// credential. Pinned as sentences, because "no path-level scope" alone
+		// states the fence and not what it does not cover.
+		"can read and write the whole installation database",
+		"`config/kill/*`, including the switch that is supposed to stop it",
+		"`config/policy/*`, including the allow-list that holds a call to a model",
+		"turn off its own stop switch or widen the policy it is checked against",
+		"the same identity already holds every model credential a call can be given",
+		"The fence is the service's own behaviour",
 		// The revocation, stated exactly: write-once outcome, and fx as the
 		// only bound until it exists.
 		"the write-once outcome",

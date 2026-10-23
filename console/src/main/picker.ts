@@ -164,9 +164,12 @@ export interface InstallationPickerDeps {
   /** The app's own directories. `userData` is where the store lives, and `home`
    * is the operator's home as this app's own environment names it: it is what
    * rule 4's `~` expands to (`binDirectories`' own `home` argument, which
-   * defaults to `homedir()`) and what the path refusal is asked about. This file
-   * never calls `homedir()` -- the entry point hands it in, and says there why
-   * it is not `app.getPath('home')`. */
+   * defaults to `homedir()`) and what the path refusal is asked about. Nothing in
+   * this module calls `homedir()`: `installInstallationPicker`, at the foot of
+   * this file, is the one place that decides this value
+   * (`options.appEnv['HOME']`, falling back to `app.getPath('home')` when the key
+   * is missing or blank), and its own comment says there why the environment's
+   * answer and not Electron's. */
   readonly userData: string
   readonly home: string
   /** The app's root, from which `pickerPreloadPath` derives the preload. */

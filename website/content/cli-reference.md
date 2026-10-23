@@ -3424,8 +3424,11 @@ does, for the last 24 hours) and says so; fugaro runs ls --watch stays for the
 question "did my runs finish".
 
 A finished run leaves the list three minutes after it finishes, on its own
-(succeeded, failed and cancelled alike; --keep changes the window, --keep-count
-the number of rows, whichever is stricter). In the interactive screen x
+(succeeded, failed and cancelled alike). --keep changes the window for every
+finished run whatever its status — a failure is never kept for a shorter time
+than a success, so raising it shows more failures, not fewer — and
+--keep-count the number of rows, whichever is stricter; a failed row counts
+against --keep-count like any other. In the interactive screen x
 dismisses the selected finished run at once, and a toggles showing every
 finished run again, the ones the window or a dismissal hid included; --all
 starts that way. --json is always unfiltered: it carries every finished run
@@ -3453,8 +3456,8 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for watch |
 | `--interval` | duration | `0s` | no | the least time between plain frames (default 10s) and the polling period (default 5s) |
 | `--json` | bool | `false` | no | print one JSON document per change instead of a screen |
-| `--keep` | duration | `3m0s` | no | how long a finished run stays shown after it finishes (with --keep-count, whichever is stricter) |
-| `--keep-count` | int | `15` | no | how many finished runs stay shown (with --keep, whichever is stricter) |
+| `--keep` | duration | `3m0s` | no | how long a finished run stays shown after it finishes, failed runs included and never for less (with --keep-count, whichever is stricter) |
+| `--keep-count` | int | `15` | no | how many finished runs stay shown, failed runs included (with --keep, whichever is stricter) |
 | `--no-color` | bool | `false` | no | no colour (NO_COLOR and TERM=dumb do the same) |
 | `--no-pr-state` | bool | `false` | no | do not ask gh about the ready PRs: list every one of them, run nothing |
 | `--once` | bool | `false` | no | print one snapshot and exit (with --json or plain text) |
