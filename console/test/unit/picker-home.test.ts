@@ -29,13 +29,14 @@
 // (`installInstallationPicker`, which is the entry point's one call) with a fake
 // Electron whose `app.getPath('home')` deliberately answers something *other*
 // than the environment's home -- which is macOS's divergence, reproduced on any
-// platform. The first case reads it off the store refusal, which is decided
-// before any binary is looked for and so runs everywhere. The second case reads
-// it off the resolution itself, which is the behaviour the e2e is about: it
-// skips on a machine that has its own `fugaro` in one of the platform's
-// *absolute* prefixes, because there the machine decides the answer before the
-// `~` entry is reached -- the same reason, and the same honesty, as the e2e's
-// own `resolveConsoleBinary` skip.
+// platform. The three cases under "the picker's home" read it off the store
+// refusal, which is decided before any binary is looked for: one for a home the
+// environment names, and one for each of the two ways it can name none. The
+// last case reads it off the resolution itself, which is the behaviour the e2e
+// is about: it skips on a machine that has its own `fugaro` in one of the
+// platform's *absolute* prefixes, because there the machine decides the answer
+// before the `~` entry is reached -- the same reason, and the same honesty, as
+// the e2e's own `resolveConsoleBinary` skip.
 
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -218,8 +219,8 @@ describe('the picker’s home', () => {
 })
 
 /** machineFugaro is a `fugaro` this machine has in one of the platform's own
- * **absolute** prefixes -- the ones rule 4 walks before the `~` entry the cases
- * below control. It is the guard the e2e spells as a skip: a machine that has
+ * **absolute** prefixes -- the ones rule 4 walks before the `~` entry the case
+ * below controls. It is the guard the e2e spells as a skip: a machine that has
  * one decides the resolution before the console's own home is ever reached, so
  * a case about which `~` was used would prove nothing there. A `~` prefix is
  * skipped because after this file's change it is the app's environment home,
