@@ -6627,12 +6627,27 @@ func TestConsoleReleaseLinuxAddsTheLinuxLegAndMovesNothingElse(t *testing.T) {
 		}
 	}
 
+	// Which release stream this text is on. Once console-release-tag.yml has
+	// been copied in, the applied file -- the one read here after both
+	// supersede files are gone -- triggers on the console's own
+	// `console-vX.Y.Z` tag, hands the gate `v` + the version rather than the
+	// tag, and resolves the tag the owner pushed rather than asking whether it
+	// exists. Those two lines are pinned for the tag stream by
+	// TestDocsConsoleReleaseWorkflowIsStagedAndPinned; here they are only read
+	// in the form the stream this tree is on carries.
+	gateCall := `scripts/release-gate.sh "$TAG"`
+	tagRefusal := "could not tell whether the tag $CONSOLE_TAG exists"
+	if strings.Contains(text, `tags: ["console-v[0-9]+.[0-9]+.[0-9]+"]`) {
+		gateCall = `scripts/release-gate.sh "v$VERSION"`
+		tagRefusal = "could not resolve the tag $CONSOLE_TAG to a commit"
+	}
+
 	// What the linux job does: the same gate, the same pack, and -- added for
 	// Linux because an unsigned artifact has no other claim -- the shipped bytes
 	// opened and read.
 	linuxRuns := strings.Join(stepStrings(wf, "linux"), "\n")
 	for _, want := range []string{
-		`scripts/release-gate.sh "$TAG"`,
+		gateCall,
 		"npm run package:linux",
 		`sha256sum "$(basename "$APPIMAGE")" "$(basename "$DEB")"`,
 		"dpkg-deb --info",
@@ -6704,7 +6719,7 @@ func TestConsoleReleaseLinuxAddsTheLinuxLegAndMovesNothingElse(t *testing.T) {
 		// The refusals a re-run must still meet, verbatim from the old file.
 		"the release $CONSOLE_TAG is already published",
 		"delete it (gh release delete",
-		"could not tell whether the tag $CONSOLE_TAG exists",
+		tagRefusal,
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("%s lacks %q", path, want)
