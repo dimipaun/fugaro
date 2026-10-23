@@ -138,7 +138,10 @@ p.run-agent-message,
 p.run-reported-warning,
 p.run-pin-warning,
 p.run-draft-note,
-p.run-follow-up {
+p.run-follow-up,
+p.live-review-empty,
+p.live-review-note,
+p.live-review-capped {
   margin-block: var(--space-2xs);
   font-size: var(--font-size-base);
 }
@@ -184,6 +187,7 @@ p.run-follow-up {
 
 li.live-repo,
 li.live-run,
+li.live-review-row,
 li.spend-row,
 li.spend-point,
 li.spend-cap-repo,
@@ -224,6 +228,7 @@ ol.run-log-list,
 ol.run-log-tail,
 div.spend-accounts,
 div.spend-totals,
+section.live-review,
 section.spend-caps,
 section.projects-panel,
 section.run-ledger,
@@ -262,6 +267,10 @@ li.live-run {
  */
 
 span.live-run-id,
+span.live-review-run-id,
+span.live-review-repo,
+span.live-review-number,
+span.live-review-url,
 h1.run-id,
 span.run-repo,
 span.run-workflow,
@@ -519,6 +528,36 @@ span.run-halt-word {
 
 li.live-repo[data-killed='true'] {
   border-left: 3px solid var(--halted);
+}
+
+/* The review inbox (design F26; desktop-console v2 plan Task V2.7.1): the
+ * section the Live screen ends with -- the finished runs that are ready for a
+ * look, as rows of **text**. Its box is the panel group above, so what is here
+ * is the heading and the row's own pieces. The rows carry no link of any kind:
+ * the pull request's number and URL are drawn as text, and `data-href` -- the
+ * one attribute `link.openExternal` acts on -- is written nowhere in this
+ * section (`review.test.ts` walks it and asserts exactly that). */
+h2.live-review-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-xs);
+  font-size: var(--font-size-md);
+  font-weight: var(--weight-semibold);
+}
+
+/* The count's parentheses are drawn elements rather than CSS punctuation, so
+ * what the heading reads is in the document rather than in the stylesheet. */
+span.live-review-open,
+span.live-review-close {
+  color: var(--text-muted);
+}
+
+/* The title is a job's own sentence, so it takes the readable size the run
+ * rows' titles take; the age beside it is the `live-num` hook's, and the
+ * repository, the number, the URL and the run id are the identity group's. */
+span.live-review-run-title {
+  font-size: var(--font-size-base);
 }
 
 /* ---- Spend ---------------------------------------------------------------- */
@@ -1356,6 +1395,9 @@ main p {
   p.run-replay-note,
   p.run-replay-scrubbed,
   span.run-halt-detail,
+  p.live-review-empty,
+  p.live-review-note,
+  p.live-review-capped,
   p.degraded-notice,
   p.degraded-warning,
   p.unavailable-reason,

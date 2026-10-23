@@ -52,7 +52,7 @@ import {
 } from '../../shared/availability'
 import type { Reading, Sample } from '../../shared/availability'
 import { sanitizeText } from '../../shared/sanitize'
-import type { BurnView, KillView, LiveDocument, RunView, TotalsView } from '../../shared/schema'
+import type { BurnView, FinishedView, KillView, LiveDocument, RunView, TotalsView } from '../../shared/schema'
 import { putReading, putText } from '../app'
 import type { ElementLike } from '../app'
 
@@ -112,6 +112,54 @@ export const LIVE_THEMES = Object.freeze(['light', 'dark'] as const)
 
 /** LiveTheme is one of them. */
 export type LiveTheme = (typeof LIVE_THEMES)[number]
+
+// ---------------------------------------------------------------------------
+// The review inbox (design F26, desktop-console v2 plan Task V2.7.1).
+// ---------------------------------------------------------------------------
+
+/**
+ * LIVE_REVIEW_CAP bounds the review list, exactly as `PROJECT_JOB_CAP` bounds
+ * the Projects screen's job list: the feed's `ready[]` is deliberately
+ * **unfiltered** (`internal/watch/json.go`: `--keep` and `--keep-count` bound
+ * the interactive view's history, not what still needs a look), so a project
+ * that nobody has caught up with could carry thousands of rows -- and a screen
+ * with ten thousand rows is not a list of ten thousand rows. Past this cap the
+ * oldest rows go undrawn and the count of what was not drawn is drawn instead,
+ * which is the same shape the log panel and the job list use.
+ */
+export const LIVE_REVIEW_CAP = 50
+
+/**
+ * LIVE_REVIEW_TITLE is the section's heading, quoted from the CLI's own text
+ * view (`internal/watch/render.go`'s `readyForReview`: `Ready for your
+ * review (%d)`). The count beside it is a *reading* rather than part of this
+ * string, so the number cannot be drawn without its state (see `numberCell`).
+ */
+export const LIVE_REVIEW_TITLE = 'Ready for your review'
+
+/**
+ * LIVE_REVIEW_EMPTY is what the section says with no row to draw. It says it
+ * about **this feed** on purpose: `ready[]` ships empty when the runs bucket
+ * could not be read as well as when nothing is waiting, and the difference
+ * between those two is the CLI's own `queued_note`, which the header draws
+ * (`live-note`) rather than this section inventing a second reason.
+ */
+export const LIVE_REVIEW_EMPTY = 'no finished run in this feed is ready for review'
+
+/**
+ * LIVE_PR_NO_LINK_REASON is the sentence the section carries beneath its rows,
+ * and it is **the same sentence `run.ts` draws beside a run's pull request**
+ * (`PR_NO_LINK_REASON`): the console shows the number and the URL as text and
+ * builds no link from either, because no document on this tree says which
+ * provider the run's repository is on (v1 design section 5.1 rule 2, its gap 7,
+ * and design F26). It is a second copy rather than an import because the
+ * screens are siblings and none owns the others -- the same reason each screen
+ * declares `ScreenElement` and `ScreenFactory` itself -- and
+ * `review.test.ts` holds the two constants equal, so the copies cannot drift
+ * into two different promises.
+ */
+export const LIVE_PR_NO_LINK_REASON =
+  'this CLI does not say which provider this run’s repository is on, so the console will not build a link from it'
 
 // ---------------------------------------------------------------------------
 // The flags.
@@ -588,6 +636,21 @@ export interface LiveConnection {
   readonly staleByAge: boolean
 }
 
+/** LiveReviewRow is one finished run waiting for a look (`JSONFinished` from
+ * the feed's `ready[]`): its repository, its pull request as facts, its title
+ * and its age. The pull request is **three fields and not a link** -- a number
+ * and a URL the screen draws as text (design F26) -- so `null` here is "the
+ * run has no pull request", which the wire spells by leaving both fields out
+ * (`omitempty`), and never a value nobody filled in. */
+export interface LiveReviewRow {
+  readonly run: string
+  readonly repo: string
+  readonly title: string
+  readonly prNumber: number | null
+  readonly prUrl: string | null
+  readonly age: Reading
+}
+
 /** LiveModel is the whole screen as data. */
 export interface LiveModel {
   readonly project: string
@@ -602,6 +665,26 @@ export interface LiveModel {
    * and showing them rather than dropping them is the whole point of the
    * field: a row the console cannot place is still a run that is spending. */
   readonly orphans: readonly LiveRunRow[]
+  /** review is the feed's `ready[]` -- the finished runs whose outcome is
+   * `ready`, newest first -- capped at `LIVE_REVIEW_CAP`. It is the CLI's own
+   * "Ready for your review" list (`internal/watch/filter.go`'s
+   * `ReadyForReview`, drawn by `internal/watch/render.go`'s `readyForReview`),
+   * and it is a field of its own rather than a filter over `finished[]`
+   * because the CLI already made that choice: a finished run whose outcome is
+   * `draft` or `none` is not waiting for a review.
+   *
+   * The rest of `finished[]` is deliberately not drawn here: this is the Live
+   * screen -- what is spending now, and what is waiting on the operator -- and
+   * a finished run whose outcome is `draft` or `none` is waiting on nobody.
+   * Drawing the whole of `finished[]` would also make this screen a history,
+   * which is not what the feed is read for; the same choice the CLI makes in
+   * its own view. */
+  readonly review: readonly LiveReviewRow[]
+  /** reviewCount is how many ready rows the document carried, which is more
+   * than `review.length` exactly when the list was capped. It is the CLI's own
+   * count -- `len(ReadyRowsOf(v))` -- taken over the list this console would
+   * have drawn whole. */
+  readonly reviewCount: number
   readonly queuedNote: string | null
   /** the console's own reading of how long the feed has been quiet, when the
    * caller keeps one. `null` is a caller that measures nothing -- the screen
@@ -667,6 +750,42 @@ function rowOf(run: RunView): LiveRunRow {
     stuck: run.stuck,
     contradiction: contradiction(run.health, age),
   }
+}
+
+/**
+ * reviewRowOf builds one row of the review inbox from a `ready[]` entry.
+ *
+ * Every field is copied and none is derived: `repo`, `title`, `pr_number`,
+ * `pr_url` and `age_seconds` are the document's own, and the screen draws them
+ * -- the URL through `putText`'s `url` class, which redacts a token-shaped run
+ * and refuses a URL that carries a credential -- rather than parsing a link out
+ * of any of them (design F26; v1 section 5.1 rule 2). The title is a job's own
+ * text, so it is drawn as a `sentence` like every other free string.
+ *
+ * The number is the one field that is **filtered**, and `prNumberAt` says why.
+ */
+function reviewRowOf(finished: FinishedView): LiveReviewRow {
+  return {
+    run: finished.run,
+    repo: finished.repo,
+    title: finished.title,
+    prNumber: prNumberAt(finished.prNumber),
+    prUrl: finished.prUrl,
+    age: finished.ageSeconds,
+  }
+}
+
+/** prNumberAt is a pull request's number as a row may draw one: a positive
+ * integer, or nothing. `schema.ts`'s `optionalInt` guarantees a finite number
+ * and not that it is a whole one, and a number is drawn here as **text** --
+ * `#1.5`, `#0` and `#-3` are not pull requests, and a row that drew one would
+ * be naming something that does not exist. It is the same rule `run.ts`'s
+ * `numberAt` keeps for `pr`/`pr_number` (that screen draws the same fact from a
+ * `runview.Row`), written here rather than imported because the screens are
+ * siblings and none owns the others. */
+function prNumberAt(raw: number | null): number | null {
+  if (raw === null || !Number.isInteger(raw) || raw <= 0) return null
+  return raw
 }
 
 /** silenceStamp is where a silence ends **on the CLI's clock**: the stamp of
@@ -743,6 +862,13 @@ export function buildLiveModel(
   const known = new Set(document.repos.map((repo) => repo.slug))
   const orphans = document.runs.filter((run) => !known.has(run.slug)).map(rowOf)
 
+  // The review list is the document's own order -- `ReadyForReview` sorts it
+  // newest first (`internal/watch/filter.go`), and a console that sorted again
+  // could disagree with the CLI's own view about which row is first. The count
+  // is taken **before** the cap, so the section can say how many it did not
+  // draw rather than quietly showing a shorter list.
+  const review = document.ready.map(reviewRowOf)
+
   const age = document.connection.ageSeconds
   return {
     project: document.project,
@@ -761,6 +887,8 @@ export function buildLiveModel(
     total: { ...document.total, notionalUsd: notionalReading(document.total.notionalUsd) },
     repos,
     orphans,
+    review: review.slice(0, LIVE_REVIEW_CAP),
+    reviewCount: review.length,
     queuedNote: document.queuedNote,
     feed,
   }
@@ -1094,6 +1222,99 @@ function total(factory: ScreenFactory, model: LiveModel): ScreenElement {
 }
 
 /**
+ * reviewSection draws the review inbox: the heading with its count, one row per
+ * ready run, and the sentence about the link the console does not build.
+ *
+ * **The pull request is text and is not a control.** The number is drawn with
+ * this screen's `literal` (it is an integer the model already filtered,
+ * `prNumberAt` above), the URL goes through `putText` with the `url` class --
+ * so a token-shaped run in it is redacted and a URL that carries a credential
+ * is refused, drawn as the console's reason -- and neither is ever written into
+ * `data-href`, which is the one attribute `src/renderer/app.ts` leaves a link
+ * destination in and the only thing `link.openExternal` acts on. There is no
+ * `<a>` here at all: not an inert one, and not one waiting for a provider,
+ * because an element carrying a destination the console will not offer is a
+ * control that does nothing (the rule `run.ts`'s `pullRequestPanel` states).
+ * `review.test.ts` walks this section and asserts exactly that.
+ *
+ * The section is drawn whether or not it has a row: "nothing is waiting for
+ * you" is an answer, and a section that vanishes when it is empty is a section
+ * whose absence the operator has to interpret.
+ */
+function reviewSection(factory: ScreenFactory, model: LiveModel): ScreenElement {
+  const element = make(factory, 'section', 'live-review')
+  const heading = make(factory, 'h2', 'live-review-title')
+  literal(cell(heading, factory, 'span', 'live-review-word'), LIVE_REVIEW_TITLE)
+  // The count is the CLI's own `len(ReadyRowsOf(v))` over the list before the
+  // cap, drawn as a reading: it is this console's count of a list the document
+  // carries, so it is measured, and a document that somehow carried no list at
+  // all is refused by `schema.ts` before a screen ever sees it.
+  literal(cell(heading, factory, 'span', 'live-review-open'), '(')
+  numberCell(heading, factory, 'span', measured(model.reviewCount), 'count', 'live-review-count')
+  literal(cell(heading, factory, 'span', 'live-review-close'), ')')
+  element.append(heading)
+
+  const list = cell(element, factory, 'ol', 'live-review-list')
+  for (const row of model.review) list.append(reviewRow(factory, row))
+  if (model.reviewCount === 0) {
+    literal(cell(element, factory, 'p', 'live-review-empty'), LIVE_REVIEW_EMPTY)
+  }
+  if (model.review.length > 0) {
+    // Once per section rather than once per row: the reason is a fact about
+    // every row here, and a sentence under each one would be the same sentence
+    // eleven times.
+    literal(cell(element, factory, 'p', 'live-review-note'), LIVE_PR_NO_LINK_REASON)
+  }
+  if (model.review.length < model.reviewCount) {
+    // What was **not** drawn, in the shape `run.ts`'s log panel and
+    // `projects.ts`'s job list use: the label, the number of rows the cap left
+    // out, and the total the document carried. Drawing the number of rows that
+    // *are* on the screen under this label would be the same count the heading
+    // already carries, under a sentence saying the opposite of what it means.
+    const note = cell(element, factory, 'p', 'live-review-capped')
+    literal(note, 'rows not drawn:')
+    numberCell(
+      note,
+      factory,
+      'span',
+      measured(model.reviewCount - model.review.length),
+      'count',
+      'live-review-dropped',
+    )
+    literal(cell(note, factory, 'span', 'live-review-of'), 'of')
+    numberCell(note, factory, 'span', measured(model.reviewCount), 'count', 'live-review-total')
+  }
+  return element
+}
+
+/** reviewRow draws one finished run: its repository, its pull request as facts,
+ * its title, its age and its id. The id is drawn (and goes through `putText`
+ * with the `runId` class) because the row is a door to Run detail: the entry
+ * wires a row to `diagnose RUN` by reading this cell's text, exactly as
+ * `wireRuns` reads a live row's -- and a run id the sanitizer refused is drawn
+ * as the unavailable mark, which matches no run in the model and so opens
+ * nothing. */
+function reviewRow(factory: ScreenFactory, row: LiveReviewRow): ScreenElement {
+  const element = make(factory, 'li', 'live-review-row')
+  // `repoDisplayName` falls back to the slash-free slug when the host's config
+  // does not name the repository, as `repoBlock` says: the slash decides the
+  // text class, and a slug is not a repository name.
+  textCell(element, factory, 'span', row.repo, row.repo.includes('/') ? 'repository' : 'slug', 'ready[].repo', 'live-review-repo')
+  if (row.prNumber !== null) {
+    // A number is an identifier, not a measurement: drawn as text, with no link
+    // and no reading (`run.ts`'s `pullRequestPanel`).
+    literal(cell(element, factory, 'span', 'live-review-number'), `#${String(row.prNumber)}`)
+  }
+  if (row.prUrl !== null) {
+    textCell(element, factory, 'span', row.prUrl, 'url', 'ready[].pr_url', 'live-review-url')
+  }
+  textCell(element, factory, 'span', row.title, 'sentence', 'ready[].title', 'live-review-run-title')
+  numberCell(element, factory, 'span', row.age, 'seconds', 'live-review-age')
+  textCell(element, factory, 'span', row.run, 'runId', 'ready[].run', 'live-review-run-id')
+  return element
+}
+
+/**
  * renderLive draws the model and returns the tree it built, so a test can walk
  * what was drawn rather than read a window that no test can see.
  *
@@ -1122,5 +1343,11 @@ export function renderLive(factory: ScreenFactory, model: LiveModel, theme: Live
     const orphans = cell(root, factory, 'ol', 'live-orphans')
     for (const row of model.orphans) orphans.append(runRow(factory, row))
   }
+
+  // The review inbox is last: the screen answers "what is spending now" first,
+  // and what is waiting for the operator after it (design section 6.1 rule 6,
+  // "one glance answers what is responsible"). It is drawn whether or not it
+  // has a row -- see `reviewSection`.
+  root.append(reviewSection(factory, model))
   return root
 }
