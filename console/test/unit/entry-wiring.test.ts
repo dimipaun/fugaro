@@ -842,6 +842,31 @@ describe('the fixture source', () => {
     expect(importers, 'the fixture source is reachable from the shipped code').toEqual([])
   })
 
+  it('hands the startup read the installation’s distribution and checkout (T-D1)', () => {
+    // `resolveHandshakeBinary`'s WSL branch is reachable only if the entry hands
+    // the read a `distro`, and the directory the CLI starts in travels with it
+    // as the wrapper's `--cd` (`wslDirectory`, D3(a)). The two are the fields
+    // the store carries and the handshake would otherwise drop: a stored WSL
+    // installation read as a host one is a console that reports a missing
+    // binary for the installation the operator chose, because the walk is a
+    // walk of the host and the host has no `fugaro` (T-C2). This file imports
+    // Electron's runtime, so the claim is read off its text -- the same way the
+    // fixture-source scan above is -- and the *function body* is what is read,
+    // so naming the field in prose elsewhere in the file cannot satisfy it.
+    const index = readFileSync(join(CONSOLE_ROOT, 'src', 'main', 'index.ts'), 'utf8')
+    // `\n}\n` and not `\n}`: the **return type** ends with a brace at column
+    // zero too (`} | null {`), so the shorter pattern reads the signature and
+    // nothing else -- and would then fail on a body that is exactly right.
+    const declared = /function handshakeInstallation\(\)[\s\S]*?\n}\n/.exec(index)
+    if (declared === null) throw new Error('the scan found no handshakeInstallation: it would pass by finding nothing')
+    expect(declared[0]).toContain('distro: chosen.distro')
+    expect(declared[0]).toContain('checkout: chosen.checkout')
+    // ...and the read that consumes it is handed that object: the resolution
+    // takes `installation`, and a second object built beside this one would be
+    // the same defect one line later.
+    expect(index).toMatch(/resolveHandshakeBinary\(\{[\s\S]*?installation: chosen/)
+  })
+
   it('leaves the main process the one source the shipped app can construct', () => {
     const index = readFileSync(join(CONSOLE_ROOT, 'src', 'main', 'index.ts'), 'utf8')
     expect(index).toContain('createBoundSource(')
