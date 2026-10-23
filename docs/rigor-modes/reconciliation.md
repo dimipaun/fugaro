@@ -973,7 +973,7 @@ attractive because bootstrap is the easy moment (the configuration is in hand an
 no diff exists), and it is the reason D22 keeps bootstrap as one of its moments
 rather than the only one.
 
-**Amended 2026-10-22, by the levels addendum, pending the owner's confirmation:** a new run's own request may lower a default (never below a floor), while a follow-up stays raise-only; see [levels-reconciliation.md](levels-reconciliation.md) §3a (LD3).
+**Amended 2026-10-22, by the levels addendum, amended after review and confirmed by the owner 2026-10-22:** a new run's own request may lower a default (never below a floor), while a follow-up stays raise-only; see [levels-reconciliation.md](levels-reconciliation.md) §3a (LD3).
 
 ### D7 — What each mode changes in the run loop
 
@@ -1526,7 +1526,7 @@ second configuration surface with its own schema, its own trust question and its
 own load order, for a shape the repository does not use anywhere; and an area
 file inside the tree is a file the branch under review can write (F35, F41).
 
-**Amended 2026-10-22, by the levels addendum, pending the owner's confirmation:** a repository's own configuration may lower a project area, and a project area's members are repositories or repositories with paths; see [levels-reconciliation.md](levels-reconciliation.md) §3a (LD4).
+**Amended 2026-10-22, by the levels addendum, amended after review and confirmed by the owner 2026-10-22:** a repository's own configuration may lower a project area, and a project area's members are repositories or repositories with paths; see [levels-reconciliation.md](levels-reconciliation.md) §3a (LD4).
 
 ### D21 — Whether a narrower layer may lower
 
@@ -1629,7 +1629,7 @@ Cost: undefined for overlapping globs of equal or incomparable specificity
 will remember. Patterns have no natural order; modes do, and that is why
 strictest-by-mode is the recommendation.
 
-**Amended 2026-10-22, by the levels addendum, pending the owner's confirmation:** the strictest mode wins within one layer, and across layers the narrower layer wins; see [levels-reconciliation.md](levels-reconciliation.md) §3a (LD4).
+**Amended 2026-10-22, by the levels addendum, amended after review and confirmed by the owner 2026-10-22:** the strictest mode wins within one layer, and across layers the narrower layer wins; see [levels-reconciliation.md](levels-reconciliation.md) §3a (LD4).
 
 ### D24 — What each surface shows, and which value it shows
 
@@ -1791,7 +1791,7 @@ for the index anyway. **Alternative: two files per item, the item and a `closed`
 marker.** Cost: two things to keep in step, two chances to drift, and the pin then
 has to hold a relation between files rather than a field.
 
-**Amended 2026-10-22, by the levels addendum, pending the owner's confirmation:** a ninth required field `kind`, and `mode` renamed `level`; see [levels-reconciliation.md](levels-reconciliation.md) §3a (LD5).
+**Amended 2026-10-22, by the levels addendum, amended after review and confirmed by the owner 2026-10-22:** a ninth required field `kind`, and `mode` renamed `level`; see [levels-reconciliation.md](levels-reconciliation.md) §3a (LD5).
 
 ### D28 — The index is generated, pinned twice, and never hand-merged
 
@@ -1923,7 +1923,7 @@ modes, the pull request body for others).** Cost: two records of one finding, an
 the moment "one backlog and not two" (D32) breaks — by the mechanism that was
 supposed to file.
 
-**Amended 2026-10-22, by the levels addendum, pending the owner's confirmation:** Critical files its open risks as items, and Startup and Pro also file the deferrals the agent lists; see [levels-reconciliation.md](levels-reconciliation.md) §3a (LD5).
+**Amended 2026-10-22, by the levels addendum, amended after review and confirmed by the owner 2026-10-22:** Critical files its open risks as items, and Startup and Pro also file the deferrals the agent lists; see [levels-reconciliation.md](levels-reconciliation.md) §3a (LD5).
 
 ### D31 — Closing: the pull request that fixes it flips the status in the same commit
 
