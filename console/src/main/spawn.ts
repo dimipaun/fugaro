@@ -890,6 +890,115 @@ export function assertArgvFlags(operation: string, argv: readonly string[]): voi
 }
 
 /**
+ * WSL_PREFIX_FLAGS is every word of the wrapper that is a flag or a separator:
+ * the distribution to run in, the directory to start in, and the `--` after
+ * which the CLI's own argv begins. It is `wsl.exe`'s set and **not**
+ * `SPAWN_FLAGS`'s, which is the whole reason `SpawnPlan` keeps `prefix` apart
+ * from `argv` (T-C1, F8): `--cd` is not a flag this console may emit to the CLI,
+ * and `--` is not a flag at all.
+ *
+ * The two sets must stay disjoint, and `test/unit/spawn.test.ts` holds them
+ * apart: a word in both would be a wrapper word that also looks like a CLI flag,
+ * which is the one shape that makes the two halves of the command line
+ * indistinguishable.
+ */
+export const WSL_PREFIX_FLAGS: readonly string[] = Object.freeze(['-d', '--cd', '--'])
+
+/**
+ * DISTRO_NAME_RE is the alphabet a WSL distribution's name may use when this
+ * console hands it to `wsl.exe` (T-E3, F22). A distribution's name is a
+ * registry key's name on Windows -- letters, digits, `.`, `_` and `-` -- and it
+ * is checked as a name rather than as a path, because it is one.
+ *
+ * **Why a name needs an alphabet at all.** Part C widened the argv this console
+ * builds with words that do not come from the CLI's own table: a distribution's
+ * name arrives from `wsl.exe --list --quiet` (a document's string) or from the
+ * store, and it lands on `wsl.exe`'s command line. With `shell: false` there is
+ * no shell for it to be re-parsed by, so the hazard is not injection but
+ * *argument confusion*: a name spelled `--help`, `-d` or `--` is a word
+ * `wsl.exe` reads as its own, and a name carrying whitespace or a control
+ * character is a name no `wsl.exe` ever printed. A name outside this alphabet,
+ * or one that begins with a hyphen, is refused by name rather than run (see
+ * `isSafeDistroName` and `assertWslPrefix`).
+ */
+export const DISTRO_NAME_RE = /^[A-Za-z0-9._-]+$/
+
+/** isSafeDistroName answers whether a distribution's name may become a wrapper
+ * word. It is the tight alphabet above, with the length bound the store's own
+ * values carry, and an empty name is refused because `-d ''` names nothing.
+ *
+ * **A leading `-` is refused as well as the alphabet**, and that is the one
+ * place this rule is narrower than the alphabet it is built on: `-` has to be
+ * admitted (a real distribution is called `Ubuntu-22.04`), so `-d --help`,
+ * `-d -d` and `-d --` are all *inside* the alphabet while being exactly the
+ * argument confusion the alphabet exists to refuse. A distribution whose
+ * registered name begins with a hyphen is not a distribution any `wsl.exe`
+ * printed, so refusing it by name costs nothing real. */
+export function isSafeDistroName(value: string): boolean {
+  if (value === '' || value.length > 256) return false
+  if (value.startsWith('-')) return false
+  return DISTRO_NAME_RE.test(value)
+}
+
+/**
+ * assertWslPrefix holds the wrapper to its shape and to its two alphabets, and
+ * it is the prefix's half of what `assertArgvFlags` is to the CLI's argv
+ * (T-E3, F22). It is called by `wslWrapper`, the only producer of a prefix, for
+ * the same reason `assertArgvFlags` is called by `argvFor`: a check in the
+ * callers is a check a later caller can forget.
+ *
+ * The shape is `-d <distribution>` and then either `--` or `--cd <directory> --`
+ * -- exactly what `wslWrapper` builds, and nothing else. Two of the words are
+ * **values**, and they are checked by two different rules:
+ *
+ *   - **the distribution's name** is a *name*, and it is held to
+ *     `DISTRO_NAME_RE`: it is the one word here that reaches `wsl.exe` as a
+ *     selector, and a name that could be read as a flag or as two words is the
+ *     argument confusion `DISTRO_NAME_RE` exists to refuse.
+ *   - **the directory is exempt from that alphabet, by name and deliberately.**
+ *     It is a Linux path, and a path is not a name: `/home/Ann Lee/src` is a
+ *     directory an operator can have, and `ARGUMENT_RE` (which the renderer's
+ *     own values satisfy) admits neither the space nor the `~` a shell would
+ *     expand. It is checked by `isSafeInstallationValue` instead -- the rule the
+ *     project name, the config path and the checkout already satisfy -- so what
+ *     is refused is a control character, a NUL, an empty string, an absurd
+ *     length and a leading `-`, and what is admitted is every path an operator
+ *     can actually type.
+ */
+export function assertWslPrefix(prefix: readonly string[]): void {
+  const words = [...prefix]
+  for (const word of words) {
+    if (SPAWN_FLAGS.includes(word)) {
+      refused(`the wrapper would carry ${word}, which is a flag this console emits to the CLI: the two halves of the command line are separate fields`)
+    }
+  }
+  const [flag, name] = words
+  if (flag !== '-d') {
+    refused(`the wrapper must start with -d <distribution>, and starts with ${JSON.stringify(flag ?? '')}`)
+  }
+  if (name === undefined || !isSafeDistroName(name)) {
+    refused(
+      `the distribution name ${JSON.stringify(name ?? '')} is not one this console will hand to wsl.exe: ` +
+        `a distribution's name is ${String(DISTRO_NAME_RE)}`,
+    )
+  }
+  const rest = words.slice(2)
+  if (rest.length === 1 && rest[0] === '--') return
+  if (rest.length === 3 && rest[0] === '--cd' && rest[2] === '--') {
+    // The directory, and the exemption above: a path is not a name.
+    const directory = rest[1] ?? ''
+    if (!isSafeInstallationValue(directory)) {
+      refused(`the wrapper would start the CLI in ${JSON.stringify(directory)}, which is not a directory this console will pass`)
+    }
+    return
+  }
+  refused(
+    `the wrapper's words are \`-d <distribution>\`, an optional \`--cd <directory>\`, and \`--\`: ` +
+      `${JSON.stringify(words.join(' '))} is none of them`,
+  )
+}
+
+/**
  * COMMANDS_WITHOUT_PROJECT and COMMANDS_TAKING_DIR are rules 3 and 5 as the CLI
  * states them, keyed by the *operation's* command (Task 1.2's table), not by the
  * spawn row: `version` is the one command with no `--project`
@@ -1457,11 +1566,17 @@ export interface WslRoute {
 /** wslWrapper is the wrapper's own words: the distribution to run in, the
  * directory to start in (in the distribution's spelling), and the separator
  * after which the CLI's argv begins. `--cd` is left out when there is no
- * directory to name -- see `WslRoute`. */
+ * directory to name -- see `WslRoute`.
+ *
+ * It is the only producer of a prefix, so `assertWslPrefix` is called here
+ * rather than in the callers (T-E3): the distribution's name is a string that
+ * came out of `wsl.exe` or out of the store, and it is checked against
+ * `DISTRO_NAME_RE` on the way to `wsl.exe`'s command line. */
 function wslWrapper(wsl: WslRoute): readonly string[] {
   const head = ['-d', wsl.distro]
-  if (wsl.directory === undefined) return Object.freeze([...head, '--'])
-  return Object.freeze([...head, '--cd', wsl.directory, '--'])
+  const prefix = wsl.directory === undefined ? [...head, '--'] : [...head, '--cd', wsl.directory, '--']
+  assertWslPrefix(prefix)
+  return Object.freeze(prefix)
 }
 
 /** planFor assembles a plan from an operation, its validated arguments and

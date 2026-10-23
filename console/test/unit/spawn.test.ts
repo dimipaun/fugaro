@@ -823,6 +823,96 @@ describe('the wrapper on the spawn plan', () => {
   })
 })
 
+describe('the wrapper’s own words', () => {
+  // T-E3 of docs/console-windows/implementation-plan.md, finding F22: the guard
+  // the CLI's argv is held to is extended to the prefix. Part C put words on a
+  // command line that do not come from the CLI's own table -- a distribution's
+  // name arrives from `wsl.exe --list --quiet` or from the store -- so the
+  // prefix has an alphabet of its own rather than the CLI's, and the two are
+  // disjoint by design (T-C1: that is why `prefix` and `argv` are two fields).
+  //
+  // The directory is the one word **exempt from the name alphabet by name**, and
+  // the reason is written beside the exemption in `assertWslPrefix`: a Linux path
+  // is a path and not a name, and `/home/Ann Lee/src` is a directory an operator
+  // can have.
+  const words = (list: readonly string[]): readonly string[] => Object.freeze([...list])
+  const inside = (directory: string): readonly string[] => words(['-d', 'Ubuntu', '--cd', directory, '--'])
+
+  it('admits exactly the two shapes `wslWrapper` builds, and nothing else', () => {
+    expect(() => assertWslPrefix(words(['-d', 'Ubuntu', '--']))).not.toThrow()
+    expect(() => assertWslPrefix(words(['-d', 'Ubuntu-22.04', '--cd', '/home/dimi/src', '--']))).not.toThrow()
+    // The exemption, asserted as an admission *and* as a refusal below: a space
+    // is in a path and not in a name.
+    expect(() => assertWslPrefix(inside('/home/Ann Lee/src/fugaro'))).not.toThrow()
+    for (const list of [
+      [], // no `-d` at all
+      ['-d', 'Ubuntu'], // no `--`
+      ['-d', 'Ubuntu', '--cd', '/home/dimi'], // `--cd` with no `--`
+      ['--cd', '/home/dimi', '-d', 'Ubuntu', '--'], // the words reordered
+      ['-d', 'Ubuntu', '--cd', '/home/dimi', '--', 'extra'], // one word too many
+      ['-d', 'Ubuntu', '--distribution', 'Debian', '--'], // a flag `wsl.exe` has and this console never emits
+    ]) {
+      expect(() => assertWslPrefix(words(list))).toThrow()
+    }
+  })
+
+  it('refuses a distribution name that could be read as a flag, or as two words', () => {
+    // What `DISTRO_NAME_RE` is for. `-` has to be *in* the alphabet -- a real
+    // distribution is called `Ubuntu-22.04` -- so `-d --help`, `-d -d` and
+    // `-d --` are inside it while being exactly the argument confusion the
+    // alphabet exists to refuse; the leading-hyphen rule in `isSafeDistroName`
+    // is what refuses them. With `shell: false` there is no shell to re-parse
+    // any of this, so the hazard is argument confusion and not injection.
+    for (const name of ['-d', '--', '--help', 'Ubuntu 22.04', 'Ubuntu\t22.04', 'ubuntu\n', 'Ubuntu;rm -rf', '']) {
+      expect(isSafeDistroName(name)).toBe(false)
+      expect(() => assertWslPrefix(words(['-d', name, '--']))).toThrow(/distribution name/)
+    }
+    expect(isSafeDistroName('Ubuntu-22.04')).toBe(true)
+    expect(isSafeDistroName('kali-linux')).toBe(true)
+    expect(DISTRO_NAME_RE.test('Ubuntu')).toBe(true)
+    // The length bound is the one the store's own values carry.
+    expect(isSafeDistroName('a'.repeat(257))).toBe(false)
+  })
+
+  it('keeps the wrapper’s flags and the CLI’s flags apart', () => {
+    // Disjointness is what makes the two fields mean anything: a word in both
+    // would be a wrapper word that also looks like a CLI flag, and the two
+    // halves of the command line would be indistinguishable.
+    expect(WSL_PREFIX_FLAGS.filter((flag) => SPAWN_FLAGS.includes(flag))).toEqual([])
+    expect([...WSL_PREFIX_FLAGS]).toEqual(['-d', '--cd', '--'])
+    // ...and a wrapper word that *is* one of the CLI's own flags is refused
+    // rather than passed through. This is the mutation the case exists for:
+    // widening the guard with `wsl.exe`'s flags -- the alternative a design that
+    // kept the wrapper in `argv` would have had to choose.
+    expect(() => assertWslPrefix(words(['-d', 'Ubuntu', '--cd', '/home/dimi', '--', '--json']))).toThrow(
+      /flag this console emits to the CLI/,
+    )
+  })
+
+  it('refuses a directory only for the reasons a path is refused', () => {
+    // The exemption is from the *name* alphabet, not from every rule: what is
+    // still refused is a control character, an empty string, an absurd length
+    // and a leading `-` -- `isSafeInstallationValue`, the rule the project name,
+    // the config path and the checkout already satisfy.
+    expect(() => assertWslPrefix(inside('/home/dimi/src\n-rf'))).toThrow(/start the CLI in/)
+    expect(() => assertWslPrefix(inside('-rf /home/dimi'))).toThrow(/start the CLI in/)
+    expect(() => assertWslPrefix(inside(''))).toThrow(/start the CLI in/)
+    expect(() => assertWslPrefix(inside(`/home/${'a'.repeat(4100)}/src`))).toThrow(/start the CLI in/)
+    expect(() => assertWslPrefix(inside(`/home/${'a'.repeat(1000)}/src`))).not.toThrow()
+  })
+
+  it('checks the prefix on the way to `wsl.exe`, and not only when asked', () => {
+    // The enforcement is inside `wslWrapper`, the only producer of a prefix, for
+    // the same reason `assertArgvFlags` is inside `argvFor`: a check in the
+    // callers is a check a later caller can forget. The distribution's name is a
+    // string that came out of `wsl.exe` or out of the store, so this says the
+    // line it has to cross is the one the wrapper builds.
+    const wsl = { distro: 'Ubuntu --json', directory: '/home/dimi/src', executable: 'C:\\Windows\\System32\\wsl.exe' }
+    expect(() => planFor('budget.show', {}, safeContext({ binaryPath: '', wsl }))).toThrow(/distribution name/)
+    expect(() => planFor('budget.show', {}, safeContext({ binaryPath: '', wsl: { ...wsl, distro: 'Ubuntu' } }))).not.toThrow()
+  })
+})
+
 describe('the child environment', () => {
   const fullAppEnv = {
     PATH: '/usr/local/bin:/usr/bin:/bin',
@@ -3270,6 +3360,26 @@ describe('the source scan', () => {
     expect(source).not.toMatch(/\bexecSync?\(/)
     expect(source).not.toMatch(/shell:\s*true/)
     expect(source).not.toMatch(/\/bin\/sh/)
+  })
+
+  it('closes stdin at every spawn site, and pipes the other two', () => {
+    // T-E3, finding F19: `stdio: ['ignore', 'pipe', 'pipe']` is written at each
+    // site that starts a child -- the real spawner, the supervised run and the
+    // live subscription -- so a CLI that decides to read a prompt reads EOF
+    // rather than the console's terminal, and nothing a window does with the
+    // keyboard reaches a child. The mutation this catches is `'inherit'` (or a
+    // dropped `stdio`, which hands the child the parent's streams by default) at
+    // any one of the three: the count is asserted as well as the literal, so
+    // deleting the option fails here rather than passing quietly.
+    const source = codeOnly('main/spawn.ts')
+    const optionLines = source.match(/stdio: \[[^\]]*\]/g) ?? []
+    expect(optionLines).toHaveLength(3)
+    for (const line of optionLines) expect(line).toBe("stdio: ['ignore', 'pipe', 'pipe']")
+    // The type the spawner is handed says the same thing, so a caller cannot
+    // widen it without changing this line too.
+    expect(source).toContain("stdio: readonly ['ignore', 'pipe', 'pipe']")
+    expect(source).not.toMatch(/stdio:\s*'inherit'/)
+    expect(source).not.toMatch(/stdio:\s*\[[^\]]*'inherit'/)
   })
 })
 
