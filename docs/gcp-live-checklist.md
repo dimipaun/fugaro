@@ -2290,7 +2290,7 @@ These are the first live run's findings. Record every later run in the same way,
 
 ## Results of the third live run (M5)
 
-To be filled in by the live bring-up and migration (gcp-setup.md, "Adopting an M4 installation"). Record every `FACT` and each plan summary in the same way as the runs above. Each item names the check that produces it.
+To be filled in by the live bring-up and migration (the M4 adoption section gcp-setup.md had until 2026-10-23). Record every `FACT` and each plan summary in the same way as the runs above. Each item names the check that produces it.
 
 ### Recorded so far (2026-09-29, the dev project)
 
