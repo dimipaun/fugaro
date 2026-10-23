@@ -1029,6 +1029,7 @@
     'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen',
     'nineteen', 'twenty']
   var LIVE_STAGES = ['implement', 'review', 'ready for review']
+  var LIVE_ROWS = 6
 
   function jobsIn(text) {
     var lines = String(text || '').split(/\n/)
@@ -1097,7 +1098,10 @@
           'Fugaro: launching ' + count + (count === 1 ? ' job' : ' jobs') +
           (asked > max ? ' (max_parallel is ' + max + ' by default)' : '')
       while (list.firstChild) list.removeChild(list.firstChild)
-      for (var n = 1; n <= count; n++) {
+      // A long fan-out draws its first rows and one line for the rest, so the card stays the size
+      // of a card.
+      var shown = count > LIVE_ROWS ? LIVE_ROWS - 1 : count
+      for (var n = 1; n <= shown; n++) {
         var entry = row(n, count)
         entry.item.setAttribute('data-arrive', '')
         list.appendChild(entry.item)
@@ -1107,6 +1111,13 @@
           entry.stage.textContent = 'queued'
           advance(entry, 0, 300 + n * 180)
         }
+      }
+      if (shown < count) {
+        var rest = row(shown + 1, count)
+        rest.item.querySelector('.hero-shot-job-name').textContent = 'and ' + (count - shown) + ' more pull requests'
+        rest.stage.textContent = ''
+        rest.item.setAttribute('data-arrive', '')
+        list.appendChild(rest.item)
       }
     }
 
