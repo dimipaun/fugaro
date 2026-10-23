@@ -3610,16 +3610,18 @@ describe('the wrapper into a distribution', () => {
     // of the signal.
     //
     // Real timers, because the ordering that matters is between a real
-    // process's death and the grace. The deadline is long enough for the
-    // wrapper's pid line to have been read (the double is a Node process) and
-    // the grace long enough that the death has certainly been seen: on Windows
-    // that ordering is the normal case rather than a race.
+    // process's death and the grace, and the fake is a real process. The
+    // deadline is generous because the pid line has to have been read before
+    // it fires -- the double is a Node process and this machine may be busy --
+    // while what the case itself depends on is narrower: the grace is long
+    // enough that the fake's death has certainly been seen, which on Windows is
+    // the normal case rather than a race.
     const directory = freshDirectory()
     const wsl = installWslStub(join(directory, 'windows'), {
       distros: TWO,
       scenario: { commands: { version: { stdout: '1.4.2\n', hold: true } } },
     })
-    const pending = runToCompletion(wslPlanIn(wsl, 'cli.version'), { timeoutMs: 500, shutdownGraceMs: 250 })
+    const pending = runToCompletion(wslPlanIn(wsl, 'cli.version'), { timeoutMs: 2_000, shutdownGraceMs: 250 })
     const refusal: Promise<SpawnTimeout> = pending.then(
       () => {
         throw new Error('the read was expected to be refused')

@@ -1837,9 +1837,9 @@ export function planFor(
  * carries the CLI's argv. It is what the spawn log records, so the log's `argv`
  * line stays the operator's record of what ran (D1) on both routes: unchanged
  * on the host route, where there is no wrapper at all, and
- * `['C:\\…\\wsl.exe', '-d', 'Ubuntu', '--cd', '/home/dimi', '--', 'sh', '-c',
- * "printf '%s %s\n' 'fugaro-console: the WSL wrapper started' \"$$\" >&2; exec
- * 'fugaro' 'version'"]` on the WSL one -- the CLI's own words are inside the last
+ * `['C:\\…\\wsl.exe', '-d', 'Ubuntu', '--cd', '/home/dimi', '--', 'sh', '-c',`
+ * `printf '%s %s\n' 'fugaro-console: the WSL wrapper started' "$$" >&2; exec`
+ * `'fugaro' 'version']` on the WSL one -- the CLI's own words are inside the last
  * element, quoted, which is where they are when it runs. It is the first element
  * of this array that is the program, and that is why the log's line is still
  * "the binary's absolute path first".
