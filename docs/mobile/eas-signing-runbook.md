@@ -136,8 +136,8 @@ register):**
   (`docs/pending-workflows/console-release.yml` and `console-release-linux.yml`,
   the second superseding the first) and superseded once more by the change that
   gives the console its own `console-vX.Y.Z` release stream
-  (`docs/pending-workflows/console-release-tag.yml`, the file that is applied
-  last), and each declares the same `environment: console-release` in its own
+  (`console-release-tag.yml`, applied on 2026-10-23 over both copies of
+  `console-release.yml` and then removed), and each declares the same `environment: console-release` in its own
   `release` job. Every workflow this page cites, it
   cites by **content** — the `environment:` key and the job that declares it —
   and never by line number, so the citation cannot rot when a line above it
@@ -583,7 +583,7 @@ number:
 | Environment | The workflow that reads it | What it gates |
 |---|---|---|
 | **`website-live`** | `.github/workflows/website-promote.yml` (`environment: website-live`, in its `promote` job) | the site's **live promotion**: the job copies an already-reviewed preview channel onto the live channel. `workflow_dispatch`-only, the actor is guarded to you, and its deployment branch policy is **`main`**. It holds repository **variables** — a project id, a provider name, a service-account address — and no secret, because the deploy authenticates by Workload Identity Federation. Its one-time setup is [../website/preview-promote.md](../website/preview-promote.md). |
-| **`console-release`** | `.github/workflows/console-release.yml`, and the three staged files that supersede or twin it — `docs/pending-workflows/console-release.yml`, `console-release-linux.yml` and `console-release-tag.yml` — each declaring `environment: console-release` in its own `release` job | the desktop console's **signing, notarisation and stapling job**, on a `console-vX.Y.Z` tag push, publishing the release of that name. **This is the closer precedent**: it is a signing job, and it reads its six Apple secrets only through the environment, only as `secrets.NAME` in the one step that signs. |
+| **`console-release`** | `.github/workflows/console-release.yml`, and its staged twin `docs/pending-workflows/console-release.yml` (which `console-release-linux.yml` and then `console-release-tag.yml` superseded, both now applied and removed) — each declaring `environment: console-release` in its own `release` job | the desktop console's **signing, notarisation and stapling job**, on a `console-vX.Y.Z` tag push, publishing the release of that name. **This is the closer precedent**: it is a signing job, and it reads its six Apple secrets only through the environment, only as `secrets.NAME` in the one step that signs. |
 | **`mobile-release`** | `docs/pending-workflows/mobile-release.yml` — **staged, not applied** (**#777**) — declaring `environment: mobile-release` in both its `ios` job and its `android` job | the mobile app's **build and store submission** on the app's own release tag (`mobile-vX.Y.Z`): one job per platform, building on EAS and submitting to TestFlight's internal testers and to Play's internal-testing track, behind your approval. §10 has the rest of it. |
 
 **And two things that are not environments, because a reader will expect them to
