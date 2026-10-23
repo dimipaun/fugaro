@@ -225,12 +225,20 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 			t.Errorf("%s: §2.9's %s row does not say %q — %s", path, strings.TrimSpace(want.row), want.has, want.because)
 		}
 	}
+	// §2.10's count row, which is scoped as tightly as the screen is: Live drew
+	// no `count` reading at all until the review inbox landed (v2 plan Task
+	// V2.7.1), and the row now names Live **for that inbox alone** — the ready
+	// rows it holds, how many it drew and how many the document carried. The
+	// claim the test holds is the pair: the row names Live, and the prose beside
+	// it says which readings those are, so a later screen cannot join the row by
+	// being mentioned somewhere else on Live.
+	numbers := mdFlat(mdBetween(t, path, doc, "### 2.10 Numbers", "## 3. "))
 	countRow := mdRow(t, path, mdBetween(t, path, doc, "### 2.10 Numbers", "## 3. "), "| **Count** |")
-	if strings.Contains(countRow, "Live") {
-		t.Errorf("%s: §2.10's count row names Live, and Live draws no `count` reading — its units are usd, percent and seconds", path)
+	if !strings.Contains(countRow, "Live") {
+		t.Errorf("%s: §2.10's count row does not name Live, which is where the review inbox's three `count` readings are drawn (v2 plan Task V2.7.1)", path)
 	}
-	if !strings.Contains(doc, "Live draws no `count` reading at all") {
-		t.Errorf("%s: §2.10 no longer says Live draws no `count` reading, which is why the row above leaves it out", path)
+	if !strings.Contains(numbers, "the only `count` readings on the screen are the review inbox's three") {
+		t.Errorf("%s: §2.10 does not say the review inbox's three readings are the only counts on Live, which is why the row above names Live and no other part of the screen", path)
 	}
 	if !strings.Contains(mdBetween(t, path, doc, "### 1.1 ", "### 1.2 "), "61 lines") {
 		t.Errorf("%s: §1.1 does not give the served document's real length (61 lines)", path)

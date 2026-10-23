@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "checked_at": "2026-10-20",
+  "checked_at": "2026-10-23",
   "sources": [
     "https://openrouter.ai/api/v1/models",
     "https://openrouter.ai/api/v1/models/{id}/endpoints",
@@ -10,45 +10,45 @@
     "deepseek/deepseek-v4-flash": {
       "context_tokens": 384000,
       "max_output_tokens": 32768,
-      "endpoints": 16,
-      "zdr_endpoints": 11,
+      "endpoints": 15,
+      "zdr_endpoints": 10,
       "all": {
         "cache_read_per_m": {
-          "min": "0.0104",
-          "max": "0.19",
-          "min_of": "open-inference/fp4",
-          "max_of": "mancer/fp8"
+          "min": "0.014",
+          "max": "0.2",
+          "min_of": "cloudflare",
+          "max_of": "wafer/mxfp4"
         },
         "input_per_m": {
-          "min": "0.01328",
+          "min": "0.05",
           "max": "0.7",
-          "min_of": "open-inference/fp4",
+          "min_of": "relace/fp4",
           "max_of": "wafer/mxfp4"
         },
         "output_per_m": {
-          "min": "0.136",
+          "min": "0.14",
           "max": "1.32",
-          "min_of": "open-inference/fp4",
+          "min_of": "streamlake/fp8",
           "max_of": "cloudflare"
         }
       },
       "zdr": {
         "cache_read_per_m": {
-          "min": "0.0104",
-          "max": "0.19",
-          "min_of": "open-inference/fp4",
-          "max_of": "mancer/fp8"
+          "min": "0.014",
+          "max": "0.2",
+          "min_of": "cloudflare",
+          "max_of": "wafer/mxfp4"
         },
         "input_per_m": {
-          "min": "0.01328",
+          "min": "0.05",
           "max": "0.7",
-          "min_of": "open-inference/fp4",
+          "min_of": "relace/fp4",
           "max_of": "wafer/mxfp4"
         },
         "output_per_m": {
-          "min": "0.136",
+          "min": "0.17",
           "max": "1.32",
-          "min_of": "open-inference/fp4",
+          "min_of": "wafer/mxfp4",
           "max_of": "cloudflare"
         }
       }
@@ -56,8 +56,8 @@
     "deepseek/deepseek-v4-pro": {
       "context_tokens": 1000000,
       "max_output_tokens": 16384,
-      "endpoints": 16,
-      "zdr_endpoints": 10,
+      "endpoints": 15,
+      "zdr_endpoints": 9,
       "all": {
         "cache_read_per_m": {
           "min": "0.079605",
@@ -66,9 +66,9 @@
           "max_of": "venice"
         },
         "input_per_m": {
-          "min": "0.45",
+          "min": "0.9",
           "max": "1.91",
-          "min_of": "parasail/fp8",
+          "min_of": "relace/fp4",
           "max_of": "azure/us"
         },
         "output_per_m": {
@@ -86,9 +86,9 @@
           "max_of": "venice"
         },
         "input_per_m": {
-          "min": "0.45",
+          "min": "0.9",
           "max": "1.91",
-          "min_of": "parasail/fp8",
+          "min_of": "relace/fp4",
           "max_of": "azure/us"
         },
         "output_per_m": {
@@ -102,54 +102,54 @@
     "deepseek/deepseek-v4.1-flash": {
       "context_tokens": 1000000,
       "max_output_tokens": 131072,
-      "endpoints": 35,
-      "zdr_endpoints": 30,
+      "endpoints": 40,
+      "zdr_endpoints": 35,
       "all": {
         "cache_read_per_m": {
-          "min": "0.0016",
-          "max": "0.3",
-          "min_of": "open-inference/fp4",
-          "max_of": "nebius/fp8"
+          "min": "0.002",
+          "max": "0.033",
+          "min_of": "coreweave/fp8",
+          "max_of": "alibaba"
         },
         "input_per_m": {
-          "min": "0.0352",
+          "min": "0.07",
           "max": "0.6",
           "min_of": "open-inference/fp4",
           "max_of": "baseten/fast"
         },
         "output_per_m": {
-          "min": "0.0112",
+          "min": "0.18",
           "max": "2.4",
-          "min_of": "open-inference/fp4",
+          "min_of": "decart/fp4",
           "max_of": "baseten/fast"
         }
       },
       "zdr": {
         "cache_read_per_m": {
-          "min": "0.0016",
-          "max": "0.3",
-          "min_of": "open-inference/fp4",
-          "max_of": "nebius/fp8"
+          "min": "0.002",
+          "max": "0.03",
+          "min_of": "coreweave/fp8",
+          "max_of": "google-vertex/global"
         },
         "input_per_m": {
-          "min": "0.0352",
+          "min": "0.07",
           "max": "0.6",
           "min_of": "open-inference/fp4",
           "max_of": "baseten/fast"
         },
         "output_per_m": {
-          "min": "0.0112",
+          "min": "0.18",
           "max": "2.4",
-          "min_of": "open-inference/fp4",
+          "min_of": "decart/fp4",
           "max_of": "baseten/fast"
         }
       }
     },
     "moonshotai/kimi-k3": {
-      "context_tokens": 1000000,
+      "context_tokens": 1048576,
       "max_output_tokens": 65535,
-      "endpoints": 26,
-      "zdr_endpoints": 24,
+      "endpoints": 29,
+      "zdr_endpoints": 27,
       "all": {
         "cache_read_per_m": {
           "min": "0.165",
@@ -158,21 +158,21 @@
           "max_of": "akashml/fp4"
         },
         "cache_write_5m_per_m": {
-          "min": "0.2975",
+          "min": "0.29875",
           "max": "5.625",
-          "min_of": "wafer",
+          "min_of": "inference-net/fp4",
           "max_of": "fireworks/fast"
         },
         "input_per_m": {
-          "min": "0.238",
+          "min": "0.239",
           "max": "4.5",
-          "min_of": "wafer",
+          "min_of": "inference-net/fp4",
           "max_of": "fireworks/fast"
         },
         "output_per_m": {
-          "min": "3",
+          "min": "5.5",
           "max": "22.5",
-          "min_of": "relace/fp4",
+          "min_of": "sail-research/fp4",
           "max_of": "fireworks/fast"
         }
       },
@@ -184,21 +184,21 @@
           "max_of": "akashml/fp4"
         },
         "cache_write_5m_per_m": {
-          "min": "0.2975",
+          "min": "0.29875",
           "max": "5.625",
-          "min_of": "wafer",
+          "min_of": "inference-net/fp4",
           "max_of": "fireworks/fast"
         },
         "input_per_m": {
-          "min": "0.238",
+          "min": "0.239",
           "max": "4.5",
-          "min_of": "wafer",
+          "min_of": "inference-net/fp4",
           "max_of": "fireworks/fast"
         },
         "output_per_m": {
-          "min": "3",
+          "min": "5.5",
           "max": "22.5",
-          "min_of": "relace/fp4",
+          "min_of": "sail-research/fp4",
           "max_of": "fireworks/fast"
         }
       }

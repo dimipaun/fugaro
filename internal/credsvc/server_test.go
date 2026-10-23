@@ -309,13 +309,21 @@ func (k *fakeKills) readCount() int {
 
 // fakeStore is the cascade's shared state in memory, as creds.Store: the
 // marks, the placements, the leases and the round-robin counter.
+//
+// err fails every read and every write, which is the state a call meets when
+// the database as a whole cannot be read. updateErr fails only a mark's write
+// (UpdateMark), which is the other state a test needs and the one err cannot
+// express: a selection that is made and a credential that is spent, whose mark
+// cannot be recorded — the refusal the next call pays for (cascade.go's
+// markRefusal).
 type fakeStore struct {
-	mu      sync.Mutex
-	marks   map[string]creds.Mark
-	current map[string]string
-	leases  map[string]creds.Lease
-	rr      int64
-	err     error
+	mu        sync.Mutex
+	marks     map[string]creds.Mark
+	current   map[string]string
+	leases    map[string]creds.Lease
+	rr        int64
+	err       error
+	updateErr error
 }
 
 func newFakeStore() *fakeStore {
@@ -342,6 +350,9 @@ func (s *fakeStore) UpdateMark(_ context.Context, name string, f func(creds.Mark
 	defer s.mu.Unlock()
 	if s.err != nil {
 		return creds.Mark{}, s.err
+	}
+	if s.updateErr != nil {
+		return creds.Mark{}, s.updateErr
 	}
 	prev, found := s.marks[name]
 	next, err := f(prev, found)

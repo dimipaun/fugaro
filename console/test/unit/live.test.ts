@@ -477,6 +477,40 @@ describe('the row model', () => {
     expect(queued.requestedBy).toBe('redacted@example.invalid')
   })
 
+  it('draws who started a run as the short form, and no cell for a run nobody is named on', () => {
+    // Owner request 2026-10-18: the Started-by column, on the Live row. The
+    // fixture predates `launched_by`, so the key is added to the frame as it
+    // arrived and read back through the decoder -- the row is built the way a
+    // 0.9.0 feed builds it, rather than around `schema.ts`.
+    const frame = theLastFrame()
+    const runs = frame.runs.map((run) =>
+      run.run === QUEUED_RUN ? { ...run, launchedBy: 'dana.person+fugaro@example.com' } : run,
+    )
+    const tree = renderLive(factory, buildLiveModel({ ...frame, runs }, new BurnHistory()), 'light')
+    // The short form, exactly as `fugaro runs ls` writes it
+    // (`runview.LauncherShort`): the part before the address's `@`.
+    expect(texts(tree, 'live-run-started-by')).toEqual(['dana.person+fugaro'])
+    // The address the record named is in no cell of the screen: the cut is the
+    // column's, so no `@` -- and no domain -- reaches a cell.
+    for (const leaf of walk(tree)) {
+      expect(leaf.textContent ?? '').not.toContain('dana.person+fugaro@example.com')
+    }
+    // The run beside it keeps no launcher, and a row without one draws no cell
+    // at all: not an empty span, which would add a flex gap, and never another
+    // person's name (the request's "fail private").
+    const untouched = renderLive(factory, modelOf(frame), 'light')
+    expect(all(untouched, 'live-run-started-by')).toHaveLength(0)
+    // A launcher that shortens to nothing a cell can draw is that same empty
+    // cell, and not an empty span: `'  @example.com'` shortens to `'  '`, which
+    // the label class would trim to `''` and draw as a blank element with the
+    // row's `gap` around it (`launcher.ts`'s `blank`).
+    const blank = frame.runs.map((run) =>
+      run.run === QUEUED_RUN ? { ...run, launchedBy: '  @example.com' } : run,
+    )
+    const blanks = renderLive(factory, buildLiveModel({ ...frame, runs: blank }, new BurnHistory()), 'light')
+    expect(all(blanks, 'live-run-started-by')).toHaveLength(0)
+  })
+
   it('flags the runs the fixture went silent and then lost', () => {
     const silent = modelOf(frameAt('2026-10-15T12:01:40Z')).repos[0]
     if (silent === undefined) throw new Error('no repository row')
