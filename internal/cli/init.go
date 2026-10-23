@@ -1930,8 +1930,10 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	// the fact and applies nothing. Read here, and not in installOptions,
 	// because the answer is a cloud fact: a plain `fugaro update` of a managed
 	// installation that dropped the variable would plan the destruction of the
-	// fourteen resources the fence is — and --forget, the other path that plans
-	// this root, reads it the same way (managedScope).
+	// fourteen resources the fence is. (--forget used to be the other path that
+	// plans this root and read the fact the same way; it plans nothing here any
+	// more, and reads the fact only to refuse, at the run's door — see
+	// managedScope and managedForgetRefusal.)
 	spec.ManagedDeployerScoped, err = r.managedScope(ctx, c)
 	if err != nil {
 		return outs, false, err
@@ -2579,6 +2581,16 @@ func installationFenceRecorded(lc *localcfg.Config) (bool, error) {
 	return recorded, nil
 }
 
+// The two subjects managedForgetRefusal's sentence opens with, one per record.
+// Each is a format string whose %s is the project, because the sentence names
+// the installation in its own clause ("… and proj-1234's installation holds …").
+const (
+	// holdsFenceRecorded: the installation's own document carries the key.
+	holdsFenceRecorded = "%s's installation holds the managed deployer's fence"
+	// holdsFlaggedManaged: the project's label and marker are what answered.
+	holdsFlaggedManaged = "%s is flagged managed, and the managed deployer's fence belongs to its installation"
+)
+
 // managedForgetRefusal is the sentence `fugaro update --forget` stops with for
 // an installation that holds the managed deployer's fence: the rollback is not
 // that installation's command, and what it names instead is the owner's work.
@@ -2618,16 +2630,9 @@ func installationFenceRecorded(lc *localcfg.Config) (bool, error) {
 // and not the project's mode. What an installation that holds the fence has is
 // the owner's own work in the project, which is what the guide's rollback
 // section says of everything the rollback leaves.
-const (
-	// holdsFenceRecorded: the installation's own document carries the key.
-	holdsFenceRecorded = "its installation holds the managed deployer's fence"
-	// holdsFlaggedManaged: the project's label and marker are what answered.
-	holdsFlaggedManaged = "it is flagged managed, and the fence the managed path converges into a managed project is the managed deployer's"
-)
-
 func managedForgetRefusal(project, holds, why string) error {
-	return userErr("fugaro update --forget is the rollback of an installation from before managed projects, and %s %s — seven scoped roles and their seven conditioned bindings — so this run stops here: the rollback's second phase removes every address of the installation from Terraform's state, and the fence would leave it with them wherever the installation holds it — live in the project with nothing accounting for it (the inventory the managed apply reads before it plans would find it unaccounted on every later run) and no way to put it back, because a converge's plan creates roles that already exist. %s. The fence is written by the apply that creates the fourteen and carried forward by every run that rewrites the installation's settings, so it is the installation's and not a mode of the project: taking the project out of managed mode does not remove it, and no command of ours does. Nothing of the installation was read, planned or forgotten: not the state bucket, not its outputs, not a plan and not a state removal. What is left for an installation that holds the fence is the owner's own work in the project (docs/gcp-setup.md, \"Rolling back\")",
-		project, holds, why)
+	return userErr("fugaro update --forget is the rollback of an installation from before managed projects, and %s — seven scoped roles and their seven conditioned bindings — so this run stops here: the rollback's second phase removes every address of the installation from Terraform's state, and the fence would leave it with them wherever the installation holds it — live in the project with nothing accounting for it (the inventory the managed apply reads before it plans would find it unaccounted on every later run) and no way to put it back, because a converge's plan creates roles that already exist. %s. The fence is written by the apply that creates the fourteen and carried forward by every run that rewrites the installation's settings, so it is the installation's and not a mode of the project: taking the project out of managed mode does not remove it, and no command of ours does. Nothing of the installation was read, planned or forgotten: not the state bucket, not its outputs, not a plan and not a state removal. What is left for an installation that holds the fence is the owner's own work in the project (docs/gcp-setup.md, \"Rolling back\")",
+		fmt.Sprintf(holds, project), why)
 }
 
 // forget is the rollback: a guarded apply that turns the log isolation and
