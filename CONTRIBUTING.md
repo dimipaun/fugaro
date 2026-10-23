@@ -38,7 +38,7 @@ One package needs a bound of its own. `go test` kills any package still running 
 go test -race -timeout 40m ./internal/runner/...
 ```
 
-CI's `test` job does not give that package the same bound yet. `.github/workflows/ci.yml` is a file no run may push, so the exact change the owner has to make — the job's one test step split in two, and its own `timeout-minutes` raised with them, without which the longer bound can never fire — is written out in `docs/pending-workflows/README.md`, `## ci.yml`, and `internal/cli/docs_runner_timeout_test.go` fails until that section and this sentence are updated if it ever is applied.
+CI's `test` job does not give that package the same bound yet. `.github/workflows/ci.yml` is a file no run may push, so the exact change the owner has to make — the job's one test step split in two, and its own `timeout-minutes` raised with them, without which the longer bound can never fire — is written out in `docs/pending-workflows/README.md`, `## ci.yml`. `internal/cli/docs_runner_timeout_test.go` holds this sentence and that section to the workflow in both directions, so applying the change without rewriting this line fails the suite.
 
 ## Skills
 
