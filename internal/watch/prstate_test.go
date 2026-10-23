@@ -571,11 +571,14 @@ func TestTUIPRStateDropsMergedReadyRow(t *testing.T) {
 	x := newTM(t)
 	x.m.o.PRState = NewPRState(PRStateOptions{Timeout: prStateTestTimeout})
 	x.m.o.Queued = func() ([]QueuedRun, []FinishedRun, string) {
+		// Inside the default window a finished run stays listed for, so the
+		// finished rows below are still rows of this screen (item 3): this test
+		// is about the ready list's PR states, not about the window.
 		return nil, []FinishedRun{
 			{Run: "r-merged", Slug: "acme/app", Title: "Already merged", Status: "succeeded",
-				Outcome: "ready", PRURL: "https://github.com/acme/app/pull/1", PRNumber: 1, FinishedAt: x.now.Add(-30 * time.Minute)},
+				Outcome: "ready", PRURL: "https://github.com/acme/app/pull/1", PRNumber: 1, FinishedAt: x.now.Add(-2 * time.Minute)},
 			{Run: "r-open", Slug: "acme/app", Title: "Still open", Status: "succeeded",
-				Outcome: "ready", PRURL: "https://github.com/acme/app/pull/2", PRNumber: 2, FinishedAt: x.now.Add(-20 * time.Minute)},
+				Outcome: "ready", PRURL: "https://github.com/acme/app/pull/2", PRNumber: 2, FinishedAt: x.now.Add(-time.Minute)},
 		}, ""
 	}
 	x.seed()
@@ -593,7 +596,8 @@ func TestTUIPRStateDropsMergedReadyRow(t *testing.T) {
 		t.Fatalf("want only the open PR listed:\n%s", section)
 	}
 	// The row is gone from the ready list only: its finished row is untouched.
-	if !strings.Contains(s, "r-merged") {
+	// (The run table names a run by the last four characters of its id, item 1.)
+	if !strings.Contains(s, shortRun("r-merged")) {
 		t.Fatalf("the finished row itself must stay:\n%s", s)
 	}
 }

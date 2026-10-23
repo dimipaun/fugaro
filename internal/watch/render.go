@@ -431,13 +431,13 @@ func (r *rend) keyLine(tier int, keys, live, filterAll bool) string {
 	parts := []string{r.filterNote(filterAll)}
 	switch {
 	case tier == 3 && keys:
-		parts = append(parts, sel, "space fold/expand", "x ack", "PgUp/PgDn scroll", "k/K kill repo/project", "r/R resume", "? help", "q quit")
+		parts = append(parts, sel, "space fold/expand", "x dismiss", "PgUp/PgDn scroll", "k/K kill repo/project", "r/R resume", "? help", "q quit")
 	case tier == 3:
-		parts = append(parts, sel, "space fold/expand", "x ack", "PgUp/PgDn scroll", "? help", "q quit")
+		parts = append(parts, sel, "space fold/expand", "x dismiss", "PgUp/PgDn scroll", "? help", "q quit")
 	case tier == 2 && keys:
-		parts = append(parts, sel, "space fold/expand", "x ack", "k/K kill", "r/R resume", "? help", "q quit")
+		parts = append(parts, sel, "space fold/expand", "x dismiss", "k/K kill", "r/R resume", "? help", "q quit")
 	case tier == 2:
-		parts = append(parts, sel, "space fold/expand", "x ack", "? help", "q quit")
+		parts = append(parts, sel, "space fold/expand", "x dismiss", "? help", "q quit")
 	default:
 		parts = append(parts, sel, "? help", "q quit")
 	}
@@ -450,7 +450,7 @@ func (r *rend) helpLines(keys bool) []string {
 		{"PgUp PgDn", "scroll"},
 		{"space", "fold the selected repository, or show/hide the selected run's detail"},
 		{"a", "toggle finished runs: recent / all"},
-		{"x", "acknowledge the selected failed run"},
+		{"x", "dismiss the selected finished run at once"},
 	}
 	if keys {
 		rows = append(rows,
@@ -464,6 +464,10 @@ func (r *rend) helpLines(keys bool) []string {
 	for _, kv := range rows {
 		out = append(out, r.line(seg{"  " + r.fit(kv[0], 13), cBold}, seg{kv[1], ""}))
 	}
+	// The rule behind the a and x keys, where a viewer looks for the keys
+	// themselves: a finished run leaves the list on its own, and a brings the
+	// ones it took away back (owner spec 2026-10-22, items 3 and 5).
+	out = append(out, r.line(seg{"A finished run leaves the list " + durText(FinishedKeep) + " after it finishes; a shows them all again.", cFaint}))
 	if keys {
 		out = append(out, r.line(seg{"Kill and resume are off while the data is stale or offline.", cFaint}))
 	}
@@ -550,16 +554,26 @@ func (r *rend) scope(tier int, label string, b Bar, counted, spent, notional bud
 }
 
 // runCols are the widths of the run table (tiers 2 and 3).
-type runCols struct{ run, title, stage, round, age, spend, flags, verify, models int }
+type runCols struct{ run, title, stage, round, age, spend, by, flags, verify, models int }
 
+// launcherCol is the width of the table's BY column: who started a run, in
+// the short form a column has room for (launcherText). Ten columns hold a
+// name or an address's local part; a longer identity is clipped like every
+// other over-long cell, and the expanded detail has it whole.
+const launcherCol = 10
+
+// colsOf is the run table's column widths. Every cell but the title has a
+// fixed width, so the title takes what is left (never less than its own
+// minimum, which is what a narrow screen clips). run is shortRunLen plus the
+// one column a clipping ellipsis needs.
 func colsOf(tier, w, recW int) runCols {
 	if tier == 3 {
-		c := runCols{run: 8, stage: 9, round: 3, age: 7, spend: 15, flags: 30, verify: 9, models: 14 + recW}
-		c.title = max(10, w-(2+c.run+c.stage+c.round+c.age+c.spend+c.flags+c.verify+c.models+8))
+		c := runCols{run: shortRunLen + 1, stage: 9, round: 3, age: 7, spend: 15, by: launcherCol, flags: 30, verify: 9, models: 14 + recW}
+		c.title = max(10, w-(2+c.run+c.stage+c.round+c.age+c.spend+c.by+c.flags+c.verify+c.models+9))
 		return c
 	}
-	c := runCols{run: 8, stage: 8, round: 3, age: 7, spend: 9, flags: 18}
-	c.title = max(8, w-(2+c.run+c.stage+c.round+c.age+c.spend+c.flags+6))
+	c := runCols{run: shortRunLen + 1, stage: 8, round: 3, age: 7, spend: 9, by: launcherCol, flags: 18}
+	c.title = max(8, w-(2+c.run+c.stage+c.round+c.age+c.spend+c.by+c.flags+7))
 	return c
 }
 
@@ -758,6 +772,26 @@ func (r *rend) readyForReview(ready []ReadyRow) []string {
 	return out
 }
 
+// shortRunLen is how many characters of a run id a table shows: the last four
+// (shortRun).
+const shortRunLen = 4
+
+// shortRun is a run's id as a table cell shows it: its LAST four characters.
+// A run id is a launch stamp plus a random suffix (20261023-021512-abcd), so
+// any prefix is shared — the first eight columns are the day, the first
+// thirteen the minute — and two runs started together would read the same.
+// The suffix is what tells them apart (owner spec 2026-10-22, item 1). The
+// expanded detail and --json carry the id whole, so this is what the column
+// shows, never all the screen knows. An id of four characters or fewer is its
+// own short form.
+func shortRun(run string) string {
+	r := []rune(run)
+	if len(r) <= shortRunLen {
+		return run
+	}
+	return string(r[len(r)-shortRunLen:])
+}
+
 func (r *rend) runRows(tier int, c runCols, run RunRow, selected bool) []string {
 	rnd := "-"
 	if run.Round != "-" {
@@ -770,7 +804,7 @@ func (r *rend) runRows(tier int, c runCols, run RunRow, selected bool) []string 
 		cur = r.g.cur
 	}
 	if tier == 1 {
-		l1 := r.line(seg{cur + " " + r.fit(run.Run, 8) + " ", ""}, seg{run.Title, cBold})
+		l1 := r.line(seg{cur + " " + r.fit(shortRun(run.Run), c.run) + " ", ""}, seg{run.Title, cBold})
 		segs := []seg{{"    " + run.Stage + " " + rnd + " " + ageText(run), ""}}
 		if fl != "" {
 			segs = append(segs, seg{" " + fl, fc})
@@ -790,9 +824,10 @@ func (r *rend) runRows(tier int, c runCols, run RunRow, selected bool) []string 
 		}
 	}
 	segs := []seg{
-		{cur + " " + r.fit(run.Run, c.run) + " ", ""}, {r.fit(run.Title, c.title) + " ", cBold},
+		{cur + " " + r.fit(shortRun(run.Run), c.run) + " ", ""}, {r.fit(run.Title, c.title) + " ", cBold},
 		{r.fit(run.Stage, c.stage) + " ", ""}, {r.fit(rnd, c.round) + " ", ""},
 		{r.fit(ageText(run), c.age) + " ", ""}, {r.fit(sp, c.spend) + " ", ""},
+		{r.fit(launcherText(run), c.by) + " ", ""},
 		{r.fit(fl, c.flags), fc},
 	}
 	if tier == 3 {
@@ -843,6 +878,10 @@ func (r *rend) detail(run RunRow) []string {
 	// account's full address). A run whose launch.json recorded no launcher
 	// shows the dash, like every other line with nothing to say.
 	rows := [][2]string{
+		// The whole run id: the table's RUN column shows only its last four
+		// characters (shortRun), so this is where the id a viewer needs for
+		// `fugaro logs <run>` and the like is on the screen at all.
+		{"run", run.Run},
 		{"stage", run.Stage + " " + rnd},
 		{"by", dashIfEmpty(run.LaunchedBy)},
 		{"verify", run.Verify},
@@ -888,7 +927,8 @@ func (r *rend) colHeader(tier int) string {
 	c := colsOf(tier, r.w, r.recW)
 	segs := []seg{
 		{"  " + r.fit("RUN", c.run) + " " + r.fit("TITLE", c.title) + " " + r.fit("STAGE", c.stage) + " " +
-			r.fit("R", c.round) + " " + r.fit("AGE", c.age) + " " + r.fit("SPENT", c.spend) + " " + r.fit("FLAGS", c.flags), cFaint},
+			r.fit("R", c.round) + " " + r.fit("AGE", c.age) + " " + r.fit("SPENT", c.spend) + " " +
+			r.fit("BY", c.by) + " " + r.fit("FLAGS", c.flags), cFaint},
 	}
 	if tier == 3 {
 		segs = append(segs, seg{" " + r.fit("VERIFY", c.verify) + " MODELS", cFaint})

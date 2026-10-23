@@ -340,3 +340,79 @@ func TestPlainLauncherCellCutsAtTheBoundary(t *testing.T) {
 		t.Errorf("a value one rune over the cap shows %q, want %q", cell, want)
 	}
 }
+
+// tuiRowCell is the value under the header's col column on the frame line
+// whose RUN cell is shortID, for the interactive screen's fixed-width table
+// (columns are space padded, so the header's own offsets are the row's). next
+// is the column the wanted one is followed by, which is where its cell ends.
+func tuiRowCell(t *testing.T, frame, shortID, col, next string) string {
+	t.Helper()
+	var hdr string
+	for _, l := range strings.Split(frame, "\n") {
+		if strings.Contains(l, "TITLE") && strings.Contains(l, col) {
+			hdr = l
+			break
+		}
+	}
+	if hdr == "" {
+		t.Fatalf("the frame has no run-table header with a %q column:\n%s", col, frame)
+	}
+	start, end := strings.Index(hdr, col), strings.Index(hdr, next)
+	if start < 0 || end <= start {
+		t.Fatalf("the header %q has no %q column before %q", hdr, col, next)
+	}
+	for _, l := range strings.Split(frame, "\n") {
+		f := strings.Fields(l)
+		if len(f) < 2 || (f[0] != shortID && !(f[0] == "▸" && f[1] == shortID)) {
+			continue
+		}
+		if len(l) < end {
+			return ""
+		}
+		return strings.TrimSpace(l[start:end])
+	}
+	t.Fatalf("no run row %q in the frame:\n%s", shortID, frame)
+	return ""
+}
+
+// TestWideTableShowsTheLauncherColumn: the interactive screen's run table
+// carries a BY column like the plain frames do — the short form a column has
+// room for (the part before an address's @), so a viewer can tell whose run a
+// row is without expanding it — while the expanded detail keeps the whole
+// recorded identity (owner spec 2026-10-22, item 2). Mutation caught: dropping
+// the column, printing the full address in it, or losing the detail's line.
+func TestWideTableShowsTheLauncherColumn(t *testing.T) {
+	got := frame(launcherView("dana@example.com"), 120, 0)
+	if cell := tuiRowCell(t, got, "live", "BY", "FLAGS"); cell != "dana" {
+		t.Errorf("the live row's BY cell = %q, want the short form %q:\n%s", cell, "dana", got)
+	}
+	if strings.Contains(got, "dana@example.com") {
+		t.Errorf("the whole address reached the unexpanded table:\n%s", got)
+	}
+	// An automated launch has no @ to cut at, so the whole value is the short
+	// form; a run whose launch recorded none shows the dash the detail shows.
+	sa := frame(launcherView("ci-runner"), 120, 0)
+	if cell := tuiRowCell(t, sa, "live", "BY", "FLAGS"); cell != "ci-runner" {
+		t.Errorf("a service account's BY cell = %q, want the whole value:\n%s", cell, sa)
+	}
+	none := frame(launcherView(""), 120, 0)
+	if cell := tuiRowCell(t, none, "live", "BY", "FLAGS"); cell != "-" {
+		t.Errorf("a run with no recorded launcher's BY cell = %q, want a dash:\n%s", cell, none)
+	}
+}
+
+// TestDetailCarriesTheWholeLauncherOnTheColumnScreen: with a BY column on the
+// table, the expanded detail still names the launcher whole — the column is
+// the short form, the detail is what tells a person from an automated launch.
+func TestDetailCarriesTheWholeLauncherOnTheColumnScreen(t *testing.T) {
+	const by = "ci-runner@proj.iam.gserviceaccount.com"
+	v := launcherView(by)
+	sel := Cursor{Slug: "acme__app", Run: "r-live"}
+	got := frame(v, 120, 0, func(o *RenderOptions) { o.Selected, o.Expanded = sel, map[Cursor]bool{sel: true} })
+	if line := detailValue(got, "by"); line != by {
+		t.Fatalf("the detail's launcher line = %q, want the whole identity:\n%s", line, got)
+	}
+	if cell := tuiRowCell(t, got, "live", "BY", "FLAGS"); cell == by {
+		t.Fatalf("the table's BY cell is the whole identity:\n%s", got)
+	}
+}

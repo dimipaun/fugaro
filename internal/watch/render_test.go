@@ -104,7 +104,8 @@ func TestFrameNarrow(t *testing.T) { golden(t, "narrow_50", frame(fixture(), 50,
 func TestFrameNarrowSelectedRun(t *testing.T) {
 	sel := Cursor{Slug: "acme__app", Run: "r-aaaa11"}
 	got := frame(fixture(), 50, 0, func(o *RenderOptions) { o.Selected = sel })
-	if !strings.Contains(got, "▸ r-aaaa11") {
+	// The row names the run by the last four characters of its id (item 1).
+	if !strings.Contains(got, "▸ "+shortRun("r-aaaa11")) {
 		t.Fatalf("selected run not marked at tier 1:\n%s", got)
 	}
 	if strings.Contains(got, "▸ acme/app") {
@@ -277,7 +278,7 @@ func TestWideRunesClipByWidth(t *testing.T) {
 	col := strings.Index(hdr, "STAGE")
 	var row string
 	for _, l := range strings.Split(got, "\n") {
-		if strings.Contains(l, "r-aaaa11") {
+		if strings.Contains(l, shortRun("r-aaaa11")) {
 			row = l
 		}
 	}
@@ -396,9 +397,9 @@ func TestFrameRecipeMixedRowsAligned(t *testing.T) {
 	var a, b string
 	for _, l := range strings.Split(out, "\n") {
 		switch {
-		case strings.Contains(l, "r-aaaa11"):
+		case strings.Contains(l, shortRun("r-aaaa11")):
 			a = l
-		case strings.Contains(l, "r-bbbb22"):
+		case strings.Contains(l, shortRun("r-bbbb22")):
 			b = l
 		}
 	}
@@ -407,6 +408,41 @@ func TestFrameRecipeMixedRowsAligned(t *testing.T) {
 	}
 	if ia, ib := utf8.RuneCountInString(a[:strings.Index(a, "unit")]), utf8.RuneCountInString(b[:strings.Index(b, "unit")]); ia != ib {
 		t.Fatalf("verify column at %d and %d:\n%s", ia, ib, out)
+	}
+}
+
+// A run's id is shown as its LAST four characters: the leading ones are the
+// launch stamp (20261023-021512-abcd), which every run started in the same
+// minute — every run of the same day, at eight columns — shares, so a prefix
+// cannot tell two rows apart (owner spec 2026-10-22, item 1). The expanded
+// detail names the id whole, so the short form is never all the screen knows.
+func TestRunIDShowsItsLastFourCharacters(t *testing.T) {
+	v := fixture()
+	a, b := "20261023-021512-abcd", "20261023-021512-ef01"
+	v.Repos[0].Runs[0].Run, v.Repos[0].Runs[1].Run = a, b
+	for _, w := range []int{120, 80, 50} {
+		got := frame(v, w, 0)
+		for _, want := range []string{"abcd", "ef01"} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("width %d: the run id's tail %q is not on the screen:\n%s", w, want, got)
+			}
+		}
+		if strings.Contains(got, "20261023") {
+			t.Fatalf("width %d: the launch stamp both runs share is still shown:\n%s", w, got)
+		}
+	}
+	// An id of four characters or fewer is its own short form: nothing is cut.
+	short := fixture()
+	short.Repos[0].Runs[0].Run = "abc"
+	if got := frame(short, 120, 0); !strings.Contains(got, "abc") {
+		t.Fatalf("a three-character run id was cut:\n%s", got)
+	}
+	// The whole id is in the detail, where there is room for it: the short
+	// form is what the column shows, not what the screen knows.
+	sel := Cursor{Slug: v.Repos[0].Slug, Run: a}
+	detail := frame(v, 120, 0, func(o *RenderOptions) { o.Selected, o.Expanded = sel, map[Cursor]bool{sel: true} })
+	if !strings.Contains(detail, a) {
+		t.Fatalf("the expanded detail must name the whole run id:\n%s", detail)
 	}
 }
 
@@ -423,7 +459,7 @@ func TestFrameSelectedRunDetail(t *testing.T) {
 	got := frame(v, 120, 0, func(o *RenderOptions) {
 		o.Selected, o.Expanded = sel, map[Cursor]bool{sel: true}
 	})
-	if !strings.Contains(got, "▸ r-aaaa11") {
+	if !strings.Contains(got, "▸ "+shortRun("r-aaaa11")) {
 		t.Fatalf("selected run not marked:\n%s", got)
 	}
 	golden(t, "detail-120", got)
@@ -489,14 +525,15 @@ func TestKeyLineAndHelpNameRunsAndDetail(t *testing.T) {
 }
 
 // The help screen names a and x, the finished-run filter toggle and the
-// failure-acknowledgement key (design generic-tool §10.3): a screen with no
-// way to recall them would leave a viewer unable to discover either.
-func TestHelpNamesFilterToggleAndAck(t *testing.T) {
+// dismissal key (design generic-tool §10.3, owner spec 2026-10-22, item 4): a
+// screen with no way to recall them would leave a viewer unable to discover
+// either.
+func TestHelpNamesFilterToggleAndDismiss(t *testing.T) {
 	help := frame(fixture(), 120, 0, func(o *RenderOptions) { o.Help = true })
 	if !strings.Contains(help, "toggle finished runs: recent / all") {
 		t.Fatalf("help must describe the a key:\n%s", help)
 	}
-	if !strings.Contains(help, "acknowledge the selected failed run") {
+	if !strings.Contains(help, "dismiss the selected finished run") {
 		t.Fatalf("help must describe the x key:\n%s", help)
 	}
 }
