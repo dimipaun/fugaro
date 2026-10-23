@@ -22,6 +22,11 @@ a task. Checked against `origin/main` at `cc50b5b23` on 2026-10-22.
   amended to `docs/release-streams.yaml` (F29), owner to confirm (e).
 - **GD8**: this folder's own prefixes.
 
+**An assumption the owner must confirm: Slices 1 and 2 assume open tension (d)'s option 1**
+(per-plan task graphs now, the whole-project graph at 0.11.0+). GV1.3, GV1.6, GV1.7 and every task
+in Slice 2 depend on that ruling. Under option 2 (nothing task-level until 0.11.0) they are void
+except GV1.1, GV1.2, GV1.4 and GV1.5, and Slice 2 is re-planned on the coordinator's PR-level view.
+
 ## 1. Conventions every task follows
 
 - **Go:** `gofmt -l .` clean, `GOFLAGS=-p=2 go vet ./...`, targeted tests with `-count=1
@@ -130,15 +135,17 @@ a task. Checked against `origin/main` at `cc50b5b23` on 2026-10-22.
 
 #### GV1.3 — Graph schema v2: the stream
 - **Files:** `internal/plan/document.go` (`SchemaVersion` 2; document-level `stream`, one of `cli`,
-  `console`, `mobile`, optional; node `version` shaped `MAJOR.MINOR`), `internal/plan/read.go`
-  (reads v1 and v2; refuses v3), `internal/plan/read_test.go`, new
+  `console`, `mobile`, optional; in v2 documents only, node `version` shaped `MAJOR.MINOR[.PATCH]`,
+  so a patch box such as 0.10.1, spoken "Badger one", is expressible), `internal/plan/read.go`
+  (reads v1 unchanged — no shape check on a v1 `version` — and v2; refuses v3), `internal/plan/read_test.go`, new
   `internal/plan/testdata/graph-v2.json`, `console/docs/json-contract.md` (§6.9).
 - **Interfaces:** `plan graph --json` prints `stream` when present.
 - **Schema/rules/config:** artifact schema 2; v1 artifacts stay valid.
-- **Tests:** `TestReadV1StillValid`, `TestReadV2Stream`, `TestUnknownStreamRefused`,
-  `TestVersionShape`, the existing future-version refusal now at 3.
+- **Tests:** `TestReadV1StillValid` (including a v1 `version` of any text), `TestReadV2Stream`,
+  `TestUnknownStreamRefused`, `TestVersionShape` (accepts `0.10` and `0.10.1`, refuses `v0.10`,
+  `0.10.1.2`, free text), the existing future-version refusal now at 3.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/plan ./internal/cli -run 'Read|Stream|Version|PlanGraph' -count=1 -timeout 300s`
-- **Depends on:** nothing.
+- **Depends on:** the owner's ruling on tension (d) (see the assumption above).
 - **Commit:** `plan: graph schema 2 names the plan's release stream`
 - **Red step:** `TestReadV2Stream` fails on v1's unknown-field refusal.
 - **Reviewer:** standard. **OWNER-RUN:** no.
@@ -146,13 +153,15 @@ a task. Checked against `origin/main` at `cc50b5b23` on 2026-10-22.
 #### GV1.4 — The streams data file (GD7)
 - **Files:** new `docs/release-streams.yaml`, new `internal/streams/streams.go`, new
   `internal/streams/streams_test.go`.
-- **Interfaces:** produces `streams.Read(path) (Catalogue, error)`: per stream `name`, `theme`,
+- **Interfaces:** produces `streams.Read(path) (Catalogue, error)` (refuses a symlink and a file over
+  64 KiB before decoding; YAML aliases refused): per stream `name`, `theme`,
   `names` (ordered), `current` version, `next` name, `tag_prefix` (`v`, `console-v`, `mobile-v`).
 - **Schema/rules/config:** the file; content per GD7: CLI Badger 0.10, Camel 0.11, Dolphin,
   Gecko, Hippo, Koala, Moose; Console Cherry, Mango, Melon; Mobile Falcon, Pelican, Robin.
 - **Tests:** `TestCatalogueValid`, `TestNamesAlphabetical`, `TestNoNameInTwoStreams`,
   `TestConsoleFloor` (console `current` ≥ 0.10.0; F33), `TestForbiddenConsoleNames` (Apple,
-  Lemon), `TestRealFileParses` (reads the repository's own file).
+  Lemon), `TestRealFileParses` (reads the repository's own file), `TestSymlinkRefused`,
+  `TestOversizeRefused`, `TestAliasRefused`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/streams -count=1 -timeout 300s`
 - **Depends on:** the owner's confirmation of the path, open item (e).
 - **Commit:** `streams: one file names the three release streams, their names and tag prefixes`
@@ -160,8 +169,12 @@ a task. Checked against `origin/main` at `cc50b5b23` on 2026-10-22.
 - **Reviewer:** standard. **OWNER-RUN:** no.
 
 #### GV1.5 — The release script reads the CLI stream
-- **Files:** `scripts/release.sh`, `scripts/release_test.go`.
-- **Interfaces:** `scripts/release.sh X.Y.Z` reads the `cli` stream from `docs/release-streams.yaml`,
+- **Files:** `scripts/release.sh`, `scripts/release_test.go`, new
+  `internal/streams/cmd/streams/main.go`.
+- **Interfaces:** `scripts/release.sh X.Y.Z` reads the `cli` stream from `docs/release-streams.yaml`
+  through a small Go helper run from the clean clone the script already works in (new
+  `internal/streams/cmd/streams/main.go`, `go run ./internal/streams/cmd/streams get cli`; no `yq`
+  dependency),
   refuses a version below `current` or a tag prefix that is not `v`, prints the release's spoken
   name ("Badger one"), and writes the new `current` into the file in its release commit.
 - **Schema/rules/config:** none. Console and mobile tagging stays as `docs/release.md` describes;
@@ -177,25 +190,45 @@ a task. Checked against `origin/main` at `cc50b5b23` on 2026-10-22.
 #### GV1.6 — `fugaro plan status --json`: the graph joined to runs
 - **Files:** new `internal/plan/state.go`, new `internal/plan/state_test.go`, new
   `internal/cli/plan_status.go`, new `internal/cli/plan_status_test.go`, `internal/cli/plan.go`
-  (register the subcommand), `console/docs/json-contract.md` (new §6.10, and `plan_task` in §2 and
-  §5).
+  (register the subcommand), `console/docs/json-contract.md` (new **§6.11**, and `plan_task` in §2
+  and §5; §6.10 is `runs stats` and is pinned).
 - **Interfaces:** consumes GV1.1, GV1.2's `plan_task` (through `internal/runview`), GV1.3's
-  `stream`, GV1.4's catalogue. Produces `fugaro plan status [--checkout DIR] [--all] --json`: every
-  artifact under `DIR/docs/` (default: the working directory), each plan with its `stream`, nodes
-  with `state` (`done`, `running` + `stage`, `ready`, `blocked`, `not-started`), `run` suffix,
-  `pr_number` when finished, `critical`, `level`; per release a `closed` counter (merged and
-  cancelled, collapsed unless `--all`, GD6); the streams catalogue.
+  `stream`, GV1.4's catalogue. Produces `fugaro plan status [--all] --json` **plus the cloud flags**
+  (`--project`/`--config`, as `runs ls`): unlike `plan graph` it is a cloud read. It reads every
+  artifact under the working directory's `docs/`, and prints each plan with its `stream`, nodes with
+  `state`, `level`, `critical`, `run` suffix and `pr_number` **whenever the run has recorded one**
+  (`record_pr`, running or finished); per release a `closed` counter (merged and cancelled,
+  collapsed unless `--all`, GD6) and `finished` (the catalogue's `current` for that stream is at or
+  past the release); the streams catalogue.
+- **The states, defined.** `running` + `stage`: a live run joined to the node. `done`: a joined
+  run's PR is merged according to `internal/watch/prstate.go`'s `PRState` (the operator's `gh`,
+  GitHub only, fail-open); where that answer is unavailable (Bitbucket, no `gh`, a lookup failure) a
+  run whose outcome is `ready`/`reviewed` is shown `done` with the mark `merge unknown`.
+  `cancelled`: the latest run cancelled and no other. `blocked`: a need is not `done`. `ready`:
+  every need `done`, no run. `not-started` otherwise. **Merged** in GD6's counter means `done` with a
+  merge confirmed; the others count as open.
+- **The join rules.** (i) The plan id is the artifact's directory under `docs/`
+  (`docs/setup-wizard/implementation-plan.graph.json` → `setup-wizard`), or for `docs/plans/` the
+  file's stem (`docs/plans/2026-10-15-desktop-console-v2.graph.json` →
+  `plans/2026-10-15-desktop-console-v2`). (ii) A run joins only a plan of **its own repository**
+  (the checkout's origin); a run from another repository naming the same id is ignored. (iii) Of
+  several runs on one task, the latest launched wins for `state`; follow-ups (`fugaro run --pr N`)
+  inherit `plan_task` from their task spec only if they were given one, and are otherwise joined
+  through their PR number to the run they follow. (iv) The join is display-only: it never makes
+  another plan's node `ready`.
 - **Schema/rules/config:** none (a read).
-- **Tests:** `TestStateFromRuns`, `TestBlockedUntilNeedsDone`, `TestOpenWorkByDefault`,
-  `TestAllShowsClosed`, `TestCheckoutConfined` (a symlink under `docs/` pointing outside is
-  refused; `..` in `--checkout` resolves and is still confined), `TestArtifactCountCap`,
-  `TestRunWithUnknownPlanTaskIgnored`.
-- **Command:** `GOFLAGS=-p=2 go test ./internal/plan ./internal/cli -run 'State|Blocked|OpenWork|AllShows|CheckoutConfined|ArtifactCount|PlanStatus|UnknownPlanTask' -count=1 -timeout 300s`
-- **Depends on:** GV1.1, GV1.2, GV1.3, GV1.4.
+- **Tests:** `TestStateFromRuns`, `TestBlockedUntilNeedsDone`, `TestDoneNeedsMergeOrMarksUnknown`,
+  `TestOpenWorkByDefault`, `TestAllShowsClosed`, `TestPlanIDFromPath`, `TestJoinIgnoresOtherRepo`,
+  `TestLatestRunWins`, `TestFollowUpJoinsByPR`, `TestRunningNodeShowsRecordPR`,
+  `TestCheckoutConfined` (a symlink under `docs/` pointing outside is refused, and a symlinked
+  `docs/` itself), `TestArtifactCountCap`, `TestRunWithUnknownPlanTaskIgnored`.
+- **Command:** `GOFLAGS=-p=2 go test ./internal/plan ./internal/cli -run 'State|Blocked|DoneNeeds|OpenWork|AllShows|PlanID|JoinIgnores|LatestRun|FollowUp|RunningNode|CheckoutConfined|ArtifactCount|PlanStatus|UnknownPlanTask' -count=1 -timeout 300s`
+- **Depends on:** GV1.1, GV1.2, GV1.3, GV1.4; the owner's ruling on tension (d).
 - **Commit:** `plan: plan status joins every plan's graph to its runs`
-- **Red step:** `TestCheckoutConfined` fails against a walk that follows symlinks.
+- **Red step:** `TestCheckoutConfined` fails against a walk that follows symlinks;
+  `TestJoinIgnoresOtherRepo` fails against a join on the id alone.
 - **Reviewer:** **opus + mandatory independent review** (filesystem confinement; a cloud read joined
-  to repository files). **OWNER-RUN:** no.
+  to repository files; a job-writable join key). **OWNER-RUN:** no.
 
 #### GV1.7 — The planning skill writes the graph (V2.8.1, with the stream)
 - **Files:** `plugin/skills/parallelism/SKILL.md`, new
@@ -207,7 +240,7 @@ a task. Checked against `origin/main` at `cc50b5b23` on 2026-10-22.
 - **Tests:** the skill lint; `plan graph --plan docs/console-dependency-graph/implementation-plan.md
   --json` reads the new artifact without refusal.
 - **Command:** `GOFLAGS=-p=2 go test ./plugin -run 'PluginSkillsLintClean|LintSizeBudget|LintByteBudget|LintChecksReferenceFiles' -count=1 -timeout 300s && go run ./cmd/fugaro plan graph --plan docs/console-dependency-graph/implementation-plan.md --json`
-- **Depends on:** GV1.3.
+- **Depends on:** GV1.3; the owner's ruling on tension (d).
 - **Commit:** `skills: parallelism writes the plan's graph artifact, with its stream`
 - **Red step:** the `plan graph` read of the new artifact fails before GV1.3's schema 2 is on the
   branch (v1 refuses `stream`).
@@ -217,20 +250,24 @@ a task. Checked against `origin/main` at `cc50b5b23` on 2026-10-22.
 
 #### GV2.1 — The `plan.status` operation
 - **Files:** `console/src/main/ipc.ts` (`CONSOLE_OPERATIONS`, `ALLOWED_OPERATION_FLAGS`),
-  `console/src/main/spawn.ts` (`SPAWN_COMMANDS`; `--checkout` from the installation tuple's
-  `checkout`, never from the renderer), `console/src/preload/index.ts` (`EXPOSED_OPERATIONS`),
+  `console/src/main/spawn.ts` (`SPAWN_COMMANDS`; the checkout reaches the CLI as the spawn's cwd,
+  which spawn.ts already sets from the installation tuple — no path in the argv; the cloud flags as
+  `runs.list` carries them), `console/src/preload/index.ts` (`EXPOSED_OPERATIONS`),
   `console/src/source/source.ts`, `console/src/source/cli.ts` (`CliSource`),
   `console/src/source/fixture.ts`, `console/src/shared/schema.ts` (the decoder),
   `console/test/unit/ipc.test.ts`, `console/test/unit/spawn.test.ts`,
   `console/test/unit/preload-surface.test.ts`, `console/test/unit/schema.test.ts`, new
   `console/test/fixtures/plan-status.json`.
-- **Interfaces:** consumes GV1.6's document; produces `source.planStatus()` to the renderer.
+- **Interfaces:** consumes GV1.6's document; produces `source.planStatus()` to the renderer. Refresh
+  cadence: on opening the screen, on the operator's refresh, and at most once a minute while the
+  screen is visible (it lists every run in the bucket, F24); never on each watch frame — live stage
+  changes come from the existing feed, joined in the renderer by run id.
 - **Schema/rules/config:** none.
 - **Tests:** an operation whose argv carries a renderer-supplied path is refused; an installation
-  with no `checkout` yields the not-available state; the decoder refuses an unknown `state`; the
+  with no `checkout` yields the not-available state; the refresh is rate-limited; the decoder refuses an unknown `state`; the
   spawn argv is exact.
 - **Command:** `cd console && npx vitest run test/unit/ipc.test.ts test/unit/spawn.test.ts test/unit/preload-surface.test.ts test/unit/schema.test.ts && npm run typecheck`
-- **Depends on:** GV1.6.
+- **Depends on:** GV1.6 (and so on tension (d)).
 - **Commit:** `console: read plan status through the CLI, with the checkout from the installation`
 - **Red step:** the "renderer-supplied path refused" test fails against an operation that accepts an
   `args` path.
@@ -238,49 +275,61 @@ a task. Checked against `origin/main` at `cc50b5b23` on 2026-10-22.
   **OWNER-RUN:** no.
 
 #### GV2.2 — elkjs in a worker (GD3)
-- **Files:** `console/package.json` (`dependencies`: `elkjs` exact; `build.files`: the worker
-  bundle), `console/package-lock.json`, `console/tools/bundle-renderer/index.ts` (a second entry
-  that may import `elkjs` and nothing else), new `console/src/renderer/graph/layout-worker.ts`,
-  `console/src/main/protocol.ts` (`SERVED_FILES` gains the worker file; `CONTENT_SECURITY_POLICY`
-  unchanged), `console/README.md` (the D9 sentence, amended), new `console/THIRD_PARTY_NOTICES.md`,
-  `console/test/unit/pinning.test.ts`, `console/test/unit/bundle.test.ts`,
+- **Files:** `console/package.json` (**`devDependencies`**: `elkjs` exact; `build.files`: the worker
+  file), `console/package-lock.json`, `console/tools/bundle-renderer/index.ts` (copies
+  `node_modules/elkjs/lib/elk-worker.min.js` verbatim into `dist/bundle/` — a copy, not a walked
+  entry, so the bare-specifier rule is unchanged), new `console/src/renderer/graph/layout-client.ts`
+  (plain `postMessage` to the worker; validates every reply: known ids, finite numbers),
+  `console/src/main/protocol.ts` (`SERVED_FILES` gains the worker file as its seventh entry;
+  `CONTENT_SECURITY_POLICY` unchanged), `console/README.md` (the D9 sentence, amended), new
+  `console/THIRD_PARTY_NOTICES.md`, `console/test/unit/bundle.test.ts`,
   `console/test/unit/build-files.test.ts`, `console/test/unit/window.test.ts`,
   `console/test/unit/csp-document.test.ts`, `console/test/unit/lockfile.test.ts`, new
-  `console/test/e2e/graph-worker.spec.ts`.
-- **Interfaces:** produces a worker that takes `{nodes:[{id,w,h,group}], edges:[{from,to}],
-  groups:[…]}` (ids and sizes, no text) and returns positions.
-- **Schema/rules/config:** a runtime dependency (the first renderer one).
-- **Tests:** pinning allows `elkjs` by name only; the main bundle still refuses every bare specifier;
-  the CSP string is byte-identical; `SERVED_FILES` has exactly seven entries; in the built app the
-  worker lays out a fixture and `new Function` inside the worker throws.
-- **Command:** `cd console && npx vitest run test/unit/pinning.test.ts test/unit/bundle.test.ts test/unit/build-files.test.ts test/unit/window.test.ts test/unit/csp-document.test.ts test/unit/lockfile.test.ts && npm run test:e2e -- test/e2e/graph-worker.spec.ts`
+  `console/test/unit/layout-client.test.ts`, new `console/test/e2e/graph-worker.spec.ts`.
+- **Interfaces:** the worker takes ELK's JSON graph built from ids and sizes (no text) and returns
+  positions; `layout-client.ts` exposes `layout(graph): Promise<Positions>`.
+- **Schema/rules/config:** a devDependency, exactly pinned; `pinning.test.ts`'s
+  `runtimeDependencyAllowList` stays empty (the file is copied at build time, not a runtime
+  package, so the 8 MB package does not ship).
+- **Tests:** the main bundle still refuses every bare specifier (unchanged test, still green); the
+  copied file's SHA-256 matches the pinned package's; the CSP string is byte-identical;
+  `SERVED_FILES` has exactly seven entries; a reply with an unknown id or `NaN` is refused; in the
+  built app the worker lays out a fixture and `new Function` inside the worker throws.
+- **Command:** `cd console && npx vitest run test/unit/pinning.test.ts test/unit/bundle.test.ts test/unit/build-files.test.ts test/unit/window.test.ts test/unit/csp-document.test.ts test/unit/lockfile.test.ts test/unit/layout-client.test.ts && npm run test:e2e -- test/e2e/graph-worker.spec.ts`
 - **Depends on:** the owner's confirmation of the licence, item (c); GV0.1.
-- **Commit:** `console: elkjs, pinned, in a worker under the unchanged CSP`
-- **Red step:** `bundle.test.ts`'s bare-specifier claim fails on the worker entry until the bundler
-  admits `elkjs` for that entry alone; the e2e fails if elkjs needs eval (U1).
+- **Commit:** `console: elkjs's worker, pinned and served verbatim under the unchanged CSP`
+- **Red step:** `build-files.test.ts` and `window.test.ts` fail when the worker is copied but not
+  yet listed in `build.files` and `SERVED_FILES`; the layout-client test fails on a `NaN` reply
+  before validation exists.
 - **Reviewer:** **opus + mandatory independent review** (supply chain, CSP, served files).
   **OWNER-RUN:** no (the licence confirmation is the owner's, before the task).
+- **If the owner declines (c):** this task is replaced by a layered layout computed in Go beside
+  `internal/plan` (F15), printed by `plan status` as positions; Files then
+  `internal/plan/layout.go`, `internal/plan/layout_test.go`; no console dependency, no served file.
 
 #### GV2.3 — The graph screen, static
 - **Files:** new `console/src/renderer/screens/graph.ts`, new `console/src/renderer/graph/model.ts`
   (document → layout input: stream columns, release boxes, nodes), new
-  `console/src/renderer/graph/layout.ts` (the worker client, cached by structure hash),
+  `console/src/renderer/graph/layout.ts` (caches GV2.2's client results by structure hash),
   `console/src/renderer/entry.ts` (`VIEWS` gains `graph`), `console/src/renderer/theme/screens.css`,
   new `console/test/unit/graph.test.ts`, new `console/test/unit/graph-model.test.ts`, new
   `console/test/e2e/graph.spec.ts`.
 - **Interfaces:** consumes `source.planStatus()`, the live feed, the worker. Produces: tabs CLI,
   Console, Mobile, All (columns); release boxes headed "Stream · Name" with "n of m done" bars;
-  finished releases as chips grouped by stream; nodes with title, PR number, "run …xxxx";
+  finished releases (GV1.6's `finished`) as chips grouped by stream, expanded only on click;
+  cross-release edges within one plan drawn faint and thin, highlighted when a node is selected;
+  nodes with title, PR number, "run …xxxx";
   states with words (`implementing`, `in review`, `fixing`, `queued`, `waiting`, `halted`,
   `stuck`, `blocked`, `ready`, `done`, `critical`); critical path edges thicker and distinct;
   blocked dashed; zoom, pinch, fit; a list view of the same document; keyboard traversal; a node
   opens the run screen, or the PR through `link.openExternal`.
 - **Schema/rules/config:** none.
-- **Tests:** every state has a word in the DOM; a hostile title renders as text; layout is not
+- **Tests:** every state has a word in the DOM; a finished chip expands only on click; a
+  cross-release edge is faint until its node is selected; a hostile title renders as text; layout is not
   recomputed on a watch frame that changes no structure; the list view carries every node; a PR
   opens only via `link.openExternal`; forced colours keep the dashed/solid distinction.
 - **Command:** `cd console && npx vitest run test/unit/graph.test.ts test/unit/graph-model.test.ts && npm run typecheck && npm run test:e2e -- test/e2e/graph.spec.ts`
-- **Depends on:** GV2.1, GV2.2.
+- **Depends on:** GV2.1, GV2.2 (and so on tension (d)).
 - **Commit:** `console: the dependency graph screen, read-only and static`
 - **Red step:** the "no relayout on an unchanged structure" test fails against a screen that lays out
   per frame.
@@ -300,16 +349,18 @@ a task. Checked against `origin/main` at `cc50b5b23` on 2026-10-22.
 - **Red step:** the reduced-motion test fails while only `base.css`'s global freeze applies (F36).
 - **Reviewer:** standard. **OWNER-RUN:** no.
 
-#### GV2.5 — A live run's PR number in the feed
+#### GV2.5 — A live run's PR number in the watch feed (optional)
+**Optional since review round 1:** `plan status` already prints a running node's draft PR from
+`record_pr` (GV1.6, F9). This task only matters if the screen should show the PR before its next
+`plan status` refresh.
 - **Files:** `internal/watch/json.go`, `internal/watch/json_test.go`, `console/docs/json-contract.md`
   (§2), `console/src/shared/schema.ts`, `console/test/unit/schema.test.ts`.
-- **Interfaces:** `pr_number` on a live `JSONRun` when the run has recorded one.
+- **Interfaces:** `pr_number` on a live `JSONRun`, from the run record's `PR` (the value
+  `runview.Row.RecordPR` already holds).
 - **Schema/rules/config:** additive field.
 - **Tests:** `TestLiveRunCarriesDraftPR`, `TestLiveRunWithoutPRHasNoField`; the decoder accepts it.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/watch -run 'LiveRun' -count=1 -timeout 300s && cd console && npx vitest run test/unit/schema.test.ts`
-- **Depends on:** GV1.6, GV2.1, and UNVERIFIED U3 being answered (where the draft PR number is
-  recorded). If U3 says nowhere, the task closes as "not possible without a runner change" and the
-  node shows the PR only when finished.
+- **Depends on:** GV1.6, GV2.1.
 - **Commit:** `watch: a live run carries its draft PR number`
 - **Red step:** `TestLiveRunCarriesDraftPR` fails on today's feed (contract §2).
 - **Reviewer:** standard. **OWNER-RUN:** no.
@@ -335,7 +386,8 @@ a task. Checked against `origin/main` at `cc50b5b23` on 2026-10-22.
   front-door change the coordinator plan would have to take. Option 1: none.
 - **Interfaces:** `<command> MOVE <plan>/<task> --to <stream>/<release> [--expect <from>] --json`,
   printing the before/after and refusing when `--expect` no longer matches.
-- **Tests:** stale `--expect` refused and nothing moves; a move that makes an edge backwards is
+- **Tests:** stale `--expect` refused and nothing moves; under option 2, a move refused when the
+  artifact file has uncommitted changes (D30's "clobber uncommitted work"); a move that makes an edge backwards is
   reported; the inverse move restores the document byte for byte.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/plan ./internal/coordinator ./internal/cli -run 'Move|Roadmap' -count=1 -timeout 300s`
 - **Depends on:** the owner's ruling on (a); for option 3, coordinator P3/P4 on `main`.
@@ -351,8 +403,10 @@ a task. Checked against `origin/main` at `cc50b5b23` on 2026-10-22.
   the fence's move, as V2.5.1 does for the launch).
 - **Interfaces:** the renderer sends `{node, toRelease}` ids only; the main process checks both
   against the last document read and builds the argv; the confirmation shows the exact argv and the
-  before/after; undo is the inverse move, previewed the same way.
-- **Tests:** a node or release id not in the last document is refused; a declined confirmation
+  before/after, every title in it sanitized and length-capped so a title cannot forge the from/to
+  line; undo is the inverse move, previewed the same way.
+- **Tests:** a node or release id not in the last document is refused; a title containing "→" and
+  a release name renders inside its own capped field; a declined confirmation
   spawns nothing; the confirmation text is composed from named fields; undo issues the inverse
   argv.
 - **Command:** `cd console && npx vitest run test/unit/graph-move.test.ts test/unit/ipc.test.ts test/unit/spawn.test.ts && npm run typecheck`
@@ -377,6 +431,9 @@ a task. Checked against `origin/main` at `cc50b5b23` on 2026-10-22.
 - **Reviewer:** standard. **OWNER-RUN:** no.
 
 ## 5. Parallel execution
+
+**Owner rulings that gate tasks** (not edges between tasks): (b) gates GV0.1; (c) gates GV2.2;
+(d) gates GV1.3, GV1.6, GV1.7 and Slice 2; (e) gates GV1.4; (a) gates GV3.1.
 
 **Edges** (from "Depends on"): GV1.1→GV1.6; GV1.2→GV1.6; GV1.3→GV1.6; GV1.4→GV1.6; GV1.3→GV1.7;
 GV1.4→GV1.5; GV0.1→GV2.2; GV1.6→GV2.1; GV2.1→GV2.3; GV2.2→GV2.3; GV1.6→GV2.5; GV2.1→GV2.5;
@@ -408,6 +465,7 @@ sits at L3 because `console/src/shared/schema.ts` is GV2.1's at L2.
 | `console/docs/json-contract.md` | GV1.3 (L0), GV1.6 (L1), GV2.5 (L3) |
 | `internal/watch/json.go`, `internal/watch/json_test.go` | GV1.2 (L0), GV2.5 (L3) |
 | `internal/cli/plan.go` | GV1.6 (L1) |
+| `internal/streams/` (package) | GV1.4 (L0: `streams.go`, `streams_test.go`), GV1.5 (L1: new `cmd/streams/main.go`) |
 | `internal/cli/plan_status.go` | GV1.6 (L1), GV4.1 (blocked) |
 | `console/src/shared/schema.ts`, `console/test/unit/schema.test.ts` | GV2.1 (L2), GV2.5 (L3) |
 | `console/src/main/ipc.ts`, `console/src/main/spawn.ts`, `console/src/preload/index.ts`, `console/src/source/cli.ts`, `console/test/unit/ipc.test.ts`, `console/test/unit/spawn.test.ts` | GV2.1 (L2), GV3.2 (blocked, after L4) |

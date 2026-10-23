@@ -11,7 +11,7 @@ Streams" addendum, reconciled against the repository and planned.
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The owner's spec, **verbatim**, committed alone in its own first commit. |
-| [reconciliation.md](reconciliation.md) | Findings **F1–F38** (Wrong / Exists / Gap / Rule / Open), decisions **GD1–GD8** with the owner's answers of 2026-10-22, open tensions (a)–(f), the smallest first slice, security probes, UNVERIFIED **U1–U7**. **Where it disagrees with `spec.md`, it wins.** |
+| [reconciliation.md](reconciliation.md) | Findings **F1–F38** (Wrong / Exists / Gap / Rule / Open), decisions **GD1–GD8** with the owner's answers of 2026-10-22, open tensions (a)–(f), the smallest first slice, security probes, UNVERIFIED **U1–U7** (U1–U3 resolved in review round 1). **Where it disagrees with `spec.md`, it wins.** |
 | [implementation-plan.md](implementation-plan.md) | Tasks **GV0.1–GV4.1** in five slices, parallel levels L0–L5, the critical path, the shared-files table; what it supersedes in console v2 and amends in the coordinator plan. Nothing in it is approved. |
 
 ## Typos fixed in `spec.md`
@@ -27,7 +27,7 @@ None. The file is byte-identical to the text received.
 ## Answers that were not the recommendation
 
 **GD1** (wait for the coordinator's project record, 0.11.0), **GD2** (the console writes the
-roadmap; reverses console v2 D30 and amends D22) and **GD3** (elkjs; reverses console v2 D9).
+roadmap; reverses console v2 D30 and amends D22) and **GD3** (elkjs; reverses the v1 console design's D9).
 GD7's file path was amended after reading the code (`docs/release-streams.yaml`; F29), for the
 owner to confirm.
 

@@ -49,8 +49,9 @@ contract `console/docs/json-contract.md` §6.9. *Consequence:* the view is built
 extended; no Markdown scraper and no second parser. The console reads it only through the CLI
 (design `desktop-console.md` §5.1; v2 design's "the CLI is the only data plane").
 
-**F2 — Gap: nothing writes a graph artifact.** The only `*.graph.json` files are fixtures under
-`internal/plan/testdata/`. `plugin/skills/parallelism/SKILL.md` (52 lines) does not mention the
+**F2 — Gap: nothing writes a graph artifact.** No `*.graph.json` file exists anywhere in the tree;
+the only graph documents are the fixtures `graph.json`, `cycle.json`, `future.json` and
+`malformed.json` under `internal/plan/testdata/`. `plugin/skills/parallelism/SKILL.md` (52 lines) does not mention the
 graph or the footprint, so V2.8.1 is not done. *Consequence:* the view has no data on day one; a
 writer is a prerequisite (plan GV1.7).
 
@@ -97,9 +98,12 @@ now. Kept here only so the alternative stays readable.
 *Consequence:* blue/purple/amber map to `implement` / `review_first`+`review` / `fix`; the spec's
 "extend for other known states" is about eight more (plan GV2.3 names each).
 
-**F9 — Gap: a live run carries no PR number.** Contract §2: "A live run carries no PR field at
-all". *Consequence:* the PR number on a running node needs a feed field (plan GV2.6, blocked on
-UNVERIFIED U3) or shows only once the run finishes.
+**F9 — Gap (in the feed only): a live run carries no PR number in `watch`.** Contract §2: "A live
+run carries no PR field at all". But the runner records the early draft PR at once
+(`internal/runner/prflow.go` `notePR` sets `r.rec.PR` and saves the record), and
+`internal/runview/runview.go` copies it to `Row.RecordPR`, which `runs ls --json` prints as
+`record_pr`. *Consequence:* `plan status` (GV1.6), which joins through `internal/runview`, prints a
+running node's PR number with no feed change; a `watch` field (GV2.5) is optional.
 
 **F10 — Open → GD5: linking a node to a run.** `Node.Run` is the only designed link and nothing
 writes it; writing a run id back into a committed artifact is a commit per launch. Titles are free
@@ -127,7 +131,14 @@ six-file list; `console/test/unit/window.test.ts` and `csp-document.test.ts` pin
 packer's `build.files` in `console/package.json` lists each bundle file by name. *Consequence:* a
 same-origin worker script is allowed by the `script-src` fallback but needs a seventh
 `SERVED_FILES` entry and a `build.files` entry; anything needing eval or WASM would need a CSP
-change, which this plan does not propose (UNVERIFIED U1).
+change, which this plan does not propose. **Read from the `elkjs@0.12.0` tarball (2026-10-22, in a
+scratch directory, deleted):** `lib/main.js` and `lib/elk.bundled.js` contain a bare
+`require('web-worker')`, which `console/tools/bundle-renderer` refuses by design; `lib/elk-worker.min.js`
+(1,595,334 bytes) contains no `require`, no `eval(` and no `new Function(`, and has its own
+`onmessage`. So the worker file is served **verbatim** (copied, not walked by the bundler) and the
+renderer talks to it with plain `postMessage`; the bare-specifier rule is untouched. Since
+`protocol.ts`'s `bundleHeaders` puts the CSP on every served response, the worker runs under
+`script-src 'self'` too.
 
 **F14 — Open → GD3: the licence.** The repository is MIT (`LICENSE`). npm metadata, read
 2026-10-22: `elkjs@0.11.0` is `EPL-2.0`; `elkjs@0.12.0` (published 2026-07-17) is `EPL-2.0 OR
@@ -208,11 +219,12 @@ forced-colours support and reduced motion; an SVG graph also needs a non-visual 
 platform-specific.
 
 **F27 — Gap: the checkout.** `plan graph` reads files in a checkout; the console spawns in a
-private working directory (`console/src/main/spawn.ts`, `PRIVATE_DIR_LEAF`) and an installation's
-checkout is optional (`console/src/main/installations.ts`, `INSTALLATION_KEYS` includes
+private working directory **only when the installation has no checkout** (`console/src/main/spawn.ts`
+header rule 5: the checkout is the cwd when there is one; `PRIVATE_DIR_LEAF` otherwise), and an
+installation's checkout is optional (`console/src/main/installations.ts`, `INSTALLATION_KEYS` includes
 `checkout`). *Consequence:* the view works only for an installation with a checkout, shows that
-checkout's branch (not `main`), and the main process — never the renderer — supplies the
-directory (plan GV2.1).
+checkout's branch (not `main`), and the directory comes from the spawn's cwd, which the main process
+sets — never from the renderer and never as an extra argv (plan GV2.1).
 
 **F28 — Proposal: the smallest useful first slice** — see §5.
 
@@ -269,7 +281,7 @@ itself" as a cost. *Consequence:* GD2 is an amendment to **D22 and D30**, not to
 `console/src/renderer/theme/base.css` sets `animation-duration: 0.01ms` and
 `animation-iteration-count: 1` under `prefers-reduced-motion: reduce`. A comet whose last frame
 leaves the streak in one spot is a misleading static picture. *Consequence:* GD4's fallback is an
-explicit static style per state (plan GV2.5), tested under emulated reduced motion.
+explicit static style per state (plan GV2.4), tested under emulated reduced motion.
 
 **F37 — Exists: the coordinator view joins runs to PRs but holds no PR-to-PR edge.**
 `origin/coordinator:internal/coordinator/view.go` (`Join`, `Record`, `Collision`). *Consequence:*
@@ -278,8 +290,9 @@ join into a plan artifact.
 
 **F38 — Gap: the coordinator's console view and this screen edit the same console files.**
 Coordinator P6 edits `console/src/main/ipc.ts`, `console/src/main/spawn.ts`,
-`console/src/preload/index.ts` and `console/src/renderer/entry.ts` on the `coordinator` branch;
-plan GV2.1 and GV2.3 edit the same files on `main`. *Consequence:* a merge-time conflict, not a
+`console/src/preload/index.ts`, `console/src/renderer/entry.ts`, `console/src/source/cli.ts`, and
+names `console/src/main/protocol.ts` and `console/test/unit/window.test.ts` (its CSP pin) on the
+`coordinator` branch; plan GV2.1, GV2.2 and GV2.3 edit the same files on `main`. *Consequence:* a merge-time conflict, not a
 design conflict; noted for whoever syncs `main` into `coordinator`.
 
 ## 3. Decisions (answered by the owner, 2026-10-22)
@@ -288,11 +301,11 @@ design conflict; noted for whoever syncs `main` into `coordinator`.
 | --- | --- | --- | --- | --- |
 | **GD1** | Source of truth for tasks, releases and edges | Per-plan `.graph.json` files plus one roadmap file for releases, assignment and cross-plan edges: works now, no new infrastructure | Wait for the coordinator's project record (0.11.0): no task-level whole-project graph until it carries tasks | **2026-10-22: wait for the coordinator's project record (0.11.0) — not the recommendation.** *Why:* one source of project state, the coordinator's, rather than a file that would later be migrated. *Consequence:* PR/run-level first; task-level only when the record carries tasks, releases and cross-plan edges; no roadmap file now; D29's "project record" now means the coordinator's (F31). |
 | **GD2** | Does D30 (no drag write) stand? | Yes: drag becomes "copy the command" (D30's shape) | Let the console write: a new write path and its guard | **2026-10-22: let the console write the roadmap — not the recommendation; reverses D30 and amends D22 (F35).** *Why:* moving work between releases is the view's purpose. *Consequence:* the target, the write path and its security model are open (§4 (a), plan GV3). |
-| **GD3** | Layout engine | Layered layout in Go or hand-written TypeScript: keeps D9 and the CSP | elkjs: D9 reversal, licence, worker file, bundle size | **2026-10-22: bring elkjs in — not the recommendation; reverses D9.** *Why:* nested release boxes are what ELK is for. *Consequence:* the licence is an item the owner confirms (§4 (c)); a worker file under the CSP; size measured from npm metadata only (U2). |
+| **GD3** | Layout engine | Layered layout in Go or hand-written TypeScript: keeps D9 and the CSP | elkjs: D9 reversal, licence, worker file, bundle size | **2026-10-22: bring elkjs in — not the recommendation; reverses D9.** *Why:* nested release boxes are what ELK is for. *Consequence:* the licence is an item the owner confirms (§4 (c)); a worker file under the CSP, served verbatim (1,595,334 bytes, no eval; F13). |
 | **GD4** | Motion | Allow comet/pulse/flow with a text mark on every coloured state and a `prefers-reduced-motion` static fallback | Keep §3.9: static states only | **2026-10-22: the recommendation.** *Why:* the motion carries meaning on this one screen, and the marks keep it accessible. Amends console-styling §3.9 for this screen only. |
 | **GD5** | Join key node → run | `fugaro run` records an optional plan task id in `launch.json` (additive, skew-safe) | Match on title: not unique, free text | **2026-10-22: the recommendation.** *Why:* the only exact join that needs no commit per launch. Stored in `task.json` too (F32). |
 | **GD6** | Scope | Open work by default, a toggle for everything, merged/cancelled collapse into a per-release counter | All ~800 tasks always | **2026-10-22: the recommendation.** *Why:* the useful view is what is still moving. |
-| **GD7** | Stream names and tag prefixes | One data file in the repository (stream, next name, current version, tag prefix), read by the graph and the release scripts; proposed path `docs/releases/streams.yaml` | Names hard-coded in two places | **2026-10-22: the recommendation.** *Why:* one list, two readers. Names: CLI animals, no birds (Badger 0.10, Camel 0.11, Dolphin, Gecko, Hippo, Koala, Moose); Console fruits (Cherry, Mango, Melon; avoid Apple, Lemon); Mobile birds (Falcon, Pelican, Robin). Console never below 0.10.0. ***Path amended after reading the code:*** `docs/release-streams.yaml`, because `docs/releases/` breaks the website build (F29); the owner confirms (§4 (e)). |
+| **GD7** | Stream names and tag prefixes | One data file in the repository (stream, next name, current version, tag prefix), read by the graph and the release scripts; proposed path `docs/releases/streams.yaml` | Names hard-coded in two places | **2026-10-22: the recommendation.** *Why:* one list, two readers. Names: CLI animals, no birds (Badger 0.10, Camel 0.11, Dolphin, Gecko, Hippo, Koala, Moose); Console fruits (Cherry, Mango, Melon; avoid Apple, Lemon); Mobile birds (Falcon, Pelican, Robin). Console never below 0.10.0. ***Path amended after review:*** `docs/release-streams.yaml`, because `docs/releases/` breaks the website build (F29); the owner confirms (§4 (e)). |
 | **GD8** | Numbering | Own prefix `GD` in this folder | Take a block of the global `D` series | **2026-10-22: the recommendation.** *Why:* the folder's numbers cannot collide with console v2's D21–D38 or anyone's block. |
 
 ## 4. Open tensions and open items for the owner
@@ -361,7 +374,7 @@ a change to an approved plan, proposed here and not made.
 Read-only, one stream at a time, no drag: the skill writes artifacts (GV1.7), levels and the
 critical path in Go (GV1.1), the stream field and the streams file (GV1.3, GV1.4), the plan-task
 join (GV1.2) and `fugaro plan status --json` (GV1.6), the console operation (GV2.1), elkjs in a
-worker (GV2.2, after (c)), and the static screen (GV2.3). Motion (GV2.5) follows; the write (GV3)
+worker (GV2.2, after (c)), and the static screen (GV2.3). Motion (GV2.4) follows; the write (GV3)
 and the cross-plan graph (GV4) wait on (a) and (d).
 
 ## 6. Security probes for the plan's reviewers
@@ -371,26 +384,32 @@ and the cross-plan graph (GV4) wait on (a) and (d).
   never a command); what validates them in the main process (exact patterns, membership in the
   last document read); what a hostile plan file or job-written title can make the confirmation
   show; what a replayed or stale drop does (compare-and-set on the record, refusal on a moved
-  version).
+  version). Titles in the confirmation come from repository-written artifacts: sanitized and
+  length-capped, so a title such as "→ Camel" cannot forge the from/to line. Under tension (a)'s
+  option 2 the write goes into the working tree, so the CLI refuses when the artifact file has
+  uncommitted changes (D30's "clobber uncommitted work").
 - **The worker and the CSP** (GV2.2): `script-src 'self'` stays; no `'unsafe-eval'`, no
   `'wasm-unsafe-eval'`, no `worker-src` widening; the worker file is an exact `SERVED_FILES`
   entry; a probe that `new Function` inside the worker is refused by the CSP; the worker receives
-  only the graph's structure (ids, sizes), never text.
+  only the graph's structure (ids, sizes), never text; the renderer validates every reply (known
+  ids, finite numbers) before a coordinate reaches an SVG attribute.
 - **Path confinement** (GV2.1, GV1.6): the renderer sends no path; the main process passes the
   installation's own checkout; the CLI discovers artifacts only under `docs/` of that checkout and
-  refuses a symlink that leaves it; a plan id from the renderer is matched against the CLI's own
-  listing, never joined into a path.
+  refuses a symlink that leaves it, and a symlinked `docs/` itself; the same rule and a size cap
+  before decoding apply to `docs/release-streams.yaml` (repository-written YAML, possibly with
+  anchors and aliases, from a contributor's branch); a plan id from the renderer is matched against
+  the CLI's own listing, never joined into a path.
 - **The join hint** (GV1.2): `plan_task` is job-writable (F32): shape-validated, length-capped,
-  sanitized, never an authorization input.
+  sanitized, never an authorization input. The real abuse is state spoofing: a prompt-injected run
+  can claim any task and paint it running or done. So the join is scoped to the plan's own
+  repository, and a run's claim never changes `ready`/`blocked` for another repository's plan.
 
 ## UNVERIFIED
 
-- **U1** Whether elkjs's bundled build calls `eval` or `new Function` (which `script-src 'self'`
-  refuses). GV2.2's red step tests it in the built app.
-- **U2** elkjs's size: npm reports an unpacked total of 8,046,232 bytes over 12 files for 0.12.0;
-  the size of the one file the worker would bundle is not known from metadata alone.
-- **U3** Whether a live run's early draft PR number is recorded anywhere the CLI could print
-  without a per-run `diagnose`.
+- **U1** *Resolved in review round 1:* `lib/elk-worker.min.js` has no `eval(` or `new Function(`
+  (F13). GV2.2's e2e still probes it in the built app.
+- **U2** *Resolved in review round 1:* the served worker file is 1,595,334 bytes (F13).
+- **U3** *Resolved in review round 1:* yes — `record_pr` in `runs ls --json` (F9).
 - **U4** Task and "Depends on" counts are grep approximations.
 - **U5** Whether a Web Worker loads from the `app://` scheme under the console's fuses and
   sandbox in the packed, signed app (Check 123).
