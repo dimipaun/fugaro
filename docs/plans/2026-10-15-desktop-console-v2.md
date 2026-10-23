@@ -110,6 +110,7 @@ The planner's expected footprint per task, in the shape D28 recommends: glob-sha
 
 **V2.2.3 — readiness, and the critical path. (needs D26)**
 `ready` and `blocked` computed **where the graph is read** (design F7), so two consoles cannot disagree; and the bottleneck ranking by critical path, with the raw downstream count as the fallback when no footprint carries a weight (D26).
+**Landed 2026-10-23, and it added one input the task did not name: `--done`.** A task is ready when every task it needs is done, and *done* is a fact this read cannot derive — a finished run is not a done task, and the command opens no bucket — so the caller states the set and the definition of readiness stays in `internal/plan`'s `Analyze`, which is what F7 asks for. The document a read prints gains the answers and the artifact does not change: `schema_version` stays 1, so a newer planner is refused exactly as before and an older console ignores keys it does not know (design, "the graph artifact's schema, written down"; contract §6.9). The verification below is the shape it shipped in — `internal/plan`'s table carries the raw-count hub that is not the bottleneck — with the CLI's own read pinned by `TestPlanGraphPrintsReadiness`.
 *Files:* `internal/plan/`, `internal/cli/plan.go`, `console/docs/json-contract.md`.
 *Verification:* `GOFLAGS=-p=2 go test ./internal/plan -run 'Ready|CriticalPath' -count=1` — table-driven, with a graph whose raw-count hub is *not* the critical-path bottleneck, since that is the case the feature exists for.
 *Independent merge:* yes; it depends on V2.2.1's schema and on nothing else.
@@ -195,6 +196,7 @@ Derived from the watch feed by the console's own long-lived reader, **off by def
 *Files:* `plugin/skills/parallelism/SKILL.md`, `plugin/skills/parallelism/reference/` (new file, only if needed), `docs/design/desktop-console-v2.md`.
 *Verification:* the **skill lint**, which lives in its own package — `GOFLAGS=-p=2 go test ./plugin -run 'PluginSkillsLintClean|LintSizeBudget|LintByteBudget|LintChecksReferenceFiles' -count=1` (`plugin/skills_lint_test.go`, package `plugin_test`) — plus the docs tests that read `docs/design/*.md`, `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs' -count=1`. The skill lint is what decides new-file-versus-inline, so the test is the verification and not a formality; a `-run` pattern aimed at `./internal/cli` cannot reach it.
 *Independent merge:* yes, and it is the **cheapest useful task in this plan**: its output is a file a person can read, so it pays for itself before any console reads it.
+**Landed 2026-10-23, inline in `SKILL.md`** (81 of the lint's 400 lines, 6078 of its 24576 bytes), so the optional reference file was not needed — and `plugin/parallelism_skill_test.go` parses the skill's own example with `internal/plan`'s parser, so a renamed json tag fails a named test instead of leaving the skill wrong with every test green.
 
 ## 4. The owner-run check: Check 62
 

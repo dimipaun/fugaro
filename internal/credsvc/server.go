@@ -35,6 +35,34 @@ const (
 	CountTokensPath = "/v1/messages/count_tokens"
 )
 
+// routeAct is the ONE rule for the two facts an audit line carries about the
+// call rather than about what the service did with it: the purpose the call
+// asked for, and the credential name a line for it may carry (C1.13).
+//
+// It exists so the rule is written once. The two routes are two acts of the
+// service — a proxied model call (C1.11) and a mint (C2.1) — and every refusal
+// either route answers has to be recorded as the act the run asked for and not
+// as the branch it was answered in, whether that refusal is taken before the
+// route is branched on (the binding and the stop switches in ServeHTTP) or
+// inside the route's own code (the mint's own refusals, github.go's refuseMint
+// and auditMint). Two spellings of one rule is how they drift: a mint's
+// refusals named the App key while the stop-switch refusal named nothing until
+// this rule replaced both.
+//
+// The credential answers for the mint because the App key is what the endpoint
+// issues from: it is the endpoint's own name for it and not something read out
+// of the bundle, so it is known before the bundle is read and after it alike,
+// and a mint's line that named no credential would be a mint an operator
+// cannot account for. A model call's line names none here: which credential a
+// model call used, or would have used, is the cascade's answer and not the
+// route's, and a refusal taken before one was chosen has no name to carry.
+func routeAct(path string) (purpose, credential string) {
+	if path == MintPath {
+		return PurposeMint, config.GitHubAppKeySecret
+	}
+	return PurposeForward, ""
+}
+
 // JobAccount is one job service account and the repository whose runs are
 // launched as it. It is the binding the service checks a run token against
 // (review finding N1): a run token names a repository slug, a job token names
@@ -432,18 +460,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The purpose the call asks for and the credential a line for it names, and
-	// what every refusal below is recorded as (C1.13): the route decides both,
-	// and they are read here because every refusal that follows — the binding,
-	// the stop switches and an unreadable switch — is answered before the route
-	// is branched on. A refusal of a mint recorded as "forward" would be the
-	// audit telling an operator that a model call was refused when the run asked
-	// for an installation token, and a mint's line names the App key by the rule
-	// the mint itself keeps (auditMint): the credential the endpoint issues from
-	// is the endpoint's own name for it, not a value read out of the bundle.
-	purpose, credential := PurposeForward, ""
-	if r.URL.Path == MintPath {
-		purpose, credential = PurposeMint, config.GitHubAppKeySecret
-	}
+	// what every refusal below is recorded as (C1.13): the route decides both
+	// (routeAct, the one rule), and they are read here because every refusal
+	// that follows — the binding, the stop switches and an unreadable switch —
+	// is answered before the route is branched on, and because every refusal
+	// below the mint's branch is recorded with THIS purpose as well: a line that
+	// hard-coded one route's purpose would be a line an operator reads as
+	// another call (a mint refused by the kill switch recorded as a proxied
+	// model call was exactly that, before the purpose was read off the route).
+	// A mint's line names the App key for the same reason
+	// (routeAct): the credential the endpoint issues from is the endpoint's own
+	// name for it, not a value read out of a bundle, which is why the mint
+	// itself (auditMint, refuseMint) takes both from the same rule.
+	purpose, credential := routeAct(r.URL.Path)
 	ja, bound := s.jobs[id.JobAccount]
 	if !bound || ja.Slug != id.Slug {
 		// Review finding N1: the two identities a call carries are verified
@@ -495,12 +524,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// before the one document that holds every credential is read at all.
 	shared, found, err := s.cfg.Policy.Shared(ctx)
 	if err != nil || !found {
-		s.refuseCall(ctx, w, id, PurposeForward, "", "", StatusUnavailable, ErrorStateUnavailable, "the project's policy could not be read")
+		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, "the project's policy could not be read")
 		return
 	}
 	cl, err := readCall(r, []string{req.RunIDToken, req.JobIDToken})
 	if err != nil {
-		s.refuseCall(ctx, w, id, PurposeForward, "", "", StatusUnavailable, ErrorStateUnavailable, err.Error())
+		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, err.Error())
 		return
 	}
 	if r.URL.Path == MessagesPath {
@@ -519,14 +548,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// out and no credential value is anywhere in it, because none was
 		// touched.
 		if noAllowList := requestNoAllowListRefusal(shared); noAllowList != "" {
-			s.refuseCall(ctx, w, id, PurposeForward, "", "", StatusRequestRefused, ErrorRequestRefused, requestRefused+noAllowList)
+			s.refuseCall(ctx, w, id, purpose, "", "", StatusRequestRefused, ErrorRequestRefused, requestRefused+noAllowList)
 			return
 		}
 		refusal, err := s.requestRefusal(shared, cl.body)
 		if err != nil {
 			// The project's own prices could not be read: a state the caller
 			// cannot fix, and never a refusal of what it sent.
-			s.refuseCall(ctx, w, id, PurposeForward, "", "", StatusUnavailable, ErrorStateUnavailable, "the project's model prices could not be read")
+			s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, "the project's model prices could not be read")
 			return
 		}
 		if refusal != "" {
@@ -536,7 +565,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// tool type or field it objects to — that is what makes it
 			// actionable — but no credential value is anywhere in it: none was
 			// touched.
-			s.refuseCall(ctx, w, id, PurposeForward, "", "", StatusRequestRefused, ErrorRequestRefused, requestRefused+refusal)
+			s.refuseCall(ctx, w, id, purpose, "", "", StatusRequestRefused, ErrorRequestRefused, requestRefused+refusal)
 			return
 		}
 	}
@@ -546,12 +575,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// carrying a value, a key or another package's text (BundleRefusal):
 		// the loader's own error carries the key it is about for the operator,
 		// and the run reading this refusal is not the operator.
-		s.refuseCall(ctx, w, id, PurposeForward, "", "", StatusUnavailable, ErrorStateUnavailable, BundleRefusal(err))
+		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, BundleRefusal(err))
 		return
 	}
 	cands, notAdmitted, err := s.candidates(ctx, id.Slug, ja.Repo, b)
 	if err != nil {
-		s.refuseCall(ctx, w, id, PurposeForward, "", "", StatusUnavailable, ErrorStateUnavailable, "the repository's admissions could not be read")
+		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, "the repository's admissions could not be read")
 		return
 	}
 	sel := &creds.Selector{Store: s.cfg.State, Settings: settingsOf(shared), Now: s.now}
