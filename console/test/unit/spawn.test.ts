@@ -59,6 +59,7 @@ import {
   PICKER_OPERATION_NAMES,
   PLATFORM_LOCATIONS,
   SPAWN_COMMANDS,
+  WIN32_LOCATIONS,
   argvFor,
   assertArgvFlags,
   assertSpawnSurface,
@@ -1135,12 +1136,15 @@ describe('binary resolution', () => {
     // The brief's rule: the per-platform choice lives in ONE place. This is that
     // place -- the table below is the whole of the per-platform data, and every
     // reader goes through `locationsFor`.
-    expect(Object.keys(PLATFORM_LOCATIONS).toSorted()).toEqual(['darwin', 'linux'])
+    expect(Object.keys(PLATFORM_LOCATIONS).toSorted()).toEqual(['darwin', 'linux', 'win32'])
     expect(locationsFor('darwin')).toBe(DARWIN_LOCATIONS)
     expect(locationsFor('linux')).toBe(LINUX_LOCATIONS)
-    expect(locationsFor()).toBe(PLATFORM_LOCATIONS[process.platform === 'darwin' ? 'darwin' : 'linux'])
-    // Both lists are frozen and total: every platform has both a resolution
-    // order and a child `PATH`, and neither can be extended afterwards.
+    expect(locationsFor('win32')).toBe(WIN32_LOCATIONS)
+    expect(locationsFor()).toBe(PLATFORM_LOCATIONS[process.platform])
+    // Every row is frozen and total: every platform has both a resolution
+    // order and a child `PATH`, and neither can be extended afterwards. The
+    // win32 row's `binaryPrefixes` is empty on purpose -- see the next test --
+    // so the "more than nothing" half is asked of the two host rows.
     for (const platform of ['darwin', 'linux']) {
       const locations = locationsFor(platform)
       expect(Object.isFrozen(locations)).toBe(true)
@@ -1160,15 +1164,45 @@ describe('binary resolution', () => {
   it('falls back to the POSIX list on a platform this build is not packaged for', () => {
     // The console is packaged for darwin and linux and the fuse hook refuses
     // anything else, so this branch is a developer running the sources on an
-    // unpackaged platform and nothing more. The POSIX list is the nearest
-    // layout, and every entry is an absolute directory that either exists or
-    // does not -- so the fallback cannot find a binary that is not there.
-    expect(locationsFor('win32')).toBe(LINUX_LOCATIONS)
+    // unpackaged platform and nothing more. `win32` is not in this list any
+    // more: it has a row of its own now -- the WSL route, above -- and this
+    // fallback is about the platforms nobody has decided at all.
     expect(locationsFor('freebsd')).toBe(LINUX_LOCATIONS)
+    expect(locationsFor('sunos')).toBe(LINUX_LOCATIONS)
     // and the darwin-only Homebrew prefix never leaks into it
-    for (const platform of ['win32', 'freebsd', 'sunos', 'aix']) {
+    for (const platform of ['freebsd', 'sunos', 'aix']) {
       expect([...locationsFor(platform).binaryPrefixes]).not.toContain('/opt/homebrew/bin')
     }
+  })
+
+  it('is the WSL route on win32, and it is not a directory list', () => {
+    // T-C2. The Windows console does not walk the host's directories looking
+    // for a `fugaro`: there is no `fugaro.exe`, the CLI is a Linux program
+    // inside a distribution, and the way to reach it is `wsl.exe`. So the win32
+    // row carries no resolution order at all -- `binaryPrefixes` is empty, and
+    // `binDirectories` on this platform finds nothing, which is the truth about
+    // the host -- and it says so with `route` rather than leaving a reader to
+    // infer it from an empty list.
+    expect(WIN32_LOCATIONS.route).toBe('wsl')
+    expect([...WIN32_LOCATIONS.binaryPrefixes]).toEqual([])
+    // The child's `PATH` is **Linux's**, and that is the whole of F5: the
+    // process on the other end of `wsl.exe` is a Linux process, so the
+    // directories it may find `terraform` in are Linux's. macOS's list here
+    // would put `/opt/homebrew/bin` on a Linux child's `PATH`; a list of
+    // Windows directories would put nothing on it that a Linux lookup can use.
+    expect([...WIN32_LOCATIONS.childPathPrefixes]).toEqual([...LINUX_LOCATIONS.childPathPrefixes])
+    expect(WIN32_LOCATIONS.childPathPrefixes).toContain('/usr/bin')
+    expect([...WIN32_LOCATIONS.childPathPrefixes]).not.toContain('/opt/homebrew/bin')
+    for (const prefix of WIN32_LOCATIONS.childPathPrefixes) {
+      expect(prefix, `win32 child PATH: ${prefix}`).toMatch(/^\//)
+    }
+    expect(Object.isFrozen(WIN32_LOCATIONS)).toBe(true)
+    expect(Object.isFrozen(WIN32_LOCATIONS.binaryPrefixes)).toBe(true)
+    expect(Object.isFrozen(WIN32_LOCATIONS.childPathPrefixes)).toBe(true)
+    // The host route is what the other two rows are, and it is spelled rather
+    // than defaulted: a row that forgot to say would otherwise read as `host`.
+    expect(DARWIN_LOCATIONS.route).toBe('host')
+    expect(LINUX_LOCATIONS.route).toBe('host')
   })
 
   it('resolves against the platform’s list, and the list is an argument rather than a global', () => {
@@ -1195,6 +1229,11 @@ describe('binary resolution', () => {
     expect([...binDirectories({ home: '/nowhere', platform: 'linux' })]).toContain(
       '/nowhere/.local/bin/fugaro',
     )
+    // and the win32 row is not a directory list at all: nothing is walked on
+    // the host, because the CLI is not on the host (T-C2). The empty list is
+    // the row's `binaryPrefixes`, not a special case in `binDirectories` --
+    // which is why the walk is the same code on all three platforms.
+    expect([...binDirectories({ home: 'C:\\Users\\owner', platform: 'win32' })]).toEqual([])
   })
 
   it('never takes the app’s own PATH as a place to find the binary', async () => {

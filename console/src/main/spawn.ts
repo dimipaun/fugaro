@@ -47,7 +47,11 @@
 //      `/usr/bin`, `~/.local/bin`, `/home/linuxbrew/.linuxbrew/bin`,
 //      `~/.linuxbrew/bin`. Neither list is ever read out of the app's own
 //      environment -- "never the inherited `PATH`" is a property of the list,
-//      and there is no step after it. The path and the version it reported
+//      and there is no step after it. **On Windows there is no list at all**:
+//      the CLI is a Linux program inside a WSL distribution, the row for
+//      `win32` is the WSL route rather than a set of directories (T-C2), and a
+//      platform with no row is refused rather than answered with Linux's
+//      (T-C3). The path and the version it reported
 //      are the header's ("the resolved absolute path and the version it reports
 //      are shown in the header"), and **a candidate that exists but whose version
 //      cannot be read is refused rather than skipped**: falling through to the
@@ -63,7 +67,10 @@
 //      `CHILD_ENV_KEYS`. **The `PATH` is the resolved binary's own directory
 //      first, then the platform's own tool directories** (rule 5's list, from
 //      the same `locationsFor` table: macOS gets `/opt/homebrew/bin`, Linux
-//      gets `/home/linuxbrew/.linuxbrew/bin`, and neither gets the other's) --
+//      gets `/home/linuxbrew/.linuxbrew/bin`, and neither gets the other's;
+//      **on the WSL route the list is Linux's, because the child is a Linux
+//      process** -- F5, and `WIN32_LOCATIONS.childPathPrefixes` says so by
+//      naming Linux's) --
 //      because the CLI looks up external tools itself (`doctor` resolves the SDK
 //      tools with `exec.LookPath`, `internal/cli/doctor.go:147`), and
 //      `terraform`, `cosign` and the rest do not sit beside the `fugaro` binary
@@ -123,6 +130,22 @@ export const CONFIG_FLAG = '--config'
 export const DIR_FLAG = '--dir'
 
 /**
+ * PlatformRoute is which *kind* of answer a platform's row is. It exists so a
+ * reader is never left to infer the route from a list's contents: an empty
+ * `binaryPrefixes` looks like an unfinished row, and the win32 row's emptiness
+ * is the opposite of unfinished -- it is the statement that the host is not
+ * where the CLI is.
+ *
+ *   - `host` -- the CLI is a program on this machine, so rule 4's walk is a
+ *     walk of this machine's directories and the child runs where the console
+ *     runs;
+ *   - `wsl` -- the CLI is a Linux program inside a distribution and is reached
+ *     through `wsl.exe`, so the walk is not a walk of the host at all (T-C2)
+ *     and the child's `PATH` is a Linux one (F5).
+ */
+export type PlatformRoute = 'host' | 'wsl'
+
+/**
  * PlatformLocations is the whole of what this file knows per platform: where
  * rule 4 looks for the CLI, and which tool directories rule 5 gives the child.
  * The two are not the same list on any platform and the difference is
@@ -130,19 +153,25 @@ export const DIR_FLAG = '--dir'
  * two constants that have to be kept in step by hand.
  */
 export interface PlatformLocations {
+  /** route is which kind of answer this row is -- see `PlatformRoute`. */
+  readonly route: PlatformRoute
   /** binaryPrefixes is rule 4's order, and it is the whole of it: a configured
    * path first (`SpawnTarget.binaryPath`, the optional override an installation
    * may carry), then these directories in this order. The app's own inherited
    * `PATH` is **not** a step after them (owner's ruling of 2026-10-20). `~/.local/bin` is
    * spelled with `~` and joined with the home directory at resolution time,
-   * because the home directory is an argument rather than a constant. */
+   * because the home directory is an argument rather than a constant. **On the
+   * `wsl` route it is empty**: the host is not where the CLI is, and an empty
+   * list is how the row says so. */
   readonly binaryPrefixes: readonly string[]
   /** childPathPrefixes is the well-known *tool* directories the child's `PATH`
    * is built from: the resolved binary's own directory first, then these. It
    * answers "where may the CLI find `terraform`?", so it includes `/bin`,
    * `/usr/sbin` and `/sbin`, and it does not include `~/.local/bin` unless the
    * binary itself lives there. Every entry is absolute: the child receives a
-   * literal string and nothing expands a `~` inside a `PATH`. */
+   * literal string and nothing expands a `~` inside a `PATH`. **It is the list
+   * of the platform the child runs on, which is not always the platform the
+   * console runs on**: on the `wsl` route it is Linux's (F5). */
   readonly childPathPrefixes: readonly string[]
 }
 
@@ -156,6 +185,7 @@ export interface PlatformLocations {
  * system's.
  */
 export const DARWIN_LOCATIONS: PlatformLocations = Object.freeze({
+  route: 'host' as const,
   binaryPrefixes: Object.freeze(['/opt/homebrew/bin', '/usr/local/bin', '~/.local/bin', '/usr/bin']),
   childPathPrefixes: Object.freeze([
     '/opt/homebrew/bin',
@@ -186,6 +216,7 @@ export const DARWIN_LOCATIONS: PlatformLocations = Object.freeze({
  *     `PATH` always puts first.
  */
 export const LINUX_LOCATIONS: PlatformLocations = Object.freeze({
+  route: 'host' as const,
   binaryPrefixes: Object.freeze([
     '/usr/local/bin',
     '/usr/bin',
@@ -204,6 +235,37 @@ export const LINUX_LOCATIONS: PlatformLocations = Object.freeze({
 })
 
 /**
+ * WIN32_LOCATIONS is the row for the Windows console, and **it is not a list of
+ * directories** (T-C2, decision D1). It is the row for a route rather than a
+ * place: on Windows the CLI is a Linux program inside a WSL distribution, and
+ * the console reaches it by running `wsl.exe -d <distro> --cd <dir> -- fugaro
+ * …` rather than by executing a binary the host can see. There is no
+ * `fugaro.exe` to find, so there is nothing for rule 4 to walk.
+ *
+ * The two fields say that in the two ways they can:
+ *
+ *   - **`binaryPrefixes` is empty**, so `binDirectories` on this platform is
+ *     empty too -- the same code, told the truth about the host. It is not a
+ *     fallback to Linux's list: on Windows `/usr/local/bin` is a path relative
+ *     to the current drive, and looking for a binary there would be a search of
+ *     a directory that means something else on the machine it runs on. The
+ *     distro-side resolution is its own path (`src/main/wsl.ts`, T-C4/T-C5),
+ *     not a row in this table.
+ *   - **`childPathPrefixes` is Linux's**, by reference rather than by a copy
+ *     (F5). The process on the other end of `wsl.exe` is a Linux process: the
+ *     directories it may find `terraform`, `gcloud` or `cosign` in are Linux's,
+ *     and a `PATH` of Windows directories would give it entries no Linux lookup
+ *     can use. Naming `LINUX_LOCATIONS.childPathPrefixes` here rather than
+ *     writing the six strings out again is deliberate -- the child's tool list
+ *     is one fact about Linux, and two copies of it could drift.
+ */
+export const WIN32_LOCATIONS: PlatformLocations = Object.freeze({
+  route: 'wsl' as const,
+  binaryPrefixes: Object.freeze([] as string[]),
+  childPathPrefixes: LINUX_LOCATIONS.childPathPrefixes,
+})
+
+/**
  * PLATFORM_LOCATIONS is the per-platform table, and `locationsFor` is the only
  * reader of it. **The platform choice lives here and nowhere else**: no other
  * line in this module -- and none in `src/source/` -- names a well-known
@@ -214,27 +276,23 @@ export const LINUX_LOCATIONS: PlatformLocations = Object.freeze({
  * electron-builder uses for `electronPlatformName` -- so the two halves of "does
  * this build support this platform?" (this table and the fuse hook's
  * `SUPPORTED_PLATFORMS`) are keyed identically on purpose.
+ *
+ * **A row is a decision, and the table is the list of decisions that have been
+ * made**: darwin and Linux are host routes, win32 is the WSL route, and a
+ * platform that is not here is one nobody has decided -- which `locationsFor`
+ * refuses rather than answers (T-C3).
  */
 export const PLATFORM_LOCATIONS: Readonly<Record<string, PlatformLocations>> = Object.freeze({
   darwin: DARWIN_LOCATIONS,
   linux: LINUX_LOCATIONS,
+  win32: WIN32_LOCATIONS,
 })
 
 /**
  * locationsFor is the one place the per-platform choice is made: the platform's
  * two lists, or -- for a platform this build is not packaged for -- the POSIX
- * ones.
- *
- * The fallback is stated rather than silent. The console *ships* on darwin and
- * on Linux and the fuse hook refuses every other platform outright, so this
- * branch is reached only by a developer running the sources somewhere the app
- * has never been packaged. There, the POSIX layout is the nearest thing to a
- * right answer, and every entry in it is an absolute directory that either
- * exists or does not: the fallback cannot find a binary that is not on the
- * machine. Refusing instead would make the sources unrunnable, which is a worse
- * failure than searching the obvious directories -- and the one thing the
- * fallback must not do is reach for the app's own `PATH`, which is why the
- * lists are constants and not a read of the environment.
+ * ones. `win32` is a row of its own now (the WSL route, above); this branch is
+ * about the platforms nobody has decided at all.
  */
 export function locationsFor(platform: string = process.platform): PlatformLocations {
   return PLATFORM_LOCATIONS[platform] ?? LINUX_LOCATIONS
