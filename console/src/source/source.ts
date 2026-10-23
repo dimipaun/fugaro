@@ -147,10 +147,12 @@ export interface LiveFeed {
 
 /**
  * FugaroSource is the interface every screen talks to. The eleven reads are the
- * eleven documents of design section 2.1 (`docs/json-contract.md` section 2),
- * one method each, named after the thing on screen rather than after the CLI verb
- * -- so a screen that says `listRuns` does not change when the verb behind it
- * does.
+ * eleven documents of design section 2.1 that the dashboard draws
+ * (`docs/json-contract.md` section 2), one method each, named after the thing on
+ * screen rather than after the CLI verb -- so a screen that says `listRuns` does
+ * not change when the verb behind it does. (Section 2.1's twelfth row, the
+ * picker's own `fugaro config list --json`, is the picker window's read and
+ * reaches no screen through this interface.)
  *
  * The arguments are the *validated* arguments of Task 1.2's schema, not a
  * renderer payload: a source is downstream of the validation, and an

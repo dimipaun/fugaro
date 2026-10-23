@@ -525,6 +525,10 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(configListCheckout{}),
 		reflect.TypeOf(plan.Document{}), reflect.TypeOf(plan.Node{}),
 		reflect.TypeOf(plan.Edge{}), reflect.TypeOf(plan.Footprint{}),
+		// The read's own document (V2.2.3): the artifact's shape plus what is
+		// computed where the graph is read.
+		reflect.TypeOf(plan.Graph{}), reflect.TypeOf(plan.NodeState{}),
+		reflect.TypeOf(plan.CriticalPath{}),
 		reflect.TypeOf(runstore.ChangedFiles{}),
 		// §6.10, the same three shapes as the test above (CLI 0.9.0).
 		reflect.TypeOf(userStatsDoc{}),
@@ -707,9 +711,13 @@ func TestDocsDesktopConsoleContractStatesWhichDocumentsAreLineDelimited(t *testi
 
 // TestDocsDesktopConsoleContractNamesTheFlagInventory: the spawn contract's
 // one flag fact (design section 3.4 rule 3) must be the cobra commands', not
-// the document's word for it. Every command the console spawns except the
+// the document's word for it. Every command the dashboard spawns except the
 // version handshake carries --project and --config; version takes no flags at
 // all, so a console that appended --project to it would fail on every machine.
+// The map is the dashboard's commands, and deliberately not the picker's own
+// read: `config list --json` takes neither flag (it prints the installations,
+// so there is no project to name), which is why this inventory -- an inventory
+// of the flags a project read carries -- must not gain it (§5.1 rule 6).
 func TestDocsDesktopConsoleContractNamesTheFlagInventory(t *testing.T) {
 	const path = "console/docs/json-contract.md"
 	doc := readDoc(t, path)
@@ -1028,9 +1036,13 @@ func firstBacktick(cell string) string {
 // the bare substring "watch --json" is satisfied by a sentence about it, which
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
-// §5.1 rule 6 carries and compares their first cells exactly:
-// the allow-list is the eleven argvs and nothing else, and the "never" table
-// still names the two entries that make a name-based list a hole.
+// §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
+// the twelve argvs and nothing else -- the console's dashboard table
+// (SPAWN_COMMANDS) and its picker table (PICKER_COMMANDS) are together the
+// eleven it fixes, and a review of an earlier revision found the picker's own
+// read, `config list --json`, absent here, which left the specification
+// forbidding the one read the picker depends on -- and the "never" table still
+// names the two entries that make a name-based list a hole.
 func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 	const path = "docs/design/desktop-console.md"
 	doc := readDoc(t, path)
@@ -1047,6 +1059,11 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		"accounts ls --json",
 		"version",
 		"doctor --json",
+		// The picker's own read: the twelfth argv, and the only one that
+		// belongs to the installations picker rather than the dashboard. It
+		// carries no --project and no --config, so it is absent from the
+		// contract document's flag inventory below, which is about flags.
+		"config list --json",
 	}
 	rows := docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |")
 	got := map[string]bool{}
@@ -1104,17 +1121,19 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 // that knowledge, and this test reads it back off the design's own table, so
 // the two cannot drift. Adding an argv to §5.1 without adding its command
 // here fails, and so does a command on the list that the design does not
-// allow (bar the two reads the design names for the console and §5.1 has no
+// allow (bar the one read the design names for the console and §5.1 has no
 // row for yet).
 func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	const path = "docs/design/desktop-console.md"
 	doc := readDoc(t, path)
 	allowed := map[string]bool{}
+	argvs := 0
 	for _, cells := range docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |") {
 		argv := firstBacktick(cells[0])
 		if argv == "" {
 			continue
 		}
+		argvs++
 		// "budget show --json" is the command `fugaro budget show`: its own
 		// words, up to its first flag or its first ARGUMENT (the RUN a
 		// diagnose or a logs row takes, spelled in capitals in the table).
@@ -1131,18 +1150,20 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	if len(allowed) != 10 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 10 (logs has two argvs)", path, 11, len(allowed))
+	// Eleven commands: the ten dashboard reads (logs has two argvs) and the
+	// picker's `config list --json` (D13's amendment of 2026-10-20).
+	if len(allowed) != 11 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 11 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
-	// except the two reads the design names for the console and §5.1 has not
-	// grown a row for yet (D13/§12 item 8 for the installation list, V2.2.1
-	// for the graph document). A third name is a command someone decided the
-	// console spawns, and that is a design change, not a table entry.
-	namedNotAllowed := map[string]bool{"fugaro config list": true, "fugaro plan graph": true}
+	// except the one read the design names for the console and §5.1 has not
+	// grown a row for yet (V2.2.1, the graph document). A second name is a
+	// command someone decided the console spawns, and that is a design change,
+	// not a table entry.
+	namedNotAllowed := map[string]bool{"fugaro plan graph": true}
 	for cmdPath := range consoleReadPaths {
 		if !allowed[cmdPath] && !namedNotAllowed[cmdPath] {
-			t.Errorf("consoleReadPaths carries %q, which is neither an argv §5.1 allows nor one of the two reads the design names for the console (%v): the read-only list is the design's, not this file's", cmdPath, namedNotAllowed)
+			t.Errorf("consoleReadPaths carries %q, which is neither an argv §5.1 allows nor the one read the design names for the console (%v): the read-only list is the design's, not this file's", cmdPath, namedNotAllowed)
 		}
 	}
 }

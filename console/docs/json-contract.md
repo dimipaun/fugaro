@@ -894,25 +894,40 @@ which would join this document the day a field is added to the struct. A test
 fails if a field outside the six above reaches the output, and if either type
 ever becomes (or embeds) `localcfg.Config`.
 
-**Version skew.** The command is new, so an older CLI does not have it at all:
-the spawn fails and the console shows its "this CLI cannot list installations"
-state, which is the form D13 accepted for v1. The handshake (§6.7) is what tells
-the console which case it is in. **`checkouts` is newer than the command**: a
-CLI that lists installations and emits no `checkouts` key at all is a CLI that
-does not know about checkouts, and the console shows the installation without
-them (its checkout directory stays whatever the operator stored in D13's
-form) — an empty array means this CLI knows, and this machine remembers none.
-The two are not the same state and the reader must not conflate them. There is
-no version field to bump: this document is read whole, and the key's absence is
-the signal.
+**`checkouts` is optional to the reader.** The per-installation `checkouts` array
+(PR #735) is newer than the command, and **the console treats it as optional**:
+absent, null and a malformed entry are each an empty list rather than a refusal,
+because a console that refused a document over a field it only *offers* would stop
+listing installations on the day the field is added. Where it is present the
+console offers the `path` of each entry carrying `valid: true` (an absolute path;
+a `valid: false` entry is never offered, whatever its `reason`) and nothing else: a directory the document never
+named is refused by name, so the list is the CLI's own enumeration even at the
+point of use. An installation listed with no `checkouts` is drawn with no way to
+set one, which is the truthful state — the console does not invent a directory.
+A CLI that emits no `checkouts` key at all is a CLI that does not know about
+checkouts, while an empty array means this CLI knows and this machine remembers
+none: the two are not the same fact, even though both leave the console nothing to
+offer. There is no version field to bump: this document is read whole, and the
+key's absence is the signal.
+
+**Version skew.** The command is new, so an older CLI does not have it at all: the
+spawn fails (or the CLI answers with its own `unknown command` sentence), and **the
+console draws the rows its own store holds beside the CLI's refusal** — an
+installation the operator already chose does not disappear because today's binary
+cannot enumerate it — with the CLI's sentence on the screen and **no** onboarding
+screen, since this is not a first run. The handshake (§6.7) is what tells the
+console which case it is in. The install-CLI onboarding screen is drawn only when no
+`fugaro` could be *resolved* (rule 4), which is a different answer.
 
 ### 6.9 `fugaro plan graph --json`
 
 **Command:** `internal/cli/plan.go` `newPlanGraphCmd`, the only subcommand of
 `fugaro plan`. **Flags:** `--plan <path>` (the plan document the graph sits
 beside; with none, the one graph artifact under `docs/plans` is read, and more
-than one is refused and listed rather than picked), `--json`. **It takes no
-cloud flags**, for the same reason as §6.8: it reads a file in the checkout.
+than one is refused and listed rather than picked), `--done <ids>`
+(comma-separated or repeated: the tasks whose work is done, which is what
+"ready" is computed against — see below), `--json`. **It takes no cloud
+flags**, for the same reason as §6.8: it reads a file in the checkout.
 
 **What it reads:** the plan-side graph artifact (v2 design D25 and F6/F33),
 `<plan>.graph.json` beside `<plan>.md`, parsed and validated by
@@ -927,6 +942,9 @@ The document:
 | `plan` | string | never | never | the plan the artifact came from, as the artifact names it |
 | `nodes` | array | never | never | the tasks; `[]` is a plan with no tasks yet |
 | `edges` | array | never | never | the dependencies; `[]` is a plan with no dependencies yet |
+| `levels` | number | never | never | how many levels the plan has — the longest chain of dependencies plus one; `0` for a plan with no tasks |
+| `critical_path` | object | never | never | the longest chain of tasks in the plan, below |
+| `bottleneck` | string | never | **yes** | the task the critical path runs through; null only when the plan has no tasks |
 
 one entry of `nodes`:
 
@@ -937,6 +955,24 @@ one entry of `nodes`:
 | `run` | string | never | **yes** | the run this task belongs to; null when it belongs to none |
 | `version` | string | never | **yes** | the target version; null when the plan does not say |
 | `footprint` | object | never | never | the expected paths, below |
+| `level` | number | never | never | the longest chain of dependencies *ending* at this task: `0` for a task that waits on nothing, otherwise one more than the deepest task it waits for |
+| `done` | bool | never | never | the task is in the `--done` set the read was given. **A fact the caller stated, not one the CLI derived**: a finished run is not the same claim as a done task (see below) |
+| `ready` | bool | never | never | the task is not done and **every task it needs is done**. This is the field a launch may act on (design F7) |
+| `blocked` | bool | never | never | the task is not done and at least one task it needs is not done |
+| `critical_path_length` | number | never | never | the longest chain of tasks *starting* at this one, counting it: `1` for a task nothing waits on |
+| `downstream` | number | never | never | how many tasks wait on this one, directly or through others; the raw count D26 keeps as the cheap fallback beside the critical path |
+
+**A task is done, ready or blocked — exactly one of the three, always.** The
+three are fields rather than a rule a screen applies, so two screens colour one
+node the same way; `ready` and `blocked` are both false exactly when `done` is
+true.
+
+the `critical_path` object:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `length` | number | never | never | the chain's length **in tasks**; `0` for a plan with no tasks |
+| `tasks` | array | never | never | the tasks along the chain, in the order they can be done; `[]` for a plan with no tasks. Ties are broken by id, so one graph has one critical path |
 
 one entry of `edges`:
 
@@ -961,6 +997,25 @@ is a function of the graph, so a cyclic graph has none to give. A refused graph
 is no document at all: the command exits non-zero and prints nothing to stdout,
 so a renderer never has half a graph to draw.
 
+**What the read computes, and why the done set is passed in.** `level`, `done`,
+`ready`, `blocked`, `critical_path_length`, `downstream`, `levels`,
+`critical_path` and `bottleneck` are **not in the artifact**: the planner cannot
+know them, and a planner that guessed them would be a second answer to a
+question the CLI already answers (design F7). They are computed in Go, beside
+the read, so two consoles reading the same graph and the same facts get the same
+answer — which is the whole point of "ready" being a field rather than a screen's
+rule, since ready is also what a launch is allowed to act on.
+
+The one thing the read cannot compute for itself is **which tasks are done**, so
+`--done` states it. A task is done when its work is done; a *run* finishing is a
+different claim — a run can finish failed, or finish with a pull request nobody
+has reviewed — and this read is local (it takes no cloud flag and opens no
+bucket), so it never sees a run's state in the first place. The definition of
+readiness is the CLI's; the fact is the caller's, and the document echoes it per
+task in `done`, so a renderer never has to remember what it passed. An id that is
+not a task of the graph, or an empty one, is **refused rather than ignored**:
+an unknown id would otherwise read exactly like a task nobody has done.
+
 **The footprint is advisory and it is a prediction; the measured set is a
 different document.** What a task *expected* to touch is this field; what a run
 *did* touch is the run's own record (D27), written after the fact. The console
@@ -971,6 +1026,17 @@ document rather than in the renderer.
 this, and they answer different halves: an older CLI has no `plan graph` at all,
 and a newer *planner* can write a `schema_version` the CLI refuses. The console
 shows the CLI's refusal sentence rather than a graph.
+
+**The computed fields are additive, and `schema_version` stays `1`.** They are
+fields of the *read's* document and not of the artifact: a graph artifact is
+still schema version 1 with the artifact's own field set — the nine computed
+keys above are not among them, and a planner that wrote one would be refused by
+name — so what a planner writes and what an older CLI accepts are unchanged, and
+`--done` is a flag on the read rather than a field a planner writes. A console built before
+these keys existed ignores them and draws the graph it drew before; a console
+built after them must not require them of a CLI that predates them — an older
+CLI's document has no `level`, no `ready` and no `critical_path`, and that
+absence is the signal (the availability rule, §1), not an empty graph.
 
 ### 6.10 `fugaro runs stats --json` (**CLI 0.9.0**)
 

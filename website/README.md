@@ -2104,6 +2104,15 @@ packer and the unit suite can pass on a Windows runner — `docs/pending-workflo
 (2026-10-20) — and `docs/pending-workflows/console-release-tag.yml` — the console's own release
 stream, a `console-vX.Y.Z` tag with its own version line and its own notes (2026-10-23), which
 supersedes the staged `console-release.yml`. None of the five is this site's: the website's two manual
+||||||| cc50b5b23
+packer and the unit suite can pass on a Windows runner — and
+`docs/pending-workflows/mobile-release.yml` — the mobile app's build and store submissions
+(2026-10-20). None of the four is this site's: the website's two manual
+packer and the unit suite can pass on a Windows runner — and
+`docs/pending-workflows/mobile-release.yml` — the mobile app's build and store submissions
+(2026-10-20) — and `docs/pending-workflows/dependabot-console.yml` — Dependabot's watch over
+the console's npm dependencies (2026-10-23), which is a settings file rather than a workflow and
+is copied over `.github/dependabot.yml` rather than into `.github/workflows/`. None of the five is this site's: the website's two manual
 workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the
 owner, and no deploy workflow is staged. The only other workflow files left there are the desktop
 console's `console-tests.yml` and `console-release.yml`, which the owner has copied in as well:

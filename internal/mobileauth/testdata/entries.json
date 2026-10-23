@@ -1,0 +1,265 @@
+{
+  "_comment": "The allowlist's vectors (P1's testdata): the normalisation two writers agree on, the resolution rule with an exact entry overriding its domain's, every refusal, and the node-key encoding's round trip. The Go test in mobileauth_test.go drives every case here; the named tests beside it are the ones the red step's mutations are proved against. No case carries a credential, an address that belongs to a person, or a Firebase key: the addresses are the documentation's own (example.com and RFC 2606's names).",
+  "normalize": [
+    {"name": "the domain is folded, the local part is kept", "in": "Dimi@Example.COM", "want": "Dimi@example.com"},
+    {"name": "the canonical form is a fixed point", "in": "dimi@example.com", "want": "dimi@example.com"},
+    {"name": "a subdomain is a domain of its own", "in": "dimi@sub.example.com", "want": "dimi@sub.example.com"},
+    {"name": "the local part is not folded", "in": "Dimi@example.com", "want": "Dimi@example.com"},
+    {"name": "a leading space is refused, not trimmed", "in": " dimi@example.com", "want_error": true},
+    {"name": "a trailing space is refused, not trimmed", "in": "dimi@example.com ", "want_error": true},
+    {"name": "a tab is refused", "in": "dimi@example.com\t", "want_error": true},
+    {"name": "a newline is refused", "in": "dimi@example.com\n", "want_error": true},
+    {"name": "a display-name form is refused, not parsed", "in": "Dimi Paun <dimi@example.com>", "want_error": true},
+    {"name": "a bare name is refused", "in": "Dimi Paun", "want_error": true},
+    {"name": "a comment is refused", "in": "dimi@example.com (work)", "want_error": true},
+    {"name": "a quoted local part is refused", "in": "\"dimi paun\"@example.com", "want_error": true},
+    {"name": "two addresses in one value are refused", "in": "dimi@example.com,ana@example.com", "want_error": true},
+    {"name": "a second @ is refused", "in": "dimi@@example.com", "want_error": true},
+    {"name": "no @ at all is refused", "in": "dimi.example.com", "want_error": true},
+    {"name": "an empty local part is refused", "in": "@example.com", "want_error": true},
+    {"name": "a leading dot in the local part is refused", "in": ".dimi@example.com", "want_error": true},
+    {"name": "a trailing dot in the local part is refused", "in": "dimi.@example.com", "want_error": true},
+    {"name": "two dots in a row in the local part are refused", "in": "dimi..paun@example.com", "want_error": true},
+    {"name": "a domain literal is refused", "in": "dimi@[192.0.2.1]", "want_error": true},
+    {"name": "a single-label domain is refused", "in": "dimi@localhost", "want_error": true},
+    {"name": "a trailing dot in the domain is refused", "in": "dimi@example.com.", "want_error": true},
+    {"name": "an empty domain label is refused", "in": "dimi@example..com", "want_error": true},
+    {"name": "a wildcard is refused, not read as its base domain", "in": "dimi@*.example.com", "want_error": true},
+    {"name": "an underscore is refused", "in": "dimi@exa_mple.com", "want_error": true},
+    {"name": "a label starting with a hyphen is refused", "in": "dimi@-example.com", "want_error": true},
+    {"name": "a numeric last label is refused", "in": "dimi@127.0.0.1", "want_error": true},
+    {"name": "a non-ASCII address is refused rather than folded", "in": "dimi@exämple.com", "want_error": true},
+    {"name": "an address over 254 bytes is refused", "in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com", "want_error": true},
+    {"name": "a local part over 64 bytes is refused", "in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com", "want_error": true},
+    {"name": "a local part of exactly 64 bytes is accepted", "in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com", "want": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com"},
+    {"name": "a label over 63 bytes is refused", "in": "dimi@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com", "want_error": true},
+    {"name": "an empty value is refused", "in": "", "want_error": true}
+  ],
+  "normalize_domain": [
+    {"name": "a domain is folded", "in": "Example.COM", "want": "example.com"},
+    {"name": "a subdomain is a domain of its own", "in": "sub.example.com", "want": "sub.example.com"},
+    {"name": "a single label is refused", "in": "localhost", "want_error": true},
+    {"name": "a wildcard is refused", "in": "*.example.com", "want_error": true},
+    {"name": "a trailing dot is refused", "in": "example.com.", "want_error": true},
+    {"name": "an all-digit last label is refused", "in": "127.0.0.1", "want_error": true},
+    {"name": "a non-ASCII domain is refused", "in": "exämple.com", "want_error": true},
+    {"name": "a domain over 253 bytes is refused", "in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com", "want_error": true},
+    {"name": "an empty value is refused", "in": "", "want_error": true}
+  ],
+  "resolve": [
+    {
+      "name": "a domain entry alone admits its member",
+      "domains": [{"address": "example.com", "role": "operator", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "ana@example.com",
+      "want": "operator"
+    },
+    {
+      "name": "an exact entry overrides a domain entry that grants less",
+      "exact": [{"address": "dimi@example.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "domains": [{"address": "example.com", "role": "viewer", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "dimi@example.com",
+      "want": "admin"
+    },
+    {
+      "name": "an exact entry overrides a domain entry that grants more",
+      "exact": [{"address": "dimi@example.com", "role": "viewer", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "domains": [{"address": "example.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "dimi@example.com",
+      "want": "viewer"
+    },
+    {
+      "name": "an exact entry and its domain entry agree",
+      "exact": [{"address": "dimi@example.com", "role": "operator", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "domains": [{"address": "example.com", "role": "operator", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "dimi@example.com",
+      "want": "operator"
+    },
+    {
+      "name": "a domain entry does not admit another domain's member",
+      "domains": [{"address": "example.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "dimi@other.example",
+      "want_error": "not_allowed"
+    },
+    {
+      "name": "a domain entry does not admit a subdomain",
+      "domains": [{"address": "example.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "dimi@sub.example.com",
+      "want_error": "not_allowed"
+    },
+    {
+      "name": "the lookup folds the domain of the address",
+      "exact": [{"address": "dimi@example.com", "role": "operator", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "dimi@EXAMPLE.COM",
+      "want": "operator"
+    },
+    {
+      "name": "the lookup does not fold the local part",
+      "exact": [{"address": "dimi@example.com", "role": "operator", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "Dimi@example.com",
+      "want_error": "not_allowed"
+    },
+    {"name": "an exact entry that names the address but is not in canonical form refuses it rather than falling through to its domain", "exact": [{"address": "Dimi@Example.com", "role": "viewer", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "domains": [{"address": "example.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "address": "Dimi@example.com", "want_error": "not_allowed"},
+    {"name": "an exact entry with an unfolded domain and a folded lookup refuses it rather than falling through to its domain", "exact": [{"address": "dimi@Example.com", "role": "viewer", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "domains": [{"address": "example.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "address": "dimi@example.com", "want_error": "not_allowed"},
+    {"name": "an exact entry that names the address but carries no known role refuses it rather than falling through to its domain", "exact": [{"address": "dimi@example.com", "role": "superuser", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "domains": [{"address": "example.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "address": "dimi@example.com", "want_error": "not_allowed"},
+    {"name": "an exact entry that names the address with no role refuses it rather than falling through to its domain", "exact": [{"address": "dimi@example.com", "role": "", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "domains": [{"address": "example.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "address": "dimi@example.com", "want_error": "not_allowed"},
+    {"name": "a usable entry of the key still grants beside an unusable entry for the same address", "exact": [{"address": "dimi@example.com", "role": "viewer", "at": "2026-10-22T09:00:00Z", "by": "dimi"}, {"address": "Dimi@Example.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "address": "dimi@example.com", "want": "viewer"},
+    {"name": "an entry that cannot be normalised at all names nobody", "exact": [{"address": " dimi@example.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "address": "dimi@example.com", "want_error": "not_allowed"},
+    {"name": "an exact entry whose local part differs in case names another address, so its domain's role stands", "exact": [{"address": "Dimi@example.com", "role": "viewer", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "domains": [{"address": "example.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "address": "dimi@example.com", "want": "admin"},
+    {"name": "a domain entry that names the domain but carries no known role admits nobody", "domains": [{"address": "example.com", "role": "superuser", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "address": "dimi@example.com", "want_error": "not_allowed"},
+    {"name": "a domain entry that names the domain with no role admits nobody", "domains": [{"address": "example.com", "role": "", "at": "2026-10-22T09:00:00Z", "by": "dimi"}], "address": "dimi@example.com", "want_error": "not_allowed"},
+    {
+      "name": "an exact entry that is not in canonical form admits nobody",
+      "exact": [{"address": "Dimi@Example.com", "role": "operator", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "Dimi@example.com",
+      "want_error": "not_allowed"
+    },
+    {
+      "name": "a domain entry that is not in canonical form admits nobody",
+      "domains": [{"address": "EXAMPLE.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "dimi@example.com",
+      "want_error": "not_allowed"
+    },
+    {
+      "name": "a role outside the closed set admits nobody",
+      "exact": [{"address": "dimi@example.com", "role": "superuser", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "dimi@example.com",
+      "want_error": "not_allowed"
+    },
+    {
+      "name": "a role spelled with a capital admits nobody",
+      "exact": [{"address": "dimi@example.com", "role": "Admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "dimi@example.com",
+      "want_error": "not_allowed"
+    },
+    {
+      "name": "an absent role admits nobody",
+      "exact": [{"address": "dimi@example.com", "role": "", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "dimi@example.com",
+      "want_error": "not_allowed"
+    },
+    {
+      "name": "two exact entries that disagree are ambiguous",
+      "exact": [
+        {"address": "dimi@example.com", "role": "viewer", "at": "2026-10-22T09:00:00Z", "by": "dimi"},
+        {"address": "dimi@example.com", "role": "admin", "at": "2026-10-22T10:00:00Z", "by": "dimi"}
+      ],
+      "address": "dimi@example.com",
+      "want_error": "ambiguous"
+    },
+    {
+      "name": "two exact entries that agree are one role",
+      "exact": [
+        {"address": "dimi@example.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"},
+        {"address": "dimi@example.com", "role": "admin", "at": "2026-10-22T10:00:00Z", "by": "dimi"}
+      ],
+      "address": "dimi@example.com",
+      "want": "admin"
+    },
+    {
+      "name": "two domain entries that disagree are ambiguous",
+      "domains": [
+        {"address": "example.com", "role": "viewer", "at": "2026-10-22T09:00:00Z", "by": "dimi"},
+        {"address": "example.com", "role": "admin", "at": "2026-10-22T10:00:00Z", "by": "dimi"}
+      ],
+      "address": "dimi@example.com",
+      "want_error": "ambiguous"
+    },
+    {
+      "name": "an exact entry is trusted even when its domain's entries disagree",
+      "exact": [{"address": "dimi@example.com", "role": "operator", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "domains": [
+        {"address": "example.com", "role": "viewer", "at": "2026-10-22T09:00:00Z", "by": "dimi"},
+        {"address": "example.com", "role": "admin", "at": "2026-10-22T10:00:00Z", "by": "dimi"}
+      ],
+      "address": "dimi@example.com",
+      "want": "operator"
+    },
+    {
+      "name": "an exact entry admits even when a domain entry is malformed",
+      "exact": [{"address": "dimi@example.com", "role": "viewer", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "domains": [{"address": "*.example.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "dimi@example.com",
+      "want": "viewer"
+    },
+    {
+      "name": "a domain in the exact list admits nobody",
+      "exact": [{"address": "example.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "dimi@example.com",
+      "want_error": "not_allowed"
+    },
+    {
+      "name": "an address in the domain list admits nobody",
+      "domains": [{"address": "dimi@example.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "dimi@example.com",
+      "want_error": "not_allowed"
+    },
+    {
+      "name": "an empty allowlist admits nobody",
+      "address": "dimi@example.com",
+      "want_error": "not_allowed"
+    },
+    {
+      "name": "an address that cannot be canonicalised admits nobody",
+      "domains": [{"address": "example.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "Dimi Paun <dimi@example.com>",
+      "want_error": "not_allowed"
+    },
+    {
+      "name": "an unreadable exact entry refuses the whole resolution rather than falling through to its domain",
+      "exact": [{"address": "dimi@good.com ", "role": "viewer", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "domains": [{"address": "good.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "dimi@good.com",
+      "want_error": "not_allowed"
+    },
+    {
+      "name": "an exact entry in display-name form refuses the whole resolution rather than falling through to its domain",
+      "exact": [{"address": "Dimi <dimi@good.com>", "role": "viewer", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "domains": [{"address": "good.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "dimi@good.com",
+      "want_error": "not_allowed"
+    },
+    {
+      "name": "an empty exact entry refuses the whole resolution",
+      "exact": [{"address": "", "role": "viewer", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "domains": [{"address": "good.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "dimi@good.com",
+      "want_error": "not_allowed"
+    },
+    {
+      "name": "an exact entry carrying a control character refuses the whole resolution",
+      "exact": [{"address": "dimi@good.com\u0000", "role": "viewer", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "domains": [{"address": "good.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "dimi@good.com",
+      "want_error": "not_allowed"
+    },
+    {
+      "name": "an unreadable exact entry refuses even beside a usable entry for the address",
+      "exact": [{"address": "dimi@good.com", "role": "viewer", "at": "2026-10-22T09:00:00Z", "by": "dimi"}, {"address": "dimi@good.com ", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "domains": [{"address": "good.com", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "dimi@good.com",
+      "want_error": "not_allowed"
+    },
+    {
+      "name": "an unreadable domain entry refuses the whole resolution rather than admitting another domain's member",
+      "domains": [{"address": "good.com ", "role": "viewer", "at": "2026-10-22T09:00:00Z", "by": "dimi"}, {"address": "other.example", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "ana@other.example",
+      "want_error": "not_allowed"
+    },
+    {
+      "name": "an unreadable domain entry refuses the domain it would otherwise have admitted",
+      "domains": [{"address": "good.com ", "role": "admin", "at": "2026-10-22T09:00:00Z", "by": "dimi"}],
+      "address": "dimi@good.com",
+      "want_error": "not_allowed"
+    }
+  ],
+  "keys": [
+    {"address": "dimi@example.com", "key": "dimi@example%2Ecom"},
+    {"address": "dimi.paun+fugaro@Example.COM", "key": "dimi%2Epaun%2Bfugaro@Example%2ECOM"},
+    {"address": "example.com", "key": "example%2Ecom"},
+    {"address": "sub.example.com", "key": "sub%2Eexample%2Ecom"},
+    {"address": "a%40b@example.com", "key": "a%2540b@example%2Ecom"},
+    {"address": "dimi@exämple.com", "key": "dimi@ex%C3%A4mple%2Ecom"},
+    {"address": "a/b#c$d[e]@example.com", "key": "a%2Fb%23c%24d%5Be%5D@example%2Ecom"},
+    {"name": "a key with a non-hex first escape digit is refused", "address": "", "key": "dimi%G2com", "want_decode_error": true}
+  ]
+}

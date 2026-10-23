@@ -239,7 +239,6 @@ function aRefusedState(): RefusedState {
 function anAbsentState(): NoBinaryState {
   return noInstallationState({
     reason: 'no fugaro binary was found: looked at /usr/local/bin/fugaro, /usr/bin/fugaro',
-    appEnv: {},
     home: '/nonexistent-home',
   })
 }
@@ -699,7 +698,7 @@ describe('the console with no binary to read', () => {
     expect(one(tree, 'unavailable-searched-count').classes).toContain('degraded-num')
   })
 
-  it('names what is needed, the install command and the picker, and draws no dashboard', () => {
+  it('names what is needed, the install command, and no picker to choose a binary with', () => {
     const state = anAbsentState()
     expect(state.installCommand).toBe(FUGARO_INSTALL_COMMAND)
     expect(state.searched.length).toBeGreaterThan(0)
@@ -707,7 +706,18 @@ describe('the console with no binary to read', () => {
     expect((tree as FakeScreen).getAttribute('data-kind')).toBe('no-binary')
     expect(one(tree, 'unavailable-headline').textContent).toBe('no fugaro binary')
     expect(one(tree, 'unavailable-install-command').textContent).toBe(FUGARO_INSTALL_COMMAND)
-    expect(one(tree, 'unavailable-picker').getAttribute('data-picker')).toBe('binary')
+    // **No choose-the-binary affordance**, which is the design's §6.3 row as this
+    // PR amended it (owner's ruling of 2026-10-20: the console asks the operator
+    // for no path). The screen used to draw one -- `div.unavailable-picker` with
+    // `data-picker="binary"` and a lead reading `PICKER_LEAD` -- and it wired
+    // nothing, so it told the operator to choose a binary the console no longer
+    // lets anyone choose. What replaces it is the install command above and the
+    // count below, and the installations list, which is the picker window's own
+    // screen. The sentence is asserted by its text, not by its constant, so a
+    // reintroduction under a new name is caught too.
+    expect(all(tree, 'unavailable-picker')).toEqual([])
+    expect(all(tree, 'unavailable-configured')).toEqual([])
+    expect(one(tree, 'unavailable-install-lead').textContent).toBe('install it with')
     // How many places were searched, and never which: no path is drawn on this
     // console -- the `path` class turns every one of them into `<path>`, and a
     // column of `<path>` under a sentence saying the console looked somewhere
@@ -716,6 +726,9 @@ describe('the console with no binary to read', () => {
     const drawn = walk(tree).map((node) => node.textContent).join('\n')
     expect(drawn).not.toContain('/opt/homebrew')
     expect(drawn).not.toContain('/usr/local/bin')
+    expect(drawn, 'the screen still invites the operator to choose a binary').not.toContain(
+      'choose a different fugaro binary',
+    )
     // The resolution's own sentence is read as prose, so the paths inside it
     // are drawn as the console's `<path>` marker -- the design's own mark for a
     // path, and the reason the sentence is still worth drawing: it says the
