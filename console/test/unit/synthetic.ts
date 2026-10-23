@@ -18,9 +18,13 @@
 //
 // The documents cover the axes a replay has to reproduce, one per record:
 //
-//   1. a normal live document, with a repository, a running run and a finished
-//      run that opened a pull request;
-//   2. the same feed one tick later, with the numbers moved (the 1 s floor);
+//   1. a normal live document, with a repository and a running run;
+//   2. the same feed one tick later, with the numbers moved (the 1 s floor),
+//      and a finished run that opened a pull request -- listed in `finished`
+//      **and** in `ready`, because `ready` IS the finished rows whose outcome
+//      is `ready` (`ReadyForReview`, `internal/watch/filter.go`, and
+//      `console/docs/json-contract.md`), so a document that carried the one
+//      without the other would be a shape the CLI cannot print;
 //   3. the degraded mode's sentence, which the CLI writes to stdout on the same
 //      stream as the documents and which is a **notice** rather than a document;
 //   4. a run that has gone silent, and a connection whose age says so;
@@ -122,6 +126,31 @@ function repoBlock(overrides: JSONDoc = {}): JSONDoc {
   }
 }
 
+/** readyRun is record 2's finished run: one that ended ready and opened a pull
+ * request. It is a **function** rather than a constant because it is drawn twice
+ * -- once in the document's `finished[]` and once in its `ready[]` -- and the two
+ * are the same row on the wire, not two rows that happen to agree today.
+ *
+ * Its `status` is `succeeded` and its `outcome` is `ready`, which is the pair
+ * `runstore` writes for a ready PR (`StatusSucceeded` is "a ready PR, or (outcome
+ * none, gate clean)", `internal/runstore/runstore.go:29`; `internal/watch/plain.go`
+ * keys the same pair off `Outcome`). No "ready" runstore *status* exists, so a row
+ * whose status read `ready` would be a row the CLI cannot print. */
+function readyRun(): JSONDoc {
+  return {
+    run: '20261015-101500-aa02',
+    slug: SLUG,
+    repo: REPO,
+    title: 'merge feat/console-fixtures for fixture-owner/fixture-repo',
+    status: 'succeeded',
+    outcome: 'ready',
+    failed: false,
+    pr_url: 'https://example.invalid/fixture-owner/fixture-repo/pull/412',
+    pr_number: 412,
+    age_seconds: 6400,
+  }
+}
+
 /** liveDocument is the whole document, with the fields each record moves. */
 function liveDocument(at: string, overrides: JSONDoc = {}): JSONDoc {
   return {
@@ -170,20 +199,11 @@ export const SYNTHETIC_SOURCE: readonly FixtureRecord[] = Object.freeze([
       },
       repos: [repoBlock({ counted_usd: 12.54, notional_usd: 3.29, percent: 25.08 })],
       runs: [runBlock({ spent_usd: 12.54, age_seconds: 1505, recipe: 'console-text-path' })],
-      finished: [
-        {
-          run: '20261015-101500-aa02',
-          slug: SLUG,
-          repo: REPO,
-          title: 'merge feat/console-fixtures for fixture-owner/fixture-repo',
-          status: 'ready',
-          outcome: 'ready',
-          failed: false,
-          pr_url: 'https://example.invalid/fixture-owner/fixture-repo/pull/412',
-          pr_number: 412,
-          age_seconds: 6400,
-        },
-      ],
+      finished: [readyRun()],
+      // The same row again: `watch --json` builds `ready` out of the finished
+      // rows the view already holds (`jsonDoc`), so the two lists carry one row
+      // in two places -- not two rows that happen to agree today.
+      ready: [readyRun()],
     }),
   },
   { at: '2026-10-15T12:00:08Z', notice: 'no budget backend: showing run records only' },
