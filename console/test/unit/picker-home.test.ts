@@ -71,11 +71,10 @@ function accountHome(name: string): string {
   return directory
 }
 
-/** installableStub puts a stub CLI in the well-known `~/.local/bin` of the home
- * the given environment names, and answers its `~`. It is the `test/unit/stub`
- * fake, so the console can spawn it: it answers the version handshake and the
- * picker's one read (`config list --json`, with no installations), and refuses
- * everything else. */
+/** installableStub puts a stub CLI in the well-known `~/.local/bin` of the given
+ * home. It is the `test/unit/stub` fake, so the console can spawn it: it answers
+ * the version handshake and the picker's one read (`config list --json`, with no
+ * installations), and refuses everything else. */
 function installableStub(envHome: string): Stub {
   return installStub(join(envHome, '.local', 'bin'), {
     commands: {
