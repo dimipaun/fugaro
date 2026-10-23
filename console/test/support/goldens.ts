@@ -35,11 +35,17 @@
 // fails rather than being written) and the darwin set committed by PR #629 is a
 // picture of the tree **before the stylesheet landed**: the four specs passed
 // with no CSS in the bundle, so the two themes' frames were byte-identical
-// pictures of unstyled markup. `assertGoldenFresh` is what makes that state
-// *legible*: when the golden is older than the stylesheet — by the commit that
-// last touched each, which is the only clock a checkout has — the golden test
-// fails with the exact re-record command for its own file instead of a
-// comparison against a picture of a tree that no longer exists.
+// pictures of unstyled markup. `assertGoldenFresh` is what makes *that* state
+// legible: when the golden is older than the stylesheet — by the commit that last
+// touched each, which is the only clock a checkout has — the golden test fails
+// with the exact re-record command for its own file instead of a comparison
+// against a picture of a tree that no longer exists.
+//
+// **The #629 set is a different case, and the timestamp cannot see it**: those
+// PNGs were committed on 2026-10-22, three days *after* the newest file of the
+// theme directory, so by commit time they are newer than the stylesheet they
+// predate. What fails for them is the comparison itself, which is why 2 above
+// exists: the diff is real, and the command is what makes it actionable.
 //
 // **Why this module is imported by a unit test as well as by four specs**, and
 // why every path in it is an argument rather than a constant derived from this
@@ -437,9 +443,11 @@ export function goldenMismatch(goldenPath: string, reported: string, spec: strin
  *     a picture of a tree that no longer exists can print a pixel diff nobody can
  *     read;
  *   - **the comparison failed.** The matcher's own message is kept — the diff
- *     ratio, the snapshot's name, and the `-actual`/`-expected`/`-diff` images
- *     Playwright writes under `test-results/` — and the exact re-record command
- *     is appended to it. What the matcher prints by itself is
+ *     ratio and the snapshot's name — and the exact re-record command is appended
+ *     to it. The `-actual`/`-expected`/`-diff` images under `test-results/` are
+ *     not lost either: the matcher attaches them to its own step as it fails,
+ *     which happens before this catch re-reports the error. What the matcher
+ *     prints by itself is
  *     `npx playwright test <file> --update-snapshots`, which is not that command:
  *     `npx playwright test` does not build, so a re-record run that way
  *     photographs whatever `dist/` happens to hold rather than this tree, and on
