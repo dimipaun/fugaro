@@ -30,6 +30,11 @@ var costBasisSplitters = []struct {
 		why:    "the same fallback in WithNotional, which recomputes the billed total from the notional part",
 	},
 	{
+		file:   "internal/runstore/cost.go",
+		anchor: "return c.ModelBasis == BasisSubscription",
+		why:    "the same fallback in AllNotional, which answers the split as a yes or no",
+	},
+	{
 		file:   "internal/runner/cost.go",
 		anchor: "runstore.ModelBasis(r.cfg.Agent.Auth) == runstore.BasisSubscription",
 		why:    "the writer: a stage of a run with no gateway records the notional part its auth mode implies, never a reading of a recorded run's dollars",
@@ -50,11 +55,14 @@ var costBasisSplitters = []struct {
 // necessarily names both -- is not a match, and what is checked is this tree's
 // code rather than any of its documents.
 //
-// The console's readers follow the same rule under a weaker check, because
-// their basis test is legitimate: a row written before C1.16 carries no
-// model_notional_usd, so the screens fall back to the subscription basis there
-// (`modelReading` in console/src/renderer/screens). What is never legitimate is
-// the fallback without the field, which is what the second walk asserts.
+// The desktop console's screens follow the same rule and this walk does not
+// reach them: they are TypeScript, outside this Go module, and a Go test that
+// read them would have to widen the one-entry console boundary allow-list
+// (internal/cli/docs_console_boundary_test.go, plan Task 0.3 a3) -- a
+// deliberate change of that boundary, argued in its own commit, rather than a
+// passenger of this sweep. The screens are field-first already: their basis
+// test is the documented fallback for a row written before C1.16 carried
+// model_notional_usd (`modelReading`).
 func TestNoReaderSplitsTheRunDollarsOnTheBasis(t *testing.T) {
 	const root = "../.."
 	seen := map[string]bool{}
@@ -117,42 +125,5 @@ func TestNoReaderSplitsTheRunDollarsOnTheBasis(t *testing.T) {
 			t.Errorf("costBasisSplitters allows %s to carry %q, and it does not (%s): "+
 				"a permission for a line that is gone hides the next reader added to that file", e.file, e.anchor, e.why)
 		}
-	}
-	// The console's half: a screen that decides on the basis must read the
-	// field beside it.
-	notionalRead := []string{"model_notional_usd", "modelNotionalUsd"}
-	basisTest := []string{"modelBasis", "model_basis"}
-	names := func(text string, ss []string) bool {
-		for _, s := range ss {
-			if strings.Contains(text, s) {
-				return true
-			}
-		}
-		return false
-	}
-	err = filepath.WalkDir(filepath.Join(root, "console", "src"), func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() || filepath.Ext(path) != ".ts" {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		text := string(data)
-		if !strings.Contains(text, "'subscription'") && !strings.Contains(text, `"subscription"`) {
-			return nil
-		}
-		if !names(text, basisTest) || names(text, notionalRead) {
-			return nil
-		}
-		t.Errorf("console/src/%s decides on the run's model basis and never reads %s: the basis is only the fallback for a row written before C1.16 (P12/D140), "+
-			"so the field is what a console reader splits on", strings.TrimPrefix(filepath.ToSlash(path), root+"/console/src/"), strings.Join(notionalRead, " or "))
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 }

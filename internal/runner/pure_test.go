@@ -163,7 +163,7 @@ func TestCostLine(t *testing.T) {
 	// the plan served in full, exactly as for a mixed one.
 	for want, c := range map[string]runstore.Cost{
 		"**Cost:** ≈ $2.50 (model $2.12 + compute $0.38, estimate); model $2.00 notional, counted against the Claude subscription": runstore.NewCost(4.12, 0.38, runstore.BasisAPIList).WithNotional(2.00),
-		"**Cost:** model $2.12 (compute not estimated); model $2.00 notional, counted against the Claude subscription":            runstore.ModelOnlyCost(4.12, runstore.BasisAPIList).WithNotional(2.00),
+		"**Cost:** model $2.12 (compute not estimated); model $2.00 notional, counted against the Claude subscription":             runstore.ModelOnlyCost(4.12, runstore.BasisAPIList).WithNotional(2.00),
 		"**Cost:** ≈ $0.38 compute (estimate); model $4.12 notional, counted against the Claude subscription":                      runstore.NewCost(4.12, 0.38, runstore.BasisAPIList).WithNotional(4.12),
 		"**Cost:** model $4.12 notional, counted against the Claude subscription (compute not estimated)":                          runstore.ModelOnlyCost(4.12, runstore.BasisAPIList).WithNotional(4.12),
 	} {

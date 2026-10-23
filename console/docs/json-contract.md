@@ -166,8 +166,8 @@ drift from it.
 | `verify` | string | — | no | measured |
 | `models` | string | — | no | measured, a pre-rendered pair |
 | `recipe` | string | — | **yes** | absent before the run reports one |
-| `auth` | string | — | no | `oauth` means `spent_usd` is notional |
-| `notional` | bool | — | no | **the availability state of `spent_usd`** |
+| `auth` | string | — | no | the run's auth mode, from the live registry entry. `oauth` means `spent_usd` is notional: such a run has no gateway, so `budget.AgentEntry.Spent` is its whole notional total (`snapshotEntry`, `internal/budget/registry.go`), while a cascade run's row carries the billed part its gateway charged and leaves its tier-A dollars to the notional counters (`notional_usd`) |
+| `notional` | bool | — | no | **the availability state of `spent_usd`**: true when `spent_usd` is a subscription's list price, which for a live row is `auth == "oauth"` (`internal/watch/build.go`). It is a fact about this **live** row, never a reading of a recorded run's `model_basis`: a recorded run's split is `model_notional_usd` (C1.16/P12 — a cascade run the plan served in full has an api-list basis and billed nothing) |
 | `spent_usd` | `*float64` | USD | no | **null = unavailable** |
 | `age_seconds` | `*float64` | seconds | no | **null = unavailable** |
 | `health` | string | — | no | `ok`, `silent` or `lost` (`HealthSilent` = 60 s, `HealthLost` = 180 s — `SilentAfter`/`LostAfter`, `internal/watch/build.go`) |
