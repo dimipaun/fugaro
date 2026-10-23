@@ -1120,6 +1120,7 @@ and **not** off this document or the design:
 | `budget show` | yes (`newBudgetShowCmd`) |
 | `report` | yes (`newReportCmd`) |
 | `runs ls` | yes (`newLsCmd`) |
+| `runs stats` | yes (`newRunsStatsCmd`, §6.10) |
 | `diagnose` | yes (`newDiagnoseCmd`) |
 | `logs` | yes (`newLogsCmd`) |
 | `secrets ls` | yes (`secretsOptions.addFlags`) |

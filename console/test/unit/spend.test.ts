@@ -322,7 +322,9 @@ const STATS_TOTALS = [
     counted_usd: 1.75,
     notional_usd: 0.4,
     counted_runs: 4,
-    avg_counted_usd: 0.4375,
+    // The CLI rounds every published figure to the cent (`userstats.cents`):
+    // the total's average is $0.44, not 0.4375.
+    avg_counted_usd: 0.44,
   },
 ] as const
 
@@ -332,6 +334,61 @@ const STATS_TOTALS = [
  * lists place that identity as an operator, the window, the read's own bound and
  * the runs of the window that never started. */
 function statsDocument(over: JSONDoc = {}): JSONDoc {
+  return {
+    project: 'fugaro-demo',
+    by: 'user',
+    view: 'all',
+    you: 'ada@example.com',
+    operator: true,
+    since: '2026-10-12',
+    until: '2026-10-15',
+    max_runs: 5000,
+    truncated: false,
+    rows: STATS_ROWS,
+    totals: STATS_TOTALS,
+    unlaunched: 2,
+    notes: ['these are every launcher of this project in the window'],
+    ...over,
+  }
+}
+
+/**
+ * statsOwnDocument is the **same read** as `statsDocument` in the shape the CLI
+ * really publishes for a private view, and the two are not interchangeable.
+ *
+ * `internal/cli/runs_stats.go` filters the private view *before* it aggregates:
+ * it deletes every run whose recorded launcher is not the caller, and only then
+ * does `userstats.Aggregate` build the rows -- and the totals **out of those
+ * rows** (`userstats.go:229`). So an `own` document carries the caller's runs
+ * alone in `rows` *and* in `totals` (whose single line is that person's figures,
+ * not the window's), and the two states the CLI cannot key the view in -- `you`
+ * empty, or the unattributed key, which it maps to the empty identity before the
+ * filter (`userstats.CallerKey`) -- delete *every* run, so both come back `[]`.
+ * A fixture that pairs an `own` view with a whole-window total is a document no
+ * CLI writes, and a screen written against it would tell a launcher that the
+ * number under their own row was everyone's.
+ */
+function statsOwnDocument(you: string): JSONDoc {
+  const identified = you !== '' && you !== 'unknown'
+  const rows = identified ? STATS_ROWS.filter((row) => row.user === you) : []
+  // The CLI writes one total per currency with the empty `user`, summing the
+  // rows it kept -- for one row, that row's own figures.
+  const totals = rows.map((row) => ({ ...row, user: '' }))
+  return statsDocument({
+    view: 'own',
+    you,
+    operator: false,
+    rows: [...rows],
+    totals,
+    notes: ['this read is your own runs in the window'],
+  })
+}
+
+/** statsDefensiveDocument is a document **the CLI does not write**: a private
+ * view that carries other people's rows, a `by` or a `view` word this build does
+ * not know. It exists to pin the screen's defence rather than the wire, which is
+ * why it is built from the whole-window rows on purpose. */
+function statsDefensiveDocument(over: JSONDoc = {}): JSONDoc {
   return {
     project: 'fugaro-demo',
     by: 'user',
@@ -1048,21 +1105,24 @@ describe('the by-person view', () => {
     expect(drawn(tree)).not.toContain('ada')
   })
 
-  it('draws one row for a private view, and says out loud how many it did not draw', () => {
+  it('draws one row for a private view, and says the total under it is that person’s own', () => {
     const model = buildSpendModel(PERSON_REPORT, BUDGET, {
       persons: true,
-      people: statsDocument({ view: 'own', you: 'bob@example.com', operator: false }),
+      people: statsOwnDocument('bob@example.com'),
     })
     const people = peopleOf(model)
     expect(people.view).toBe('own')
     expect(people.viewName).toBe('you alone')
     expect(people.operator).toBe(false)
     expect(people.rows.map((row) => row.user)).toEqual(['bob@example.com'])
-    // Two rows of the document are withheld, and the panel says how many: a
-    // reader who cannot see them is owed the fact that they exist.
-    expect(people.withheld).toBe(2)
+    expect(people.withheld).toBe(0)
     expect(people.sentences.join(' ')).toContain('your own runs alone')
-    expect(people.sentences.join(' ')).toContain('2 row(s) of this document are not drawn')
+    // The total the CLI published for this view is the caller's own, because the
+    // CLI aggregates after it filters -- so the panel says whose money that line
+    // is rather than letting it read as the window's.
+    expect(people.totals).toHaveLength(1)
+    expect(people.totals[0]?.counted.value).toBe(0.25)
+    expect(people.sentences.join(' ')).toContain('not the window’s total')
 
     const tree = renderSpend(factory, model, 'light')
     // One row and the total.
@@ -1072,30 +1132,59 @@ describe('the by-person view', () => {
     expect(drawn(tree)).not.toContain('ada@example.com')
   })
 
-  it('fails private: with no identity to key the view by, it draws the totals and no row at all', () => {
+  it('still counts the rows of an own view a document should not have carried', () => {
+    // A document the CLI does not write: `runs stats` never publishes another
+    // launcher's row in a private view (it deletes them before aggregating), so
+    // this document is a stranger's. The screen is written against the shape and
+    // not against the CLI's good behaviour, so it draws the caller's row alone
+    // and says how many it did not draw.
+    const model = buildSpendModel(PERSON_REPORT, BUDGET, {
+      persons: true,
+      people: statsDefensiveDocument({ view: 'own', you: 'bob@example.com' }),
+    })
+    const people = peopleOf(model)
+    expect(people.rows.map((row) => row.user)).toEqual(['bob@example.com'])
+    expect(people.withheld).toBe(2)
+    expect(people.sentences.join(' ')).toContain('2 row(s) of this document are not drawn')
+    expect(people.sentences.join(' ')).toContain('other people’s rows are withheld')
+    expect(drawn(renderSpend(factory, model, 'light'))).not.toContain('ada@example.com')
+  })
+
+  it('fails private: with no identity to key the view by, it draws neither a row nor a total', () => {
+    // The two documents here are the ones the CLI really publishes for these
+    // states, and neither carries a total: `runs_stats.go` deletes every run
+    // before `userstats.Aggregate` can sum the rows, so `rows` and `totals` come
+    // back `[]` together (`statsOwnDocument`). That is the whole reason the
+    // panel may not promise a total beside its "no rows" sentence: there is no
+    // figure to promise, and a panel that drew the identity sentence and then
+    // "the document carries no totals line" would contradict itself.
     for (const [you, sentence] of [
       ['', 'did not say who this read was resolved for'],
       ['unknown', 'unattributed key itself'],
     ] as const) {
       const model = buildSpendModel(PERSON_REPORT, BUDGET, {
         persons: true,
-        people: statsDocument({ view: 'own', you, operator: false }),
+        people: statsOwnDocument(you),
       })
       const people = peopleOf(model)
       expect(people.rows, you).toEqual([])
+      expect(people.totals, you).toEqual([])
       expect(people.failPrivate, you).toBe(true)
-      expect(people.withheld, you).toBe(STATS_ROWS.length)
-      // The totals are the window's and not a person's, so they are drawn in
-      // every state -- and they are drawn *as the document published them*.
-      expect(people.totals, you).toHaveLength(1)
+      expect(people.withheld, you).toBe(0)
       expect(people.sentences.join(' '), you).toContain(sentence)
-      expect(people.sentences.join(' '), you).toContain('3 row(s) of this document are not drawn')
+      // The fail-private sentence promises no figure the document does not
+      // carry: "only the totals" is not something this state can say.
+      expect(people.sentences.join(' '), you).not.toContain('only the totals')
 
       const tree = renderSpend(factory, model, 'light')
-      // The total line, and not one person row.
-      expect(all(tree, 'spend-person'), you).toHaveLength(1)
-      expect(all(tree, 'spend-person-total'), you).toHaveLength(1)
+      expect(all(tree, 'spend-person'), you).toEqual([])
+      expect(all(tree, 'spend-person-total'), you).toEqual([])
       expect(one(tree, 'spend-people-rows').childNodes(), you).toEqual([])
+      // No total was published, so the panel says that and nothing else about
+      // one: exactly one sentence about the missing line, its own console words.
+      const notes = texts(tree, 'spend-person-note')
+      expect(notes.filter((note) => note?.includes('no totals line')), you).toHaveLength(1)
+      expect(notes.join(' '), you).not.toContain('only the totals')
       // The identity cell says why it is not an identity, in the console's own
       // words: an empty cell would read as anonymous.
       // `''` is drawn as the console's sentence for an identity the CLI could
@@ -1115,13 +1204,34 @@ describe('the by-person view', () => {
     }
   })
 
+  it('counts the rows of a private view a document should not have carried, and keeps no claim about totals', () => {
+    // A document the CLI does not write, on purpose: an own view that still
+    // carries other people's rows *and* a whole-window total. The rows are
+    // withheld by the same rule and counted; the document's totals are drawn as
+    // it published them, and the panel says which read they are the sum of.
+    const model = buildSpendModel(PERSON_REPORT, BUDGET, {
+      persons: true,
+      people: statsDefensiveDocument({ view: 'own', you: '' }),
+    })
+    const people = peopleOf(model)
+    expect(people.rows).toEqual([])
+    expect(people.totals).toHaveLength(1)
+    expect(people.withheld).toBe(STATS_ROWS.length)
+    expect(people.sentences.join(' ')).toContain('3 row(s) of this document are not drawn')
+    const tree = renderSpend(factory, model, 'light')
+    expect(all(tree, 'spend-person-total')).toHaveLength(1)
+    expect(all(tree, 'spend-person')).toHaveLength(1)
+  })
+
   it('draws no row for a view or a breakdown this build does not know, and echoes neither word', () => {
     // The value is never drawn -- not in a cell, not in an attribute: the
     // panel's own closed words stand in for it, the rule the switch's eighth
-    // breakdown and the Live screen's unknown flags follow.
+    // breakdown and the Live screen's unknown flags follow. Both documents here
+    // are ones the CLI does not write (its `view` is `own` or `all`, its `by` is
+    // `user`), so they pin the defence rather than the wire.
     const unknownView = buildSpendModel(PERSON_REPORT, BUDGET, {
       persons: true,
-      people: statsDocument({ view: 'the-whole-company' }),
+      people: statsDefensiveDocument({ view: 'the-whole-company' }),
     })
     const view = peopleOf(unknownView)
     expect(view.view).toBe('unknown')
@@ -1137,14 +1247,19 @@ describe('the by-person view', () => {
 
     const unknownBy = buildSpendModel(PERSON_REPORT, BUDGET, {
       persons: true,
-      people: statsDocument({ by: 'team' }),
+      people: statsDefensiveDocument({ by: 'team' }),
     })
     const by = peopleOf(unknownBy)
     expect(by.rows).toEqual([])
     expect(by.withheld).toBe(STATS_ROWS.length)
+    expect(by.sentences.join(' ')).toContain('a breakdown this console does not know')
     const drawnBy = renderSpend(factory, unknownBy, 'light')
     expect(drawn(drawnBy)).not.toContain('team')
-    expect(drawn(drawnBy)).toContain('the totals')
+    // The document published totals, so they are drawn -- as *its* totals: in a
+    // state where the panel does not know who the rows were for, it claims
+    // nothing about what they are the sum of.
+    expect(all(drawnBy, 'spend-person-total')).toHaveLength(1)
+    expect(texts(drawnBy, 'spend-person-user')).toEqual(['total'])
   })
 
   it('says the read was bounded, and draws no average where the document has no sample', () => {

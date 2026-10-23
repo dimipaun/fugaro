@@ -80,8 +80,13 @@
 // nothing it is not licensed to draw**: rows appear only when the document's own
 // `by` and `view` say who they are for, the private view draws the one row the
 // CLI keyed by the identity it resolved (`you`) and **no row at all** when the
-// document does not say who the caller is, and the document's own totals are
-// drawn in every state, because a total is the window's and not a person's. The
+// document does not say who the caller is, and the totals drawn are the ones
+// that read published -- the CLI aggregates *after* it filters for the private
+// view (`internal/cli/runs_stats.go`), so under `all` they are the window's and
+// under `own` they are the caller's own alone, and the two states where the CLI
+// publishes no row publish **no total either** (`userstats.Aggregate` builds
+// `totals` out of `rows`). A total is never computed here: it is the CLI's own
+// sum of the rows it published, and the panel says which read it is the sum of. The
 // console cannot ask for `--all-users`: that flag is not on the operation's
 // schema (`src/main/ipc.ts`), so "who may see whose rows" is the CLI's decision
 // and never this window's. What the panel *withheld* is a sentence and a count
@@ -542,8 +547,13 @@ export type PeopleView = 'all' | 'own' | 'unknown'
  *     who the caller is -- `you` empty is *unavailable* (the CLI could not tell),
  *     and the `unknown` key is a group of runs rather than a person;
  *   - a `view` or a `by` this build does not know draws no rows;
- *   - the document's own `totals` are drawn in **every** state, because the
- *     total is the window's and not a person's.
+ *   - the document's own `totals` are drawn **as the document published them,
+ *     and never computed here** -- and what they are the sum of follows the
+ *     view, because the CLI aggregates after it filters (`runs_stats.go`): the
+ *     window's under `all`, the caller's own runs alone under a licensed `own`
+ *     (where `PEOPLE_OWN_TOTAL` says so on screen), and **absent** in the two
+ *     states where the CLI publishes no row at all, its totals coming from its
+ *     rows (`userstats.Aggregate`).
  */
 export interface SpendPeople {
   /** false when there is no document behind this panel: the read was refused,
@@ -586,7 +596,10 @@ export interface SpendPeople {
   readonly unlaunched: Reading
   /** the rows this screen draws, after the fail-private rule */
   readonly rows: readonly SpendPersonRow[]
-  /** the document's own per-currency totals (its `user` is `""`), always drawn */
+  /** the document's own per-currency totals (its `user` is `""`), drawn
+   * exactly as published: the rows of the read that produced them, which is the
+   * window under `all` and the caller's own runs under `own`, and **empty** in
+   * the two states where the CLI published no row to sum */
   readonly totals: readonly SpendPersonRow[]
   /** the console's own sentences about what is drawn, in the order they are
    * drawn; every one is a console constant or is composed from them */
@@ -837,32 +850,45 @@ const UNKNOWN_PEOPLE_VIEW = 'a view this console does not know'
  * console does not know: no rows are drawn, because the panel's whole subject
  * is who the launcher was. */
 const PEOPLE_UNKNOWN_BY =
-  'the document groups by a breakdown this console does not know, so no rows are drawn here -- only the totals'
+  'the document groups by a breakdown this console does not know, so no rows are drawn here'
 
 /** PEOPLE_UNKNOWN_VIEW is the same sentence for an unknown `view` word. */
 const PEOPLE_UNKNOWN_VIEW =
-  'the document names a view this console does not know, so no rows are drawn here -- only the totals'
+  'the document names a view this console does not know, so no rows are drawn here'
 
 /** PEOPLE_PRIVATE is the fail-private sentence: the document did not say who
  * the read was resolved for, so the console draws no row at all. It is the
  * design's rule in the console's own words -- an identity the installation's own
- * lists do not place stays private -- and it is drawn in place of the rows, not
- * in place of the totals. */
+ * lists do not place stays private -- and it is drawn in place of the rows. It
+ * promises no totals: in this state the CLI publishes none (`you` empty means
+ * every run was deleted before the aggregation, so `totals` comes back `[]`),
+ * and the panel must not claim a figure the document does not carry. */
 const PEOPLE_PRIVATE =
-  'the CLI did not say who this read was resolved for, so no rows are drawn here -- only the totals: an identity the installation’s own lists do not place stays private'
+  'the CLI did not say who this read was resolved for, so no rows are drawn here: an identity the installation’s own lists do not place stays private'
 
 /** PEOPLE_UNATTRIBUTED is the fail-private sentence for the one identity the CLI
  * resolves but will not key a private view by: the unattributed key itself
  * (`userstats.UnknownUser`, `"unknown"`), whose row holds every run of the
  * window that recorded no launcher -- nobody's own figures. The CLI shows such a
- * caller nothing at all, and so does this screen. */
+ * caller nothing at all, and so does this screen: no row **and no total**, for
+ * the same reason (`runs_stats.go` filters to nothing before `Aggregate`). */
 const PEOPLE_UNATTRIBUTED =
-  'the identity this read resolved for you is the unattributed key itself, which holds every run of the window that recorded no launcher: those are nobody’s own figures, so no row is drawn here -- only the totals'
+  'the identity this read resolved for you is the unattributed key itself, which holds every run of the window that recorded no launcher: those are nobody’s own figures, so no row is drawn here'
 
 /** PEOPLE_OWN is the sentence for the private view: what it is, and what it
  * deliberately does not say. */
 const PEOPLE_OWN =
   'the CLI resolved this read as your own runs alone: these are the runs you started in the window and what they cost, and it says nothing about what anyone else spent'
+
+/** PEOPLE_OWN_TOTAL is the sentence for the private view's totals line. The CLI
+ * filters the private view *before* it aggregates (`internal/cli/runs_stats.go`:
+ * every run whose launcher is not the caller is deleted, then
+ * `userstats.Aggregate` sums what is left), so the total beside these rows is
+ * the caller's own and not the window's. A reader who took it for the window's
+ * -- the totals line is one line above it and looks the same -- would read it as
+ * everyone's spend, which is the one thing this view may not say. */
+const PEOPLE_OWN_TOTAL =
+  'the total below is this read’s own sum of the rows it published, which for this view is your own runs alone: it is not the window’s total, and it says nothing about what anyone else spent'
 
 /** PEOPLE_ALL is the sentence for the view that shows everyone. It states the
  * ruling and not the reason for it: whether the caller is an operator is the
@@ -954,7 +980,9 @@ function personRowOf(raw: unknown): SpendPersonRow | null {
  * The drawing rules are `SpendPeople`'s, and the two that matter are here: rows
  * are drawn only when the document's own `by` and `view` license them, and in
  * the private view only the row keyed by the identity the CLI resolved. The
- * totals are read in every state, because they are the window's.
+ * totals are read from the document as it published them and are never summed
+ * here; what they are the sum *of* is the view's, so the private view gets a
+ * sentence naming whose money that line is.
  */
 function peopleOf(raw: JSONDoc | null, reason: string | null): SpendPeople {
   const document = raw === null ? null : objectAt(raw)
@@ -993,6 +1021,11 @@ function peopleOf(raw: JSONDoc | null, reason: string | null): SpendPeople {
   const rows = arrayAt(document['rows'])
     .map(personRowOf)
     .filter((row): row is SpendPersonRow => row !== null)
+  // The document's totals, read as it published them: this screen never sums a
+  // row (a second sum is a figure the CLI did not write).
+  const totals = arrayAt(document['totals'])
+    .map(personRowOf)
+    .filter((row): row is SpendPersonRow => row !== null)
   const truncated = boolAt(document['truncated'])
   const unlaunched = countReading(document, 'unlaunched')
   const maxRuns = countReading(document, 'max_runs')
@@ -1014,8 +1047,12 @@ function peopleOf(raw: JSONDoc | null, reason: string | null): SpendPeople {
   if (!byKnown) sentences.push(PEOPLE_UNKNOWN_BY)
   else if (view === 'unknown') sentences.push(PEOPLE_UNKNOWN_VIEW)
   else if (view === 'own') {
-    if (identified) sentences.push(PEOPLE_OWN)
-    else sentences.push(you === UNATTRIBUTED_KEY ? PEOPLE_UNATTRIBUTED : PEOPLE_PRIVATE)
+    if (identified) {
+      sentences.push(PEOPLE_OWN)
+      // The totals line under these rows is this read's own sum of them, which
+      // for the private view is the caller's own runs and not the window's.
+      if (totals.length > 0) sentences.push(PEOPLE_OWN_TOTAL)
+    } else sentences.push(you === UNATTRIBUTED_KEY ? PEOPLE_UNATTRIBUTED : PEOPLE_PRIVATE)
   } else sentences.push(PEOPLE_ALL)
   if (licensed && drawn.length === 0) sentences.push(PEOPLE_NO_ROW)
   if (rows.length > drawn.length) {
@@ -1050,9 +1087,7 @@ function peopleOf(raw: JSONDoc | null, reason: string | null): SpendPeople {
     truncated,
     unlaunched,
     rows: drawn,
-    totals: arrayAt(document['totals'])
-      .map(personRowOf)
-      .filter((row): row is SpendPersonRow => row !== null),
+    totals,
     sentences,
     notes: arrayAt(document['notes']).filter((note): note is string => typeof note === 'string'),
   }
@@ -2309,12 +2344,18 @@ function personLine(factory: ScreenFactory, row: SpendPersonRow): ScreenElement 
   return element
 }
 
-/** NO_PEOPLE_TOTAL is the console's sentence for a document with no totals line
- * at all: the panel's rows are drawn from `rows`, and a total is a figure the
- * document publishes rather than one this screen adds up (adding one currency's
- * rows is what the CLI does, and a second sum here could differ from it). */
+/** NO_PEOPLE_TOTAL is the console's sentence for a document that published no
+ * totals line at all: the panel's rows are drawn from `rows`, and a total is a
+ * figure the document publishes rather than one this screen adds up (adding one
+ * currency's rows is what the CLI does, and a second sum here could differ from
+ * it). It is a real state of the CLI's own, not only a hostile document: the
+ * private view the CLI neither keyed nor filled (`you` empty, or the
+ * unattributed key) publishes `totals: []` because its `totals` are its `rows`,
+ * and a licensed private view over a window the caller started nothing in
+ * publishes `[]` too. The sentence says only that, and never that the read had
+ * a window total it withheld. */
 const NO_PEOPLE_TOTAL =
-  'the document carries no totals line, so this console has no window total to draw: the total is the CLI’s own sum of the rows, and this screen does not compute a second one'
+  'the document carries no totals line, so this console draws no total here: a total is the CLI’s own sum of the rows this read published, and this screen does not compute a second one'
 
 /**
  * peoplePanel draws the by-person view: `runs stats --json` as its own panel
@@ -2322,10 +2363,15 @@ const NO_PEOPLE_TOTAL =
  *
  * The panel's whole job is to say **who the rows are for** before it draws them,
  * and the fail-private rule is `SpendPeople`'s: no document, an unknown `by` or
- * `view`, or a private view with no identity to key a row by, all draw the
- * document's totals and **no row at all**. A panel that drew an empty list in
- * those states would say "nobody spent anything", which is a different fact from
- * "the console will not show you whose money this was".
+ * `view`, or a private view with no identity to key a row by, all draw **no row
+ * at all**. A panel that drew an empty list in those states would say "nobody
+ * spent anything", which is a different fact from "the console will not show you
+ * whose money this was". The totals are the ones the document published and
+ * never a sum computed here: they are drawn in every state that carries them,
+ * and the two the CLI itself publishes none in (its `you` empty or the
+ * unattributed key, where it deletes every run before aggregating) draw
+ * `NO_PEOPLE_TOTAL` -- which says exactly that, and so never contradicts the
+ * fail-private sentence above it.
  *
  * It is drawn only while the operator's knob is on (`renderSpend`): with the
  * knob off there is no read and no panel, which is D15's rule and not a state of

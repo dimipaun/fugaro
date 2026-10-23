@@ -296,6 +296,12 @@ interface Screen {
   readonly peopleTotals: number
   readonly peopleReason: string | null
   readonly peopleYou: string | null
+  /** the by-person panel's money column, per drawn line: the count, the two
+   * accounts (the notional one marked) and the average with its sample */
+  readonly peopleMoney: readonly string[]
+  readonly peopleNotional: readonly string[]
+  readonly peopleAverages: readonly string[]
+  readonly peopleSamples: readonly string[]
   readonly points: number
   readonly seriesValues: readonly string[]
   readonly text: string
@@ -353,6 +359,13 @@ function screen(page: Page): Promise<Screen> {
       peopleTotals: all('.spend-people-totals .spend-person').length,
       peopleReason: scope.querySelector('.spend-people-reason')?.textContent ?? null,
       peopleYou: scope.querySelector('.spend-people-you')?.textContent ?? null,
+      // The panel's money path, per drawn line: the model figure, the notional
+      // one (with its mark), the average and the sample it is over. Read from
+      // the panel's own classes so the report's columns cannot satisfy them.
+      peopleMoney: texts('.spend-people .spend-person-counted'),
+      peopleNotional: texts('.spend-people .spend-person-notional'),
+      peopleAverages: texts('.spend-people .spend-person-average'),
+      peopleSamples: texts('.spend-people .spend-person-counted-runs'),
       points: all('.spend-account')
         .find((block) => block.getAttribute('data-account') === 'model')
         ?.querySelectorAll('.spend-point').length ?? 0,
@@ -552,10 +565,17 @@ const STATS_DOCUMENT: JSONDoc = {
       infra_error: 0,
       other: 0,
       no_record: 0,
-      counted_usd: '1.500000',
-      notional_usd: '0.400000',
+      // The three money fields are JSON **numbers** on the wire, and all three
+      // are always present: contract section 6.10 declares `counted_usd`,
+      // `notional_usd` and `avg_counted_usd` `float64` with no `omitempty`, and
+      // notional `0` means zero rather than absent. A string here would be a
+      // document no CLI writes, and `readNumber` refuses a numeric string -- so
+      // a fixture that typed them as strings would draw `n/a` in every money
+      // cell and still pass.
+      counted_usd: 1.5,
+      notional_usd: 0.4,
       counted_runs: 3,
-      avg_counted_usd: '0.500000',
+      avg_counted_usd: 0.5,
     },
     {
       user: 'bob@example.com',
@@ -567,10 +587,10 @@ const STATS_DOCUMENT: JSONDoc = {
       infra_error: 0,
       other: 0,
       no_record: 0,
-      counted_usd: '0.650000',
-      notional_usd: null,
+      counted_usd: 0.65,
+      notional_usd: 0,
       counted_runs: 1,
-      avg_counted_usd: '0.650000',
+      avg_counted_usd: 0.65,
     },
     {
       user: 'unknown',
@@ -582,10 +602,12 @@ const STATS_DOCUMENT: JSONDoc = {
       infra_error: 0,
       other: 0,
       no_record: 1,
-      counted_usd: '0.000000',
-      notional_usd: null,
+      counted_usd: 0,
+      notional_usd: 0,
       counted_runs: 0,
-      avg_counted_usd: null,
+      // `counted_runs` 0 with an average of 0 is the CLI's "no run to average":
+      // the console draws `n/a`, never `$0.00` (contract section 6.10).
+      avg_counted_usd: 0,
     },
   ],
   totals: [
@@ -599,10 +621,12 @@ const STATS_DOCUMENT: JSONDoc = {
       infra_error: 0,
       other: 0,
       no_record: 1,
-      counted_usd: '2.150000',
-      notional_usd: '0.400000',
+      counted_usd: 2.15,
+      notional_usd: 0.4,
       counted_runs: 4,
-      avg_counted_usd: '0.537500',
+      // The CLI rounds every published figure to the cent (`userstats.cents`),
+      // so the total's average is $0.54 and not 0.5375.
+      avg_counted_usd: 0.54,
     },
   ],
   notes: ['these are every launcher of this project in the window'],
@@ -914,6 +938,21 @@ test.describe('the Spend screen', () => {
     expect(drawn.peopleYou).toBe('redacted@example.invalid')
     expect(drawn.text).toContain('these are every launcher of this project in the window')
     expect(drawn.text).not.toContain('ada')
+
+    // The money path, end to end: the document's three `float64`s reach the
+    // cells as dollars, the notional one carries its mark, and the average
+    // without a sample is `n/a` rather than `$0.00`. Three rows plus the total
+    // line, and the total is the CLI's own sum of the rows above it ($1.50 +
+    // $0.65 + $0.00) and never a sum this screen computed.
+    expect(drawn.peopleMoney).toEqual(['$1.50', '$0.65', '$0.00', '$2.15'])
+    expect(drawn.peopleNotional).toEqual([
+      `NOTIONAL~$0.40`,
+      `NOTIONAL~$0.00`,
+      `NOTIONAL~$0.00`,
+      `NOTIONAL~$0.40`,
+    ])
+    expect(drawn.peopleAverages).toEqual(['$0.50', '$0.65', 'n/a', '$0.54'])
+    expect(drawn.peopleSamples).toEqual(['3', '1', '0', '4'])
 
     // The knob off is one read and no panel at all -- not an empty one.
     const off = await mountWired(SPEND_DEFAULT_CONTROLS, { '30d': REPORT }, 'light', STATS_DOCUMENT)

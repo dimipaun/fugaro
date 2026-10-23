@@ -741,6 +741,13 @@ func TestDocsDesktopConsoleContractNamesTheFlagInventory(t *testing.T) {
 		if !strings.Contains(doc, "`"+name+"`") {
 			t.Errorf("%s never names the spawned command %q", path, name)
 		}
+		// And it must be a row of the section-8 table itself, not merely a
+		// mention somewhere in the file: a command that reached the console's
+		// set while the inventory quietly went on listing the older ones would
+		// pass the check above (§6.10's own heading names this command anyway).
+		if !strings.Contains(doc, "| `"+name+"`") {
+			t.Errorf("%s's flag inventory table has no row for the spawned command %q", path, name)
+		}
 	}
 	if cmd := newVersionCmd(); cmd.Flags().HasFlags() {
 		t.Errorf("fugaro version takes flags now, so it is no longer the handshake exception the document states: %s", cmd.Flags().FlagUsages())
