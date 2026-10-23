@@ -432,6 +432,7 @@ only where Windows itself opens the path.** The Linux one is the one the operato
 terminal inside the distribution, which is what makes it the right one to show (F16).
 Verification: `[unit]`, `[types]`. Tier A. Depends on: T-D2.
 Commit: `console: the Linux spelling for what we say and pass, the UNC spelling for what Windows opens`
+**KNOWN LIMIT:** a WSL distribution whose name has a space, quote or other shell metacharacter (outside `^[A-Za-z0-9][A-Za-z0-9._-]*$`, 200 characters or fewer) is refused on the WSL route (fail closed, because the CLI runs through the distribution's shell); register it under a plain name (`wsl --export` then `wsl --import`) to drive it.
 
 **T-D4 — the private working directory on a Windows host (F12).**
 Files: `console/src/main/spawn.ts`, `console/test/unit/spawn.test.ts`.

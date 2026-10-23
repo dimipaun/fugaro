@@ -819,6 +819,77 @@ func TestTheRefusalOfAnUnauditedMintIsAudited(t *testing.T) {
 	}
 }
 
+// TestAMintWhoseAnswerCannotBeBuiltIsRefusedUnaudited is the other half of the
+// mint's fail-closed pair, and the one an operator reads the trail differently
+// for: an answer this endpoint cannot build is a call that hands out NO token,
+// so it must leave no line saying a token was issued. The refusal is written
+// through refuseMint and carries its own line, and the log holds exactly one
+// line for the call — the refusal's.
+//
+// The order in answerMint is what this pins: the body is built BEFORE the
+// issuance is audited. A mint that audited first (the revert this test is for)
+// writes an `ok` line, then fails to build the answer, and an operator reading
+// the trail sees a mint that was served and a run that got a refusal — with the
+// token's existence at GitHub to match the line and no answer to explain it.
+//
+// The failure is driven by hand because a real mint cannot reach it: the
+// endpoint's answer is three fields, and the only one encoding/json can refuse
+// is the expiry time.Time, whose refusal needs a year outside [0,9999] while
+// every year GitHub's RFC3339 timestamps can name is four digits. The branch is
+// kept so that this call is answered rather than panicked on
+// (github.go's answerMint), and this is the test that holds what it answers.
+//
+// Mutation (run, restore): audit the issuance before building the body in
+// github.go's answerMint, and this test is red on the count ("want exactly 1
+// line, the refusal's") and on the ok status being found beside it.
+func TestAMintWhoseAnswerCannotBeBuiltIsRefusedUnaudited(t *testing.T) {
+	s, auditLog := auditSvc(t, nil)
+	id := Identity{Slug: s.slug, Run: s.run, Job: s.job, JobAccount: testJobSA}
+	rec := httptest.NewRecorder()
+	// A token and an expiry encoding/json refuses: a year outside its range.
+	token := fakeCred(t, "installation-token")
+	s.server.answerMint(context.Background(), rec, id, MintResponse{
+		Token:      token,
+		ExpiresAt:  time.Date(10000, time.January, 1, 0, 0, 0, 0, time.UTC),
+		Repository: testRepo,
+	})
+
+	if rec.Code != StatusUnavailable {
+		t.Fatalf("the answer is %d, want %d: %s", rec.Code, StatusUnavailable, rec.Body.String())
+	}
+	e := refusal(t, rec.Code, rec.Body.Bytes())
+	if e.Error != ErrorStateUnavailable || e.Message != mintAnswerRefusal {
+		t.Errorf("the refusal is %+v, want state_unavailable and this file's own sentence %q", e, mintAnswerRefusal)
+	}
+	// The token is in no answer: the call it was minted for is over.
+	if strings.Contains(rec.Body.String(), token) {
+		t.Fatalf("the refusal carries the token:\n%s", rec.Body.String())
+	}
+	if !strings.Contains(s.logs.String(), "the mint's answer could not be built") {
+		t.Errorf("the service's log says nothing about the answer it could not build: %s", s.logs.String())
+	}
+	lines := parseAuditLines(t, auditLog.String())
+	if len(lines) != 1 {
+		t.Fatalf("the refused mint wrote %d audit lines, want exactly 1 (the refusal's, and no issuance line): %v", len(lines), lines)
+	}
+	line := lines[0]
+	checkAuditShape(t, line)
+	for field, want := range map[string]any{
+		"run":        s.run,
+		"repository": s.slug,
+		"job":        s.job,
+		"caller":     testJobSA,
+		"credential": config.GitHubAppKeySecret,
+		"tier":       "",
+		"purpose":    PurposeMint,
+		"status":     ErrorStateUnavailable,
+	} {
+		if got := line[field]; got != want {
+			t.Errorf("the refusal's audit line %s = %v, want %q", field, got, want)
+		}
+	}
+}
+
 // levelOffHandler is a handler that records nothing: Enabled is false for every
 // level, which is the half of "cannot be audited" a level-filtered log is
 // (C1.13's line(): slog's own LogAttrs would drop such a record silently).

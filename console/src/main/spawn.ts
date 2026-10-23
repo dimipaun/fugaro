@@ -342,6 +342,13 @@ export function locationsFor(platform: string = process.platform): PlatformLocat
  * installation's. Anything not on this list is not passed -- there is no merge
  * with `process.env` anywhere in this file, and that is the property
  * `test/unit/spawn.test.ts` diffs the child's own report against.
+ *
+ * **It is the whole list on both routes, and the WSL route adds exactly one key
+ * to the environment `wsl.exe` is handed (`WSLENV_KEY`, see `childEnvironment`).**
+ * That key is not a variable the distribution receives: it is `wsl.exe`'s own
+ * share list, and the console states it empty rather than leaving it out, so
+ * "no Windows variable is shared with the distribution" is a sentence this
+ * console wrote rather than a default it inherited (F20, D5(a)).
  */
 export const CHILD_ENV_KEYS: readonly string[] = Object.freeze([
   'PATH',
@@ -356,6 +363,26 @@ export const CHILD_ENV_KEYS: readonly string[] = Object.freeze([
   'XDG_RUNTIME_DIR',
   'FUGARO_PROJECT',
 ])
+
+/**
+ * WSLENV_KEY is `wsl.exe`'s own share list, and **the console writes it, always
+ * empty, and never reads it** (Part E, T-E2; F20, D5(a)).
+ *
+ * The mechanism it states: `wsl.exe` copies a Windows variable into the
+ * distribution's environment **only when that variable's name is listed in
+ * `WSLENV`**, and an entry may carry a `/u`, `/w` or `/l` suffix saying which
+ * side's spelling it keeps. So an absent `WSLENV` and an empty one mean the same
+ * thing to a build that reads it as a list -- and only the second is a thing the
+ * console *said*. With `WSLENV` in the host's own environment the console does
+ * nothing: the key is written as `''` unconditionally and the host's value is
+ * not read, because a `WSLENV` that lists `PATH` (or anything else) is exactly
+ * the leak this module's allow-list exists to prevent, and forwarding the
+ * operator's own share list would hand the distribution whatever the operator
+ * had arranged for their own `wsl` sessions -- which is not the console's
+ * decision to make. `test/unit/secret-hygiene.test.ts` holds the "never reads
+ * it" half as a source scan over `console/src/`.
+ */
+export const WSLENV_KEY = 'WSLENV'
 
 /**
  * SPAWN_FLAGS is every flag this module may emit. It is the argv half of the
@@ -530,7 +557,7 @@ export type SpawnOperationName = OperationName | PickerOperationName
  * whose `operation` field was a CLI operation would say the console had run that
  * operation when it had not.
  */
-export type WslQueryName = 'wsl.distributions'
+export type WslQueryName = 'wsl.distributions' | 'wsl.path'
 
 /**
  * SpawnCommand is one row of the table: the operation it serves, the argv words
@@ -598,6 +625,19 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
       { key: 'pr', flag: '--pr', kind: 'pullRequest' },
       { key: 'all', flag: '--all', kind: 'boolean' },
     ],
+    dirFlag: false,
+  },
+  {
+    // The Spend screen's by-person view (console L5b). One declared argument,
+    // `--since`, in `runs stats`'s own grammar: the row cannot emit
+    // `--all-users` (so no spawn can widen the view the CLI resolved to the
+    // caller), and `--by`, `--max-runs`, `--repo` and `--all` are no part of the
+    // operation's schema, so `argvFor` refuses them by name before this row is
+    // reached with them.
+    operation: 'runs.stats',
+    words: ['runs', 'stats', '--json'],
+    takesProject: true,
+    args: [{ key: 'since', flag: '--since', kind: 'value' }],
     dirFlag: false,
   },
   {
@@ -719,6 +759,74 @@ export function isSafeInstallationValue(value: string): boolean {
   if (value.startsWith('-')) return false
   // eslint-disable-next-line no-control-regex
   return !/[\u0000-\u001f\u007f]/.test(value)
+}
+
+/**
+ * DISTRO_SHELL_METACHARACTERS_RE matches a character the **distribution's
+ * shell** would read as syntax rather than as part of a word.
+ *
+ * **Why this rule exists on the WSL route alone.** The host route spawns the CLI
+ * with `shell: false` and an array argv, so a word is a word and there is no
+ * parser between the console and the program -- `isSafeInstallationValue` is the
+ * whole of that rule. On the WSL route the CLI is started *inside* a
+ * distribution, and the words after `--` are handed to the distribution's own
+ * shell (`sh -c …`, which is also what makes the Linux pid capturable, T-F4).
+ * A word carrying `$(…)`, a backtick, a `;` or a newline is therefore not a
+ * value there: it is a program the operator never asked the console to run.
+ *
+ * The console refuses such a word where the plan is built rather than escaping
+ * it, because the escaping belongs to the shell's own layer: `shellQuoteWord`
+ * below is that layer's function, and Part F's wrapper is where it is applied.
+ * Until then a word that only *could* be quoted safely is refused outright --
+ * `$(touch x)` as a project name must never reach a shell as syntax (Part D's
+ * carry-over, F7's "one word, one value"). */
+// eslint-disable-next-line no-control-regex
+const DISTRO_SHELL_METACHARACTERS_RE = /[\s$`;()|&<>!*?[\]{}~#'"\\\u0000-\u001f\u007f]/
+
+/** distroShellUnsafe reports whether `word` carries a character the
+ * distribution's shell would read as syntax. See the regex above. */
+export function distroShellUnsafe(word: string): boolean {
+  return DISTRO_SHELL_METACHARACTERS_RE.test(word)
+}
+
+/** MAX_DISTRO_NAME_LENGTH bounds a WSL distribution's name. It is the same bound
+ * a project name gets: both are short single-token names. */
+export const MAX_DISTRO_NAME_LENGTH = 200
+
+/** DISTRO_NAME_PATTERN is the alphabet a WSL distribution's name is drawn from:
+ * letters, digits, `.`, `_` and `-`, with a first character that is not `-` (a
+ * name that began with one would read as `wsl.exe`'s own flag).
+ *
+ * **It is the narrowest alphabet in this file, and it is on purpose.** The name
+ * arrives from a document -- `wsl.exe --list --quiet`'s lines are data -- and it
+ * becomes the value of `-d`, the distribution the console then runs a shell
+ * inside (T-D3, T-E3). `installations.ts` reads the same rule for the field it
+ * stores, so the store and the plan builder cannot disagree about what a
+ * distribution is called. */
+export const DISTRO_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+
+/** isDistroName is the distribution-name rule: a bounded, non-empty name in the
+ * alphabet above. */
+export function isDistroName(value: string): boolean {
+  return value.length <= MAX_DISTRO_NAME_LENGTH && DISTRO_NAME_PATTERN.test(value)
+}
+
+/**
+ * shellQuoteWord renders one word so that the distribution's shell hands it to
+ * the CLI **unchanged**: a POSIX single-quoted string, where the only character
+ * that needs anything at all is the single quote itself (`'\''`, the standard
+ * four-character splice). Nothing is interpolated inside single quotes -- no
+ * `$`, no backtick, no `*` -- so `$(touch x)` in a project name is the fourteen
+ * characters of that name and not a command substitution.
+ *
+ * A NUL cannot be quoted and cannot be in an argv at all: it is refused rather
+ * than silently dropped. This function is the shell layer's half of the rule
+ * above, and Part F's wrapper is its caller; `distroShellUnsafe` is what the
+ * plan builder applies today.
+ */
+export function shellQuoteWord(word: string): string {
+  if (word.includes('\u0000')) refused('a spawn word carries a NUL byte, which no shell can quote')
+  return `'${word.split("'").join("'\\''")}'`
 }
 
 function refused(message: string): never {
@@ -860,6 +968,121 @@ export function assertArgvFlags(operation: string, argv: readonly string[]): voi
       refused(`${operation} would emit ${forbidden.value}: ${forbidden.why} (${forbidden.where})`)
     }
   }
+}
+
+/**
+ * WSL_PREFIX_FLAGS is every word of the wrapper that is a flag or a separator:
+ * the distribution to run in, the directory to start in, and the `--` after
+ * which the CLI's own argv begins. It is `wsl.exe`'s set and **not**
+ * `SPAWN_FLAGS`'s, which is the whole reason `SpawnPlan` keeps `prefix` apart
+ * from `argv` (T-C1, F8): `--cd` is not a flag this console may emit to the CLI,
+ * and `--` is not a flag at all.
+ *
+ * The two sets must stay disjoint, and `test/unit/spawn.test.ts` holds them
+ * apart: a word in both would be a wrapper word that also looks like a CLI flag,
+ * which is the one shape that makes the two halves of the command line
+ * indistinguishable.
+ */
+export const WSL_PREFIX_FLAGS: readonly string[] = Object.freeze(['-d', '--cd', '--'])
+
+/**
+ * isSafeDistroName answers whether a distribution's name may become a wrapper
+ * word (T-E3, F22). Part C widened the argv this console builds with words that
+ * do not come from the CLI's own table: a distribution's name arrives from
+ * `wsl.exe --list --quiet` (a document's string) or from the store, and it lands
+ * on `wsl.exe`'s command line. This is the check it crosses.
+ *
+ * **What it refuses, and why each one is a hazard rather than a taste:**
+ *
+ *   - a **leading `-`**. This is the whole of the argument confusion here:
+ *     `-d --help`, `-d -d` and `-d --` hand `wsl.exe` a word it may read as one
+ *     of its own instead of as the distribution it names. `-` is admitted
+ *     everywhere else (`Ubuntu-22.04` is a real distribution), so this rule and
+ *     not the alphabet is what keeps a flag out of the value position.
+ *   - a **control character or a NUL**, which is not a name any `wsl.exe` printed
+ *     and not a name any screen can draw.
+ *   - the **empty name**, because `-d ''` names nothing.
+ *   - an **absurd length** -- the bound the store's own values carry.
+ *
+ * **What it admits, and why that is not the route's rule.** This is the
+ * *argv-level* guard -- argument confusion on `wsl.exe`'s own command line --
+ * and whitespace, quotes, `;` and `~` are not argument confusion with an array
+ * argv. It is not the rule a distribution must meet to be *driven*: Part D's
+ * `isDistroName` (`DISTRO_NAME_PATTERN`, T-D3) is, because the WSL route runs
+ * the CLI through the distribution's own shell. `planFor` and the resolver hold
+ * the name to that narrower rule first and refuse with a sentence, so a
+ * distribution called `My Linux` is refused on the WSL route (fail closed, a
+ * known limit in `docs/console-windows/implementation-plan.md`); this guard is
+ * the last line under it, and both are asserted in `test/unit/spawn.test.ts`.
+ */
+export function isSafeDistroName(value: string): boolean {
+  if (value === '' || value.length > 256) return false
+  if (value.startsWith('-')) return false
+  // eslint-disable-next-line no-control-regex
+  return !/[\u0000-\u001f\u007f]/.test(value)
+}
+
+/**
+ * assertWslPrefix holds the wrapper to its shape and its two values to their
+ * rule, and it is the prefix's half of what `assertArgvFlags` is to the CLI's
+ * argv (T-E3, F22). It is called by `wslWrapper`, the only producer of a prefix,
+ * for the same reason `assertArgvFlags` is called by `argvFor`: a check in the
+ * callers is a check a later caller can forget.
+ *
+ * The shape is `-d <distribution>` and then either `--` or `--cd <directory> --`
+ * -- exactly what `wslWrapper` builds, and nothing else. Its word that is a flag
+ * is checked by absence from `SPAWN_FLAGS`, and its two **values** are checked
+ * as follows:
+ *
+ *   - **the distribution's name**, the one word here that reaches `wsl.exe` as a
+ *     selector, is held to `isSafeDistroName`: not a flag, not a control
+ *     character, not empty, not absurd. That is the argv's rule only: the
+ *     route's rule is Part D's narrower `isDistroName`, which `planFor` applies
+ *     before this guard runs (see that function's own note).
+ *   - **the directory** is a Linux path, and it is held to
+ *     `isSafeInstallationValue` -- the rule the project name, the config path
+ *     and the checkout already satisfy. `ARGUMENT_RE`, which the renderer's own
+ *     values satisfy, would be the wrong rule here: it admits neither the space
+ *     of `/home/Ann Lee/src` nor the `~` a shell would expand, and it is a
+ *     renderer's alphabet rather than a path's.
+ *
+ * So the two values are held to the same rule -- no control character or NUL, not
+ * empty, not absurd, no leading `-` -- and the name differs only in its length
+ * bound (256, the store's own). The narrower alphabet a distribution must meet
+ * to be driven at all (`DISTRO_NAME_PATTERN`, Part D) is enforced upstream, in
+ * `planFor` and the resolver; this guard is the argv's last line under it.
+ */
+export function assertWslPrefix(prefix: readonly string[]): void {
+  const words = [...prefix]
+  for (const word of words) {
+    if (SPAWN_FLAGS.includes(word)) {
+      refused(`the wrapper would carry ${word}, which is a flag this console emits to the CLI: the two halves of the command line are separate fields`)
+    }
+  }
+  const [flag, name] = words
+  if (flag !== '-d') {
+    refused(`the wrapper must start with -d <distribution>, and starts with ${JSON.stringify(flag ?? '')}`)
+  }
+  if (name === undefined || !isSafeDistroName(name)) {
+    refused(
+      `the distribution name ${JSON.stringify(name ?? '')} is not one this console will hand to wsl.exe: ` +
+        `it must be a non-empty name that does not begin with "-" and carries no control character`,
+    )
+  }
+  const rest = words.slice(2)
+  if (rest.length === 1 && rest[0] === '--') return
+  if (rest.length === 3 && rest[0] === '--cd' && rest[2] === '--') {
+    // The directory: the same rule as the name, without the name's length bound.
+    const directory = rest[1] ?? ''
+    if (!isSafeInstallationValue(directory)) {
+      refused(`the wrapper would start the CLI in ${JSON.stringify(directory)}, which is not a directory this console will pass`)
+    }
+    return
+  }
+  refused(
+    `the wrapper's words are \`-d <distribution>\`, an optional \`--cd <directory>\`, and \`--\`: ` +
+      `${JSON.stringify(words.join(' '))} is none of them`,
+  )
 }
 
 /**
@@ -1114,6 +1337,21 @@ export function parseVersionLine(text: string):
  *
  * The returned object has a null prototype and is frozen, so a caller cannot
  * add a key to it after the fact.
+ *
+ * **`wsl` adds one key and it is always the empty string** (T-E2, D5(a)):
+ * `WSLENV`, `wsl.exe`'s own share list, which says which Windows variables the
+ * distribution receives. The allow-list above is what keeps the Windows
+ * environment out; this states *why* the mechanism that could let it in is
+ * closed, rather than relying on a default whose exact behaviour is unverified
+ * (U4). See `WSLENV_KEY`.
+ *
+ * **It is an explicit option and not `platform === 'win32'`**, because the two
+ * questions are different ones: the row a platform selects is the `PATH` a child
+ * on that platform can use (`WIN32_LOCATIONS`' child prefixes are Linux's, F5),
+ * and a `wsl.exe` *query* uses that row too while starting no distribution
+ * process at all (`src/main/wsl.ts`). Only a plan that hands `wsl.exe` a CLI to
+ * run **inside** a distribution has a distribution process to state a share list
+ * to, and only that plan sets this.
  */
 export function childEnvironment(options: {
   readonly target: SpawnTarget
@@ -1123,6 +1361,10 @@ export function childEnvironment(options: {
    * for the same reason `binDirectories` takes one: the platform's tool
    * directories are a fact about the platform the child will run on. */
   readonly platform?: string | undefined
+  /** `wsl` states the WSL share list (`WSLENV_KEY`) empty. True for the WSL
+   * route's own plans and false everywhere else, including the `wsl.exe`
+   * queries. */
+  readonly wsl?: boolean | undefined
 }): Readonly<Record<string, string>> {
   const env: Record<string, string> = Object.create(null) as Record<string, string>
   for (const key of CHILD_ENV_KEYS) {
@@ -1132,6 +1374,10 @@ export function childEnvironment(options: {
   }
   env['PATH'] = childPath(options.binaryPath, options.platform)
   env['FUGARO_PROJECT'] = options.target.project
+  // Written unconditionally, and never read from `appEnv`: the host's own
+  // `WSLENV` is the operator's business and not this console's, and a value
+  // carried over from it would be a share list the console did not choose.
+  if (options.wsl === true) env[WSLENV_KEY] = ''
   return Object.freeze(env)
 }
 
@@ -1187,13 +1433,34 @@ export function childPath(binaryPath: string, platform: string = process.platfor
  * nothing else". The installations file is the other write and it is a record;
  * it is reconciled there rather than here, because `src/main/installations.ts`
  * owns it and this module writes neither file. This directory is still neither.
- */
+ *
+ * **On Windows it makes no mode claim at all** (F12, F45, T-D4). NTFS reports
+ * two file modes and neither is a POSIX one: `chmodSync` is a no-op there,
+ * `process.getuid` is undefined, and a directory's `0700` is therefore not a
+ * fact this console can state -- repeating the POSIX claim on Windows would be
+ * a promise the filesystem does not keep. What the Windows branch does is what
+ * it can: create the directory under `tmpdir()`, refuse a link or a
+ * non-directory planted at that name, and return it. The protection that does
+ * hold there is the user profile's own ACL, and it is the operator's, not ours.
+ *
+ * **On the WSL route this directory is a host directory** and its *Linux*
+ * spelling is what goes into the wrapper's `--cd` (T-D2, D4(a)): the directory
+ * belongs to the host -- it is where `wsl.exe` itself is started from -- while
+ * the CLI inside the distribution is started in the translation of it. */
 export function privateWorkingDirectory(options: {
   readonly base?: string
   readonly uid?: number | null
+  /** `platform` is the platform whose filesystem this asks, so a test on one
+   * machine can drive the other branch (T-D4). It is the host's platform: on the
+   * WSL route the directory is still created on the host. */
+  readonly platform?: string | undefined
 } = {}): string {
-  const ownUid = typeof process.getuid === 'function' ? process.getuid() : null
-  const uid = options.uid === undefined ? ownUid : options.uid
+  const platform = options.platform ?? process.platform
+  // Windows has no uid, so the branch below makes the same answer the
+  // `uid === null` path already makes, and it never asks the process for one:
+  // `process.getuid` does not exist there.
+  const ownUid = platform === 'win32' || typeof process.getuid !== 'function' ? null : process.getuid()
+  const uid = platform === 'win32' ? null : options.uid === undefined ? ownUid : options.uid
   // The uid is in the **base** name, which is the level two users on one machine
   // would otherwise share. With one `fugaro-console` for everybody, the first
   // user created it 0700 and every other user then found a directory owned by
@@ -1220,14 +1487,22 @@ export function privateWorkingDirectory(options: {
   const stat = lstatSync(path)
   if (stat.isSymbolicLink()) refused(`${path} is a symbolic link: the console will not spawn from it`)
   if (!stat.isDirectory()) refused(`${path} is not a directory: the console has nowhere to spawn from`)
-  if (uid !== null && stat.uid !== uid) {
-    refused(`${path} is owned by uid ${stat.uid}, not ${uid}: the console will not spawn from it`)
-  }
-  // A directory of our own with a wider mode (an older build, a umask) is taken
-  // back to owner-only; one that still is not 0700 afterwards is refused.
-  if ((stat.mode & 0o777) !== PRIVATE_DIR_MODE) chmodSync(path, PRIVATE_DIR_MODE)
-  if ((lstatSync(path).mode & 0o777) !== PRIVATE_DIR_MODE) {
-    refused(`${path} is not mode 0700: the console will not spawn from it`)
+  // **The mode question is POSIX's and it is not asked on Windows** (F12, F45).
+  // `chmodSync` there is a no-op and NTFS reports two modes rather than a POSIX
+  // one, so a `0700` claim would be a sentence about a state the filesystem does
+  // not have -- and a refusal built on it would refuse a perfectly good
+  // directory. A directory someone else can write to is then the profile ACL's
+  // business, which is the operator's.
+  if (platform !== 'win32') {
+    if (uid !== null && stat.uid !== uid) {
+      refused(`${path} is owned by uid ${stat.uid}, not ${uid}: the console will not spawn from it`)
+    }
+    // A directory of our own with a wider mode (an older build, a umask) is
+    // taken back to owner-only; one that still is not 0700 afterwards is refused.
+    if ((stat.mode & 0o777) !== PRIVATE_DIR_MODE) chmodSync(path, PRIVATE_DIR_MODE)
+    if ((lstatSync(path).mode & 0o777) !== PRIVATE_DIR_MODE) {
+      refused(`${path} is not mode 0700: the console will not spawn from it`)
+    }
   }
   // The canonical spelling (`/private/var/...` on macOS), so the `--dir` the
   // child is given and the working directory it reports are one path.
@@ -1407,11 +1682,117 @@ export interface WslRoute {
 /** wslWrapper is the wrapper's own words: the distribution to run in, the
  * directory to start in (in the distribution's spelling), and the separator
  * after which the CLI's argv begins. `--cd` is left out when there is no
- * directory to name -- see `WslRoute`. */
+ * directory to name -- see `WslRoute`.
+ *
+ * It is the only producer of a prefix, so `assertWslPrefix` is called here
+ * rather than in the callers (T-E3): the distribution's name is a string that
+ * came out of `wsl.exe` or out of the store, and it is checked by
+ * `isSafeDistroName` on the way to `wsl.exe`'s command line. */
 function wslWrapper(wsl: WslRoute): readonly string[] {
   const head = ['-d', wsl.distro]
-  if (wsl.directory === undefined) return Object.freeze([...head, '--'])
-  return Object.freeze([...head, '--cd', wsl.directory, '--'])
+  const prefix = wsl.directory === undefined ? [...head, '--'] : [...head, '--cd', wsl.directory, '--']
+  assertWslPrefix(prefix)
+  return Object.freeze(prefix)
+}
+
+/**
+ * isWindowsPathSpelling reports whether a path is written the way **Windows**
+ * spells it: a drive-rooted `C:\…`, or anything carrying a backslash (a Linux
+ * path never does -- `/` is the only separator there, and a backslash is an
+ * ordinary character in a Linux file name).
+ *
+ * It exists so that the one spelling rule of this route is enforced where the
+ * plan is built rather than discovered where it fails: a `C:\…` handed to a
+ * Linux child is a path inside the distribution that does not exist, and the
+ * distribution's `wsl.exe` would report it as a missing directory -- a sentence
+ * that says nothing about which side spelled the path wrong (T-D2, T-D3).
+ */
+export function isWindowsPathSpelling(path: string): boolean {
+  return path.includes('\\') || /^[A-Za-z]:/.test(path)
+}
+
+/**
+ * wslUncPath is the spelling Windows opens a distribution's path by:
+ * `\\wsl.localhost\<distro>\home\dimi\src` for `/home/dimi/src`.
+ *
+ * **It is not the spelling the console states and not the one it passes** (D3(a),
+ * F16). What the console shows and hands the CLI is the **Linux** spelling --
+ * the one the operator can paste back into a terminal inside the distribution --
+ * and this one exists for exactly one consumer: the field an affordance that
+ * hands a path to Windows itself reads (an Explorer reveal, a file dialog). The
+ * two are separate functions rather than one function with a flag because the
+ * distinction is the rule, and a caller that reached for the wrong one would be
+ * reaching for a spelling whose only justification is "Windows opens this".
+ */
+export function wslUncPath(distro: string, linuxPath: string): string {
+  const tail = linuxPath.replace(/^\/+/, '').split('/').join('\\')
+  return `\\\\wsl.localhost\\${distro}\\${tail}`
+}
+
+/**
+ * assertDistroWordsAreSafe refuses the plan whose words the distribution's shell
+ * could read as syntax, and the plan whose paths are spelled for the wrong side.
+ * It runs on the WSL route alone: the host route's argv never meets a shell and
+ * its paths are the host's.
+ *
+ * Two rules, one reason -- neither word may mean something other than itself
+ * once it is inside the distribution:
+ *
+ *   - **every word that is not a fixed constant** (the CLI's own program word
+ *     and the flags this console emits) must be free of shell metacharacters
+ *     (`distroShellUnsafe`), because Part F puts the CLI inside `sh -c` and a
+ *     word like `$(touch x)` would be a command rather than a project name;
+ *   - **the distribution's own spelling** for the wrapper's distro, its `--cd`
+ *     and the installation's `--config`: a Windows spelling there is the
+ *     wrong-spelling bug the fake `wsl.exe` refuses by name, and it is refused
+ *     here -- before any process exists -- so the failure names the rule rather
+ *     than arriving as an `ENOENT` from inside a distribution.
+ */
+function assertDistroWordsAreSafe(wsl: WslRoute, configPath: string | undefined, cli: readonly string[]): void {
+  // **The name first, against the narrowest alphabet in this file.** A
+  // distribution is the one word in this line that names *where the shell runs*,
+  // and it arrives from a document. `planFor` is the last place it is still a
+  // string: a name outside the alphabet is refused here rather than handed to
+  // `wsl.exe`, which is what "the plan checks the distro itself" means for a
+  // function that starts no process.
+  if (!isDistroName(wsl.distro)) {
+    refused(
+      `${JSON.stringify(wsl.distro)} is not a WSL distribution name: a distribution is ` +
+        `${String(MAX_DISTRO_NAME_LENGTH)} characters or fewer of letters, digits, dot, dash and underscore, ` +
+        'and the console runs a shell in whatever it names (T-D3)',
+    )
+  }
+  if (distroShellUnsafe(wsl.distro)) {
+    refused(
+      `the distribution’s name (${JSON.stringify(wsl.distro)}) carries a character the distribution’s shell would read as syntax: ` +
+        'the console will not hand a shell a word that is not a name',
+    )
+  }
+  // **The spellings before the shell check**, so a Windows-spelled `--config`
+  // is refused as the wrong spelling rather than as a word full of backslashes:
+  // both are refusals, and only one of them tells the operator what to do.
+  const spellings: readonly (readonly [string, string | undefined])[] = [
+    ['the directory the CLI starts in', wsl.directory],
+    ['the installation’s config path', configPath],
+  ]
+  for (const [what, path] of spellings) {
+    if (path === undefined || path === '') continue
+    if (isWindowsPathSpelling(path)) {
+      refused(
+        `${what} is a Windows spelling (${path}): on the WSL route every path the console passes is the ` +
+          'distribution’s own, translated by `wslpath` (D3(a), T-D2)',
+      )
+    }
+  }
+  for (const word of cli) {
+    if (word === FUGARO_BINARY_NAME || word.startsWith('--')) continue
+    if (distroShellUnsafe(word)) {
+      refused(
+        `this console will not pass ${JSON.stringify(word)} to the CLI inside a distribution: it carries a character ` +
+          'the distribution’s shell would read as syntax rather than as part of the word (T-D3)',
+      )
+    }
+  }
 }
 
 /** planFor assembles a plan from an operation, its validated arguments and
@@ -1445,6 +1826,11 @@ export function planFor(
 ): SpawnPlan {
   const wsl = context.wsl
   if (wsl !== undefined) {
+    const cli = argvFor(operation, args, { target: context.target, directory: wsl.directory })
+    // Both rules of this route, and both before a process exists: the words the
+    // distribution's shell would read as syntax, and the paths spelled for the
+    // wrong side (T-D3, and Part D's carry-over for `$(…)` in a project name).
+    assertDistroWordsAreSafe(wsl, context.target.configPath, cli)
     return Object.freeze({
       operation,
       command: wsl.executable ?? wslExecutable(context.appEnv),
@@ -1455,10 +1841,7 @@ export function planFor(
       // (F15) and it is not what runs: it is what the console states (the
       // resolution's `path`, D3(a)) and its directory leads the child's `PATH`
       // below, so the `fugaro` the name resolves to is the one the record names.
-      argv: Object.freeze([
-        FUGARO_BINARY_NAME,
-        ...argvFor(operation, args, { target: context.target, directory: wsl.directory }),
-      ]),
+      argv: Object.freeze([FUGARO_BINARY_NAME, ...cli]),
       // `cwd` is the host directory the console starts `wsl.exe` in. It is not
       // the CLI's directory: that one is inside the distribution and is the
       // wrapper's `--cd`.
@@ -1472,6 +1855,9 @@ export function planFor(
         binaryPath: context.binaryPath,
         appEnv: context.appEnv,
         platform: 'win32',
+        // The WSL route is the one plan that starts a distribution process, so
+        // it is the one environment that states `WSLENV` empty (T-E2, D5(a)).
+        wsl: true,
       }),
       project: context.target.project,
       backoff: context.backoff ?? DEFAULT_BACKOFF,
@@ -1713,8 +2099,20 @@ function boundAppend(current: string, chunk: string, limit: number): string {
  *     for anything this vocabulary does not name;
  *   - `no-wsl` -- `wsl.exe` could not answer at all (T-C4's `absent` outcome):
  *     WSL is not installed, or the feature is off;
- *   - `no-distro` -- WSL answered and the distribution this installation names
- *     is not among them;
+ *   - `no-distro` -- WSL answered and there is no distribution this console can
+ *     drive by the name the installation carries. It has **two shapes** (Part E,
+ *     T-E3, added the second):
+ *       1. the name is simply not among the ones `wsl.exe` lists, which is a
+ *          rename or a removal, and the reason carries the whole list;
+ *       2. the name *is* listed and is one this console will not hand to
+ *          `wsl.exe` -- a registered name beginning with `-` (see
+ *          `isSafeDistroName`), which is a name that would be read as one of
+ *          `wsl.exe`'s own flags.
+ *     The instruction to the operator is the same in both -- choose or add a
+ *     distribution -- which is why the second shape did not add a fifth kind: a
+ *     kind exists to say which of the four *remedies* applies, and the remedy
+ *     here is this one. The sentence in `reason` carries what is specific
+ *     (F26/F31's remedy list is unaffected);
  *   - `no-fugaro-in-distro` -- the distribution is there and the CLI is not in
  *     it: nothing named `fugaro` is on the distribution's own `PATH`.
  *
@@ -1914,10 +2312,17 @@ export async function resolveInstalledBinary(options: {
  *   - **`no-wsl`** -- `wsl.exe` could not answer at all (T-C4's `absent`
  *     outcome): WSL is not installed, or the feature is off. The operator's
  *     instruction is to install WSL, not to install a CLI;
- *   - **`no-distro`** -- WSL answered, and the distribution this installation
- *     names is not among them. The list `wsl.exe` gave is in the sentence,
- *     because the distribution was renamed or removed and the operator is the
- *     only one who can say which;
+ *   - **`no-distro`** -- WSL answered, and there is no distribution this console
+ *     can drive by the name the installation carries. Its two shapes are both
+ *     answered here, and they are told apart by their sentences rather than by
+ *     their kind (see `BinaryRefusalKind`):
+ *       1. the distribution is **not among them**. The list `wsl.exe` gave is in
+ *          the sentence, because the distribution was renamed or removed and the
+ *          operator is the only one who can say which;
+ *       2. the distribution **is among them**, and the name is one this console
+ *          will not hand to `wsl.exe` -- it begins with `-`
+ *          (`isSafeDistroName`). It is refused here, with a sentence, rather than
+ *          left for the wrapper's own guard to throw out of this async read;
  *   - **`no-fugaro-in-distro`** -- the distribution is there and the CLI is not
  *     in it: the probe came back as a shell's miss (see
  *     `SHELL_COMMAND_NOT_FOUND`). The instruction is to install the CLI inside
@@ -1980,6 +2385,44 @@ async function resolveInDistribution(
           : `this machine has no distribution named ${quote(distro)}: wsl.exe lists ${names
               .map(quote)
               .join(', ')}`,
+    }
+  }
+
+  // A name this machine *lists* but this console will not hand to `wsl.exe`
+  // (T-E3, `isSafeDistroName`): the name is the one word `wsl.exe` reads as a
+  // selector, so a listed name that begins with `-` -- a custom registration can
+  // be called `-sneaky` -- is answered here rather than thrown from the wrapper's
+  // own guard. `assertWslPrefix` is the last line of the boundary and not an
+  // error path an operator should meet as a crash. `no-distro` and not a fifth
+  // kind: **this is the second shape of `no-distro`**, documented on
+  // `BinaryRefusalKind` -- the name is not one this console has a working route
+  // to, and the remedy the kinds drive (choose or add a distribution) is the
+  // same one; the reason below carries what is specific to this case.
+  if (!isSafeDistroName(distro)) {
+    return {
+      ok: false,
+      path: null,
+      kind: 'no-distro',
+      reason:
+        `the distribution this installation names, ${quote(distro)}, is listed by wsl.exe and is not a name ` +
+        `this console will hand to wsl.exe: it must not begin with "-"`,
+    }
+  }
+  // The second half of the same answer, and Part D's rule (T-D3): the WSL route
+  // runs the CLI through the distribution's own shell, so a listed name outside
+  // `DISTRO_NAME_PATTERN` -- `My Linux`, `dimi's distro`, `Ubuntu;x` -- is
+  // refused here with a sentence (fail closed) rather than thrown out of
+  // `planFor`'s guard as an exception from an async read.
+  if (!isDistroName(distro)) {
+    return {
+      ok: false,
+      path: null,
+      kind: 'no-distro',
+      reason:
+        `the distribution this installation names, ${quote(distro)}, is listed by wsl.exe and is not a name ` +
+        `this console will run a shell in: a distribution name is ${String(MAX_DISTRO_NAME_LENGTH)} characters ` +
+        'or fewer of letters, digits, dot, dash and underscore -- register it under a plain name ' +
+        '(wsl --export and wsl --import) to drive it from the console',
     }
   }
 

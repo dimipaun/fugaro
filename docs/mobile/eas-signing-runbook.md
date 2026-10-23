@@ -15,8 +15,8 @@ side of P4.4 has landed: `mobile/eas.json`, `mobile/app.config.js` and their
 tests are in the tree (**PR #675**, **#738**, **#745**), the submit profile
 carries the App Store Connect app id the owner's first submission produced
 (**#759**), the export-compliance answer is declared in the build's config, and
-the app's release workflow is **staged** for the owner to copy in
-(`docs/pending-workflows/mobile-release.yml`, **#777**). The owner's own record
+the app's release workflow, staged by **#777**, was **copied in on 2026-10-23**
+on the owner's approval and runs as `.github/workflows/mobile-release.yml`. The owner's own record
 in [mobile/README.md](../../mobile/README.md) — the one submission of
 **2026-10-20** that created the App Store Connect record, and the
 export-compliance declaration of the same day — is the whole of what this
@@ -69,7 +69,7 @@ of §10 — all of them read, none of them written by the run.
 |---|---|
 | **It is** | the setup the owner performs **once** so that Check 89 can run at all: the Expo/EAS project, the Apple and Google prerequisites, the signing credentials and where they live, the two repository settings they need, and the rollback. |
 | **It is not** | the check. **This runbook does not restate Check 89. The register is its authority.** Check 89's steps, its guard block, its `FACT` lines, its pass and fail conditions and its restore step are written into [../gcp-live-checklist.md](../gcp-live-checklist.md) by **task P4.2a**, merged into `main` as **PR #580** on **2026-10-19** (that pull request's own branch was `fugaro/20261018-130217-49c7`), so the section is in the register you read today; **the register's text, not this one, is what you follow** when the two describe the same thing. Where they differ, the register wins and this page has a defect to fix. |
-| **It is not** | a workflow. **This runbook describes a workflow and writes none.** No file is created under `.github/workflows/` by this task or by any agent (Global Constraint 8). The app's release workflow **is** written and **staged** — `docs/pending-workflows/mobile-release.yml` (**#777**), one job per platform, behind the protected environment of §9 — and §10 is this page's account of it, read off the file rather than proposed. **No agent copies a workflow file into `.github/workflows/`**: that copy-in is the owner's step, per [the copy procedure](../pending-workflows/README.md). |
+| **It is not** | a workflow. **This runbook describes a workflow and writes none.** No file is created under `.github/workflows/` by this task or by any agent (Global Constraint 8). The app's release workflow **is** written (**#777**) and, since the owner's approval of 2026-10-23, **applied** — `.github/workflows/mobile-release.yml`, one job per platform, behind the protected environment of §9 — and §10 is this page's account of it, read off the file rather than proposed. **No agent copies a workflow file into `.github/workflows/` on its own**: that copy-in is the owner's decision, per [the copy procedure](../pending-workflows/README.md). |
 | **It is not** | a claim that anything works. The register's row 89 stays **NOT RUN**, no `FACT` line has been pasted back, and the plan's open item 5 stands: *"Checks 80–89 are owner-run and none has been run."* What the owner's own record shows — the App Store Connect record and the first submission of 2026-10-20 — is setup, not this check, and it proves no store track, no install and no version. |
 
 **Three things this runbook does not own, and must not be read as owning.**
@@ -115,8 +115,8 @@ register):**
   two patterns, the export-compliance declaration and what it refuses), both
   merged as **PR #675** and extended by **#738**, **#745** and **#759** — §8 is
   this page's account of them, and where they differ the files win;
-- **the app's release workflow, read off the staged file rather than off a
-  plan**: `docs/pending-workflows/mobile-release.yml` (**#777**, revised
+- **the app's release workflow, read off the file rather than off a
+  plan**: `.github/workflows/mobile-release.yml` (**#777**, applied 2026-10-23, revised
   2026-10-21 after that pull request's security review) — its trigger, its two
   jobs, the protected environment each job declares, the one secret it reads and
   the variables that turn a platform off. §10 is this page's account of it, and
@@ -575,8 +575,8 @@ list is Check 89's, and it asks for the profile's values, not the identity's.
 The environment is the repository-side lock, and it is the owner's to create.
 **Three protected environments are declared on this tree today:** two are
 **declared on a job of an installed workflow** — not in a comment and not in a
-plan — and the third is declared by the **staged** release workflow of §10,
-which is not installed until you copy it in. This page's precedent claim is about
+plan — and the third is declared by the release workflow of §10, which was
+staged by **#777** and copied in on 2026-10-23. This page's precedent claim is about
 the declarations themselves, and it cites each by content rather than by line
 number:
 
@@ -584,7 +584,7 @@ number:
 |---|---|---|
 | **`website-live`** | `.github/workflows/website-promote.yml` (`environment: website-live`, in its `promote` job) | the site's **live promotion**: the job copies an already-reviewed preview channel onto the live channel. `workflow_dispatch`-only, the actor is guarded to you, and its deployment branch policy is **`main`**. It holds repository **variables** — a project id, a provider name, a service-account address — and no secret, because the deploy authenticates by Workload Identity Federation. Its one-time setup is [../website/preview-promote.md](../website/preview-promote.md). |
 | **`console-release`** | `.github/workflows/console-release.yml`, and its staged twin `docs/pending-workflows/console-release.yml` (which `console-release-linux.yml` and then `console-release-tag.yml` superseded, both now applied and removed) — each declaring `environment: console-release` in its own `release` job | the desktop console's **signing, notarisation and stapling job**, on a `console-vX.Y.Z` tag push, publishing the release of that name. **This is the closer precedent**: it is a signing job, and it reads its six Apple secrets only through the environment, only as `secrets.NAME` in the one step that signs. |
-| **`mobile-release`** | `docs/pending-workflows/mobile-release.yml` — **staged, not applied** (**#777**) — declaring `environment: mobile-release` in both its `ios` job and its `android` job | the mobile app's **build and store submission** on the app's own release tag (`mobile-vX.Y.Z`): one job per platform, building on EAS and submitting to TestFlight's internal testers and to Play's internal-testing track, behind your approval. §10 has the rest of it. |
+| **`mobile-release`** | `.github/workflows/mobile-release.yml` — **applied 2026-10-23** (staged by **#777**) — declaring `environment: mobile-release` in both its `ios` job and its `android` job | the mobile app's **build and store submission** on the app's own release tag (`mobile-vX.Y.Z`): one job per platform, building on EAS and submitting to TestFlight's internal testers and to Play's internal-testing track, behind your approval. §10 has the rest of it. |
 
 **And two things that are not environments, because a reader will expect them to
 be.** `.github/workflows/release.yml` — the CLI's own release — declares **no**
@@ -671,12 +671,12 @@ secrets on it. **Never a value, and never a screenshot of a value.**
 **Global Constraint 8 forbids an agent to create or edit anything under
 `.github/workflows/`, and GitHub refuses Fugaro's push of such a change anyway.**
 So **this runbook describes a workflow and writes none.** The app's release
-workflow **is written and staged**, and what follows is this page's account of
-the file as it is — read off `docs/pending-workflows/mobile-release.yml`
+workflow **is written and applied**, and what follows is this page's account of
+the file as it is — read off `.github/workflows/mobile-release.yml`
 (**#777**, staged 2026-10-20, revised 2026-10-21 after that pull request's
-security review). Copying it in is your step, per
-[the copy procedure](../pending-workflows/README.md), and **the environment of
-§9 has to exist first**.
+security review, copied in on the owner's approval of 2026-10-23 per
+[the copy procedure](../pending-workflows/README.md), with **the environment of
+§9 created first**).
 
 **It is not needed for Check 89**, which is entirely owner-run at your terminal:
 the workflow is what a *release of the app* would use, and Check 89 is the check
@@ -843,8 +843,8 @@ copy of it, which is why §7's rule is "never", not "not yet".
   plan's open item 4 says what that means — *"Until it exists, the shared
   package's tests run only where someone runs them, and that is a real gap in
   this plan's coverage."* When it lands it holds no store credential. The app's
-  release workflow of §10 is **staged and not applied**: it has run nowhere, in
-  no repository, and its first **dry run** is what would verify it — the mask
+  release workflow of §10 is **applied (2026-10-23) and not yet run**: it has run
+  nowhere, in no repository, and its first **dry run** is what would verify it — the mask
   step, the environment, the pins and the gate are all unexercised claims about
   GitHub and `eas-cli` until then.
 - **The owner's own two runs, and what this repository records of them.** The
@@ -998,8 +998,8 @@ that the register's step 4 was amended, and the commit that did it.
 **Tension 5 — D120's ceiling sentence, and the release workflow the owner staged.
 Recorded, not resolved here, and the ruling is already made.** D120 (the owner's
 answer of **2026-10-17**) says, in the plan's own words, that *"CI at most builds
-a **test** artifact with no store credential"*. The staged
-`docs/pending-workflows/mobile-release.yml` (**#777**) does more than that: it
+a **test** artifact with no store credential"*. The workflow
+**#777** staged, applied on 2026-10-23 as `.github/workflows/mobile-release.yml`, does more than that: it
 builds the **`internal`** profile and **submits** it to TestFlight and to Play's
 internal-testing track, reading `EXPO_TOKEN` behind the `mobile-release`
 environment. No sentence was ever amended — the file was staged on the owner's
@@ -1030,7 +1030,7 @@ what it says, and this page paraphrases none of them as certain):
 | [../../mobile/app.json](../../mobile/app.json) and [../../mobile/package.json](../../mobile/package.json) | the app's Expo config and its `engines` (**P3.1**) |
 | [../../mobile/eas.json](../../mobile/eas.json) and [../../mobile/app.config.js](../../mobile/app.config.js) | the three build profiles, the submit track, the **App Store Connect app id** the iOS submit entry carries, and `cli`'s `appVersionSource`/`requireCommit`; and the two identity variable names, the reverse-DNS patterns, the export-compliance declaration and what the dynamic config refuses (**P4.4**, merged as PR **#675** and extended by **#745** and **#759**) — §8 is this page's account of both, and where they differ **the files win** |
 | [../../mobile/README.md](../../mobile/README.md) | what the app is, where its secrets live, the internal-testing path (the two `env:set` commands and the submit), the export-compliance declaration, the owner's first submission of **2026-10-20**, and what is not verified |
-| [../pending-workflows/mobile-release.yml](../pending-workflows/mobile-release.yml) | the app's release workflow — **staged, not applied** (**#777**): its trigger, its two jobs, the `mobile-release` environment each declares, the `EXPO_TOKEN` it reads and the one variable that skips a platform. §10 is this page's account of it, and where they differ **the file wins** |
+| [../../.github/workflows/mobile-release.yml](../../.github/workflows/mobile-release.yml) | the app's release workflow — **applied 2026-10-23** (staged by **#777**): its trigger, its two jobs, the `mobile-release` environment each declares, the `EXPO_TOKEN` it reads and the one variable that skips a platform. §10 is this page's account of it, and where they differ **the file wins** |
 | [../../.github/workflows/website-promote.yml](../../.github/workflows/website-promote.yml) and [../../.github/workflows/console-release.yml](../../.github/workflows/console-release.yml) | the protected environments this repository installs, read off the files themselves: `environment: website-live` in `website-promote.yml`'s `promote` job and `environment: console-release` in `console-release.yml`'s `release` job, each declared on a job (the console's is declared again by its three staged twins, the last of which moves it to the console's own `console-vX.Y.Z` tag). [../../.github/workflows/release.yml](../../.github/workflows/release.yml) is there too, as the counter-example: no environment, keyless signing (§2, §9) |
 | [../pending-workflows/README.md](../pending-workflows/README.md) | how a staged workflow is copied in, and why an agent may not copy it |
 | [../website/preview-promote.md](../website/preview-promote.md) | the same owner-only shape worked through end to end for `website-live` |

@@ -353,7 +353,18 @@ jobs:
           # is asked to hide.
           mask() {
             local name="${1}" value
-            if ! value=$(eas env:exec --non-interactive production "printenv ${name}" 2>/dev/null); then
+            if ! value=$(eas env:exec --non-interactive production "printenv ${name}" 2>"${RUNNER_TEMP}/eas_read_error"); then
+              # The tool's own error text, never a value: a failed read has none, and
+              # EXPO_TOKEN is masked by Actions. Without this a real cause (a scope,
+              # a version, a project) looked like a missing variable.
+              echo "the EAS environment read failed for ${name}:"
+              sed -e 's/^/    /' "${RUNNER_TEMP}/eas_read_error" | head -n 20
+              # Who the token is and which variable NAMES the environment returns:
+              # the account's login (first line only, no email) and the names with
+              # every value cut off, so no value reaches this log.
+              echo "token account: $(eas whoami --non-interactive 2>/dev/null | head -n 1)"
+              echo "names EAS returns for production:"
+              eas env:list production --non-interactive 2>/dev/null | sed -n 's/^\([A-Z][A-Z0-9_]*\)=.*/    \1/p' | head -n 40
               echo "::error::${name} could not be read from the EAS project's production environment, so it cannot be masked, and this job will not build: a build resolves mobile/app.config.js and would print the identity into this public log. Check that ${name} exists in that environment and that the EXPO_TOKEN secret can read it, then run this workflow again. Nothing was built or submitted." >&2
               exit 1
             fi
@@ -540,7 +551,18 @@ jobs:
           set -euo pipefail
           mask() {
             local name="${1}" value
-            if ! value=$(eas env:exec --non-interactive production "printenv ${name}" 2>/dev/null); then
+            if ! value=$(eas env:exec --non-interactive production "printenv ${name}" 2>"${RUNNER_TEMP}/eas_read_error"); then
+              # The tool's own error text, never a value: a failed read has none, and
+              # EXPO_TOKEN is masked by Actions. Without this a real cause (a scope,
+              # a version, a project) looked like a missing variable.
+              echo "the EAS environment read failed for ${name}:"
+              sed -e 's/^/    /' "${RUNNER_TEMP}/eas_read_error" | head -n 20
+              # Who the token is and which variable NAMES the environment returns:
+              # the account's login (first line only, no email) and the names with
+              # every value cut off, so no value reaches this log.
+              echo "token account: $(eas whoami --non-interactive 2>/dev/null | head -n 1)"
+              echo "names EAS returns for production:"
+              eas env:list production --non-interactive 2>/dev/null | sed -n 's/^\([A-Z][A-Z0-9_]*\)=.*/    \1/p' | head -n 40
               echo "::error::${name} could not be read from the EAS project's production environment, so it cannot be masked, and this job will not build: a build resolves mobile/app.config.js and would print the identity into this public log. Check that ${name} exists in that environment and that the EXPO_TOKEN secret can read it, then run this workflow again. Nothing was built or submitted." >&2
               exit 1
             fi
