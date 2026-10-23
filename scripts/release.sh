@@ -7,8 +7,12 @@
 #   scripts/release.sh X.Y.Z [--yes] [--dry-run] [--timeout-minutes N]
 #
 # --yes is accepted and does nothing (there is no tag prompt any more); every
-# precondition below still runs. --dry-run stops after printing the plan for
-# step 2 (branch/PR), creating nothing. --timeout-minutes (default 45, a
+# precondition below still runs. --dry-run applies the version bump to a
+# scratch worktree and runs the plugin tests there (the bump rewrites two
+# version stamps in every skill file, so it can push one over its byte budget
+# on its own), then stops after printing the plan for step 2 (branch/PR),
+# creating nothing outside that worktree, which it removes. --timeout-minutes
+# (default 45, a
 # whole number >= 1) bounds each of the two waits: step 3 (the release PR
 # merging) and step 4 (CI's test, terraform, rules and both console checks finishing on the merge
 # commit).
@@ -213,11 +217,55 @@ fi
 echo "checking that main's checks are green at $local_main (waiting up to ${timeout_minutes}m for any still running)..."
 GITHUB_SHA="$local_main" GITHUB_REPOSITORY="$repo" GATE_WAIT_SECONDS="$timeout_seconds" GATE_POLL_SECONDS="$poll_seconds" scripts/release-gate.sh "$tag"
 
+# plugin_budget_check applies the version bump to a scratch worktree of the
+# tree being released and runs the plugin tests there. The bump rewrites two
+# version stamps in every skill file, so a version one of whose components
+# gains a digit grows each file by a byte or two: 0.9.5 -> 0.10.0 added two
+# bytes and pushed plugin/skills/setup/SKILL.md over its 24576-byte budget
+# (plugin/skills_lint_test.go's maxSkillBytes), which failed
+# TestPluginSkillsLintClean on the bump commit itself (#929). Only applying
+# the bump can see that -- the version strings all agree, so
+# scripts/bump-plugin-version.sh --check passes on the same tree.
+#
+# RELEASE_SH_PLUGIN_TEST_CMD exists for the tests only: they substitute a stub
+# for the go command (the test repository holds no module).
+plugin_budget_check() {
+  want=$1
+  test_cmd=${RELEASE_SH_PLUGIN_TEST_CMD:-go test ./plugin/ -count=1}
+  if [ -z "${RELEASE_SH_PLUGIN_TEST_CMD:-}" ]; then
+    if [ ! -f go.mod ]; then
+      echo "note: no go.mod here, so the plugin budget check ($test_cmd on a bumped tree) is skipped" >&2
+      return 0
+    fi
+    if ! command -v go >/dev/null 2>&1; then
+      echo "note: go is not on PATH, so the plugin budget check ($test_cmd on a bumped tree) is skipped" >&2
+      return 0
+    fi
+  fi
+  scratch=$(mktemp -d)
+  if ! git worktree add --quiet --detach "$scratch/tree" HEAD >/dev/null 2>&1; then
+    rm -rf "$scratch"
+    echo "note: could not create a scratch worktree, so the plugin budget check ($test_cmd on a bumped tree) is skipped" >&2
+    return 0
+  fi
+  rc=0
+  ( cd "$scratch/tree" && scripts/bump-plugin-version.sh "$want" >/dev/null && sh -c "$test_cmd" ) || rc=$?
+  git worktree remove --force "$scratch/tree" >/dev/null 2>&1 || true
+  rm -rf "$scratch"
+  if [ "$rc" != 0 ]; then
+    echo "the plugin tests fail on a tree with the $want bump applied (above), so the bump commit would go red on main. The usual cause is a skill file the bump pushed over its byte budget (plugin/skills_lint_test.go's maxSkillBytes; 0.10.0's plugin/skills/setup/SKILL.md, #929): shorten the file, then tag." >&2
+    return 1
+  fi
+  echo "the plugin tests pass on a tree with the $want bump applied (a scratch worktree, since removed)"
+}
+
 # 2. Branch, bump, PR (skipped by --dry-run; resumed from an existing PR).
 if [ "$dry_run" = 1 ]; then
+  plugin_budget_check "$version" || exit 1
   cat <<EOF
 
-Dry run for $tag: every precondition above passed; nothing was changed.
+Dry run for $tag: every precondition above passed, and the plugin tests pass
+on a bumped tree; nothing else was changed.
 Without --dry-run this would:
   2. create $branch from main, bump the plugin to $version (scripts/bump-plugin-version.sh), commit "release: $tag", push it, open a PR to main, and enable squash auto-merge
   3. wait up to ${timeout_minutes}m for that PR to merge

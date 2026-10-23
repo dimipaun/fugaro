@@ -544,6 +544,98 @@ func TestDryRunCreatesNothing(t *testing.T) {
 	}
 }
 
+// writePluginTestStub writes the stand-in for `go test ./plugin/` that
+// TestDryRunChecksThePluginBudgetOnABumpedTree puts in
+// RELEASE_SH_PLUGIN_TEST_CMD. It runs inside the scratch worktree release.sh
+// bumped, so it fails unless that tree really carries the new version -- the
+// check under test is what applies the bump -- and it records the path it ran
+// in, so the test can assert the worktree is gone afterwards. STUB_RC is the
+// status the test wants it to exit with.
+func writePluginTestStub(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "plugin-test-stub.sh")
+	script := `#!/usr/bin/env bash
+set -eu
+version=$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' plugin/.claude-plugin/plugin.json | head -1)
+echo "tree=$PWD version=$version" >> "$STUB_LOG"
+[ "$version" = "$STUB_WANT" ] || { echo "plugin.json says $version, want $STUB_WANT" >&2; exit 1; }
+grep -q "fugaro-version=$STUB_WANT" plugin/skills/setup/SKILL.md || { echo "the skill headers are not bumped" >&2; exit 1; }
+exit "${STUB_RC:-0}"
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestDryRunChecksThePluginBudgetOnABumpedTree checks that --dry-run applies
+// the version bump to a scratch worktree and runs the plugin tests there. The
+// bump rewrites two version stamps in every skill file, so it can push a skill
+// file over its byte budget by itself: 0.10.0's bump commit did exactly that
+// to the setup skill, two bytes over, and failed TestPluginSkillsLintClean on
+// main (#929). Nothing else can see it -- the version strings all agree, so
+// scripts/bump-plugin-version.sh --check passes on the same tree.
+func TestDryRunChecksThePluginBudgetOnABumpedTree(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		rc       string
+		wantFail bool
+	}{
+		{"the plugin tests pass", "0", false},
+		{"the plugin tests fail", "1", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newReleaseRepo(t)
+			log := filepath.Join(t.TempDir(), "stub.log")
+			g := newGHState(t, r, greenChecks()).with(
+				"RELEASE_SH_PLUGIN_TEST_CMD=bash "+writePluginTestStub(t),
+				"STUB_LOG="+log, "STUB_WANT=1.0.0", "STUB_RC="+tc.rc)
+
+			res := runRelease(t, r, g, "", "1.0.0", "--dry-run")
+
+			// The stub's one line says where it ran: a worktree of the tree
+			// being released, carrying the bump, and removed when the script
+			// exited.
+			b, err := os.ReadFile(log)
+			if err != nil {
+				t.Fatalf("the plugin test command did not run: %v\n%s", err, res.out)
+			}
+			lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+			if len(lines) != 1 {
+				t.Fatalf("want one plugin test run, got %q:\n%s", lines, res.out)
+			}
+			scratch := strings.TrimPrefix(strings.Fields(lines[0])[0], "tree=")
+			if !strings.Contains(lines[0], "version=1.0.0") {
+				t.Errorf("the plugin tests did not run on a bumped tree: %s", lines[0])
+			}
+			if _, err := os.Stat(scratch); !os.IsNotExist(err) {
+				t.Errorf("the scratch worktree %s was not removed (stat: %v)", scratch, err)
+			}
+			if out := strings.TrimSpace(testutil.Git(t, r.local, "worktree", "list")); strings.Contains(out, "\n") || !strings.Contains(out, r.local) {
+				t.Errorf("want exactly the checkout's own worktree left, got:\n%s", out)
+			}
+			if out := testutil.Git(t, r.local, "status", "--porcelain"); out != "" {
+				t.Errorf("--dry-run changed the checkout: %s", out)
+			}
+
+			if tc.wantFail {
+				res.requireFailureContaining(t, "the plugin tests fail on a tree with the 1.0.0 bump applied")
+				if strings.Contains(res.out, "Dry run for v1.0.0") {
+					t.Errorf("a failed plugin check must not print the plan:\n%s", res.out)
+				}
+				return
+			}
+			res.requireSuccess(t)
+			if !strings.Contains(res.out, "the plugin tests pass on a tree with the 1.0.0 bump applied") {
+				t.Errorf("want the plugin check reported, got:\n%s", res.out)
+			}
+			if !strings.Contains(res.out, "Dry run for v1.0.0") {
+				t.Errorf("expected a dry-run plan, got:\n%s", res.out)
+			}
+		})
+	}
+}
+
 // TestHappyPathAnsweringYes drives release.sh through a real bump, PR,
 // squash merge and the tag (no prompt) — checking that exactly
 // one branch, one commit and one PR were created, and the tag matches the
