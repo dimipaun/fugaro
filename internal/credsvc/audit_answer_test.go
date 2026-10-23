@@ -432,7 +432,7 @@ func TestTheRefusalOfAnUnauditedIssuanceIsAudited(t *testing.T) {
 // answer path (D143): an issuance this service cannot audit is not made. The
 // upstream answered — the call is out of this service's hands by then — so what
 // is withheld is the credential's EFFECT: no byte of the upstream's answer
-// reaches the run, and the run is halts on the refusal instead.
+// reaches the run, and the run halts on the refusal instead.
 func TestACallIsRefusedWhenItCannotBeAudited(t *testing.T) {
 	s, _ := auditSvc(t, func(_ *svc, cfg *Config) { cfg.AuditLog = silentHandler{} })
 	s.up.Script = []anthropicfake.Reply{anthropicfake.MessageOK(testModel, testUsage)}

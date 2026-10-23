@@ -315,21 +315,34 @@ func (s *Server) mint(ctx context.Context, w http.ResponseWriter, r *http.Reques
 // path is the one where the two differ, and it refuses on a line it could not
 // write — see mint.)
 //
+// It answers through refuseCall, the ONE refusal helper this service has, so a
+// refused mint is written and answered by the same code as every other refusal
+// after admission: one refusal sink, one audit sink (Server.audit through
+// auditCall) and one rule for what a mint's line names (routeAct). The mint had
+// a helper of its own before that answered its refusals with s.refuse, which
+// left the mint's refusals and the answer path's two shapes of one act that
+// could drift apart.
+//
 // The refusal's message is the caller's, and it is always one of this file's
-// own sentences: GitHub's text is never relayed.
+// own sentences: GitHub's text is never relayed. The status is the one every
+// refusal of this endpoint carries — state_unavailable, the word the runner's
+// halt message and the operator's line read alike.
 func (s *Server) refuseMint(ctx context.Context, w http.ResponseWriter, id Identity, message string) {
-	if err := s.auditMint(ctx, id, ErrorStateUnavailable); err != nil {
-		s.log.Error("credsvc: the mint's audit line was not written", "error", err)
-	}
-	s.refuse(w, StatusUnavailable, ErrorStateUnavailable, message)
+	purpose, credential := routeAct(MintPath)
+	s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnavailable, ErrorStateUnavailable, message)
 }
 
 // auditMint writes one mint's line through C1.13's auditor (audit.go), which
-// is the service's one writer of audit lines: the event is completed from the
-// identity the service verified (Identity.Audit — the run, the repository slug,
-// the job the run reported and the account that called, and none of them from
-// anything a caller typed), the credential is the App key's NAME, the purpose
-// is PurposeMint, and there is NO tier.
+// is the service's one writer of audit lines: the line is written by auditCall,
+// the same helper the answer path writes through, and the purpose and the
+// credential it carries come from routeAct — the ONE rule, so the mint's own
+// refusals, the refusals ServeHTTP answers before the mint's branch (the
+// binding and the stop switches) and this line cannot name the act or the
+// credential two ways. The event is completed from the identity the service
+// verified (Identity.Audit — the run, the repository slug, the job the run
+// reported and the account that called, and none of them from anything a caller
+// typed), the credential is the App key's NAME, the purpose is PurposeMint, and
+// there is NO tier.
 //
 // The absent tier is the shape C1.13 defines for a mint and not an omission: a
 // tier names the model credential a call spent (A, B or C), the App key is not
@@ -360,11 +373,8 @@ func (s *Server) refuseMint(ctx context.Context, w http.ResponseWriter, id Ident
 // on with it — the mint's answer is a refusal in that case, and a refusal's
 // answer is the refusal it already had.
 func (s *Server) auditMint(ctx context.Context, id Identity, status string) error {
-	return s.audit.Write(ctx, id.Audit(AuditEvent{
-		Credential: config.GitHubAppKeySecret,
-		Purpose:    PurposeMint,
-		Status:     status,
-	}))
+	purpose, credential := routeAct(MintPath)
+	return s.auditCall(ctx, id, purpose, credential, "", status)
 }
 
 // writeMintAnswer writes the mint's answer. It is the one answer of this
