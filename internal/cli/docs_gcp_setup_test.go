@@ -101,7 +101,7 @@ func TestDocsGCPSetupNamesTheWindowsForm(t *testing.T) {
 		// else was `fugaro`, which is false of the quota project, billing,
 		// serviceusage, Terraform and the build identity — gcloud and
 		// terraform commands the reader runs in every subsection.
-		"The `gcloud` lines under Install, Log in, Have ready and Before you onboard a repository",
+		"The `gcloud` lines under Install, Log in and Before you onboard a repository",
 		"`terraform version` under Install",
 	} {
 		if !strings.Contains(flat, want) {
