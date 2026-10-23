@@ -41,8 +41,9 @@ lands the notes, on `main` before the tag:
 
 **The name comes first.** The app's releases are named after birds, spent in
 order: the **first is Falcon** (`mobile-v0.1.0`), then **Pelican**, then
-**Robin**. The name belongs in the first bullet of the notes and in the release's
-own title.
+**Robin**. The name belongs in the first bullet of the notes, in the summary
+line's own phrasing where it fits, and in the store listing's "what's new" text:
+this stream creates no GitHub release to title.
 
 **The first release is `mobile-v0.1.0`, "Falcon".** `mobile/app.json` carries
 `expo.version` `0.0.0` today, which is a placeholder rather than a version
