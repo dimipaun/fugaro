@@ -565,6 +565,43 @@ describe('translating a path with wslpath', () => {
     if (!answer.ok) expect(answer.reason).toContain('not an absolute path')
   })
 
+  it('refuses an answer Windows would not open, in the direction where it matters most', async () => {
+    // The `-w` direction's whole purpose is the spelling **Windows opens**
+    // (D3(a)): it is what a reveal-in-Explorer or a file dialog is handed. An
+    // answer that is not an absolute Windows path -- a relative one, a bare
+    // name, a distribution's own spelling coming back -- must be refused rather
+    // than passed on, exactly as the `-u` direction refuses a non-POSIX answer.
+    const { wsl, cwd } = arrangement([{ windows: 'odd', linux: 'odd' }])
+    const answer = await wslpath({
+      direction: 'toWindows',
+      path: 'odd',
+      distro: 'Ubuntu',
+      appEnv: APP_ENV,
+      cwd,
+      wslPath: wsl.binary,
+    })
+    expect(answer.ok).toBe(false)
+    if (!answer.ok) {
+      expect(answer.reason).toContain('not a path Windows would open')
+      expect(answer.reason).toContain('odd')
+    }
+    // ...and the two forms Windows accepts are accepted, so the check is a check
+    // and not a wall: a drive path and a UNC path.
+    const drive = arrangement([{ windows: 'C:\\Users\\dimi\\src', linux: 'src' }])
+    const unc = arrangement([{ windows: '\\\\wsl.localhost\\Ubuntu\\home\\dimi\\src', linux: 'src' }])
+    for (const one of [drive, unc]) {
+      const taken = await wslpath({
+        direction: 'toWindows',
+        path: 'src',
+        distro: 'Ubuntu',
+        appEnv: APP_ENV,
+        cwd: one.cwd,
+        wslPath: one.wsl.binary,
+      })
+      expect(taken.ok).toBe(true)
+    }
+  })
+
   it('asks no one when no distribution was named', async () => {
     // A translation is always *into* a distribution (F7: the installation's own,
     // never a default), so a call with none starts nothing at all.

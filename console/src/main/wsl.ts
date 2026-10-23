@@ -40,6 +40,8 @@
 // ever falls back to "the first one in the list", which would be a choice the
 // operator never made and cannot see.
 
+import { win32, posix } from 'node:path'
+
 import { DEFAULT_BACKOFF, FUGARO_BINARY_NAME, childEnvironment, runToCompletion } from './spawn'
 import type { ChildSpawner, SpawnPlan, Timers, WslQueryName } from './spawn'
 import type { SpawnLogWriter } from './spawnlog'
@@ -408,10 +410,27 @@ export async function wslpath(options: WslPathQueryOptions): Promise<WslPathTran
         'the console will not pass an answer it cannot read on (T-D2)',
     }
   }
-  if (direction === 'toLinux' && !path.startsWith('/')) {
+  // **Both directions are checked, and each against its own side's idea of an
+  // absolute path.** The `-u` answer is a path inside the distribution
+  // (`posix.isAbsolute`); the `-w` answer is the spelling **Windows opens**
+  // (D3(a)), so it is absolute when Windows says it is -- a drive path
+  // (`C:\Users\dimi\src`) or a UNC path (`\\wsl.localhost\Ubuntu\…`) -- and
+  // `win32.isAbsolute` is the only thing that knows both. An answer that is
+  // neither is a refusal in each direction, because every consumer hands this
+  // value to something that opens or enters it: a relative answer would be
+  // resolved against whatever directory that consumer happens to be in.
+  if (direction === 'toLinux' && !posix.isAbsolute(path)) {
     return {
       ok: false,
       reason: `the distribution answered ${JSON.stringify(path)} for ${options.path}, which is not an absolute path inside it`,
+    }
+  }
+  if (direction === 'toWindows' && !win32.isAbsolute(path)) {
+    return {
+      ok: false,
+      reason:
+        `the distribution answered ${JSON.stringify(path)} for ${options.path}, which is not a path Windows would open: ` +
+        'a Windows answer is a drive path or a UNC path, and the console will not hand a file manager anything else (D3(a))',
     }
   }
   return { ok: true, path }
