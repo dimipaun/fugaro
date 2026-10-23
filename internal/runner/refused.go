@@ -91,11 +91,14 @@ func (r *run) runCommits(ctx context.Context) (int, error) {
 // check — never the checkout's origin/<base>, which the agent's own git can
 // repoint (at the run's own tip, say, which would subtract every commit the
 // run made and pass any workflow change). They can only ever make the list
-// shorter, so a base the remote cannot name, or whose commit the checkout
-// lacks (the agent never brought that base in), is left out and the
-// comparison is the stricter one against the start commit alone. For a start
-// that has no start commit (startErr: workBase falls back to the base
-// branch) there is only the one bound.
+// shorter, so a base the remote cannot name is left out here, and a base
+// whose commit the checkout lacks is left out by the reader itself
+// (gitops.readableBounds, one bound at a time): the bounds that do resolve
+// still leave out their own commits, so one unreadable base cannot blame the
+// run for a workflow file another base merged in — the false refusal that
+// dropping every bound together would give. For a start that has no start
+// commit (startErr: workBase falls back to the base branch) there is only
+// the one bound.
 func (r *run) guardBounds(ctx context.Context) (since string, except []string) {
 	since = r.workBase()
 	if since == r.baseRef() {
