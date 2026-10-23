@@ -2100,6 +2100,14 @@ change `.github/workflows/`. `docs/pending-workflows/` now holds five pending wo
 `docs/pending-workflows/images.yml` — the credentials service's image leg (credentials-service plan, task C1.14) — `docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
 P4.3) — `docs/pending-workflows/console-windows.yml` — the console's Windows installer pack,
 which runs at release time only rather than on a pull request, and is copied in only after the
+packer and the unit suite can pass on a Windows runner — `docs/pending-workflows/mobile-release.yml` — the mobile app's build and store submissions
+(2026-10-20) — and `docs/pending-workflows/console-release-tag.yml` — the console's own release
+stream, a `console-vX.Y.Z` tag with its own version line and its own notes (2026-10-23), which
+supersedes the staged `console-release.yml`. None of the five is this site's: the website's two manual
+||||||| cc50b5b23
+packer and the unit suite can pass on a Windows runner — and
+`docs/pending-workflows/mobile-release.yml` — the mobile app's build and store submissions
+(2026-10-20). None of the four is this site's: the website's two manual
 packer and the unit suite can pass on a Windows runner — and
 `docs/pending-workflows/mobile-release.yml` — the mobile app's build and store submissions
 (2026-10-20) — and `docs/pending-workflows/dependabot-console.yml` — Dependabot's watch over
