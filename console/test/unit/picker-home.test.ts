@@ -145,6 +145,28 @@ function pickerOver(options: {
   }
 }
 
+/** expectRefused is the assertion the three home cases below make: the picker
+ * starts with no store and says why, rather than writing `installations.json`
+ * into the CLI's configuration. It reads the sentence off the refusal -- the `??`
+ * is so that a picker which refused nothing fails with the sentence it did not
+ * print, rather than with an assertion about `null` -- and then checks that no
+ * store was written. */
+function expectRefused(picker: Picker, userData: string): void {
+  expect(picker.refusal ?? '(nothing refused: the store was written)').toContain(
+    'refuses to keep its installations',
+  )
+  expect(existsSync(join(userData, INSTALLATIONS_FILE_NAME))).toBe(false)
+}
+
+/** The two spellings of "this environment names no home", which are one branch in
+ * the picker. The blank one is the one a case is easy to leave out: `HOME=''` is
+ * not `undefined`, so a case that only drops the key cannot see whether the blank
+ * was handled. */
+const noHome = [
+  { spelling: 'names no home at all', appEnv: { HOME: undefined } },
+  { spelling: 'names a home that is empty', appEnv: { HOME: '' } },
+] as const
+
 describe('the picker’s home', () => {
   it('is the app’s own environment’s, asked of the path rule that refuses the CLI’s own config directory', () => {
     // `~/.config/fugaro` is the one entry of that rule the home decides -- the
@@ -163,35 +185,35 @@ describe('the picker’s home', () => {
       accountHome: accountHome('refused-account-home'),
       userData,
     })
-    // The `??` is so that a picker which refused nothing fails with the
-    // sentence it did not print, rather than with an assertion about `null`.
-    expect(picker.refusal ?? '(nothing refused: the store was written)').toContain(
-      'refuses to keep its installations',
-    )
-    expect(existsSync(join(userData, INSTALLATIONS_FILE_NAME))).toBe(false)
+    expectRefused(picker, userData)
   })
 
-  it('falls back to Electron’s answer when the environment names no home at all', () => {
-    // The other half of the same decision: an empty `HOME` is not a home, and
-    // neither is a missing one. `join('', '.local', 'bin')` is a **relative**
-    // path, which rule 4 refuses to consider at all, so the fallback is not a
-    // convenience -- without it a launch that scrubbed `HOME` would resolve `~`
-    // to a path under the *working directory*. Electron's own answer is the home
-    // the account actually has, so it is the one to fall back to.
+  it.each(noHome)('falls back to Electron’s answer when the environment $spelling', ({ appEnv }) => {
+    // The other half of the same decision: a missing `HOME` is not a home, and
+    // neither is an empty one. The blank spelling is the worse of the two
+    // because it is *silently relative*: `join('', '.local', 'bin')` is
+    // `.local/bin` and `join('', '.config', 'fugaro')` is `.config/fugaro`, and
+    // both are then read against the directory the app happens to have been
+    // started in. Nothing downstream catches that -- rule 4 pushes every `~`
+    // entry into the candidate list whether or not its home made it absolute
+    // (`resolveBinary` refuses a relative **configured** path, not an expansion
+    // of `~`), and the refusal resolves the config entry the same way. So
+    // without the fallback a launch that scrubbed `HOME` would look for the CLI
+    // in `./.local/bin` and stop refusing to write into `./.config/fugaro`.
+    // Electron's own answer is the home the account actually has, so it is the
+    // one to fall back to.
     const account = accountHome('fallback-account-home')
     const userData = join(account, '.config', 'fugaro', 'console')
     const picker = pickerOver({
+      // A home that is *not* Electron's answer, so a case that stopped reading
+      // the environment -- or stopped overriding it with the spelling above --
+      // fails rather than passing for the wrong reason.
       envHome: accountHome('fallback-home'),
       accountHome: account,
       userData,
-      appEnv: { HOME: undefined },
+      appEnv,
     })
-    // The `??` is so that a picker which refused nothing fails with the
-    // sentence it did not print, rather than with an assertion about `null`.
-    expect(picker.refusal ?? '(nothing refused: the store was written)').toContain(
-      'refuses to keep its installations',
-    )
-    expect(existsSync(join(userData, INSTALLATIONS_FILE_NAME))).toBe(false)
+    expectRefused(picker, userData)
   })
 })
 
