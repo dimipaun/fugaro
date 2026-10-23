@@ -2100,19 +2100,20 @@ tests it with the tools stubbed on PATH, and `go test ./scripts/` runs that test
 The deploy workflow is still W2.1's and **not a Fugaro run's to write**: W2.1 stages a
 workflow under `docs/pending-workflows/` for the owner to copy in, and the owner runs it to
 deploy to the Firebase project created for the website only (D91, D109) — a run may not
-change `.github/workflows/`. `docs/pending-workflows/` now holds six pending workflows,
+change `.github/workflows/`. `docs/pending-workflows/` now holds five pending workflows,
 `docs/pending-workflows/images.yml` — the credentials service's image leg (credentials-service
 plan, task C1.14) — `docs/pending-workflows/shared-tests.yml` — the shared package's test job
 (mobile plan Task P4.3) — `docs/pending-workflows/console-windows.yml` — the console's Windows
 installer pack, which runs at release time only rather than on a pull request, and is copied in
 only after the packer and the unit suite can pass on a Windows runner —
-`docs/pending-workflows/mobile-release.yml` — the mobile app's build and store submissions
-(2026-10-20) — `docs/pending-workflows/console-release-tag.yml` — the console's own release
+`docs/pending-workflows/console-release-tag.yml` — the console's own release
 stream, a `console-vX.Y.Z` tag with its own version line and its own notes (2026-10-23), which
 supersedes the staged `console-release.yml` — and `docs/pending-workflows/dependabot-console.yml`
 — Dependabot's watch over the console's npm dependencies (2026-10-23), which is a settings file
 rather than a workflow and is copied over `.github/dependabot.yml` rather than into
-`.github/workflows/`. None of the six is this site's: the website's two manual
+`.github/workflows/`. None of the five is this site's (the mobile app's release workflow,
+`mobile-release.yml`, was copied into `.github/workflows/` on 2026-10-23 and is no longer
+staged): the website's two manual
 workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the
 owner, and no deploy workflow is staged. The only other workflow files left there are the desktop
 console's `console-tests.yml` and `console-release.yml`, which the owner has copied in as well:
