@@ -3491,18 +3491,29 @@ describe('the wrapper into a distribution', () => {
 
   it('feeds a watch stream through the wrapper exactly as on the host route', async () => {
     // T-F3 (F28, F29): the wrapper is not allowed to change the feed. The same
-    // scenario runs on both routes -- one document line with a `\r` before the
-    // `\n`, one notice, and a line carrying a character outside ASCII -- and the
-    // two routes must produce the same frames and the same notices. A decoder
-    // applied on one route and not the other, or a `StringDecoder` lost to the
-    // wrapper's shell, fails here.
-    const lines = ['{"kind":"live","day":"2026-01-01"}\r', 'no budget backend: showing run records only', '{"kind":"live","day":"2026-01-01","note":"héllo ✓"}']
+    // scenario runs on both routes and the two must produce the same frames, the
+    // same notices and the same end.
+    //
+    // The scenario is the two things the plan names. A line ends `\r\n` -- which
+    // `decodeFeedLine` strips -- and the child's stdout is written as **bytes**
+    // with the cut **inside a multi-byte character**, so the two chunks on the
+    // pipe are not text on their own and only a `StringDecoder` that remembers
+    // the partial character reassembles the document. `split` cannot do that
+    // (it cuts the string, and a string has no half a character); `splitBytes`
+    // can, and the cut is computed here from the bytes rather than guessed.
+    const document = '{"kind":"live","day":"2026-01-01","note":"héllo ✓"}'
+    const stdout = `${document}\r\nno budget backend: showing run records only\n`
+    const check = Buffer.from('✓', 'utf8')
+    const splitBytes = Buffer.from(stdout, 'utf8').indexOf(check) + 1
+    // The cut is inside the character, which is what makes this the case.
+    expect(Buffer.from(stdout, 'utf8').subarray(splitBytes - 1, splitBytes + 1)).toEqual(check.subarray(0, 2))
+
     // The child writes its lines and then **refuses** (status 1): the feed then
     // settles on the child's own end on both routes, which is a fact about the
     // child rather than a moment a test picked -- and the sentence it ends with
     // is compared too, so the wrapper's own marker line is asserted absent
     // (T-F1) as well as asserted equal.
-    const scenario = { commands: { watch: { lines, delayMs: 5, code: 1 } } }
+    const scenario = { commands: { watch: { stdout, splitBytes, delayMs: 5, code: 1 } } }
 
     const hostDirectory = freshDirectory()
     const host = installStub(hostDirectory, scenario)
@@ -3537,22 +3548,31 @@ describe('the wrapper into a distribution', () => {
     expect(fromWsl.frames).toEqual(fromHost.frames)
     expect(fromWsl.notices).toEqual(fromHost.notices)
     expect(fromWsl.end).toEqual(fromHost.end)
+    // The document arrived **whole** on both routes: the character cut in half
+    // by the pipe was put back together, and the line was not dropped as a
+    // fragment (which is what a lost `StringDecoder` would do with it).
     expect(fromHost.notices).toHaveLength(1)
-    // The document carrying the multi-byte character arrived whole on both
-    // routes: a decode that lost a byte would have dropped it as a notice.
-    expect(fromWsl.frames).toHaveLength(2)
+    expect(fromWsl.frames).toHaveLength(1)
+    const frame = fromWsl.frames[0] as { document?: Record<string, unknown> } | undefined
+    expect(frame?.document?.['note']).toBe('héllo ✓')
   })
 
-  it('stops a wedged read at the deadline through the wrapper too', async () => {
-    // T-F5 (F25): `READ_TIMEOUT_MS` is the backstop on both routes. The child
-    // inside the distribution holds and never closes its stdout, so nothing
-    // settles the read but the deadline -- and it settles **at** the deadline,
-    // not before: a reader that settled on `exit`, or on the first quiet
-    // moment, would hand back a torn document.
+  it('stops a read whose pipe outlives the child at the deadline, through the wrapper', async () => {
+    // T-F5 (F25): the read deadline is the backstop, and on this route it is
+    // load-bearing -- the wrapper adds a relay and the distribution a session,
+    // and either can hold the pipe open after the process that wrote to it has
+    // gone. So the fake here **outlives its child with stdout still open**: the
+    // CLI exits normally, and the reader sees no `close`.
+    //
+    // The assertions are both halves of the rule: nothing settles the read
+    // before the deadline (a reader that settled on `exit` would hand back a
+    // torn document here, which is the failure `close`-not-`exit` prevents),
+    // and it settles **at** the deadline rather than never.
     const directory = freshDirectory()
     const wsl = installWslStub(join(directory, 'windows'), {
       distros: TWO,
-      scenario: { commands: { version: { stdout: '1.4.2\n', hold: true } } },
+      scenario: { commands: { version: { stdout: '1.4.2\n' } } },
+      lingersAfterChild: true,
     })
     const timers = manualTimers()
     const pending = runToCompletion(wslPlanIn(wsl, 'cli.version'), { timers, timeoutMs: 90_000, shutdownGraceMs: 50 })
@@ -3566,15 +3586,26 @@ describe('the wrapper into a distribution', () => {
         settled = true
       },
     )
-    // The child has answered and is holding: nothing has settled the read.
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    // The CLI has run and exited; the pipe is still open, and nothing has
+    // settled the read.
+    await new Promise((resolve) => setTimeout(resolve, 100))
     expect(settled).toBe(false)
     expect(timers.fired()).toEqual([])
 
     timers.fire()
-    const error = await pending.catch((thrown: unknown) => thrown as SpawnTimeout)
+    const error: SpawnTimeout = await pending.then(
+      () => {
+        throw new Error('the read was expected to be refused')
+      },
+      (thrown: SpawnTimeout) => thrown,
+    )
     expect(error).toBeInstanceOf(SpawnTimeout)
+    expect(error.message).toContain('did not finish within 90s')
     expect(timers.fired()).toEqual([90_000])
+    // The child was stopped rather than left behind, exactly as on a timeout
+    // anywhere else in this module: the shutdown grace is armed, and its
+    // `SIGKILL` is the escalation for a process that ignores the `SIGTERM`.
+    expect(timers.pending()).toBe(1)
   })
 
   it('spells every CLI word for the distribution’s shell, so a hostile name is a word', async () => {

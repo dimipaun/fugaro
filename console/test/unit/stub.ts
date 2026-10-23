@@ -50,6 +50,12 @@ export interface StubAnswer {
   /** `split` writes `stdout` in two chunks with a `delayMs` gap, so a test can
    * assert that a document split across two reads is still one document. */
   readonly split?: boolean
+  /** `splitBytes` writes `stdout` as **bytes**, cut at this offset -- which is
+   * the split a `StringDecoder` exists for (T-F3): the two halves are two
+   * chunks on the pipe, and a cut inside a multi-byte character is a valid byte
+   * string whose halves are not valid text on their own. `split` cuts the
+   * *string* in half, which cannot land inside a character; this can. */
+  readonly splitBytes?: number
 }
 
 /** StubScenario keys answers by the command the stub was asked for: the command
@@ -234,7 +240,12 @@ async function main() {
     }
   }
   if (typeof answer.stdout === 'string' && answer.stdout !== '') {
-    if (answer.split) {
+    if (typeof answer.splitBytes === 'number') {
+      const bytes = Buffer.from(answer.stdout, 'utf8')
+      process.stdout.write(bytes.subarray(0, answer.splitBytes))
+      await sleep(answer.delayMs || 20)
+      process.stdout.write(bytes.subarray(answer.splitBytes))
+    } else if (answer.split) {
       const half = Math.floor(answer.stdout.length / 2)
       process.stdout.write(answer.stdout.slice(0, half))
       await sleep(answer.delayMs || 20)
