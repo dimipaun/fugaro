@@ -172,8 +172,10 @@ func (r *Repo) WorkflowFiles(ctx context.Context, since string) ([]string, error
 // own commits: with one of them subtracted, a run cut from integration that
 // merged main in is refused for the workflow file main's own commit added.
 // Every member of except is a ref the agent's own git could repoint, so they
-// can only ever make the list shorter; when any of them cannot be read the
-// list falls back to the since side alone, which reports more rather than
+// can only ever make the list shorter; a bound the checkout cannot read as a
+// commit is dropped on its own, and the others still leave out their own
+// commits (see readableBounds). Only when nothing is left to subtract does
+// the list fall back to the since side alone, which reports more rather than
 // nothing.
 func (r *Repo) WorkflowFilesExcept(ctx context.Context, since string, except ...string) ([]string, error) {
 	return r.workflowFiles(ctx, since, "HEAD", except)
@@ -212,12 +214,11 @@ func (r *Repo) WorkflowFilesInExcept(ctx context.Context, since, until string, e
 // that none of except — when they name a revision — has, a merge for what
 // it changes against all of its parents.
 func (r *Repo) workflowFiles(ctx context.Context, since, until string, except []string) ([]string, error) {
+	except = r.readableBounds(ctx, except)
 	revs := []string{"--no-replace-objects", "log", "--format=", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv",
 		"-c", "--full-history", "--root", "--ignore-submodules=none", "--end-of-options", since + ".." + until}
 	for _, e := range except {
-		if e != "" {
-			revs = append(revs, "^"+e)
-		}
+		revs = append(revs, "^"+e)
 	}
 	revs = append(revs, "--", ":(icase)"+workflowRoot)
 	out, err := r.gitRaw(ctx, revs...)
@@ -225,10 +226,10 @@ func (r *Repo) workflowFiles(ctx context.Context, since, until string, except []
 		if len(except) == 0 {
 			return nil, err
 		}
-		// A bound could not be read: report what the run's own base alone
-		// says rather than nothing (the guard fails closed either way, but
-		// this is also what the guard did before it knew about a base's own
-		// commits).
+		// The range could not be read with the bounds that are left: report
+		// what the run's own base alone says rather than nothing (the guard
+		// fails closed either way, but this is also what the guard did before
+		// it knew about a base's own commits).
 		return r.workflowFiles(ctx, since, until, nil)
 	}
 	seen := make(map[string]bool)
@@ -244,6 +245,37 @@ func (r *Repo) workflowFiles(ctx context.Context, since, until string, except []
 	}
 	slices.Sort(files) // a commit's own files come sorted, the commits do not
 	return files, nil
+}
+
+// readableBounds keeps the bounds of except the checkout can read as a
+// commit, in order, and drops the others. Each bound is read on its own: a
+// bound the checkout lacks — a base branch whose tip the remote has and the
+// agent never fetched — takes nothing with it, so the bounds that do resolve
+// still leave out their own commits. Reading them together instead (one git
+// log over the whole range) drops every bound on the one that fails, and the
+// range then blames the run for a workflow file a base branch merged in, a
+// refusal for work the run never did.
+//
+// Dropping a bound only ever makes the list longer — the commits it would
+// have left out count as the run's again — so a bound that cannot be read
+// cannot hide a workflow file the run changed: it can only report more.
+// Every bound kept is one that resolves, and subtracting it leaves out that
+// base's own commits, which are not the run's to be refused for.
+func (r *Repo) readableBounds(ctx context.Context, except []string) []string {
+	var out []string
+	for _, e := range except {
+		if e == "" {
+			continue
+		}
+		if _, err := r.git(ctx, "cat-file", "-e", "--end-of-options", e+"^{commit}"); err != nil {
+			if ctx.Err() != nil {
+				return nil // the context is gone: read no bound rather than some
+			}
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 // hasPrefixFold is strings.HasPrefix without regard to ASCII case.
