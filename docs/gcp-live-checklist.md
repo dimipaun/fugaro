@@ -2316,7 +2316,7 @@ The installation and the sandbox are migrated; the web repo is applied and its f
 
 Still to record: the items below that this list doesn't cover.
 
-- **The project's default build identity** (gcp-setup.md, precondition 9): the account `gcloud builds get-default-service-account` names, its roles, and whether the leaked-build-token path of design §6.1 is real in this project.
+- **The project's default build identity** (gcp-setup.md, "Before you onboard a repository"): the account `gcloud builds get-default-service-account` names, its roles, and whether the leaked-build-token path of design §6.1 is real in this project.
 - **Cloud Resource Manager disabled:** on a project where it was disabled, `fugaro update --plan-only` asked to enable it, enabled it, and carried on once the enable propagated (how many retries it took).
 - **The installation plan (adoption):** the imports, creates and in-place updates the plan showed, and that it had zero deletes; that `plan -detailed-exitcode` exits 2 for an import-only plan.
 - **Log isolation:** a new Fugaro job line lands in the `fugaro` log bucket and not in `_Default`; the project exclusion applies to `_Default`; `fugaro logs` reads through the view; adopted M4 jobs already carry template labels, so the sink's filter matches them; and the check-job failure alert fires with log isolation on (check 16b).

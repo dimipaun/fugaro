@@ -49,7 +49,7 @@ The 0.6.0 guard `config publish --executable-changes` is a CLI check. It binds o
 
 The bucket has `uniform_bucket_level_access = true` and `public_access_prevention = "enforced"`. It has **no versioning** and no retention policy (`modules/installation/bucket.tf`). The Terraform state is in a separate bucket, where only operators hold `objectAdmin`.
 
-People are made launchers or operators by `fugaro init --launcher/--operator`, stored in the local config's `terraform.launchers` and `terraform.operators`. A new config defaults both to the person running `init` ([gcp-setup.md](../gcp-setup.md), precondition 8). So on a one-person installation, which is the case for both of the owner's installations, every launcher is also an operator.
+People are made launchers or operators by `fugaro init --launcher/--operator`, stored in the local config's `terraform.launchers` and `terraform.operators`. A new config defaults both to the person running `init` ([gcp-setup.md](../gcp-setup.md), "Setup checks these for you"). So on a one-person installation, which is the case for both of the owner's installations, every launcher is also an operator.
 
 ### 2.2 Who reads and writes which objects
 
