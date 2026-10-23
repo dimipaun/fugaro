@@ -402,16 +402,23 @@ func OpenLedger(o LedgerOptions) (*Ledger, error) {
 	}
 
 	l := &Ledger{path: o.Path, opts: o}
-	data, err := os.ReadFile(o.Path)
+	// The size is read before the file is: a ledger is at most MaxMaxSeen
+	// records of three short fields, so a file past the bound is not a ledger,
+	// and reading one all the way in first would be the hostile input's choice
+	// rather than this package's (`acks.go` bounds its own the same way).
+	info, err := os.Stat(o.Path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		l.state = ledgerState{seen: []LedgerEntry{}}
 		return l, nil
 	case err != nil:
 		return nil, fmt.Errorf("mailbox: reading the ledger at %s: %w", o.Path, cacheDir(err))
-	}
-	if len(data) > maxLedgerBytes {
+	case info.Size() > maxLedgerBytes:
 		return nil, refuse(CodeInvalidLedger, "file")
+	}
+	data, err := os.ReadFile(o.Path)
+	if err != nil {
+		return nil, fmt.Errorf("mailbox: reading the ledger at %s: %w", o.Path, cacheDir(err))
 	}
 	if refusal := l.parse(data); refusal != nil {
 		return nil, refusal

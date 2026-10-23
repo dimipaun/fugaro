@@ -1024,6 +1024,34 @@ func TestLedgerUnreadableFileIsRefused(t *testing.T) {
 	}
 }
 
+// TestLedgerOversizedFileIsRefused: a file past the bound is refused from its
+// size, without being read. A ledger is at most MaxMaxSeen records of three
+// short fields, so what is past the bound is not a ledger — and reading one in
+// full first would let whatever put it there choose this process's memory.
+func TestLedgerOversizedFileIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ledger.json")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("creating the fixture: %v", err)
+	}
+	// Truncated rather than written: the file is a hole, and the point is its
+	// size. `os.ReadFile` on it would hand this process 4 MiB of NULs.
+	if err := f.Truncate(maxLedgerBytes + 1); err != nil {
+		t.Fatalf("sizing the fixture: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("closing the fixture: %v", err)
+	}
+	l, err := OpenLedger(ledgerOptions(path))
+	if err == nil {
+		t.Fatalf("a ledger past the bound was opened: %d records", len(l.Entries()))
+	}
+	if got := ledgerRefusalCode(t, err); got != CodeInvalidLedger {
+		t.Errorf("refused with %q, and a file past the bound is not a ledger at all", got)
+	}
+}
+
 // writeLedgerFile writes a ledger document by hand, which is how these tests
 // reach the states a running consumer cannot produce: a full ledger, a record
 // left accepted by a pass that died, an acked record past the horizon.
