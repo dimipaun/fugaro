@@ -342,6 +342,13 @@ export function locationsFor(platform: string = process.platform): PlatformLocat
  * installation's. Anything not on this list is not passed -- there is no merge
  * with `process.env` anywhere in this file, and that is the property
  * `test/unit/spawn.test.ts` diffs the child's own report against.
+ *
+ * **It is the whole list on both routes, and the WSL route adds exactly one key
+ * to the environment `wsl.exe` is handed (`WSLENV_KEY`, see `childEnvironment`).**
+ * That key is not a variable the distribution receives: it is `wsl.exe`'s own
+ * share list, and the console states it empty rather than leaving it out, so
+ * "no Windows variable is shared with the distribution" is a sentence this
+ * console wrote rather than a default it inherited (F20, D5(a)).
  */
 export const CHILD_ENV_KEYS: readonly string[] = Object.freeze([
   'PATH',
@@ -356,6 +363,26 @@ export const CHILD_ENV_KEYS: readonly string[] = Object.freeze([
   'XDG_RUNTIME_DIR',
   'FUGARO_PROJECT',
 ])
+
+/**
+ * WSLENV_KEY is `wsl.exe`'s own share list, and **the console writes it, always
+ * empty, and never reads it** (Part E, T-E2; F20, D5(a)).
+ *
+ * The mechanism it states: `wsl.exe` copies a Windows variable into the
+ * distribution's environment **only when that variable's name is listed in
+ * `WSLENV`**, and an entry may carry a `/u`, `/w` or `/l` suffix saying which
+ * side's spelling it keeps. So an absent `WSLENV` and an empty one mean the same
+ * thing to a build that reads it as a list -- and only the second is a thing the
+ * console *said*. With `WSLENV` in the host's own environment the console does
+ * nothing: the key is written as `''` unconditionally and the host's value is
+ * not read, because a `WSLENV` that lists `PATH` (or anything else) is exactly
+ * the leak this module's allow-list exists to prevent, and forwarding the
+ * operator's own share list would hand the distribution whatever the operator
+ * had arranged for their own `wsl` sessions -- which is not the console's
+ * decision to make. `test/unit/secret-hygiene.test.ts` holds the "never reads
+ * it" half as a source scan over `console/src/`.
+ */
+export const WSLENV_KEY = 'WSLENV'
 
 /**
  * SPAWN_FLAGS is every flag this module may emit. It is the argv half of the
@@ -1114,6 +1141,21 @@ export function parseVersionLine(text: string):
  *
  * The returned object has a null prototype and is frozen, so a caller cannot
  * add a key to it after the fact.
+ *
+ * **`wsl` adds one key and it is always the empty string** (T-E2, D5(a)):
+ * `WSLENV`, `wsl.exe`'s own share list, which says which Windows variables the
+ * distribution receives. The allow-list above is what keeps the Windows
+ * environment out; this states *why* the mechanism that could let it in is
+ * closed, rather than relying on a default whose exact behaviour is unverified
+ * (U4). See `WSLENV_KEY`.
+ *
+ * **It is an explicit option and not `platform === 'win32'`**, because the two
+ * questions are different ones: the row a platform selects is the `PATH` a child
+ * on that platform can use (`WIN32_LOCATIONS`' child prefixes are Linux's, F5),
+ * and a `wsl.exe` *query* uses that row too while starting no distribution
+ * process at all (`src/main/wsl.ts`). Only a plan that hands `wsl.exe` a CLI to
+ * run **inside** a distribution has a distribution process to state a share list
+ * to, and only that plan sets this.
  */
 export function childEnvironment(options: {
   readonly target: SpawnTarget
@@ -1123,6 +1165,10 @@ export function childEnvironment(options: {
    * for the same reason `binDirectories` takes one: the platform's tool
    * directories are a fact about the platform the child will run on. */
   readonly platform?: string | undefined
+  /** `wsl` states the WSL share list (`WSLENV_KEY`) empty. True for the WSL
+   * route's own plans and false everywhere else, including the `wsl.exe`
+   * queries. */
+  readonly wsl?: boolean | undefined
 }): Readonly<Record<string, string>> {
   const env: Record<string, string> = Object.create(null) as Record<string, string>
   for (const key of CHILD_ENV_KEYS) {
@@ -1132,6 +1178,10 @@ export function childEnvironment(options: {
   }
   env['PATH'] = childPath(options.binaryPath, options.platform)
   env['FUGARO_PROJECT'] = options.target.project
+  // Written unconditionally, and never read from `appEnv`: the host's own
+  // `WSLENV` is the operator's business and not this console's, and a value
+  // carried over from it would be a share list the console did not choose.
+  if (options.wsl === true) env[WSLENV_KEY] = ''
   return Object.freeze(env)
 }
 
@@ -1472,6 +1522,9 @@ export function planFor(
         binaryPath: context.binaryPath,
         appEnv: context.appEnv,
         platform: 'win32',
+        // The WSL route is the one plan that starts a distribution process, so
+        // it is the one environment that states `WSLENV` empty (T-E2, D5(a)).
+        wsl: true,
       }),
       project: context.target.project,
       backoff: context.backoff ?? DEFAULT_BACKOFF,

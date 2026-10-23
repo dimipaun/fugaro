@@ -52,6 +52,7 @@ import {
   CHILD_ENV_KEYS,
   COMMANDS_WITHOUT_PROJECT,
   DARWIN_LOCATIONS,
+  DISTRO_NAME_RE,
   FUGARO_BINARY_NAME,
   INSTALLATION_LIST_COMMAND,
   LINUX_LOCATIONS,
@@ -59,13 +60,18 @@ import {
   PICKER_OPERATION_NAMES,
   PLATFORM_LOCATIONS,
   SPAWN_COMMANDS,
+  SPAWN_FLAGS,
   WIN32_LOCATIONS,
+  WSLENV_KEY,
+  WSL_PREFIX_FLAGS,
   argvFor,
   assertArgvFlags,
   assertSpawnSurface,
+  assertWslPrefix,
   binDirectories,
   childEnvironment,
   childPath,
+  isSafeDistroName,
   cliSentence,
   isExecutableFile,
   decodeFeedLine,
@@ -111,6 +117,12 @@ import type { WslFixture, WslStub } from './wslstub'
 
 const SOURCE_ROOT = fileURLToPath(new URL('../../src', import.meta.url))
 const PROJECT = 'fugaro'
+
+/** WINDOWS_PATH is a `PATH` spelled the way a Windows host spells one: two
+ * entries separated by `;`, drive-rooted, with backslashes. It is the string the
+ * child's `PATH` must never be, and the two separators of one WSL spawn are
+ * visible side by side because of it (F5, T-A2). */
+const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
 
 /**
  * COMMANDS_TAKING_PROJECT is the plan's own list, hard-coded: the ten
@@ -971,6 +983,64 @@ describe('the child environment', () => {
     expect(Object.keys(env).sort()).toEqual(['FUGARO_PROJECT', 'HOME', 'PATH'])
   })
 
+  it('states `WSLENV` empty on the WSL leg, and never carries the key on the host', () => {
+    // T-E2 of docs/console-windows/implementation-plan.md, F20 and decision
+    // D5(a). `wsl.exe` shares a Windows variable with the distribution only when
+    // its name is listed in `WSLENV`, so the console states the list **empty**
+    // rather than leaving the variable out and trusting a default (U4): "no
+    // Windows variable is shared with the distribution" is then a sentence this
+    // console wrote.
+    //
+    // The mutations this case catches: drop the key, and the first assertion
+    // fails; write `'PATH'` (or anything else) into it, and the second fails --
+    // which is the mutation that matters, because a shared `PATH` is a Windows
+    // path in a Linux child.
+    const wsl = childEnvironment({
+      target: { project: PROJECT },
+      binaryPath: FUGARO_BINARY_NAME,
+      appEnv: fullAppEnv,
+      platform: 'win32',
+      wsl: true,
+    })
+    expect(wsl[WSLENV_KEY]).toBe('')
+    expect(Object.keys(wsl).sort()).toEqual([...CHILD_ENV_KEYS, WSLENV_KEY].sort())
+
+    // The host route does not carry the key at all: there is no `wsl.exe` between
+    // the console and the CLI, so there is no share list to state.
+    const host = childEnvironment({
+      target: { project: PROJECT },
+      binaryPath: '/opt/homebrew/bin/fugaro',
+      appEnv: fullAppEnv,
+    })
+    expect(Object.keys(host)).not.toContain(WSLENV_KEY)
+    expect(host[WSLENV_KEY]).toBeUndefined()
+
+    // **The host's own `WSLENV` is not read.** A value the operator set for their
+    // own `wsl` sessions -- `PATH` shared, or a variable of their own -- is not
+    // this console's share list, and forwarding it would hand the distribution
+    // whatever the operator had arranged elsewhere. The key is written, never
+    // copied.
+    const hostile = childEnvironment({
+      target: { project: PROJECT },
+      binaryPath: FUGARO_BINARY_NAME,
+      appEnv: { ...fullAppEnv, WSLENV: 'PATH/l:FOO/u' },
+      platform: 'win32',
+      wsl: true,
+    })
+    expect(hostile[WSLENV_KEY]).toBe('')
+
+    // And it is the *route* that states it, not the platform: the win32 row is
+    // what a `wsl.exe` **query** uses too (`src/main/wsl.ts`), and a query starts
+    // no distribution process to state a share list to.
+    const query = childEnvironment({
+      target: { project: PROJECT },
+      binaryPath: FUGARO_BINARY_NAME,
+      appEnv: fullAppEnv,
+      platform: 'win32',
+    })
+    expect(Object.keys(query)).not.toContain(WSLENV_KEY)
+  })
+
   it('reaches the child as its real environment, not just as a plan', async () => {
     // The end-to-end half: the stub reports the keys of its own process.env, so
     // a merge with process.env anywhere in the console would show up here.
@@ -1785,10 +1855,12 @@ describe('the WSL resolution path', () => {
     ])
   })
 
-  it('gives the CLI inside the distribution Linux’s PATH and exactly CHILD_ENV_KEYS', () => {
+  it('gives the CLI inside the distribution Linux’s PATH, CHILD_ENV_KEYS and an empty WSLENV', () => {
     // The credential boundary's near side, on the WSL route: the environment the
     // CLI receives is built by `childEnvironment` and nothing else, and its PATH
-    // is a Linux one even though the host is Windows (F5, T-C2).
+    // is a Linux one even though the host is Windows (F5, T-C2). `WSLENV` is the
+    // one key beside the eleven, and it is the *statement* that the Windows
+    // environment is not shared with the distribution (T-E2, D5(a)).
     const wsl = installWslStub(freshDirectory(), { distros: TWO_DISTROS })
     const plan = planFor('budget.show', {}, safeContext({
       binaryPath: FUGARO_BINARY_NAME,
@@ -1800,9 +1872,16 @@ describe('the WSL resolution path', () => {
       },
       wsl: { distro: 'Ubuntu', directory: '/home/dimi/src', executable: wsl.binary },
     }))
-    // Every key is a `CHILD_ENV_KEY` -- the allow-list is the enforcement, and
-    // the app's own environment is read for nothing else.
-    for (const key of Object.keys(plan.env)) expect(CHILD_ENV_KEYS).toContain(key)
+    // Every key is a `CHILD_ENV_KEY` or the share list this route states -- the
+    // allow-list is the enforcement, and the app's own environment is read for
+    // nothing else.
+    for (const key of Object.keys(plan.env)) expect([...CHILD_ENV_KEYS, WSLENV_KEY]).toContain(key)
+    // The keys are exactly the ones this `appEnv` supplied plus the two this
+    // module always writes (`PATH`, `FUGARO_PROJECT`) and the share list -- a
+    // key that is not on the allow-list would be a key that came from the app's
+    // environment, which is the leak this case exists to refuse.
+    expect(Object.keys(plan.env).sort()).toEqual(['FUGARO_PROJECT', 'HOME', 'PATH', WSLENV_KEY])
+    expect(plan.env[WSLENV_KEY]).toBe('')
     expect(plan.env['PATH']).toBe(childPath(FUGARO_BINARY_NAME, 'linux'))
     expect(plan.env['PATH']).not.toContain('C:\\Windows')
     expect(Object.keys(plan.env)).not.toContain('AWS_SECRET_ACCESS_KEY')
@@ -2038,6 +2117,127 @@ describe('the WSL resolution path', () => {
     expect(resolution.kind).toBe('no-distro')
     // The host's `fugaro` was never asked: `resolveBinary` was not reached.
     expect(hostStub.calls()).toBe(0)
+  })
+
+  // SECURITY-SENSITIVE: the credential boundary, proved through `wsl.exe` rather
+  // than around it (T-E1; F18, F19, F21, F22; decision D5(a)).
+  //
+  // **The claim, in one sentence:** nothing the console's own environment holds
+  // reaches the process inside the distribution except the eleven
+  // `CHILD_ENV_KEYS`, and the only key beside them on the way to `wsl.exe` is
+  // the empty `WSLENV` the route states.
+  //
+  // **Why it is asserted here and not read off the plan.** A test that inspected
+  // `plan.env` would be asserting that the console is self-consistent. The fake
+  // reports what each hop *received*: the `wsl.exe` hop's own environment (what
+  // the console handed it) and the `fugaro` hop's (what the Linux side got), and
+  // those are the two accounts an operator's machine could be wrong about.
+  //
+  // **The mutations this case catches**, each one a plausible edit:
+  //   1. `...process.env` merged into `childEnvironment` -- the sentinels are in
+  //      this *test process's* environment, so they appear in the `wsl.exe`
+  //      hop's own report and the case fails by naming them;
+  //   2. the same merge done from `appEnv` -- the sentinels are in the `appEnv`
+  //      handed over too, so that half is covered by the same assertions;
+  //   3. the allow-list widened (a key added to `CHILD_ENV_KEYS`) -- the `wsl.exe`
+  //      hop's key set is pinned exactly;
+  //   4. `WSLENV` forwarded from the host rather than written empty -- the
+  //      near-side assertion on its value fails;
+  //   5. the double forwarding its own environment to the child -- the child
+  //      hop's key set is pinned exactly, and `test/unit/wslstub.test.ts` holds
+  //      that half of the double's contract on its own.
+  it('hands the distribution exactly CHILD_ENV_KEYS, with this process’s credentials planted', async () => {
+    // The planted credentials are *names*, and the values are inert strings that
+    // match no credential shape (the rule `test/unit/secret-hygiene.test.ts`
+    // enforces over this tree). They stand in for everything the console's
+    // environment holds and the distribution must not see.
+    const PLANTED: Readonly<Record<string, string>> = {
+      AWS_SECRET_ACCESS_KEY: 'planted-not-a-real-key',
+      GITHUB_TOKEN: 'planted-not-a-real-token',
+      GOOGLE_APPLICATION_CREDENTIALS: 'C:\\Users\\dimi\\.config\\gcloud\\planted.json',
+    }
+    for (const [name, value] of Object.entries(PLANTED)) vi.stubEnv(name, value)
+    vi.stubEnv('PATH', WINDOWS_PATH)
+
+    // The environment the app hands the console: this process's own (the
+    // sentinels included) plus the eleven keys spelled as a Windows host would
+    // spell them. All eleven are present, so "exactly the eleven" is a literal
+    // claim here and not a claim about whichever keys this machine happens to
+    // have.
+    const appEnv: Readonly<Record<string, string | undefined>> = {
+      ...process.env,
+      ...PLANTED,
+      PATH: WINDOWS_PATH,
+      HOME: 'C:\\Users\\dimi',
+      TMPDIR: 'C:\\Users\\dimi\\AppData\\Local\\Temp',
+      LANG: 'en_US.UTF-8',
+      LC_ALL: 'en_US.UTF-8',
+      XDG_CONFIG_HOME: 'C:\\Users\\dimi\\.config',
+      XDG_CACHE_HOME: 'C:\\Users\\dimi\\.cache',
+      XDG_DATA_HOME: 'C:\\Users\\dimi\\.local\\share',
+      XDG_STATE_HOME: 'C:\\Users\\dimi\\.local\\state',
+      XDG_RUNTIME_DIR: 'C:\\Users\\dimi\\run',
+    }
+
+    const arrangement = wslRoot()
+    const resolution = await resolveInstalledBinary({
+      binaryPath: '',
+      distro: 'Ubuntu',
+      wslDirectory: arrangement.distroDirectory,
+      wslPath: arrangement.wsl.binary,
+      appEnv,
+      directory: arrangement.host,
+      target: { project: PROJECT },
+    })
+    expect(resolution.ok).toBe(true)
+
+    // macOS adds __CF_USER_TEXT_ENCODING to every process it starts (as
+    // elsewhere in this file): the platform's own key, named rather than waved
+    // through so any other addition still fails.
+    const platformKeys = process.platform === 'darwin' ? ['__CF_USER_TEXT_ENCODING'] : []
+
+    // The near side: what `wsl.exe` was handed. The eleven, plus the share list
+    // this route states -- and nothing else, sentinels included.
+    const hop = only(arrangement.wsl.reports().filter((report) => report.kind === 'spawn'))
+    expect(hop.envKeys.filter((key) => !platformKeys.includes(key)).sort()).toEqual(
+      [...CHILD_ENV_KEYS, WSLENV_KEY].sort(),
+    )
+    expect(hop.env[WSLENV_KEY]).toBe('')
+    // The `PATH` the console hands `wsl.exe` is the **child's** -- Linux's --
+    // even though the process that receives it is a Windows one, because it is
+    // the environment the distribution's process is built from (F5, T-A2). The
+    // Windows-shaped `PATH` this test put in the app's own environment is
+    // nowhere in it.
+    expect(hop.path).toBe(childPath(FUGARO_BINARY_NAME, 'win32'))
+    expect(hop.path).not.toContain('C:\\')
+    for (const [name, value] of Object.entries(PLANTED)) {
+      expect(hop.envKeys, name).not.toContain(name)
+      expect(hop.env[name], name).toBeUndefined()
+      // ...and the value is nowhere in the environment either, which is what a
+      // key-by-key check would miss if the name were respelled.
+      expect(Object.values(hop.env), name).not.toContain(value)
+    }
+    // The share list is `wsl.exe`'s: it is not one of the variables the child
+    // inside the distribution receives, so the double does not hand it over.
+    expect(Object.keys(hop.childEnv)).not.toContain(WSLENV_KEY)
+
+    // The far side: what the Linux process got. Exactly the eleven -- the
+    // distribution's own `PATH`, the allow-list's values, and nothing else.
+    const child = only(arrangement.wsl.children())
+    const childKeys = child.envKeys.filter((key) => !platformKeys.includes(key))
+    expect(childKeys.sort()).toEqual([...CHILD_ENV_KEYS].sort())
+    expect(child.env['PATH']).toBe(DISTRO_PATH)
+    expect(child.env['PATH']).not.toContain('C:\\')
+    expect(child.env[WSLENV_KEY]).toBeUndefined()
+    // The filter is a filter and not an empty environment: the allow-listed
+    // values did arrive, spelled as the Windows host spells them.
+    expect(child.env['HOME']).toBe('C:\\Users\\dimi')
+    expect(child.env['FUGARO_PROJECT']).toBe(PROJECT)
+    for (const [name, value] of Object.entries(PLANTED)) {
+      expect(child.envKeys, name).not.toContain(name)
+      expect(child.env[name], name).toBeUndefined()
+      expect(Object.values(child.env), name).not.toContain(value)
+    }
   })
 })
 
