@@ -571,6 +571,103 @@ against upstream by the person copying the file in (see "Before you copy" below 
 Dependabot does not watch this directory), and the first real run is Check 59a's
 and 59b's (plan Task 4.3), which are owner-run on a Mac.
 
+## `console-release-tag.yml`
+
+**This file supersedes `## console-release.yml` above**, in the shape
+the `console-release-linux.yml` section above established: it is that file with one change,
+so it is copied over the staged `console-release.yml` **and** into
+`.github/workflows/console-release.yml`, which is why its copy-in has one more
+command than usual. Staged on **2026-10-23** by the run that gives the console
+its own release stream (the owner's addendum of **2026-10-22**: three
+independent streams — **CLI = animals** (`vX.Y.Z`), **Console = fruits**
+(`console-vX.Y.Z`), **Mobile = birds**).
+
+The console used to release from the CLI's `vX.Y.Z` tag: one tag pushed the
+CLI's GoReleaser run *and* this signing pipeline, and the console's version was
+whatever the CLI's tag said. It does not any more. What changes, and nothing
+else in the file moved:
+
+1. **The trigger is a push of `console-v[0-9]+.[0-9]+.[0-9]+`, and nothing
+   else.** The CLI's `vX.Y.Z` tag starts `release.yml` and no console work at
+   all, which is also why the staged `mobile-release.yml` — still on the CLI's
+   `vX.Y.Z` pattern — is a separate decision and not part of this one. The
+   version is taken from the console tag: `X.Y.Z` after `${TAG#console-v}`, and
+   the tag step refuses anything that is not strict, including the CLI's own
+   tags.
+2. **A step in both build legs refuses a tag whose `X.Y.Z` is not
+   `console/package.json`'s own `version`** — the call `release.yml` already
+   makes for the plugin's version, one file over. So the console's version line
+   is bumped on `main`, in the same commit as the notes below, **before** the
+   tag is pushed; the file's own header carries the message the refusal prints.
+   A release whose version lives only in its tag is one whose own version line,
+   update feed and file names can disagree with it — and, because Task 4.4's
+   updater refuses a downgrade, a console stamped below its `version` would
+   refuse every update it was ever offered.
+3. **The release body is the console's own notes file**, `docs/releases/console/vX.Y.Z.md`,
+   read from the tagged commit. The `release` job refuses to build when that
+   file is missing or empty, and `publish` — the job with no checkout — fetches
+   it through the API and passes it as `--notes-file`, after the standing
+   sentence about what is and is not signed. The inline body string the file
+   used to carry is gone: the console's end-user summary is that file.
+   `docs/release.md`, "Console releases", is the procedure the owner follows and
+   carries the fruit-name list.
+
+**`scripts/release.sh` and `scripts/release-gate.sh` are unchanged and stay
+CLI-only.** The gate refuses anything that is not a strict `vX.Y.Z`, so both
+console legs hand it **`v` + the version** — `scripts/release-gate.sh "v$VERSION"`
+— rather than the console tag, and what it is asked for is the part that is
+about the commit: the tagged commit is an ancestor of `origin/main`, and the
+required checks (`test`, `terraform`, `rules` and both console legs) succeeded
+on it. The shape of the console's own tag was already checked, strictly and by
+prefix, one step above. `scripts/release.sh` is the CLI's release driver and
+never names this workflow.
+
+**Permissions and environment, unchanged** (they are the security-sensitive part
+of this file, so they are repeated here): the `release` job keeps
+`contents: read` + `checks: read` and the protected `console-release`
+environment with its six Apple secrets; the `linux` job keeps `contents: read` +
+`checks: read` and **no environment and no secret at all**; the `publish` job
+keeps `contents: write` + `id-token: write` and **no environment, no secret, no
+checkout**. The trigger is still a **tag push and nothing else**: no
+`pull_request`, no `pull_request_target`, no `workflow_run`, no
+`workflow_dispatch` — a job holding the App Store Connect key must never be
+reachable from a branch of this repository.
+
+**To copy it in**, from the repository root — the first command is the one that
+keeps `console-release.yml` and its staged copy byte-identical, which is what
+`TestDocsConsoleReleaseWorkflowIsStagedAndPinned` asserts:
+
+```sh
+cp docs/pending-workflows/console-release-tag.yml docs/pending-workflows/console-release.yml
+cp docs/pending-workflows/console-release.yml .github/workflows/console-release.yml
+git rm docs/pending-workflows/console-release-tag.yml
+git add -A
+git commit -m "console: the console releases from its own console-vX.Y.Z tag"
+```
+
+The same commit has to carry the two sentences that count the files still
+pending here, because this file stops being one of them: **the four-file pair the
+`console-release-linux.yml` section above prints under "If `mobile-release.yml`
+is still staged when you make this copy-in"** is the pair to write — the opening
+line below the heading of this file and the last section of `website/README.md`
+— unless `mobile-release.yml` has been applied first, in which case that section
+prints the three-file pair for the tree that copy-in leaves.
+`TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere` and
+`website/test/readme.mjs` hold both sentences to the directory.
+
+**What is checked, and what is not.** The staged file is read by
+`TestDocsConsoleReleaseWorkflowIsStagedAndPinned` in both of its homes, through
+the effective-text reader that makes the suite identical before and after the
+copy-in; the trigger, both new refusal steps, the gate call and the publish
+shape are pinned there, the tag step and the version step are **run** under bash
+by `TestDocsConsoleReleaseTagStepStampsOnlyStrictVersions` and
+`TestDocsConsoleReleaseVersionStepRefusesATagItsOwnVersionLineDisagreesWith`,
+and the publish step is run against a faked `gh` by
+`TestDocsConsoleReleasePublishRefusesToClobber`, which refuses a version whose
+notes are missing or empty. What no test here can do is push a `console-vX.Y.Z`
+tag: the first real run of the new trigger is the owner's, and the first console
+release on the new stream is `0.11.0` "Cherry" (`docs/release.md`).
+
 ## `console-linux.yml`
 
 The desktop console's **Linux build check**, staged on **2026-10-20** by the run
