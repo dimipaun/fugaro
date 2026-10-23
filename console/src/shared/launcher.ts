@@ -21,9 +21,12 @@
 //      recorded. The console's column and `fugaro runs ls`'s column therefore
 //      name a run the same way (`dana@example.com` is `dana`, which is what
 //      tells two colleagues' runs apart), and the owner's "the email local
-//      part" is what the console really draws. An address with nothing before
-//      its `@` shortens to `''`: that is the empty cell, and the caller draws
-//      no element for it.
+//      part" is what the console really draws. A display name beside an address
+//      (`Ana Lopez <ana@example.com>`) is cut at that address's `@` like any
+//      other value, giving `Ana Lopez <ana` -- the CLI's rule applied faithfully
+//      rather than a shape the console invents a second answer for. An address
+//      with nothing before its `@` shortens to `''`: that is the empty cell, and
+//      the caller draws no element for it.
 //   2. **the shortened string is drawn as a `label`, not as a `person`.** The
 //      `person` class draws a bare address (as the console's marker) or a login
 //      `[A-Za-z0-9-]{1,39}`, and refuses everything else -- so a dotted local
