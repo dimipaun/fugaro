@@ -36,9 +36,12 @@
 //   - the absent-binary screen is the console's own, built by
 //     `src/source/cli.ts`'s `noInstallationState` from the resolution that
 //     failed, and it is deliberately the *only* thing on screen: what is
-//     needed, the install command, the picker, and how many places were
-//     searched -- a count and never the paths themselves, because no path is
-//     ever drawn on this console (the `path` class, `sanitize.ts`).
+//     needed, the install command, and how many places were searched -- a count
+//     and never the paths themselves, because no path is ever drawn on this
+//     console (the `path` class, `sanitize.ts`). **There is no choose-the-binary
+//     affordance** (the design's section 6.3 row, as the owner's ruling of
+//     2026-10-20 amended it): the console asks the operator for no path, and the
+//     screen that used to draw one drew a control that wired nothing.
 //
 // Every string a document or the CLI wrote reaches the window through `putText`
 // (and every number through `putReading`); only the console's own vocabulary is
@@ -88,12 +91,6 @@ export const COMPUTE_LOWER_BOUND_NOTE =
 export const NO_BINARY_HEADLINE = 'no fugaro binary'
 /** INSTALL_LEAD is the sentence the install command is offered under. */
 export const INSTALL_LEAD = 'install it with'
-/** PICKER_LEAD is the affordance design section 6.3 asks for: the operator can
- * point the console at another binary, and this is where that starts. The
- * screen draws it and wires nothing -- the installations list is a task this
- * one does not own, and an invented control that did nothing would be worse
- * than a sentence that says what it is for. */
-export const PICKER_LEAD = 'choose a different fugaro binary'
 /** SEARCHED_LEAD says what the number beside it counts. */
 export const SEARCHED_LEAD = 'places the console looked in for a fugaro binary'
 /** REFUSED_HEADLINE is the refused-read screen's heading. */
@@ -519,7 +516,6 @@ export interface NoBinaryState {
   readonly reason: string
   readonly installCommand: string
   readonly searched: readonly string[]
-  readonly configuredPath: string | null
 }
 
 /** RefusedState is a read the CLI refused: which read, and the CLI's sentence
@@ -564,17 +560,6 @@ export function refusedState(operation: string, refusal: { readonly sentence: st
   return { kind: 'refused', operation, sentence: drawn.ok ? drawn.text : REFUSAL_UNREADABLE }
 }
 
-/** picker draws the binary-picker affordance: what it is for, and the path the
- * installation named when it named one. */
-function picker(parent: ScreenElement, factory: ScreenFactory, state: NoBinaryState): void {
-  const element = cell(parent, factory, 'div', 'unavailable-picker')
-  element.setAttribute('data-picker', 'binary')
-  literal(cell(element, factory, 'span', 'unavailable-picker-lead'), PICKER_LEAD)
-  if (state.configuredPath !== null) {
-    textCell(element, factory, 'span', state.configuredPath, 'label', 'configured binary path', 'unavailable-configured')
-  }
-}
-
 /**
  * searched says **how many** places the resolution walked, and deliberately not
  * which ones.
@@ -587,8 +572,9 @@ function picker(parent: ScreenElement, factory: ScreenFactory, state: NoBinarySt
  * and a list read as prose would be a column of `[redacted]` instead. The count
  * is the fact that survives that rule, and it is the whole of what the operator
  * needs from it: the console looked in the usual places and found no `fugaro`
- * there, so the answer is the install command or the picker above, and the paths
- * themselves are in the spawn log where the resolution wrote them.
+ * there, so the answer is the install command above or the installations list in
+ * the picker's own window, and the paths themselves are in the spawn log where
+ * the resolution wrote them.
  *
  * The number goes through `putReading` like every other number -- a count this
  * file computed, drawn `measured` -- and `SEARCHED_LEAD` is this file's own
@@ -600,8 +586,8 @@ function searched(parent: ScreenElement, factory: ScreenFactory, state: NoBinary
   literal(cell(element, factory, 'span', 'unavailable-searched-lead'), SEARCHED_LEAD)
 }
 
-/** noBinary draws the absent-binary screen: what is needed, the install command
- * and the picker, and nothing else. */
+/** noBinary draws the absent-binary screen: what is needed, the install command,
+ * and nothing else. */
 function noBinary(factory: ScreenFactory, state: NoBinaryState): ScreenElement {
   const element = make(factory, 'div', 'unavailable-body')
   literal(cell(element, factory, 'h1', 'unavailable-headline'), NO_BINARY_HEADLINE)
@@ -623,7 +609,6 @@ function noBinary(factory: ScreenFactory, state: NoBinaryState): ScreenElement {
   // the README's own line, so it is the console's vocabulary and not a
   // document's string.
   literal(cell(install, factory, 'code', 'unavailable-install-command'), state.installCommand)
-  picker(element, factory, state)
   searched(element, factory, state)
   return element
 }

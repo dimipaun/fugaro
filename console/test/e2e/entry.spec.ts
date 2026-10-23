@@ -47,9 +47,25 @@
 // scratch `--user-data-dir` seeded with one **active installation naming the
 // stub**, so the startup handshake reads that binary and no other
 // (`resolveHandshakeBinary`) -- whatever `fugaro` the machine has in
-// `/usr/local/bin` or `/opt/homebrew/bin`. No case here skips for the machine
-// it runs on. The one first-run case uses an unseeded profile of its own, and
-// asserts nothing that depends on which `fugaro` the machine resolves.
+// `/usr/local/bin` or `/opt/homebrew/bin`. Two cases are the exception, on
+// purpose: the two that assert which binary a run with **no usable stored path**
+// drives seed a record whose path has gone, or one with no path at all, so rule
+// 4 walks the well-known prefixes and the machine decides. Those two ask the
+// console's own resolver first (`resolveConsoleBinary`) and skip when this
+// machine's answer is not one the console can drive -- a skip that says which
+// `fugaro` answered rather than failing on a fact about the machine. The one
+// first-run case uses an unseeded profile of its own and asserts nothing about
+// which `fugaro` the machine resolves.
+//
+// **Drawn, never raw.** The header's line is `src/renderer/entry.ts`'s `textOf`,
+// which is `sanitizeRefusal`: the path the console draws is the sanitized one,
+// while the same value arrives raw over IPC. A scratch stub directory's random
+// suffix reads as a token and is redacted, so `/tmp/fugaro-cli-stub-Ab3xY9/...`
+// is drawn as `[redacted-token]...`. The two cases above therefore compare the
+// header against `sanitizeRefusal(drove, ...).text` and keep the raw `drove` for
+// the spawn log and the IPC-level assertions -- comparing the drawn line to the
+// raw path passes only where the resolved binary happens to live outside a
+// scratch directory.
 //
 // Nothing here reaches the network and nothing here starts a child that the
 // console's own read would not have started: the stub answers `version`, and
@@ -67,6 +83,7 @@ import { join } from 'node:path'
 import { expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
+import { INSTALLATIONS_FILE_NAME } from '../../src/main/installations'
 import { NO_ACTIVE_INSTALLATION, REDUCED_REFUSAL } from '../../src/main/ipc'
 import { APP_ENTRY_URL, APP_ORIGIN, REFUSAL_ENTRY_URL, SERVED_FILES } from '../../src/main/protocol'
 import { SPAWN_LOG_ENV } from '../../src/main/spawnlog'
@@ -75,9 +92,10 @@ import {
   CLI_VERSION_BUILT_AGAINST,
   REDUCED_VIEWS,
   SKEW_HEADLINES,
+  classifyCliVersion,
 } from '../../src/shared/version'
 import { EXPOSED_OPERATIONS } from '../../src/preload/index'
-import { installCliStub } from '../support/cliStub'
+import { installCliStub, resolveConsoleBinary } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
 import { dismissFirstRunPicker } from '../support/firstRun'
 import { launchConsole } from '../support/launch'
@@ -147,20 +165,28 @@ async function launch(
     spawnLog,
     scratch,
     records(): readonly SpawnLogEntry[] {
-      let text: string
-      try {
-        text = readFileSync(spawnLog, 'utf8')
-      } catch {
-        // Unset, unreadable, never written: an empty log is the honest answer,
-        // and the tests that need records assert a length.
-        return []
-      }
-      return text
-        .split('\n')
-        .filter((line) => line.trim() !== '')
-        .map((line) => JSON.parse(line) as SpawnLogEntry)
+      return readSpawnLog(spawnLog)
     },
   }
+}
+
+/** readSpawnLog parses the log at `path`, and answers an empty list when there
+ * is no file: unset, unreadable, never written -- the honest answer, and why the
+ * specs that need records assert a length. It is read *after* the handshake,
+ * because the read that produced the records is what opened and closed the file.
+ * The specs beside `launch` use it directly, since they hold the app rather than
+ * the wrapper. */
+function readSpawnLog(path: string): readonly SpawnLogEntry[] {
+  let text: string
+  try {
+    text = readFileSync(path, 'utf8')
+  } catch {
+    return []
+  }
+  return text
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => JSON.parse(line) as SpawnLogEntry)
 }
 
 /** close ends the app and the scratch tree beside it. */
@@ -830,40 +856,147 @@ test.describe('the renderer entry, in the real window', () => {
     }
   })
 
-  test('a stored binary that is gone is a refusal, never another fugaro, and the picker is still reachable (review B1)', async () => {
-    // A second profile whose active installation names a binary that is not
-    // there. Before the fix the handshake walked on to the machine's own
-    // `fugaro` (or the stub on `PATH`) and drew a dashboard for it.
+  test('a stored binary that has gone falls through, and the header names the binary this run drives (review B1)', async () => {
+    // This spec used to pin the opposite rule -- a stored override that is gone
+    // is a refusal, never another `fugaro` -- and the owner's ruling of
+    // 2026-10-20 reversed it: a stored `binaryPath` is only rule 4's **first
+    // candidate**, so the walk carries on to the well-known prefixes and the
+    // console drives whichever binary it resolved. What the old spec was really
+    // written against is the silence, not the fall-through: a dashboard that
+    // names the gone path while the console runs another file. That is what this
+    // asserts now.
     const gone = installCliStub(CLI_VERSION_BUILT_AGAINST)
-    gone.seedActiveInstallation('gone', join(gone.dir, 'missing', 'fugaro'))
-    const scratch = mkdtempSync(join(tmpdir(), 'fugaro-console-entry-'))
-    const spawnLog = join(scratch, 'spawn.jsonl')
-    const app = await launchConsole({ args: gone.launchArgs(consoleDir), env: { ...gone.env, [SPAWN_LOG_ENV]: spawnLog } })
     try {
-      const page = await app.firstWindow()
-      await page.waitForLoadState('domcontentloaded')
-      expect(page.url()).toBe(REFUSAL_ENTRY_URL)
-      expect(app.windows()).toHaveLength(1)
-      // Nothing was spawned: not the stub on `PATH`, not the machine's own.
-      let logged = ''
+      const missing = join(gone.dir, 'missing', 'fugaro')
+      gone.seedActiveInstallation('gone', missing)
+      // Which `fugaro` this machine gives the app, asked with the console's own
+      // resolver and the environment this launch passes to it. **Not** the
+      // scratch stub spelled out: the override having gone means rule 4 walks
+      // `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `/usr/bin`, and a
+      // machine with a real `fugaro` in one of the first two drives *that* -- so
+      // a hardcoded `~/.local/bin/fugaro` would fail here for a fact about the
+      // machine, in the one spec whose subject is the resolution itself.
+      const winner = await resolveConsoleBinary(gone.env)
+      const mode = winner.ok ? classifyCliVersion(winner.version).mode : 'refused'
+      test.skip(mode !== 'ok', `no fugaro this console drives was resolved (${winner.ok ? winner.version : 'none found'})`)
+      const drove = winner.ok ? winner.path : ''
+      // The line the header draws is the path as the console's sanitizer *draws*
+      // it, never the raw string: `src/renderer/entry.ts`'s `textOf` is
+      // `sanitizeRefusal`, and a scratch directory's random suffix reads as a
+      // token, so `/tmp/fugaro-cli-stub-Ab3xY9/home/.local/bin/fugaro` is drawn
+      // as `[redacted-token].local/bin/fugaro`. On a machine with a real
+      // `fugaro` in `/usr/local/bin` the two strings coincide, which is why this
+      // spec passed there and failed on CI, where the scratch stub is what the
+      // walk finds (the same idiom as the reduced-mode case above).
+      const drawnDrove = sanitizeRefusal(drove, 'the installation’s binary')
+      expect(drawnDrove.ok, 'this run resolved a binary the sanitizer refuses').toBe(true)
+      const scratch = mkdtempSync(join(tmpdir(), 'fugaro-console-entry-'))
+      const spawnLog = join(scratch, 'spawn.jsonl')
+      const app = await launchConsole({ args: gone.launchArgs(consoleDir), env: { ...gone.env, [SPAWN_LOG_ENV]: spawnLog } })
       try {
-        logged = readFileSync(spawnLog, 'utf8')
-      } catch {
-        logged = ''
+        const page = await app.firstWindow()
+        await page.waitForLoadState('domcontentloaded')
+        expect(page.url(), 'the fall-through did not reach the dashboard').toBe(APP_ENTRY_URL)
+        expect(app.windows()).toHaveLength(1)
+        // The header, in the words the operator reads: the record's project, and
+        // the binary **this run resolved** -- not the path the record still holds.
+        const section = page.locator('section.console-installation')
+        await expect(section.locator('p.installation-project')).toHaveText('gone')
+        await expect(section.locator('p.installation-binary')).toHaveText(drawnDrove.ok ? drawnDrove.text : '')
+        // And the same file at the IPC level, where the reply is raw: the state
+        // names the binary this run resolved, not the gone path the record still
+        // holds. This is the half the drawn line cannot say, because the
+        // sanitizer rewrites both strings.
+        const state = await installationOf(page)
+        expect((state['data'] as Record<string, unknown>)['binary']).toBe(drove)
+        expect((state['data'] as Record<string, unknown>)['binary']).not.toBe(missing)
+        // And the file the header names is the file that ran: every record in the
+        // log has it first, including the handshake's own `version`.
+        await expect
+          .poll(() => readSpawnLog(spawnLog).filter((record) => record.argv[0] !== drove).length, {
+            message: 'the console spawned something other than the binary the header named',
+          })
+          .toBe(0)
+        expect(readSpawnLog(spawnLog).length).toBeGreaterThan(0)
+        // The picker is still reachable, and the row it draws is this
+        // installation -- now the mode the binary it drove calls for, because the
+        // handshake read one the console can drive (`mode` above, from the same
+        // resolution this spec expects the header to name).
+        const picker = await openPickerFromMenu(app)
+        const listed = (await picker.evaluate(async () => {
+          const api = (window as unknown as { fugaroInstallations: { list: () => Promise<unknown> } }).fugaroInstallations
+          return await api.list()
+        })) as { ok: boolean; data: { rows: { project: string; active: boolean; mode: string }[] } }
+        expect(listed.ok).toBe(true)
+        expect(listed.data.rows.map((row) => [row.project, row.active, row.mode])).toEqual([['gone', true, mode]])
+      } finally {
+        await app.close()
+        rmSync(scratch, { recursive: true, force: true })
       }
-      expect(logged).toBe('')
-      // The door out of a refusal is still there (plan 3.4b step 5).
-      const picker = await openPickerFromMenu(app)
-      const listed = (await picker.evaluate(async () => {
-        const api = (window as unknown as { fugaroInstallations: { list: () => Promise<unknown> } }).fugaroInstallations
-        return await api.list()
-      })) as { ok: boolean; data: { rows: { project: string; active: boolean; mode: string }[] } }
-      expect(listed.ok).toBe(true)
-      expect(listed.data.rows.map((row) => [row.project, row.active, row.mode])).toEqual([['gone', true, 'refused']])
     } finally {
-      await app.close()
-      rmSync(scratch, { recursive: true, force: true })
       gone.remove()
+    }
+  })
+
+  test('an installation this console chose carries no binary, and the header still names the one it drives', async () => {
+    // The shape **this console writes** (owner's ruling of 2026-10-20): a record
+    // with an id and a project and no `binaryPath` field at all, because the
+    // console resolves the installed `fugaro` itself and never stores the path it
+    // found. Every other seed in this suite writes the legacy shape, an override
+    // naming the CLI, so without this spec the dashboard's own line about the
+    // binary it drives is only ever exercised with a store that answers it.
+    const bare = installCliStub(CLI_VERSION_BUILT_AGAINST)
+    try {
+      bare.seedActiveInstallation('bare', null)
+      const seeded = readFileSync(join(bare.userData, INSTALLATIONS_FILE_NAME), 'utf8')
+      // The seed itself, first: the field is absent rather than `null` or `''`.
+      expect(seeded).not.toContain('binaryPath')
+      expect(JSON.parse(seeded)).toEqual({
+        version: 1,
+        active: '0123456789abcdef',
+        installations: [{ id: '0123456789abcdef', project: 'bare' }],
+      })
+      // Which `fugaro` this machine gives the app, from the console's own
+      // resolver rather than spelled (see the B1 case above): a record with no
+      // override is exactly the case where the well-known order decides, and
+      // `/opt/homebrew/bin` and `/usr/local/bin` come before the scratch stub.
+      const winner = await resolveConsoleBinary(bare.env)
+      const mode = winner.ok ? classifyCliVersion(winner.version).mode : 'refused'
+      test.skip(mode !== 'ok', `no fugaro this console drives was resolved (${winner.ok ? winner.version : 'none found'})`)
+      const drove = winner.ok ? winner.path : ''
+      // Drawn, not raw: see the B1 case above -- `textOf` sanitizes the path, so
+      // a resolution that landed in a scratch directory is drawn with its random
+      // suffix redacted, and comparing the raw string to it would fail on a
+      // machine whose scratch stub won the walk.
+      const drawnDrove = sanitizeRefusal(drove, 'the installation’s binary')
+      expect(drawnDrove.ok, 'this run resolved a binary the sanitizer refuses').toBe(true)
+      const scratch = mkdtempSync(join(tmpdir(), 'fugaro-console-entry-'))
+      const spawnLog = join(scratch, 'spawn.jsonl')
+      const app = await launchConsole({ args: bare.launchArgs(consoleDir), env: { ...bare.env, [SPAWN_LOG_ENV]: spawnLog } })
+      try {
+        const page = await app.firstWindow()
+        await page.waitForLoadState('domcontentloaded')
+        expect(page.url()).toBe(APP_ENTRY_URL)
+        const section = page.locator('section.console-installation')
+        await expect(section.locator('p.installation-project')).toHaveText('bare')
+        // The line the defect drew nothing on: the store has no path to give, so
+        // it can only be right if the header reads this run's resolution.
+        await expect(section.locator('p.installation-binary')).toHaveText(drawnDrove.ok ? drawnDrove.text : '')
+        await expect(section.locator('p.installation-version')).toContainText(winner.ok ? winner.version : '')
+        await expect
+          .poll(() => readSpawnLog(spawnLog).filter((record) => record.argv[0] !== drove).length, {
+            message: 'the console spawned something other than the binary the header named',
+          })
+          .toBe(0)
+        // Non-vacuity: the log is not empty, so the assertion above is about a
+        // spawn that happened rather than about a file nobody wrote.
+        expect(readSpawnLog(spawnLog).length).toBeGreaterThan(0)
+      } finally {
+        await app.close()
+        rmSync(scratch, { recursive: true, force: true })
+      }
+    } finally {
+      bare.remove()
     }
   })
 

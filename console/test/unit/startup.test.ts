@@ -538,10 +538,12 @@ describe('a choose in the picker (Task 3.4b, step 5)', () => {
 // The startup handshake's resolution (Task 3.4b, steps 3 and 4; review B1, S4)
 // ---------------------------------------------------------------------------
 
-describe('the startup handshake reads the active installation, and only it', () => {
+describe('the startup handshake resolves rule 4 for the active installation', () => {
   /** machine is a scratch "machine": a well-known prefix and a PATH entry, each
-   * holding a `fugaro` that answers an in-range version -- the binaries a
-   * fallthrough would find. */
+   * holding a `fugaro` that answers an in-range version. The prefix is what the
+   * resolution is allowed to find; the PATH entry is the one nothing may ever
+   * ask for (owner's ruling of 2026-10-20, rule 4), so every test here asserts
+   * it was never run. */
   function machine() {
     const root = mkdtempSync(join(tmpdir(), 'fugaro-handshake-'))
     const wellKnown = installStub(join(root, 'opt', 'bin'), { commands: { version: { stdout: `${CLI_VERSION_BUILT_AGAINST}\n` } } })
@@ -581,24 +583,37 @@ describe('the startup handshake reads the active installation, and only it', () 
     return { root, wellKnown, onPath, read, records }
   }
 
-  it('refuses a missing stored binary as not-found, and asks no other fugaro (B1)', async () => {
+  // The owner's ruling of 2026-10-20 replaces review B1's "no fallthrough": a
+  // store's `binary` is an **optional override**, not a pin, because the console
+  // resolves the `fugaro` that is installed on this machine and asks the
+  // operator for nothing. So a stored path that has gone is not a refusal -- it
+  // is the first candidate of rule 4's order that did not answer, and the walk
+  // carries on to the well-known locations. What B1 protects is unchanged in
+  // substance: the app's own `PATH` is still never asked.
+  it('falls through a stored binary that has gone, to the installed one', async () => {
     const m = machine()
     const resolution = await m.read({ binaryPath: join(m.root, 'gone', 'fugaro'), target: { project: 'gone' } })
-    expect(resolution.ok).toBe(false)
-    expect(versionReadFrom(resolution)).toEqual({ ok: false, failure: 'not-found' })
-    // The fallthrough the review reproduced: neither in-range binary was asked.
-    expect(m.wellKnown.reports()).toEqual([])
+    expect(resolution).toMatchObject({ ok: true, path: m.wellKnown.binary, source: 'well-known' })
+    // The binary that answered is the installed one, and it was asked with the
+    // installation's project -- the log still says which installation this
+    // `version` was for.
+    expect(m.wellKnown.reports().map((report) => report.argv)).toEqual([['version']])
+    expect(m.records().map((record) => [record.argv[0], record.argv[1], record.project])).toEqual([
+      [m.wellKnown.binary, 'version', 'gone'],
+    ])
+    // ...and the app's own `PATH` entry was never asked, gone stored path or not.
     expect(m.onPath.reports()).toEqual([])
-    expect(m.records()).toEqual([])
   })
 
-  it('refuses a stored binary that is not executable as unreadable, and asks no other fugaro', async () => {
+  it('falls through a stored binary that is not executable, to the installed one', async () => {
     const m = machine()
     const plain = join(m.root, 'plain-fugaro')
     writeFileSync(plain, '#!/bin/sh\necho 0.8.1\n', { mode: 0o644 })
     const resolution = await m.read({ binaryPath: plain, target: { project: 'acme' } })
-    expect(versionReadFrom(resolution)).toEqual({ ok: false, failure: 'unreadable' })
-    expect(m.wellKnown.reports()).toEqual([])
+    expect(resolution).toMatchObject({ ok: true, path: m.wellKnown.binary })
+    // The unreadable candidate is not *run* either: a file without an execute
+    // bit is not a candidate at all.
+    expect(resolution.ok && resolution.version).toBe(CLI_VERSION_BUILT_AGAINST)
     expect(m.onPath.reports()).toEqual([])
   })
 
@@ -1047,6 +1062,78 @@ describe('the entry point puts the surface on ipcMain, and only when it may', ()
     // reads the window for the same claim from the other side (one `<script>`,
     // and the Live screen's rows drawn by it).
     expect(indexSource).not.toContain('executeJavaScript')
+  })
+
+  it('answers the header from this run’s resolution, and keeps the record for the source', () => {
+    // Review of this branch. `installation.current` was `picker.installation`
+    // itself, so a chosen record with no `binaryPath` -- the shape this console
+    // writes, because it never stores the path it resolves -- made the header
+    // draw nothing while the console was driving a binary the store had never
+    // heard of, and a legacy record whose override has gone made it name a path
+    // it was not running. The join is `withResolvedBinary` (unit-tested in
+    // `test/unit/installations-store.test.ts`); these are the two things only
+    // this file can be wrong about: which state the header reads, and that both
+    // writers of the resolution are wired to it.
+    expect(indexSource).toContain('installation: () => installationState()')
+    const state = bodyOf('function installationState()')
+    expect(state).toContain('picker?.installation()')
+    expect(state).toContain('resolvedBinaries.get(chosen.project)')
+    expect(state).toContain('withResolvedBinary(')
+    // Both moments a resolution happens, written to the one map: the startup
+    // handshake and a choose.
+    expect(bodyOf('async function readCliVersion()')).toContain(
+      'resolvedBinaries.set(chosen.target.project, resolution.path)',
+    )
+    expect(indexSource).toContain('resolvedBinaries.set(chosen.project, chosen.resolvedBinaryPath)')
+    // And the binding the source is built from carries the store's override and
+    // **nothing else**. This is the other end of the same join, and it is the
+    // one the map must not reach: `sourceFor` hands the binding's `binaryPath`
+    // to the resolver as the *configured* path -- rule 4's first place -- so a
+    // run's own resolution arriving here would make `configuredSource` report
+    // `configured` for `/usr/local/bin/fugaro`, and would make
+    // `InstallationRef.source` say `configured` for every record this console
+    // wrote, which is the ordinary case and carries no override at all. The
+    // binding is where the record's optional override is what rule 4 is asked
+    // about; the source resolves the well-known locations itself, exactly as the
+    // startup handshake does.
+    const binding = bodyOf('function activeBinding()')
+    expect(binding).toContain('binaryPath: chosen.binary')
+    expect(
+      binding,
+      'the source binding reads the run’s resolution, so a well-known path is handed to the resolver as the operator’s own',
+    ).not.toContain('resolvedBinaries')
+    // The checkout travels too, and it is not decoration: it is the child's
+    // working directory, and it is the one field the picker changes on a record
+    // the console already holds (`setCheckout` preserves the id, deliberately).
+    // `createBoundSource` caches its source by the binding -- id *and* checkout --
+    // so a binding that dropped this field would leave the console spawning in
+    // the directory the operator just left while the row and the header reported
+    // the new one (`test/unit/bound-source.test.ts` is the other half of this).
+    expect(binding).toContain('checkout: chosen.checkout')
+  })
+
+  it('hands the startup handshake to the picker under the installation’s project, never its id', () => {
+    // The compatibility a handshake read is held **by project**: `remember` is
+    // `registry.remember(project, …)` -> `compatibility.set(project, value)`, and
+    // the readers are `compatibility.get(active.project)` (`current`,
+    // `activeCompatibility`) and `compatibility.get(installation.project)`
+    // (`rows`). An id is a different string, so remembering under it stores the
+    // answer where nothing looks: the dashboard's header draws "version not read
+    // · unknown" and the picker's active row says `unknown` on every launch,
+    // while the handshake that just read the version is thrown away. The two
+    // statements that make that a fact here are the assignment below -- which the
+    // same function does correctly two lines earlier for `resolvedBinaries` --
+    // and the `remember` call `onDecided` makes with it.
+    expect(indexSource).toContain('handshakeProject = chosen === null ? null : chosen.target.project')
+    expect(indexSource).not.toMatch(/handshakeProject\s*=\s*[^\n]*\.id/)
+    expect(bodyOf('function onDecided(compatibility: CliCompatibility): void')).toContain(
+      'picker?.remember(read, compatibility)',
+    )
+    // And the id is not carried at all: `resolveHandshakeBinary` takes the
+    // override and the target, so a stored id would be a field nothing reads and
+    // the next writer of this function would have to guess which one `remember`
+    // wants (it wants the project).
+    expect(bodyOf('function handshakeInstallation()')).not.toContain('chosen.id')
   })
 
   // The two Task 3.4b cases that stood here were greps of this file's text

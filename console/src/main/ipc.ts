@@ -2,9 +2,12 @@
 // section 5.1 rule 5).
 //
 // The console has no IPC bridge. It has a fixed table of named operations --
-// one per read the console performs, twelve of them for the eleven documents of
-// design section 2.1 plus the one validated link -- and three prohibitions that
-// are the whole of the rule:
+// one per read the console performs, twelve of them for the eleven documents the
+// dashboard draws out of design section 2.1 plus the one validated link (that
+// section's list holds a twelfth row, the picker's own `fugaro config list
+// --json`; it belongs to the installations picker window and is not an operation
+// of this table -- `src/preload/installations.ts` is its surface) -- and three
+// prohibitions that are the whole of the rule:
 //
 //   - **no `invoke(channel, ...)`**: nothing anywhere in the console takes a
 //     channel from a caller. `channelForOperation` derives a channel from a name
@@ -285,11 +288,13 @@ export interface ConsoleOperation {
  * the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
- * The eleven CLI commands are design section 2.1's list (which is
- * `docs/json-contract.md`'s list, read off the cobra commands), and the twelfth
- * is the startup handshake's answer (`startup.compatibility`, the console's own
- * state, which no CLI command can be asked for); the thirteenth is the one path
- * that is not a command: `openExternal`, whose URL argument goes
+ * The eleven CLI commands are the dashboard's half of design section 2.1's list
+ * -- its twelfth row, the picker's own `fugaro config list --json`, is the
+ * installations picker's read and is not an operation of this table -- and that
+ * half is `docs/json-contract.md`'s list, read off the cobra commands; the
+ * twelfth operation is the startup handshake's answer (`startup.compatibility`,
+ * the console's own state, which no CLI command can be asked for); the thirteenth
+ * is the one path that is not a command: `openExternal`, whose URL argument goes
  * through `validateExternalUrl` -- `https:` only, no credentials, no port, host
  * on `ALLOWED_EXTERNAL_HOSTS` -- so the renderer's only way out of the console
  * is a link the console would have opened anyway. The fourteenth

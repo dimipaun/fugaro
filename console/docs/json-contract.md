@@ -894,17 +894,30 @@ which would join this document the day a field is added to the struct. A test
 fails if a field outside the six above reaches the output, and if either type
 ever becomes (or embeds) `localcfg.Config`.
 
-**Version skew.** The command is new, so an older CLI does not have it at all:
-the spawn fails and the console shows its "this CLI cannot list installations"
-state, which is the form D13 accepted for v1. The handshake (§6.7) is what tells
-the console which case it is in. **`checkouts` is newer than the command**: a
-CLI that lists installations and emits no `checkouts` key at all is a CLI that
-does not know about checkouts, and the console shows the installation without
-them (its checkout directory stays whatever the operator stored in D13's
-form) — an empty array means this CLI knows, and this machine remembers none.
-The two are not the same state and the reader must not conflate them. There is
-no version field to bump: this document is read whole, and the key's absence is
-the signal.
+**`checkouts` is optional to the reader.** The per-installation `checkouts` array
+(PR #735) is newer than the command, and **the console treats it as optional**:
+absent, null and a malformed entry are each an empty list rather than a refusal,
+because a console that refused a document over a field it only *offers* would stop
+listing installations on the day the field is added. Where it is present the
+console offers the `path` of each entry carrying `valid: true` (an absolute path;
+a `valid: false` entry is never offered, whatever its `reason`) and nothing else: a directory the document never
+named is refused by name, so the list is the CLI's own enumeration even at the
+point of use. An installation listed with no `checkouts` is drawn with no way to
+set one, which is the truthful state — the console does not invent a directory.
+A CLI that emits no `checkouts` key at all is a CLI that does not know about
+checkouts, while an empty array means this CLI knows and this machine remembers
+none: the two are not the same fact, even though both leave the console nothing to
+offer. There is no version field to bump: this document is read whole, and the
+key's absence is the signal.
+
+**Version skew.** The command is new, so an older CLI does not have it at all: the
+spawn fails (or the CLI answers with its own `unknown command` sentence), and **the
+console draws the rows its own store holds beside the CLI's refusal** — an
+installation the operator already chose does not disappear because today's binary
+cannot enumerate it — with the CLI's sentence on the screen and **no** onboarding
+screen, since this is not a first run. The handshake (§6.7) is what tells the
+console which case it is in. The install-CLI onboarding screen is drawn only when no
+`fugaro` could be *resolved* (rule 4), which is a different answer.
 
 ### 6.9 `fugaro plan graph --json`
 
