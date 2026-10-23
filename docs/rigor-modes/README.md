@@ -155,7 +155,7 @@ On 2026-10-22 the owner gave a second spec for the same dial, written as **five 
 | Document | What it is |
 | --- | --- |
 | [levels-spec.md](levels-spec.md) | the owner's second spec, **verbatim**, in its own commit |
-| [levels-reconciliation.md](levels-reconciliation.md) | what the tree says back: **LF1–LF14**, the owner's answers **LD1–LD11** (2026-10-22), the amendments after review (§3a), twelve open items for the owner and the UNVERIFIED list |
+| [levels-reconciliation.md](levels-reconciliation.md) | what the tree says back: **LF1–LF14**, the owner's answers **LD1–LD11** (2026-10-22), the amendments after review (§3a), thirteen open items for the owner and the UNVERIFIED list |
 | [levels-implementation-plan.md](levels-implementation-plan.md) | the overlay plan: seven slices (LV1–LV7), the approved tasks it changes, parallel levels, critical path; **nothing is approved to build** |
 
 The numbers this addendum holds: decisions **LD1–LD11**, findings **LF1–LF14**, no new check number (Slice 8's Check 119 gains one step per level). The word is **level** from here on (LD2); the 2026-10-20 documents keep saying *mode* until LV1.1 renames the code and LV1.2 restates their sentences.
