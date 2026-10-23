@@ -120,11 +120,16 @@ const (
 	mobileReleaseAndroidGate = "${{ !contains(vars." + mobileReleaseDisabledPlatforms + ", 'android') }}"
 	mobileReleaseSubmitGate  = "${{ github.event.inputs.dry_run != 'true' }}"
 	mobileReleaseNoticeGate  = "${{ github.event.inputs.dry_run == 'true' }}"
-	// mobileReleaseTagPattern is the tag filter, spelled the way the sibling
-	// release workflows spell it (`.github/workflows/release.yml`, `images.yml`,
-	// `console-release.yml`). A bare `v*` also starts a release on `vtest` and
-	// on a `v1.2.3-rc1` tag, and neither of those is a release of anything.
-	mobileReleaseTagPattern = "v[0-9]+.[0-9]+.[0-9]+"
+	// mobileReleaseTagPattern is the tag filter: the app's own release stream,
+	// spelled the way the sibling release workflows spell theirs
+	// (`.github/workflows/release.yml`, `images.yml`, `console-release.yml`)
+	// under the app's own prefix (`mobile-`, docs/release.md's "Mobile
+	// releases"). A bare `v*` also starts a release on `vtest` and on a
+	// `v1.2.3-rc1` tag; the CLI's own `v[0-9]+.[0-9]+.[0-9]+` filter -- which
+	// this file carried until the app got its own stream -- starts one on every
+	// CLI release as well, which is the coupling the owner split apart on
+	// 2026-10-22.
+	mobileReleaseTagPattern = "mobile-v[0-9]+.[0-9]+.[0-9]+"
 	// mobileReleaseEasCLIVersion is the exact `eas-cli` the job installs. The
 	// pin matters because the job holds a store credential: a global install of
 	// whatever `latest` was at the moment of the run is a dependency nobody
