@@ -128,6 +128,28 @@ func (c Cost) ModelSubscriptionUSD() float64 {
 	return 0
 }
 
+// AllNotional answers the question a reader asks when it wants to know whether
+// the run's model figure was a bill at all: whether the whole of it was a
+// subscription's, so nothing of it counts toward a cap (P12, D140). A run whose
+// figure is the plan's whole -- an oauth run, or a cascade run the plan served
+// in full -- is one, and so is a subscription run that recorded no figure at
+// all: nothing of such a run's model spend was a real dollar.
+//
+// It is the same split ModelSubscriptionUSD writes down, asked as yes or no,
+// and the basis is the fallback for the records written before C1.16 carried
+// the field (an oauth record's whole figure was always the subscription's, and
+// it says so with model_basis alone). A reader must ask this rather than compare
+// the basis itself: a cascade run's basis is api-list for the whole run -- its
+// billed part's -- so the basis reads a cascade run the plan paid in full as an
+// api-key one (P12; internal/runstore's cost_readers_guard_test.go holds the
+// rule over every reader in the tree).
+func (c Cost) AllNotional() bool {
+	if c.ModelNotionalUSD > 0 {
+		return c.ModelNotionalUSD >= c.ModelUSD
+	}
+	return c.ModelBasis == BasisSubscription
+}
+
 // WithNotional records the notional part of ModelUSD (P12, D140) and returns
 // the cost with TotalUSD recomputed from it: the calls a subscription paid
 // for are in ModelUSD -- every stage's figure, so the sum invariant holds --

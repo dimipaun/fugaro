@@ -102,11 +102,15 @@ type Run struct {
 	// has not finalized, and one whose record is corrupt or past its read
 	// cap. Its status and its money are both unknown, never zero.
 	NoRecord bool
-	// CountedUSD is the run's model spend that counts toward the caps: a
-	// record whose model_basis is api-list (or vertex, which costs the same
-	// way). NotionalUSD is the model spend of a run on a subscription
-	// (agent.auth oauth), which counts toward the plan's limits and is no
-	// one's bill. They are never added to one another.
+	// CountedUSD is the run's model spend that counts toward the caps: the
+	// money part of its model figure (Cost.ModelMoneyUSD), which is the whole
+	// of an api-key or Vertex run's and a cascade run's tiers B and C.
+	// NotionalUSD is the part a subscription paid (Cost.ModelSubscriptionUSD):
+	// an oauth run's whole figure, and a cascade run's tier A, which counts
+	// toward the plan's limits and is no one's bill. They are never added to
+	// one another, and both come from model_notional_usd rather than from
+	// model_basis (P12, D140): a cascade run the plan served in full has an
+	// api-list basis and billed nothing.
 	CountedUSD, NotionalUSD float64
 	// CountedCost means the run's record settled a real-dollar model cost,
 	// zero included. Only such a run is averaged in: a notional run, a run
@@ -144,8 +148,9 @@ type Row struct {
 	Currency string `json:"currency"`
 	Counts
 	// CountedUSD is the group's model spend that counts toward the caps, and
-	// NotionalUSD the model spend of its subscription runs, which counts
-	// toward no cap. Separate columns, never summed.
+	// NotionalUSD the part a subscription paid, which counts toward no cap.
+	// The split is the run's own (Run.CountedUSD, P12, D140), not a reading of
+	// its basis. Separate columns, never summed.
 	CountedUSD  float64 `json:"counted_usd"`
 	NotionalUSD float64 `json:"notional_usd"`
 	// CountedRuns is the sample the average is over: the group's runs whose

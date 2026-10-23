@@ -190,6 +190,14 @@ func TestCostPartPrintsTheMoneyAgainstTheCap(t *testing.T) {
 	if got := r.costPart(); got != "notional $3.20 (not billed)" {
 		t.Fatalf("costPart = %q", got)
 	}
+	// And a cascade run the plan served in full: api-list by basis, like every
+	// cascade run's billed part, and notional in its whole model figure -- so
+	// it is the notional line, not "model cost $0.00 of $5 cap" (C1.16, P12).
+	all := runstore.NewCost(3.20, 0, runstore.BasisAPIList).WithNotional(3.20)
+	r.rec = &runstore.Record{Cost: &all, CostUSD: all.ModelUSD}
+	if got := r.costPart(); got != "notional $3.20 (not billed)" {
+		t.Fatalf("costPart = %q, want the notional line for a run whose whole model figure the plan paid", got)
+	}
 }
 
 // TestCrossCheckCostComparesTheWholeModelFigure (C1.16, F25): the cross-check

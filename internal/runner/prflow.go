@@ -453,7 +453,7 @@ func (r *run) costPart() string {
 	if c == nil {
 		return ""
 	}
-	if c.ModelBasis == runstore.BasisSubscription {
+	if c.AllNotional() {
 		return fmt.Sprintf("notional $%.2f (not billed)", c.ModelSubscriptionUSD())
 	}
 	// The cap is enforced on money, so the figure beside it is the money part

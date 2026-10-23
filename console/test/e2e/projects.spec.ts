@@ -121,6 +121,7 @@ const SPEC = 'projects.spec.ts'
 const MODULES: readonly string[] = Object.freeze([
   'shared/availability.js',
   'shared/sanitize.js',
+  'shared/launcher.js',
   'shared/version.js',
   'renderer/app.js',
   'renderer/screens/projects.js',

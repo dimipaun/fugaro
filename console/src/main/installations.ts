@@ -56,7 +56,7 @@ import {
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 import { NO_ACTIVE_INSTALLATION } from './ipc'
-import { isSafeInstallationValue, privateWorkingDirectory, resolveBinary } from './spawn'
+import { isSafeInstallationValue, privateWorkingDirectory, resolveBinary, resolveInstalledBinary } from './spawn'
 import type { ChildSpawner, SpawnTarget } from './spawn'
 import { createSpawnLog } from './spawnlog'
 import type { SpawnLogWriter } from './spawnlog'
@@ -573,6 +573,9 @@ export interface ValidationDeps {
    * directory (design section 3.4 rule 5), never the binary's own directory.
    * It is a dep only so a test can see which one was used. */
   readonly workingDirectory?: () => string
+  /** `wslPath` replaces the `wsl.exe` a WSL candidate's probe runs, so a test
+   * can point the route at the fake (T-A1, T-C6). */
+  readonly wslPath?: string | undefined
 }
 
 /** ProbedInstallation is a candidate the handshake answered for: the binary rule
@@ -651,23 +654,46 @@ export async function probeInstallation(
   const checkout = candidate.checkout
   const target: SpawnTarget = { project, ...(configPath === undefined ? {} : { configPath }) }
   const env = deps.appEnv ?? {}
-  const resolution = await withSpawnLog(env, deps.spawnLog, (log) =>
-    resolveBinary({
+  // **Which route, and it is the candidate's `distro` that decides.** An
+  // installation with a distribution is a Windows installation whose CLI is a
+  // Linux program inside it (D2(a)): the binary's path is a Linux spelling the
+  // host cannot `stat`, and the question "is it there, and does it run?" is the
+  // distribution's -- asked through the same `version` probe, by
+  // `resolveInstalledBinary`'s WSL branch (T-C5). Without a distro the candidate
+  // is an ordinary host installation and rule 4's walk is the answer (F4).
+  const distro = candidate.distro ?? ''
+  const resolution = await withSpawnLog(env, deps.spawnLog, (log) => {
+    const shared = {
+      appEnv: env,
+      target,
+      ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }),
+      log,
+    }
+    if (distro !== '') {
+      return resolveInstalledBinary({
+        ...shared,
+        binaryPath: candidate.binaryPath ?? '',
+        distro,
+        // The checkout is the CLI's working directory **inside** the
+        // distribution, so it is the wrapper's `--cd`; `wsl.exe` itself is
+        // started in a host directory, which the checkout is not.
+        ...(checkout === undefined ? {} : { wslDirectory: checkout }),
+        ...(deps.wslPath === undefined ? {} : { wslPath: deps.wslPath }),
+        directory: (deps.workingDirectory ?? privateWorkingDirectory)(),
+      })
+    }
+    return resolveBinary({
+      ...shared,
       // The store's override, when it has one. Absent is the ordinary case: rule
       // 4 walks the well-known locations, and the console never asks.
       ...(candidate.binaryPath === undefined || candidate.binaryPath === ''
         ? {}
         : { configuredPath: candidate.binaryPath }),
-      appEnv: env,
       ...(deps.home === undefined ? {} : { home: deps.home }),
       ...(deps.prefixes === undefined ? {} : { prefixes: deps.prefixes }),
       directory: checkout ?? (deps.workingDirectory ?? privateWorkingDirectory)(),
-
-      target,
-      ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }),
-      log,
-    }),
-  )
+    })
+  })
   if (!resolution.ok) return { ok: false, reason: resolution.reason }
   const compatibility = classifyCliVersion(resolution.version)
   if (compatibility.mode === 'refused') {
@@ -692,10 +718,14 @@ export async function probeInstallation(
  *
  *   1. the schema: a project name that is safe and bounded, a config path and a
  *      checkout that are absolute when they are given;
- *   2. the checkout, when given: an existing directory, because it becomes the
- *      child's working directory (rule 5);
- *   3. `probeInstallation`: rule 4's resolution and the version handshake, which
- *      is where a missing `fugaro` and a CLI this console cannot drive are
+ *   2. the checkout, when given **on the host route**: an existing directory,
+ *      because it becomes the child's working directory (rule 5). Under a
+ *      `distro` this check is not run at all -- the checkout is then a Linux
+ *      spelling the host cannot see (F4, T-C6), and the probe below answers for
+ *      it;
+ *   3. `probeInstallation`: rule 4's resolution and the version handshake --
+ *      inside the distribution when the candidate names one (T-C5) -- which is
+ *      where a missing `fugaro` and a CLI this console cannot drive are
  *      refused;
  *   4. `deps.verify` -- one allow-listed `doctor --json` from that checkout,
  *      with that project -- whose refusal is the CLI's own sentence, shown
@@ -719,7 +749,14 @@ export async function validateInstallation(
   if (checkout !== undefined && !isAbsolutePath(checkout, MAX_INSTALLATION_PATH_LENGTH)) {
     return { ok: false, reason: 'the checkout must be an absolute path' }
   }
-  if (checkout !== undefined) {
+  // **The checkout's mode question is asked only on the host route.** Under a
+  // `distro` the checkout is a Linux spelling inside the distribution (F15), and
+  // the host cannot `stat` it -- asking would refuse an installation whose
+  // directory is perfectly good, which is F4's "a path the host cannot see is
+  // not the host's to answer". What answers for it is the probe below, which
+  // starts the CLI *in* that directory (`--cd`, T-C5): a directory that is not
+  // there is then `wsl.exe`'s refusal, in its own words.
+  if (checkout !== undefined && (candidate.distro ?? '') === '') {
     let isDirectory = false
     try {
       isDirectory = fs.stat(checkout).isDirectory()
