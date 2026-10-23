@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
 // The credentials stage (docs/credentials-service, D146, D147; plan task
@@ -799,6 +800,99 @@ func TestOrdinaryInitAfterTheOptInKeepsTheCredentialsService(t *testing.T) {
 	}
 	if string(got) != string(want) {
 		t.Errorf("credentials_service = %s, want it carried forward exactly as %s", got, want)
+	}
+}
+
+// The opt-in records the service's URL in the project config, and that is what
+// makes it reach a run at all: `fugaro run` puts FUGARO_CREDENTIALS_SERVICE_URL
+// on a job from the selected config's credentials_service block (run.go's
+// credentialsServiceLaunchEnv), and the block is published with the rest of the
+// installation's facts (localcfg.Shared/MergeShared) so a teammate's machine
+// gets it too. The value is the installation's own record and never something
+// this stage composes: it is what the installation root's outputs carry, which
+// is the service resource's own uri.
+//
+// It is written in the opt-in run ITSELF and not left to the next ordinary
+// init: the installation stage's writeConfig ran before the service existed, so
+// waiting would leave a one-run window in which the service is on, the
+// repository jobs have lost their model credentials, and every launch still
+// goes out without the variable — the run the owner launches right after this
+// one, which is the whole point of the stage.
+//
+// Mutation (verified, run and restored): drop the recordURL call from Apply's
+// apply branch: this test fails, the config carrying no block.
+func TestInitCredentialsStageRecordsTheURLInTheProjectConfig(t *testing.T) {
+	r := credentialsStageRig(t)
+	r.setPlanAt(t, "installation")
+	// The outputs as the run really meets them: the installation stage reads
+	// them BEFORE the apply that creates the service, so its read carries no
+	// credentials service (the module's output answers null while the tfvars
+	// have no key), and every read from the credentials stage on carries the
+	// URL. Scripting the list is what makes this test about recordURL at all —
+	// with one static answer the installation stage would write the block and
+	// the stage's own write would be invisible. The first two steps are the
+	// reads before the service exists (the installation stage's own output
+	// read and the writeConfig that follows it); the third is this stage's.
+	noService := map[string]any{"stdout": outputsJSONWith(t, nil)}
+	withService := map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"credentials_service": map[string]any{"name": infra.CredentialsServiceName, "region": "us-east5", "url": credentialsServiceURL},
+	})}
+	r.script["output"] = []any{noService, noService, withService}
+	r.save(t)
+	typedThroughYes(t)
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials")
+	if err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	data, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc, err := localcfg.Parse(data)
+	if err != nil {
+		t.Fatalf("the project config the opt-in wrote does not parse: %v\n%s", err, data)
+	}
+	if lc.CredentialsService == nil || lc.CredentialsService.URL != credentialsServiceURL {
+		t.Fatalf("credentials_service = %+v, want the URL the installation's outputs carry (%s): without it every launch of this project goes out with no address on the job while the installation has the service on\n%s", lc.CredentialsService, credentialsServiceURL, data)
+	}
+	if !strings.Contains(out, credentialsServiceURL) {
+		t.Errorf("the stage did not say it recorded the URL:\n%s", out)
+	}
+	// The block is published: a machine that has no local config reads it from
+	// the runs bucket (localcfg.Select), which is the ledger item of PR #903.
+	pub, err := lc.Shared().Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(pub), "credentials_service:") || !strings.Contains(string(pub), credentialsServiceURL) {
+		t.Errorf("the published shared config carries no credentials service:\n%s", pub)
+	}
+}
+
+// An installation that has NOT opted in records no block, and that is the
+// off position of every reader: `fugaro run` puts no variable on the job, so
+// the launch is byte for byte what it was before the wiring existed. An
+// ordinary init of such an installation must therefore not invent one — there
+// is no URL for it to write, and a block with an empty url is a config the
+// loader refuses (localcfg's validCredentialsServiceURL).
+func TestAnOrdinaryInitOfAnInstallationWithoutTheServiceRecordsNoBlock(t *testing.T) {
+	r := credentialsStageRig(t)
+	r.setPlanAt(t, "installation")
+	// The outputs of an installation that never opted in: the field is absent,
+	// which is what the module's output answers (outputs.tf).
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, nil)}
+	r.save(t)
+	typedThroughYes(t)
+	if out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes"); err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	data, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "credentials_service") {
+		t.Errorf("an ordinary init of an installation without the service wrote a credentials_service block:\n%s", data)
 	}
 }
 
