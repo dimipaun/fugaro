@@ -2079,6 +2079,18 @@ const (
 	// is where the owner copies it (plan Task 4.5).
 	consoleReleaseWorkflowPath = "docs/pending-workflows/console-release.yml"
 	appliedConsoleReleasePath  = ".github/workflows/console-release.yml"
+
+	// consoleReleaseTagWorkflowPath is the staged supersede file that moves the
+	// console onto its own `console-vX.Y.Z` tag stream: the console no longer
+	// releases from the CLI's `v*` tag, it has its own version line, its own
+	// notes file and its own release. While it is staged it is the file's
+	// *effective* text -- it is what the owner's copy-in writes over both copies
+	// of console-release.yml -- so these tests read it through
+	// consoleReleaseEffectiveText rather than reading console-release.yml, which
+	// is still the file that runs until that copy-in happens. The byte-identity
+	// clause between console-release.yml's two homes is unchanged and still
+	// asserted: this file supersedes it, and does not touch it.
+	consoleReleaseTagWorkflowPath = "docs/pending-workflows/console-release-tag.yml"
 )
 
 // consoleReleaseSecrets is the exact set of secrets the signing job reads, and
@@ -2165,9 +2177,18 @@ type consoleReleaseStep struct {
 // readConsoleReleaseWorkflow is the staged signing file's text, parsed both
 // ways: into the typed shape above, and into raw mappings of the trigger block
 // and of each job, where a key this test does not model is still visible.
+// It reads the file's *effective* text -- consoleReleaseEffectiveText: the
+// staged supersede file while it is staged, the applied copy afterwards -- so
+// the same suite is green on both sides of the owner's copy-in.
+//
+// The failure messages below name consoleReleaseWorkflowPath, and while the
+// supersede file is staged that is the file the change *supersedes* rather than
+// the text just read: it is kept staged, byte-identical to the copy that runs,
+// and its header names the supersede file and the copy-in -- the file a reader
+// is being pointed on to anyway (docs/pending-workflows/README.md).
 func readConsoleReleaseWorkflow(t *testing.T) (string, consoleReleaseWorkflow, map[string]any, map[string]map[string]any) {
 	t.Helper()
-	text := readDoc(t, consoleReleaseWorkflowPath)
+	text, _ := consoleReleaseEffectiveText(t)
 	var wf consoleReleaseWorkflow
 	if err := yaml.Unmarshal([]byte(text), &wf); err != nil {
 		t.Fatalf("%s is not valid YAML: %v", consoleReleaseWorkflowPath, err)
@@ -2248,8 +2269,14 @@ func TestDocsConsoleReleaseWorkflowHoldsNoPullRequestTrigger(t *testing.T) {
 	if !slices.Equal(keys, []string{"push"}) {
 		t.Errorf("%s triggers on %v, want exactly [push]: it is the tag-only signing job (plan Task 4.2's table)", consoleReleaseWorkflowPath, keys)
 	}
-	if !slices.Equal(wf.On.Push.Tags, []string{"v[0-9]+.[0-9]+.[0-9]+"}) {
-		t.Errorf("%s's push trigger tags = %v, want the strict release tag pattern release.yml and images.yml use: a loose `v*` would start a signing run for a tag the release gate refuses", consoleReleaseWorkflowPath, wf.On.Push.Tags)
+	// The console's own tag, and only the console's: `console-vX.Y.Z`. The CLI's
+	// `v*` tag releases the CLI (release.yml) and must not start a console
+	// signing run any more -- three release streams, each with its own tag
+	// (owner addendum 2026-10-22: CLI = animals, Console = fruits, Mobile =
+	// birds). A loose `console-v*` would start a signing run for a tag the
+	// version check below refuses.
+	if !slices.Equal(wf.On.Push.Tags, []string{"console-v[0-9]+.[0-9]+.[0-9]+"}) {
+		t.Errorf("%s's push trigger tags = %v, want exactly [console-v[0-9]+.[0-9]+.[0-9]+]: the console releases from its own console-vX.Y.Z tag, and a `v*` tag here would put the console back on the CLI's release stream", consoleReleaseWorkflowPath, wf.On.Push.Tags)
 	}
 	if len(wf.On.Push.Branches) != 0 {
 		t.Errorf("%s's push trigger carries branches %v: the signing job runs on a tag and never on a branch", consoleReleaseWorkflowPath, wf.On.Push.Branches)
@@ -5999,6 +6026,27 @@ func consoleReplacementText(t *testing.T, staged, applied string) (string, strin
 		return readDoc(t, staged), staged
 	}
 	return readDoc(t, applied), applied
+}
+
+// consoleReleaseEffectiveText is the console signing workflow's text as the
+// repository is *heading*: the staged supersede file
+// (consoleReleaseTagWorkflowPath) while it is staged, and console-release.yml
+// once the owner's copy-in has written it over both copies of that file and
+// removed the supersede file. It is what every test about the console's release
+// stream reads, so the same suite is green before and after a copy-in only a
+// human performs.
+//
+// The byte-identity clause stays live in every state: consoleWorkflowText is
+// called first, so the two copies of console-release.yml are still held to be
+// byte-identical while the supersede file is staged, and the supersede file is
+// not a licence to edit either of them.
+func consoleReleaseEffectiveText(t *testing.T) (string, string) {
+	t.Helper()
+	file, stagedPath := consoleWorkflowText(t, consoleReleaseWorkflowPath, appliedConsoleReleasePath)
+	if docExists(t, consoleReleaseTagWorkflowPath) {
+		return readDoc(t, consoleReleaseTagWorkflowPath), consoleReleaseTagWorkflowPath
+	}
+	return file, stagedPath
 }
 
 // parseConsoleWorkflow is readConsoleTestsWorkflow's parsing half: the typed
