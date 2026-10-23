@@ -34,7 +34,7 @@ Procedure for one Fugaro release. Detail lives in `docs/release.md` (read it fir
 
 ## 3. Dry run
 
-`scripts/release.sh X.Y.Z --dry-run`: it must pass every precondition (including "docs/releases/vX.Y.Z.md exists and is not empty on main" and "website/data/release-summaries.yaml has a non-empty entry for vX.Y.Z"; both are its own messages, naming the file). It also applies the bump to a scratch worktree and runs `go test ./plugin/` there. Fix what it reports: when the plugin tests fail, a skill file is over its byte budget (`plugin/skills_lint_test.go`'s `maxSkillBytes`), so shorten it in a PR to `main` and re-run.
+`scripts/release.sh X.Y.Z --dry-run`: it must pass every precondition (including "docs/releases/vX.Y.Z.md exists and is not empty on main" and "website/data/release-summaries.yaml has a non-empty entry for vX.Y.Z"; both are its own messages, naming the file). It also applies the bump to a scratch worktree and runs `go test ./plugin/` there, then removes that worktree however it ends; it needs `go` on `PATH` and refuses without it (the check cannot run, so the plan would vouch for nothing). Read the plan line it prints: it says what the check did, and says so when the check did not run. Fix what it reports: when the plugin tests fail, a skill file is over its byte budget (`plugin/skills_lint_test.go`'s `maxSkillBytes`), so shorten it in a PR to `main` and re-run.
 
 ## 4. Release (needs the user's go-ahead)
 

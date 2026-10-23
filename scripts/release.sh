@@ -10,10 +10,12 @@
 # precondition below still runs. --dry-run applies the version bump to a
 # scratch worktree and runs the plugin tests there (the bump rewrites two
 # version stamps in every skill file, so it can push one over its byte budget
-# on its own), then stops after printing the plan for step 2 (branch/PR),
-# creating nothing outside that worktree, which it removes. --timeout-minutes
-# (default 45, a
-# whole number >= 1) bounds each of the two waits: step 3 (the release PR
+# on its own; `go` has to be on PATH for it, and its absence is a refusal like
+# a missing `gh`), then stops after printing the plan for step 2 (branch/PR),
+# creating nothing outside that worktree, which it removes however it ends.
+# The plan says what that check did, including that it did not run when the
+# checkout holds no module. --timeout-minutes (default 45, a whole number
+# >= 1) bounds each of the two waits: step 3 (the release PR
 # merging) and step 4 (CI's test, terraform, rules and both console checks finishing on the merge
 # commit).
 #
@@ -77,6 +79,21 @@ restore_main() {
       echo "could not switch back to main; run: git switch main" >&2
   fi
 }
+# plugin_scratch is the scratch worktree plugin_budget_check has created, or
+# empty; cleanup_plugin_scratch removes it and is called from the EXIT trap
+# below, so the worktree is gone however the run ends -- an error, or a Ctrl-C
+# or SIGTERM, which reaches on_signal's exit 130 and so the same trap.
+plugin_scratch=""
+cleanup_plugin_scratch() {
+  [ -n "$plugin_scratch" ] || return 0
+  git worktree remove --force "$plugin_scratch/tree" >/dev/null 2>&1 || true
+  rm -rf "$plugin_scratch"
+  # A worktree whose removal failed half-way (a process still in it, a signal
+  # landing mid-delete) leaves a registration behind; prune drops the entries
+  # whose directory is gone, so the checkout does not collect them.
+  git worktree prune >/dev/null 2>&1 || true
+  plugin_scratch=""
+}
 on_signal() {
   echo "
 interrupted; nothing was torn down. Re-run \"scripts/release.sh $version\" to resume: it finds an existing release branch or pull request and continues from there, and refuses outright if the tag already exists on origin." >&2
@@ -129,7 +146,7 @@ if [ "$current_branch" != main ]; then
   echo "the current branch is '$current_branch', not main; switch to main first" >&2
   exit 1
 fi
-trap restore_main EXIT
+trap 'cleanup_plugin_scratch; restore_main' EXIT
 trap on_signal INT TERM HUP
 
 git fetch --quiet origin main --tags --prune
@@ -227,36 +244,48 @@ GITHUB_SHA="$local_main" GITHUB_REPOSITORY="$repo" GATE_WAIT_SECONDS="$timeout_s
 # the bump can see that -- the version strings all agree, so
 # scripts/bump-plugin-version.sh --check passes on the same tree.
 #
+# It reports what it did in plugin_check_line, which the dry-run plan prints
+# instead of a fixed sentence: a check that did not run must not read as a
+# check that passed, and the two ways it can fail to run (a checkout with no
+# module, a worktree that could not be created) are not the release's fault.
+# A missing `go` is not one of them: it is a refusal, like a missing `gh`,
+# because the check the dry run advertises cannot run at all without it.
+#
 # RELEASE_SH_PLUGIN_TEST_CMD exists for the tests only: they substitute a stub
 # for the go command (the test repository holds no module).
+plugin_check_line=""
 plugin_budget_check() {
   want=$1
   test_cmd=${RELEASE_SH_PLUGIN_TEST_CMD:-go test ./plugin/ -count=1}
   if [ -z "${RELEASE_SH_PLUGIN_TEST_CMD:-}" ]; then
     if [ ! -f go.mod ]; then
+      plugin_check_line="the plugin budget check did not run (this checkout holds no go.mod), so nothing has verified that the $want bump leaves every skill file inside its byte budget"
       echo "note: no go.mod here, so the plugin budget check ($test_cmd on a bumped tree) is skipped" >&2
       return 0
     fi
     if ! command -v go >/dev/null 2>&1; then
-      echo "note: go is not on PATH, so the plugin budget check ($test_cmd on a bumped tree) is skipped" >&2
-      return 0
+      echo "go is not on PATH, and the plugin budget check ($test_cmd on a bumped tree) is the check --dry-run exists for: it is what catches a bump that pushes a skill file over its byte budget (plugin/skills_lint_test.go's maxSkillBytes; 0.10.0's plugin/skills/setup/SKILL.md, #929). Install go (https://go.dev/dl), or run the check by hand on a bumped tree (docs/release.md, \"Before you tag\")." >&2
+      return 1
     fi
   fi
-  scratch=$(mktemp -d)
-  if ! git worktree add --quiet --detach "$scratch/tree" HEAD >/dev/null 2>&1; then
-    rm -rf "$scratch"
+  plugin_scratch=$(mktemp -d)
+  if ! git worktree add --quiet --detach "$plugin_scratch/tree" HEAD >/dev/null 2>&1; then
+    rm -rf "$plugin_scratch"
+    plugin_scratch=""
+    plugin_check_line="the plugin budget check did not run (no scratch worktree could be created), so nothing has verified that the $want bump leaves every skill file inside its byte budget"
     echo "note: could not create a scratch worktree, so the plugin budget check ($test_cmd on a bumped tree) is skipped" >&2
     return 0
   fi
   rc=0
-  ( cd "$scratch/tree" && scripts/bump-plugin-version.sh "$want" >/dev/null && sh -c "$test_cmd" ) || rc=$?
-  git worktree remove --force "$scratch/tree" >/dev/null 2>&1 || true
-  rm -rf "$scratch"
+  ( cd "$plugin_scratch/tree" && scripts/bump-plugin-version.sh "$want" >/dev/null && sh -c "$test_cmd" ) || rc=$?
+  cleanup_plugin_scratch
   if [ "$rc" != 0 ]; then
+    plugin_check_line="the plugin tests fail on a tree with the $want bump applied"
     echo "the plugin tests fail on a tree with the $want bump applied (above), so the bump commit would go red on main. The usual cause is a skill file the bump pushed over its byte budget (plugin/skills_lint_test.go's maxSkillBytes; 0.10.0's plugin/skills/setup/SKILL.md, #929): shorten the file, then tag." >&2
     return 1
   fi
-  echo "the plugin tests pass on a tree with the $want bump applied (a scratch worktree, since removed)"
+  plugin_check_line="the plugin tests pass on a tree with the $want bump applied (a scratch worktree, since removed)"
+  echo "$plugin_check_line"
 }
 
 # 2. Branch, bump, PR (skipped by --dry-run; resumed from an existing PR).
@@ -264,8 +293,8 @@ if [ "$dry_run" = 1 ]; then
   plugin_budget_check "$version" || exit 1
   cat <<EOF
 
-Dry run for $tag: every precondition above passed, and the plugin tests pass
-on a bumped tree; nothing else was changed.
+Dry run for $tag: every precondition above passed; $plugin_check_line.
+Nothing else was changed.
 Without --dry-run this would:
   2. create $branch from main, bump the plugin to $version (scripts/bump-plugin-version.sh), commit "release: $tag", push it, open a PR to main, and enable squash auto-merge
   3. wait up to ${timeout_minutes}m for that PR to merge

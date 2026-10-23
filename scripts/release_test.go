@@ -636,6 +636,151 @@ func TestDryRunChecksThePluginBudgetOnABumpedTree(t *testing.T) {
 	}
 }
 
+// TestDryRunReportsASkippedPluginBudgetCheck: the fixture repository holds no
+// go.mod, so with no RELEASE_SH_PLUGIN_TEST_CMD the check cannot run at all.
+// The plan has to say that rather than print the sentence the check exists to
+// earn: the check is what --dry-run is for, and a skip reported as a pass is
+// worse than no check, because it is read as one.
+func TestDryRunReportsASkippedPluginBudgetCheck(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := newGHState(t, r, greenChecks())
+
+	res := runRelease(t, r, g, "", "1.0.0", "--dry-run")
+
+	res.requireSuccess(t)
+	if !strings.Contains(res.out, "the plugin budget check did not run (this checkout holds no go.mod)") {
+		t.Errorf("want the skipped check named in the plan, got:\n%s", res.out)
+	}
+	if strings.Contains(res.out, "the plugin tests pass on a tree") {
+		t.Errorf("a check that did not run must not read as a pass:\n%s", res.out)
+	}
+	if !strings.Contains(res.out, "Dry run for v1.0.0") {
+		t.Errorf("a skipped check is not a refusal, so the plan still prints:\n%s", res.out)
+	}
+}
+
+// TestDryRunRefusesWhenGoIsMissing: `go` missing from PATH is the one skip that
+// is a refusal. The check cannot run, and it is the check the dry run exists
+// for, so printing a plan that does not mention it -- or a plan at all -- would
+// vouch for a release nothing verified. go.mod is what tells the two cases
+// apart: without it there is no module to test and the check is skipped.
+func TestDryRunRefusesWhenGoIsMissing(t *testing.T) {
+	r := newReleaseRepo(t)
+	writeFixtureFile(t, r.local, "go.mod", "module example.com/fixture\n")
+	g := newGHState(t, r, greenChecks()).with("PATH=" + pathWithoutGo(t, fakeBinDir(t)))
+
+	res := runRelease(t, r, g, "", "1.0.0", "--dry-run")
+
+	res.requireFailureContaining(t, "go is not on PATH")
+	if strings.Contains(res.out, "Dry run for v1.0.0") {
+		t.Errorf("a refused dry run must not print the plan:\n%s", res.out)
+	}
+}
+
+// writeFixtureFile writes name into the fixture checkout, commits it on main
+// and pushes it, so release.sh's clean-tree and main-equals-origin/main
+// preconditions still hold when a test needs one more file on main.
+func writeFixtureFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, dir, "add", name)
+	testutil.Git(t, dir, "commit", "--quiet", "-m", "fixture: "+name)
+	testutil.Git(t, dir, "push", "--quiet", "origin", "main")
+}
+
+// pathWithoutGo returns a directory holding a link to every command on PATH
+// except go itself, plus the fake gh in extra (which must shadow any real one).
+// Emptying PATH is not an option: the script, the gate and the fake gh all need
+// git, mktemp, awk, sed and friends, and there is no way to stub a command out
+// of PATH -- so the absence is built by subtraction.
+func pathWithoutGo(t *testing.T, extra ...string) string {
+	t.Helper()
+	dir := t.TempDir()
+	link := func(src string) {
+		name := filepath.Base(src)
+		if name == "go" || name == "gofmt" {
+			return
+		}
+		dst := filepath.Join(dir, name)
+		if _, err := os.Lstat(dst); err == nil {
+			return // an earlier PATH entry already supplied this name
+		}
+		_ = os.Symlink(src, dst)
+	}
+	for _, d := range append(append([]string{}, extra...), filepath.SplitList(os.Getenv("PATH"))...) {
+		ents, err := os.ReadDir(d)
+		if err != nil {
+			continue
+		}
+		for _, e := range ents {
+			if !e.IsDir() {
+				link(filepath.Join(d, e.Name()))
+			}
+		}
+	}
+	return dir
+}
+
+// writeSignalStub writes the stand-in for `go test ./plugin/` that
+// TestDryRunRemovesTheScratchWorktreeOnASignal uses: it records the worktree it
+// runs in, then sends the release script the signal a Ctrl-C sends, so the run
+// ends through on_signal's exit 130 and not through the check's own cleanup --
+// which is the path that used to leave the worktree and its registration
+// behind. The script is the lowest-numbered process whose command line carries
+// its path: the subshells it forks carry the same line.
+func writeSignalStub(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "plugin-test-signal-stub.sh")
+	script := `#!/usr/bin/env bash
+set -eu
+echo "tree=$PWD" >> "$STUB_LOG"
+pid=$(pgrep -f -- "$STUB_SCRIPT" | sort -n | head -1)
+kill -TERM "$pid"
+exit 0
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestDryRunRemovesTheScratchWorktreeOnASignal: the script's header,
+// docs/release.md and the check's own comment all say the scratch worktree is
+// removed however the check ends. An interrupted run ends through on_signal,
+// which exits 130 -- before the EXIT trap held the worktree, that exit left the
+// directory and its .git/worktrees entry behind, and the test could not see it
+// because no other case interrupts a run.
+func TestDryRunRemovesTheScratchWorktreeOnASignal(t *testing.T) {
+	r := newReleaseRepo(t)
+	log := filepath.Join(t.TempDir(), "stub.log")
+	g := newGHState(t, r, greenChecks()).with(
+		"RELEASE_SH_PLUGIN_TEST_CMD=bash "+writeSignalStub(t),
+		"STUB_LOG="+log,
+		"STUB_SCRIPT="+filepath.Join(r.local, "scripts", "release.sh"))
+
+	res := runRelease(t, r, g, "", "1.0.0", "--dry-run")
+
+	if res.err == nil {
+		t.Fatalf("the interrupted run succeeded:\n%s", res.out)
+	}
+	if !strings.Contains(res.out, "interrupted") {
+		t.Errorf("want the interrupt reported, got:\n%s", res.out)
+	}
+	b, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatalf("the plugin test command did not run: %v\n%s", err, res.out)
+	}
+	scratch := strings.TrimPrefix(strings.Fields(strings.TrimSpace(string(b)))[0], "tree=")
+	if _, err := os.Stat(scratch); !os.IsNotExist(err) {
+		t.Errorf("the scratch worktree %s survived the interrupt (stat: %v)", scratch, err)
+	}
+	if out := strings.TrimSpace(testutil.Git(t, r.local, "worktree", "list")); strings.Contains(out, "\n") || !strings.Contains(out, r.local) {
+		t.Errorf("want no worktree left registered after the interrupt, got:\n%s", out)
+	}
+}
+
 // TestHappyPathAnsweringYes drives release.sh through a real bump, PR,
 // squash merge and the tag (no prompt) — checking that exactly
 // one branch, one commit and one PR were created, and the tag matches the
