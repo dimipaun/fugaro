@@ -10,22 +10,25 @@ a task. Checked against `origin/main` at `cc50b5b23` on 2026-10-22.
   roadmap file; the graph is per-plan and run-level now (GV1.6), and task-level across plans waits
   (GV4.1, blocked).
 - **GD2** (not the recommendation): the console writes the roadmap; reverses D30, amends D22. The
-  write (GV3.1, GV3.2) is **blocked on open tension (a)**: the record it would write does not exist
+  write (GV3.1, GV3.2) stays **blocked until the coordinator's record exists** (ruling (a),
+  2026-10-22: read-only until 0.11.0): the record it would write does not exist
   until 0.11.0.
-- **GD3** (not the recommendation): elkjs; reverses D9. GV2.2 is **blocked on the licence item
-  (c)**.
+- **GD3** (not the recommendation): elkjs; reverses D9. Licence confirmed under EPL-2.0, pinned
+  to 0.11.0 (ruling (c)); GV2.2 is not gated.
 - **GD4**: motion with text marks and a reduced-motion static fallback (GV2.4).
 - **GD5**: a plan-task id recorded at launch (GV1.2).
 - **GD6**: open work by default, a toggle for everything, merged/cancelled as a per-release
   counter (GV1.6, GV2.3).
 - **GD7**: one streams data file, read by the graph and the release script (GV1.4, GV1.5); path
-  amended to `docs/release-streams.yaml` (F29), owner to confirm (e).
+  amended to `docs/release-streams.yaml` (F29), accepted (ruling (e)).
 - **GD8**: this folder's own prefixes.
 
-**An assumption the owner must confirm: Slices 1 and 2 assume open tension (d)'s option 1**
-(per-plan task graphs now, the whole-project graph at 0.11.0+). GV1.3, GV1.6, GV1.7 and every task
-in Slice 2 depend on that ruling. Under option 2 (nothing task-level until 0.11.0) they are void
-except GV1.1, GV1.2, GV1.4 and GV1.5, and Slice 2 is re-planned on the coordinator's PR-level view.
+**The owner's rulings on the tensions (2026-10-22, all as recommended):** (a) read-only graph
+until 0.11.0, drag with the coordinator's record; (b) the amendments to D9, D22, D29, D30 and
+console-styling §3.9 confirmed; (c) elkjs confirmed under EPL-2.0, pinned to **0.11.0**, licence
+text shipped, file unmodified; (d) per-plan task graphs now on the existing `plan graph --json`
+document, release assignment later — so Slices 1–2 wait on no ruling; (e)
+`docs/release-streams.yaml` accepted; (f) proposed for coordinator P4 only.
 
 ## 1. Conventions every task follows
 
@@ -54,12 +57,12 @@ except GV1.1, GV1.2, GV1.4 and GV1.5, and Slice 2 is re-planned on the coordinat
 | --- | --- |
 | Console v2 **V2.2.3** (readiness, critical path) | **Absorbed** by GV1.1 (structure) and GV1.6 (readiness from runs). Same D26 answer. |
 | Console v2 **V2.3.1** (graph on screen, four colours) | **Superseded** by GV2.3 and GV2.4. |
-| Console v2 **V2.5.3** ("copy the change") | **Superseded** by GV3.2 once tension (a) is ruled (GD2). |
+| Console v2 **V2.5.3** ("copy the change") | **Superseded** by GV3.2, which arrives with the coordinator's record (GD2, ruling (a)). |
 | Console v2 **V2.6.1** (version column) | **Amended**: the version becomes a release box (GV2.3); the stream comes from GV1.3; the source later moves to the coordinator's record (GD1), not to `fugaro project export` (F31). |
 | Console v2 **V2.6.2** (dependency-aware warning) | **Kept** as is for the warning; its "pull it forward" half follows GV3.2 instead of V2.5.3. |
 | Console v2 **V2.8.1** (skill writes the format) | **Kept**, extended by the `stream` field: GV1.7. |
 | Coordinator **P6** (console project view) | **Unchanged in scope**; shares console files with GV2.1/GV2.3 (F38, a merge-time note). When P1 reaches `main`, GV4.1 reads release membership for PR-level nodes from it. |
-| Coordinator **P4** (intent record) | **Proposed, not made**: carry GD5's plan-task id (open item (f)). |
+| Coordinator **P4** (intent record) | **Proposed, not made**: carry GD5's plan-task id (ruling (f): proposed there only). |
 
 ## 3. Global constraints and review focus
 
@@ -88,7 +91,7 @@ except GV1.1, GV1.2, GV1.4 and GV1.5, and Slice 2 is re-planned on the coordinat
 - **Tests:** the existing docs tests that read these files (`TestDocsConsoleStyling*`,
   `TestDocsDesktopConsoleV2*`, the live-init census).
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'Docs|LiveInitCensus' -count=1 -timeout 300s`
-- **Depends on:** the owner's confirmation of open tension (b).
+- **Depends on:** nothing (ruling (b) confirmed the amendments, 2026-10-22).
 - **Commit:** `docs(console): the graph view's amendments to D9, D22, D29, D30 and styling §3.9`
 - **Red step:** none (docs-only); the docs tests must stay green, and each note sits beside the
   original sentence rather than replacing it.
@@ -145,7 +148,7 @@ except GV1.1, GV1.2, GV1.4 and GV1.5, and Slice 2 is re-planned on the coordinat
   `TestUnknownStreamRefused`, `TestVersionShape` (accepts `0.10` and `0.10.1`, refuses `v0.10`,
   `0.10.1.2`, free text), the existing future-version refusal now at 3.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/plan ./internal/cli -run 'Read|Stream|Version|PlanGraph' -count=1 -timeout 300s`
-- **Depends on:** the owner's ruling on tension (d) (see the assumption above).
+- **Depends on:** nothing. Per ruling (d), `stream` is a display input; authoritative release assignment comes from the coordinator's record (GV4.1).
 - **Commit:** `plan: graph schema 2 names the plan's release stream`
 - **Red step:** `TestReadV2Stream` fails on v1's unknown-field refusal.
 - **Reviewer:** standard. **OWNER-RUN:** no.
@@ -163,7 +166,7 @@ except GV1.1, GV1.2, GV1.4 and GV1.5, and Slice 2 is re-planned on the coordinat
   Lemon), `TestRealFileParses` (reads the repository's own file), `TestSymlinkRefused`,
   `TestOversizeRefused`, `TestAliasRefused`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/streams -count=1 -timeout 300s`
-- **Depends on:** the owner's confirmation of the path, open item (e).
+- **Depends on:** nothing (ruling (e) accepted the path).
 - **Commit:** `streams: one file names the three release streams, their names and tag prefixes`
 - **Red step:** `TestConsoleFloor` fails on a fixture whose console `current` is 0.9.7.
 - **Reviewer:** standard. **OWNER-RUN:** no.
@@ -223,7 +226,7 @@ except GV1.1, GV1.2, GV1.4 and GV1.5, and Slice 2 is re-planned on the coordinat
   `TestCheckoutConfined` (a symlink under `docs/` pointing outside is refused, and a symlinked
   `docs/` itself), `TestArtifactCountCap`, `TestRunWithUnknownPlanTaskIgnored`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/plan ./internal/cli -run 'State|Blocked|DoneNeeds|OpenWork|AllShows|PlanID|JoinIgnores|LatestRun|FollowUp|RunningNode|CheckoutConfined|ArtifactCount|PlanStatus|UnknownPlanTask' -count=1 -timeout 300s`
-- **Depends on:** GV1.1, GV1.2, GV1.3, GV1.4; the owner's ruling on tension (d).
+- **Depends on:** GV1.1, GV1.2, GV1.3, GV1.4.
 - **Commit:** `plan: plan status joins every plan's graph to its runs`
 - **Red step:** `TestCheckoutConfined` fails against a walk that follows symlinks;
   `TestJoinIgnoresOtherRepo` fails against a join on the id alone.
@@ -240,7 +243,7 @@ except GV1.1, GV1.2, GV1.4 and GV1.5, and Slice 2 is re-planned on the coordinat
 - **Tests:** the skill lint; `plan graph --plan docs/console-dependency-graph/implementation-plan.md
   --json` reads the new artifact without refusal.
 - **Command:** `GOFLAGS=-p=2 go test ./plugin -run 'PluginSkillsLintClean|LintSizeBudget|LintByteBudget|LintChecksReferenceFiles' -count=1 -timeout 300s && go run ./cmd/fugaro plan graph --plan docs/console-dependency-graph/implementation-plan.md --json`
-- **Depends on:** GV1.3; the owner's ruling on tension (d).
+- **Depends on:** GV1.3.
 - **Commit:** `skills: parallelism writes the plan's graph artifact, with its stream`
 - **Red step:** the `plan graph` read of the new artifact fails before GV1.3's schema 2 is on the
   branch (v1 refuses `stream`).
@@ -267,7 +270,7 @@ except GV1.1, GV1.2, GV1.4 and GV1.5, and Slice 2 is re-planned on the coordinat
   with no `checkout` yields the not-available state; the refresh is rate-limited; the decoder refuses an unknown `state`; the
   spawn argv is exact.
 - **Command:** `cd console && npx vitest run test/unit/ipc.test.ts test/unit/spawn.test.ts test/unit/preload-surface.test.ts test/unit/schema.test.ts && npm run typecheck`
-- **Depends on:** GV1.6 (and so on tension (d)).
+- **Depends on:** GV1.6.
 - **Commit:** `console: read plan status through the CLI, with the checkout from the installation`
 - **Red step:** the "renderer-supplied path refused" test fails against an operation that accepts an
   `args` path.
@@ -275,14 +278,15 @@ except GV1.1, GV1.2, GV1.4 and GV1.5, and Slice 2 is re-planned on the coordinat
   **OWNER-RUN:** no.
 
 #### GV2.2 — elkjs in a worker (GD3)
-- **Files:** `console/package.json` (**`devDependencies`**: `elkjs` exact; `build.files`: the worker
+- **Files:** `console/package.json` (**`devDependencies`**: `elkjs` exactly `0.11.0`; `build.files`: the worker
   file), `console/package-lock.json`, `console/tools/bundle-renderer/index.ts` (copies
   `node_modules/elkjs/lib/elk-worker.min.js` verbatim into `dist/bundle/` — a copy, not a walked
   entry, so the bare-specifier rule is unchanged), new `console/src/renderer/graph/layout-client.ts`
   (plain `postMessage` to the worker; validates every reply: known ids, finite numbers),
   `console/src/main/protocol.ts` (`SERVED_FILES` gains the worker file as its seventh entry;
   `CONTENT_SECURITY_POLICY` unchanged), `console/README.md` (the D9 sentence, amended), new
-  `console/THIRD_PARTY_NOTICES.md`, `console/test/unit/bundle.test.ts`,
+  `console/THIRD_PARTY_NOTICES.md` (elkjs's EPL-2.0 licence text, copied from the package's
+  `LICENSE.md`, and a pointer to its source; packed beside the app via `build.files`), `console/test/unit/bundle.test.ts`,
   `console/test/unit/build-files.test.ts`, `console/test/unit/window.test.ts`,
   `console/test/unit/csp-document.test.ts`, `console/test/unit/lockfile.test.ts`, new
   `console/test/unit/layout-client.test.ts`, new `console/test/e2e/graph-worker.spec.ts`.
@@ -296,16 +300,14 @@ except GV1.1, GV1.2, GV1.4 and GV1.5, and Slice 2 is re-planned on the coordinat
   `SERVED_FILES` has exactly seven entries; a reply with an unknown id or `NaN` is refused; in the
   built app the worker lays out a fixture and `new Function` inside the worker throws.
 - **Command:** `cd console && npx vitest run test/unit/pinning.test.ts test/unit/bundle.test.ts test/unit/build-files.test.ts test/unit/window.test.ts test/unit/csp-document.test.ts test/unit/lockfile.test.ts test/unit/layout-client.test.ts && npm run test:e2e -- test/e2e/graph-worker.spec.ts`
-- **Depends on:** the owner's confirmation of the licence, item (c); GV0.1.
+- **Depends on:** GV0.1 (ruling (c) confirmed the licence: EPL-2.0, 0.11.0).
 - **Commit:** `console: elkjs's worker, pinned and served verbatim under the unchanged CSP`
 - **Red step:** `build-files.test.ts` and `window.test.ts` fail when the worker is copied but not
   yet listed in `build.files` and `SERVED_FILES`; the layout-client test fails on a `NaN` reply
   before validation exists.
 - **Reviewer:** **opus + mandatory independent review** (supply chain, CSP, served files).
-  **OWNER-RUN:** no (the licence confirmation is the owner's, before the task).
-- **If the owner declines (c):** this task is replaced by a layered layout computed in Go beside
-  `internal/plan` (F15), printed by `plan status` as positions; Files then
-  `internal/plan/layout.go`, `internal/plan/layout_test.go`; no console dependency, no served file.
+  **OWNER-RUN:** no. The copied worker file's SHA-256 is asserted against the pinned 0.11.0
+  package's, so the file ships unmodified as ruling (c) requires.
 
 #### GV2.3 — The graph screen, static
 - **Files:** new `console/src/renderer/screens/graph.ts`, new `console/src/renderer/graph/model.ts`
@@ -329,7 +331,7 @@ except GV1.1, GV1.2, GV1.4 and GV1.5, and Slice 2 is re-planned on the coordinat
   recomputed on a watch frame that changes no structure; the list view carries every node; a PR
   opens only via `link.openExternal`; forced colours keep the dashed/solid distinction.
 - **Command:** `cd console && npx vitest run test/unit/graph.test.ts test/unit/graph-model.test.ts && npm run typecheck && npm run test:e2e -- test/e2e/graph.spec.ts`
-- **Depends on:** GV2.1, GV2.2 (and so on tension (d)).
+- **Depends on:** GV2.1, GV2.2.
 - **Commit:** `console: the dependency graph screen, read-only and static`
 - **Red step:** the "no relayout on an unchanged structure" test fails against a screen that lays out
   per frame.
@@ -377,20 +379,21 @@ except GV1.1, GV1.2, GV1.4 and GV1.5, and Slice 2 is re-planned on the coordinat
 - **Depends on:** GV2.4. **Reviewer:** standard (for the row). **OWNER-RUN:** yes; no agent runs any
   step.
 
-### Slice 3 — the write (GD2) — blocked on open tension (a)
+### Slice 3 — the write (GD2) — blocked until the coordinator's record exists (ruling (a))
 
 #### GV3.1 — The roadmap write command
-- **Files:** depend on the ruling. Option 2: new `internal/plan/move.go`, `internal/plan/move_test.go`,
-  new `internal/cli/plan_move.go`. Option 3: `internal/coordinator/` (a move record written with
+- **Files:** designed with the coordinator's record. Option 2 (declined by ruling (a), kept for
+  reference): new `internal/plan/move.go`, `internal/plan/move_test.go`,
+  new `internal/cli/plan_move.go`. Option 3 (the route that comes with the record): `internal/coordinator/` (a move record written with
   `GetETag` + `PutIfMatch`), new `internal/cli/roadmap.go`, `internal/cli/root.go`, and the rules or
-  front-door change the coordinator plan would have to take. Option 1: none.
+  front-door change the coordinator plan would have to take. Under ruling (a), nothing until the record exists.
 - **Interfaces:** `<command> MOVE <plan>/<task> --to <stream>/<release> [--expect <from>] --json`,
   printing the before/after and refusing when `--expect` no longer matches.
 - **Tests:** stale `--expect` refused and nothing moves; under option 2, a move refused when the
   artifact file has uncommitted changes (D30's "clobber uncommitted work"); a move that makes an edge backwards is
   reported; the inverse move restores the document byte for byte.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/plan ./internal/coordinator ./internal/cli -run 'Move|Roadmap' -count=1 -timeout 300s`
-- **Depends on:** the owner's ruling on (a); for option 3, coordinator P3/P4 on `main`.
+- **Depends on:** the coordinator's record on `main` (ruling (a): option 1 now, the write with the record); the write route into it (front door or grant) is designed with the coordinator then. The option-2 file list above is kept only as the declined alternative.
 - **Commit:** `roadmap: move a task between releases, compare-and-set`
 - **Red step:** the stale-`--expect` test fails against a blind write.
 - **Reviewer:** **opus + mandatory independent review**. **OWNER-RUN:** no.
@@ -416,7 +419,7 @@ except GV1.1, GV1.2, GV1.4 and GV1.5, and Slice 2 is re-planned on the coordinat
   the renderer's ids.
 - **Reviewer:** **opus + mandatory independent review**. **OWNER-RUN:** no.
 
-### Slice 4 — the whole project, task-level — blocked on GD1's record and tension (d)
+### Slice 4 — the whole project, task-level — blocked on GD1's record (ruling (d): release assignment later)
 
 #### GV4.1 — Cross-plan and cross-stream edges from the coordinator's record
 - **Files:** depend on the coordinator's record shape once it carries tasks, releases and
@@ -432,8 +435,8 @@ except GV1.1, GV1.2, GV1.4 and GV1.5, and Slice 2 is re-planned on the coordinat
 
 ## 5. Parallel execution
 
-**Owner rulings that gate tasks** (not edges between tasks): (b) gates GV0.1; (c) gates GV2.2;
-(d) gates GV1.3, GV1.6, GV1.7 and Slice 2; (e) gates GV1.4; (a) gates GV3.1.
+**External gates:** none on Slices 0–2 since the owner's rulings of 2026-10-22. GV3.1 and GV4.1
+wait on the coordinator's record (0.11.0).
 
 **Edges** (from "Depends on"): GV1.1→GV1.6; GV1.2→GV1.6; GV1.3→GV1.6; GV1.4→GV1.6; GV1.3→GV1.7;
 GV1.4→GV1.5; GV0.1→GV2.2; GV1.6→GV2.1; GV2.1→GV2.3; GV2.2→GV2.3; GV1.6→GV2.5; GV2.1→GV2.5;
@@ -449,7 +452,7 @@ GV2.3→GV2.4; GV0.1→GV2.4; GV2.4→GV2.6; GV3.1→GV3.2; GV2.4→GV3.2; GV2.3
 | L3 | GV2.3, GV2.5 |
 | L4 | GV2.4 |
 | L5 | GV2.6 (OWNER-RUN) |
-| blocked | GV3.1 → GV3.2 (tension (a)); GV4.1 (GD1's record, tension (d)) |
+| blocked | GV3.1 → GV3.2 and GV4.1 (the coordinator's record, rulings (a) and (d)) |
 
 **Critical path:** GV1.2 → GV1.6 → GV2.1 → GV2.3 → GV2.4 → GV2.6 (six levels; GV1.2 is the
 longest L0 task). The schema task GV1.3 and the streams file GV1.4 are on equal-length paths.

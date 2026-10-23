@@ -68,7 +68,7 @@ plan namespace (`setup-wizard/W1.3`).
 `Normalize` refuses an edge naming a node not in the same document. Newer plans live in
 `docs/<topic>/implementation-plan.md`, outside the command's default `docs/plans` search.
 *Consequence:* cross-release and cross-stream edges need a qualified-id form and a reader across
-plans. Under GD1 that waits on the coordinator's record (§4 tension (d)); the first slice shows
+plans. Under GD1 that waits on the coordinator's record (§4 (d), ruled); the first slice shows
 per-plan graphs side by side with no cross-plan edges.
 
 **F5 — Gap: no stream or release per task.** `Node.Version` is free text and absent everywhere;
@@ -131,11 +131,12 @@ six-file list; `console/test/unit/window.test.ts` and `csp-document.test.ts` pin
 packer's `build.files` in `console/package.json` lists each bundle file by name. *Consequence:* a
 same-origin worker script is allowed by the `script-src` fallback but needs a seventh
 `SERVED_FILES` entry and a `build.files` entry; anything needing eval or WASM would need a CSP
-change, which this plan does not propose. **Read from the `elkjs@0.12.0` tarball (2026-10-22, in a
-scratch directory, deleted):** `lib/main.js` and `lib/elk.bundled.js` contain a bare
-`require('web-worker')`, which `console/tools/bundle-renderer` refuses by design; `lib/elk-worker.min.js`
-(1,595,334 bytes) contains no `require`, no `eval(` and no `new Function(`, and has its own
-`onmessage`. So the worker file is served **verbatim** (copied, not walked by the bundler) and the
+change, which this plan does not propose. **Read from the `elkjs` tarballs (2026-10-22, in a scratch
+directory, deleted):** in 0.12.0, `lib/main.js` and `lib/elk.bundled.js` contain a bare
+`require('web-worker')`, which `console/tools/bundle-renderer` refuses by design. In **0.11.0**, the
+version the owner pinned (§4 (c)), `lib/elk-worker.min.js` is **1,613,729 bytes**, contains no
+`require`, no `eval(` and no `new Function(`, has its own `onmessage`, and the package ships its
+`LICENSE.md` (EPL-2.0); 0.12.0's copy (1,595,334 bytes) is the same in those respects. So the worker file is served **verbatim** (copied, not walked by the bundler) and the
 renderer talks to it with plain `postMessage`; the bare-specifier rule is untouched. Since
 `protocol.ts`'s `bundleHeaders` puts the CSP on every served response, the worker runs under
 `script-src 'self'` too.
@@ -143,12 +144,13 @@ renderer talks to it with plain `postMessage`; the bare-specifier rule is untouc
 **F14 — Open → GD3: the licence.** The repository is MIT (`LICENSE`). npm metadata, read
 2026-10-22: `elkjs@0.11.0` is `EPL-2.0`; `elkjs@0.12.0` (published 2026-07-17) is `EPL-2.0 OR
 GPL-3.0-or-later`. No licence policy exists in the console's tests or docs, and the packed app
-ships no third-party notices file. *Consequence:* an item the owner confirms (§4 (c)).
+ships no third-party notices file. *Consequence:* the owner confirmed EPL-2.0 on 2026-10-22 and
+pinned **0.11.0**, shipped with its licence text and the file unmodified (§4 (c)).
 
 **F15 — Considered: layout without ELK.** A layered layout in Go beside `internal/plan` (D26
 already puts the critical path in Go) or a small hand-written layered layout in TypeScript keeps
 D9 and the CSP untouched. **GD3 chose elkjs** (not the recommendation); kept as the fallback if the
-licence item (§4 (c)) is not confirmed.
+licence had been declined; the owner confirmed it (§4 (c)), so this stays a note.
 
 **F16 — Exists: rendering and sanitizing patterns.** Screens are plain TypeScript DOM
 (`console/src/renderer/screens/{live,spend,projects,run,degraded}.ts`); `console/src/shared/sanitize.ts`;
@@ -194,7 +196,7 @@ on branch `coordinator`**, `origin/coordinator:internal/coordinator/view.go` `Re
 P3 (the record), P4 (intent record with target release), P6 (the console's project view), target
 0.11.0. *Consequence:* the coordinator's record is **PR-level** (records, runs, release); it holds
 no task and no task-to-task edge. GD1 makes it the graph's future source, so the graph is PR- and
-run-level first, task-level only when that record carries tasks (§4 (d)).
+run-level first, task-level only when that record carries tasks (§4 (d), ruled: per-plan task graphs now).
 
 **F22 — Exists: styling.** `docs/design/console-styling.md` (tokens, §3.4 contrast, §3.5, §4.3
 keyboard, §4.4 forced colours) governs any new screen.
@@ -204,7 +206,7 @@ keyboard, §4.4 forced colours) governs any new screen.
 **F23 — Rule → GD2: dragging is ruled out.** D30 (answered 2026-10-15/16): "there is no
 drag-and-drop write: the app holds no path into the checkout" (V2.5.3); its rejected alternative
 names the reason: a write into the operator's working tree "can clobber uncommitted work".
-*Consequence:* GD2 reverses D30 (§4 (b)).
+*Consequence:* GD2 reverses D30 (§4 (b), confirmed).
 
 **F24 — Open: performance.** 1 MiB per artifact; the console spawns the CLI per read and re-reads
 the live feed on a one-second floor (contract §10.1). ELK on hundreds of nodes on the renderer
@@ -234,8 +236,8 @@ sets — never from the renderer and never as an extra argv (plan GV2.1).
 `website/src/lib/changelog.mjs` `buildChangelog` reads every file in `docs/releases/` except
 `README.md` and **throws** on any name that is not `vX.Y.Z.md` ("every file there is vX.Y.Z.md,
 and README.md … is the only file that is not one"). *Consequence:* GD7's file moves to
-**`docs/release-streams.yaml`** (amended after review of the code; the owner confirms the path,
-§4 (e)).
+**`docs/release-streams.yaml`** (amended after review of the code; accepted by the owner
+2026-10-22, §4 (e)).
 
 **F30 — Rule: the coordinator's record is read-only to people and written behind its own front
 door.** Coordinator spec §7: "Local agents never touch Firestore directly. The coordinator writes
@@ -244,7 +246,7 @@ and the rules change "is a **read** grant only, for the people the CLI and the p
 authenticate as"; the store is the realtime database's `coordinator/` subtree (D195, answered
 2026-10-21). *Consequence:* a console that "writes the roadmap" (GD2) into that record has no path
 under the coordinator's own design: it needs either the front door (P8, not started) or a new
-write grant (a rules change the coordinator plan does not have). §4 (a).
+write grant (a rules change the coordinator plan does not have). §4 (a): ruled read-only until 0.11.0.
 
 **F31 — Gap: two things are called "the project record".** D29 (answered) means project-centric
 phase 6's backing repository (`fugaro project export`, `docs/plans/2026-10-14-project-centric.md`,
@@ -275,7 +277,7 @@ beside D22's launch.
 
 **F35 — Rule: GD2 also amends D22.** D22 (answered 2026-10-16): "one write, launch … everything
 else stays read-only"; its rejected alternative names "a drag-and-drop the console performs
-itself" as a cost. *Consequence:* GD2 is an amendment to **D22 and D30**, not to D30 alone (§4 (b)).
+itself" as a cost. *Consequence:* GD2 is an amendment to **D22 and D30**, not to D30 alone (§4 (b), confirmed).
 
 **F36 — Gap: the reduced-motion rule freezes animations, it does not restyle them.**
 `console/src/renderer/theme/base.css` sets `animation-duration: 0.01ms` and
@@ -301,16 +303,17 @@ design conflict; noted for whoever syncs `main` into `coordinator`.
 | --- | --- | --- | --- | --- |
 | **GD1** | Source of truth for tasks, releases and edges | Per-plan `.graph.json` files plus one roadmap file for releases, assignment and cross-plan edges: works now, no new infrastructure | Wait for the coordinator's project record (0.11.0): no task-level whole-project graph until it carries tasks | **2026-10-22: wait for the coordinator's project record (0.11.0) — not the recommendation.** *Why:* one source of project state, the coordinator's, rather than a file that would later be migrated. *Consequence:* PR/run-level first; task-level only when the record carries tasks, releases and cross-plan edges; no roadmap file now; D29's "project record" now means the coordinator's (F31). |
 | **GD2** | Does D30 (no drag write) stand? | Yes: drag becomes "copy the command" (D30's shape) | Let the console write: a new write path and its guard | **2026-10-22: let the console write the roadmap — not the recommendation; reverses D30 and amends D22 (F35).** *Why:* moving work between releases is the view's purpose. *Consequence:* the target, the write path and its security model are open (§4 (a), plan GV3). |
-| **GD3** | Layout engine | Layered layout in Go or hand-written TypeScript: keeps D9 and the CSP | elkjs: D9 reversal, licence, worker file, bundle size | **2026-10-22: bring elkjs in — not the recommendation; reverses D9.** *Why:* nested release boxes are what ELK is for. *Consequence:* the licence is an item the owner confirms (§4 (c)); a worker file under the CSP, served verbatim (1,595,334 bytes, no eval; F13). |
+| **GD3** | Layout engine | Layered layout in Go or hand-written TypeScript: keeps D9 and the CSP | elkjs: D9 reversal, licence, worker file, bundle size | **2026-10-22: bring elkjs in — not the recommendation; reverses D9.** *Why:* nested release boxes are what ELK is for. *Consequence:* licence confirmed 2026-10-22 under EPL-2.0, pin 0.11.0 (§4 (c)); a worker file under the CSP, served verbatim (1,613,729 bytes, no eval; F13). |
 | **GD4** | Motion | Allow comet/pulse/flow with a text mark on every coloured state and a `prefers-reduced-motion` static fallback | Keep §3.9: static states only | **2026-10-22: the recommendation.** *Why:* the motion carries meaning on this one screen, and the marks keep it accessible. Amends console-styling §3.9 for this screen only. |
 | **GD5** | Join key node → run | `fugaro run` records an optional plan task id in `launch.json` (additive, skew-safe) | Match on title: not unique, free text | **2026-10-22: the recommendation.** *Why:* the only exact join that needs no commit per launch. Stored in `task.json` too (F32). |
 | **GD6** | Scope | Open work by default, a toggle for everything, merged/cancelled collapse into a per-release counter | All ~800 tasks always | **2026-10-22: the recommendation.** *Why:* the useful view is what is still moving. |
-| **GD7** | Stream names and tag prefixes | One data file in the repository (stream, next name, current version, tag prefix), read by the graph and the release scripts; proposed path `docs/releases/streams.yaml` | Names hard-coded in two places | **2026-10-22: the recommendation.** *Why:* one list, two readers. Names: CLI animals, no birds (Badger 0.10, Camel 0.11, Dolphin, Gecko, Hippo, Koala, Moose); Console fruits (Cherry, Mango, Melon; avoid Apple, Lemon); Mobile birds (Falcon, Pelican, Robin). Console never below 0.10.0. ***Path amended after review:*** `docs/release-streams.yaml`, because `docs/releases/` breaks the website build (F29); the owner confirms (§4 (e)). |
+| **GD7** | Stream names and tag prefixes | One data file in the repository (stream, next name, current version, tag prefix), read by the graph and the release scripts; proposed path `docs/releases/streams.yaml` | Names hard-coded in two places | **2026-10-22: the recommendation.** *Why:* one list, two readers. Names: CLI animals, no birds (Badger 0.10, Camel 0.11, Dolphin, Gecko, Hippo, Koala, Moose); Console fruits (Cherry, Mango, Melon; avoid Apple, Lemon); Mobile birds (Falcon, Pelican, Robin). Console never below 0.10.0. ***Path amended after review:*** `docs/release-streams.yaml`, because `docs/releases/` breaks the website build (F29); **accepted by the owner 2026-10-22** (§4 (e)). |
 | **GD8** | Numbering | Own prefix `GD` in this folder | Take a block of the global `D` series | **2026-10-22: the recommendation.** *Why:* the folder's numbers cannot collide with console v2's D21–D38 or anyone's block. |
 
-## 4. Open tensions and open items for the owner
+## 4. Tensions and open items, with the owner's rulings
 
-These are **not resolved here**. Each states the choices and what each holds back.
+**All six were ruled by the owner on 2026-10-22, each as recommended.** The choices are kept as
+they were offered, so each ruling can be read against what it chose between. Nothing is open.
 
 **(a) GD1 against GD2: the console writes a record that does not exist yet.** GD1 waits for the
 coordinator's record (0.11.0); GD2 has the console write the roadmap; and the coordinator's own
@@ -333,6 +336,10 @@ preview (task, from-release, to-release, every edge that becomes backwards) and 
 confirmation before it writes; and every write has an undo that is the inverse write, also
 previewed. A mistaken drop must be one click from reversed.
 
+**Ruled 2026-10-22 (the owner, the recommendation):** option 1, read-only until 0.11.0; drag comes with the coordinator's record,
+and GV3.1/GV3.2 stay blocked until it exists. *Why:* no interim write into the working tree and no
+second source beside the record GD1 chose. The preview and undo recommendation stays with GV3.2.
+
 **(b) GD2 and GD3 amend answered console v2 decisions.** For the owner's confirmation, every
 console v2 item they change:
 - **GD2 → D30** (`desktop-console-v2.md` D30 row and F23, "a drag is a write"; plan V2.5.3,
@@ -346,14 +353,21 @@ console v2 item they change:
   `console/src/main/protocol.ts` `SERVED_FILES`).
 - **GD4 → console-styling §3.9** (this screen only).
 - **GD1 → D29**'s later half (F31).
-Plan GV0.1 writes the dated amendment notes; it waits for this confirmation.
+Plan GV0.1 writes the dated amendment notes.
+
+**Ruled 2026-10-22 (the owner, the recommendation):** **confirmed** — the amendments to D22, D30, D9, D29 and console-styling §3.9,
+as listed. *Why:* they follow from GD1–GD4, which the owner had already answered.
 
 **(c) The elkjs licence.** `elkjs@0.12.0` is `EPL-2.0 OR GPL-3.0-or-later`; `0.11.0` and earlier
 are `EPL-2.0`; the repository is MIT. Shipping an unmodified EPL-2.0 library inside an
 MIT-licensed app is commonly done, with a notice and a pointer to the library's source; the exact
 obligations for a bundled copy are UNVERIFIED and are the owner's to confirm. Choices: confirm
 EPL-2.0 (pin 0.12.0 under its EPL-2.0 option, ship a third-party notices file); or decline, and
-GV2.2 is replaced by F15's layout without ELK. GV2.2 does not start before this is confirmed.
+GV2.2 is replaced by F15's layout without ELK.
+
+**Ruled 2026-10-22 (the owner, the recommendation):** **confirmed under EPL-2.0; pin `elkjs` 0.11.0** (EPL-2.0 only), ship its licence
+text, and ship the worker file unmodified. *Why:* a single-licence version and an unmodified file
+keep the obligation to the notice and the source pointer. GV2.2 is no longer gated on the licence.
 
 **(d) Task-level across ~800 tasks against GD1's delay.** The spec asks for the whole task graph;
 GD1 delays task-level data to the coordinator's record, which today holds PR-level records only
@@ -362,20 +376,32 @@ artifact) and the whole graph at 0.11.0+; or nothing task-level until 0.11.0. Th
 cross-plan and cross-stream edges; the second holds back the view itself. GD6's default (open work
 only) keeps either within the 1 MiB-per-artifact limit.
 
+**Ruled 2026-10-22 (the owner, the recommendation):** option 1 — per-plan task graphs now, built on the existing `plan graph --json`
+document; release assignment later, from the coordinator's record. *Why:* the view is useful now
+for the plans that have an artifact, and nothing is written that the record would later migrate.
+*Read as:* the existing `version` and GV1.3's per-plan `stream` are display inputs only; the
+authoritative assignment of tasks to releases arrives with the record (GV4.1). Slices 1–2 no longer
+wait on a ruling.
+
 **(e) GD7's path.** Confirm `docs/release-streams.yaml` (F29), or keep `docs/releases/streams.yaml`
 and have `website/src/lib/changelog.mjs` skip it by name (a website change the plan would add).
+
+**Ruled 2026-10-22 (the owner, the recommendation):** `docs/release-streams.yaml` accepted. *Why:* no website change for a data file.
 
 **(f) The coordinator plan.** Coordinator P4's intent record carries a target release but no plan
 task; recording GD5's plan-task id in it too would let the 0.11.0 record join tasks to PRs. That is
 a change to an approved plan, proposed here and not made.
+
+**Ruled 2026-10-22 (the owner, the recommendation):** proposed for coordinator P4 only; the coordinator's documents are not changed by
+this work. *Why:* the coordinator plan is approved and owned elsewhere.
 
 ## 5. The smallest useful first slice
 
 Read-only, one stream at a time, no drag: the skill writes artifacts (GV1.7), levels and the
 critical path in Go (GV1.1), the stream field and the streams file (GV1.3, GV1.4), the plan-task
 join (GV1.2) and `fugaro plan status --json` (GV1.6), the console operation (GV2.1), elkjs in a
-worker (GV2.2, after (c)), and the static screen (GV2.3). Motion (GV2.4) follows; the write (GV3)
-and the cross-plan graph (GV4) wait on (a) and (d).
+worker (GV2.2, elkjs 0.11.0), and the static screen (GV2.3). Motion (GV2.4) follows; the write
+(GV3) and the cross-plan graph (GV4) wait on the coordinator's record (rulings (a) and (d)).
 
 ## 6. Security probes for the plan's reviewers
 
@@ -385,7 +411,7 @@ and the cross-plan graph (GV4) wait on (a) and (d).
   last document read); what a hostile plan file or job-written title can make the confirmation
   show; what a replayed or stale drop does (compare-and-set on the record, refusal on a moved
   version). Titles in the confirmation come from repository-written artifacts: sanitized and
-  length-capped, so a title such as "→ Camel" cannot forge the from/to line. Under tension (a)'s
+  length-capped, so a title such as "→ Camel" cannot forge the from/to line. Under (a)'s
   option 2 the write goes into the working tree, so the CLI refuses when the artifact file has
   uncommitted changes (D30's "clobber uncommitted work").
 - **The worker and the CSP** (GV2.2): `script-src 'self'` stays; no `'unsafe-eval'`, no
@@ -408,11 +434,11 @@ and the cross-plan graph (GV4) wait on (a) and (d).
 
 - **U1** *Resolved in review round 1:* `lib/elk-worker.min.js` has no `eval(` or `new Function(`
   (F13). GV2.2's e2e still probes it in the built app.
-- **U2** *Resolved in review round 1:* the served worker file is 1,595,334 bytes (F13).
+- **U2** *Resolved in review round 1:* the served worker file is 1,613,729 bytes in the pinned 0.11.0 (F13).
 - **U3** *Resolved in review round 1:* yes — `record_pr` in `runs ls --json` (F9).
 - **U4** Task and "Depends on" counts are grep approximations.
 - **U5** Whether a Web Worker loads from the `app://` scheme under the console's fuses and
   sandbox in the packed, signed app (Check 123).
-- **U6** The exact EPL-2.0 obligations for a bundled, unmodified copy (§4 (c)).
+- **U6** *Settled by the owner's ruling (c), 2026-10-22:* EPL-2.0 accepted; ship the licence text, file unmodified.
 - **U7** Mobile's first store version number: `mobile/app.json` says `0.0.0`; what the test-track
   builds carry was not read.
