@@ -543,9 +543,10 @@ func TestFinishedRunsLeaveAfterThreeMinutes(t *testing.T) {
 	}
 }
 
-// A ready PR stays in "Ready for your review" past --keep (6h by default):
-// the filter bounds how much history the dashboard shows, not what still
-// needs a look (design generic-tool §10.1).
+// A ready PR stays in "Ready for your review" past --keep — three minutes by
+// default since the owner spec of 2026-10-22: the filter bounds how much
+// history the dashboard shows, not what still needs a look (design
+// generic-tool §10.1).
 func TestReadyForReviewSurvivesTheFilter(t *testing.T) {
 	x := newTM(t)
 	x.m.o.Queued = func() ([]QueuedRun, []FinishedRun, string) {

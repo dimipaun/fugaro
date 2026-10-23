@@ -297,9 +297,11 @@ The runner writes them only if the rules accept them, and drops them once with a
 ### 10.3 Completed-run filtering (G25)
 
 - **Ordering:** running at the top, then queued, then finished, newest first.
-- **Default filter:** a finished success is shown only while it is younger than `--keep 6h` (strictly: a run exactly 6h old is hidden, not kept) and among the 15 most recent finished rows (`--keep-count 15`), whichever is stricter.
-- **Failures** (`failed`, `halted`, `infra_error`) stay while younger than 24 h (same strict edge), or until acknowledged with `x` on the selected row. Acknowledgements are local, per viewer, in `$XDG_STATE_HOME/fugaro/watch-acks.json` (best effort; losing it only shows failures again).
-- **`--all`** starts unfiltered. **`a`** toggles between filtered and full without relaunching.
+- **Default filter:** a finished run leaves the list three minutes after it finishes — succeeded, failed and cancelled alike — and `--keep` changes that window (owner spec, 2026-10-22, item 3: it was 6 h for a success and 24 h for a failure, and a screen left open all afternoon kept showing runs nobody was waiting for). `--keep-count 15` still caps how many finished rows are shown, and whichever of the two is stricter wins. The edge is the same strict one it always was: a run exactly at the window's edge is hidden, not kept.
+- **Dismissing:** `x` hides the selected finished row at once, whatever its status (owner spec, 2026-10-22, item 4: `x` acknowledged a failure only, so the successful rows a viewer was done with stayed until the window took them). Dismissals are local, per viewer, in `$XDG_STATE_HOME/fugaro/watch-acks.json` (best effort; losing it only shows the row again).
+- **`--all`** starts unfiltered. **`a`** toggles between filtered and full without relaunching, and brings back everything the window and the dismissals took away (owner spec, 2026-10-22, item 5).
+- **A run's id in the table** is its last four characters (owner spec, 2026-10-22, item 1): the leading ones are the launch stamp, which every run started in the same minute shares, so a prefix cannot tell two rows apart. The expanded detail names the id whole, as `--json` and `--plain` do.
+- **The `BY` column** names who started a run (owner spec, 2026-10-22, item 2): the person's name, else the local part of the address, taken from the run's `launched_by` (`runview.LauncherShort`), on the two wide layout tiers. The whole identity stays in the detail view, in `--json` and in `--plain`.
 - **The footer** shows the view: `showing active + recent · a: all` or `showing all · a: recent`, and it is advertised at every width.
 - **Degraded mode** (no budget backend) gets the same filter over its `ls`-style rows.
 
@@ -370,6 +372,6 @@ Plus six tasks the plan wrote after 0.7.0 (plan Tasks 24 to 29), of which one is
 | G22 | Review-ready source | Runs bucket (`result.json`) through the queued scanner | RTDB `/outcomes` with a rules change |
 | G23 | Watch ordering and selection | Per-row cursor by (slug, run), blocks by name, space on run toggles detail | Keep spend order |
 | G24 | Detail data | Write `verify` and `prUrl` (already allowed); new `action` and `tokens` keys with a drop-once fallback | No `action` (narrower exposure) |
-| G25 | Filtering | `--keep 6h`, `--keep-count 15`, failures 24 h or until `x`, `--all`, `a`, footer | Local-config keys |
+| G25 | Filtering | `--keep` (6 h, three minutes since the owner spec of 2026-10-22), `--keep-count 15`, failures until dismissed with `x`, `--all`, `a`, footer | Local-config keys |
 | G26 | Control plane | Document the seam in `docs/backends.md` only | Nothing |
 | G27 | Ordering | After layered config Phase 1 and base-image Group 2; inside the freeze; no IAM here | Interleave freely |
