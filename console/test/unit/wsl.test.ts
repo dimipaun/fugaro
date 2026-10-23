@@ -478,6 +478,33 @@ describe('translating a path with wslpath', () => {
     expect(wsl.childCalls()).toBe(0)
   })
 
+  it('carries the same allow-list as any other child, on the translation’s own invocation', async () => {
+    // SECURITY-SENSITIVE: the credential boundary's near side, on the third
+    // shape of query this module makes. A translation is a new invocation of
+    // `wsl.exe`, and a new invocation is a new place for the boundary to be one
+    // line thinner: the fake's report carries the keys the console passed, so a
+    // leak is visible without anything having to be printed.
+    const { wsl, cwd } = arrangement()
+    await wslpath({
+      direction: 'toLinux',
+      path: WINDOWS_PATH,
+      distro: 'Ubuntu',
+      appEnv: APP_ENV,
+      cwd,
+      wslPath: wsl.binary,
+    })
+    const report = only(wsl.reports())
+    const platformKeys = process.platform === 'darwin' ? ['__CF_USER_TEXT_ENCODING'] : []
+    for (const key of report.envKeys.filter((k) => !platformKeys.includes(k))) {
+      expect(CHILD_ENV_KEYS, `${key} is not a key the child may receive`).toContain(key)
+    }
+    for (const planted of Object.keys(SENTINELS)) {
+      expect(report.envKeys, `${planted} crossed into wsl.exe`).not.toContain(planted)
+      expect(report.env[planted], `${planted} crossed into wsl.exe`).toBeUndefined()
+    }
+    expect(report.env['HOME']).toBe('/home/dimi')
+  })
+
   it('reads the distribution’s spelling and answers Windows’ own, in the other direction', async () => {
     const { wsl, cwd } = arrangement()
     const answer = await wslpath({
