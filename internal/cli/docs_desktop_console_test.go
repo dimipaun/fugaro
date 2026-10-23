@@ -374,6 +374,12 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(plan.Node{}),
 		reflect.TypeOf(plan.Edge{}),
 		reflect.TypeOf(plan.Footprint{}),
+		// The read's own document (V2.2.3): every key of what `plan graph
+		// --json` prints, so a computed field the contract does not name fails
+		// here too, not only the artifact's own.
+		reflect.TypeOf(plan.Graph{}),
+		reflect.TypeOf(plan.NodeState{}),
+		reflect.TypeOf(plan.CriticalPath{}),
 		reflect.TypeOf(runstore.ChangedFiles{}),
 	}
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
