@@ -162,7 +162,7 @@ type Config struct {
 	// CredentialsService is the installation's credentials service
 	// (docs/credentials-service, D146/D147), or nil while the installation has
 	// not opted into one — which is every installation until an owner runs
-	// `fugaro init --provision-credentials`. It is what `fugaro run` reads to
+	// `fugaro setup --provision-credentials`. It is what `fugaro run` reads to
 	// put the service's URL on the job's environment, which is the one fact the
 	// runner's cascade upstream and the keyless GitHub path are built on
 	// (internal/runner/gateway.go's credentialsServiceURLEnv,
@@ -184,7 +184,7 @@ type Config struct {
 	// the installation's fact and not one machine's, and the machine that runs
 	// a launch is often not the machine that opted in. A local-only key would
 	// be the ledger item of PR #903: a teammate's config, written by `fugaro
-	// setup` or carried by `init --repo`, never learns it, and their launches
+	// setup` or carried by `fugaro update --repo`, never learns it, and their launches
 	// would go out without the variable while the installation has the service
 	// on.
 	CredentialsService *CredentialsService `yaml:"credentials_service,omitempty"`

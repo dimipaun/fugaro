@@ -65,7 +65,7 @@ func TestTheCredentialsServiceURLReachesTheJobEnv(t *testing.T) {
 // absence of the block is the opt-in's off position, and off is byte for byte
 // what this tree launched before the variable existed — no entry, no empty
 // value, nothing for a backend to merge into the job's environment. Every
-// installation is in this state until an owner runs `fugaro init
+// installation is in this state until an owner runs `fugaro setup
 // --provision-credentials`, so a launcher that put an empty value here would
 // change every run in the world; a launcher that put a value here would make
 // every job believe it has a credentials service to call.

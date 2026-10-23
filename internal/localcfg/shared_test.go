@@ -391,7 +391,7 @@ func TestSharedDropsBaseBranchAndBuildAccount(t *testing.T) {
 // PUBLISHED, for the reason batch: is: the machine that runs a launch is often
 // not the machine that opted in, and a local-only copy is the ledger item of
 // PR #903. A publisher whose own config has no block — a teammate who onboarded
-// a repository with `fugaro init --repo`, a CI box whose config came from the
+// a repository with `fugaro update --repo`, a CI box whose config came from the
 // published file — must not erase it: `fugaro run` reads the block to decide
 // whether to put FUGARO_CREDENTIALS_SERVICE_URL on a job, so an erased block is
 // a launch that goes out without the variable while the installation has the

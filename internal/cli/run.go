@@ -2316,7 +2316,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 // backend a project happens to use.
 //
 // An installation with no block -- every installation until an owner runs
-// `fugaro init --provision-credentials` -- gets nil, so its launch spec is
+// `fugaro setup --provision-credentials` -- gets nil, so its launch spec is
 // byte for byte the one it built before this variable existed: no entry, no
 // empty value, nothing for a backend to merge.
 func credentialsServiceLaunchEnv(lc *localcfg.Config) []string {

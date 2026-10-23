@@ -161,7 +161,7 @@ func MergeShared(published, local *Config) *Config {
 		// Cloud Run service, and the machine that runs a launch is often not
 		// the machine that opted in. A publisher whose own config has no block
 		// is a machine that never ran the opt-in — a teammate who onboarded a
-		// repository with `fugaro init --repo`, a CI box whose config came
+		// repository with `fugaro update --repo`, a CI box whose config came
 		// from the published file — and taking its nil over the published one
 		// would erase the installation's one record of its service, silently,
 		// so that every later launch of the project went out without the
