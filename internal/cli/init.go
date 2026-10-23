@@ -54,8 +54,9 @@ var stdinIsTerminal = func(in io.Reader) bool {
 type initOptions struct {
 	// strictCreate and created are fugaro restore's, and nothing else sets
 	// them: no flag reaches either (restore.go builds the child with
-	// newInitCmdWith). strictCreate makes --create-project FAIL on a project
-	// that already exists instead of adopting it; created, when set, is
+	// newInitCmdWith). strictCreate makes the creation FAIL on a project
+	// that already exists, even one an earlier run of fugaro setup created
+	// and a plain first run would resume; created, when set, is
 	// filled with what this run did, for the caller to check.
 	strictCreate                        bool
 	created                             *initCreation
@@ -342,13 +343,13 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// neither drifts into a document the other does not print.
 	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
 		if err.Error() == "unknown flag: --"+retiredFirebaseFlag {
-			return userErr("--%s is --firebase-project now: pass --firebase-project <firebase-project-id> to build the budget backend in a Firebase project of its own, since the run's Firebase project is the installation's own --gcp-project by default (fugaro %s --help)", retiredFirebaseFlag, c.Name())
+			return userErr("--%s is --firebase-project now: pass --firebase-project <gcp-project-id> to build the budget backend in the installation's own GCP project, the only project Fugaro uses for it (fugaro %s --help)", retiredFirebaseFlag, c.Name())
 		}
 		return err
 	})
 	addCloudFlags(cmd, &o.cloud)
 	f := cmd.Flags()
-	f.StringVar(&o.name, "name", "", "the project's name: for a project config "+d.name+" creates, and what names an installation that has no name yet (with a config, it must be its name; an installation's name never changes; with several project configs it names the one to create or use; adopting an installation defaults it to the installation's)")
+	f.StringVar(&o.name, "name", "", "the project's name: for a project config "+d.name+" creates, and what names an installation that has no name yet (with a config, it must be its name; an installation's name never changes; with several project configs it names the one to create or use; fugaro update on a machine with no config for an installation defaults it to the installation's)")
 	f.StringVar(&o.schedulerRegion, "scheduler-region", "", "Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers)")
 	f.StringVar(&o.runsBucket, "runs-bucket", "", "the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>)")
 	f.StringVar(&o.stateBucket, "state-bucket", "", "the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>)")
@@ -365,14 +366,14 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.StringVar(&o.alertEmail, "alert-email", "", "where failed image checks and rebuilds are reported (default: the local config's)")
 	f.BoolVar(&o.noLogIsolation, "no-log-isolation", false, "leave Fugaro job logs in _Default instead of their own log bucket")
 	f.StringVar(&o.registryCleanup, "registry-cleanup", "", "Artifact Registry cleanup: dry-run (the default), on or off")
-	f.StringVar(&o.firebase, "firebase-project", "", "build the budget backend in this Firebase project: the run's Firebase project is the installation's own --gcp-project by default (one id for both, D7), so this is the advanced flag, for a Firebase project of its own (one you created and linked to billing, or created with --create-project). It is also the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: typed where it is a first-time question, covered by --yes where the run re-converges an installation that is already there) and the config")
+	f.StringVar(&o.firebase, "firebase-project", "", "build the budget backend in the installation's own GCP project, the only Firebase project Fugaro uses (one id for both, D7; any other id is refused). It is the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: typed where it is a first-time question, covered by --yes where the run re-converges an installation that is already there) and the config")
 	f.StringVar(&o.budgetMode, "budget-mode", "", "with --firebase-project: off, observe or enforce: the jobs' budget mode in the project config, and for observe and enforce the project-wide mode in the database (an absent one is seeded observe)")
 	f.StringArrayVar(&o.budgetAdmins, "budget-admin", nil, "with --firebase-project: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins)")
-	f.BoolVar(&o.createProject, "create-project", false, "create the GCP project --gcp-project names and add Firebase to it, as you, after you type its ID at a terminal (never with --yes, --non-interactive or --json). An ID that exists and you can read is adopted; one held by someone else is refused. Billing is not linked unless --link-billing is also given; without it "+d.name+" prints the one gcloud command that links it")
-	f.StringVar(&o.displayName, "display-name", "", "with --create-project: the project's display name (default: its ID)")
-	f.StringVar(&o.parent, "parent", "", "with --create-project: organizations/<number> or folders/<number> to create the project under (default: no parent; an organization is never guessed)")
-	f.BoolVar(&o.managed, "managed", false, "with --create-project: create a Fugaro-managed project. The monthly budget amount is required — --budget, --budget-currency and --billing-account together, with no default and no suggestion taken for you — and the amount and the currency are recorded in the project's creation fact (gs://fugaro-runs-<gcp-project>/fugaro/managed.json), where a later run and a restore read what was chosen. It removes no confirmation: the project's creation still types its ID, and the installation's ordinary steps share the run's one review. Flagging a project that already exists as managed is fugaro managed flag's, run by the owner at a terminal, and never "+d.name+"'s")
-	f.StringVar(&o.linkBilling, "link-billing", "", "with --create-project: link this billing account (an ID such as 0123AB-4567CD-89EF01) to the project, after you type the account's ID at a terminal. This may incur charges on that account; never with --yes. It never changes a project's existing billing link")
+	f.BoolVar(&o.createProject, "create-project", false, "create the GCP project --gcp-project names and add Firebase to it, as you, after you type its ID at a terminal (never with --yes, --non-interactive or --json). A first run of "+d.name+" always creates its project, so the flag only says so explicitly. Fugaro only starts fresh: an ID that already exists is refused, unless an earlier run of "+d.name+" created it (the resume). Billing is not linked unless --link-billing is also given; without it "+d.name+" prints the one gcloud command that links it")
+	f.StringVar(&o.displayName, "display-name", "", "on a first run, which creates the project: its display name (default: its ID)")
+	f.StringVar(&o.parent, "parent", "", "on a first run, which creates the project: organizations/<number> or folders/<number> to create it under (default: no parent; an organization is never guessed)")
+	f.BoolVar(&o.managed, "managed", false, "on a first run, which creates the project: record its monthly budget in the creation fact. Every project "+d.name+" creates is Fugaro-managed (its runs bucket's creation fact and the fugaro_managed label); --managed is what records the budget amount the managed apply needs. The monthly budget amount is required — --budget, --budget-currency and --billing-account together, with no default and no suggestion taken for you — and the amount and the currency are recorded in the project's creation fact (gs://fugaro-runs-<gcp-project>/fugaro/managed.json), where a later run and a restore read what was chosen. It removes no confirmation: the project's creation still types its ID, and the installation's ordinary steps share the run's one review. Recording the budget later, on a project "+d.name+" created without --managed, is fugaro managed flag's, run by the owner at a terminal, and never "+d.name+"'s")
+	f.StringVar(&o.linkBilling, "link-billing", "", "on a first run, which creates the project: link this billing account (an ID such as 0123AB-4567CD-89EF01) to the project, after you type the account's ID at a terminal. This may incur charges on that account; never with --yes. It never changes a project's existing billing link")
 	f.BoolVar(&o.planOnly, "plan-only", false, "stop after showing the plan (never takes --yes: it creates nothing on a flag's word)")
 	f.BoolVar(&o.printVars, "print-vars", false, "print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates)")
 	f.BoolVar(&o.configOnly, "config-only", false, "only write the local config, from the installation's outputs (else the flags)")
@@ -473,7 +474,7 @@ type initRun struct {
 	// already there when the project stage read it (projectStage.read). It
 	// is the fact markCreated's --managed warning needs and r.res.Created
 	// cannot give: an empty Created says this run created no project, which
-	// is what adoption leaves behind — and also what --plan-only, a declined
+	// is what resuming an earlier run's creation leaves behind — and also what --plan-only, a declined
 	// or unaskable typed confirmation, an environment refusal and a failure
 	// before the project stage leave behind.
 	projectExisted bool
@@ -591,6 +592,9 @@ func runInit(r *initRun) error {
 		return err
 	}
 	r.setProject(lc)
+	if err := checkFirebaseProject(o.firebase, lc.GCPProject); err != nil {
+		return err
+	}
 	r.noteOpenProviders(lc)
 	if o.publishConfig {
 		if old == nil {
@@ -788,13 +792,14 @@ func (e *initEngine) markCreated(ctx context.Context) {
 		// --managed asked for a managed creation and this run created no
 		// project, so there is no fact to record — and the owner must not
 		// silently get an unmarked project where they asked for a managed
-		// one. Which of the two ways that happened is said as it is, because
-		// only one of them is adoption: a project the run read and found
-		// already there (projectExisted), or a creation that never ran or
-		// never finished. An empty Created alone cannot tell them apart.
+		// one. Which of the two ways that happened is said as it is: a project
+		// the run read and found already there (projectExisted: the resume of
+		// a creation an earlier run of fugaro setup made, since any other
+		// existing project is refused), or a creation that never ran or never
+		// finished. An empty Created alone cannot tell them apart.
 		if r.o.managed {
 			if r.projectExisted {
-				r.warn(fmt.Sprintf("--managed was not applied: project %s already existed, so this run created nothing and no creation fact was written; it is not managed, and the owner flags it with `fugaro managed flag %s --budget N --budget-currency CCC` at their own terminal if they want it to be", r.gcpProject, r.gcpProject))
+				r.warn(fmt.Sprintf("--managed was not applied: project %s was created by an earlier run of fugaro setup, which this run resumed, so this run created nothing and no creation fact was written; it is not managed until the owner records its budget with `fugaro managed flag %s --budget N --budget-currency CCC` at their own terminal", r.gcpProject, r.gcpProject))
 			} else {
 				r.warn(fmt.Sprintf("--managed was not applied: this run created no project (it stopped before creating one, or the creation did not finish), so no creation fact was written and %s is not managed", r.gcpProject))
 			}
@@ -1078,6 +1083,18 @@ func (o *initOptions) firebaseProject() string {
 	return cmp.Or(o.firebase, o.cloud.gcpProject)
 }
 
+// checkFirebaseProject refuses a Firebase project other than the
+// installation's own GCP project. Fugaro only starts fresh (the owner's ruling
+// of 2026-10-23): the budget backend goes in the project fugaro setup created
+// for the installation and nowhere else, so --firebase-project, which asks for
+// the backend, names that project or is refused before anything is read.
+func checkFirebaseProject(fp, gcpProject string) error {
+	if fp == "" || gcpProject == "" || fp == gcpProject {
+		return nil
+	}
+	return userErr("--firebase-project %s is not the installation's GCP project %s: Fugaro builds the budget backend only in the project fugaro setup created for the installation, and uses no Firebase project of its own; pass --firebase-project %s", fp, gcpProject, gcpProject)
+}
+
 // check refuses flag combinations that mean nothing.
 //
 // Two features were once refused here before any cloud call, and neither is
@@ -1190,8 +1207,14 @@ func (o *initOptions) check() error {
 			return userErr("--image-source: %v", err)
 		}
 	}
-	if err := o.checkCreateProject(); err != nil {
-		return err
+	// The creation's own flags are checked here only where --create-project
+	// says this run creates: whether a run without it creates (a first run of
+	// fugaro setup does) is known once its project config was looked for, and
+	// the wizard's settleCreation checks them there, either way.
+	if o.createProject {
+		if err := o.checkCreateProject(); err != nil {
+			return err
+		}
 	}
 	if o.firebase == "" && (o.budgetMode != "" || o.budgetAdminsChanged) {
 		// Door-relative for the same reason as the --no-build refusal above:
@@ -1208,6 +1231,8 @@ func (o *initOptions) check() error {
 			return userErr("--firebase-project builds the budget backend; it excludes --forget and --config-only")
 		case !infra.ValidProjectID(fp):
 			return userErr("--firebase-project %q is not a project ID (6 to 30 of a-z, 0-9 and '-', starting with a letter)", fp)
+		case checkFirebaseProject(fp, o.cloud.gcpProject) != nil:
+			return checkFirebaseProject(fp, o.cloud.gcpProject)
 		case o.budgetMode != "" && !slices.Contains([]string{"off", "observe", "enforce"}, o.budgetMode):
 			return userErr("--budget-mode %q must be off, observe or enforce", o.budgetMode)
 		}
@@ -1860,7 +1885,7 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports) (
 	// (through managedScope), and there this carry is a no-op because the spec
 	// it was handed already carries the answer; it is the paths that only
 	// re-serialize the root — --config-only, the compute stage's read of the
-	// installation's outputs, adopt — that would otherwise write a document
+	// installation's outputs, a new machine's config — that would otherwise write a document
 	// that reads as an installation without the fence. --forget is not one of
 	// those paths: an installation whose document carries the key never reaches
 	// this carry, because the run's door refuses `update --forget` for it
@@ -1886,7 +1911,7 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports) (
 	return backend, nil
 }
 
-// install stands up or adopts the installation: discovery, the state
+// install stands up or re-converges the installation: discovery, the state
 // bucket, the runs bucket's viewers, then plan, guard, confirm and apply,
 // and the local config.
 func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, lc *localcfg.Config, spec infra.InstallationSpec, path string, old []byte) error {

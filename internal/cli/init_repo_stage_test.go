@@ -772,7 +772,7 @@ func TestRepoStageAdoptRefusalComesBeforeTheTypedPrompt(t *testing.T) {
 	fakeTerminal(t)
 	e, out := stageEngine(t, "acme/app\n", nil)
 	e.lc.Repos = nil // not listed: it would ask for owner/name
-	e.adopted = "adopted"
+	e.newMachine = "adopted"
 	s := newRepositoryStage(e)
 	s.engineStage.run = func(context.Context) error { t.Error("the engine ran after an adopt"); return nil }
 	_, err := s.Apply(t.Context(), initflow.Env{Interactive: true})

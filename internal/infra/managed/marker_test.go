@@ -3061,7 +3061,7 @@ func TestWriteFlagRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s, f := newStorage(t)
 	f.AddBucket(testBucket, testProjectNumber, testManaged)
-	replaced, err := WriteFlag(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 7, Currency: "USD"})
+	replaced, err := WriteFlag(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 7, Currency: "USD"}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3076,7 +3076,7 @@ func TestWriteFlagRoundTrip(t *testing.T) {
 	// flagged again — the amount is the owner's decision at the time it was
 	// taken, and this command is not an editor of it — and the second call
 	// says so rather than overwriting.
-	replaced, err = WriteFlag(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 9, Currency: "EUR"})
+	replaced, err = WriteFlag(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 9, Currency: "EUR"}, true)
 	if err == nil || !errors.Is(err, ErrAlreadyMarked) {
 		t.Fatalf("second flag: %v, want ErrAlreadyMarked", err)
 	}
@@ -3101,7 +3101,9 @@ func TestWriteFlagReplacesTheCreationFactThatRecordsNoAmount(t *testing.T) {
 	s, f := newStorage(t)
 	f.AddBucket(testBucket, testProjectNumber, testManaged)
 	f.Put(testBucket, MarkerObject, []byte(markerJSON))
-	replaced, err := WriteFlag(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 7, Currency: "USD"})
+	// created=false: the version-1 fact is itself the evidence that a run of
+	// fugaro setup created the project, so no label is needed for it.
+	replaced, err := WriteFlag(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 7, Currency: "USD"}, false)
 	if err != nil {
 		t.Fatalf("flagging a version-1 project: %v", err)
 	}
@@ -3114,6 +3116,35 @@ func TestWriteFlagReplacesTheCreationFactThatRecordsNoAmount(t *testing.T) {
 	}
 	if string(b) != markerBudgetJSON {
 		t.Errorf("after the flag gs://%s/%s = %s, want %s", testBucket, MarkerObject, b, markerBudgetJSON)
+	}
+}
+
+// TestWriteFlagRefusesAProjectFugaroDidNotCreate: Fugaro only starts fresh
+// (the owner's ruling of 2026-10-23), so the flag never makes a project managed
+// that no run of fugaro setup created. With no object in the runs bucket the
+// write needs the creation label's word (created, which the command reads off
+// the project); without it nothing is written and the refusal is
+// ErrNotCreated. With it — a creation whose first run stopped before its runs
+// bucket existed and a later run resumed — the fact is written.
+func TestWriteFlagRefusesAProjectFugaroDidNotCreate(t *testing.T) {
+	ctx := context.Background()
+	s, f := newStorage(t)
+	f.AddBucket(testBucket, testProjectNumber, testManaged)
+	replaced, err := WriteFlag(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 7, Currency: "USD"}, false)
+	if !errors.Is(err, ErrNotCreated) || replaced {
+		t.Fatalf("flagging a project with no creation fact and no creation label: replaced %v, %v; want ErrNotCreated", replaced, err)
+	}
+	if !strings.Contains(err.Error(), "fugaro_created=true") {
+		t.Errorf("the refusal does not name the label that would have allowed it: %v", err)
+	}
+	if b, ok := readMarker(t, s, testBucket); ok {
+		t.Errorf("the refused flag wrote gs://%s/%s = %q", testBucket, MarkerObject, b)
+	}
+	if _, err := WriteFlag(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 7, Currency: "USD"}, true); err != nil {
+		t.Fatalf("flagging a labelled creation with no fact: %v", err)
+	}
+	if b, ok := readMarker(t, s, testBucket); !ok || string(b) != markerBudgetJSON {
+		t.Errorf("gs://%s/%s = %q (present %v), want %q", testBucket, MarkerObject, b, ok, markerBudgetJSON)
 	}
 }
 
@@ -3136,7 +3167,7 @@ func TestWriteFlagReplacesNothingButTheCreationFactOfItsOwnProject(t *testing.T)
 			s, f := newStorage(t)
 			f.AddBucket(testBucket, testProjectNumber, testManaged)
 			f.Put(testBucket, MarkerObject, []byte(existing))
-			replaced, err := WriteFlag(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 7, Currency: "USD"})
+			replaced, err := WriteFlag(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 7, Currency: "USD"}, true)
 			if err == nil || !errors.Is(err, ErrAlreadyMarked) {
 				t.Fatalf("flagging over %s: %v, want ErrAlreadyMarked", existing, err)
 			}
@@ -3167,7 +3198,7 @@ func TestWriteFlagWritesSomethingTheManagedReadBelieves(t *testing.T) {
 			if existing != "" {
 				f.Put(testBucket, MarkerObject, []byte(existing))
 			}
-			if _, err := WriteFlag(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 7, Currency: "USD"}); err != nil {
+			if _, err := WriteFlag(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 7, Currency: "USD"}, true); err != nil {
 				t.Fatal(err)
 			}
 			ok, reason, err := IsManaged(ctx, s, c, testFugaroProject, testProject)
@@ -3205,7 +3236,7 @@ func TestWriteFlagRefusesABudgetThatIsNotOne(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s, f := newStorage(t)
 			f.AddBucket(testBucket, testProjectNumber, testManaged)
-			if _, err := WriteFlag(ctx, s, testBucket, testProject, testProjectNumber, b); err == nil {
+			if _, err := WriteFlag(ctx, s, testBucket, testProject, testProjectNumber, b, true); err == nil {
 				t.Fatal("want a refusal: the amount and the currency are a pair, above 0 and in range")
 			}
 			// Before the read below makes a request of its own: a flag with
@@ -3244,7 +3275,7 @@ func TestWriteFlagNeedsTheProjectsOwnRunsBucket(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s, f := newStorage(t)
 			f.AddBucket(testBucket, testProjectNumber, tc.labels)
-			if _, err := WriteFlag(ctx, s, tc.bucket, testProject, tc.number, Budget{Amount: 7, Currency: "USD"}); err == nil {
+			if _, err := WriteFlag(ctx, s, tc.bucket, testProject, tc.number, Budget{Amount: 7, Currency: "USD"}, true); err == nil {
 				t.Fatal("want a refusal")
 			}
 			if _, ok := readMarker(t, s, testBucket); ok {
@@ -3256,15 +3287,15 @@ func TestWriteFlagNeedsTheProjectsOwnRunsBucket(t *testing.T) {
 	// so the table above is not passing for the wrong reason.
 	s, f := newStorage(t)
 	f.AddBucket(testBucket, testProjectNumber, testManaged)
-	if _, err := WriteFlag(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 7, Currency: "USD"}); err != nil {
+	if _, err := WriteFlag(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 7, Currency: "USD"}, true); err != nil {
 		t.Fatalf("the project's own runs bucket was refused: %v", err)
 	}
 	// A call with no storage client is a refusal rather than a panic.
-	if _, err := WriteFlag(ctx, nil, testBucket, testProject, testProjectNumber, Budget{Amount: 7, Currency: "USD"}); err == nil {
+	if _, err := WriteFlag(ctx, nil, testBucket, testProject, testProjectNumber, Budget{Amount: 7, Currency: "USD"}, true); err == nil {
 		t.Error("the flag was written with no storage client")
 	}
 	// A call naming no project has nothing to write a fact about.
-	if _, err := WriteFlag(ctx, s, testBucket, "", testProjectNumber, Budget{Amount: 7, Currency: "USD"}); err == nil {
+	if _, err := WriteFlag(ctx, s, testBucket, "", testProjectNumber, Budget{Amount: 7, Currency: "USD"}, true); err == nil {
 		t.Error("the flag was written with no project named")
 	}
 }

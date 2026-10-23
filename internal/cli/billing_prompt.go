@@ -135,7 +135,7 @@ var billingProjectNumber = func(ctx context.Context, gcpProject, region string) 
 //
 // The last part is the question's own: the project stage links billing only
 // for a project this run was asked to create (its Check skips the stage
-// outright on an answer of adoption, so a billing answer there would be read
+// outright on a run that creates no project, so a billing answer there would be read
 // by nobody), and a --link-billing on the command line has already answered
 // this question — a second answer would replace what the operator typed.
 func (r *initRun) asksBilling() bool {

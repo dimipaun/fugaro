@@ -251,14 +251,14 @@ func TestTheFlagsWriteErrorIsBounded(t *testing.T) {
 			s, f := newStorage(t)
 			f.AddBucket(testBucket, testProjectNumber, testManaged)
 			f.RefusePath(MarkerObject, http.StatusInternalServerError, "INTERNAL", "", "backend error"+v)
-			_, err := WriteFlag(ctx, s, testBucket, testProject, testProjectNumber, budget)
+			_, err := WriteFlag(ctx, s, testBucket, testProject, testProjectNumber, budget, true)
 			if err == nil {
 				t.Fatal("the marker read failed, and the flag was written anyway")
 			}
 			bounded(t, name+" in WriteFlag's error", err.Error(), 1)
 		})
 		t.Run(name+" in the project", func(t *testing.T) {
-			_, err := WriteFlag(ctx, nil, testBucket, v, testProjectNumber, budget)
+			_, err := WriteFlag(ctx, nil, testBucket, v, testProjectNumber, budget, true)
 			if err == nil {
 				t.Fatal("a flag with no storage client was written")
 			}

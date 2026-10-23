@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -24,13 +25,17 @@ import (
 )
 
 // fugaro managed flag (docs/design/managed-projects.md D58, the plan's Task
-// 6.1) is the owner's decision that an EXISTING project — one a Fugaro run
-// did not create — is managed, recorded in that project's own marker object.
-// It is the second way a project becomes managed; the first is a run that
-// created it (Task 0.1).
+// 6.1) is the owner's decision to record a monthly budget in the managed fact
+// of a project fugaro setup created without one: the version-1 creation fact
+// a creation without --managed writes, or no fact at all where the creating
+// run stopped before its runs bucket existed and a later run resumed it (the
+// project then carries infra.CreatedLabelKey from its creation). Fugaro only
+// starts fresh (the owner's ruling of 2026-10-23): a project Fugaro did not
+// create is refused (managed.ErrNotCreated), so this command no longer makes
+// an existing project managed.
 //
-// It is the only path in Fugaro that LOWERS the guard on a project Fugaro
-// did not create, and that is the whole reason for its shape: the marker is
+// It is a path that LOWERS the guard on a project, and that is the whole
+// reason for its shape: the marker is
 // what turns the typed confirmation off (D55), so an operator who flags the
 // wrong project has made that project's applies unprompted. The shape, and
 // what each part buys, is the answer's own (D58's row, and the plan's Task
@@ -96,15 +101,21 @@ func newManagedFlagCmd() *cobra.Command {
 	var currency string
 	cmd := &cobra.Command{
 		Use:   "flag PROJECT_ID",
-		Short: "Flag an existing GCP project as managed (the project's owner)",
-		Long: `Flag an existing GCP project PROJECT_ID as managed, recording the managed
-marker in that project's own runs bucket.
+		Short: "Record the budget of a project fugaro setup created, making it managed (the project's owner)",
+		Long: `Record the monthly budget of GCP project PROJECT_ID, a project fugaro setup
+created, in the managed marker in that project's own runs bucket.
 
-This is how a project Fugaro did not create becomes managed: the marker is
-what tells a later run that this project's applies may skip the typed
-confirmation, and it is normally written by the run that created the project
-(fugaro setup --create-project --managed). Flagging is the after-the-fact way,
-answered by the owner on 2026-10-16 (design D58).
+Every project fugaro setup creates is Fugaro's: the creating run writes its
+creation fact, and a run with --managed records the budget in it at creation.
+This is the after-the-fact way for a creation that recorded no budget (setup
+without --managed), or that stopped before its runs bucket existed and was
+resumed by a later run (answered by the owner on 2026-10-16, design D58). The
+marker is what tells a later run that this project's applies may skip the
+typed confirmation.
+
+Fugaro only starts fresh: a project fugaro setup did not create (no creation
+fact in its runs bucket, and no fugaro_created=true label on the project) is
+refused with nothing written.
 
 Run it in your own terminal, as an operator, with your own credentials, and
 type the GCP project ID it asks for. A coding agent's session is refused, and
@@ -156,7 +167,9 @@ editing one. The one object it does replace is a version-1 creation fact —
 what fugaro setup --create-project without --managed leaves, and the state the
 managed apply refuses for having no amount recorded. What it replaced is said
 in the output, and the write is conditioned on the object it read, so nothing
-is overwritten blind.`,
+is overwritten blind. Where there is no object at all, the project must carry
+the label fugaro_created=true, which fugaro setup puts on every project it
+creates; otherwise nothing is written.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return managedFlag(cmd, o, args[0], amount, currency)
@@ -277,11 +290,15 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	fmt.Fprintf(w, "  it gives up: the typed confirmation for this project's applies. From the next apply on, a plan a coding agent's session authored is applied with no human prompt when the deterministic gate admits it (D55), and what stands in the confirmation's place is the gate, the whole-project inventory, the owner's delete list (fugaro allow-delete) and the budget above.\n")
 	fmt.Fprintf(w, "  it creates nothing: no resource is created, no billing call is made, and the amount above is recorded rather than spent.\n")
 	fmt.Fprintf(w, "  it does not protect against: a coding agent's session, which holds these credentials and can write this object directly (SECURITY.md).\n")
-	fmt.Fprintf(w, "  if this project already records whether it is managed: nothing is written unless its marker is the creation fact that records no amount (what `fugaro setup --create-project` without --managed leaves), which this replaces with the one above. A marker that already records an amount is refused, and so is any object this build cannot read as this project's.\n")
+	fmt.Fprintf(w, "  if this project already records whether it is managed: nothing is written unless its marker is the creation fact that records no amount (what `fugaro setup` without --managed leaves), which this replaces with the one above. A marker that already records an amount is refused, and so is any object this build cannot read as this project's. A project with no marker must carry the label fugaro_created=true that fugaro setup puts on the projects it creates.\n")
 	if err := confirmTypedGCPProject(cmd, lc.GCPProject); err != nil {
 		return err
 	}
-	replaced, err := managed.WriteFlag(ctx, c.Storage, bucket, lc.GCPProject, number, budget)
+	created, err := managedFlagCreatedLabel(ctx, c, lc.GCPProject)
+	if err != nil {
+		return remote(fmt.Errorf("reading the labels of GCP project %s: %s", safetext.Field(lc.GCPProject), safetext.Field(err.Error())))
+	}
+	replaced, err := managed.WriteFlag(ctx, c.Storage, bucket, lc.GCPProject, number, budget, created)
 	if err != nil {
 		return managedFlagErr(lc, bucket, err)
 	}
@@ -351,6 +368,20 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	return nil
 }
 
+// managedFlagCreatedLabel is whether the project carries the label fugaro
+// setup puts on every project it creates (infra.CreatedLabelKey): what lets
+// the flag write a fact where the creating run wrote none. A label is a
+// statement anyone with resourcemanager.projects.update can make, and that is
+// what this answers and no more; the typed project ID below is the owner's
+// gate, as it always was.
+func managedFlagCreatedLabel(ctx context.Context, c *infra.Clients, project string) (bool, error) {
+	p, err := c.CRM.Projects.Get(project).Context(ctx).Do()
+	if err != nil {
+		return false, err
+	}
+	return p.Labels[infra.CreatedLabelKey] == infra.CreatedLabelValue, nil
+}
+
 // managedFlagReadBack is the read the written marker is checked with; tests
 // replace it.
 var managedFlagReadBack = managed.ReadBudget
@@ -400,6 +431,8 @@ func confirmTypedGCPProject(cmd *cobra.Command, gcpProject string) error {
 // credentials the bucket's root refuses, or the cloud's own answer.
 func managedFlagErr(lc *localcfg.Config, bucket string, err error) error {
 	switch {
+	case errors.Is(err, managed.ErrNotCreated):
+		return userErr("nothing was written for %s: %s", safetext.Field(lc.Name), safetext.Field(err.Error()))
 	case errors.Is(err, managed.ErrAlreadyMarked):
 		return userErr("nothing was written for %s: gs://%s/%s is already there and is not the creation fact this command adds a budget to, so %s already records whether it is managed — a run that created it wrote the fact, or an owner flagged it before. This command replaces only a version-1 creation fact, which records no amount; a marker that records one is the owner's decision, not a value to edit. To read what is there, use `gcloud storage cat gs://%s/%s` as the operator",
 			safetext.Field(lc.Name), safetext.Field(bucket), managed.MarkerObject, safetext.Field(lc.Name), safetext.Field(bucket), managed.MarkerObject)

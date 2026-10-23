@@ -45,7 +45,7 @@ type initEngine struct {
 	adminsRead bool
 	fpChecked  string // "", "yes" or "no": the Firebase project's verification, once
 	defaulted  string // the member a new config's launchers and operators defaulted to (init_members.go)
-	adopted    string // set when the installation stage adopted an existing installation instead of applying
+	newMachine string // set when the installation stage wrote a new machine's config from an existing installation instead of applying
 
 	// The one confirmation's review screen is built from the preview's stages
 	// and the two stages it asks about (init_review.go).
@@ -179,14 +179,13 @@ func initStages(e *initEngine) []initflow.Stage {
 		stages = append(stages, newComputeStage(e))
 	}
 	// The project stage, which is the one stage that may create the GCP
-	// project. `setup` registers it on a first run whether or not
-	// --create-project was given: the wizard's first question is whether to
-	// create the project or adopt one, and the answer (recorded on the same
-	// field the flag sets, askProjectAnswer) is what the stage acts on — a run
-	// whose answer was adoption has nothing to create. `update` never
-	// registers it, and neither does a `setup` whose installation is already
-	// there: e.old is the project config's file, and a run that has one
-	// converges as update does (D11, reconciliation F24).
+	// project. `setup` registers it on every first run: Fugaro only starts
+	// fresh, so a first run creates its project (settleCreation sets the
+	// field the flag sets), and the stage refuses an ID that already exists
+	// unless an earlier run of setup created it. `update` never registers it,
+	// and neither does a `setup` whose installation is already there: e.old is
+	// the project config's file, and a run that has one converges as update
+	// does (D11, reconciliation F24).
 	if e.r.o.createProject || (e.r.o.door == setupDoor.name && e.old == nil) {
 		stages = append(stages, newProjectStage(e))
 	}
@@ -315,7 +314,7 @@ type engineStage struct {
 	// The run's result still accumulates both.
 	isolate bool
 	// did, when set, is what the engine did besides applying Terraform (the
-	// installation stage's adoption writes the local config and applies
+	// installation stage's new-machine run writes the local config and applies
 	// nothing): a non-empty line makes the stage "changed".
 	did     func() string
 	applied bool
@@ -367,7 +366,7 @@ func (s *engineStage) Plan(ctx context.Context, env initflow.Env) (initflow.Plan
 }
 
 func (s *engineStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
-	if err := s.e.adoptGuard(s.name); err != nil {
+	if err := s.e.newMachineGuard(s.name); err != nil {
 		return initflow.Outcome{}, err
 	}
 	if err := s.with(ctx, env, false); err != nil {
@@ -388,7 +387,7 @@ func (s *engineStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 // --firebase-project the installation is the Firebase engine's first apply, so the
 // stage is skipped.
 func newInstallationStage(e *initEngine) *engineStage {
-	return &engineStage{e: e, name: initflow.Installation, did: func() string { return e.adopted },
+	return &engineStage{e: e, name: initflow.Installation, did: func() string { return e.newMachine },
 		skip: func() string {
 			if e.r.o.firebase != "" {
 				return "applied as the first step of the firebase backend"
@@ -399,12 +398,12 @@ func newInstallationStage(e *initEngine) *engineStage {
 			if err := e.setup(ctx); err != nil {
 				return err
 			}
-			if e.old == nil { // no local config yet: is this an installation someone else made?
+			if e.old == nil { // no local config yet: is the installation already there (a new machine's update)?
 				switch ok, err := e.r.installationExists(ctx, e.c, e.spec); {
 				case err != nil:
 					return err
 				case ok:
-					return e.r.adopt(ctx, e)
+					return e.r.newMachineConfig(ctx, e)
 				}
 				if err := e.defaultMembers(ctx); err != nil {
 					return err

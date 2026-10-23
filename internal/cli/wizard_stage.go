@@ -212,10 +212,9 @@ func wizardFlagsLeft(flags []string) string {
 func (s *wizardStage) ask(ctx context.Context) error {
 	r, o := s.r, s.r.o
 	if !s.creating {
-		// A project config is selected (or --config-only takes the name from
-		// the installation): this run's inputs are already settled, and
-		// nothing is asked.
-		return nil
+		// A project config is selected: this run's inputs are already settled,
+		// nothing is asked, and nothing is created.
+		return r.settleCreation(false)
 	}
 	if len(s.missing) > 0 && !r.canAsk() {
 		// Nobody can be asked: the flags are the answer. --non-interactive
@@ -225,18 +224,13 @@ func (s *wizardStage) ask(ctx context.Context) error {
 		s.stop(initflow.LeftCommand, wizardFlagsLeft(s.missing))
 		return nil
 	}
-	// The banner goes with any question this run is about to ask. `missing`
-	// cannot answer whether there is one: it names every question but the
-	// project's, so a run whose other inputs all came from flags has an empty
-	// `missing` and still has that question to ask — it is the wizard's first
-	// (D11), and a run whose inputs are all flags is still a first run at a
-	// terminal.
-	if len(s.missing) > 0 || r.asksProjectAnswer() {
+	// The banner goes with any question this run is about to ask.
+	if len(s.missing) > 0 {
 		fmt.Fprintln(r.w, "fugaro setup: this is the first run here; each answer has a suggestion, press Enter to accept it.")
 	}
 	if o.cloud.gcpProject == "" {
 		q := questionFor("--gcp-project")
-		def, alt, why := projectIDSuggestions(ctx, s.name, s.fromCheckout)
+		def, alt, why := projectIDSuggestions(ctx, s.name, s.fromCheckout, o.door == updateDoor.name)
 		s.a.asked = append(s.a.asked, q.label)
 		v, err := r.promptChoice(q.label, def, alt, why, func(v string) error {
 			if !infra.ValidProjectID(v) {
@@ -263,27 +257,28 @@ func (s *wizardStage) ask(ctx context.Context) error {
 		}
 		o.cloud.region = v
 	}
-	// An installation may already be there (a teammate's, or one this machine
-	// has no project config for): `setup` keeps it, and converges as `fugaro
-	// update` does rather than offering to create a second one (D11). What
-	// this settles is the name — the installation's own, so it is not asked —
-	// and the run returns here, so the project question below is not asked
-	// either: the answer this path takes is adoption.
+	// An installation may already be there (one this machine has no project
+	// config for: the owner's second machine, or a teammate's). `setup` only
+	// starts fresh, so it refuses the ID before the name is asked and says
+	// which command reads that installation's config instead. `update` is that
+	// command: what it settles here is the name — the installation's own, so
+	// it is not asked — and its installation stage then writes this machine's
+	// local config from the installation and applies nothing
+	// (init_new_machine.go).
 	if s.name == "" && !o.configOnly {
 		if installed := installationName(ctx, o.cloud.gcpProject, o.cloud.region, o.runsBucket); installed != "" {
+			if o.door != updateDoor.name {
+				return freshOnlyInstalled(o.cloud.gcpProject, installed, o.cloud.region)
+			}
 			o.name = installed
-			fmt.Fprintf(r.w, "%s%s: keeping project %s, and converging as %s does\n",
-				o.programPrefix(), setupAlreadySetUp, pluginwire.Printable(installed), "fugaro "+updateDoor.name)
+			fmt.Fprintf(r.w, "%sthe installation of project %s is in GCP project %s and this machine has no local config for it: writing it from the installation, and applying nothing\n",
+				o.programPrefix(), pluginwire.Printable(installed), pluginwire.Printable(o.cloud.gcpProject))
 			return nil
 		}
 	}
-	// The project (D11): create one, or adopt one that already exists. The
-	// answer is what the project stage acts on; a run that cannot ask takes
-	// adoption (setup.go's askProjectAnswer says why).
-	if r.asksProjectAnswer() {
-		s.a.asked = append(s.a.asked, setupAskProject)
-	}
-	if err := r.askProjectAnswer(); err != nil {
+	// The project: a first run of `setup` creates it (settleCreation). There
+	// is no question to ask: Fugaro only starts fresh.
+	if err := r.settleCreation(true); err != nil {
 		return s.answer(err)
 	}
 	if s.name == "" && !o.configOnly {
