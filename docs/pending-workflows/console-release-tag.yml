@@ -381,12 +381,12 @@ jobs:
           VERSION: ${{ steps.tag.outputs.version }}
         run: |
           set -euo pipefail
-          NOTES="docs/releases/console/v$VERSION.md"
-          if [ ! -s "$NOTES" ]; then
-            echo "::error::$NOTES is missing or empty on the tagged commit: the console's release body is that file, so refusing to build a release whose notes do not exist"
+          NOTES_PATH="docs/releases/console/v$VERSION.md"
+          if [ ! -s "$NOTES_PATH" ]; then
+            echo "::error::$NOTES_PATH is missing or empty on the tagged commit: the console's release body is that file, so refusing to build a release whose notes do not exist"
             exit 1
           fi
-          wc -l "$NOTES"
+          wc -l "$NOTES_PATH"
 
       # The same gate the CLI's own tag is subject to, and the same script: a tag
       # that is not strict, is not reachable from main, or whose checks did not
@@ -1247,13 +1247,14 @@ jobs:
           # read there, they cannot disagree with the artifacts beside them. The
           # content is body text and nothing executes it. Only a 404 -- the file
           # is not on the tagged commit -- makes the read fail.
+          NOTES_PATH="docs/releases/console/v$VERSION.md"
           NOTES="$RUNNER_TEMP/console-release/console-release-notes.md"
           BODY="$RUNNER_TEMP/console-release/console-release-body.md"
-          if ! gh api "repos/$GITHUB_REPOSITORY/contents/docs/releases/console/v$VERSION.md?ref=$GITHUB_SHA" --jq .content 2>/dev/null | base64 -d > "$NOTES"; then
-            echo "::error::docs/releases/console/v$VERSION.md could not be read from $GITHUB_SHA: the console's release body is that file, so refusing to publish a release that would carry no notes"
+          if ! gh api "repos/$GITHUB_REPOSITORY/contents/$NOTES_PATH?ref=$GITHUB_SHA" --jq .content 2>/dev/null | base64 -d > "$NOTES"; then
+            echo "::error::$NOTES_PATH could not be read from $GITHUB_SHA: the console's release body is that file, so refusing to publish a release that would carry no notes"
             exit 1
           fi
-          test -s "$NOTES" || { echo "::error::docs/releases/console/v$VERSION.md is empty on $GITHUB_SHA: a release body of nothing is refused"; exit 1; }
+          test -s "$NOTES" || { echo "::error::$NOTES_PATH is empty on $GITHUB_SHA: a release body of nothing is refused"; exit 1; }
           {
             printf '%s\n\n' "The Fugaro desktop console built from the console's own $TAG tag (the console's release stream, the same release gate, the same pinned packer and the same Electron fuses on both platforms). The macOS build is signed with a Developer ID certificate, notarised and stapled; console-verification.txt records the checks run on those exact files. **The Linux build is unsigned**: an AppImage is not code-signed and this project has no Linux signing key, so the AppImage and the .deb for x64 carry no signature of their own -- their integrity claim is the SHA-256 in console-sha256sums.txt, which covers every file here and is itself signed keyless with Sigstore (console-sha256sums.txt.sigstore.json, verify with cosign verify-blob). console-linux-verification.txt records the commands run on those exact files, including a read-back of the Electron fuse wire from the executable inside each artifact."
             cat "$NOTES"
