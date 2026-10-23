@@ -1367,6 +1367,11 @@ export interface SpawnPlan {
  * **`executable` is `wsl.exe`, and it is not the CLI.** It is left out in the
  * app, where `wslExecutable(appEnv)` computes the absolute path, and set by a
  * test that must point the route at the fake (T-A1).
+ *
+ * **The plan's `binaryPath` is the record's Linux spelling of the CLI, not the
+ * program word.** The name `fugaro` is what `wsl.exe` hands the distribution, and
+ * the record's path is what the console states and what leads the child's `PATH`;
+ * `''` is the store's own spelling of "no path of my own" and the ordinary case.
  */
 export interface WslRoute {
   readonly distro: string
@@ -1393,13 +1398,11 @@ function wslWrapper(wsl: WslRoute): readonly string[] {
  *
  * **What differs between the two routes, and why.** The program word: on the
  * host route it is the resolved binary's absolute path, because that is the file
- * that runs; on the WSL route it is the name the *distribution* resolves, since
- * the point of running inside is that the distribution's own `PATH` finds the
- * CLI (`FUGARO_BINARY_NAME` when the installation names no path of its own,
- * otherwise the path the installation stored -- which on this route is a Linux
- * spelling inside the distribution, F15). The child's `PATH`: Linux's, on both
- * the host route's win32 row and here (F5). And the working directory: `cwd` is
- * where `wsl.exe` itself is started, which is a **host** directory, while the
+ * that runs; on the WSL route it is the bare name `fugaro`, because the
+ * distribution's own `PATH` is what finds the CLI there -- that is the point of
+ * running it inside (T-C5). The child's `PATH`: Linux's, on both the host
+ * route's win32 row and here (F5). And the working directory: `cwd` is where
+ * `wsl.exe` itself is started, which is a **host** directory, while the
  * directory the CLI starts in is the wrapper's `--cd` and `argvFor`'s `--dir` --
  * two different directories, which is why they are two different fields.
  */
@@ -1417,25 +1420,31 @@ export function planFor(
 ): SpawnPlan {
   const wsl = context.wsl
   if (wsl !== undefined) {
-    // The program word. `''` is the store's way of saying "no path of my own"
-    // (`installations.ts`'s own spelling of an absent optional field), and it is
-    // the ordinary case on this route: the distribution resolves `fugaro`.
-    const program = context.binaryPath === '' ? FUGARO_BINARY_NAME : context.binaryPath
     return Object.freeze({
       operation,
       command: wsl.executable ?? wslExecutable(context.appEnv),
       prefix: wslWrapper(wsl),
+      // **The program word is the name, and never a path.** The distribution's
+      // own `PATH` resolves it, which is the point of running the CLI inside
+      // (T-C5). A record's `binaryPath` is the *Linux spelling* of the same file
+      // (F15) and it is not what runs: it is what the console states (the
+      // resolution's `path`, D3(a)) and its directory leads the child's `PATH`
+      // below, so the `fugaro` the name resolves to is the one the record names.
       argv: Object.freeze([
-        program,
+        FUGARO_BINARY_NAME,
         ...argvFor(operation, args, { target: context.target, directory: wsl.directory }),
       ]),
       // `cwd` is the host directory the console starts `wsl.exe` in. It is not
       // the CLI's directory: that one is inside the distribution and is the
       // wrapper's `--cd`.
       cwd: context.directory,
+      // The `PATH` head is the record's own directory, exactly as on the host
+      // route, so a name and a stored path agree about which file runs; `''`
+      // (the ordinary case: no path of its own) puts nothing in front of the
+      // distribution's tool list.
       env: childEnvironment({
         target: context.target,
-        binaryPath: program,
+        binaryPath: context.binaryPath,
         appEnv: context.appEnv,
         platform: 'win32',
       }),
@@ -1938,10 +1947,15 @@ async function resolveInDistribution(
     }
   }
 
-  const program = options.binaryPath === '' ? FUGARO_BINARY_NAME : options.binaryPath
+  // The word `wsl.exe` hands the distribution: the bare name, which the
+  // distribution's own `PATH` resolves. The record's path, when it has one, is
+  // what the console *states* -- it is a Linux spelling inside the distribution
+  // (F15) and it is the same file the name resolves to, because `planFor` puts
+  // its directory at the head of the child's `PATH`.
+  const reported = options.binaryPath === '' ? FUGARO_BINARY_NAME : options.binaryPath
   const plan = planFor('cli.version', {}, {
     target: options.target,
-    binaryPath: program,
+    binaryPath: options.binaryPath,
     directory: options.directory,
     appEnv: options.appEnv,
     wsl: {
@@ -1955,16 +1969,16 @@ async function resolveInDistribution(
     if (isShellMiss(probe)) {
       return {
         ok: false,
-        path: program,
+        path: reported,
         kind: 'no-fugaro-in-distro',
         reason:
           `the distribution ${quote(distro)} has no ${quote(FUGARO_BINARY_NAME)}: ` +
           `${probe.said ?? 'the distribution said nothing'}`,
       }
     }
-    return { ok: false, path: program, kind: 'no-binary', reason: probe.reason }
+    return { ok: false, path: reported, kind: 'no-binary', reason: probe.reason }
   }
-  return { ok: true, path: program, version: probe.version, source: 'configured' }
+  return { ok: true, path: reported, version: probe.version, source: 'configured' }
 }
 
 /** SHELL_COMMAND_NOT_FOUND is the status a POSIX shell uses for a command it

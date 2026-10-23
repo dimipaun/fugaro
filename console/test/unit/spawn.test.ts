@@ -1661,7 +1661,7 @@ describe('the WSL resolution path', () => {
   it('builds the wrapper on the plan: `wsl.exe`, the distribution, the directory, the CLI’s own argv', () => {
     const wsl = installWslStub(freshDirectory(), { distros: TWO_DISTROS })
     const plan = planFor('budget.show', {}, safeContext({
-      binaryPath: FUGARO_BINARY_NAME,
+      binaryPath: '',
       directory: '/Users/owner/AppData/Local/Temp/fugaro-console/cwd',
       wsl: { distro: 'Ubuntu', directory: '/home/dimi/src/fugaro', executable: wsl.binary },
     }))
@@ -1789,19 +1789,30 @@ describe('the WSL resolution path', () => {
     expect(child.cwd).toBe(arrangement.distroDirectory)
   })
 
-  it('runs the path the installation stored inside the distribution, when it stores one', async () => {
+  it('states the path the installation stored, and runs the name the distribution resolves', async () => {
     // `binaryPath` under a `distro` is a Linux spelling **inside** the
-    // distribution (F15, T-C6): when the record names one, that is the program
-    // word, and the distribution's `PATH` is not consulted. The fake runs the
-    // absolute path it installed, which is this route's stand-in for the CLI the
-    // operator's own record names.
+    // distribution (F15): it is what the console states -- the resolution's
+    // `path`, which is the header's line (D3(a)) -- and it is *not* the program
+    // word. The distribution resolves the name; the record's directory leads the
+    // child's `PATH`, so the name resolves to the file the record names.
     const arrangement = wslRoot()
-    const stored = arrangement.wsl.stub.binary
+    const stored = '/home/dimi/.local/bin/fugaro'
     const resolution = await resolveInside(arrangement, { binaryPath: stored })
     expect(resolution.ok && resolution.path).toBe(stored)
     const spawn = only(arrangement.wsl.reports().filter((report) => report.kind === 'spawn'))
-    expect(spawn.argv.at(-2)).toBe(stored)
+    expect(spawn.argv.at(-2)).toBe(FUGARO_BINARY_NAME)
+    expect(spawn.argv.at(-1)).toBe('version')
     expect(only(arrangement.wsl.children()).argv).toEqual(['version'])
+
+    // And the plan says the same thing: the name runs, the record's directory is
+    // the head of the child's `PATH`, and the distribution's tool list follows.
+    const plan = planFor('cli.version', {}, safeContext({
+      binaryPath: stored,
+      wsl: { distro: 'Ubuntu', directory: '/home/dimi/src', executable: arrangement.wsl.binary },
+    }))
+    expect(plan.argv[0]).toBe(FUGARO_BINARY_NAME)
+    expect(plan.env['PATH']).toBe(childPath(stored, 'linux'))
+    expect(plan.env['PATH']?.startsWith('/home/dimi/.local/bin:')).toBe(true)
   })
 
   it('refuses with `no-wsl` when wsl.exe cannot answer at all', async () => {
