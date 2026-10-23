@@ -592,8 +592,8 @@ never sit in the file that runs on every pull request.
 **`mobile-release` is the third**, and the shape it copies is `console-release`'s
 for the lock and `website-live`'s for the branch policy — §10 pins which refs the
 trigger offers, and the policy has to admit them: the app's own release tag
-(`mobile-v*`) and `main`. **The one thing this section
-adds is that the environment has to exist before the file is copied in**: GitHub
+(`mobile-v*`) and `main`. **The one thing this section adds is that the
+environment has to exist before the file is copied in**: GitHub
 creates a missing environment on first use, and the environment it creates that
 way has **no required reviewer**, so the first run would go straight through,
 holding the Expo token, with nobody's click in between. Create it, then copy the
@@ -630,10 +630,10 @@ documentation at `https://docs.github.com/`):
   own `on:` says — and since the owner's ruling of 2026-10-22 it cannot be reached
   by the app's own release tag either, because a `v*` policy admits the CLI's tags
   and not one `mobile-vX.Y.Z` tag. The staged file offers both triggers — the
-  app's release tag, and a
-  dispatch that defaults to a dry run — so **the policy must name `main` as well**
-  as the app's tags (`mobile-v*` plus `main`). The two settings are one decision and have to
-  be made together; the staged file's own header states the same pair. A policy
+  app's release tag, and a dispatch that defaults to a dry run — so **the policy
+  must name `main` as well** as the app's tags (`mobile-v*` plus `main`). The two
+  settings are one decision and have to be made together; the staged file's own
+  header states the same pair. A policy
   that excludes the trigger's ref fails closed, but it fails at the wrong moment,
   on the day you need the build.
 - **Environment secrets:** **exactly one, and only when you are ready to use
