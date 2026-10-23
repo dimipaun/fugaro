@@ -132,10 +132,12 @@ function repoBlock(overrides: JSONDoc = {}): JSONDoc {
  * are the same row on the wire, not two rows that happen to agree today.
  *
  * Its `status` is `succeeded` and its `outcome` is `ready`, which is the pair
- * `runstore` writes for a ready PR (`StatusSucceeded` is "a ready PR, or (outcome
- * none, gate clean)", `internal/runstore/runstore.go:29`; `internal/watch/plain.go`
- * keys the same pair off `Outcome`). No "ready" runstore *status* exists, so a row
- * whose status read `ready` would be a row the CLI cannot print. */
+ * the runstore writes for a ready PR: `StatusSucceeded` is "a ready PR, or
+ * (outcome none, gate clean)" (`internal/runstore/runstore.go:29`), and `ready`
+ * is one of the outcome words a `FinishedRun` carries (`ready, draft, none,
+ * reviewed, artifacts`, `internal/watch/finished.go`). No "ready" runstore
+ * *status* exists, so a row whose status read `ready` would be a row the CLI
+ * cannot print. */
 function readyRun(): JSONDoc {
   return {
     run: '20261015-101500-aa02',
