@@ -120,11 +120,14 @@ type CriticalPath struct {
 
 // Analyze computes the read's answers over a document, against a done set.
 //
-// doc is expected to have been through Normalize, which refuses a cycle; the
-// guard is repeated here rather than assumed, because Analyze is exported and a
-// caller that built a Document by hand would otherwise hand every walk below a
-// graph it cannot finish. A refusal here is the same refusal, in the same
-// words: a cyclic graph has no ready and blocked answers to give.
+// doc is expected to have been through Normalize, and the call below is that
+// same guard rather than a second copy of it. Analyze is exported, so a caller
+// that built a Document by hand -- a test, or the day something reads a graph
+// out of something other than a file -- would otherwise hand every walk below a
+// graph it cannot finish: a cycle is a walk that never returns, an edge to a
+// node that is not there is a map that is not there, and a repeated id is two
+// tasks the same answers are written for. It gets the read's own refusals, in
+// the read's own words, instead.
 //
 // done names the tasks whose work is done, by node id. An id that is not a task
 // of this graph, or an empty one, is refused rather than ignored: an unknown id
@@ -135,9 +138,9 @@ func Analyze(doc Document, done []string) (Graph, error) {
 	if strings.TrimSpace(name) == "" {
 		name = "the graph"
 	}
-	if cycle := findCycle(doc); cycle != nil {
-		return Graph{}, refuse(name, "the graph has a cycle (%s); every ready and blocked answer is a function of this graph, so a cyclic one has none to give",
-			strings.Join(cycle, " -> "))
+	doc, err := Normalize(name, doc)
+	if err != nil {
+		return Graph{}, err
 	}
 
 	// The graph as sets, because the answers below count tasks and not edges: a

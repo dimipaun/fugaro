@@ -553,6 +553,38 @@ func TestPlanAnalysisRefusesWhatItCannotAnswer(t *testing.T) {
 	if _, err := Analyze(self, nil); err == nil || !strings.Contains(err.Error(), "a -> a") {
 		t.Errorf("Analyze on a self-edge gave %v, want the cycle a -> a", err)
 	}
+
+	// And a document that never went through the read at all: Analyze is
+	// exported, so these are the shapes a caller can hand it, and every one of
+	// them is a refusal rather than a panic or a wrong answer. The edge cases
+	// are the ones that would otherwise be a write to a map that is not there.
+	node := Node{ID: "a", Title: "first", Footprint: NewFootprint(nil)}
+	for _, tc := range []struct {
+		name string
+		doc  Document
+		want string
+	}{
+		{"an edge from a node that is not there", Document{Plan: "p.md", Nodes: []Node{node},
+			Edges: []Edge{{Task: "ghost", Needs: "a", Reason: "why"}}}, `starts at "ghost"`},
+		{"an edge to a node that is not there", Document{Plan: "p.md", Nodes: []Node{node},
+			Edges: []Edge{{Task: "a", Needs: "ghost", Reason: "why"}}}, `needs "ghost", which is not a node of this graph`},
+		{"two nodes with one id", Document{Plan: "p.md", Nodes: []Node{node, node}, Edges: []Edge{}}, `two nodes carry the id "a"`},
+		{"a node with no title", Document{Plan: "p.md",
+			Nodes: []Node{{ID: "a", Footprint: NewFootprint(nil)}}, Edges: []Edge{}}, `node "a" has no title`},
+		{"a footprint that is not labelled a prediction", Document{Plan: "p.md",
+			Nodes: []Node{{ID: "a", Title: "x", Footprint: Footprint{Paths: []string{}}}}, Edges: []Edge{}},
+			"not labelled a prediction"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g, err := Analyze(tc.doc, nil)
+			if err == nil {
+				t.Fatalf("Analyze answered a document with %s: %+v", tc.name, g)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("refusal = %q, want it to say %q", err, tc.want)
+			}
+		})
+	}
 }
 
 // TestPlanAnalysisEchoesTheArtifactsOwnFields: the read prints the artifact's
