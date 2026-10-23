@@ -1217,12 +1217,19 @@ class LiveStream implements LiveFeed {
  * project name, the config path when it is not the ambient one, the binary when
  * they chose one, and the checkout when they picked a directory. It is the D13
  * tuple minus the binary path and version the source resolves itself.
+ *
+ * **`distro` is the WSL one, and it is what puts the candidate on that route**
+ * (D2(a)): with it, `binaryPath` and `checkout` are Linux spellings *inside* the
+ * distribution and the CLI is reached through `wsl.exe`; without it -- the
+ * ordinary case, and every record this console wrote before Windows -- the
+ * installation is a host installation and the fields are host paths.
  */
 export interface InstallationCandidate {
   readonly project: string
   readonly configPath?: string | undefined
   readonly binaryPath?: string | undefined
   readonly checkout?: string | undefined
+  readonly distro?: string | undefined
 }
 
 /** InstallationStore is the in-memory list the app holds for one run. */

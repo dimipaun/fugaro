@@ -150,26 +150,32 @@ const workflowRoot = ".github/workflows"
 // a workflow file the branch already carried, is not this run's. It is what
 // GitHub refuses to take from an App without the `workflows` permission.
 func (r *Repo) WorkflowFiles(ctx context.Context, since string) ([]string, error) {
-	return r.workflowFiles(ctx, since, "HEAD", "")
+	return r.workflowFiles(ctx, since, "HEAD", nil)
 }
 
 // WorkflowFilesExcept is WorkflowFiles under one more bound: the commits
-// except — the base branch — does not have either. Each bound alone is
-// wrong in a way the other fixes.
+// the revisions in except — the bases the run works from — do not have
+// either. Each bound alone is wrong in a way the other fixes.
 //
 // The commit the run was cut from is the only one that says what the run
-// did: the base branch is another branch whenever the run started from one
-// (--ref console with base_branch main), and measured against main a run
-// cut from console looks like it added every workflow file console already
-// carried, so its push was refused for files it never touched.
+// did: a base is another branch whenever the run started from one (--ref
+// console with base_branch main), and measured against main a run cut from
+// console looks like it added every workflow file console already carried,
+// so its push was refused for files it never touched.
 //
-// The base branch is the only one that leaves out its own commits: a base
-// the agent rebased or merged into the branch carries them, and against the
-// commit the run was cut from alone they look like the run's. except is a
-// ref the agent's own git could repoint, so it can only ever make the list
-// shorter; when it cannot be read the list falls back to the since side
-// alone, which reports more rather than nothing.
-func (r *Repo) WorkflowFilesExcept(ctx context.Context, since, except string) ([]string, error) {
+// A base is the only thing that leaves out its own commits: a base the
+// agent rebased or merged into the branch carries them, and against the
+// commit the run was cut from alone they look like the run's. There is more
+// than one of those (the run's base of work and the branch its
+// configuration came from, which a run started from another ref is most
+// often told to keep up with), and each is the only one that leaves out its
+// own commits: with one of them subtracted, a run cut from integration that
+// merged main in is refused for the workflow file main's own commit added.
+// Every member of except is a ref the agent's own git could repoint, so they
+// can only ever make the list shorter; when any of them cannot be read the
+// list falls back to the since side alone, which reports more rather than
+// nothing.
+func (r *Repo) WorkflowFilesExcept(ctx context.Context, since string, except ...string) ([]string, error) {
 	return r.workflowFiles(ctx, since, "HEAD", except)
 }
 
@@ -182,44 +188,48 @@ func (r *Repo) WorkflowFilesIn(ctx context.Context, since, until string) ([]stri
 	if err := checkRange(since, until); err != nil {
 		return nil, err
 	}
-	return r.workflowFiles(ctx, since, until, "")
+	return r.workflowFiles(ctx, since, until, nil)
 }
 
 // WorkflowFilesInExcept is WorkflowFilesExcept over since..until, until
 // being any commit rather than HEAD: a checkpoint checks the exact commit
 // it pushes, which the agent may have moved HEAD away from since (see
 // WorkflowFilesIn).
-func (r *Repo) WorkflowFilesInExcept(ctx context.Context, since, except, until string) ([]string, error) {
+func (r *Repo) WorkflowFilesInExcept(ctx context.Context, since, until string, except ...string) ([]string, error) {
 	if err := checkRange(since, until); err != nil {
 		return nil, err
 	}
-	if err := checkRange(except, until); err != nil {
-		return nil, err
+	for _, e := range except {
+		if err := checkRange(e, until); err != nil {
+			return nil, err
+		}
 	}
 	return r.workflowFiles(ctx, since, until, except)
 }
 
 // workflowFiles lists, sorted and without duplicates, the files under
 // .github/workflows/ (in any case) changed by the commits of since..until
-// that except — when it names a revision — does not have, a merge for what
+// that none of except — when they name a revision — has, a merge for what
 // it changes against all of its parents.
-func (r *Repo) workflowFiles(ctx context.Context, since, until, except string) ([]string, error) {
+func (r *Repo) workflowFiles(ctx context.Context, since, until string, except []string) ([]string, error) {
 	revs := []string{"--no-replace-objects", "log", "--format=", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv",
 		"-c", "--full-history", "--root", "--ignore-submodules=none", "--end-of-options", since + ".." + until}
-	if except != "" {
-		revs = append(revs, "^"+except)
+	for _, e := range except {
+		if e != "" {
+			revs = append(revs, "^"+e)
+		}
 	}
 	revs = append(revs, "--", ":(icase)"+workflowRoot)
 	out, err := r.gitRaw(ctx, revs...)
 	if err != nil {
-		if except == "" {
+		if len(except) == 0 {
 			return nil, err
 		}
-		// The base branch could not be read: report what the run's own base
-		// alone says rather than nothing (the guard fails closed either way,
-		// but this is also what the guard did before it knew about the base
-		// branch's own commits).
-		return r.workflowFiles(ctx, since, until, "")
+		// A bound could not be read: report what the run's own base alone
+		// says rather than nothing (the guard fails closed either way, but
+		// this is also what the guard did before it knew about a base's own
+		// commits).
+		return r.workflowFiles(ctx, since, until, nil)
 	}
 	seen := make(map[string]bool)
 	var files []string

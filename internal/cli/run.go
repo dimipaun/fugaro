@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -2246,6 +2247,14 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		// the launch rather than carry it (backend.LaunchSpec.SecretEnv).
 		lspec.SecretEnv = []string{sealMarker(sealKey)}
 	}
+	// The credentials service, when the installation has opted into one and
+	// this execution is a repository's own job (job is the shared project job
+	// otherwise, and the service refuses that caller: see the helper).
+	jobName := ""
+	if job != nil {
+		jobName = job.Name
+	}
+	lspec.Env = credentialsServiceLaunchEnv(env.lc, jobName)
 	ref, err := env.be.Launch(lctx, lspec)
 	cancel()
 	// A backend error may quote the request it was given; the key is in that
@@ -2287,6 +2296,58 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		return res, remote(fmt.Errorf("launched %s but could not record launch.json (fugaro run --retry %s records it from result.json): %w", ref.Name, res.Run, err))
 	}
 	return done(l, "launched") // the claim stays in place for good
+}
+
+// credentialsServiceLaunchEnv is what this launch puts on the execution's
+// environment for the credentials service (plan task C1.24, D146/D147): the
+// service's URL, under the one name the runner and the keyless GitHub path
+// both read, or nothing at all. job is the shared project job this launch
+// resolved, or "" for a repository's own job.
+//
+// The block's presence in the selected config IS the opt-in. The config is the
+// published shared one where this machine has no local config of its own
+// (localcfg.Select), and the URL in it is the installation's own record --
+// Cloud Run's assignment for the service the installation root created, which
+// the credentials stage writes and MergeShared never lets a machine that lacks
+// it erase (internal/localcfg/shared.go, the ledger item of PR #903). So a
+// teammate's `fugaro run`, on a machine that never ran the opt-in, still hands
+// the job the installation's service.
+//
+// A SHARED PROJECT JOB IS NOT TOLD, and that is the service's own rule rather
+// than a policy chosen here: its admission refuses an account that belongs to
+// a shared project job whole, before any route (internal/credsvc/auth.go's
+// verifyJob, Global Constraint 6, C3.9). So the address would buy such a job
+// nothing it could use -- a `cascade` run would fail at the service's door
+// instead of at the runner's clear "this job has no credentials service" --
+// and it would cost it something: the same variable is what opens the git
+// provider keyless (internal/gitprov/providers/providers.go), so a shared
+// project job told about the service would stop reading the App key it still
+// mounts and be refused the mint that replaced it, breaking every GitHub run
+// on it. The shared jobs keep their own credentials until C3.9 moves them,
+// which is what SECURITY.md and the credentials stage's confirmation both say.
+//
+// It is plain Env and not SecretEnv, deliberately. The URL is not a secret:
+// it is the service's public address, it is the audience every caller's ID
+// token is minted for, and the service's own container carries it in plain
+// environment (credentials_serve.go's envCredentialsServiceURL, the same
+// name). A secret entry would also be the wrong carrier on the backend that
+// matters: Batch refuses SecretEnv outright (backend.LaunchSpec.SecretEnv),
+// so an installation on the Batch backend would either lose the variable or
+// fail to launch, and the one thing this value must not do is depend on which
+// backend a project happens to use.
+//
+// An installation with no block -- every installation until an owner runs
+// `fugaro setup --provision-credentials` -- gets nil, so its launch spec is
+// byte for byte the one it built before this variable existed: no entry, no
+// empty value, nothing for a backend to merge.
+func credentialsServiceLaunchEnv(lc *localcfg.Config, job string) []string {
+	if job != "" {
+		return nil
+	}
+	if lc == nil || lc.CredentialsService == nil || lc.CredentialsService.URL == "" {
+		return nil
+	}
+	return []string{envCredentialsServiceURL + "=" + lc.CredentialsService.URL}
 }
 
 // releaseClaim drops our own claim after a failed launch, so a retry need

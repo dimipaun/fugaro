@@ -20,7 +20,14 @@
 //   - `ts` -- RFC 3339, UTC, second precision (the shape Check 59a's FACT lines
 //     compare, and the reason the milliseconds `Date#toISOString` writes are
 //     trimmed here rather than left in);
-//   - `argv` -- the array as spawned, the binary's absolute path first;
+//   - `argv` -- the array as spawned, the binary's absolute path first. It is
+//     `spawn.ts`'s `spawnedArgv(plan)` and not `plan.argv`: the two are the same
+//     array on the host route, and on the WSL route the line is the *whole*
+//     command line -- `wsl.exe -d <distro> --cd <dir> -- fugaro …` -- because
+//     what ran is `wsl.exe`, and a line that showed only the CLI's own argv
+//     would name a process the operator never sees in Task Manager. The wrapper
+//     is a field of the plan (D1(a)) precisely so that this line can stay what it
+//     has always been: the record of what ran, first word first;
 //   - `cwd` -- absolute, the directory the child was given;
 //   - `project` -- the chosen installation's project name, which is the value
 //     passed as `--project` -- so **the bare `version` handshake records which

@@ -76,7 +76,7 @@ The brief's reading of D1 ("CLI sidecar (option A) … direct RTDB/Firestore acc
 
 #### F2 — Hide-old-completed is a *view* rule with a local acknowledgement store. **Exists.**
 
-**Evidence.** `internal/watch/filter.go`'s `Filter` (`Keep`, `KeepCount`, `FailedKeep` — 24h, "not a flag") and `Apply`; `internal/watch/acks.go`'s `AckPath` (the acknowledgements file under `$XDG_STATE_HOME`); `plugin/skills/working/reference/status.md`; `internal/cli/watch.go`'s `watchOptions.Keep`/`KeepCount`.
+**Evidence.** `internal/watch/filter.go`'s `Filter` (`Keep`, `KeepCount`, `FailedKeep` — `FinishedKeep`, three minutes for every status since the owner spec of 2026-10-22, "not a flag") and `Apply`; `internal/watch/acks.go`'s `AckPath` (the dismissals file under `$XDG_STATE_HOME`); `plugin/skills/working/reference/status.md`; `internal/cli/watch.go`'s `watchOptions.Keep`/`KeepCount`.
 
 **Consequence.** Two things the plan must get right. First, `--json` is **always unfiltered** — "hide old completed jobs by default" is the app's **own** filter over an unfiltered feed, not a flag it can lean on. Second, the acknowledgements live in a **local file on the machine running the CLI**, which a phone cannot share, so the app's "show all" toggle is a toggle over the unfiltered feed and its own (or no) ack state. The app must not promise the desktop's ack semantics.
 

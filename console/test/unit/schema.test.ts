@@ -521,6 +521,9 @@ describe('both document shapes decode', () => {
     if (!result.ok || result.value.shape !== 'live') return
     expect(result.value.runs[0]?.run).toBe('20261015-120000-aa01')
     expect(result.value.runs[0]?.requestedBy).toBe('redacted@example.invalid')
+    // `launched_by` is decoded now, whole (owner request 2026-10-18): the
+    // Started-by column's short form is the screen's cut, not the model's.
+    expect(result.value.runs[0]?.launchedBy).toBe('redacted@example.invalid')
     expect(result.value.finished[0]?.run).toBe('20261015-113000-aa02')
     expect(result.value.finished[0]?.prNumber).toBe(411)
   })

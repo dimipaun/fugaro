@@ -29,7 +29,7 @@ import { describe, expect, it } from 'vitest'
 
 import { SPAWN_LOG_ENV, SPAWN_LOG_LIMIT, SPAWN_LOG_MODE, TRUNCATION_LINE, createSpawnLog, rfc3339Seconds } from '../../src/main/spawnlog'
 import type { SpawnLogFs } from '../../src/main/spawnlog'
-import { planFor } from '../../src/main/spawn'
+import { planFor, spawnedArgv } from '../../src/main/spawn'
 import { CliSource, createInstallationStore } from '../../src/source/cli'
 import { installStub } from './stub'
 
@@ -448,5 +448,44 @@ describe('the spawn plan the log records', () => {
     const line = JSON.parse(readFileSync(logPath, 'utf8').trim()) as { argv: string[]; cwd: string }
     expect(line.argv).toEqual([...plan.argv])
     expect(line.cwd).toBe(plan.cwd)
+  })
+
+  it('is the whole command line on the WSL route, and unchanged on the host one', () => {
+    // T-C1 of docs/console-windows/implementation-plan.md, decision D1(a): the
+    // plan carries the program and the wrapper's words apart from the CLI's
+    // argv, and the log records `spawnedArgv(plan)` -- the command, the
+    // wrapper's words, then the CLI's argv. On the host route that is exactly
+    // `plan.argv`, so every line Check 59a already reads is byte-identical; on
+    // the WSL route it is the command line Task Manager shows, which is the
+    // point of recording it at all.
+    const host = planFor('budget.show', {}, {
+      target: { project: PROJECT },
+      binaryPath: '/opt/homebrew/bin/fugaro',
+      directory: '/Users/owner/src/fugaro',
+      appEnv: {},
+    })
+    expect([...spawnedArgv(host)]).toEqual([...host.argv])
+    expect([...spawnedArgv(host)][0]).toBe('/opt/homebrew/bin/fugaro')
+
+    const wsl = {
+      ...host,
+      command: 'C:\\Windows\\System32\\wsl.exe',
+      prefix: ['-d', 'Ubuntu', '--cd', '/home/dimi', '--'],
+      argv: ['fugaro', 'budget', 'show', '--json', '--project', PROJECT],
+    }
+    expect([...spawnedArgv(wsl)]).toEqual([
+      'C:\\Windows\\System32\\wsl.exe',
+      '-d',
+      'Ubuntu',
+      '--cd',
+      '/home/dimi',
+      '--',
+      'fugaro',
+      'budget',
+      'show',
+      '--json',
+      '--project',
+      PROJECT,
+    ])
   })
 })

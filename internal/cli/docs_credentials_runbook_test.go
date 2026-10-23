@@ -95,35 +95,56 @@ func TestDocsCredentialsRunbookIsOwnerRunOnly(t *testing.T) {
 	}
 }
 
-// TestDocsCredentialsRunbookSaysTheServiceShipsDormant: this release's service
-// is deployed by the opt-in and reachable by nobody — no job is ever given its
-// address, so a `cascade` run fails at bootstrap rather than being served — and
-// the runbook says so before any of its steps, because every step in it is
-// advice an operator would otherwise act on for a service nothing can call.
+// TestDocsCredentialsRunbookSaysWhatTheLaunchWires: the runbook's header has to
+// say, before any of its steps, which jobs carry the service's address — the
+// launch sets it on an opted-in installation's repository job and on no other,
+// so a `cascade` run there is served while one on a shared project job or on an
+// installation that has not opted in fails at bootstrap — and what the release
+// does not carry (the other `agent.auth` modes' half). Every step in the file
+// is advice an operator acts on, so a reader who takes the wiring the wrong way
+// acts on it wrongly.
 //
-// The independent review of C1.22 (M1) found this missing: the file described
-// the outage of a service that is wired, and a reader would have taken the
-// steps as usable on 0.10.0. The claim is read out of the whole document (the
-// paragraph sits in the file's header, above §1, so an operator who opens the
-// runbook anywhere at all reads it) and it is the counterpart of SECURITY.md's
-// dormant bullet, which TestSecurityMdNamesTheCredentialsServicesKnownLimits
-// holds.
+// The independent review of C1.22 (M1) found the opposite claim missing: the
+// file described the outage of a service that is wired, and a reader would have
+// taken the steps as unusable on 0.10.0. That claim ("the service ships dormant",
+// "no job is ever given its address", "Do not opt in before the release that
+// wires it (0.10.1)") is now the false one, and it is banned below rather than
+// pinned: the release that wires it (0.10.1) is this one. What replaces it is
+// the counterpart of SECURITY.md's known-limits bullet, which
+// TestSecurityMdNamesTheCredentialsServicesKnownLimits holds.
 //
-// Mutation (run, restored): the paragraph deleted fails this on every pin.
-func TestDocsCredentialsRunbookSaysTheServiceShipsDormant(t *testing.T) {
+// Mutations (verified, run and restored): the header paragraph deleted → FAIL
+// on every pin; the retired "ships dormant" paragraph put back → FAIL, on the
+// ban; the "and no other" clause of the wiring sentence softened to include
+// shared project jobs → FAIL; the other-auth-modes clause deleted → FAIL.
+func TestDocsCredentialsRunbookSaysWhatTheLaunchWires(t *testing.T) {
 	flat := flattenDoc(readDoc(t, credentialsRunbook))
 	for _, want := range []string{
-		"the service ships dormant",
-		"no job is ever given its address",
+		"the launch wires the service",
 		"FUGARO_CREDENTIALS_SERVICE_URL",
+		"a per-repository job of an installation that has opted in carries its address",
+		"shared project job",
+		"byte for byte what it was",
 		"serviceUpstream",
 		"fails",
 		"infra_error",
 		"opens no pull request",
-		"Do not opt in before the release that wires it (0.10.1)",
+		"the **other `agent.auth` modes'**",
+		"agent.auth: cascade",
 	} {
 		if !strings.Contains(flat, want) {
-			t.Errorf("%s does not say %q: an operator would run its steps against a service nothing can call", credentialsRunbook, want)
+			t.Errorf("%s does not say %q: an operator would act on its steps without knowing which jobs the launch tells about the service", credentialsRunbook, want)
+		}
+	}
+	for _, banned := range []string{
+		// The retired claim: the service is wired now.
+		"the service ships dormant",
+		"no job is ever given its address",
+		"Do not opt in before the release that wires it (0.10.1)",
+		"set by no Terraform module and by no `internal/infra` code path",
+	} {
+		if strings.Contains(flat, banned) {
+			t.Errorf("%s says %q: internal/cli/run.go's credentialsServiceLaunchEnv sets `FUGARO_CREDENTIALS_SERVICE_URL` on an opted-in installation's repository job, so this is the release that wires it and an operator reading that sentence would not opt in", credentialsRunbook, banned)
 		}
 	}
 }

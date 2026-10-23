@@ -91,8 +91,8 @@ type WatchDeps struct {
 	// Filter bounds which finished rows the interactive and plain views
 	// show (design generic-tool §10.3); --json stays unfiltered.
 	Filter watch.Filter
-	// Acks is the local acknowledgement set x and the plain/json paths
-	// check finished failures against.
+	// Acks is the local dismissal set the screen's x key writes and the plain
+	// path checks finished rows against (--json never filters).
 	Acks *watch.Acks
 	// PRState drops a ready row whose pull request the operator's own gh
 	// reports merged or closed (--no-pr-state leaves it out). --json never
@@ -187,12 +187,13 @@ func newWatchCmd() *cobra.Command {
 			"A project with no budget backend shows its run records only (as fugaro runs ls\n" +
 			"does, for the last 24 hours) and says so; fugaro runs ls --watch stays for the\n" +
 			"question \"did my runs finish\".\n\n" +
-			"A finished run stays shown for --keep (default 6h) or among the most recent\n" +
-			"--keep-count (default 15), whichever is stricter; a failed one stays until it\n" +
-			"is acknowledged (x in the interactive screen) or a day passes. --all shows\n" +
-			"every finished run (the a key toggles this without relaunching). --json is\n" +
-			"always unfiltered: it carries every finished run and, among them, the ones\n" +
-			"ready for review.\n\n" +
+			"A finished run leaves the list three minutes after it finishes, on its own\n" +
+			"(succeeded, failed and cancelled alike; --keep changes the window, --keep-count\n" +
+			"the number of rows, whichever is stricter). In the interactive screen x\n" +
+			"dismisses the selected finished run at once, and a toggles showing every\n" +
+			"finished run again, the ones the window or a dismissal hid included; --all\n" +
+			"starts that way. --json is always unfiltered: it carries every finished run\n" +
+			"and, among them, the ones ready for review.\n\n" +
 			"The \"Ready for your review\" list drops a pull request that is already merged\n" +
 			"or closed. The state is asked of your own gh (when it is installed and\n" +
 			"logged in), by pull request number and repository, never through a shell and\n" +
@@ -213,8 +214,8 @@ func newWatchCmd() *cobra.Command {
 	f.DurationVar(&o.interval, "interval", 0, "the least time between plain frames (default 10s) and the polling period (default 5s)")
 	f.BoolVar(&o.ascii, "ascii", false, "use ASCII instead of ⚠ ▓░ ▸")
 	f.BoolVar(&o.noClr, "no-color", false, "no colour (NO_COLOR and TERM=dumb do the same)")
-	f.BoolVar(&o.all, "all", false, "show every finished run, not just the active and recent ones")
-	f.DurationVar(&o.keep, "keep", 6*time.Hour, "how long a finished run stays shown (with --keep-count, whichever is stricter)")
+	f.BoolVar(&o.all, "all", false, "show every finished run, not just the ones that finished within --keep")
+	f.DurationVar(&o.keep, "keep", watch.FinishedKeep, "how long a finished run stays shown after it finishes (with --keep-count, whichever is stricter)")
 	f.IntVar(&o.keepCount, "keep-count", 15, "how many finished runs stay shown (with --keep, whichever is stricter)")
 	f.BoolVar(&o.noPRState, "no-pr-state", false, "do not ask gh about the ready PRs: list every one of them, run nothing")
 	addCloudFlags(cmd, &o.cloud)
@@ -265,7 +266,7 @@ func runWatch(cmd *cobra.Command, o *watchOptions) error {
 	}
 	d := &WatchDeps{In: cmd.InOrStdin(), Out: cmd.OutOrStdout(), Err: cmd.ErrOrStderr(), LC: lc, DB: db,
 		Config: watch.Config{BurnAlertPerHour: lc.BurnAlert(), RepoNames: repoNames(lc)}, RepoKey: repoKey, Repo: o.repo, ASCII: o.ascii, NoColor: o.noClr,
-		Filter: watch.Filter{All: o.all, Keep: o.keep, KeepCount: o.keepCount, FailedKeep: 24 * time.Hour},
+		Filter: watch.Filter{All: o.all, Keep: o.keep, KeepCount: o.keepCount, FailedKeep: watch.FinishedKeep},
 		Acks:   watch.LoadAcks(watch.AckPath(os.Getenv)),
 		// The ready list's PR states come from the operator's own gh, when
 		// there is one; nothing here ever holds a credential of its own.
