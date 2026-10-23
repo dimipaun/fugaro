@@ -707,16 +707,27 @@ a.skip-link:focus {
 /* The entrances (the redesign's motion layer, the owner's rulings of 2026-10-23, lever 7). The
  * script marks a part of a home section `data-reveal` only when it is below the first screen and
  * the reader has not asked for less motion, and marks it `data-revealed` as it enters, so with
- * no script nothing is ever held back. Transform and opacity only. */
+ * no script nothing is ever held back. Transform and opacity only. The owner-approved motion
+ * review of 2026-10-23 made them quicker and shorter: the base duration (240 ms, not the slow
+ * 600 ms) and 12 px of travel (not 24 px). */
 [data-reveal] {
   transition:
-    opacity var(--duration-slow) var(--ease-out),
-    transform var(--duration-slow) var(--ease-out);
+    opacity var(--duration-base) var(--ease-out),
+    transform var(--duration-base) var(--ease-out);
 }
 
 [data-reveal]:not([data-revealed]) {
   opacity: 0;
-  transform: translateY(24px);
+  transform: translateY(12px);
+}
+
+/* A printed page shows every part, whether or not it was scrolled to (the failsafe the
+ * owner-approved motion review of 2026-10-23 asked for; the script also reveals on `beforeprint`). */
+@media print {
+  [data-reveal]:not([data-revealed]) {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /* ---- 3. the element defaults (all zero-specificity) ------------------------------------- */

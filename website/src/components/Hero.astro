@@ -463,17 +463,15 @@ const WATCH = loadHomeScreens().screens.find((screen) => screen.src.endsWith('/f
     padding-bottom: var(--space-md);
   }
 
-  /* The signature move (the dealt "shutter image"): the capture opens from its top edge while
-     the picture inside settles from a slight scale, once, as the page loads. It needs no script,
-     and a reader who asks for less motion gets the end state at once (the layout's global
-     reduced-motion rule). */
+  /* The signature move (the dealt "shutter image"): the capture opens from its top edge, once,
+     as the page loads. It needs no script, and a reader who asks for less motion gets the end
+     state at once (the layout's global reduced-motion rule). The owner-approved motion review of
+     2026-10-23 keeps this one move and shortens it to 700 ms; the picture's 1.5 s settle from
+     scale(1.12) that ran under it is dropped, because two moves on one element read as one slow
+     one and the shutter alone already carries the reveal. */
   @media (prefers-reduced-motion: no-preference) {
     .hero-watch-crop {
-      animation: hero-shutter 1100ms var(--ease-out) 200ms both;
-    }
-
-    .hero-watch-image {
-      animation: hero-settle 1500ms var(--ease-out) 200ms both;
+      animation: hero-shutter 700ms var(--ease-out) 200ms both;
     }
 
     .hero-shot-job[data-arrive] {
@@ -487,17 +485,6 @@ const WATCH = loadHomeScreens().screens.find((screen) => screen.src.endsWith('/f
     }
     to {
       clip-path: inset(0);
-    }
-  }
-
-  @keyframes hero-settle {
-    from {
-      transform: scale(1.12);
-      transform-origin: left top;
-    }
-    to {
-      transform: none;
-      transform-origin: left top;
     }
   }
 
