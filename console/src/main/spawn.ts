@@ -509,6 +509,20 @@ export const INSTALLATION_LIST_COMMAND = 'config list'
 export type SpawnOperationName = OperationName | PickerOperationName
 
 /**
+ * WslQueryName is the questions the console asks `wsl.exe` itself rather than
+ * the CLI (Part C, T-C4; `src/main/wsl.ts`). They are not CLI operations: they
+ * carry no `--project`, they produce no document, and `SPAWN_COMMANDS` must not
+ * grow a row for them -- `assertSpawnSurface`'s table is the table of reads the
+ * console makes *of the CLI*, and `wsl.exe --list --quiet` is not one.
+ *
+ * They are named anyway, because a query is a spawn like any other: it carries a
+ * plan, it goes through `runToCompletion`, and the spawn log records it. A plan
+ * whose `operation` field was a CLI operation would say the console had run that
+ * operation when it had not.
+ */
+export type WslQueryName = 'wsl.distributions'
+
+/**
  * SpawnCommand is one row of the table: the operation it serves, the argv words
  * the CLI's own command path needs, whether the command accepts `--project`,
  * and its declared arguments in the order they are emitted.
@@ -1084,9 +1098,21 @@ export function childEnvironment(options: {
  * -- see rule 4 in this file's header and design section 3.4 rule 5. Its tail is
  * the platform's own tool directories (`locationsFor`), so the macOS Homebrew
  * prefix is not on a Linux child's `PATH` and Linuxbrew's system directory is
- * not on a macOS one's. */
+ * not on a macOS one's.
+ *
+ * **Its head is the binary's own directory, or nothing at all.** `dirname`
+ * answers `.` for a path with no directory in it, and a `.` entry in a `PATH`
+ * means *the child's own working directory* -- which, for a child started in the
+ * operator's checkout, is the operator's checkout. That is not a directory the
+ * console decided to put on the `PATH`, and on the WSL route it is the only
+ * answer there could be: the CLI there is the bare name `fugaro`, resolved by
+ * the distribution's own `PATH`, so the console has no directory of its own to
+ * put in front of the tool list (F5, T-C5). The empty entry is dropped rather
+ * than passed. */
 export function childPath(binaryPath: string, platform: string = process.platform): string {
-  return dedupe([dirname(binaryPath), ...locationsFor(platform).childPathPrefixes]).join(':')
+  const directory = dirname(binaryPath)
+  const head = directory === '.' || directory === '' ? [] : [directory]
+  return dedupe([...head, ...locationsFor(platform).childPathPrefixes]).join(':')
 }
 
 /**
@@ -1283,7 +1309,11 @@ export const nodeSpawner: ChildSpawner = (command, args, options) =>
  * and is therefore unchanged on the host route, where the wrapper is empty.
  */
 export interface SpawnPlan {
-  readonly operation: SpawnOperationName
+  /** `operation` is the CLI operation this plan runs, or the `wsl.exe` question
+   * it asks (`WslQueryName`). Nothing in this module reads it: it is what the
+   * plan says about itself, and `wsl.ts` is the one place that builds the
+   * second kind. */
+  readonly operation: SpawnOperationName | WslQueryName
   /** `command` is the program handed to the spawner: the resolved binary on the
    * host route, `wsl.exe` on the WSL route. It is what `runToCompletion` and
    * `startSidecar` start, and what the spawn log's first word is. */

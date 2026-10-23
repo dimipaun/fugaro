@@ -923,6 +923,22 @@ describe('the child environment', () => {
     )
   })
 
+  it('puts no `.` on the child’s PATH when the binary is named bare', () => {
+    // The WSL route's case (T-C5): there the CLI is the bare name `fugaro`,
+    // resolved by the distribution's own `PATH`, so the console has no directory
+    // of its own to put in front of the tool list. `dirname('fugaro')` is `.`,
+    // and a `.` entry in a `PATH` means *the child's own working directory* --
+    // which for a child started in the operator's checkout is the operator's
+    // checkout. Dropping it is the whole of the fix, and the tool list is
+    // otherwise intact.
+    expect(childPath(FUGARO_BINARY_NAME, 'linux')).toBe(
+      ['/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin', '/home/linuxbrew/.linuxbrew/bin'].join(':'),
+    )
+    expect(childPath(FUGARO_BINARY_NAME, 'win32')).toBe(childPath(FUGARO_BINARY_NAME, 'linux'))
+    expect(childPath(FUGARO_BINARY_NAME, 'linux').split(':')).not.toContain('.')
+    expect(childPath(FUGARO_BINARY_NAME, 'linux').split(':')).not.toContain('')
+  })
+
   it('keeps HOME, TMPDIR, LANG and LC_ALL: the operator’s own tools, as their shell has them', () => {
     const env = childEnvironment({ target: { project: PROJECT }, binaryPath: '/usr/bin/fugaro', appEnv: fullAppEnv })
     expect(env['HOME']).toBe('/Users/owner')
