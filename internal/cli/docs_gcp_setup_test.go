@@ -36,6 +36,32 @@ const gcpSetupDoc = "docs/gcp-setup.md"
 // theirs, and a rename is what would take that away.
 const gcpSetupWindowsSection = "## On Windows and in WSL: the two commands you run yourself"
 
+// TestDocsGCPSetupNotAnOwnerSaysWhatCreatingAndLinkingNeed: the project stage
+// answers a refused creation with `See docs/gcp-setup.md#not-an-owner.`
+// (refusedCreate, internal/cli/init_project.go), and a refused billing link
+// with the two roles that link needs, so #not-an-owner is where the reader
+// lands. The section says what creating a project and linking billing need,
+// and it names the roles as their administrators name them: those are the
+// words the reader repeats.
+func TestDocsGCPSetupNotAnOwnerSaysWhatCreatingAndLinkingNeed(t *testing.T) {
+	doc := readDoc(t, gcpSetupDoc)
+	sec := docSection(t, gcpSetupDoc, doc, "### If setup cannot create the project or link billing")
+	for _, want := range []string{
+		"roles/resourcemanager.projectCreator",
+		"roles/billing.user",
+		"billing.resourceAssociations.create",
+		"Owner or Project Billing Manager",
+		"gcloud billing projects link",
+	} {
+		if !strings.Contains(sec, want) {
+			t.Errorf("%s's #not-an-owner section lacks %q: refusedCreate sends a reader with no project here for the roles to ask for", gcpSetupDoc, want)
+		}
+	}
+	if !strings.Contains(doc, `<a id="not-an-owner"></a>`) {
+		t.Errorf("%s has no not-an-owner anchor: refusedCreate names it in the line it prints", gcpSetupDoc)
+	}
+}
+
 // TestDocsGCPSetupNamesTheWindowsForm: the guide carries both forms of the two
 // commands it has a Windows reader run. The login's two *files* are the claim
 // that makes the environment rule necessary — a Windows gcloud and a WSL gcloud

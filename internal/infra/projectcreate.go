@@ -198,6 +198,19 @@ const (
 type ProjectError struct {
 	Kind ProjectErrorKind
 	Err  error
+	// Refused is whether the call was refused for want of a permission or
+	// because of an organization policy: the case the CLI answers with one
+	// helpful line naming what to ask the organization for (init_project.go,
+	// the owner's ruling of 2026-10-23). It is set for a 403 and for the other
+	// shapes the same refusal takes (a 400 whose own text reads like one, and
+	// an operation's PERMISSION_DENIED or FAILED_PRECONDITION).
+	//
+	// It is deliberately false for everything else this classification
+	// recognises: a quota (a 429, or RESOURCE_EXHAUSTED), an API that is off
+	// on the credentials' quota project, a billing account that is closed or
+	// an ID that is taken all keep the message they always had, and the CLI
+	// prints that message unchanged.
+	Refused bool
 	// Hint is the likely cause; Fix is the one line to run or do.
 	Hint, Fix string
 }
@@ -341,10 +354,55 @@ func classify(err error, what string) error {
 			Fix:  "gcloud auth application-default set-quota-project <a project you may use>"}
 	}
 	switch ge.Code {
-	case http.StatusForbidden, http.StatusBadRequest, http.StatusTooManyRequests:
+	case http.StatusForbidden:
+		// A 403 is always "you may not": a permission the caller lacks, or an
+		// organization policy. (An API that is off and a quota project the
+		// caller may not use are 403s too, and both were answered above.)
+		return &ProjectError{Kind: ProjectDenied, Err: wrapped, Refused: true}
+	case http.StatusBadRequest:
+		// A 400 is a refusal only when its own text says so: the code alone
+		// cannot tell a missing permission or a violated constraint from the
+		// other 400s these APIs answer with, and a closed billing account is
+		// one of those — a helpful line about a role would be false of it.
+		return &ProjectError{Kind: ProjectDenied, Err: wrapped, Refused: refusalWords(ge.Message)}
+	case http.StatusTooManyRequests:
+		// A quota: the service's own text, and no helpful line (the ruling of
+		// 2026-10-23 keeps a quota's message as it was).
 		return &ProjectError{Kind: ProjectDenied, Err: wrapped}
 	}
 	return &ProjectError{Kind: ProjectOther, Err: wrapped}
+}
+
+// refusalWords are the words a 400's own message holds when the call was
+// refused for want of a permission or because of an organization policy. A
+// message that names a quota is not a refusal whatever else it says: a quota
+// has its own message, and "exceeded" is not a role the caller can be granted.
+func refusalWords(message string) bool {
+	m := strings.ToLower(message)
+	if strings.Contains(m, "quota") {
+		return false
+	}
+	for _, w := range []string{"permission", "constraint", "organization policy", "forbidden"} {
+		if strings.Contains(m, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// refusedOperation is refusalWords for a long-running operation's own error,
+// whose code is a google.rpc.Code rather than an HTTP status: 7 is
+// PERMISSION_DENIED and 9 is FAILED_PRECONDITION, which is how an organization
+// policy answers. 8 (RESOURCE_EXHAUSTED) is a quota, and every other code is
+// not a refusal.
+func refusedOperation(code int64, message string) bool {
+	switch code {
+	case 7:
+		return true
+	case 9:
+		return refusalWords(message)
+	}
+	return false
 }
 
 // CreateSpec is what the user confirmed.
@@ -443,7 +501,7 @@ func CreateProject(ctx context.Context, pc *ProjectClients, s CreateSpec) error 
 		if op.Error.Code == 6 { // ALREADY_EXISTS
 			return &ProjectError{Kind: ProjectTaken, Err: e, Hint: "the ID is held by another project"}
 		}
-		return orgPolicyHint(&ProjectError{Kind: ProjectDenied, Err: e})
+		return orgPolicyHint(&ProjectError{Kind: ProjectDenied, Err: e, Refused: refusedOperation(op.Error.Code, op.Error.Message)})
 	}
 	return nil
 }

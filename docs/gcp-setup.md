@@ -118,9 +118,9 @@ Each check prints the problem and a one-line fix, and applies nothing until it p
 |---|---|---|
 | Environment | refuses while `GOOGLE_IMPERSONATE_SERVICE_ACCOUNT` is set, while `GOOGLE_PROJECT`, `GOOGLE_CLOUD_PROJECT` or `CLOUDSDK_CORE_PROJECT` names another project, or while `GODEBUG` holds `http2debug` | unset it (Windows forms: below) |
 | Terraform | refuses when it is missing or outside 1.9 to 2.0 | install a supported version |
-| Project creation | a refusal with `likely cause:` a missing `resourcemanager.projects.create`, or an organization policy | [ask IT](#not-an-owner) |
+| Project creation | `Fugaro could not create the project <id>: your Google account is not allowed to create projects in your organization.`, with the service's own text under it | [ask IT](#not-an-owner) |
 | Billing (`--create-project`) | lists your open billing accounts to pick, or prints `gcloud billing projects link` | pick one, or run the line |
-| Billing link refused | `likely cause: you need billing.resourceAssociations.create on the billing account` | [ask IT](#not-an-owner) |
+| Billing link refused | `Fugaro could not link billing account <account> to project <id>: your account is missing a role the link needs.`, then the two roles and the `gcloud billing projects link` line | [ask IT](#not-an-owner) |
 | Cloud Billing API off on the quota project (billing picker) | offers to enable it when it is this project; otherwise prints the line for the other project's owner | type the confirmation, or ask |
 | Cloud Resource Manager API off | offers to enable it, behind a confirmation | type the confirmation |
 | Project name | refuses a bad name, or a name other than the installation's | use the installation's name |
@@ -146,6 +146,8 @@ Each check prints the problem and a one-line fix, and applies nothing until it p
 
 <a id="not-an-owner"></a>
 ### If setup cannot create the project or link billing
+
+**Creating a project** needs `roles/resourcemanager.projectCreator` on the organization, or on the folder you pass as `--parent`. **Linking billing** needs `roles/billing.user` (`billing.resourceAssociations.create`) on the billing account, *and* Owner or Project Billing Manager on the project; whoever holds both can link it for you with `gcloud billing projects link <id> --billing-account=<account>`.
 
 1. **Run `fugaro setup`.** It creates `fugaro-<name>` after you type its ID. Its billing picker lists your billing accounts and links the one whose ID you type. Without one it prints `gcloud billing projects link <id> --billing-account=BILLING_ACCOUNT_ID` and stops.
 2. **If it refuses at project creation or at the billing link,** your organization restricts one of the two. Ask IT for exactly one of:
