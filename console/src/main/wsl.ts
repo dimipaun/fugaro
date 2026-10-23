@@ -184,13 +184,15 @@ export async function wslDistributions(options: {
   if (names === null) {
     // The one thing this module refuses to guess about: an answer that is not
     // text this decoder can read is not a list of names, and half of one would
-    // be a distribution the console then tries to run. See `parseDistributionList`
-    // for what T-F2 does about the encoding itself.
+    // be a distribution the console then tries to run. `decodeWslAnswer` reads
+    // both encodings WSL answers in (T-F2); what is left here is an answer that
+    // decoded and still carries a NUL, which is a name cut in half rather than
+    // a name.
     return {
       kind: 'absent',
       reason:
-        'wsl.exe answered `--list --quiet` in bytes that are not UTF-8 text: the list of ' +
-        'distributions cannot be read, and a partial read would name distributions that are not there',
+        'wsl.exe answered `--list --quiet` in bytes that are not a readable list of names: the ' +
+        'list of distributions cannot be read, and a partial read would name distributions that are not there',
     }
   }
 
@@ -252,12 +254,19 @@ async function runWslQuery(options: {
     // here is the CLI's bare name rather than the program being run: the
     // environment this builds is the one the *distribution* will see, and the
     // distribution resolves `fugaro` itself.
-    env: childEnvironment({
-      target: { project: options.project },
-      binaryPath: FUGARO_BINARY_NAME,
-      appEnv: options.appEnv,
-      platform: 'win32',
-    }),
+    env: {
+      ...childEnvironment({
+        target: { project: options.project },
+        binaryPath: FUGARO_BINARY_NAME,
+        appEnv: options.appEnv,
+        platform: 'win32',
+      }),
+      // T-F2's one addition, and it is this module's own word: ask WSL to answer
+      // in UTF-8. The answer is decoded from bytes either way (`decodeWslAnswer`),
+      // because the switch is not honoured on every machine -- but a machine that
+      // honours it hands the console the encoding it reads most simply.
+      [WSL_UTF8_VAR]: WSL_UTF8_VALUE,
+    },
     project: options.project,
     backoff: DEFAULT_BACKOFF,
   })
@@ -269,6 +278,13 @@ async function runWslQuery(options: {
       ...(options.log === undefined ? {} : { log: options.log }),
       ...(options.timers === undefined ? {} : { timers: options.timers }),
       timeoutMs: options.timeoutMs ?? WSL_QUERY_TIMEOUT_MS,
+      // The answer is read as **bytes**, not as text (T-F2): `wsl.exe` prints
+      // `--list --quiet` in UTF-16LE on the machines whose WSL does not honour
+      // `WSL_UTF8`, and a UTF-8 decode destroys the BOM before anything can
+      // look at it -- the one byte that says which of the two it is. `latin1`
+      // is a lossless carry of any byte string, and `decodeWslAnswer` below
+      // decides what the bytes are.
+      stdoutEncoding: 'latin1',
     })
   } catch (error) {
     return {
@@ -285,7 +301,82 @@ async function runWslQuery(options: {
         (said === '' ? ' and said nothing' : `: ${said}`),
     }
   }
-  return { ok: true, stdout: result.stdout }
+  const decoded = decodeWslAnswer(result.stdout)
+  if (decoded === null) {
+    return {
+      ok: false,
+      reason:
+        `wsl.exe answered \`${options.args.join(' ')}\` in bytes that are neither UTF-8 nor UTF-16LE text: ` +
+        'the answer cannot be read, and half of it would be a value the console invented',
+    }
+  }
+  return { ok: true, stdout: decoded }
+}
+
+/** WSL_UTF8_VAR is the variable WSL reads to answer in UTF-8 rather than in the
+ * machine's console encoding (T-F2, U9: `wsl.exe --list --quiet` answers in
+ * UTF-16LE on the machines this was written against, and WSL's own switch is
+ * this one).
+ *
+ * **It is the console's own constant, not a value carried in from outside.** It
+ * is set on the *query* plans and nowhere else -- it is `wsl.exe`'s switch and
+ * not the CLI's -- and it is written here rather than read from the app's
+ * environment, so the credential boundary is unchanged: the console adds one
+ * word of its own to a child's environment and takes nothing from the operator's
+ * (`childEnvironment`'s allow-list still decides everything else). */
+export const WSL_UTF8_VAR = 'WSL_UTF8'
+
+/** WSL_UTF8_VALUE is what `WSL_UTF8_VAR` is set to: `1` is the spelling WSL
+ * documents. */
+export const WSL_UTF8_VALUE = '1'
+
+/**
+ * decodeWslAnswer turns the bytes `wsl.exe` printed into text (T-F2), or
+ * answers `null` when they are not text this module can read.
+ *
+ * **Why bytes are needed at all.** `--list --quiet` is an old Windows console
+ * program: with `WSL_UTF8=1` unset or ignored it prints UTF-16LE, and the two
+ * encodings are indistinguishable once a UTF-8 decode has replaced the BOM with
+ * U+FFFD. So the console carries the answer as bytes and decides here:
+ *
+ *   1. a UTF-16LE BOM (`FF FE`) -- UTF-16LE, the BOM dropped;
+ *   2. a UTF-8 BOM (`EF BB BF`) -- UTF-8, the BOM dropped;
+ *   3. bytes that are valid UTF-8 -- UTF-8. A UTF-16LE answer of ASCII names is
+ *      *also* valid UTF-8, and this is where the honest answer is the
+ *      conservative one: the names arrive with NULs in them and
+ *      `parseDistributionList` refuses them rather than half-reading a name the
+ *      console would then try to run a CLI in;
+ *   4. otherwise, nothing.
+ *
+ * The round-trip in step 3 is the validity test: a decode that produced a
+ * replacement character cannot re-encode to the bytes it came from, which is
+ * how invalid UTF-8 is told from valid without a second library.
+ */
+export function decodeWslAnswer(bytes: string): string | null {
+  if (bytes.startsWith('\u00ff\u00fe')) return decodeUtf16le(bytes.slice(2))
+  if (bytes.startsWith('\u00ef\u00bb\u00bf')) return decodeUtf8(bytes.slice(3))
+  if (roundTrips(bytes, 'utf8')) return decodeUtf8(bytes)
+  return null
+}
+
+/** decodeUtf16le reads byte pairs as UTF-16LE code units. An odd byte count is
+ * not a UTF-16LE string: the last byte is dropped from the decode and the value
+ * is refused by the caller's own checks rather than here -- `parseDistributionList`
+ * refuses NULs, and a truncated name is not a name. */
+function decodeUtf16le(bytes: string): string {
+  return Buffer.from(bytes, 'latin1').toString('utf16le')
+}
+
+/** decodeUtf8 reads the bytes as UTF-8. */
+function decodeUtf8(bytes: string): string {
+  return Buffer.from(bytes, 'latin1').toString('utf8')
+}
+
+/** roundTrips answers whether the bytes decode as `encoding` and re-encode to
+ * the same bytes: what a decoder is asked for is the string it was given, not a
+ * string like it. */
+function roundTrips(bytes: string, encoding: 'utf8' | 'utf16le'): boolean {
+  return Buffer.from(Buffer.from(bytes, 'latin1').toString(encoding), encoding).toString('latin1') === bytes
 }
 
 /**

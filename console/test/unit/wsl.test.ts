@@ -39,6 +39,9 @@ import { CHILD_ENV_KEYS, FUGARO_BINARY_NAME, childPath, nodeSpawner } from '../.
 import type { RecordedSpawn, SpawnLogWriter } from '../../src/main/spawnlog'
 import {
   WSL_EXE_NAME,
+  WSL_UTF8_VAR,
+  WSL_UTF8_VALUE,
+  decodeWslAnswer,
   WSL_QUERY_TIMEOUT_MS,
   WSL_SYSTEM_ROOT,
   parseDefaultDistribution,
@@ -295,9 +298,12 @@ describe('the query is a spawn like any other', () => {
   it('hands wsl.exe the child’s allow-list and nothing else', async () => {
     // SECURITY-SENSITIVE: the credential boundary's near side. The environment
     // built for a query is `childEnvironment`'s -- the same eleven keys the CLI
-    // gets -- so a query is not a hole in the allow-list. The fake's report
-    // carries the keys the console passed it, which is the only account of this
-    // that is not the console's own word.
+    // gets -- plus exactly one key the console writes itself, `WSL_UTF8`, which
+    // asks `wsl.exe` for UTF-8 and carries nothing from the operator's
+    // environment (T-F2). So a query is not a hole in the allow-list: the
+    // allow-list still decides everything that came from outside. The fake's
+    // report carries the keys the console passed it, which is the only account
+    // of this that is not the console's own word.
     const { wsl, cwd } = install(TWO_DISTROS)
     await wslDistributions({ appEnv: APP_ENV, cwd, wslPath: wsl.binary })
     // macOS adds __CF_USER_TEXT_ENCODING to every process it starts (as in
@@ -305,6 +311,12 @@ describe('the query is a spawn like any other', () => {
     const platformKeys = process.platform === 'darwin' ? ['__CF_USER_TEXT_ENCODING'] : []
     for (const report of wsl.reports()) {
       for (const key of report.envKeys.filter((k) => !platformKeys.includes(k))) {
+        if (key === WSL_UTF8_VAR) {
+          // The one exception, named rather than waved through: the console's
+          // own constant, and its value is the console's too.
+          expect(report.env[WSL_UTF8_VAR]).toBe(WSL_UTF8_VALUE)
+          continue
+        }
         expect(CHILD_ENV_KEYS, `${key} is not a key the child may receive`).toContain(key)
       }
       for (const planted of Object.keys(SENTINELS)) {
@@ -422,5 +434,81 @@ describe('reading the two answers', () => {
     // The name is data and is taken verbatim: a distribution may be called
     // anything, and trimming is the only thing done to it.
     expect(parseDefaultDistribution('Default Distribution: Ubuntu-22.04 LTS\r\n')).toBe('Ubuntu-22.04 LTS')
+  })
+})
+
+describe('the answer’s encoding (T-F2)', () => {
+  /** bytesAs is the byte string a decoder is handed: `latin1` carries one code
+   * unit per byte, which is exactly what `runToCompletion`'s `stdoutEncoding:
+   * 'latin1'` gives it. */
+  const bytesAs = (text: string, encoding: 'utf8' | 'utf16le'): string =>
+    Buffer.from(text, encoding).toString('latin1')
+
+  it('decodes both encodings --list --quiet answers in to the same names', async () => {
+    // U9: which encoding `wsl.exe` prints in is not knowable from here, and the
+    // two machines are two different answers. The console asks for UTF-8
+    // (`WSL_UTF8=1`) and decodes the bytes anyway, so the list is the same list
+    // either way -- which is the assertion, not the mechanism.
+    const utf8 = install({ ...TWO_DISTROS, list: 'Ubuntu\r\nDebian\r\n' })
+    const utf16 = install({
+      ...TWO_DISTROS,
+      // The BOM is part of the vector: that is what a real UTF-16LE answer
+      // begins with, and it is the one byte that says which encoding this is.
+      list: '﻿Ubuntu\r\nDebian\r\n',
+      // `--status` comes from the same console program, so it is UTF-16LE with
+      // a BOM on the same machine: one encoding per machine, not per query.
+      status: '﻿' + TWO_DISTROS.status,
+      encoding: 'utf16le',
+    })
+    const fromUtf8 = await wslDistributions({ appEnv: APP_ENV, cwd: utf8.cwd, wslPath: utf8.wsl.binary })
+    const fromUtf16 = await wslDistributions({ appEnv: APP_ENV, cwd: utf16.cwd, wslPath: utf16.wsl.binary })
+
+    expect(fromUtf8.kind).toBe('listed')
+    expect(fromUtf16.kind).toBe('listed')
+    if (fromUtf8.kind !== 'listed' || fromUtf16.kind !== 'listed') return
+    expect(fromUtf8.distributions.map((row) => row.name)).toEqual(['Ubuntu', 'Debian'])
+    expect(fromUtf16.distributions.map((row) => row.name)).toEqual(fromUtf8.distributions.map((row) => row.name))
+    // ...and the default is read out of the UTF-16LE answer too, not only the
+    // names: `--status` is the same console program.
+    expect(fromUtf16.distributions.filter((row) => row.isDefault).map((row) => row.name)).toEqual(['Debian'])
+
+    // The switch was asked for, on both queries of both machines (U9).
+    for (const report of [...utf8.wsl.reports(), ...utf16.wsl.reports()]) {
+      if (report.kind !== 'query') continue
+      expect(report.env[WSL_UTF8_VAR]).toBe(WSL_UTF8_VALUE)
+    }
+  })
+
+  it('refuses a name with a NUL in it rather than truncating it', async () => {
+    // A NUL cannot be in a name that came through `execve`, so an answer
+    // carrying one is an answer this console has misread. Truncating at the NUL
+    // -- the tempting repair -- would hand the console a distribution name that
+    // is not the one `wsl.exe` printed, and it would then try to run a CLI in
+    // it. So the whole answer is refused, and the refusal is `absent`.
+    const arrangement = install({ ...TWO_DISTROS, list: 'Ubu\u0000ntu\r\nDebian\r\n' })
+    const outcome = await wslDistributions({ appEnv: APP_ENV, cwd: arrangement.cwd, wslPath: arrangement.wsl.binary })
+    expect(outcome.kind).toBe('absent')
+    if (outcome.kind !== 'absent') return
+    expect(outcome.reason).toContain('--list --quiet')
+    expect(outcome.reason).not.toContain('Ubuntu')
+  })
+
+  it('tells the two encodings apart by their bytes, and refuses what is neither', () => {
+    expect(decodeWslAnswer(bytesAs('Ubuntu\nDebian\n', 'utf8'))).toBe('Ubuntu\nDebian\n')
+    expect(decodeWslAnswer(bytesAs('﻿Ubuntu\nDebian\n', 'utf8'))).toBe('Ubuntu\nDebian\n')
+    expect(decodeWslAnswer(bytesAs('﻿Ubuntu\r\nDebian\r\n', 'utf16le'))).toBe('Ubuntu\r\nDebian\r\n')
+    // A UTF-8 BOM is dropped, not kept as a character in the first name.
+    expect(decodeWslAnswer('ï»¿Ubuntu')).toBe('Ubuntu')
+    // Bytes that are neither: a lone continuation byte is not UTF-8, and it is
+    // not UTF-16LE either. Guessing here would invent a distribution name.
+    expect(decodeWslAnswer('ÿ')).toBeNull()
+    expect(decodeWslAnswer('Ubuntué')).toBeNull()
+    // A BOM-less UTF-16LE answer of ASCII names is also valid UTF-8, and the
+    // answer then carries NULs -- which `parseDistributionList` refuses, so the
+    // console never half-reads a name it guessed the encoding of.
+    const bare = bytesAs('Ubuntu\r\n', 'utf16le')
+    const decoded = decodeWslAnswer(bare)
+    expect(decoded).not.toBeNull()
+    expect(parseDistributionList(decoded ?? '')).toBeNull()
   })
 })
