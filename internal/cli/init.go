@@ -404,7 +404,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	}
 	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — "+covers+" — and it never covers "+never+": each of those is typed at a real terminal, and no door relaxes them. Under a coding agent's environment variable (CLAUDECODE and the like) "+d.name+" applies nothing, --yes included (except "+d.name+" --anchor, which only edits the checkout's fugaro.yaml and honours --yes there); that is a mitigation, not a barrier: an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint")
 	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes also covers onboarding such a repository, and neither it nor this flag is honoured in a coding agent's session; any other origin takes the typed confirmation)")
-	f.BoolVar(&o.provisionCredentials, "provision-credentials", false, "after the installation's ordinary steps, turn ON the credentials service in the installation root (docs/credentials-service, D146): a Cloud Run service (its own account, one Secret Manager bundle secret) running this release's image pinned by digest through the installation's remote repository. It is the identity the REPOSITORY jobs' model credentials move to: every workflow job of every repository root re-applied after this drops its model credential — in every agent.auth mode, oauth and api-key as much as cascade — and its account's accessor on it, and gets an invoker grant on the service instead. It does NOT reach the shared project jobs, which keep mounting their provider keys and CLAUDE_CODE_OAUTH_TOKEN with their grants (C3.9 moves those). And the part that gives a run a credential from the service instead is not in this release yet, so until it lands no re-applied repository job has a model credential to use: this is the owner's step of a service that is not finished. It needs the installation's Firebase rules (fugaro "+d.name+" --firebase-project) at the credentials generation first. --yes never covers it and it is typed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor), and it does NOT exclude --provision-batch: they are two applies of different roots, each with its own typed confirmation, and naming both means both")
+	f.BoolVar(&o.provisionCredentials, "provision-credentials", false, "after the installation's ordinary steps, turn ON the credentials service in the installation root (docs/credentials-service, D146): a Cloud Run service (its own account, one Secret Manager bundle secret) running this release's image pinned by digest through the installation's remote repository. It is the identity the REPOSITORY jobs' model credentials move to: every workflow job of every repository root re-applied after this drops its model credential — in every agent.auth mode, oauth and api-key as much as cascade — and its account's accessor on it, and gets an invoker grant on the service instead. It does NOT reach the shared project jobs, which keep mounting their provider keys and CLAUDE_CODE_OAUTH_TOKEN with their grants (C3.9 moves those). And it is wired from this run on: the service's address is recorded in the project's config and put on every per-repository launch, so a cascade run takes its model credential from the service and a GitHub run has its installation token minted there rather than in the job. A repository job in another agent.auth mode has no model credential to use and nothing yet to replace it (that half is not in this release), so a project that opts in runs its workflows with agent.auth: cascade; and the bundle has to hold the GitHub App's key (fugaro creds set github-app-key) before any GitHub run of the installation can mint. It needs the installation's Firebase rules (fugaro "+d.name+" --firebase-project) at the credentials generation first. --yes never covers it and it is typed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor), and it does NOT exclude --provision-batch: they are two applies of different roots, each with its own typed confirmation, and naming both means both")
 	f.BoolVar(&o.allowFork, "allow-fork", false, "let the plugin-wiring stage move the ref of a fugaro marketplace in .claude/settings.json that names a repository other than dimipaun/fugaro (a fork you host); never done otherwise")
 	// The flags --non-interactive only stops from prompting, worded for this
 	// door: --forget is fugaro update's, and setup's help must not describe
@@ -2277,6 +2277,19 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 		}
 	}
 	next.Build.ServiceAccount = ""
+	// The credentials service, from the installation's own record: the
+	// module's output carries the service's URL once the stage that turns it
+	// on has filled the audience (init_credentials.go), and this is what puts
+	// it in the local config — and so in the published one — for `fugaro run`
+	// to hand to a job. An installation whose outputs carry no service (never
+	// opted in, or opted out) clears the block: the URL it named is not a
+	// service that exists any more, and a launch that carried it would put a
+	// dead address on a job.
+	//
+	// It is set from the OUTPUTS and not from a flag: there is no way for a
+	// person to write this value by hand, because there is no way for them to
+	// know it (Cloud Run's URL carries the project number).
+	next.CredentialsService = credentialsServiceBlock(outs.CredentialsService)
 	if r.mutate != nil {
 		r.mutate(&next)
 	}
@@ -2297,6 +2310,23 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 		r.publishSharedConfig(ctx, &next)
 	}
 	return nil
+}
+
+// credentialsServiceBlock is the local config's credentials_service block for
+// an installation whose outputs carry s: nil when they carry none.
+//
+// The URL is the one field, and the block is nil rather than empty when the
+// installation has no service, because the block's PRESENCE is what `fugaro
+// run` reads as "this installation has one" — an empty block would put an
+// empty variable on a job, which the runner reads as set (the runner's own
+// check is `url == ""`, so an empty value is "no service" there, but the
+// provider gate in internal/gitprov reads presence) and which the config
+// loader refuses in the first place.
+func credentialsServiceBlock(s *infra.CredentialsService) *localcfg.CredentialsService {
+	if s == nil || s.URL == "" {
+		return nil
+	}
+	return &localcfg.CredentialsService{URL: s.URL}
 }
 
 // publishSharedConfig publishes the shared config after the local config is

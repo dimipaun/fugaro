@@ -578,10 +578,11 @@ a stage counts once it recorded a cost. A kind the window has no cost
 for on that model leaves the line out and names the model, rather than
 pricing the pinned model with what another one cost. Runs the figure
 cannot use are said to be left out, never counted as runs that cost
-nothing: a run on a subscription (agent.auth oauth), whose model_usd is
-notional rather than charged, a result.json that is missing or
-unreadable, and a record with no per-stage cost at all (one from before
-the runner kept it, or stages that all cost nothing).
+nothing: a run whose model_usd was a subscription's rather than a bill
+(agent.auth oauth, or a cascade run the plan served in full), a
+result.json that is missing or unreadable, and a record with no
+per-stage cost at all (one from before the runner kept it, or
+stages that all cost nothing).
 
 The recipe resolves as it does for a run: the repository's
 .fugaro/recipes, the project's published recipes, then the catalog. The
@@ -1784,7 +1785,13 @@ docs/plans/ is read; more than one is refused rather than guessed at.
 
 A graph this build does not understand is refused rather than rendered: a
 future schema version, a malformed document, an edge to a node that is not
-there, or a cycle. This is a local read and it writes nothing.
+there, or a cycle.
+
+The read also answers what the planner cannot: each task's level, whether it
+is ready or blocked, and the plan's critical path. A task is ready when every
+task it needs is done, so --done names the tasks that are — an id the graph
+does not carry is refused rather than ignored. This is a local read and it
+writes nothing.
 
 Usage: `fugaro plan graph`
 
@@ -1792,6 +1799,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--done` | stringSlice | `[]` | no | the tasks whose work is done, by id (comma-separated or repeated); a task is ready when every task it needs is done |
 | `-h`, `--help` | bool | `false` | no | help for graph |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--plan` | string | "" | no | the plan document the graph sits beside (default: the one graph artifact under docs/plans) |
@@ -3041,7 +3049,7 @@ Flags:
 | `--print-vars` | bool | `false` | no | print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--provision-batch` | bool | `false` | no | after the installation's ordinary steps, provision the Batch compute backend into a state of its own (design docs/design/compute-backend.md §8.1 task 6): the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router, and a preloaded boot image rebuilt on a schedule. It is money (a billable build, a NAT's hours) and permanent, so --yes never covers it and it is typed at a real terminal; nothing runs it by default, and no run can use the backend until the enable task. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor) |
-| `--provision-credentials` | bool | `false` | no | after the installation's ordinary steps, turn ON the credentials service in the installation root (docs/credentials-service, D146): a Cloud Run service (its own account, one Secret Manager bundle secret) running this release's image pinned by digest through the installation's remote repository. It is the identity the REPOSITORY jobs' model credentials move to: every workflow job of every repository root re-applied after this drops its model credential — in every agent.auth mode, oauth and api-key as much as cascade — and its account's accessor on it, and gets an invoker grant on the service instead. It does NOT reach the shared project jobs, which keep mounting their provider keys and CLAUDE_CODE_OAUTH_TOKEN with their grants (C3.9 moves those). And the part that gives a run a credential from the service instead is not in this release yet, so until it lands no re-applied repository job has a model credential to use: this is the owner's step of a service that is not finished. It needs the installation's Firebase rules (fugaro setup --firebase-project) at the credentials generation first. --yes never covers it and it is typed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor), and it does NOT exclude --provision-batch: they are two applies of different roots, each with its own typed confirmation, and naming both means both |
+| `--provision-credentials` | bool | `false` | no | after the installation's ordinary steps, turn ON the credentials service in the installation root (docs/credentials-service, D146): a Cloud Run service (its own account, one Secret Manager bundle secret) running this release's image pinned by digest through the installation's remote repository. It is the identity the REPOSITORY jobs' model credentials move to: every workflow job of every repository root re-applied after this drops its model credential — in every agent.auth mode, oauth and api-key as much as cascade — and its account's accessor on it, and gets an invoker grant on the service instead. It does NOT reach the shared project jobs, which keep mounting their provider keys and CLAUDE_CODE_OAUTH_TOKEN with their grants (C3.9 moves those). And it is wired from this run on: the service's address is recorded in the project's config and put on every per-repository launch, so a cascade run takes its model credential from the service and a GitHub run has its installation token minted there rather than in the job. A repository job in another agent.auth mode has no model credential to use and nothing yet to replace it (that half is not in this release), so a project that opts in runs its workflows with agent.auth: cascade; and the bundle has to hold the GitHub App's key (fugaro creds set github-app-key) before any GitHub run of the installation can mint. It needs the installation's Firebase rules (fugaro setup --firebase-project) at the credentials generation first. --yes never covers it and it is typed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor), and it does NOT exclude --provision-batch: they are two applies of different roots, each with its own typed confirmation, and naming both means both |
 | `--publish-config` | bool | `false` | no | publish the shared config to the runs bucket and stop (setup does it after it writes the local config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--registry-cleanup` | string | "" | no | Artifact Registry cleanup: dry-run (the default), on or off |
@@ -3211,7 +3219,7 @@ Flags:
 | `--plan-only` | bool | `false` | no | stop after showing the plan (never takes --yes: it creates nothing on a flag's word) |
 | `--print-vars` | bool | `false` | no | print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
-| `--provision-credentials` | bool | `false` | no | after the installation's ordinary steps, turn ON the credentials service in the installation root (docs/credentials-service, D146): a Cloud Run service (its own account, one Secret Manager bundle secret) running this release's image pinned by digest through the installation's remote repository. It is the identity the REPOSITORY jobs' model credentials move to: every workflow job of every repository root re-applied after this drops its model credential — in every agent.auth mode, oauth and api-key as much as cascade — and its account's accessor on it, and gets an invoker grant on the service instead. It does NOT reach the shared project jobs, which keep mounting their provider keys and CLAUDE_CODE_OAUTH_TOKEN with their grants (C3.9 moves those). And the part that gives a run a credential from the service instead is not in this release yet, so until it lands no re-applied repository job has a model credential to use: this is the owner's step of a service that is not finished. It needs the installation's Firebase rules (fugaro update --firebase-project) at the credentials generation first. --yes never covers it and it is typed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor), and it does NOT exclude --provision-batch: they are two applies of different roots, each with its own typed confirmation, and naming both means both |
+| `--provision-credentials` | bool | `false` | no | after the installation's ordinary steps, turn ON the credentials service in the installation root (docs/credentials-service, D146): a Cloud Run service (its own account, one Secret Manager bundle secret) running this release's image pinned by digest through the installation's remote repository. It is the identity the REPOSITORY jobs' model credentials move to: every workflow job of every repository root re-applied after this drops its model credential — in every agent.auth mode, oauth and api-key as much as cascade — and its account's accessor on it, and gets an invoker grant on the service instead. It does NOT reach the shared project jobs, which keep mounting their provider keys and CLAUDE_CODE_OAUTH_TOKEN with their grants (C3.9 moves those). And it is wired from this run on: the service's address is recorded in the project's config and put on every per-repository launch, so a cascade run takes its model credential from the service and a GitHub run has its installation token minted there rather than in the job. A repository job in another agent.auth mode has no model credential to use and nothing yet to replace it (that half is not in this release), so a project that opts in runs its workflows with agent.auth: cascade; and the bundle has to hold the GitHub App's key (fugaro creds set github-app-key) before any GitHub run of the installation can mint. It needs the installation's Firebase rules (fugaro update --firebase-project) at the credentials generation first. --yes never covers it and it is typed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor), and it does NOT exclude --provision-batch: they are two applies of different roots, each with its own typed confirmation, and naming both means both |
 | `--publish-config` | bool | `false` | no | publish the shared config to the runs bucket and stop (update does it after it writes the local config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--registry-cleanup` | string | "" | no | Artifact Registry cleanup: dry-run (the default), on or off |
@@ -3415,12 +3423,13 @@ A project with no budget backend shows its run records only (as fugaro runs ls
 does, for the last 24 hours) and says so; fugaro runs ls --watch stays for the
 question "did my runs finish".
 
-A finished run stays shown for --keep (default 6h) or among the most recent
---keep-count (default 15), whichever is stricter; a failed one stays until it
-is acknowledged (x in the interactive screen) or a day passes. --all shows
-every finished run (the a key toggles this without relaunching). --json is
-always unfiltered: it carries every finished run and, among them, the ones
-ready for review.
+A finished run leaves the list three minutes after it finishes, on its own
+(succeeded, failed and cancelled alike; --keep changes the window, --keep-count
+the number of rows, whichever is stricter). In the interactive screen x
+dismisses the selected finished run at once, and a toggles showing every
+finished run again, the ones the window or a dismissal hid included; --all
+starts that way. --json is always unfiltered: it carries every finished run
+and, among them, the ones ready for review.
 
 The "Ready for your review" list drops a pull request that is already merged
 or closed. The state is asked of your own gh (when it is installed and
@@ -3437,14 +3446,14 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--all` | bool | `false` | no | show every finished run, not just the active and recent ones |
+| `--all` | bool | `false` | no | show every finished run, not just the ones that finished within --keep |
 | `--ascii` | bool | `false` | no | use ASCII instead of ⚠ ▓░ ▸ |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for watch |
 | `--interval` | duration | `0s` | no | the least time between plain frames (default 10s) and the polling period (default 5s) |
 | `--json` | bool | `false` | no | print one JSON document per change instead of a screen |
-| `--keep` | duration | `6h0m0s` | no | how long a finished run stays shown (with --keep-count, whichever is stricter) |
+| `--keep` | duration | `3m0s` | no | how long a finished run stays shown after it finishes (with --keep-count, whichever is stricter) |
 | `--keep-count` | int | `15` | no | how many finished runs stay shown (with --keep, whichever is stricter) |
 | `--no-color` | bool | `false` | no | no colour (NO_COLOR and TERM=dumb do the same) |
 | `--no-pr-state` | bool | `false` | no | do not ask gh about the ready PRs: list every one of them, run nothing |

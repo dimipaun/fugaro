@@ -1,4 +1,7 @@
+bottleneck
+critical_path
 edges
+levels
 nodes
 plan
 schema_version

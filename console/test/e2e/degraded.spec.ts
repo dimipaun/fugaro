@@ -73,6 +73,7 @@ const fixturePath = join(consoleDir, 'test', 'fixtures', 'degraded.ndjson')
 const MODULES: readonly string[] = Object.freeze([
   'shared/availability.js',
   'shared/sanitize.js',
+  'shared/launcher.js',
   'shared/version.js',
   'shared/schema.js',
   'renderer/app.js',

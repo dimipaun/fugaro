@@ -59,6 +59,7 @@
 import { measured, readNumber, unavailable } from '../../shared/availability'
 import type { Reading } from '../../shared/availability'
 import type { OperationName } from '../../main/ipc'
+import { launcherCell } from '../../shared/launcher'
 import type { KillView } from '../../shared/schema'
 import { sanitizeRefusal, sanitizeText } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
@@ -253,6 +254,9 @@ export interface ProjectJob {
   readonly status: string
   readonly stage: string | null
   readonly requestedBy: string | null
+  /** the row's whole recorded launcher (`launched_by`), `null` when the record
+   * carries none; the cell draws `launcherShort` of it (`shared/launcher.ts`) */
+  readonly launchedBy: string | null
   readonly branch: string | null
   readonly created: string | null
   readonly cost: ProjectJobCost
@@ -744,6 +748,7 @@ export function buildProjectsModel(inputs: ProjectsInputs): ProjectsModel {
     status: textAt(row['status']) ?? '',
     stage: textAt(row['stage']),
     requestedBy: textAt(row['requested_by']),
+    launchedBy: textAt(row['launched_by']),
     branch: textAt(row['branch']),
     created: textAt(row['created']),
     cost: costOf(row['cost'], 'runs[].cost'),
@@ -1127,6 +1132,13 @@ function jobsPanel(factory: ScreenFactory, model: ProjectJobs): ScreenElement {
     if (job.stage !== null) textCell(line, factory, 'span', job.stage, 'label', 'runs[].stage', 'projects-job-stage')
     if (job.requestedBy !== null) {
       textCell(line, factory, 'span', job.requestedBy, 'person', 'runs[].requested_by', 'projects-job-by')
+    }
+    // Who started the job, beside who asked for it: the short form of
+    // `launched_by`, drawn as a `label` (`shared/launcher.ts` says why not
+    // `person`), and no cell at all for a row the record does not name.
+    const startedBy = launcherCell(job.launchedBy)
+    if (startedBy !== null) {
+      textCell(line, factory, 'span', startedBy, 'label', 'runs[].launched_by', 'projects-job-started-by')
     }
     if (job.created !== null) textCell(line, factory, 'span', job.created, 'label', 'runs[].created', 'projects-job-created')
     // The three accounts, apart: a subscription's model dollars are notional.

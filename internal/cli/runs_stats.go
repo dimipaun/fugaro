@@ -479,9 +479,11 @@ func userStatsRun(l *runstore.Launch, rec *runstore.Record) userStatsRecorded {
 		// The two halves of the model figure (P12, D140): the subscription's
 		// part is notional whoever it belonged to, and the money part counts
 		// toward a cap. A cascade run has both, and its basis is api-list for
-		// the whole run, so neither half can be read off the basis alone.
+		// the whole run, so neither half can be read off the basis alone --
+		// and a run the plan paid for in full is a notional run whose money
+		// part is nothing, never a run that cost $0.00.
 		r.NotionalUSD = rec.Cost.ModelSubscriptionUSD()
-		if rec.Cost.ModelBasis != runstore.BasisSubscription {
+		if !rec.Cost.AllNotional() {
 			r.CountedUSD, r.CountedCost = rec.Cost.ModelMoneyUSD(), true
 		}
 	}

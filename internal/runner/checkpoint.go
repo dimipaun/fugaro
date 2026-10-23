@@ -169,7 +169,7 @@ func (r *run) checkpointTick(ctx context.Context, stage string) {
 // checkpointSince is where a checkpoint's secret scan and workflow guard
 // start: the last pushed commit, or, before the first push, the commit the
 // run was cut from — the base of every commit the push adds, exactly as
-// finalize's guards measure them (workBase). Not the base branch, which is
+// finalize's guards measure them (workBase). Not a base branch, which is
 // another branch when the run was started from one: measured against it, a
 // run cut from console looks like it changed every workflow file console
 // already carried, which stops the run's checkpoints for good. And never a
@@ -323,8 +323,8 @@ func (r *run) checkpointClean(ctx context.Context, sha string) bool {
 func (r *run) pushCheckpoint(ctx context.Context, sha string) error {
 	r.refreshForPush(ctx)
 	// finalize's guard over the range this push adds: the same two bounds
-	// (checkpointSince and the base branch), so a checkpoint is refused
-	// exactly when the push it makes would be.
+	// (checkpointSince and the bases the run works from), so a checkpoint is
+	// refused exactly when the push it makes would be.
 	if rej := r.workflowGuardAt(ctx, r.checkpointSince(), sha); rej != nil {
 		return rej // no network call for a push GitHub is sure to refuse
 	}
