@@ -90,6 +90,7 @@ import {
   WSL_SHELL_FLAG,
   WSL_SHELL_PROGRAM,
   WSL_WRAPPER_MARKER,
+  VERSION_TIMEOUT_MS,
   shellQuote,
   withoutWrapperMarker,
   wrapperPidIn,
@@ -2429,7 +2430,10 @@ describe('the supervisor', () => {
       ok: false,
       code: null,
       said: null,
-      reason: 'the binary did not answer `version` in time',
+      // The sentence is the read's own, spelled where every other timeout in
+      // this module is spelled (`runToCompletion`'s deadline), so a probe and a
+      // read say the same thing about the same deadline.
+      reason: `fugaro version did not finish within ${String(VERSION_TIMEOUT_MS / 1000)}s`,
       // The host route: there is no wrapper, so there is no
       // "did a child inside the distribution start" question to answer (T-F1).
       wrapperStarted: null,
@@ -2437,6 +2441,67 @@ describe('the supervisor', () => {
     await waitFor(() => stub.kills().length === 1)
     expect(stub.kills()[0]?.signal).toBe('SIGTERM')
     expect(stub.kills()[0]?.argv).toContain('version')
+  })
+
+  it('carries the WSL residual and the wrapper fact through a probe timeout', async () => {
+    // The installations list is exactly where a cold-starting distribution is
+    // probed: `VERSION_TIMEOUT_MS` is five seconds and a first `wsl.exe` call
+    // can take longer than that (U15). When it does, the probe must not read as
+    // an ordinary host timeout -- a `fugaro` may have been left running inside
+    // the distribution, and the sentence that says so is the one the read
+    // computed when it refused. A probe that rebuilt its own sentence here
+    // ("the binary did not answer `version` in time", with `wrapperStarted:
+    // null`) threw both facts away, and this is the one caller-facing path
+    // where they exist.
+    const directory = freshDirectory()
+    const plan = planFor('cli.version', {}, {
+      target: { project: PROJECT },
+      binaryPath: '',
+      directory,
+      appEnv: {},
+      wsl: { distro: 'Ubuntu', executable: '/usr/bin/wsl.exe' },
+    })
+    const child = scriptedChild()
+    const timers = manualTimers()
+    const pending = probeVersion(plan, { spawner: () => child, timers, shutdownGraceMs: 50 })
+    timers.fire()
+    // Nothing was ever printed: the distribution was still starting, so the
+    // pid never came. The refusal waits for the grace and then states the
+    // window.
+    timers.fire()
+    const probe = await pending
+    expect(probe.ok).toBe(false)
+    if (probe.ok) return
+    expect(probe.reason).toContain('did not finish within')
+    expect(probe.reason).toContain('may still be running')
+    // ...and the WSL-route timeout is not a host one: no marker was seen, so no
+    // child inside the distribution ever started (T-F1, F26).
+    expect(probe.wrapperStarted).toBe(false)
+    expect(probe.code).toBeNull()
+    expect(probe.said).toBeNull()
+
+    // With the wrapper's line on stderr the same probe is the same refusal
+    // without the window: the console named the process, and the stop went out.
+    const reported = scriptedChild()
+    const calls: string[][] = []
+    const secondTimers = manualTimers()
+    const second = probeVersion(plan, {
+      spawner: ((command: string, args: readonly string[]) => {
+        calls.push([command, ...args])
+        return reported
+      }) as ChildSpawner,
+      timers: secondTimers,
+      shutdownGraceMs: 50,
+    })
+    reported.emitStderr(`${WSL_WRAPPER_MARKER} 4321\n`)
+    secondTimers.fire()
+    secondTimers.fire()
+    const secondProbe = await second
+    expect(secondProbe.ok).toBe(false)
+    if (secondProbe.ok) return
+    expect(secondProbe.reason).not.toContain('may still be running')
+    expect(secondProbe.wrapperStarted).toBe(true)
+    expect(calls[1]).toEqual(['/usr/bin/wsl.exe', '-d', 'Ubuntu', '--', 'sh', '-c', 'kill -TERM 4321'])
   })
 
   it('stops a long-lived child with SIGTERM and reports the stop', async () => {
@@ -3650,6 +3715,11 @@ describe('the wrapper into a distribution', () => {
     // starting (a cold distribution takes seconds, U15) arrives before the line
     // does. The console then says so rather than inventing a pid, and sends no
     // stop.
+    //
+    // The sentence is refused **at the grace**, not at the deadline: a pid can
+    // still arrive during those two seconds, and the console must not tell the
+    // operator the process may be running after it has just stopped it. The
+    // case where it does arrive in time is its own test below.
     const directory = freshDirectory()
     const plan = planFor('cli.version', {}, {
       target: { project: PROJECT },
@@ -3674,7 +3744,6 @@ describe('the wrapper into a distribution', () => {
       (error: SpawnTimeout) => error,
     )
     timers.fire()
-    expect((await refusal).message).toContain('may still be running')
     // The Windows-side child is still stopped first: the residual is about the
     // process *inside* the distribution, not about the one the console owns.
     expect(child.killed).toEqual(['SIGTERM'])
@@ -3682,6 +3751,53 @@ describe('the wrapper into a distribution', () => {
     expect(child.killed).toEqual(['SIGTERM', 'SIGKILL'])
     // No second call: a pid the console does not have is not a pid it guesses.
     expect(calls).toHaveLength(1)
+    // ...and the sentence the read is refused with carries the window, because
+    // the grace is over and the pid never came.
+    expect((await refusal).message).toContain('may still be running')
+  })
+
+  it('names a pid that arrives during the grace, and states no residual', async () => {
+    // The same deadline with the wrapper's line landing a moment late -- what a
+    // cold distribution does: `wsl.exe` is still booting when the read's
+    // deadline fires, and the shell prints its pid while the grace is running.
+    // Reading the pid once, at stop time, would leave the stop naming nothing
+    // while the process it could have named kept running inside the
+    // distribution, and would refuse the read with a residual that is untrue by
+    // the time the operator reads it.
+    const directory = freshDirectory()
+    const plan = planFor('cli.version', {}, {
+      target: { project: PROJECT },
+      binaryPath: '',
+      directory,
+      appEnv: {},
+      wsl: { distro: 'Ubuntu', executable: '/usr/bin/wsl.exe' },
+    })
+    const calls: string[][] = []
+    const child = scriptedChild()
+    const spawner = ((command: string, args: readonly string[]) => {
+      calls.push([command, ...args])
+      return child
+    }) as ChildSpawner
+    const timers = manualTimers()
+    const pending = runToCompletion(plan, { spawner, timers, timeoutMs: 100, shutdownGraceMs: 50 })
+    const refusal = pending.then(
+      () => {
+        throw new Error('the read was expected to be refused')
+      },
+      (error: SpawnTimeout) => error,
+    )
+    // The deadline fires with nothing on stderr: no pid, so no stop yet.
+    timers.fire()
+    expect(child.killed).toEqual(['SIGTERM'])
+    // The wrapper's line arrives inside the grace window.
+    child.emitStderr(`${WSL_WRAPPER_MARKER} 4321\n`)
+    timers.fire()
+    // The stop names the pid that arrived, and exactly once: the stale read is
+    // not used as well.
+    expect(calls[1]).toEqual(['/usr/bin/wsl.exe', '-d', 'Ubuntu', '--', 'sh', '-c', 'kill -TERM 4321'])
+    expect(calls).toHaveLength(2)
+    // The process was named, so there is no window to write down.
+    expect((await refusal).message).not.toContain('may still be running')
   })
 
   it('feeds a watch stream through the wrapper exactly as on the host route', async () => {
@@ -3913,9 +4029,12 @@ describe('the wrapper into a distribution', () => {
       (error: SpawnTimeout) => error,
     )
     secondTimers.fire()
-    expect((await secondRefusal).message).toContain('may still be running')
     secondTimers.fire()
     expect(hostileCalls).toHaveLength(1)
+    // The line is not a pid, so the window is the whole of the cancellation and
+    // the sentence says so -- refused at the grace, after the second read also
+    // found no number to name.
+    expect((await secondRefusal).message).toContain('may still be running')
   })
 
   it('stops a feed inside the distribution too, on the pid the wrapper reported', async () => {
@@ -4036,6 +4155,52 @@ describe('the wrapper into a distribution', () => {
     // and the stop inside the distribution is sent all the same.
     expect(child.killed).toEqual(['SIGTERM'])
     expect(calls[1]).toEqual(['/usr/bin/wsl.exe', '-d', 'Ubuntu', '--', 'sh', '-c', 'kill -TERM 4321'])
+    expect((await stopping).reason).toBe('stopped')
+  })
+
+  it('names a pid that arrives during the feed’s grace, and notices no window', async () => {
+    // The supervisor's half of the cold-distribution case: the feed is stopped
+    // while the distribution is still starting, and the wrapper's line lands
+    // inside `SHUTDOWN_GRACE_MS`. The pid is read at the grace, not at the
+    // stop: reading it once would skip the one `wsl.exe` that stops the
+    // process, and would tell the operator the process "may still be running"
+    // after the console had in fact killed it.
+    const directory = freshDirectory()
+    const plan = planFor('live.watch', {}, {
+      target: { project: PROJECT },
+      binaryPath: '',
+      directory,
+      appEnv: {},
+      wsl: { distro: 'Ubuntu', executable: '/usr/bin/wsl.exe' },
+    })
+    const calls: string[][] = []
+    const child = scriptedChild()
+    const timers = manualTimers()
+    const notices: string[] = []
+    const sidecar = startSidecar(
+      plan,
+      {
+        onFrame: () => undefined,
+        onNotice: (notice) => notices.push(notice.text),
+        onRestart: () => undefined,
+        onEnded: () => undefined,
+      },
+      {
+        spawner: ((command: string, args: readonly string[]) => {
+          calls.push([command, ...args])
+          return child
+        }) as ChildSpawner,
+        timers,
+      },
+    )
+    const stopping = sidecar.stop()
+    expect(child.killed).toEqual(['SIGTERM'])
+    child.emitStderr(`${WSL_WRAPPER_MARKER} 4321\n`)
+    timers.fire()
+    expect(calls[1]).toEqual(['/usr/bin/wsl.exe', '-d', 'Ubuntu', '--', 'sh', '-c', 'kill -TERM 4321'])
+    expect(calls).toHaveLength(2)
+    expect(notices).toEqual([])
+    child.close(null, 'SIGTERM')
     expect((await stopping).reason).toBe('stopped')
   })
 

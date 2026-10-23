@@ -1997,35 +1997,69 @@ export function runToCompletion(
       // `TerminateProcess`, so the Windows-side process is gone within a tick
       // while the Linux-side one -- the process F24 is about -- is still there.
       const endedOnItsOwn = exited
-      // The pid is read **now**, before the grace runs out: the shell prints it
-      // before it `exec`s the CLI, so it is there as soon as the child is
-      // running, and reading it here means the residual -- the one case where
-      // the console *cannot* name the pid -- is known before the sentence is
-      // built rather than after it has been sent.
-      const pid = !endedOnItsOwn && wrapper !== null ? wrapperPidIn(stderrHead) : null
-      const missed =
-        !endedOnItsOwn && wrapper !== null && pid === null
-          ? 'the wrapper reported no pid, so the process inside the distribution could not be stopped; it may still be running'
-          : null
-      if (!endedOnItsOwn) {
-        child.kill('SIGTERM')
-        timers.setTimeout(() => {
-          // The Windows-side child gets the stronger signal only if it is still
-          // there to receive it -- but the stop **inside** the distribution is
-          // sent whatever `wsl.exe` did, because its own exit is not evidence
-          // about the Linux process (see `endedOnItsOwn`). A stop that waited
-          // for `wsl.exe` to still be alive would never be sent on Windows at
-          // all, which is F24's stated consequence: a cancelled read leaving a
-          // `fugaro` holding a lease inside the distribution with nothing on
-          // screen to say so.
-          if (!exited) child.kill('SIGKILL')
-          if (pid !== null) stopInsideDistribution({ plan, spawner, log: deps.log, pid })
-        }, grace)
+      // `wrapperStarted` is the fact a `RunResult` would have carried, read off
+      // the head for the same reason the pid is: a read that times out returns
+      // no result, and `probeVersion` has nothing else to classify a WSL-route
+      // timeout by (T-F1, F26).
+      const noteWrapper = (): void => {
+        if (error instanceof SpawnTimeout) {
+          error.wrapperStarted = wrapper === null ? null : wrapperMarkerSeen(stderrHead)
+        }
       }
-      // The residual is stated where the operator reads it: appended to the
-      // sentence the read is refused with (D6(a): "a residual window that must
-      // be written down").
-      reject(missed === null ? error : withResidual(error, missed))
+      if (endedOnItsOwn) {
+        noteWrapper()
+        reject(error)
+        return
+      }
+      // The pid is read **now**, before the grace runs out, so that the common
+      // case -- the wrapper has already reported it -- needs no second read:
+      // the shell prints it before it `exec`s the CLI, which is as soon as the
+      // child is running.
+      const pid = wrapper !== null ? wrapperPidIn(stderrHead) : null
+      // Whether a residual is owed is decided by the read **inside** the timer,
+      // not here: a cold distribution can print the wrapper's line a moment
+      // after this deadline, and a pid that arrives during the grace is a pid
+      // the console can name. Reading it here only would leave the stop naming
+      // `null` while the process it could have stopped keeps running, and would
+      // state a residual that is already untrue.
+      const needsPid = wrapper !== null && pid === null
+      child.kill('SIGTERM')
+      if (!needsPid) {
+        // Nothing is owed to the operator, so the refusal is not held back:
+        // the pid is named and the sentence below is the whole answer.
+        noteWrapper()
+        reject(error)
+      }
+      timers.setTimeout(() => {
+        // The Windows-side child gets the stronger signal only if it is still
+        // there to receive it -- but the stop **inside** the distribution is
+        // sent whatever `wsl.exe` did, because its own exit is not evidence
+        // about the Linux process (see `endedOnItsOwn`). A stop that waited
+        // for `wsl.exe` to still be alive would never be sent on Windows at
+        // all, which is F24's stated consequence: a cancelled read leaving a
+        // `fugaro` holding a lease inside the distribution with nothing on
+        // screen to say so.
+        if (!exited) child.kill('SIGKILL')
+        const late = needsPid ? wrapperPidIn(stderrHead) : pid
+        if (late !== null) stopInsideDistribution({ plan, spawner, log: deps.log, pid: late })
+        if (needsPid) {
+          // The residual is stated where the operator reads it, and here is the
+          // last moment it can be stated *truthfully*: the grace has run, so
+          // whether the console could name the process is settled. Appended to
+          // the sentence the read is refused with (D6(a): "a residual window
+          // that must be written down"). A pid that arrived in the meantime
+          // means there is no window to write down -- the stop above named it.
+          noteWrapper()
+          reject(
+            late === null
+              ? withResidual(
+                  error,
+                  'the wrapper reported no pid, so the process inside the distribution could not be stopped; it may still be running',
+                )
+              : error,
+          )
+        }
+      }, grace)
     }
 
     deadline = timers.setTimeout(() => {
@@ -2095,15 +2129,25 @@ export function runToCompletion(
  * console looked. It keeps the error's own class, so `probeVersion` still tells
  * a `SpawnTimeout` from a spawn that failed outright. */
 function withResidual(error: Error, residual: string): Error {
-  return error instanceof SpawnTimeout
-    ? new SpawnTimeout(`${error.message}; ${residual}`)
-    : new Error(`${error.message}; ${residual}`)
+  if (!(error instanceof SpawnTimeout)) return new Error(`${error.message}; ${residual}`)
+  const wrapped = new SpawnTimeout(`${error.message}; ${residual}`)
+  wrapped.wrapperStarted = error.wrapperStarted
+  return wrapped
 }
 
 /** SpawnTimeout is the rejection of a read that missed its deadline, as its
- * own class so `probeVersion` can tell it from a spawn that failed outright. */
+ * own class so `probeVersion` can tell it from a spawn that failed outright.
+ *
+ * `wrapperStarted` is `RunResult`'s own fact, carried on the rejection because
+ * a read that times out never produces a `RunResult` and there is no other way
+ * for `probeVersion` to say whether a child inside the distribution had started
+ * at all: with `null` for both, a WSL-route timeout would be indistinguishable
+ * from a host one (T-F1, F26). `runToCompletion` writes it at the moment it
+ * refuses -- the marker's own answer, read off the same bounded head the pid
+ * comes from -- and a `SpawnTimeout` built anywhere else leaves it `null`. */
 export class SpawnTimeout extends Error {
   override readonly name = 'SpawnTimeout'
+  wrapperStarted: boolean | null = null
 }
 
 /** boundAppend keeps the last `limit` code units of `current + chunk`: stderr's
@@ -2631,12 +2675,20 @@ export async function probeVersion(
     })
   } catch (error) {
     if (error instanceof SpawnTimeout) {
+      // The sentence is `runToCompletion`'s own, residual and all. A deadline
+      // on the WSL route is the one case where the console may have left a
+      // `fugaro` running inside the distribution -- a cold distribution can
+      // still be starting when the five seconds are up -- and the console says
+      // so there, where it can still know it (D6(a), T-F4). Rebuilding a
+      // sentence here is what threw that away, and the installations list is
+      // exactly where such a probe is made: the operator read an ordinary
+      // timeout while the process it could not name kept running.
       return {
         ok: false,
         code: null,
         said: null,
-        reason: 'the binary did not answer `version` in time',
-        wrapperStarted: null,
+        reason: error.message,
+        wrapperStarted: error.wrapperStarted,
       }
     }
     throw error
@@ -3109,10 +3161,10 @@ export function startSidecar(
       // for what it could not do -- rather than a stop that silently did not
       // happen.
       const wrapper = plan.wrapper
-      // `child` is not null here: a child that was already gone when `stop()`
-      // was called returned above, so this is a stop of a process that was
-      // running -- the same position `runToCompletion`'s `endedOnItsOwn` puts
-      // it in.
+      // `child` is not null here: `stop()` returned above for a child that was
+      // already gone -- nulled by `decide`, which `close` and the drain timer
+      // after `exit` both call -- so this stop is armed for a child that was
+      // still running when it was asked for.
       const pid = wrapper !== null ? wrapperPidIn(stderrHead) : null
       timers.setTimeout(() => {
         // The Windows-side child gets the stronger signal only if it is still
@@ -3125,7 +3177,15 @@ export function startSidecar(
         // lease inside the distribution with nothing on screen to say so.
         if (child !== null) child.kill('SIGKILL')
         if (wrapper === null) return
-        if (pid === null) {
+        // The pid is read **again** here rather than used as it was at stop
+        // time: a cold distribution can print the wrapper's line a moment after
+        // the stop began, and that pid is one the console can name. Deciding
+        // from the stale value would skip the one `wsl.exe` that stops the
+        // process, and -- the other half of the same mistake -- would tell the
+        // operator the process "may still be running" after the console had
+        // just killed it.
+        const late = pid ?? wrapperPidIn(stderrHead)
+        if (late === null) {
           events.onNotice({
             text:
               'the feed was stopped, but the wrapper reported no pid: the process inside the distribution may still be running',
@@ -3133,7 +3193,7 @@ export function startSidecar(
           })
           return
         }
-        stopInsideDistribution({ plan, spawner, log: deps.log, pid })
+        stopInsideDistribution({ plan, spawner, log: deps.log, pid: late })
       }, grace)
     })
     return stopping

@@ -561,7 +561,7 @@ Files: `console/src/main/spawn.ts`, `console/src/main/wsl.ts`,
 `sh -c` script the console writes, so the pid inside the distribution is a live process the test can
 find and signal, and the second call this task asserts is one more invocation the report carries.
 Red step: through the fake — `abandon` sends `SIGTERM` to the `wsl.exe` child and, after
-`SHUTDOWN_GRACE_MS` (`spawn.ts:298`), issues **one** kill inside the distribution naming the pid the
+`SHUTDOWN_GRACE_MS` (`spawn.ts:397`), issues **one** kill inside the distribution naming the pid the
 wrapper reported; the fake's report shows the pid it was given is the child's, not the wrapper's; and
 a cancellation where the child had already exited **on its own** sends **no** second call. All three
 fail today.
