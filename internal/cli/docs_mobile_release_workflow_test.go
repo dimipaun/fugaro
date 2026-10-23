@@ -721,11 +721,11 @@ type mobileReleaseJobShape struct {
 	// version is not the version EAS would report.
 	versionSteps int
 	installs     int
-	masks         int
-	builds        int
-	summaries     int
-	submits       int
-	dryRuns       int
+	masks        int
+	builds       int
+	summaries    int
+	submits      int
+	dryRuns      int
 	// bound is how many of the job's steps bind the Expo token, which the caller
 	// holds against the number of `secrets.EXPO_TOKEN` references in the file.
 	bound int
