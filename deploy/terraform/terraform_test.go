@@ -3876,7 +3876,7 @@ func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 	}
 
 	// Every resource in the file is gated on the one boolean, which is what the
-	// header's "keeps the four resources of this file in step" means: a resource
+	// header's "keeps the six resources of this file in step" means: a resource
 	// added without it is created in an installation that never opted in.
 	// TestCredentialsServiceResourcesAreCounted reads the same promise from the
 	// other end — the sentence's number against the file — and this sweep is
@@ -3911,7 +3911,7 @@ func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 }
 
 // TestCredentialsServiceResourcesAreCounted reads the sentence that counts
-// this file's own resources — locals' "a single boolean keeps the four
+// this file's own resources — locals' "a single boolean keeps the six
 // resources of this file in step" — against the file. It said five while the
 // file declared four, and nothing read it: a number a reader is meant to trust
 // is a claim, and this is where it is checked rather than believed.
@@ -3922,9 +3922,9 @@ func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 // var.credentials_service null it creates nothing (D147) — so every resource in
 // it must be gated on the one boolean, and the count must be the whole file's.
 //
-// Mutation (run, restore): a fifth resource block in credentials.tf fails both
-// assertions ("declares 5 ... and says four", and the ungated one), and
-// reverting the word to "five" fails the count.
+// Mutation (run, restore): a seventh resource block in credentials.tf fails
+// both assertions ("declares 7 ... and says six", and the ungated one), and
+// reverting the word to "seven" fails the count.
 func TestCredentialsServiceResourcesAreCounted(t *testing.T) {
 	const path = "gcp/modules/installation/credentials.tf"
 	b, err := os.ReadFile(path)

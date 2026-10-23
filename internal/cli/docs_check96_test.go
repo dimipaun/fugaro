@@ -432,9 +432,9 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 //
 // The match is made on the file with its comments stripped
 // (stripLineComments, this package's own), and not on the raw text: every
-// spelling this regexp knows is one the file's own prose discusses at length -
+// spelling this regexp knows is one the file's own prose discusses at length —
 // the header names `fugaroCredentialsDatabase` and the long comment above the
-// role names both predefined RTDB roles and why they were refused - so a match
+// role names both predefined RTDB roles and why they were refused — so a match
 // over the raw bytes would flip this guard to "the service reads the database"
 // with no grant in the file at all. That is the vacuous pass the stripped read
 // removes, and the same shape the other guards in this package avoid.
