@@ -348,6 +348,80 @@ func TestWorkflowFilesExceptLeavesOutTheBasesOwnChanges(t *testing.T) {
 	}
 }
 
+// Every bound is filtered on its own: one the checkout cannot read is dropped
+// and takes nothing with it. Read together, the unreadable bound fails the
+// whole range and every bound is lost with it, which blames the run for a
+// workflow file a base branch's own commit merged in — a refusal for work it
+// never did.
+func TestWorkflowFilesExceptDropsOnlyTheUnreadableBound(t *testing.T) {
+	repo, remote := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	start, err := repo.HeadSHA(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The run's own workflow change.
+	testutil.WriteFiles(t, repo.Dir, map[string]string{".github/workflows/ci.yml": "on: pull_request\n"})
+	if _, err := repo.CommitAll(ctx, "the run's CI"); err != nil {
+		t.Fatal(err)
+	}
+	// A person lands a workflow file on main after the run was cut.
+	seed := filepath.Join(t.TempDir(), "seed")
+	testutil.Git(t, filepath.Dir(seed), "clone", "--quiet", remote, seed)
+	testutil.WriteFiles(t, seed, map[string]string{".github/workflows/person.yml": "on: push\n"})
+	testutil.Git(t, seed, "add", "-A")
+	testutil.Git(t, seed, "commit", "--quiet", "-m", "a person's CI")
+	testutil.Git(t, seed, "push", "--quiet", "origin", "HEAD:refs/heads/main")
+	mainTip := testutil.Git(t, seed, "rev-parse", "HEAD")
+	// The agent rebases onto it, as a run told to keep up with its base does.
+	testutil.Git(t, repo.Dir, "fetch", "--quiet", "origin", "main")
+	testutil.Git(t, repo.Dir, "rebase", "--quiet", "origin/main")
+	head, err := repo.HeadSHA(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// One bound, read on its own: the person's file is left out.
+	got, err := repo.WorkflowFilesExcept(ctx, start, mainTip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{".github/workflows/ci.yml"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("WorkflowFilesExcept = %v, want %v", got, want)
+	}
+	// A second bound the checkout cannot read (a well-formed commit SHA that
+	// was never fetched) is dropped, and the readable one still applies: the
+	// run's own file alone, not the person's.
+	const missing = "0000000000000000000000000000000000000000"
+	for _, c := range []struct {
+		name string
+		call func() ([]string, error)
+	}{
+		{"WorkflowFilesExcept", func() ([]string, error) { return repo.WorkflowFilesExcept(ctx, start, mainTip, missing) }},
+		{"WorkflowFilesInExcept", func() ([]string, error) { return repo.WorkflowFilesInExcept(ctx, start, head, mainTip, missing) }},
+	} {
+		files, err := c.call()
+		if err != nil {
+			t.Fatalf("%s with an unreadable bound: %v", c.name, err)
+		}
+		if want := []string{".github/workflows/ci.yml"}; !reflect.DeepEqual(files, want) {
+			t.Fatalf("%s = %v, want %v: an unreadable bound must not take the readable ones with it, or the run is refused for the base's own file", c.name, files, want)
+		}
+	}
+	// With no bound at all — the unreadable one is all there is — the list is
+	// longer rather than empty: the strict direction, and the one the guard
+	// has always failed in.
+	files, err := repo.WorkflowFilesExcept(ctx, start, missing)
+	if err != nil {
+		t.Fatalf("WorkflowFilesExcept with only an unreadable bound: %v", err)
+	}
+	if want := []string{".github/workflows/ci.yml", ".github/workflows/person.yml"}; !reflect.DeepEqual(files, want) {
+		t.Fatalf("WorkflowFilesExcept = %v, want %v", files, want)
+	}
+}
+
 // CommitsAhead counts the run's own commits: the base branch's own, merged
 // or rebased in after the run was cut, are not the run's work, so a run
 // that adds nothing still counts none.
@@ -391,6 +465,13 @@ func TestCommitsAheadCountsOnlyTheRunsOwnCommits(t *testing.T) {
 	// agent never fetched) subtracts nothing rather than failing finalize.
 	if n, err := repo.CommitsAhead(ctx, start, "1111111111111111111111111111111111111111"); err != nil || n != 2 {
 		t.Fatalf("CommitsAhead with a base the checkout lacks = %d, %v; want 2", n, err)
+	}
+	// Beside the base it can read, though, it must take nothing with it: a
+	// run that rebases onto its base and adds nothing is still a run that
+	// made no commits, which a bound dropped all together would report as
+	// the base's own commit being the run's.
+	if n, err := repo.CommitsAhead(ctx, start, "1111111111111111111111111111111111111111", "origin/main"); err != nil || n != 1 {
+		t.Fatalf("CommitsAhead with an unreadable base beside a readable one = %d, %v; want the run's 1", n, err)
 	}
 }
 
