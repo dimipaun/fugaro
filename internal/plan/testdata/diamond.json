@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "plan": "docs/plans/diamond.md",
+  "nodes": [
+    {"id": "a", "title": "the base", "run": null, "version": "0.9.0",
+     "footprint": {"prediction": true, "paths": ["internal/plan/**"]}},
+    {"id": "b", "title": "the left arm", "run": null, "version": "0.9.0",
+     "footprint": {"prediction": true, "paths": []}},
+    {"id": "c", "title": "the right arm", "run": null, "version": null,
+     "footprint": {"prediction": true, "paths": []}},
+    {"id": "d", "title": "the join", "run": null, "version": null,
+     "footprint": {"prediction": true, "paths": []}}
+  ],
+  "edges": [
+    {"task": "b", "needs": "a", "reason": "b builds on a"},
+    {"task": "c", "needs": "a", "reason": "c builds on a"},
+    {"task": "d", "needs": "b", "reason": "d needs the left arm"},
+    {"task": "d", "needs": "c", "reason": "d needs the right arm"}
+  ]
+}

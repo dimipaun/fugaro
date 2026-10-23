@@ -1,5 +1,11 @@
+blocked
+critical_path_length
+done
+downstream
 footprint
 id
+level
+ready
 run
 title
 version

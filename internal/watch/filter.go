@@ -5,22 +5,31 @@ import (
 	"time"
 )
 
+// FinishedKeep is how long a finished run stays listed by default: three
+// minutes (owner spec 2026-10-22, item 3). A run that has finished is noise
+// once the person watching has seen how it went, so it leaves the list by
+// itself — succeeded, failed and cancelled alike — and the x key dismisses
+// one at once. a (--all) shows the ones the window or a dismissal took away
+// again.
+const FinishedKeep = 3 * time.Minute
+
 // Filter hides finished rows that nobody needs to see any more (design
 // generic-tool §10.3): the dashboard stays about what needs attention, not
-// every run that ever happened. The zero Filter hides everything that is not
-// a failure, so every caller sets Keep, KeepCount and FailedKeep.
+// every run that ever happened. The zero Filter hides everything, so every
+// caller sets Keep, KeepCount and FailedKeep.
 type Filter struct {
 	All        bool
-	Keep       time.Duration // default 6h
+	Keep       time.Duration // FinishedKeep (3m); --keep widens it
 	KeepCount  int           // default 15
-	FailedKeep time.Duration // 24h, not a flag
+	FailedKeep time.Duration // FinishedKeep (3m), not a flag
 }
 
 // Apply hides v's finished rows per f and returns the result and how many it
-// hid. A failure is kept when it is not acknowledged and younger than
+// hid. A dismissed run is hidden whatever its status — x means "I have seen
+// this one" (owner spec 2026-10-22, item 4) — and so is a failure older than
 // FailedKeep; a success, already newest first, is kept while it is younger
 // than Keep and fewer than KeepCount successes have been kept so far. All
-// bypasses every rule. acked may be nil (nothing is acknowledged).
+// bypasses every rule. acked may be nil (nothing is dismissed).
 func (f Filter) Apply(v View, acked func(slug, run string) bool) (View, int) {
 	if acked == nil {
 		acked = func(string, string) bool { return false }
@@ -35,11 +44,18 @@ func (f Filter) Apply(v View, acked func(slug, run string) bool) (View, int) {
 		var kept []RunRow
 		successes := 0
 		for _, r := range b.Finished {
+			if f.All {
+				kept = append(kept, r)
+				continue
+			}
 			var keep bool
-			if r.Failed {
-				keep = f.All || (!acked(b.Slug, r.Run) && r.Age < f.FailedKeep)
-			} else {
-				keep = f.All || (r.Age < f.Keep && successes < f.KeepCount)
+			switch {
+			case acked(b.Slug, r.Run):
+				keep = false
+			case r.Failed:
+				keep = r.Age < f.FailedKeep
+			default:
+				keep = r.Age < f.Keep && successes < f.KeepCount
 				if keep {
 					successes++
 				}

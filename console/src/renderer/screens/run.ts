@@ -64,6 +64,7 @@ import type { Reading } from '../../shared/availability'
 import { ReplayBuffer, REPLAY_MAX_RECORDS, REPLAY_WINDOW_SECONDS } from '../../shared/replay'
 import type { ReplayArrival, ReplayDocument, ReplayRecord } from '../../shared/replay'
 import type { OperationName } from '../../main/ipc'
+import { launcherFull } from '../../shared/launcher'
 import type { TextClass } from '../../shared/sanitize'
 import { putLink, putReading, putText } from '../app'
 import type { ElementLike } from '../app'
@@ -162,6 +163,11 @@ export interface RunRow {
   readonly branch: string | null
   readonly outcome: string | null
   readonly requestedBy: string | null
+  /** the run's whole recorded launcher (`launched_by`), `null` when the record
+   * carries none. The **whole** value and not the short form a column has room
+   * for: this screen is the run view, which is where the owner's spec puts the
+   * full identity (`shared/launcher.ts`) */
+  readonly launchedBy: string | null
   readonly created: string | null
   readonly startedAt: string | null
   readonly imageAge: Reading
@@ -644,6 +650,7 @@ export function buildRunModel(inputs: RunInputs): RunModel {
       branch: textAt(row['branch']),
       outcome: textAt(row['outcome']),
       requestedBy: textAt(row['requested_by']),
+      launchedBy: textAt(row['launched_by']),
       created: textAt(row['created']),
       startedAt: textAt(row['started_at']),
       imageAge: readNumber(row['image_age_s'], 'row.image_age_s'),
@@ -795,6 +802,16 @@ function header(factory: ScreenFactory, model: RunModel): ScreenElement {
   if (model.row.branch !== null) textCell(element, factory, 'span', model.row.branch, 'branch', 'row.branch', 'run-branch')
   if (model.row.requestedBy !== null) {
     textCell(element, factory, 'span', model.row.requestedBy, 'person', 'row.requested_by', 'run-requested-by')
+  }
+  // Who started the run: the **whole** recorded identity, which is what the run
+  // view is for -- the Live and Projects columns draw the short form
+  // (`shared/launcher.ts`). It goes through the `person` class, the class the
+  // wire key carries, so an address is the console's marker here as it is in
+  // the requester cell beside it and no address is ever drawn; a login is
+  // drawn as itself. A record with no launcher draws no cell.
+  const startedBy = launcherFull(model.row.launchedBy)
+  if (startedBy !== null) {
+    textCell(element, factory, 'span', startedBy, 'person', 'row.launched_by', 'run-started-by')
   }
   // The terminal/settled pair is what says whether the numbers on this screen
   // can still move, which is a fact about reading them.

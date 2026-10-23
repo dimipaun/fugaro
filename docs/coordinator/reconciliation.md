@@ -494,7 +494,7 @@ change. → **Q11**.
 
 **#26 — Cost arithmetic at the spec's own scale (10 developers, 50 services), from the repo's own numbers. — Open.**
 From the price catalog the repo ships (`internal/pricing/catalog/catalog.json`,
-`checked_at 2026-10-14`): `deepseek/deepseek-v4.1-flash` is $0.01584–$0.60 per million
+`checked_at 2026-10-23`): `deepseek/deepseek-v4.1-flash` is $0.07–$0.60 per million
 input tokens and $0.18–$2.40 per million output; the catalog's own note is that *"a run
 that charges $5 may really cost up to about $189"* under the cheapest-endpoint
 undercharge (`docs/design/provider-price-catalog.md`, on *"`cheapest` can undercharge"*). The built-in Claude table

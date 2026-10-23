@@ -192,7 +192,7 @@ jobs:
       # The half of this job the Linux one does not have, and the only place the
       # console's suite ever runs on Windows. `npm run typecheck` is the
       # TypeScript compiler over the whole tree with no emit, and
-      # `npm run test:unit` is vitest over the 55 `.ts` files under test/unit (53
+      # `npm run test:unit` is vitest over the 57 `.ts` files under test/unit (54
       # of them `*.test.ts`; `find console/test/unit -name '*.ts' | wc -l`), which
       # need no display and no Electron. Both are expected to be red until the POSIX
       # repairs this file's header names have landed; that is what the staging is
