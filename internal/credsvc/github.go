@@ -284,27 +284,66 @@ func (s *Server) mint(ctx context.Context, w http.ResponseWriter, r *http.Reques
 		s.refuseMint(ctx, w, id, ErrMintGitHub.Error())
 		return
 	}
-	// The audit line is written BEFORE the token is handed over, and a line
-	// that cannot be written is a refusal (C1.13, D143: an issuance that
-	// cannot be audited is not made). A token cannot be unminted at GitHub, so
-	// what "not made" means here is that it reaches nobody: no answer carries
-	// it, no log line and no error does either, and the run halts on
-	// state_unavailable like any other refusal of this endpoint.
-	//
-	// The refusal is answered through refuseMint and not written here, because
-	// it IS a refusal of this endpoint after admission: the act that could not
-	// be recorded is the issuance, and a failure to write one line is no reason
-	// to leave the line an operator does need — the mint that handed out no
-	// token — unwritten. (refuseMint may fail its own line as well; then the
-	// failure is on the service's log twice, which is where an operator looks
-	// for an audit log that is not recording.)
+	// The answer is built, audited and handed over in that order, in
+	// answerMint: an answer the service cannot build is a refusal that writes
+	// its own line and no issuance line at all, and an issuance whose line
+	// cannot be written is a refusal too (C1.13, D143).
+	s.answerMint(ctx, w, id, MintResponse{Token: token, ExpiresAt: expires, Repository: ja.Repo})
+}
+
+// answerMint builds the mint's answer, audits the issuance and writes it.
+//
+// The order is the point of this function being one:
+//
+//   - the answer is built FIRST, and a body the service cannot build is a
+//     refusal answered through refuseMint — which writes the refusal's OWN
+//     line — with no issuance line written at all. The issuance's line says a
+//     token was issued, so a line written for an answer that carries no token
+//     is a mint an operator reads as served, and the one act this service hands
+//     a credential out for would be the act its log got wrong. Building the
+//     body is pure (json.Marshal over three fields) and touches no credential,
+//     so nothing is spent by doing it before the line;
+//   - the audit line is written BEFORE the token is handed over, and a line
+//     that cannot be written is a refusal (C1.13, D143: an issuance that
+//     cannot be audited is not made). A token cannot be unminted at GitHub, so
+//     what "not made" means here is that it reaches nobody: no answer carries
+//     it, no log line and no error does either, and the run halts on
+//     state_unavailable like any other refusal of this endpoint.
+//
+// Both refusals are answered through refuseMint and not written here, because
+// each IS a refusal of this endpoint after admission: the act that could not be
+// recorded (or could not be built) is the issuance, and a failure to write one
+// line is no reason to leave the line an operator does need — the mint that
+// handed out no token — unwritten. (refuseMint may fail its own line as well;
+// then the failure is on the service's log twice, which is where an operator
+// looks for an audit log that is not recording.)
+//
+// The branch that builds no body is unreachable through a real mint: the answer
+// is three fields, two of them strings, and the third is the expiry GitHub's API
+// named as an RFC3339 timestamp, whose year is four digits — which is every year
+// encoding/json writes. It is kept rather than dropped because the alternative
+// to answering is a panic inside the one act that hands out a credential, and
+// the call reaching it is the call that must be refused; it is driven by hand in
+// TestAMintWhoseAnswerCannotBeBuiltIsRefusedUnaudited.
+func (s *Server) answerMint(ctx context.Context, w http.ResponseWriter, id Identity, ans MintResponse) {
+	body, err := json.Marshal(ans)
+	if err != nil {
+		s.log.Error("credsvc: the mint's answer could not be built", "error", err)
+		s.refuseMint(ctx, w, id, mintAnswerRefusal)
+		return
+	}
 	if err := s.auditMint(ctx, id, StatusOK); err != nil {
 		s.log.Error("credsvc: the mint's audit line was not written", "error", err)
 		s.refuseMint(ctx, w, id, ErrMintUnaudited.Error())
 		return
 	}
-	writeMintAnswer(w, MintResponse{Token: token, ExpiresAt: expires, Repository: ja.Repo})
+	writeMintAnswer(w, body)
 }
+
+// mintAnswerRefusal is what a mint whose own answer cannot be built is refused
+// with: this file's own sentence, and never a word of json's error, which names
+// the byte it choked on and can quote the value it was handed.
+const mintAnswerRefusal = "the service could not build the mint's answer"
 
 // refuseMint audits a refused mint and answers it.
 //
@@ -313,7 +352,7 @@ func (s *Server) mint(ctx context.Context, w http.ResponseWriter, r *http.Reques
 // is not made either way, so the run gets the refusal it would have got and the
 // operator gets the auditor's own error on the service's log. (The issuance
 // path is the one where the two differ, and it refuses on a line it could not
-// write — see mint.)
+// write — see answerMint.)
 //
 // It answers through refuseCall, the ONE refusal helper this service has, so a
 // refused mint is written and answered by the same code as every other refusal
@@ -377,24 +416,17 @@ func (s *Server) auditMint(ctx context.Context, id Identity, status string) erro
 	return s.auditCall(ctx, id, purpose, credential, "", status)
 }
 
-// writeMintAnswer writes the mint's answer. It is the one answer of this
-// service that carries a credential's value, so it is no-store: an
-// intermediary that cached an installation token would be handing the next
-// caller a credential this service did not mint for it.
+// writeMintAnswer writes the mint's answer, from the body answerMint already
+// built and audited. It is the one answer of this service that carries a
+// credential's value, so it is no-store: an intermediary that cached an
+// installation token would be handing the next caller a credential this service
+// did not mint for it.
 //
 // No header of this answer carries the value, and none of the forward path's
 // headers is set: X-Fugaro-Tier and X-Fugaro-Credential describe a credential
 // that answered an Anthropic call, and a mint has neither (the App key is not
 // a model credential and no cascade chose it).
-func writeMintAnswer(w http.ResponseWriter, ans MintResponse) {
-	body, err := json.Marshal(ans)
-	if err != nil {
-		WriteWireError(w, StatusUnavailable, WireError{
-			Error:   ErrorStateUnavailable,
-			Message: "the service could not build the mint's answer",
-		})
-		return
-	}
+func writeMintAnswer(w http.ResponseWriter, body []byte) {
 	w.Header().Set("Content-Type", contentTypeJSON)
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
