@@ -218,6 +218,50 @@ describe('the theme directory, as the freshness bar', () => {
   })
 })
 
+describe('the tokens the reading is compared against', () => {
+  /** declarationSelector is the selector of the rule that declares one token, in
+   * a stylesheet with its comments stripped. It is a scan and not a parser, and
+   * it does not need to be one: it is asked about `palette.css`'s two top-level
+   * token blocks. */
+  function declarationSelector(css: string, token: string): string {
+    const bare = css.replace(/\/\*[\s\S]*?\*\//g, '')
+    const at = bare.search(new RegExp(`(^|[;{\\s])${token}\\s*:`, 'm'))
+    if (at < 0) throw new Error(`no rule declares ${token}`)
+    const open = bare.lastIndexOf('{', at)
+    const close = bare.lastIndexOf('}', at)
+    // The selector is what stands between the previous rule's `}` and this
+    // rule's `{` -- the match's own index is the whitespace in front of the
+    // token, so `at` cannot be used as the start of the selector.
+    return bare.slice(close + 1, open).trim()
+  }
+
+  it('are declared on the document root, which is where the e2e probe reads them', () => {
+    // The half of `readGround` a unit test can hold. It reads `--ground` and
+    // `--text` off `document.documentElement` (`getComputedStyle(...).getPropertyValue`),
+    // and a custom property declared on `body` or on `[data-theme]` alone — the
+    // screens stamp that attribute on their own roots — does not resolve there.
+    // So the rule that declares them has to match the document root, or the e2e
+    // assertion is red on a perfectly styled tree.
+    const palette = themeStylesheets(consoleDir).find((sheet) => sheet.name === 'palette.css')
+    if (palette === undefined) throw new Error('the theme directory holds no palette.css')
+    const css = readFileSync(join(consoleDir, palette.path), 'utf8')
+
+    for (const token of [GROUND_TOKEN, TEXT_TOKEN]) {
+      const selectors = declarationSelector(css, token).split(',').map((one) => one.trim())
+      expect(selectors, `${token} is not declared by a rule that matches the document root`).toContain(':root')
+    }
+  })
+
+  it('refuses a token declared only on a screen root rather than on the document root', () => {
+    // The other direction, so the case above is not satisfied by any selector
+    // list that happens to hold the string: the reading is about the document
+    // root and about nothing else.
+    const planted = "[data-theme] {\n  --ground: #0A0E16;\n  --text: #E6EEF5;\n}\n"
+    const selectors = declarationSelector(planted, GROUND_TOKEN).split(',').map((one) => one.trim())
+    expect(selectors).not.toContain(':root')
+  })
+})
+
 describe('the re-record command', () => {
   it('is the exact line, and it builds first', () => {
     // `npx playwright test` does not build, and the specs read `dist/`: a
