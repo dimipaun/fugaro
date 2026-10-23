@@ -1507,11 +1507,6 @@ export const WSL_SHELL_FLAG = '-c'
  * reads carries it. */
 export const WSL_WRAPPER_MARKER = 'fugaro-console: the WSL wrapper started'
 
-/** wslWrapperSequence numbers the pid file names this process hands out. It is
- * a counter and not a random number: two spawns of one process must differ, and
- * a name a test can predict is a name a test can assert. */
-let wslWrapperSequence = 0
-
 /** shellQuote spells one word for the distribution's own `sh` (T-F4).
  *
  * **This is the whole of the wrapper's injection surface, and it is the reason
