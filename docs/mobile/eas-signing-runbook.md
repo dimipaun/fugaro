@@ -512,7 +512,8 @@ reaches a store:
   spend this release's build numbers on artifacts nobody ever submits. **The
   build number is not the version the stores show and not the version step 4
   compares with the tag** — that one is `expo.version` in `app.json`, the line
-  the app's own `mobile-vX.Y.Z` tag names (§14, Tension 3);
+  the app's own `mobile-vX.Y.Z` tag names (and `mobile/package.json`'s `version`
+  with it: the two are one number, §14, Tension 3);
 - **`cli.requireCommit: true`** is what makes a store build record the commit it
   was made from — the `gitCommitHash` step 2 compares with `$SHA`;
 - **each profile names the EAS environment it builds with**: `development`,
@@ -681,9 +682,9 @@ disagree, **the file wins** — and then this page is the thing to fix.
 
 | | |
 |---|---|
-| **Trigger** | the **`push` of a tag matching `mobile-v[0-9]+.[0-9]+.[0-9]+`** — the app's own stream, and not the CLI's `v[0-9]+.[0-9]+.[0-9]+` the file carried until the owner's ruling of 2026-10-22 (the CLI's filter started this workflow on every CLI release, so the app was built and submitted whenever the CLI moved); a bare `mobile-*` would also start a release on `mobile-vtest` or on a `mobile-v1.2.3-rc1` tag, which is not a release of anything. The other trigger is **`workflow_dispatch`**, whose one input `dry_run` **defaults to `true` and stops before the submission** — so a person trying the workflow gets a build, a summary and no store upload. The app is versioned with **its own** tag (C6's "versioned with the CLI's tag" is superseded), and a tag is the one ref that means "this commit is a release": the tag's version and `mobile/app.json`'s `expo.version` are the same number, which the file's first step enforces. **Refused: `pull_request`, `pull_request_target`, `workflow_run` and every scheduled trigger** — a job that builds on EAS and holds an Expo token must never run on a pull request from any branch, which is the defect the console's two files exist to prevent: `.github/workflows/console-tests.yml` runs on every pull request and holds no secret, while the job that holds the signing material runs only on a tag push. |
+| **Trigger** | the **`push` of a tag matching `mobile-v[0-9]+.[0-9]+.[0-9]+`** — the app's own stream, and not the CLI's `v[0-9]+.[0-9]+.[0-9]+` the file carried until the owner's ruling of 2026-10-22 (the CLI's filter started this workflow on every CLI release, so the app was built and submitted whenever the CLI moved); a bare `mobile-*` would also start a release on `mobile-vtest` or on a `mobile-v1.2.3-rc1` tag, which is not a release of anything. The other trigger is **`workflow_dispatch`**, whose one input `dry_run` **defaults to `true` and stops before the submission** — so a person trying the workflow gets a build, a summary and no store upload. The app is versioned with **its own** tag (C6's "versioned with the CLI's tag" is superseded), and a tag is the one ref that means "this commit is a release": the tag's version, `mobile/app.json`'s `expo.version` and `mobile/package.json`'s `version` are the same number, which the file's first step enforces. **Refused: `pull_request`, `pull_request_target`, `workflow_run` and every scheduled trigger** — a job that builds on EAS and holds an Expo token must never run on a pull request from any branch, which is the defect the console's two files exist to prevent: `.github/workflows/console-tests.yml` runs on every pull request and holds no secret, while the job that holds the signing material runs only on a tag push. |
 | **The two jobs** | `ios` and `android`, one per platform, independent of each other — neither needs the other, so a platform that fails never blocks the other's release. Each runs on a **pinned** `ubuntu-24.04` with a 90-minute timeout, and **`concurrency`** is keyed on the workflow's own name rather than the ref, so two releases queue instead of submitting at once and a release mid-submission is never cancelled. |
-| **Locks** | **two, on each job.** `environment: mobile-release` — whose only required reviewer is you (§9) — **and the release gate**: on a tag push each job runs `scripts/release-gate.sh` (the app's `mobile-vX.Y.Z` tag, which the script accepts under that one prefix), which is what every publishing workflow here does; a dispatch that would submit runs a second gate step, so a dispatch naming an off-main branch or a `mobile-vtest` tag cannot build and submit behind nothing but the click. **Before either gate, on any tag ref, the version rule runs**: the tag's version is compared with `mobile/app.json`'s `expo.version`, and a tag that disagrees stops the job — EAS reports the config's version, so the alternative is a store record under a version no tag names. This is why the jobs carry `checks: read` beside `contents: read`, and why the checkout is full-depth. |
+| **Locks** | **two, on each job.** `environment: mobile-release` — whose only required reviewer is you (§9) — **and the release gate**: on a tag push each job runs `scripts/release-gate.sh` (the app's `mobile-vX.Y.Z` tag, which the script accepts under that one prefix), which is what every publishing workflow here does; a dispatch that would submit runs a second gate step, so a dispatch naming an off-main branch or a `mobile-vtest` tag cannot build and submit behind nothing but the click. **Before either gate, on any tag ref, the version rule runs**: the tag's version is compared with `mobile/app.json`'s `expo.version` **and** `mobile/package.json`'s `version`, and a tag that disagrees with either stops the job — EAS reports the config's version, so the alternative is a store record under a version no tag names, and the manifest is compared because the app's own test pins the two lines to each other and no workflow here runs that suite. This is why the jobs carry `checks: read` beside `contents: read`, and why the checkout is full-depth. |
 | **What it does** | builds on EAS with the **`internal`** profile of §8 and **submits the build it just made** — `eas build --json` is captured and its id is passed to `eas submit --id`, not `--latest`, which would take whoever's latest build of the profile. iOS goes to TestFlight's **internal** testers and Android to Play's **internal-testing** track: the same C8-bounded tracks Check 89 checks, reached from CI rather than from your terminal. |
 | **Which platforms run** | both are enabled by design (the owner's ruling of **2026-10-20**: both platforms ship from here), and one **repository variable** — `MOBILE_RELEASE_DISABLED_PLATFORMS`, naming `ios`, `android` or `ios,android` — is a **skip** list that turns one off. An unset variable names neither, so both run. |
 | **Permissions** | declared explicitly and minimally, at the workflow level **and** on each job: **`permissions:`** with **`contents: read`**, plus `checks: read` because the release gate reads the commit's check-runs. No write scope of any kind — no `id-token: write`, no `packages: write`, never `permissions: write-all`. |
@@ -942,10 +943,13 @@ chose.
 **Tension 3 — the version the app reports: SETTLED, and it is `expo.version`.**
 C6 said the app is versioned with the CLI's tag, and the owner's ruling of
 2026-10-22 supersedes that half of it: the app has its own tag
-(`mobile-vX.Y.Z`), and the tag's version and this line are the same number, which
-the staged workflow's first step enforces. What C6 settled does not change:
-`mobile/app.json`'s `version`
-is `0.0.0` today and P3.1's test pins it to `mobile/package.json`'s. The rule
+(`mobile-vX.Y.Z`), and the tag's version, this line and `mobile/package.json`'s
+`version` are the same number, which the staged workflow's first step enforces on
+all three. What C6 settled does not change: `mobile/app.json`'s `version` is
+`0.0.0` today and P3.1's test pins it to `mobile/package.json`'s — which is why
+the workflow compares the manifest too, and why a release sets both lines in one
+commit: nothing this repository runs executes the app's suite, so the pinned pair
+would otherwise only be checked by hand. The rule
 that reconciles them is the one `mobile/eas.json` and `mobile/README.md` now
 carry together: the **build number** (`expo.ios.buildNumber`,
 `expo.android.versionCode`) is EAS's, kept on the project by
@@ -953,8 +957,11 @@ carry together: the **build number** (`expo.ios.buildNumber`,
 `internal` (§8) — **the build number is not the version the stores show** — and
 the version the stores show, and the one Check 89's step 4 compares with `$TAG`,
 is **`expo.version` in `mobile/app.json`**, which a release sets to the version
-the tag names. `0.0.0` is the placeholder that says no release has been cut yet.
-**FACT for §14 (owner):** that `expo.version` was set to the release's version
+the tag names — and `mobile/package.json`'s `version` with it, in the same
+commit, because the app's own test pins the two to each other and the workflow's
+first step refuses a tag that disagrees with either. `0.0.0` is the placeholder
+that says no release has been cut yet. **FACT for §14 (owner):** that
+`expo.version` and the manifest's `version` were set to the release's version
 before step 4, and the commit that did it.
 
 **Tension 4 — three check numbers, and the register's step 4 has them wrong.**

@@ -287,10 +287,13 @@ alone, and the reason is the same one that names it the store profile:
 store, so incrementing for them would spend this release's build numbers on
 artifacts nobody ever submits. The build number is **not** the version the
 stores show, and it is not the version check 89 step 4 compares with the tag:
-that one is `expo.version` in `app.json`, the line C6 ties to the release tag,
-so releasing this app means setting it to the version being released (`0.0.0` in
-the tree is the placeholder a release replaces — nothing here bumps it for
-you). And `cli.requireCommit` is `true` (a store build records the commit it was
+that one is `expo.version` in `app.json`, the line the app's own release tag
+(`mobile-vX.Y.Z`) names — and `version` in `package.json` with it, the two being
+one number that `src/app-config.test.js` pins together. So releasing this app
+means setting **both** to the version being released, in one commit, before the
+tag (`0.0.0` in the tree is the placeholder a release replaces — nothing here
+bumps either for you, and the staged release workflow refuses a tag that
+disagrees with either). And `cli.requireCommit` is `true` (a store build records the commit it was
 made from). `development` is a dev client on internal distribution and
 `preview` is an internal-distribution build — neither reaches a store — and
 each profile
@@ -342,7 +345,8 @@ processes the build first, and the owner does four things:
    Store Connect shows it anyway, the answer is the declared one.
 4. **Install through the TestFlight app** on the device — the console hands out
    no build by itself. This is Check 89 step 4's install, and what it records is
-   the version the app reports against the release's tag (C6).
+   the version the app reports against the release's own tag, `mobile-vX.Y.Z`
+   (C6's "the app is versioned with the CLI's tag" is superseded).
 
 **The Android equivalent.** `eas submit --profile internal --platform android`
 uploads the **AAB** to Play's **internal testing** track — `eas.json`'s

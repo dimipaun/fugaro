@@ -138,11 +138,15 @@
 #     `mobile-v1.2.3-rc1` tag, which is not a release of anything.
 #   - **The version comes from the tag, and the app config has to agree with
 #     it.** The first step of each job holds the pushed tag to a strict
-#     `mobile-vX.Y.Z` shape and compares its version with `expo.version` in
-#     `mobile/app.json`, refusing a tag whose version differs: EAS reports the
-#     config's version, not the tag, so a build made from a mismatched tag
-#     would be submitted as a version no tag names. The step runs on any tag
-#     ref (`github.ref_type == 'tag'`), so a manual dispatch naming a tag is
+#     `mobile-vX.Y.Z` shape and compares its version with both of the app's own
+#     version lines -- `expo.version` in `mobile/app.json` and `version` in
+#     `mobile/package.json` -- refusing a tag whose version differs from either:
+#     EAS reports the config's version, not the tag, so a build made from a
+#     mismatched tag would be submitted as a version no tag names, and the
+#     manifest is the second line because the app's own suite pins the two to
+#     each other (`mobile/src/app-config.test.js`) while no workflow in this
+#     repository runs that suite. The step runs on any tag ref
+#     (`github.ref_type == 'tag'`), so a manual dispatch naming a tag is
 #     held to it as well.
 
 name: mobile-release
@@ -210,9 +214,17 @@ jobs:
       # own version line (`expo.version` in `mobile/app.json`), and EAS reports
       # that line rather than the tag: a build made from a tag whose version
       # disagrees with the config is a store listing whose version is not the
-      # one the tag names. So the strict shape is checked here, then the two
-      # numbers are compared, and a mismatch stops the job before the gate
-      # below and long before a store -- the version is never in the tag alone.
+      # one the tag names. So the strict shape is checked here, then the tag is
+      # compared with **both** lines the app's version lives in -- the config,
+      # and `version` in `mobile/package.json`, which the app's own test pins
+      # `expo.version` to (`mobile/src/app-config.test.js`: "the config and the
+      # manifest agree on the version"). A mismatch on either stops the job
+      # before the gate below and long before a store -- the version is never in
+      # the tag alone. The manifest is compared here and not left to the app's
+      # suite because nothing this repository runs executes that suite: no
+      # workflow mentions `mobile/`, so `scripts/release-gate.sh`'s required
+      # checks cannot see it, and a release that bumped only the config would
+      # submit a build and land on `main` with a red test nobody runs.
       # The condition is a fact about the ref rather than the event: a manual
       # dispatch can name a tag too (`gh workflow run --ref mobile-v0.1.0`),
       # and a dispatched tag reaches a store exactly as a pushed one does.
@@ -238,7 +250,19 @@ jobs:
             echo "::error::the tag names ${version} and mobile/app.json carries expo.version ${app_version}: refusing to build, because EAS reports the app's version and this build would be submitted as a version no tag names. Set expo.version to ${version} in a commit on main and tag that commit." >&2
             exit 1
           fi
-          echo "the tag ${TAG} names ${version}, which is mobile/app.json's expo.version"
+          # The app's version is two checked-in lines, and the second one is the
+          # one a release that followed a rule naming only `app.json` would
+          # forget: `mobile/src/app-config.test.js` asserts `expo.version` equals
+          # `mobile/package.json`'s `version`, and nothing in this repository
+          # runs that suite (no workflow mentions `mobile/`), so a tag over a
+          # bumped config and an unbumped manifest would be built, submitted and
+          # merged with a red test behind it. Read the same way as the config's.
+          manifest_version="$(jq -er '.version | select(type == "string")' mobile/package.json)"
+          if [[ "${manifest_version}" != "${version}" ]]; then
+            echo "::error::the tag names ${version} and mobile/package.json carries version ${manifest_version}: refusing to build, because the app's own test pins expo.version to the manifest (mobile/src/app-config.test.js) and no check this repository runs executes that suite -- this release would submit a build and leave the app's tests red on the tagged commit. Set version in mobile/package.json to ${version} in the same commit on main." >&2
+            exit 1
+          fi
+          echo "the tag ${TAG} names ${version}, and both of the app's version lines (mobile/app.json's expo.version, mobile/package.json's version) carry it"
       # The gate every tag-triggered publishing workflow here runs first: the
       # tag is a strict `vX.Y.Z` -- or the app's strict `mobile-vX.Y.Z`, the one
       # tag stream the gate accepts under a prefix, which `scripts/release-gate.sh`
@@ -442,8 +466,10 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       # The same version rule as the iOS job's, run independently of it: a tag
-      # whose version disagrees with `mobile/app.json` must not reach a store
-      # from either job, and each job is this platform's whole release.
+      # whose version disagrees with either of the app's two version lines
+      # (`mobile/app.json`'s `expo.version` and `mobile/package.json`'s
+      # `version`, which the app's own suite pins to each other) must not reach a
+      # store from either job, and each job is this platform's whole release.
       - name: The tag's version is the app's version
         if: github.ref_type == 'tag'
         env:
@@ -460,7 +486,12 @@ jobs:
             echo "::error::the tag names ${version} and mobile/app.json carries expo.version ${app_version}: refusing to build, because EAS reports the app's version and this build would be submitted as a version no tag names. Set expo.version to ${version} in a commit on main and tag that commit." >&2
             exit 1
           fi
-          echo "the tag ${TAG} names ${version}, which is mobile/app.json's expo.version"
+          manifest_version="$(jq -er '.version | select(type == "string")' mobile/package.json)"
+          if [[ "${manifest_version}" != "${version}" ]]; then
+            echo "::error::the tag names ${version} and mobile/package.json carries version ${manifest_version}: refusing to build, because the app's own test pins expo.version to the manifest (mobile/src/app-config.test.js) and no check this repository runs executes that suite -- this release would submit a build and leave the app's tests red on the tagged commit. Set version in mobile/package.json to ${version} in the same commit on main." >&2
+            exit 1
+          fi
+          echo "the tag ${TAG} names ${version}, and both of the app's version lines (mobile/app.json's expo.version, mobile/package.json's version) carry it"
       # The same gate as the iOS job's, run independently of it: this job is
       # this platform's release, and a tag that is off-main or red must not
       # reach a store from either job.

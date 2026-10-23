@@ -23,10 +23,16 @@ does neither.
 **The two other things a mobile release ships with**, both in the commit that
 lands the notes, on `main` before the tag:
 
-- **`expo.version` in `mobile/app.json`, set to `X.Y.Z`.** That is the version
-  the app reports, and the staged release workflow refuses a tag whose version
-  disagrees with it ([../../pending-workflows/mobile-release.yml](../../pending-workflows/mobile-release.yml)).
-  The notes' version and the tag's version are the same number as the config's.
+- **Both of the app's version lines, set to `X.Y.Z`: `expo.version` in
+  `mobile/app.json` and `version` in `mobile/package.json`.** The first is the
+  version the app reports; the second is the app's own record of it, which
+  `mobile/src/app-config.test.js` pins the first to. The staged release workflow
+  refuses a tag whose version disagrees with **either**
+  ([../../pending-workflows/mobile-release.yml](../../pending-workflows/mobile-release.yml)),
+  because nothing this repository runs executes that test suite — no workflow
+  mentions `mobile/` — so a release that bumped only the config would submit a
+  build and leave the app's tests red behind it. The notes' version and the tag's
+  version are the same number as both lines'.
 - **One line in `website/data/mobile-release-summaries.yaml`**, keyed by the tag
   (`mobile-vX.Y.Z: what this release gives a user.`): the app's own end-user
   summary, beside the CLI's [`website/data/release-summaries.yaml`](../../../website/data/release-summaries.yaml)

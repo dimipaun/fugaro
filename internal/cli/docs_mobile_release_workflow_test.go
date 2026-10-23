@@ -131,10 +131,15 @@ const (
 	// 2026-10-22.
 	mobileReleaseTagPattern = "mobile-v[0-9]+.[0-9]+.[0-9]+"
 	// mobileReleaseVersionStepName is the step that holds the tag's version to
-	// the app config's: the app has its own tag stream (`mobile-vX.Y.Z`) and its
-	// own version line (`expo.version` in `mobile/app.json`), EAS reports the
-	// config's version rather than the tag, and a tag that disagrees with it
-	// would be submitted as a version no tag names. The whole rule is the four
+	// the app's own version lines: the app has its own tag stream
+	// (`mobile-vX.Y.Z`) and two checked-in lines that have to name its version --
+	// `expo.version` in `mobile/app.json`, which EAS reports, and `version` in
+	// `mobile/package.json`, which `mobile/src/app-config.test.js` pins
+	// `expo.version` to (`assert.equal(CONFIG.expo.version, MANIFEST.version)`).
+	// A tag that disagrees with the first would be submitted as a version no tag
+	// names; a tag that disagrees with the second submits fine and leaves the
+	// app's own `npm test` red on the tagged commit, which no check in this
+	// repository reads (no workflow mentions `mobile/`). The whole rule is the
 	// constants below, and each is asserted rather than a pattern that could
 	// appear in a comment.
 	mobileReleaseVersionStepName = "The tag's version is the app's version"
@@ -146,12 +151,15 @@ const (
 	// only way into a store behind a tag nothing compared with the config.
 	mobileReleaseVersionCondition = "github.ref_type == 'tag'"
 	// mobileReleaseVersionShapeCheck is the block that refuses a tag that is not
-	// the app's own strict shape, and mobileReleaseVersionMismatchCheck the one
-	// that refuses a tag whose version is not the config's. Both are read as
-	// blocks (each has to stop the job), because a guard that only prints is a
-	// build that still goes to a store (mobileReleaseGuardStops).
-	mobileReleaseVersionShapeCheck    = `if [[ ! "${TAG}" =~ ^mobile-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then`
-	mobileReleaseVersionMismatchCheck = `if [[ "${app_version}" != "${version}" ]]; then`
+	// the app's own strict shape, mobileReleaseVersionMismatchCheck the one that
+	// refuses a tag whose version is not the config's, and
+	// mobileReleaseManifestMismatchCheck the one that refuses a tag whose version
+	// is not the manifest's. All three are read as blocks (each has to stop the
+	// job), because a guard that only prints is a build that still goes to a
+	// store (mobileReleaseGuardStops).
+	mobileReleaseVersionShapeCheck     = `if [[ ! "${TAG}" =~ ^mobile-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then`
+	mobileReleaseVersionMismatchCheck  = `if [[ "${app_version}" != "${version}" ]]; then`
+	mobileReleaseManifestMismatchCheck = `if [[ "${manifest_version}" != "${version}" ]]; then`
 	// mobileReleaseVersionStrip is how the version is taken from the tag: the
 	// one prefix `scripts/release-gate.sh` strips as well, so the number this
 	// step compares is the number the gate is given.
@@ -164,7 +172,14 @@ const (
 	// missing `expo.version` would otherwise look like). It reads the committed
 	// `mobile/app.json`, never a resolved `app.config.js`.
 	mobileReleaseVersionRead = `jq -er '.expo.version | select(type == "string")' mobile/app.json`
-	// mobileReleaseVersionMismatchError is the word both refusals use, so the
+	// mobileReleaseManifestRead is the same read of the app's *manifest*: the
+	// second line that names the app's version, pinned to `expo.version` by the
+	// app's own test (`mobile/src/app-config.test.js`), and the one an operator
+	// following a rule that named only `app.json` would leave at the placeholder
+	// while the build went to a store. Read the same way, so a manifest this step
+	// cannot read stops the job rather than comparing the tag with nothing.
+	mobileReleaseManifestRead = `jq -er '.version | select(type == "string")' mobile/package.json`
+	// mobileReleaseVersionMismatchError is the word every refusal uses, so the
 	// step's failure says what it refused and why rather than exiting silently.
 	mobileReleaseVersionMismatchError = "refusing to build"
 	// mobileReleaseEasCLIVersion is the exact `eas-cli` the job installs. The
@@ -806,12 +821,16 @@ func mobileReleaseCheckJob(t *testing.T, path, platform string, job mobileReleas
 			if !strings.Contains(cmd, mobileReleaseVersionRead) {
 				t.Errorf("the %s job's version step does not read the app's version as %s: the version compared with the tag is `expo.version` in the committed `mobile/app.json`, read so that a missing or non-string field stops the job rather than comparing the tag with an empty string", platform, mobileReleaseVersionRead)
 			}
+			if !strings.Contains(cmd, mobileReleaseManifestRead) {
+				t.Errorf("the %s job's version step does not read the manifest's version as %s: `mobile/src/app-config.test.js` pins `expo.version` to `mobile/package.json`'s `version`, so a release that bumped only the config would submit a build and leave the app's own suite red on the tagged commit -- and no check this repository runs reads the app's suite (nothing under .github/workflows/ mentions mobile/)", platform, mobileReleaseManifestRead)
+			}
 			if !strings.Contains(cmd, mobileReleaseVersionMismatchError) {
 				t.Errorf("the %s job's version step does not say %q when it refuses: a step that exits silently leaves a release that did not happen with nothing in the log to say why", platform, mobileReleaseVersionMismatchError)
 			}
 			for _, block := range []struct{ what, open string }{
 				{"the tag's shape", mobileReleaseVersionShapeCheck},
-				{"the two versions", mobileReleaseVersionMismatchCheck},
+				{"the tag's version and the config's", mobileReleaseVersionMismatchCheck},
+				{"the tag's version and the manifest's", mobileReleaseManifestMismatchCheck},
 			} {
 				if !mobileReleaseGuardStops(cmd, block.open) {
 					t.Errorf("the %s job's version step has no %s block that stops the job (opening on %q and reaching an `exit 1` before its `fi`): a refusal that only prints is a build that still goes to EAS and to a store under a version no tag names", platform, block.what, block.open)

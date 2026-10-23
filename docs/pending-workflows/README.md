@@ -1170,12 +1170,13 @@ app's. The filter is strict for the same reason the siblings' are — a bare
 `mobile-*` would also start a release on `mobile-vtest` or on a
 `mobile-v1.2.3-rc1` tag, which is not a release of anything.
 
-**The version comes from the tag, and the app's config has to agree with it.**
-The **first step of each job** holds the pushed tag to the app's strict
-`mobile-vX.Y.Z` shape, takes `X.Y.Z` out of it, reads `expo.version` out of
-`mobile/app.json` and **refuses to build when the two differ** — before the
-release gate runs and long before anything is built or submitted. The rule it
-enforces, and the release the app's first tag cuts, are
+**The version comes from the tag, and the app's own version lines have to agree
+with it.** The **first step of each job** holds the pushed tag to the app's
+strict `mobile-vX.Y.Z` shape, takes `X.Y.Z` out of it, reads `expo.version` out of
+`mobile/app.json` and `version` out of `mobile/package.json`, and **refuses to
+build when either differs** — before the release gate runs and long before
+anything is built or submitted. The rule it enforces, and the release the app's
+first tag cuts, are
 `### Every release, before the tag: the version the app reports` below.
 
 **A new file**, so nothing is replaced: it stages `.github/workflows/mobile-release.yml`
@@ -1561,43 +1562,58 @@ is still here: `readme.mjs` reads the directory, not the file's own history.
 
 ### Every release, before the tag: the version the app reports
 
-**The tag names the version and `expo.version` in `mobile/app.json` is that
-number, and the file refuses a tag that disagrees.** The app releases on its own
+**The tag names the version and the app's own version lines are that number, and
+the file refuses a tag that disagrees with either.** The app releases on its own
 tag (`mobile-vX.Y.Z`, `docs/release.md`'s "Mobile releases"), and the version a
 store shows is `expo.version` in `mobile/app.json` — the file is checked in as
-`"version": "0.0.0"`, the placeholder a release replaces, and
-`mobile/app.config.js` spreads that static config, adding only the two store
-identities to it. So **the first step of each job is the version rule**: it holds
-the tag to a strict `mobile-vX.Y.Z` shape, takes `X.Y.Z` out of it (the one
-`mobile-` prefix `scripts/release-gate.sh` strips as well), reads `expo.version`
-out of `mobile/app.json` with a read that fails rather than printing nothing, and
-**stops the job when the two differ** — before the release gate runs and long
-before anything is built or submitted. A tag pushed over a `0.0.0` config
-therefore builds nothing, and what a build reports is fixed at its upload: the
-two numbers cannot disagree without the run going red.
+`"version": "0.0.0"`, the placeholder a release replaces — while the app's *own*
+record of its version is `version` in `mobile/package.json`, which
+`mobile/src/app-config.test.js` pins `expo.version` to ("the config and the
+manifest agree on the version"). `mobile/app.config.js` spreads that static
+config, adding only the two store identities to it. So **the first step of each
+job is the version rule**: it holds the tag to a strict `mobile-vX.Y.Z` shape,
+takes `X.Y.Z` out of it (the one `mobile-` prefix `scripts/release-gate.sh` strips
+as well), reads **both** lines with a read that fails rather than printing
+nothing, and **stops the job when either differs** — before the release gate runs
+and long before anything is built or submitted. A tag pushed over a `0.0.0` line
+therefore builds nothing, and what a build reports is fixed at its upload: no two
+of the tag, the config and the manifest can disagree without the run going red.
 
-That step reads the committed `mobile/app.json`, never a resolved
-`mobile/app.config.js`, which requires the store identity only on EAS's own build
-machines. It carries `if: github.ref_type == 'tag'` — a fact about the ref rather
-than the event — so a manual dispatch that names a tag (`gh workflow run --ref
-mobile-v0.1.0`) is held to the same comparison a pushed tag is.
+**The manifest is compared here because nothing else compares it.** The app's
+suite asserts the config and the manifest carry the same version, and **no check
+this repository runs executes that suite**: no file under `.github/workflows/`
+mentions `mobile/`, so `scripts/release-gate.sh`'s required `test` is the Go
+module's and the app's tests are not a check run at all. A release cut from a rule
+that named only `app.json` — which is what `docs/release.md` said before this
+section — would submit a build and land on `main` with that suite red behind it,
+and the workflow's first step is the one place the mistake can still be caught.
 
-**[per repo, before every release tag] Set `expo.version` in `mobile/app.json` to
-the version being released, in a commit on `main` before the tag.** It is the
-ordering the Highlights file and the plugin bump already have
-(`scripts/bump-plugin-version.sh` bumps the plugin and touches nothing under
-`mobile/`), and `docs/release.md`'s "Before you tag" checklist and its "Mobile
-releases" section carry the same line, so a release reads it whether the owner
-comes to it from this document or from the release procedure.
+That step reads the committed `mobile/app.json` and `mobile/package.json`, never a
+resolved `mobile/app.config.js`, which requires the store identity only on EAS's
+own build machines. It carries `if: github.ref_type == 'tag'` — a fact about the
+ref rather than the event — so a manual dispatch that names a tag (`gh workflow
+run --ref mobile-v0.1.0`) is held to the same comparison a pushed tag is.
 
-**The first mobile release is `mobile-v0.1.0`, "Falcon".** Read the line before
-you cut it: `mobile/app.json` carries `0.0.0` today, which is the placeholder
-rather than a version anybody released, so the release that cuts the first tag
-sets it to `0.1.0` in a commit on `main` first. If the config carries another
-version when you read it, **that** line is the release being cut and the tag is
-`mobile-v<that line>` — the config is the authority and the tag follows it, never
-the other way round. The app's releases are named after birds, spent in order:
-Falcon first, then Pelican, then Robin (`docs/releases/mobile/README.md`).
+**[per repo, before every release tag] Set `expo.version` in `mobile/app.json`
+and `version` in `mobile/package.json` to the version being released, in one
+commit on `main` before the tag.** It is the ordering the Highlights file and the
+plugin bump already have (`scripts/bump-plugin-version.sh` bumps the plugin and
+touches nothing under `mobile/`), and `docs/release.md`'s "Before you tag"
+checklist and its "Mobile releases" section carry the same line, so a release
+reads it whether the owner comes to it from this document or from the release
+procedure. Two files rather than one because the app has two records of its
+version and its own test holds them together; a release that sets one and not the
+other is the defect the workflow's first step now refuses.
+
+**The first mobile release is `mobile-v0.1.0`, "Falcon".** Read the lines before
+you cut it: `mobile/app.json` and `mobile/package.json` both carry `0.0.0` today,
+which is the placeholder rather than a version anybody released, so the release
+that cuts the first tag sets both to `0.1.0` in a commit on `main` first. If the
+files carry another version when you read them, **that** line is the release being
+cut and the tag is `mobile-v<that line>` — the files are the authority and the tag
+follows them, never the other way round. The app's releases are named after birds,
+spent in order: Falcon first, then Pelican, then Robin
+(`docs/releases/mobile/README.md`).
 
 **Two checks read that version, and both now follow the app's own tag.** **C6**
 (`docs/mobile/implementation-plan.md`, "the app is versioned with the CLI's tag")
@@ -1713,9 +1729,10 @@ What *is* asserted offline, by `TestDocsMobileReleaseWorkflowIsStagedAndPinned`,
 is the file's text: its two triggers and the absence of any third, on the app's
 own tag pattern `mobile-v[0-9]+.[0-9]+.[0-9]+`; **the version rule as each job's
 first step** — exactly `if: github.ref_type == 'tag'`, the strict
-`mobile-vX.Y.Z` shape, the version taken from the tag and `expo.version` read out
-of `mobile/app.json`, each refusal a block that stops the job — and the tag's
-version compared with the config's, before the gate below it; the gate being the
+`mobile-vX.Y.Z` shape, the version taken from the tag, and `expo.version` read out
+of `mobile/app.json` **and** `version` out of `mobile/package.json`, each refusal
+a block that stops the job — and the tag's version compared with **both** of the
+app's version lines, before the gate below it; the gate being the
 same `scripts/release-gate.sh` every other publishing workflow runs, which takes
 the app's tag under its one `mobile-` prefix; `contents: read` at the top and
 `{contents: read, checks: read}` on each job — the second being what the release
@@ -1758,8 +1775,9 @@ is case-insensitive on purpose, because a lowercase-only one would pass a pasted
 `com.Fugaro.App`, which is the accident it exists to catch. (A handful of
 dotted names the file is allowed to carry are listed explicitly — `engines.node`,
 `submit.internal.android.track`, `android.buildType`, `artifacts.buildUrl`,
-`Info.plist`, and `expo.version`, the app's version line the version rule reads —
-plus the `github.` event-payload namespace the conditions read.
+`Info.plist`, and `expo.version`, the app's version line the version rule reads and
+the one dotted name it adds — plus the `github.` event-payload namespace the
+conditions read.
 Each is a field or file name, never a value.)
 
 **What none of that can tell the owner is what a log looks like.** The mask step
