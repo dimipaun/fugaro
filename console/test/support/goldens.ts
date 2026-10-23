@@ -11,15 +11,17 @@
 // the stylesheet declares, and an unstyled mount fails with a sentence naming
 // what is missing rather than a pixel diff nobody can read.
 //
-// The two elements are the two the design's section 6.2 names, and neither is
-// the screen's own root: a screen's root carries `color` and no `background`
-// (design section 2's inventory; `section.live` and its siblings are
-// `display: block; color: var(--text)`), because the ground is the *document's*
-// — `base.css` paints `--ground` on `body` and `--text` is inherited down from
-// it. Reading the screen root's own `background-color` would read
-// `rgba(0, 0, 0, 0)` in a perfectly styled window, which is why the assertion
-// reads the app's ground off `document.body` and the text colour off the
-// screen's own heading.
+// **The two elements read here are not the element design section 6.2 names**,
+// and the difference is the whole reason the read is written the way it is. 6.2
+// names exactly one: the **screen's own root** ("It reads a *computed* background
+// off a screen root", `paintedBackground(root)` in its two-set form). A screen's
+// root carries `color` and no `background` (design section 2's inventory;
+// `section.live` and its siblings are `display: block; color: var(--text)`),
+// because the ground is the *document's* — `base.css` paints `--ground` on
+// `body` and `--text` is inherited down from it. Reading the screen root's own
+// `background-color` would read `rgba(0, 0, 0, 0)` in a perfectly styled window,
+// which is why the assertion reads the app's ground off `document.body` and the
+// text colour off the screen's own heading — neither of them that root.
 //
 // **2. Taking a recording (`expectGolden`).** One call, so that every golden in
 // the suite fails the same way: on a *comparison* run the freshness preflight of 3
@@ -393,9 +395,13 @@ export function recordingRun(updateSnapshots: string): boolean {
  *   - **no golden at all** — nothing has been recorded for this spec on this
  *     platform (the baselines are owner-run, per platform);
  *   - **older than the stylesheet** — the picture predates the rules that paint
- *     the screens, so it is a picture of a tree that no longer exists: PR #629's
- *     darwin set is exactly this, recorded while the console served no CSS at
- *     all;
+ *     the screens, so it is a picture of a tree that no longer exists. This is
+ *     the state the timestamp can see, and **PR #629's darwin set is not it**:
+ *     those PNGs were committed *after* the newest file of the theme directory,
+ *     so by commit time they are newer than the stylesheet they predate and this
+ *     function answers null for them (the header, "the #629 set is a different
+ *     case"). What catches that set is the comparison itself, which
+ *     `expectGolden` re-reports with the re-record command;
  *   - otherwise null, and the comparison decides.
  *
  * It is a question about a **comparison** run, and `expectGolden` is what decides
