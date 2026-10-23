@@ -38,7 +38,8 @@ var pipeIntoPythonHeredocRE = regexp.MustCompile(`\|\s*python3?\s[^\n]*<<`)
 // and that the things which are NOT true on this tree are stated in the check
 // itself:
 //
-//   - C2.2's release has not landed: internal/config/providers.go's
+//   - C2.3's drop is HELD (the owner's ruling: the flip waits on this check's
+//     own live result, #907): internal/config/providers.go's
 //     ServiceHeldSecretNames is still empty, so the job keeps its accessor and
 //     its container keeps the mount. A check that claimed the drop had happened
 //     would be false, and one that stayed silent about it would let a reader
@@ -46,13 +47,15 @@ var pipeIntoPythonHeredocRE = regexp.MustCompile(`\|\s*python3?\s[^\n]*<<`)
 //   - The keyless path is switched on by the job's environment naming the
 //     service, not by the opt-in: internal/gitprov/providers/providers.go opens
 //     the keyless provider only when FUGARO_CREDENTIALS_SERVICE_URL is set, and
-//     no job's environment on this tree carries that name — the one place the
-//     name is written at all is the credentials service's own container, as that
-//     service's audience (deploy/terraform/gcp/modules/installation/
-//     credentials.tf, from the installation field credentials_service.url) — so
-//     an opted-in runner still reads the App key and mints in the job today. A
-//     check that read "the mint is the service's" as the state of this tree
-//     would be false, and this is the check the owner runs after that release.
+//     **the launch is what sets it now** (0.10.1) —
+//     internal/cli/run.go's credentialsServiceLaunchEnv puts it on an opted-in
+//     installation's per-repository execution and on no other, from the URL the
+//     credentials stage recorded in the project's config. So the check has to
+//     say what to expect per job: the variable present on a repository job's
+//     execution and the key not read in-job, absent on a shared project job and
+//     on every job of an installation that has not opted in. The sentence it
+//     used to carry ("nothing on this tree sets it", the variable expected
+//     absent, the key still read in-job) is now false and is banned below.
 //   - The service refuses every call on this tree: its deployment configures it
 //     now — the seven names credentials.tf sets are what C1.14's builder reads,
 //     so a revision starts and serves — and its account holds exactly one grant,
@@ -93,9 +96,12 @@ var pipeIntoPythonHeredocRE = regexp.MustCompile(`\|\s*python3?\s[^\n]*<<`)
 // pairing refusal as the reason a run identity for X cannot mint for Y, and
 // that clause is the mechanism); the `# 0` read-back on the Restore's scratch
 // line deleted → FAIL (the check's final assertion is that nothing survives
-// it); the known-limit bullet on the URL gate deleted whole → FAIL (the check
-// would leave a reader taking the keyless path as the state of this tree);
-// step 4's "**exactly `1` audit line** for the pairing refusal's run id" put
+// it); the per-job URL paragraph rewritten back to "nothing on this tree sets
+// it", the variable expected absent and the key still read in-job → FAIL, on
+// the ban and on the pin both, because internal/cli/run.go's
+// credentialsServiceLaunchEnv sets the variable on a repository job and
+// internal/cli/run.go is read for the helper's existence; step 4's
+// "**exactly `1` audit line** for the pairing refusal's run id" put
 // back to "**`0` audit lines**" → FAIL (the check would fail a correct release,
 // whose refusal is recorded by refuseCall); the pairing refusal's line moved
 // out of server.go's refuseCall and into refuse → FAIL in the other direction
@@ -137,11 +143,16 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 		// stdin, so the `printf … | python3 - <<'PY'` this step first used handed python the
 		// script and an empty stdin, and the step printed none of its facts.
 		"python3 - \"$W/job.json\" <<'PY'",
-		// The known limit of this release, which the check has to carry: the keyless path is
-		// switched on by the job's environment naming the service, and nothing on this tree
-		// puts that name there, so an opted-in runner still reads the key and mints in-job.
-		"the expected answer today is `false`",
-		"**What to expect today is therefore `FUGARO_CREDENTIALS_SERVICE_URL` absent from the job's environment and the key still read in-job**",
+		// The wiring, which the check has to state per job: the launch sets the
+		// variable on an opted-in installation's per-repository job and on no
+		// other, so the expected answer is true there and false on a shared
+		// project job and on every job of an installation that has not opted in.
+		"the expected answer on an opted-in installation's repository job is `true`",
+		"On a **shared project job** the expected answer is `false`",
+		"**What to expect on an opted-in installation is therefore `FUGARO_CREDENTIALS_SERVICE_URL` present on a per-repository job's execution and the App key not read in-job",
+		"**The launch is what puts it there, as of 0.10.1**",
+		"credentialsServiceLaunchEnv",
+		"held until the live result of this check proves the deployed service mints",
 		// And the audit expectation of step 4, which is the truth of the answer path: the
 		// pairing refusal is made after the identity was verified, so refuseCall records it —
 		// exactly one line, the route's purpose and credential, no tier, the refusal's own
@@ -218,23 +229,38 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 		t.Errorf("internal/credsvc/github.go's `refuseMint` no longer audits the mint it refuses (%q): Check 96 states that a refused mint is recorded like an issued one", strings.TrimSpace(body))
 	}
 
-	// The second thing that is not true on this tree, held to the code as well:
-	// the keyless provider is opened only when the job's environment names the
-	// service, and the check has to carry that limit rather than read the mint as
-	// the service's on this tree.
+	// The wiring, held to the code as well: the keyless provider is opened only
+	// when the job's environment names the service, and the launch is what puts
+	// that name on a repository job — so the check's expected answers are read
+	// from the gate and from the launcher both.
 	providers := readDoc(t, "internal/gitprov/providers/providers.go")
 	if !strings.Contains(providers, "if vars[EnvCredentialsServiceURL] != \"\"") {
-		t.Errorf("internal/gitprov/providers/providers.go no longer gates the keyless github provider on `EnvCredentialsServiceURL`: Check 96 states that gate as the reason an opted-in runner still reads the App key and mints in the job on this tree, and that is the switch it names")
+		t.Errorf("internal/gitprov/providers/providers.go no longer gates the keyless github provider on `EnvCredentialsServiceURL`: Check 96 states that gate as the switch the launch sets, and that is the name it carries")
 	}
-	if !strings.Contains(check, "**What to expect today is therefore `FUGARO_CREDENTIALS_SERVICE_URL` absent from the job's environment and the key still read in-job**") {
-		t.Errorf("Check 96 does not state what to expect today about the URL gate: the keyless path needs FUGARO_CREDENTIALS_SERVICE_URL and nothing on this tree sets it, so the check the owner runs must say the variable is expected absent and the key still read in-job")
+	run := readDoc(t, "internal/cli/run.go")
+	if !strings.Contains(run, "func credentialsServiceLaunchEnv(") {
+		t.Errorf("internal/cli/run.go no longer has `credentialsServiceLaunchEnv`: Check 96 states the launch as what puts `FUGARO_CREDENTIALS_SERVICE_URL` on a repository job's execution, and that helper is the mechanism")
+	}
+	if !strings.Contains(check, "**What to expect on an opted-in installation is therefore `FUGARO_CREDENTIALS_SERVICE_URL` present on a per-repository job's execution and the App key not read in-job; on a shared project job, or on any job of an installation that has not opted in, the variable is absent**") {
+		t.Errorf("Check 96 does not state what to expect about the URL gate: the keyless path needs FUGARO_CREDENTIALS_SERVICE_URL, the launch sets it on a repository job, and the check the owner runs must say so per job — present there, absent on a shared project job and on an installation that has not opted in")
+	}
+	// And the retired half of that sentence, which said no job ever carried the
+	// name: banned rather than merely unpinned.
+	for _, stale := range []string{
+		"Nothing on this tree puts that variable in a job's environment",
+		"the expected answer today is `false`",
+		"the wiring that puts the name on a job is the release after this one",
+	} {
+		if strings.Contains(check, stale) {
+			t.Errorf("Check 96 still says %q: internal/cli/run.go's credentialsServiceLaunchEnv sets `FUGARO_CREDENTIALS_SERVICE_URL` on an opted-in installation's repository job as of this release, so the variable is expected present there and the check would mislead the owner about the state it is reading", stale)
+		}
 	}
 
 	// The first thing that is not true on this tree, held to the code: while the
 	// held-secrets list is empty the job keeps the key, and the check has to say
 	// so; the day the list names it, the same sentence is the one that has to go.
 	const notLanded = "**on this tree that list is empty**"
-	const stillHolds = "would be answered **yes, it still does**"
+	const stillHolds = "is answered **yes, it still does**"
 	if heldSecretsListNamesTheAppKey(t) {
 		if strings.Contains(check, notLanded) || strings.Contains(check, stillHolds) {
 			t.Errorf("internal/config/providers.go's ServiceHeldSecretNames now names the App key — C2.3's drop landed — and Check 96 still says the job holds it: the release landed and this check did not")
