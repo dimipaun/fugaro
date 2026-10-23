@@ -48,7 +48,7 @@ import (
 //     flags and terminal is a literal table (confirmTable);
 //   - which environment variables are a coding agent's is a literal list
 //     (expectedAgentMarkers), not agentMarkers;
-//   - every flag of `fugaro init` has a written entry (initFlagCases).
+//   - every flag of `fugaro setup` has a written entry (initFlagCases).
 //
 // The decision is computed over the program's real paths: the managed read
 // (managed.IsManaged over internal/gcpfake), combined with initRun.ask (the
@@ -181,8 +181,8 @@ var confirmClasses = []struct {
 	name  string
 	class initflow.ConfirmClass
 }{
-	{"YesOrTyped", initflow.YesOrTyped},
 	{"Typed", initflow.Typed},
+	{"YesOrTyped", initflow.YesOrTyped},
 }
 
 // declaredConfirmClasses reads the ConfirmClass constants out of
@@ -203,7 +203,7 @@ func declaredConfirmClasses(t *testing.T) []string {
 			continue
 		}
 		// A const spec with neither a type nor a value repeats the one before
-		// it (`Typed` after `YesOrTyped ConfirmClass = iota`), so the block is
+		// it (`YesOrTyped` after `Typed ConfirmClass = iota`), so the block is
 		// tracked rather than each spec.
 		var class bool
 		for _, spec := range gd.Specs {
@@ -703,7 +703,7 @@ var inlineAgentSites = []inlineAgentSite{
 		return a == authOK && err == nil
 	}},
 	{"init_repo_gate.go onboardLeft", "init_repo_gate.go onboardLeft (the flag offered as the route)", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
-		l := onboardLeft(originInfo{Repo: "acme/app", Host: "github.com"})
+		l := onboardLeft(originInfo{Repo: "acme/app", Host: "github.com"}, "setup")
 		return l.Kind == initflow.LeftCommand && strings.Contains(l.Text, "--onboard-repo")
 	}},
 	{"initsecrets.go Left", "initsecrets.go Left (the wording of the secrets route)", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
@@ -735,10 +735,11 @@ var propertyAgentSites = map[string]string{
 // outsideAgentSites are the agent-marker sites the property does not cover,
 // each with the reason.
 var outsideAgentSites = map[string]string{
-	"init.go runInit":             "OUTSIDE: --publish-config's refusal before any write; not a confirmation (initFlagCases: publish-config)",
-	"init.go publishSharedConfig": "OUTSIDE: the shared-config publish after the local config is written; not a confirmation, it skips with a note under a marker",
-	"initsecrets.go agentEnv":     "OUTSIDE: the definition of agentEnv itself (TestManagedAgentMarkersAreTheExpectedSix pins agentMarker)",
-	"initsecrets.go Check":        "OUTSIDE: the wording of the secrets stage's detail; whether it prompts is canPrompt (an inline site)",
+	"init.go runInit":                 "OUTSIDE: --publish-config's refusal before any write; not a confirmation (initFlagCases: publish-config)",
+	"init.go publishSharedConfig":     "OUTSIDE: the shared-config publish after the local config is written; not a confirmation, it skips with a note under a marker",
+	"initsecrets.go agentEnv":         "OUTSIDE: the definition of agentEnv itself (TestManagedAgentMarkersAreTheExpectedSix pins agentMarker)",
+	"initsecrets.go Check":            "OUTSIDE: the wording of the secrets stage's detail; whether it prompts is canPrompt (an inline site)",
+	"init_repo_gate.go convergeOptIn": "OUTSIDE: the wording of the repository gate's detail — it says whether --yes is named as a way in; whether the run may onboard at all is authState/onboardCovered (inline sites)",
 }
 
 // Every inline decision refuses under each marker, and only under a marker:
@@ -789,7 +790,7 @@ func TestManagedAgentMarkersAreTheExpectedSix(t *testing.T) {
 	}
 }
 
-// initFlagCases is every flag of `fugaro init` and its relationship to the
+// initFlagCases is every flag of `fugaro setup` and its relationship to the
 // confirmations the property is about. A flag with no entry fails
 // TestManagedEveryInitFlagHasACase: a new flag is a new condition until
 // someone writes down what it does to a confirmation.
@@ -800,25 +801,26 @@ var initFlagCases = map[string]string{
 	"json":            "dimension: never takes a Typed confirmation",
 	"plan-only":       "dimension: folded into Yes=false by initRun.conditions; never takes --yes",
 	// Flags whose steps confirm through the paths the property drives.
-	"create-project":   "its creation confirms through the Typed class (askTyped/canType, both covered)",
-	"managed":          "OUTSIDE the property: with --create-project it requires the budget amount (D64) and records it in the creation fact (Task 4.2); it adds a guard, so the creation still confirms through the Typed class (covered)",
-	"link-billing":     "the billing link confirms through the Typed class (askTyped/canType, both covered)",
-	"replace-image":    "names the intent only; replacing confirms through askTyped (covered)",
-	"retire":           "both confirmations are askTyped; retireConfirm's agent refusal is an inline site (covered)",
-	"repo":             "the repository's applies confirm through ask/askOrdinary (covered)",
-	"firebase":         "its applies confirm through ask, its Firestore location through the Typed class (covered)",
-	"forget":           "its state removals confirm through ask (covered)",
-	"config-only":      "writes the local config; any confirmation is ask's (covered)",
-	"onboard-repo":     "an opt-in in place of the typed owner/name: refused under a marker (checkOnboardRepo, authState: inline sites, covered); for a non-managed project without a marker it opts in without typing, which is NOT in the table",
-	"anchor":           "OUTSIDE the property: edits only the checkout's fugaro.yaml and honours --yes under a marker by design (init --help)",
-	"publish-config":   "OUTSIDE the property: refused under a marker in init.go before any write; no confirmation",
-	"check-github-app": "OUTSIDE the property: a secret read, refused under a marker (githubapp.go); no confirmation",
-	"allow-delete":     "OUTSIDE the property: feeds tf.Guard, not a confirmation (D74, Task 1.4, is the managed case)",
-	"allow-job-delete": "OUTSIDE the property: changes what a --repo plan holds, not whether it is confirmed",
-	"allow-fork":       "OUTSIDE the property: lets plugin wiring move a ref; the wiring's apply still confirms through ask",
-	"print-vars":       "no cloud call and no confirmation (canAsk is false under it)",
-	"no-build":         "only drops the first image build's offer (a Typed step); takes nothing away from a confirmation",
-	"provision-batch":  "main's compute stage (0.9.5, init_compute.go): registered noYes, its confirmation is the project's name typed (initflow.Typed), so --yes never covers it; added on the merge of main into next-0.8.5, the confirm table does not drive this stage itself",
+	"create-project":        "its creation confirms through the Typed class (askTyped/canType, both covered)",
+	"managed":               "OUTSIDE the property: with --create-project it requires the budget amount (D64) and records it in the creation fact (Task 4.2); it adds a guard, so the creation still confirms through the Typed class (covered)",
+	"link-billing":          "the billing link confirms through the Typed class (askTyped/canType, both covered)",
+	"replace-image":         "names the intent only; replacing confirms through askTyped (covered)",
+	"retire":                "both confirmations are askTyped; retireConfirm's agent refusal is an inline site (covered)",
+	"repo":                  "the repository's applies confirm through ask/askOrdinary (covered)",
+	"firebase-project":      "its applies confirm through ask, its Firestore location through the Typed class (covered)",
+	"forget":                "its state removals confirm through ask (covered)",
+	"config-only":           "writes the local config; any confirmation is ask's (covered)",
+	"onboard-repo":          "an opt-in in place of the typed owner/name: refused under a marker (checkOnboardRepo, authState: inline sites, covered); for a non-managed project without a marker it opts in without typing, which is NOT in the table",
+	"anchor":                "OUTSIDE the property: edits only the checkout's fugaro.yaml and honours --yes under a marker by design (fugaro setup --help)",
+	"publish-config":        "OUTSIDE the property: refused under a marker in init.go before any write; no confirmation",
+	"check-github-app":      "OUTSIDE the property: a secret read, refused under a marker (githubapp.go); no confirmation",
+	"allow-delete":          "OUTSIDE the property: feeds tf.Guard, not a confirmation (D74, Task 1.4, is the managed case)",
+	"allow-job-delete":      "OUTSIDE the property: changes what a --repo plan holds, not whether it is confirmed",
+	"allow-fork":            "OUTSIDE the property: lets plugin wiring move a ref; the wiring's apply still confirms through ask",
+	"print-vars":            "no cloud call and no confirmation (canAsk is false under it)",
+	"no-build":              "only drops the first image build's offer (a Typed step); takes nothing away from a confirmation",
+	"provision-batch":       "main's compute stage (0.9.5, init_compute.go): registered noYes, its confirmation is the project's name typed (initflow.Typed), so --yes never covers it; added on the merge of main into next-0.8.5, the confirm table does not drive this stage itself",
+	"provision-credentials": "the credentials stage (0.10.0, C1.20, init_credentials.go): registered noYes, its confirmation is the project's name typed (initflow.Typed), so --yes never covers it, and a coding agent's session is refused by the loop's own gate; the confirm table does not drive this stage itself",
 	// Values a confirmed step carries: they change what is confirmed, never whether.
 	"alert-email": "value", "base": "value", "base-image": "value", "billing-account": "value", "budget": "value",
 	"budget-admin": "value", "budget-currency": "value", "budget-mode": "value", "config": "value",
@@ -829,20 +831,20 @@ var initFlagCases = map[string]string{
 	"state-bucket": "value; under --managed the value must be the derived fugaro-tfstate-<gcp-project> and anything else refuses the creation before the project stage (checkManagedStateBucket, Task 4.5/D59), the way a bad --budget-currency refuses it",
 }
 
-// Every flag `fugaro init` declares has an entry above, and every entry is a
+// Every flag `fugaro setup` declares has an entry above, and every entry is a
 // flag init declares: the enumeration is the command's own flag set, so a
 // flag added without a case fails here.
 func TestManagedEveryInitFlagHasACase(t *testing.T) {
 	seen := map[string]bool{}
-	newInitCmd().Flags().VisitAll(func(f *pflag.Flag) {
+	newSetupCmd().Flags().VisitAll(func(f *pflag.Flag) {
 		seen[f.Name] = true
 		if _, ok := initFlagCases[f.Name]; !ok {
-			t.Errorf("fugaro init --%s has no case in initFlagCases: say what it does to a confirmation, and add it to the table if it is a condition", f.Name)
+			t.Errorf("fugaro setup --%s has no case in initFlagCases: say what it does to a confirmation, and add it to the table if it is a condition", f.Name)
 		}
 	})
 	for name := range initFlagCases {
 		if !seen[name] {
-			t.Errorf("initFlagCases names --%s, which fugaro init does not declare", name)
+			t.Errorf("initFlagCases names --%s, which fugaro setup does not declare", name)
 		}
 	}
 	for _, d := range []string{"yes", "non-interactive", "json", "plan-only"} {
@@ -998,7 +1000,7 @@ func TestManagedEveryAgentSiteInInitHasACase(t *testing.T) {
 	}
 }
 
-// The failing combination the stage loop's gate stops: `fugaro init --yes` (or
+// The failing combination the stage loop's gate stops: `fugaro setup --yes` (or
 // a typed "y" at a terminal) in a coding agent's session, on a project that
 // is not managed whose checkout's plugin wiring is out of date. The plugin
 // stage is driven through the real loop with the options init builds

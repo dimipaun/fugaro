@@ -3,21 +3,22 @@
 // **The defect this file exists for** (the owner's reading of 2026-10-19: "How it works: menu
 // hidden by the blocks on mobile"): the header and the panel a group hangs below it were in
 // the page's own stacking layer, so a block a page draws *after* the header and takes a place
-// out of the flow painted over them. `ArchitectureDiagram.astro`'s steps are exactly that
-// block — `position: relative` is what their arrows are placed against — and they sit on the
-// homepage, which is the page that carries the flow (the owner's draft of 2026-10-19 gave the
-// How It Works page the run's own diagram instead). A positioned box with
-// no `z-index` paints with every other such box in tree order, and the header is the first of
-// them: an open drawer had each step's card painted across it, which is a navigation a reader
-// on a phone cannot use.
+// out of the flow painted over them. The four-step flow's steps were exactly that block —
+// `position: relative` is what their arrows were placed against, and they sat on the homepage,
+// which was the page that carried the flow — and the owner's ruling of 2026-10-20 retires the
+// flow and the component with it. A positioned box with no `z-index` paints with every other
+// such box in tree order, and the header is the first of them: an open drawer had each step's
+// card painted across it, which is a navigation a reader on a phone cannot use.
 //
-// **The fix is the header's own layer, not the diagram's.** Taking the position off the steps
-// would break the arrows, and a `z-index` on each content component is a rule every future
-// component has to remember; `src/styles/base.css` gives `.site-header` the site's header
-// layer instead, which makes it a stacking context and paints it, with everything it holds —
-// the panel included — above every block a page draws, at every width and on every page.
-// `src/styles/tokens.css` names that layer and the one above it (the reader's chrome), so the
-// site has one scale rather than a number per component.
+// **The fix is the header's own layer, not the block's.** Taking the position off the steps
+// would have broken the arrows, and a `z-index` on each content component is a rule every
+// future component has to remember; `src/styles/base.css` gives `.site-header` the site's
+// header layer instead, which makes it a stacking context and paints it, with everything it
+// holds — the panel included — above every block a page draws, at every width and on every
+// page. `src/styles/tokens.css` names that layer and the one above it (the reader's chrome),
+// so the site has one scale rather than a number per component — and the block that stands
+// where the flow's steps stood is the homepage's slider, whose panels are positioned content
+// on the same page, held to the same rule below.
 //
 // **What this file holds, over the built CSS of every page:** the scale is declared and in
 // order — the header's layer a positive integer, above every layer a page's own rules declare,
@@ -229,29 +230,47 @@ test('the header paints above the page on every built page', () => {
   assert.deepEqual(stackingFailures(DIST), [])
 })
 
-test('the flow keeps the position its arrows are placed against, and no layer of its own', () => {
-  // The block the owner's complaint was about. `position: relative` on a step is what its
-  // arrows are positioned against, so the fix could not be "take the position off it" — and a
-  // layer on it is what the defect was. It is asserted here rather than left to the case above
-  // because this is the shape a later "fix" would take: the step's own rule, in the built
-  // page, positioned and without a `z-index`.
-  // The homepage is where the flow is drawn now: the owner's draft of 2026-10-19 replaced the
-  // How It Works page's body with the run's own diagram, whose steps are SVG the stylesheet
-  // lays out rather than positioned boxes.
-  const page = builtPages(DIST).find((entry) => entry.rel === 'index.html')
-  assert.ok(page, 'dist/index.html is missing: run `npm run build` (npm run check does it first)')
-  const steps = cssRules(pageCss(page.html, DIST)).filter((rule) => /(^|[\s,>+~])\.flow-step(\[|[:,]|$)/.test(rule.selector))
-  assert.ok(steps.length, 'the built page carries no .flow-step rule: the diagram is the page that has the steps')
-  assert.ok(
-    steps.some((rule) => cssDeclarations(rule.body).some(([p, v]) => p === 'position' && v !== 'static')),
-    'no .flow-step rule positions the step, so its arrows have no box to be placed against',
+test('the slider and the run\'s picture name no layer of their own', () => {
+  // The block the owner's complaint was about. The retired case read the flow's steps on the
+  // built homepage — they were positioned, which is what their arrows were placed against, and
+  // they named no `z-index`, which is what the defect was — and it is replaced here by the same
+  // two readings of the blocks that took the flow's place (the owner's ruling of 2026-10-20):
+  // the homepage's slider, which stands where the flow stood and draws panels of its own, and
+  // the run's picture on How It Works, which is a figure full of positioned SVG. It is asserted
+  // rather than left to the case above because this is the shape a later "fix" would take: the
+  // block's own rule, in the built page, taking a place in the paint order.
+  const pages = builtPages(DIST).filter((entry) => ['index.html', 'how-it-works/index.html'].includes(entry.rel))
+  assert.equal(
+    pages.length,
+    2,
+    `dist carries ${pages.length} of the two pages this case is about: \`npm run build\` writes them (npm run check does it first)`,
   )
-  for (const rule of steps) {
+  // Every class the two blocks draw with, so a rule added for any part of either one is read
+  // here: the slider's own row and its dots (the owner's feedback of 2026-10-21, item 3, turned
+  // the strip of tabs into the slider, and the two classes the tabs carried are gone with them).
+  const blocks =
+    /(^|[\s,>+~])\.(home-slider|slider-title|slider-controls|slider-step|slider-arrow|slider-dots|slider-dot-item|slider-dot|panels|panel|panel-title|easy-steps|easy-step|step-number|step-icon|step-name|step-line|watch-shot|watch-block|watch-command|watch-note|run-diagram|run-svg|run-words)(\[|[:,]|$)/
+  let positioned = 0
+  for (const page of pages) {
+    const rules = cssRules(pageCss(page.html, DIST)).filter((rule) => blocks.test(rule.selector))
     assert.ok(
-      !cssDeclarations(rule.body).some(([property]) => property === 'z-index'),
-      `${rule.selector} declares a z-index: the step is page content and paints under the header (src/styles/base.css)`,
+      rules.length > 0,
+      `${page.rel} carries no rule for the slider or the run's picture, and this case reads the blocks that stand where the flow's steps stood`,
     )
+    for (const rule of rules) {
+      assert.ok(
+        !cssDeclarations(rule.body).some(([property]) => property === 'z-index'),
+        `${rule.selector} declares a z-index: the block is page content and paints under the header, which is what the owner's reading of 2026-10-19 was about (src/styles/base.css puts the header above them)`,
+      )
+      if (page.rel === 'index.html' && /(^|[\s,>+~])\.home-slider(\[|[:,]|$)/.test(rule.selector) && cssDeclarations(rule.body).some(([p, v]) => p === 'position' && v !== 'static')) {
+        positioned += 1
+      }
+    }
   }
+  assert.ok(
+    positioned > 0,
+    'no rule positions the homepage\'s slider, and the slider is the homepage\'s own block: this case reads the positioned box that took the flow\'s place, so a page without one is a page this reading has lost its subject on',
+  )
 })
 
 // ---- the refusals, kept -----------------------------------------------------------------
@@ -308,10 +327,10 @@ test('a page block that names a layer of its own is refused', (t) => {
   // The defect itself, in the shape a content component takes it: a positioned block on the
   // page with a `z-index` of its own — the header's layer, a raw number, or the chrome's.
   assert.match(
-    failuresOf(t, withRule('.flow-step{position:relative;z-index:var(--z-header)}')),
-    /gives \.flow-step a z-index of var\(--z-header\)[\s\S]*covers the menu/,
+    failuresOf(t, withRule('.easy-step{position:relative;z-index:var(--z-header)}')),
+    /gives \.easy-step a z-index of var\(--z-header\)[\s\S]*covers the menu/,
   )
-  assert.match(failuresOf(t, withRule('.step-card{position:relative;z-index:5}')), /gives \.step-card a z-index of 5/)
+  assert.match(failuresOf(t, withRule('.panel{position:relative;z-index:5}')), /gives \.panel a z-index of 5/)
   assert.match(
     failuresOf(t, withRule('.hero{position:relative;z-index:var(--z-chrome)}')),
     /puts \.hero on the chrome's layer/,
@@ -386,7 +405,7 @@ test('a scale that is not the scale is refused', (t) => {
   // And a block of a page's own at or over the header's row: the header's layer is strictly
   // above every layer a page's rules declare, not level with the first one under it.
   assert.match(
-    failuresOf(t, withScale(':root{--z-header:1;--z-chrome:20}', '.flow-step{position:relative;z-index:5}')),
-    /puts --z-header at 1 with \.flow-step at 5: the header sits strictly above/,
+    failuresOf(t, withScale(':root{--z-header:1;--z-chrome:20}', '.easy-step{position:relative;z-index:5}')),
+    /puts --z-header at 1 with \.easy-step at 5: the header sits strictly above/,
   )
 })

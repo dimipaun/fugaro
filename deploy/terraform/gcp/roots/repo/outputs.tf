@@ -1,4 +1,4 @@
-# fugaro init --repo reads these with terraform output -json.
+# fugaro update reads these with terraform output -json.
 
 output "jobs" {
   description = "Each workflow's job name, or null while its job isn't deployed."

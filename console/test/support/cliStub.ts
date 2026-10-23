@@ -12,8 +12,9 @@
 // change. So a spec chooses the CLI the only way the resolution allows: it puts
 // a binary where the resolution looks. `src/main/spawn.ts`'s `binDirectories`
 // walks the configured path (the store's own optional override, which
-// `seedActiveInstallation` writes) and then `WELL_KNOWN_BINARY_PREFIXES`
-// (`/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `/usr/bin`). It does
+// `seedActiveInstallation` writes) and then the platform's well-known
+// directories (`src/main/spawn.ts`'s `locationsFor`, and which ones those are
+// depends on `process.platform`). It does
 // **not** walk the app's inherited `PATH` -- that is rule 4's whole point, the
 // owner's ruling of 2026-10-20 -- so the app's `PATH` below is a decoy on
 // purpose: a resolution that searched it would find the stub there and a spec

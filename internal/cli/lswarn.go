@@ -85,7 +85,7 @@ func dailyChecks(ctx context.Context, env *cloudEnv, slug string, checkout func(
 }
 
 // installedChecks are the workflows the repository's check job checks, from
-// the spec fugaro init --repo gave it; an empty set when there is no check
+// the spec fugaro update --repo gave it; an empty set when there is no check
 // job, and nil when that can't be told.
 func installedChecks(ctx context.Context, env *cloudEnv, slug string) map[string]bool {
 	be, ok := env.be.(interface {

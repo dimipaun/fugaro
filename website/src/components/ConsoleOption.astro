@@ -1,13 +1,17 @@
 ---
 /**
  * website/src/components/ConsoleOption.astro — the console, offered on Getting Started
- * (the owner's changes spec of 2026-10-18, item 6).
+ * (the owner's changes spec of 2026-10-18, item 6; the owner's draft of 2026-10-19, "Getting
+ * started, draft 2 (OS icons)").
  *
- * Getting Started presents two ways to install Fugaro side by side: the CLI — the install
- * paths `website/data/install.yaml` carries, the Homebrew cask first, each command with its
- * copy control — and the desktop console. This component is the second option, and it is
- * the only place on that page the console is mentioned: a reader who wants the console can
- * install it from this page, and a reader who wants the CLI reads past it.
+ * Getting Started presents two ways to install Fugaro: the CLI — the install paths
+ * `website/data/install.yaml` carries, each command with its copy control — and the desktop
+ * console. This component is the second one, and it is the only place on that page the
+ * console is mentioned. It renders **inside the card of the system the console ships for**:
+ * the page draws a card per system `install.yaml` supports, the console's own data file names
+ * macOS on every asset it publishes, so the console's block sits in macOS's card and a reader
+ * who wants the CLI reads past it. A reader on Linux is not offered a download built for
+ * another system, and the page never says the console runs anywhere it does not.
  *
  * **It renders no link while the console is unreleased, and that is structural.** The two
  * states are one `if`: the download list is rendered from the release's own published names
@@ -23,15 +27,43 @@
  * the words a reader navigates by — the option's own heading and the words on the link to
  * the console page.
  *
- * The card this sits in — its border, radius and padding — is Getting Started's, written
- * once on the `#install` section's two option wrappers so that the CLI option and this one
- * are the same shape. What is here is what is inside the card.
+ * **The per-platform block is the same rule here as on the console page**, because this card
+ * and the console page's Downloads section are two renderings of one set of facts: an asset a
+ * block names is drawn under that block and its own sentence, not in the list above it. The
+ * card used to render every entry of `downloads`, which put a Linux AppImage's link under the
+ * macOS sentence the moment the data file gained one — the defect the filter below is. So the
+ * two consumers hold the same rule, and `website/test/console.mjs` asserts it over every built
+ * page rather than over this component.
+ *
+ * The card this sits in — its border, radius and padding — is Getting Started's, written once
+ * on the cards so that the system's own path and this block are the same shape. What is here
+ * is what is inside the card, under the card's `h3`, which is why the heading below is an
+ * `h4`: it is a section of the card rather than of the page.
  */
 interface DownloadFacts {
+  /**
+   * The data file's own id for the asset: the key a per-platform block's `assets` list names,
+   * which `console-downloads.mjs` resolves against the entries below. The card filters on it,
+   * so an asset a block names is not also drawn as an unqualified row here.
+   */
+  id: string
   /** What a reader sees on the button: the platform and the asset's extension. */
   label: string
   /** Where a reader downloads it from. Only ever rendered while `available` is true. */
   url: string
+}
+
+/**
+ * A platform whose own artifact exists but whose facts the released sentence does not
+ * describe: Linux, unsigned, an AppImage and a `.deb` (the owner's ruling of 2026-10-20;
+ * `docs/design/desktop-console.md` D10). The card renders it exactly as the console page's
+ * section does: the data file's own sentence, and the rows its `assets` resolved to.
+ */
+interface PlatformFacts {
+  /** The data file's own sentence for this platform — rendered, never restated here. */
+  text: string
+  /** The entries the block's `assets` ids resolved to, in the file's order. */
+  downloads: DownloadFacts[]
 }
 
 interface Props {
@@ -41,31 +73,67 @@ interface Props {
   note: string
   /** The release's published assets, in the order the data file lists them. */
   downloads: DownloadFacts[]
+  /**
+   * The data file's optional per-platform block, or `null` when it carries none — which is
+   * the state this checkout ships. Nothing is drawn for it while it is absent: no heading, no
+   * sentence, no link, and no word saying which platform is missing.
+   */
+  linux: PlatformFacts | null
 }
 
-const { available, note, downloads }: Props = Astro.props
+const { available, note, downloads, linux }: Props = Astro.props
 
 // The option's own heading: a label rather than a fact about the console, which is why it is
 // written here and not in the data file (the console page's own `h1` is the data file's
 // `name`).
 const HEADING = 'Desktop console'
+
+// The rows above the block are every asset the data file lists *minus the ones a block names*,
+// which is what the card renders today: one asset of a release is one row on the page, and a
+// Linux artifact in this list would be a link under a sentence about the disk images. With no
+// block the list is every entry, unchanged.
+const inBlock = new Set((linux?.downloads ?? []).map((download) => download.id))
+const listedAbove = downloads.filter((download) => !inBlock.has(download.id))
 ---
 
-<h3>{HEADING}</h3>
+<h4>{HEADING}</h4>
 
 {
   available ? (
-    <ul class="console-downloads">
-      {downloads.map((download) => (
-        <li>
-          {/* An `<a>` and not a `<button>`: it is a download, and the site ships no script
-              that could give a button one (D183). */}
-          <a href={download.url} rel="noopener">
-            {download.label}
-          </a>
-        </li>
-      ))}
-    </ul>
+    <>
+      <ul class="console-downloads">
+        {listedAbove.map((download) => (
+          <li>
+            {/* An `<a>` and not a `<button>`: it is a download, and the site ships no script
+                that could give a button one (D183). */}
+            <a href={download.url} rel="noopener">
+              {download.label}
+            </a>
+          </li>
+        ))}
+      </ul>
+
+      {/* The platform whose own artifact exists and whose facts the list above does not
+          describe — Linux, unsigned, an AppImage and a `.deb` (D10). The same shape the
+          console page's section renders: the data file's sentence, then the assets it names,
+          which is why the rows above are filtered rather than drawn twice. Nothing at all is
+          rendered while the data file carries no block, so this card says nothing about a
+          platform the release does not carry. */}
+      {linux && (
+        <div class="console-linux">
+          <p>{linux.text}</p>
+          <ul class="console-downloads">
+            {linux.downloads.map((download) => (
+              <li>
+                <a href={download.url} rel="noopener">
+                  {download.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </>
   ) : (
     <p class="console-unreleased">{note}</p>
   )
@@ -99,6 +167,21 @@ const HEADING = 'Desktop console'
   .console-unreleased {
     margin: 0;
     color: var(--text-muted);
+  }
+
+  /* The block's own spacing, and the whole of it: the rows above it end flush (their list
+     carries no margin), so the separation between them and the block's sentence is this one
+     step, and the sentence's own margin is zeroed so the two rules are the block's whole
+     vertical rhythm. Two rules of tokens rather than one, because the browser's default
+     paragraph margin would otherwise be the larger of the two and this token would be the
+     rule that never shows (the byte budget counts these bytes on Getting Started whichever
+     state the data file is in, `website/README.md`). */
+  .console-linux {
+    margin: var(--space-sm) 0 0;
+  }
+
+  .console-linux > p {
+    margin: 0;
   }
 
   .console-more {

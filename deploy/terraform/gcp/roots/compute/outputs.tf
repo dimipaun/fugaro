@@ -1,4 +1,4 @@
-# fugaro init reads these with terraform output -json: the preloaded boot
+# fugaro update reads these with terraform output -json: the preloaded boot
 # image a Batch job's definition names, and the accounts and network the
 # stage reports (design §8.1 task 6).
 
@@ -32,6 +32,19 @@ output "preload_account" {
 
 output "preload_scheduler_job" {
   value = module.compute.preload_scheduler_job
+}
+
+# The reaper's invocation, by name, passed through like every other output
+# here: the Cloud Run job that runs `fugaro reaper` and the Scheduler job that
+# starts it every ReapMargin (reaper.tf). A root output is the module's, one
+# for one (TestComputeOutputsCoverTheRoot), so a name added to the module is
+# added here and to internal/infra.ComputeOutputs in the same commit.
+output "reaper_job" {
+  value = module.compute.reaper_job
+}
+
+output "reaper_scheduler_job" {
+  value = module.compute.reaper_scheduler_job
 }
 
 output "router" {

@@ -239,7 +239,7 @@ export function rowText(row: InstallationsListRow): string {
  *
  * The *command* is never here. It comes from the main process
  * (`src/main/onboarding.ts`), which is the one place the console spells
- * `brew install dimipaun/tap/fugaro` and `fugaro init` -- so a screen cannot
+ * `brew install dimipaun/tap/fugaro` and `fugaro setup` -- so a screen cannot
  * drift from the command the repository documents, and the day `docs/setup-wizard/`
  * renames `init` to `setup` there is one constant to change and a test that
  * pins it.

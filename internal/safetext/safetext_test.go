@@ -238,3 +238,43 @@ func TestFieldKeepsALegitimateAddressAndIsIdempotent(t *testing.T) {
 		}
 	}
 }
+
+// FieldUncut is Field's rewrites without Field's length bound, for a value
+// that has to be read EXACTLY as it is: a value the caller encoded so that
+// nothing Field does can change it (an identity printed for its owner to paste
+// back) is printed whole, and a cut one would be text that matches nothing.
+func TestFieldUncutIsFieldWithoutTheCut(t *testing.T) {
+	csi, rlo := string(rune(0x9b)), string(rune(0x202e))
+	for in, want := range map[string]string{
+		"google_storage_bucket.a":        "google_storage_bucket.a",
+		"a" + csi + "31mb":               "ab",
+		"a" + rlo + "b":                  "ab",
+		"a\nforged line":                 "a forged line",
+		"a\r\n\t  b":                     "a b",
+		"a\x1b[2Jb\x00c":                 "abc",
+		"a" + string(rune(0x2028)) + "b": "a b",
+		"":                               "",
+		"   ":                            "",
+	} {
+		if got := FieldUncut(in); got != want {
+			t.Errorf("FieldUncut(%q) = %q, want %q", in, got, want)
+		}
+	}
+	// The one difference: no cut, so a value over FieldMax is whole, and it
+	// carries no ellipsis (a marker that would be four bytes the value does
+	// not have).
+	long := strings.Repeat("x", 10000)
+	if got := FieldUncut(long); got != long {
+		t.Errorf("a 10k value came back %d runes, want it whole", len([]rune(got)))
+	}
+	if got := FieldUncut(strings.Repeat("y", FieldMax+1)); strings.HasSuffix(got, "…") {
+		t.Error("a value over the cap came back with Field's cut marker")
+	}
+	// And below the cap it is Field, so a caller choosing between them changes
+	// nothing but the bound.
+	for _, in := range []string{"plain", "a\nb\tc", "a" + rlo + "b", "  lead and trail  "} {
+		if got, want := FieldUncut(in), Field(in); got != want {
+			t.Errorf("FieldUncut(%q) = %q, Field = %q, want them equal below the cap", in, got, want)
+		}
+	}
+}

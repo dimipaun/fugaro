@@ -1,5 +1,5 @@
 # One (repository, workflow). The repository module calls this once per
-# workflow with its slice of fugaro init --repo's terraform.tfvars.json. The
+# workflow with its slice of fugaro update's terraform.tfvars.json. The
 # validation blocks check shapes only; nothing here derives a name.
 
 variable "project" {
@@ -135,6 +135,23 @@ variable "runs_bucket" {
   validation {
     condition     = can(regex("^fugaro-runs-[a-z0-9._-]*[a-z0-9]$", var.runs_bucket)) && length(var.runs_bucket) <= 63
     error_message = "runs_bucket must start with fugaro-runs- and be a bucket name of at most 63 characters."
+  }
+}
+
+variable "credentials_service" {
+  description = "The installation's credentials service (D146, D147): its Cloud Run service name and region, or null while the installation has not opted in. Null is what keeps the job's model-secret accessors and creates no invoker grant; set, it is what drops them (the service holds those credentials) and grants the job's account roles/run.invoker on it (D135)."
+  type = object({
+    name   = string
+    region = string
+  })
+  default = null
+
+  validation {
+    condition = var.credentials_service == null ? true : (
+      can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.credentials_service.name)) &&
+      can(regex("^[a-z]+-[a-z]+[0-9]+$", var.credentials_service.region))
+    )
+    error_message = "credentials_service needs a Cloud Run service name and a region such as us-east5."
   }
 }
 

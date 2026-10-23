@@ -462,12 +462,31 @@ func TestImagesReservedAtCeiling(t *testing.T) {
 	}
 }
 
-func TestImagesRefusedWithoutCeiling(t *testing.T) {
+// overridePrices is the project config's model_prices row for a model the
+// catalog does not price: token rates and nothing else — the wire format has
+// no image field at all (internal/pricing/overrides.go), so a model priced
+// this way has no image rate and `pricing.Model.ImageTokens` is 0.
+func overridePrices(t *testing.T) *pricing.Table {
+	t.Helper()
 	table, err := pricing.Embedded().With(pricing.Overrides{"claude-custom-1": {InputPerM: 1, OutputPerM: 2, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := newHarnessWith(t, func(o *Options) { o.Prices = table })
+	return table
+}
+
+// TestImagesRefusedWithoutCeiling: an image block on a model with no image
+// rate is refused, and the refusal names the missing field — an image rate —
+// rather than saying the model is not priced, which is what an owner reading
+// "images aren't priced for model claude-custom-1" while looking at their own
+// model_prices row for that model was told (run 20261021-002046-31cc, whose
+// reviewer model is priced exactly this way).
+//
+// Mutation (restore the old wording): the message assertion fails. Mutation
+// (drop the p.images > 0 guard, i.e. refuse a model with no image rate
+// outright): TestModelPricesOnlyModelTakesTextWithoutAnImageRate fails.
+func TestImagesRefusedWithoutCeiling(t *testing.T) {
+	h := newHarnessWith(t, func(o *Options) { o.Prices = overridePrices(t) })
 	h.gw.EndStage()
 	h.gw.BeginStage(Stage{Name: "implement", Model: "claude-custom-1", Background: haiku})
 	png := base64.StdEncoding.EncodeToString(make([]byte, 30))
@@ -477,13 +496,40 @@ func TestImagesRefusedWithoutCeiling(t *testing.T) {
 	if resp.StatusCode != 400 {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
-	if _, m := apiError(t, b); m != "fugaro: images aren't priced for model claude-custom-1" {
+	if _, m := apiError(t, b); m != "fugaro: model claude-custom-1 is priced without an image rate (the price table's image_tokens, a per-image token ceiling): an image block can't be reserved without one. model_prices sets token rates only" {
 		t.Errorf("message %q", m)
 	}
 	if h.fake.Count() != before {
 		t.Error("forwarded")
 	}
 	if v := h.gw.EndStage().Violations; len(v) != 1 {
+		t.Errorf("violations %q", v)
+	}
+}
+
+// TestModelPricesOnlyModelTakesTextWithoutAnImageRate: the same model takes a
+// text-only call. It is the case every review of a pull request that adds a
+// PNG lands in once the runner builds the reviewer's input as text
+// (internal/runner/reviewinput.go): the model_prices row is the whole of the
+// model's price, the request sends no image, and the gateway must price and
+// forward it rather than refuse it for a rate nothing asked for.
+//
+// Mutation (refuse any model whose ImageTokens is 0, ignoring p.images): this
+// test fails with a 400.
+func TestModelPricesOnlyModelTakesTextWithoutAnImageRate(t *testing.T) {
+	h := newHarnessWith(t, func(o *Options) { o.Prices = overridePrices(t) },
+		anthropicfake.MessageOK("claude-custom-1", smallUsage))
+	h.gw.EndStage()
+	h.gw.BeginStage(Stage{Name: "review", Model: "claude-custom-1", Background: haiku})
+	before := h.fake.Count()
+	resp, b := h.post(msg("claude-custom-1", 100))
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d: %s", resp.StatusCode, b)
+	}
+	if h.fake.Count() != before+1 {
+		t.Error("not forwarded")
+	}
+	if v := h.gw.EndStage().Violations; len(v) != 0 {
 		t.Errorf("violations %q", v)
 	}
 }

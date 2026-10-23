@@ -1,4 +1,4 @@
-# fugaro init reads these with terraform output -json and passes them to
+# fugaro update reads these with terraform output -json and passes them to
 # each repository root.
 
 output "project_name" {
@@ -55,4 +55,8 @@ output "history_service_account" {
 
 output "history_job" {
   value = module.installation.history_job
+}
+
+output "credentials_service" {
+  value = module.installation.credentials_service
 }

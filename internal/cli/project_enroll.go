@@ -15,7 +15,7 @@ package cli
 // runs/ grant a run of a profile can write those prefixes).
 //
 // The interim path 1.6 opened (P4, 12a item 3) is closed here: a new repository
-// needs `repos add` or a confirmed `sync`, no Terraform and no init --repo.
+// needs `repos add` or a confirmed `sync`, no Terraform and no update --repo.
 
 import (
 	"bufio"
@@ -36,6 +36,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/firestore"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -347,7 +348,7 @@ func spendRepos(ctx context.Context, lc *localcfg.Config, now time.Time) (recs [
 	case errors.Is(err, firestore.ErrNoDatabase):
 		return nil, "the project's Firebase project has no Firestore database, so its spend history was not read", nil
 	case errors.Is(err, firestore.ErrNotFound):
-		return nil, "the project's Firestore database has no history mark (fugaro init --firebase has not set it up), so its spend history was not read", nil
+		return nil, "the project's Firestore database has no history mark (fugaro update --firebase-project has not set it up), so its spend history was not read", nil
 	case err != nil:
 		return nil, "", firestoreErr(lc, err)
 	}
@@ -870,7 +871,7 @@ func syncAppKey(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config, al
 	if err := refuseKeyReadInAgent(os.Getenv, syncAppKeyFlag, "the project's GitHub App private key"); err != nil {
 		return nil, err
 	}
-	secretID := gcp.ProjectSecretID(lc.Name, "github-app-key")
+	secretID := gcp.ProjectSecretID(lc.Name, config.GitHubAppKeySecret)
 	fmt.Fprintf(cmd.ErrOrStderr(), "%s: reads the GitHub App's private key from %s with your own credentials and holds it in memory only to sign a 9-minute token; only the PEM byte copy is cleared afterwards (the encoded payload and the parsed key live until garbage collection); GODEBUG=http2debug in your own environment would print the token's Authorization header, so unset it first\n", syncAppKeyFlag, secretID)
 	pem, err := readAppKey(ctx, lc, secretID)
 	switch {

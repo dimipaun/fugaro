@@ -37,7 +37,12 @@ const SharedMaxBytes = 64 << 10
 // else's jobs. Every one of its values that names a cloud resource is held to
 // the anchor's GCP project when the file is read back
 // (internal/cli's ParseShared), like registry_host, base_images, log_view and
-// budget.firebase_project. The receiver is not modified. The
+// budget.firebase_project. **mailbox: is published as well**, and for the same
+// reason batch: is: the keychain item's name is the installation's (mobile
+// P4.1, M5), and a machine whose own config has no mailbox: block must not
+// erase the name another machine recorded. What it holds is the name and never
+// the key — the key lives in the operator's OS keychain and is never written to
+// disk, so nothing published here is a secret. The receiver is not modified. The
 // copy is shallow except for repos: its other maps, slices and pointers
 // alias the receiver's, which is safe because the result is only
 // marshalled, and Marshal only reads.
@@ -134,6 +139,16 @@ func MergeShared(published, local *Config) *Config {
 	}
 	if out.Watch == nil {
 		out.Watch = published.Watch
+	}
+	if out.Mailbox == nil {
+		// The mailbox block is published for the reason batch: and watch: are
+		// (T2's plan, §13): the keychain item's name is the installation's, not
+		// one machine's, and a publisher whose own config has no mailbox: block
+		// — a machine that onboarded before the pairing existed — would
+		// otherwise erase the item name another machine recorded. What it is
+		// NOT is the key: the key never leaves the OS keychain it was generated
+		// into (M5), so nothing published here is a secret.
+		out.Mailbox = published.Mailbox
 	}
 	if out.MaxParallel == 0 {
 		out.MaxParallel = published.MaxParallel

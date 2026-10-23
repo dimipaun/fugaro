@@ -167,7 +167,7 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 }
 
 // envCeiling is the ceiling the job environment deploys: the owner's mode, cap,
-// token ceiling and allow-list as init --repo wrote them. The mode "off" is
+// token ceiling and allow-list as fugaro update wrote them. The mode "off" is
 // unset — it is the absence of a mode, not a ceiling that says nothing may be
 // accounted — and a mode that is not one of the three is refused by
 // SpendFromEnv long before this.

@@ -1,5 +1,5 @@
 # Plans the installation against a mock provider: no credentials, no network
-# beyond the provider download. The names are the ones fugaro init writes
+# beyond the provider download. The names are the ones fugaro update writes
 # into terraform.tfvars.json.
 #
 # An assertion can't reach into a child module's resources, so the first run
@@ -1700,10 +1700,11 @@ run "project_job_grants" {
   }
 }
 
-# The managed deployer's scoped role and its conditioned binding are gated off
-# by default (0.8.6: the fmgd- fence cannot be expressed as an IAM condition
-# yet; deployer.tf's header). By default neither exists, while the account, the
-# unconditioned role and its binding stay.
+# The managed deployer's seven conditioned roles and their seven conditioned
+# bindings are gated off by default (0.10.0: the fmgd- fence is one condition per
+# service and has not been measured live yet; deployer.tf's header, Check 68 of
+# docs/gcp-live-checklist.md). By default none of the fourteen exists, while the
+# account, the unconditioned role and its binding stay.
 run "deployer_scoped_off_by_default" {
   command = plan
 
@@ -1712,8 +1713,32 @@ run "deployer_scoped_off_by_default" {
   }
 
   assert {
-    condition     = length(google_project_iam_custom_role.fugaro_deployer_scoped) == 0 && length(google_project_iam_member.fugaro_deployer_scoped) == 0
-    error_message = "the scoped deployer role and its binding must not exist unless managed_deployer_scoped is set"
+    condition = alltrue([
+      for r in [
+        google_project_iam_custom_role.fugaro_deployer_storage,
+        google_project_iam_custom_role.fugaro_deployer_secret,
+        google_project_iam_custom_role.fugaro_deployer_account,
+        google_project_iam_custom_role.fugaro_deployer_apikey,
+        google_project_iam_custom_role.fugaro_deployer_repository,
+        google_project_iam_custom_role.fugaro_deployer_run_job,
+        google_project_iam_custom_role.fugaro_deployer_scheduler_job,
+      ] : length(r) == 0
+    ])
+    error_message = "the seven conditioned deployer roles must not exist unless managed_deployer_scoped is set"
+  }
+  assert {
+    condition = alltrue([
+      for m in [
+        google_project_iam_member.fugaro_deployer_storage,
+        google_project_iam_member.fugaro_deployer_secret,
+        google_project_iam_member.fugaro_deployer_account,
+        google_project_iam_member.fugaro_deployer_apikey,
+        google_project_iam_member.fugaro_deployer_repository,
+        google_project_iam_member.fugaro_deployer_run_job,
+        google_project_iam_member.fugaro_deployer_scheduler_job,
+      ] : length(m) == 0
+    ])
+    error_message = "the seven conditioned deployer bindings must not exist unless managed_deployer_scoped is set"
   }
   assert {
     condition     = google_service_account.fugaro_deployer.account_id == "fugaro-deployer" && google_project_iam_custom_role.fugaro_deployer.role_id == "fugaroDeployer"
@@ -1725,9 +1750,10 @@ run "deployer_scoped_off_by_default" {
   }
 }
 
-# The opt-in still plans the gated pair exactly as D75 wrote it: one role with
-# the scoped permissions (cloudscheduler.jobs.enable, never .resume), bound once
-# under the managed-prefix condition.
+# The opt-in plans the gated half exactly as the 0.10.0 redesign writes it: one
+# role per service, each holding that service's slice of D75's 31 permissions
+# (cloudscheduler.jobs.enable, never the .resume that does not exist), each
+# bound exactly once under its own service's fence and no other service's.
 run "deployer_scoped_opt_in" {
   command = plan
 
@@ -1740,18 +1766,570 @@ run "deployer_scoped_opt_in" {
   }
 
   assert {
-    condition     = length(google_project_iam_custom_role.fugaro_deployer_scoped) == 1 && google_project_iam_custom_role.fugaro_deployer_scoped[0].role_id == "fugaroDeployerScoped"
-    error_message = "with managed_deployer_scoped the scoped role must exist, as fugaroDeployerScoped"
+    condition = [
+      google_project_iam_custom_role.fugaro_deployer_storage[0].role_id,
+      google_project_iam_custom_role.fugaro_deployer_secret[0].role_id,
+      google_project_iam_custom_role.fugaro_deployer_account[0].role_id,
+      google_project_iam_custom_role.fugaro_deployer_apikey[0].role_id,
+      google_project_iam_custom_role.fugaro_deployer_repository[0].role_id,
+      google_project_iam_custom_role.fugaro_deployer_run_job[0].role_id,
+      google_project_iam_custom_role.fugaro_deployer_scheduler_job[0].role_id,
+      ] == [
+      "fugaroDeployerStorage",
+      "fugaroDeployerSecret",
+      "fugaroDeployerAccount",
+      "fugaroDeployerApiKey",
+      "fugaroDeployerRepository",
+      "fugaroDeployerRunJob",
+      "fugaroDeployerSchedulerJob",
+    ]
+    error_message = "with managed_deployer_scoped the seven conditioned roles exist, one per service"
   }
   assert {
-    condition     = contains(google_project_iam_custom_role.fugaro_deployer_scoped[0].permissions, "cloudscheduler.jobs.enable") && !contains(google_project_iam_custom_role.fugaro_deployer_scoped[0].permissions, "cloudscheduler.jobs.resume")
+    condition = sum([
+      for r in [
+        google_project_iam_custom_role.fugaro_deployer_storage,
+        google_project_iam_custom_role.fugaro_deployer_secret,
+        google_project_iam_custom_role.fugaro_deployer_account,
+        google_project_iam_custom_role.fugaro_deployer_apikey,
+        google_project_iam_custom_role.fugaro_deployer_repository,
+        google_project_iam_custom_role.fugaro_deployer_run_job,
+        google_project_iam_custom_role.fugaro_deployer_scheduler_job,
+      ] : length(r[0].permissions)
+    ]) == 31
+    error_message = "the seven roles partition D75's 31 conditioned permissions, none added and none dropped (9 storage, 3 secret, 4 account, 2 apikey, 3 repository, 5 run, 5 scheduler)"
+  }
+  assert {
+    condition     = contains(google_project_iam_custom_role.fugaro_deployer_scheduler_job[0].permissions, "cloudscheduler.jobs.enable") && !contains(google_project_iam_custom_role.fugaro_deployer_scheduler_job[0].permissions, "cloudscheduler.jobs.resume")
     error_message = "the scoped role resumes a Scheduler job with cloudscheduler.jobs.enable; cloudscheduler.jobs.resume does not exist"
   }
   assert {
-    condition = (length(google_project_iam_member.fugaro_deployer_scoped) == 1 &&
-      google_project_iam_member.fugaro_deployer_scoped[0].role == "projects/proj-1234/roles/fugaroDeployerScoped" &&
-      google_project_iam_member.fugaro_deployer_scoped[0].condition[0].title == "fugaro-managed-prefix" &&
-    strcontains(google_project_iam_member.fugaro_deployer_scoped[0].condition[0].expression, "projects/_/buckets/fmgd-"))
-    error_message = "with managed_deployer_scoped the scoped role is bound once, under the fugaro-managed-prefix condition"
+    condition = alltrue([
+      for b in [
+        [google_project_iam_member.fugaro_deployer_storage[0], "fugaroDeployerStorage", "storage.googleapis.com/Bucket"],
+        [google_project_iam_member.fugaro_deployer_secret[0], "fugaroDeployerSecret", "secretmanager.googleapis.com/Secret"],
+        [google_project_iam_member.fugaro_deployer_account[0], "fugaroDeployerAccount", "iam.googleapis.com/ServiceAccount"],
+        [google_project_iam_member.fugaro_deployer_apikey[0], "fugaroDeployerApiKey", "apikeys.googleapis.com/Key"],
+        [google_project_iam_member.fugaro_deployer_repository[0], "fugaroDeployerRepository", "artifactregistry.googleapis.com/Repository"],
+        [google_project_iam_member.fugaro_deployer_run_job[0], "fugaroDeployerRunJob", "run.googleapis.com/Job"],
+        [google_project_iam_member.fugaro_deployer_scheduler_job[0], "fugaroDeployerSchedulerJob", "cloudscheduler.googleapis.com/Job"],
+      ] :
+      b[0].role == "projects/proj-1234/roles/${b[1]}" &&
+      b[0].condition[0].title == "fugaro-managed-prefix" &&
+      strcontains(b[0].condition[0].expression, b[2]) &&
+      strcontains(b[0].condition[0].expression, "fmgd-") &&
+      !strcontains(b[0].condition[0].expression, "contains(")
+    ])
+    error_message = "each conditioned deployer role is bound exactly once, under its own service's fmgd- fence and no other's"
   }
+}
+
+# The credentials service is OFF by default (D147): with
+# var.credentials_service null this module creates nothing at all, so an
+# installation that has not opted in plans exactly what it planned before
+# C1.18 existed — no service, no account, no container, no grant.
+run "credentials_service_off_by_default" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  assert {
+    condition     = length(google_cloud_run_v2_service.credentials) == 0 && length(google_service_account.credentials) == 0
+    error_message = "the credentials service and its account must not exist unless credentials_service is set (D147)"
+  }
+  assert {
+    condition     = length(google_secret_manager_secret.credentials_bundle) == 0 && length(google_secret_manager_secret_iam_member.credentials_bundle) == 0
+    error_message = "the bundle container and its one accessor grant must not exist unless credentials_service is set"
+  }
+}
+
+# The opt-in (C1.18, and the owner's Q6 ruling of 2026-10-19). This run is the
+# whole security claim of the task, so it says what it pins:
+#
+#   * ONE secret container — the bundle — and ONE accessor grant on it, to the
+#     service's own account, and the grant carries NO condition: no
+#     secretmanager.googleapis.com/secretId filter and no name-prefix fence,
+#     which is what Q6 replaced. A condition added here fails this run.
+#   * The service's account holds nothing else IN THIS MODULE: not a member of
+#     the project's other secret containers (the run sets two of them, the two
+#     model credentials, so the assertion has something to be false about),
+#     nothing on the runs bucket, and no grant here that would let anyone act
+#     as it. What this run cannot see is a grant written in another file — a
+#     per-secret grant to the service's account added to secrets.tf, say, is
+#     not a resource of this module and no assertion here can reach it. That
+#     direction is the Go scan's: deploy/terraform's
+#     TestCredentialsServiceGrantsAreTheOneBundle reads credentials.tf, and
+#     internal/infra/managed's TestRunAccountsHaveNoWritePathTo… walks every
+#     module's IAM resources. (Independent review n1: this comment used to
+#     claim the run guarded that too, which it does not.)
+#   * The service requires IAM: nothing in this module grants invoker to
+#     anyone, and the container reads no credential from its environment.
+run "credentials_service_on" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    # Two project-wide model-credential containers, so "the service's account
+    # holds no member over any other secret" has something to be false about.
+    project_secrets = {
+      "claude-oauth-token" = "fugaro-project-aurora-claude-oauth-token-3f1c0a9d2b7e4451"
+      "anthropic-api-key"  = "fugaro-project-aurora-anthropic-api-key-8c2d5f6a1e9b3074"
+    }
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
+      url = "https://fugaro-credentials-123456789012.us-east5.run.app"
+    }
+  }
+
+  # The grants below are written from the account's computed member, so the
+  # mock provider has to give it one during the plan for them to be readable.
+  override_resource {
+    target          = google_service_account.credentials[0]
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-credentials@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-credentials@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-credentials@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition     = google_service_account.credentials[0].account_id == "fugaro-credentials"
+    error_message = "the service's account is the one credentials_service.account_id names, and the grants below are read against it"
+  }
+  assert {
+    condition = (length(google_secret_manager_secret.credentials_bundle) == 1 &&
+      google_secret_manager_secret.credentials_bundle[0].secret_id == "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358" &&
+    google_secret_manager_secret.credentials_bundle[0].project == "proj-1234")
+    error_message = "the bundle container's Secret Manager ID must be the one the variable carries — the name the loader reads — in this project"
+  }
+  assert {
+    condition = google_secret_manager_secret.credentials_bundle[0].labels == tomap({
+      fugaro         = "managed"
+      fugaro_project = "aurora"
+    })
+    error_message = "the bundle container carries fugaro=managed and the installation's name, and deliberately no fugaro_secret: that label is what discovery reads to decide which logical secret of the project's set a container holds, and this one is not one of them"
+  }
+  assert {
+    condition = (length(google_secret_manager_secret.credentials_bundle[0].replication) == 1 &&
+    length(google_secret_manager_secret.credentials_bundle[0].replication[0].auto) == 1)
+    error_message = "the bundle container is replicated automatically, like every container the CLI adopts"
+  }
+  assert {
+    condition = (length(google_secret_manager_secret_iam_member.credentials_bundle) == 1 &&
+      google_secret_manager_secret_iam_member.credentials_bundle[0].role == "roles/secretmanager.secretAccessor" &&
+      google_secret_manager_secret_iam_member.credentials_bundle[0].secret_id == google_secret_manager_secret.credentials_bundle[0].secret_id &&
+    google_secret_manager_secret_iam_member.credentials_bundle[0].member == google_service_account.credentials[0].member)
+    error_message = "Q6: the service's account holds roles/secretmanager.secretAccessor on the one bundle container, and on nothing else"
+  }
+  assert {
+    condition     = length(google_secret_manager_secret_iam_member.credentials_bundle[0].condition) == 0
+    error_message = "Q6: the bundle grant carries NO condition — a secretId filter or a name-prefix fence is exactly what the ruling replaced"
+  }
+  assert {
+    condition = length([
+      for k, g in google_secret_manager_secret_iam_member.operator : k
+      if g.member == google_service_account.credentials[0].member
+    ]) == 0
+    error_message = "the service's account must hold no member over the project's other secret containers: one container, one grant (Q6)"
+  }
+  assert {
+    condition = length([
+      for k, g in google_storage_bucket_iam_member.runs : k
+      if g.member == google_service_account.credentials[0].member
+    ]) == 0
+    error_message = "the service's account must hold nothing on the runs bucket"
+  }
+  assert {
+    condition = length(concat([
+      for k, g in google_service_account_iam_member.scheduler_user : k
+      if g.member == google_service_account.credentials[0].member || g.service_account_id == google_service_account.credentials[0].name
+      ], [
+      for k, g in google_service_account_iam_member.fugaro_deployer_token_creator : k
+      if g.member == google_service_account.credentials[0].member || g.service_account_id == google_service_account.credentials[0].name
+    ])) == 0
+    error_message = "nobody may act as the service's account: anyone who could deploy a revision as it could read every model credential the installation holds"
+  }
+  assert {
+    condition = (length(google_cloud_run_v2_service.credentials) == 1 &&
+      google_cloud_run_v2_service.credentials[0].name == "fugaro-credentials" &&
+      google_cloud_run_v2_service.credentials[0].location == "us-east5" &&
+    google_cloud_run_v2_service.credentials[0].project == "proj-1234")
+    error_message = "the service is the one credentials_service names, in the installation's region"
+  }
+  assert {
+    condition = (google_cloud_run_v2_service.credentials[0].template[0].service_account == google_service_account.credentials[0].email &&
+      google_cloud_run_v2_service.credentials[0].template[0].containers[0].image == "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3" &&
+    google_cloud_run_v2_service.credentials[0].template[0].timeout == "3600s")
+    error_message = "the service runs as its own account, on the image the variable carries, with the longest timeout Cloud Run allows for a streaming proxy"
+  }
+  # The environment is the seven names C1.14's `fugaro credentials serve`
+  # reads and internal/infra/tf's credentialsServiceEnv allows, and it is held
+  # as an exact map: an eighth entry, a missing one, a name the process does
+  # not read, or a value that is not the installation's own fails here. What
+  # the service does with a value (a database URL that is not the Firebase
+  # project's, an audience that is not a URL, a job table that binds nothing)
+  # is refused by the process itself, by name, and is C1.14's tests.
+  assert {
+    condition = tomap({
+      for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.name => e.value
+      }) == tomap({
+      FUGARO_PROJECT                 = "aurora"
+      FUGARO_GCP_PROJECT             = "proj-1234"
+      FUGARO_REGION                  = "us-east5"
+      FUGARO_RTDB_URL                = "https://aurora-fp-default-rtdb.firebaseio.com"
+      FUGARO_FIREBASE_PROJECT        = "aurora-fp"
+      FUGARO_CREDENTIALS_SERVICE_URL = "https://fugaro-credentials-123456789012.us-east5.run.app"
+      FUGARO_JOB_ACCOUNTS            = "[{\"provider\":\"github\",\"repo\":\"acme/webapp\",\"workflow\":\"web\"}]"
+    })
+    error_message = "the container's environment is the seven names the service reads and nothing else: no secret ID, no credential value, and no eighth entry"
+  }
+  # The service's own URL is the audience its callers' ID tokens are minted
+  # for, and it is the one entry the module cannot fill on the apply that
+  # CREATES the service: Cloud Run assigns it, and no expression inside this
+  # resource can read its own uri (Terraform refuses a self-referential
+  # block), so the variable carries it and the module's output reads it back
+  # for the apply that follows in the same init stage. Unset, the name carries
+  # the module's unassigned placeholder instead (an .invalid host, which no ID
+  # token is ever minted for) so the first revision starts and admits nobody;
+  # the run below this one is the unset case.
+  # The job table is the one name whose value is a document, and it is the
+  # module's own jsonencode of the triples: the service derives the job
+  # accounts from them (credsvc.JobAccountsFor) rather than reading emails,
+  # because the account's name and the repository's slug are both hashes of
+  # these three fields.
+  assert {
+    condition = jsondecode([
+      for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.value
+      if e.name == "FUGARO_JOB_ACCOUNTS"
+      ][0]) == [{
+      provider = "github"
+      repo     = "acme/webapp"
+      workflow = "web"
+    }]
+    error_message = "the job table must be the variable's triples as JSON, which is what the service decodes (all three fields present, no others)"
+  }
+  assert {
+    condition = (length(google_cloud_run_v2_service.credentials[0].template[0].containers) == 1 &&
+    google_cloud_run_v2_service.credentials[0].template[0].containers[0].resources[0].limits == tomap({ cpu = "1", memory = "512Mi" }))
+    error_message = "the service runs one container with the pinned resources"
+  }
+  assert {
+    condition = (length(google_cloud_run_v2_service.credentials[0].traffic) == 1 &&
+      google_cloud_run_v2_service.credentials[0].traffic[0].percent == 100 &&
+    google_cloud_run_v2_service.credentials[0].traffic[0].type == "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST")
+    error_message = "all traffic goes to the latest revision"
+  }
+  assert {
+    condition     = google_cloud_run_v2_service.credentials[0].ingress == "INGRESS_TRAFFIC_ALL"
+    error_message = "the ingress is ALL because the caller is a Cloud Run job of this project, which reaches the service over its public run.app URL; the fence is the IAM check, not the network"
+  }
+  assert {
+    condition     = google_cloud_run_v2_service.credentials[0].invoker_iam_disabled == false
+    error_message = "the service must require IAM: invoker_iam_disabled false is stated rather than implied, so a change of the provider's default cannot open the service silently"
+  }
+  assert {
+    condition     = google_cloud_run_v2_service.credentials[0].deletion_protection == false
+    error_message = "the service holds no data of its own: the bundle container is what must survive, and it carries prevent_destroy"
+  }
+  assert {
+    condition = google_cloud_run_v2_service.credentials[0].labels == tomap({
+      fugaro      = "managed"
+      fugaro_role = "credentials"
+    })
+    error_message = "the service carries fugaro=managed and its own role label"
+  }
+  assert {
+    condition = length([
+      for g in google_project_iam_member.launcher : g.member
+      if g.member == google_service_account.credentials[0].member
+    ]) == 0
+    error_message = "the service's account holds no project-level role: it reads one secret and nothing else"
+  }
+}
+
+# The first apply of an installation that has just opted in: the tfvars carry
+# no credentials_service.url yet, because the URL does not exist until this
+# apply creates the service (and Terraform refuses a resource that reads its
+# own uri). The audience must still be a name the service takes, and a value
+# no caller's ID token can carry — the placeholder is under the reserved
+# .invalid TLD, so the first revision starts, is healthy, and admits nobody
+# until the init stage reads the real URL back from this module's output and
+# applies again. An empty value here would be the deadlock the local's comment
+# describes; a run.app-shaped guess would be a service that trusts a token
+# minted for someone else's.
+run "credentials_service_first_apply_has_no_audience_yet" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
+    }
+  }
+
+  assert {
+    condition = tomap({
+      for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.name => e.value
+    })["FUGARO_CREDENTIALS_SERVICE_URL"] == "https://credentials-service-url-unassigned.invalid"
+    error_message = "with no credentials_service.url the audience is the module's unassigned placeholder, so the first revision starts without admitting a caller rather than failing the apply that would have produced the URL"
+  }
+  assert {
+    condition     = !strcontains(tomap({ for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.name => e.value })["FUGARO_CREDENTIALS_SERVICE_URL"], "run.app")
+    error_message = "the placeholder must not look like a Cloud Run URL: a run.app-shaped audience would be a guess at another service's name"
+  }
+  assert {
+    condition     = length(google_cloud_run_v2_service.credentials[0].template[0].containers[0].env) == 7
+    error_message = "the unset case sets the same seven names, the audience among them: a name the module drops is a service the process refuses by a different message"
+  }
+}
+
+# The image is pinned by digest, and a tag is refused at plan time (C1.18,
+# independent security review M1). Why this is a security rule and not a
+# preference: the service runs as the account that reads every credential in
+# the bundle, and modules/installation/iam.tf grants every operator
+# roles/artifactregistry.writer on the installation's registry — so a mutable
+# `fugaro-credentials:latest` would let an operator push the code that the
+# next owner apply runs as that account. A digest cannot be rewritten. The
+# run above is the digest form, planned and asserted; this one is the tag
+# form, refused by the variable's validation before any resource is planned.
+run "credentials_service_image_must_be_a_digest" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials:latest"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
+# A digest that is not 64 lower-case hex digits is not a digest: a truncated
+# or upper-case one would not resolve, and `@sha256:` alone would pass a check
+# that only looked for the marker. This is the second half of the same rule.
+run "credentials_service_image_must_be_a_whole_digest" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
+# The four facts the process is configured with, held to their shape at plan
+# time (modules/installation/variables.tf, the second validation). A stale or
+# hand-edited terraform.tfvars.json is what that block exists to stop - the
+# service reads every one of these from its environment and refuses to serve
+# without them, so an installation that planned a bad one would halt every run
+# that reached it (D143) while the plan reported success.
+#
+# The five runs below are the other half of the variable's two image runs
+# above: each states one bad value and requires the plan to refuse it, so the
+# guard cannot be weakened or deleted without a red test. The Go layer refuses
+# the same shapes as they are derived (TestCredentialsRefusesWithoutTheFirebaseFacts),
+# but that is the layer this file's inputs never pass through: a tfvars that
+# was edited by hand, or written by an older fugaro, reaches Terraform without
+# it.
+
+# An empty job table is a service that binds no run to a repository: it admits
+# nobody, which an operator would read as healthy while every run halted.
+run "credentials_service_job_table_must_not_be_empty" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts     = []
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
+# A row with a field missing: the account's name is derived from the workflow
+# and the repository's slug from the provider and the repository, so an empty
+# field is a job whose account cannot be derived at all.
+run "credentials_service_job_row_needs_all_three_fields" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = ""
+      }]
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
+# The Firebase project is a project ID, not a display name and not the Fugaro
+# project: it is the aud and iss a run's identity is verified against, and a
+# revision configured with the wrong one refuses every caller.
+run "credentials_service_firebase_project_must_be_a_project_id" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "Aurora Firebase"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
+# A database URL with a path is not the database: the readers are built on the
+# URL itself, and a path silently reads the wrong tree (history.tf's own rule,
+# restated here rather than trusted to whoever wrote the tfvars).
+run "credentials_service_rtdb_url_must_be_a_whole_url" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com/runs"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
+# The audience, once the stage knows it: a non-empty URL that is not the
+# https://<host> form Cloud Run serves on admits no ID token at all, so it is
+# refused here rather than left to the revision that would silently admit
+# nobody. (An ABSENT url is the other case and is admitted: the first apply
+# writes credentials.tf's unassigned placeholder, run above.)
+run "credentials_service_url_must_be_an_https_host" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
+      url = "http://fugaro-credentials.us-east5.run.app"
+    }
+  }
+
+  expect_failures = [var.credentials_service]
 }

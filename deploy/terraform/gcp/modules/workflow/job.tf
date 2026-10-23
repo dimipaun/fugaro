@@ -1,4 +1,4 @@
-# The workflow's Cloud Run job. fugaro init --repo leaves deploy_job off
+# The workflow's Cloud Run job. fugaro update leaves deploy_job off
 # until the job's image exists and every secret it mounts has a version
 # (or the job already exists), so a new job is never pointed at nothing.
 resource "google_cloud_run_v2_job" "this" {
@@ -53,9 +53,12 @@ resource "google_cloud_run_v2_job" "this" {
         }
 
         # The secret's ID, the same-project short form the live jobs hold,
-        # never its projects/… path, which would plan an update.
+        # never its projects/… path, which would plan an update. job_mounts,
+        # not var.workflow.secret_env: a mount the account has no accessor on
+        # is a job Cloud Run refuses to create, so C2.3 takes the App key's
+        # mount away with its accessor (sa.tf, and C1.20 for the model ones).
         dynamic "env" {
-          for_each = var.workflow.secret_env
+          for_each = local.job_mounts
           content {
             name = env.key
             value_source {
@@ -78,11 +81,11 @@ resource "google_cloud_run_v2_job" "this" {
     # fails the plan; a check block would only warn.
     precondition {
       condition     = lookup(var.workflow.env, "FUGARO_PROJECT", "") == var.fugaro_project
-      error_message = "the job's FUGARO_PROJECT must be the Fugaro project ${var.fugaro_project}; run fugaro init --repo"
+      error_message = "the job's FUGARO_PROJECT must be the Fugaro project ${var.fugaro_project}; run fugaro update"
     }
     precondition {
       condition     = lookup(var.workflow.env, "FUGARO_GCP_PROJECT", "") == var.project
-      error_message = "the job's FUGARO_GCP_PROJECT must be the GCP project ${var.project}; run fugaro init --repo"
+      error_message = "the job's FUGARO_GCP_PROJECT must be the GCP project ${var.project}; run fugaro update"
     }
   }
 

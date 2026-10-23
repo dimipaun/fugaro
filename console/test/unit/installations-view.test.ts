@@ -270,7 +270,7 @@ const ONBOARD_CLI: OnboardingState = {
   searched: ['/opt/homebrew/bin', '/usr/local/bin', '/Users/owner/.local/bin', '/usr/bin'],
   command: 'brew install dimipaun/tap/fugaro',
 }
-const ONBOARD_FIRST: OnboardingState = { kind: 'first-installation', command: 'fugaro init' }
+const ONBOARD_FIRST: OnboardingState = { kind: 'first-installation', command: 'fugaro setup' }
 
 /** mount builds the view over a fresh fake document, and returns the pieces a
  * test needs. Every test starts here. */
@@ -497,7 +497,7 @@ describe('the picker’s document and its view', () => {
     expect(screen.children.map((child) => child.textContent)).toEqual([
       copy.title,
       copy.body,
-      'fugaro init',
+      'fugaro setup',
       // No "looked in" line: this screen is drawn because a binary **was** found,
       // and the places it was found in are not what is missing.
       copy.link,

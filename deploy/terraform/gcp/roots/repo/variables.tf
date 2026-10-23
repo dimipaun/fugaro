@@ -27,6 +27,14 @@ variable "installation" {
     })
     launchers = list(string)
     operators = list(string)
+    # The installation's credentials service (D146, D147), absent while it has
+    # not opted in: its Cloud Run service name and region. This root passes it
+    # to the workflow module, which grants each job account roles/run.invoker on
+    # it and drops that job's model-secret accessors.
+    credentials_service = optional(object({
+      name   = string
+      region = string
+    }))
   })
 }
 
@@ -95,14 +103,14 @@ variable "repo" {
 }
 
 variable "allow_job_delete" {
-  description = "Lowers the jobs' deletion protection, for offboarding (fugaro init --repo --allow-job-delete)."
+  description = "Lowers the jobs' deletion protection, for offboarding (fugaro update --allow-job-delete)."
   type        = bool
   default     = false
   nullable    = false
 }
 
 # The GitHub App ID isn't a secret. The jobs and the check get it through
-# their env; it is here only so init --repo can read it back as an output,
+# their env; it is here only so fugaro update can read it back as an output,
 # even when every workflow's check is off.
 variable "github_app_id" {
   description = "The GitHub App's ID, or null for a Bitbucket repository."

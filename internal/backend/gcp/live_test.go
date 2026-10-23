@@ -1,7 +1,7 @@
 //go:build live
 
 // Live checks of the Cloud Run backend against the real resources that
-// fugaro init sets up in the live-test project (docs/gcp-live-checklist.md).
+// fugaro setup creates in the live-test project (docs/gcp-live-checklist.md).
 // They never run in CI: they need the `live` build tag, Application Default
 // Credentials and the real local config. Run them only after the
 // checklist's setup (docs/gcp-setup.md) has been applied:
@@ -861,7 +861,7 @@ func TestLiveCacheOnGCS(t *testing.T) {
 func TestLiveCloudBuildSecretAndDigest(t *testing.T) {
 	e := openLive(t)
 	if e.lc.BaseImage("base") == "" {
-		t.Fatal("the local config needs base_images.base (fugaro init --base-image writes it)")
+		t.Fatal("the local config needs base_images.base (fugaro update --base-image writes it)")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
@@ -874,7 +874,7 @@ func TestLiveCloudBuildSecretAndDigest(t *testing.T) {
 	if !tgt.legacy {
 		registry := tgt.image[:strings.LastIndex(tgt.image, "/")]
 		if ok, err := bld.RegistryExists(ctx, registry); err != nil || !ok {
-			t.Fatalf("the repository's registry %s: exists=%v, %v (run fugaro init --repo first)", registry, ok, err)
+			t.Fatalf("the repository's registry %s: exists=%v, %v (run fugaro update first)", registry, ok, err)
 		}
 	}
 	// The markers the RUN steps echo are split with "" so BuildKit's echo

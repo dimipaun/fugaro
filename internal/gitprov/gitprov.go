@@ -75,6 +75,13 @@ var ErrPRNotOpen = errors.New("pull request is not open on this branch")
 type PRHead struct {
 	// SHA is the head commit; review mode fetches and checks it out.
 	SHA string
+	// Base is the branch pull request Number targets now, as PRInfo.Base
+	// carries it: review mode diffs the head against this branch (a
+	// retargeted pull request — an integration or release branch — must not
+	// be reviewed against the branch its first run happened to assume).
+	// "" when the provider reported none, which the runner reads as "use
+	// the run's own ref".
+	Base string
 	// Fork is whether the head repository differs from the one the
 	// provider was opened for. A fork is reviewed only when its author is
 	// trusted AND SourceRepo's owner is that same author (reviewmode.go):
@@ -132,12 +139,20 @@ const (
 
 // PRInfo is a pull request as the provider shows it.
 type PRInfo struct {
-	Number       int
-	URL          string
-	State        PRState
-	Draft        bool
-	Title        string // as the host shows it: with DraftPrefix on a prefix-marked draft
-	Body         string // GitHub's body, Bitbucket's description; untrusted text
+	Number int
+	URL    string
+	State  PRState
+	Draft  bool
+	Title  string // as the host shows it: with DraftPrefix on a prefix-marked draft
+	Body   string // GitHub's body, Bitbucket's description; untrusted text
+	// Base is the branch pull request Number targets RIGHT NOW, as the
+	// provider's own answer gives it (GitHub's base.ref, Bitbucket's
+	// destination.branch.name); "" when the provider reported none. A run
+	// reads this rather than assuming, because a pull request's base can be
+	// retargeted after it was opened — an integration branch, a release
+	// branch — and a review that diffs against the base the FIRST run
+	// opened against reviews the whole of the new base's divergence.
+	Base         string
 	AuthorID     string // the PR author's account ID (GitHub numeric user ID; Bitbucket account_id)
 	SourceBranch string
 	SourceRepo   string // owner/name of the head repository, as the provider spells it
@@ -180,6 +195,28 @@ type GitAuth struct {
 	Token    string            // HTTPS password; empty means git needs no credentials
 	Expires  time.Time         // zero when the token does not expire
 	Env      map[string]string // extra agent variables, such as GH_TOKEN
+}
+
+// TokenSource is where a provider's installation tokens come from (C2.2):
+// one token scoped to the run's repository, valid for at least minValid, and
+// its expiry. The GitHub adapter's own mint with the App key is one, and the
+// installation's credentials service is the other (github.ServiceTokens).
+type TokenSource interface {
+	Token(ctx context.Context, minValid time.Duration) (string, time.Time, error)
+}
+
+// ServiceTokenSetter is implemented by a provider whose installation tokens
+// can be taken from the installation's credentials service instead of a
+// credential of the job's own (C2.2, D145): UseServiceTokens installs the
+// source every token then comes from. The runner installs one on every
+// provider of a run whose installation has the service on, because the
+// identities a mint carries are the run's -- the job's Google ID token and
+// the run's own Firebase one -- and not anything a git adapter holds; a
+// provider that does not implement this (Bitbucket's, whose repository access
+// token no service can mint per job, D145/F7) is left exactly as it was, and
+// so is the file-backed test provider.
+type ServiceTokenSetter interface {
+	UseServiceTokens(TokenSource)
 }
 
 // Provider is what the runner needs from the git host.
@@ -229,8 +266,10 @@ type Provider interface {
 	// reviews and drafts) and reviews with no body are left out.
 	//
 	// Self and SelfKnown say whether a comment was posted as the identity
-	// Fugaro uses, which the adapter looks up (GitHub: the App, GET /app;
-	// Bitbucket: the token's user, GET /user). A lookup the provider
+	// Fugaro uses, which the adapter looks up (GitHub: the App, GET /app
+	// with its JWT when the job holds the App's key, and GET /user with the
+	// run's installation token when the credentials service holds it —
+	// C2.2; Bitbucket: the token's user, GET /user). A lookup the provider
 	// answers definitely (a 4xx other than 408 and 429) leaves SelfKnown
 	// false on every comment, and the answer is kept. A passing failure (a
 	// network error, a 408, 429 or 5xx, a cancelled context) is not kept:

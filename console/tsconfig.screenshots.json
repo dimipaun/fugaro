@@ -1,0 +1,55 @@
+{
+  // The screenshot run's build (owner ruling 2026-10-20, step 1).
+  //
+  // `npm run screenshots` is one command an owner runs, and `node` has to run a
+  // file -- so this is the config that produces it, exactly as
+  // `tsconfig.record-fixture.json` produces the recorder. It is a second config
+  // rather than an edit to that one because the two take different trees to
+  // different outputs: the recorder takes `src/` and `tools/` to
+  // `.record-fixture/`, and this takes `src/`, `tools/`, the e2e suite's launch
+  // path and the unit suite's fake CLI to `.screenshots/` -- the run launches the
+  // console through the specs' own `test/support/launch.ts` and resolves its fake
+  // through `test/unit/stub.ts`, so those are compiled here rather than copied.
+  //
+  // Both outputs are build artifacts and are gitignored. Nothing here is part
+  // of what ships: `package.json`'s `main` is `dist/main/index.js`, built by
+  // `tsconfig.build.json`, and no file of this tree is in the packaged app's
+  // `files` list.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // `tsconfig.build.json`'s module settings and for the same reason:
+    // package.json has no `"type"`, so the emitted `.js` is CommonJS, which is
+    // what `node` expects to `require`. `verbatimModuleSyntax` is off for that
+    // build only; every `import type` in the sources is already written as one.
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "verbatimModuleSyntax": false,
+    "esModuleInterop": true,
+    "noEmit": false,
+    "outDir": ".screenshots",
+    "rootDir": ".",
+    "sourceMap": true
+  },
+  // `src/` is here because the tool imports the console's own rules rather than
+  // copies of them (the installation file's writer, the protocol's two URLs,
+  // the version the console was built against); `test/support/launch.ts` because
+  // the launch path is the e2e suite's own; `test/unit/stub.ts` because the fake
+  // CLI is the unit suite's own child.
+  //
+  // `test/support/launch.ts` is named rather than globbed as `test/support/**`
+  // for a reason worth writing down: the rest of that directory is *not* built
+  // here, and one of them (`built.ts`, which the e2e specs use to run the
+  // packaged app) reads `import.meta`, which this build's CommonJS output
+  // refuses. A glob would make `npm run screenshots` fail to compile on a module
+  // the run never loads. `test/support/cliStub.ts` -- the *e2e specs'* fake --
+  // was on this list too and is not any more: nothing the run reaches imports it
+  // (`test/unit/stub.ts` is the fake this tool uses), so it was a module
+  // compiled for a graph that does not contain it (review of 2026-10-21, low
+  // finding). The test file holds this list to the run's own import graph.
+  "include": [
+    "src/**/*.ts",
+    "tools/**/*.ts",
+    "test/support/launch.ts",
+    "test/unit/stub.ts"
+  ]
+}

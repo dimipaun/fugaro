@@ -18,8 +18,9 @@
 //     the file its `source:` names -- and to the `README.md` line that source
 //     names;
 //   - the setup command to `README.md`'s getting-started steps and to the
-//     cobra command itself, `internal/cli/config_init.go`'s `Use: "init"` --
-//     which is the thing that would have to change for the string to be wrong.
+//     cobra command itself, `internal/cli/setup.go`'s `setupDoor` (`name:
+//     "setup"`) -- which is the thing that would have to change for the string
+//     to be wrong.
 //
 // The link is pinned the same way: the URL is the page the website serves,
 // `website/src/pages/getting-started.astro`, so the two cannot drift apart.
@@ -78,7 +79,7 @@ describe('the install command', () => {
 
 describe('the setup command', () => {
   it('is the command README.md tells the operator to run', () => {
-    // The step, not merely the token: `fugaro init` appears many times in
+    // The step, not merely the token: `fugaro setup` appears many times in
     // README.md, and the *first* one is the getting-started step that sets a
     // machine up. The sentence around it is asserted too, so a README that
     // renamed the command in that step would fail here by line.
@@ -89,22 +90,20 @@ describe('the setup command', () => {
   })
 
   it('is the command the CLI itself declares', () => {
-    // `Use: "init"` (`internal/cli/config_init.go`) is what makes `fugaro init`
-    // the command: the string in the console is derived from the CLI's own name
+    // `setupDoor`'s `name: "setup"` (`internal/cli/setup.go`) is what makes
+    // `fugaro setup` the command: the string in the console is derived from the CLI's own name
     // for it, and this is the assertion that keeps the two together -- the
     // command is *built from the value the CLI declares*, so a rename in that
     // file is a red step here rather than a note beside a string nobody compares.
-    const source = read('internal/cli/config_init.go')
-    const declared = /Use:\s*"([^"\s]+)"/.exec(source)?.[1]
-    expect(declared, 'internal/cli/config_init.go must declare Use: "<name>"').toBe('init')
+    const source = read('internal/cli/setup.go')
+    const door = source.slice(source.indexOf('var setupDoor = convergeDoor{'))
+    const declared = /name:\s*"([^"\s]+)"/.exec(door)?.[1]
+    expect(declared, 'internal/cli/setup.go must declare setupDoor with name: "<name>"').toBe('setup')
     expect(FUGARO_SETUP_COMMAND).toBe(`fugaro ${declared ?? ''}`)
-    // The rename the setup-wizard plan makes (`fugaro setup`) is the one change
-    // that must fail here, and it fails *because of the derivation above*:
-    // renaming `Use:` in `internal/cli/config_init.go` makes `declared` say
-    // `setup` while the console still holds `fugaro init`, so the equalities
-    // above go red by name. No second spelling of the command is asserted
-    // instead -- a `not.toBe('fugaro setup')` here would be true whatever the
-    // CLI declared, which is the assertion this replaced.
+    // A later rename is the one change that must fail here, and it fails
+    // *because of the derivation above*: renaming `setupDoor` in
+    // `internal/cli/setup.go` makes `declared` disagree with the console's
+    // constant, so the equalities above go red by name.
   })
 
   it('points at the plan that renames it, in one place', () => {
@@ -116,7 +115,7 @@ describe('the setup command', () => {
     // purpose, and the claim is about the *code* -- one constant and no second
     // spelling of it.
     const code = module.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-    expect(code.match(/fugaro init/g) ?? []).toHaveLength(1)
+    expect(code.match(/fugaro setup/g) ?? []).toHaveLength(1)
   })
 })
 

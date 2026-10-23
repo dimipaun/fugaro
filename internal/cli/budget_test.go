@@ -61,6 +61,20 @@ func newBudgetFixture(t *testing.T, budgetYAML string) *budgetFixture {
 
 func (f *budgetFixture) runsDir() string { return filepath.Join(f.dir, "runs") }
 
+// appendConfig adds top-level YAML (such as claude_accounts: …) to the local
+// config, the way cloudFixture.appendConfig does.
+func (f *budgetFixture) appendConfig(t *testing.T, yaml string) {
+	t.Helper()
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, []byte(yaml)...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (f *budgetFixture) writeMarker(t *testing.T, name, gcpProject string) {
 	t.Helper()
 	data, err := json.Marshal(infra.ProjectMarker{Version: 1, Name: name, GCPProject: gcpProject})
@@ -642,13 +656,13 @@ func TestBudgetRefusesWithoutFirebaseConfig(t *testing.T) {
 	newBudgetFixture(t, "budget: { mode: observe, per_run_usd: 5 }\n")
 	for _, args := range [][]string{{"show"}, {"set", "--global", "--daily", "1", "--yes"}, {"kill", "--all", "--yes"}, {"resume", "--all", "--yes"}} {
 		_, _, err := execute(t, append([]string{"budget"}, args...)...)
-		if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "init --firebase") {
+		if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "update --firebase-project") {
 			t.Errorf("%v: err = %v", args, err)
 		}
 	}
 	// No budget block at all.
 	newBudgetFixture(t, " \n")
-	if _, _, err := execute(t, "budget", "show"); err == nil || !strings.Contains(err.Error(), "init --firebase") {
+	if _, _, err := execute(t, "budget", "show"); err == nil || !strings.Contains(err.Error(), "update --firebase-project") {
 		t.Errorf("err = %v", err)
 	}
 }

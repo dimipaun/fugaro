@@ -355,6 +355,14 @@ type pullDetail struct {
 			FullName string `json:"full_name"`
 		} `json:"repository"`
 	} `json:"source"`
+	// Destination is the pull request's base branch *now* (PRInfo.Base):
+	// Bitbucket reports the branch a pull request targets on the same
+	// response, which is what a run must read rather than assume.
+	Destination struct {
+		Branch struct {
+			Name string `json:"name"`
+		} `json:"branch"`
+	} `json:"destination"`
 }
 
 func (p *Provider) getPull(ctx context.Context, number int) (pullDetail, gitprov.PRInfo, error) {
@@ -370,7 +378,7 @@ func (p *Provider) getPull(ctx context.Context, number int) (pullDetail, gitprov
 		return pullDetail{}, gitprov.PRInfo{}, fmt.Errorf("reading pull request #%d: the response is for #%d", number, d.ID)
 	}
 	info := gitprov.PRInfo{Number: d.ID, URL: d.Links.HTML.Href, Draft: d.isDraft(), Title: d.Title, Body: d.Description, AuthorID: d.Author.accountID(),
-		SourceBranch: d.Source.Branch.Name}
+		SourceBranch: d.Source.Branch.Name, Base: d.Destination.Branch.Name}
 	if d.Source.Commit != nil {
 		info.HeadSHA = d.Source.Commit.Hash
 	}
@@ -448,7 +456,7 @@ func (p *Provider) FetchPRHead(ctx context.Context, number int) (gitprov.PRHead,
 		sha = full
 	}
 	return gitprov.PRHead{
-		SHA: sha, Fork: fork, Open: info.State == gitprov.PROpen,
+		SHA: sha, Base: info.Base, Fork: fork, Open: info.State == gitprov.PROpen,
 		AuthorID: info.AuthorID, AuthorLogin: d.Author.displayName(), SourceRepo: info.SourceRepo,
 	}, nil
 }

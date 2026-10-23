@@ -1,5 +1,5 @@
 # Plans the Firebase root against mock providers: no credentials, no network
-# beyond the provider downloads. The names are the ones fugaro init writes
+# beyond the provider downloads. The names are the ones fugaro update writes
 # into terraform.tfvars.json.
 #
 # An assertion can't reach into a child module's resources, so the first run

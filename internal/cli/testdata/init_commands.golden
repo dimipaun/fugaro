@@ -1,19 +1,19 @@
 [preflight] console: fix the environment problem named above, then rerun
-    fugaro init
+    fugaro setup
 [project/gcp] command: gcloud billing projects link acme-prod --billing-account=BILLING_ACCOUNT_ID
 [project/create] prompt: in your own terminal window, not through a coding agent or a pipe, type the ID(s) it asks for after running
-    fugaro init --create-project --gcp-project acme-prod --parent folders/123 --link-billing 0123AB-4567CD-89EF01
+    fugaro setup --create-project --gcp-project acme-prod --parent folders/123 --link-billing 0123AB-4567CD-89EF01
 [project/guided] command: gcloud billing projects link acme-prod --billing-account=BILLING_ACCOUNT_ID
 [installation] prompt: in your own terminal window, not through a coding agent or a pipe, type the project's name to apply after running
-    fugaro init
+    fugaro setup
 [firebase] prompt: in your own terminal window, not through a coding agent or a pipe, type the project's name at each apply after running
-    fugaro init --firebase <firebase-project-id>
+    fugaro setup --firebase-project <firebase-project-id>
 [images] prompt: in your own terminal window, not through a coding agent or a pipe, type the project's name to pin this release's base images and copy the release images after running
-    fugaro init
+    fugaro setup
 [installation-2] prompt: in your own terminal window, not through a coding agent or a pipe, type the project's name to apply the history job after running
-    fugaro init --firebase <firebase-project-id>
+    fugaro setup --firebase-project <firebase-project-id>
 [secrets/no-checkout] command: in a checkout of the repository, in your own terminal window, run
-    fugaro init
+    fugaro setup
 [secrets/github] command: run these in your own terminal window, one line at a time, in this order
     fugaro secrets set github-app-key < PATH-TO-THE-KEY-FILE
     claude setup-token
@@ -26,11 +26,11 @@
 [plugin/update] command: fugaro update-skills
 [plugin/fork] command: fugaro update-skills --allow-fork
 [repository] prompt: in your own terminal window, not through a coding agent or a pipe, in the checkout, type the project's name at each apply after running
-    fugaro init
-[repository/onboard] command: fugaro init --onboard-repo acme/app
-[repository/onboard-odd] command: fugaro init --onboard-repo 'acme/app;rm -rf'
+    fugaro setup
+[repository/onboard] command: fugaro setup --onboard-repo acme/app
+[repository/onboard-odd] command: fugaro setup --onboard-repo 'acme/app;rm -rf'
 [repository/unusual-host] console: in your own terminal window, or in a fresh clone of the real remote, type git.example.com/acme/app at the prompt of
-    fugaro init
+    fugaro setup
 [repository/switch] command: git switch -- main
 [repository/switch-dash] command: git switch -- '-fix;rm -rf'
 [repository/switch-quote] command: git switch -- 'it'\''s'

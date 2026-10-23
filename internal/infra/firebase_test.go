@@ -43,8 +43,8 @@ func checkGolden(t *testing.T, name string, got []byte) {
 	}
 }
 
-// The tfvars init --firebase writes, byte for byte: a change here is a change
-// to what Terraform is given.
+// The tfvars fugaro update --firebase-project writes, byte for byte: a change
+// here is a change to what Terraform is given.
 func TestFirebaseTfvarsGolden(t *testing.T) {
 	inst := installationSpec(t)
 	inst.Launchers = []string{"user:launcher@example.com"}
@@ -324,7 +324,7 @@ func TestDeleteHintsForFirebaseGrants(t *testing.T) {
 		t.Errorf("hints = %v", hints)
 	}
 	hints = DeleteHints(planDeleting("module.installation.google_cloud_run_v2_job.history[0]"), nil)
-	if len(hints) != 1 || !strings.Contains(hints[0], "--firebase") {
+	if len(hints) != 1 || !strings.Contains(hints[0], "--firebase-project") {
 		t.Errorf("hints = %v", hints)
 	}
 }
@@ -448,11 +448,12 @@ func TestDBLimitsKeepOwnerValues(t *testing.T) {
 }
 
 // A deployed marker *above* this binary's RulesVersion is a newer Fugaro's
-// rules. init --firebase deploys the rules the binary carries, so an older
-// binary would put its own, older document over the newer installation's and
-// record generation RulesVersion in the marker over the newer number — the
-// downgrade `fugaro doctor` warns about and tells the owner not to cause
-// ("do not re-run 'fugaro init --firebase' with this binary", doctorRulesSkew).
+// rules. fugaro update --firebase-project deploys the rules the binary carries,
+// so an older binary would put its own, older document over the newer
+// installation's and record generation RulesVersion in the marker over the newer
+// number — the downgrade `fugaro doctor` warns about and tells the owner not to
+// cause ("do not re-run 'fugaro update --firebase-project' with this binary",
+// doctorRulesSkew).
 // The deploy path refuses instead: nothing is planned, nothing is written, and
 // the rules and the marker are left exactly as the newer installation left
 // them.
@@ -625,6 +626,70 @@ func TestFirebasePlanRefusesNewerCredsMarker(t *testing.T) {
 	}
 }
 
+// The refusals below each prescribe a remedy, and a remedy has to be a command
+// that runs: the retired verb is a hidden tombstone that prints one sentence and
+// exits 1 (internal/cli/retired.go, W1.2), so a refusal that says "re-run init"
+// sends the operator to a command that cannot carry the remedy out. That bare
+// spelling is also the one the rename census cannot see: its pattern wants the
+// binary in front of the verb or a flag after it, and it enforces both of those
+// tree-wide already, so nothing else in the tree fails when one of these
+// messages grows the retired verb back. This check is case-insensitive and
+// covers the imperative ("Run init with --budget-mode observe") as well as the
+// compound ("re-run init").
+//
+// Hand mutation this fails on: putting "and re-run init with the newer binary"
+// back in either marker refusal, "then rerun init" back in the Firestore one, or
+// "Run init with --budget-mode observe" back in the no-caps one: the message
+// stops naming a door that runs, and the retired-verb check fires.
+func TestRefusalsPrescribeACommandThatRuns(t *testing.T) {
+	var messages []string
+	collect := func(what string, err error) {
+		if err == nil {
+			t.Fatalf("%s is not refused", what)
+		}
+		messages = append(messages, err.Error())
+	}
+
+	// The rules marker above this binary's generation.
+	d, f := newDB(t, "")
+	deploy(t, d)
+	f.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion+1)
+	_, _, err := d.Plan(context.Background())
+	collect("a rules marker above this binary's generation", err)
+
+	// The credentials marker above this binary's generation.
+	d2, f2 := newDB(t, "")
+	deploy(t, d2)
+	f2.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion+1)
+	_, _, err = d2.Plan(context.Background())
+	collect("a credentials marker above this binary's generation", err)
+
+	// A Firestore release that is not deny-all.
+	fr := gcpfake.NewFirebaseRules(t, "aurora")
+	fr.SeedRelease("rules_version = '2';\nservice cloud.firestore { match /databases/{d}/documents { match /{x=**} { allow read, write: if true; } } }")
+	rc := &RulesClient{Endpoint: fr.URL, Project: "aurora", HTTP: fr.Client()}
+	_, err = rc.inspect(context.Background(), FirestoreRules)
+	collect("a Firestore release that is not deny-all", err)
+
+	// A door's own plan under --budget-mode enforce, with no global caps to
+	// compare a run against.
+	collect("--budget-mode enforce without the database's global caps", NoCapsForEnforce())
+
+	if len(messages) != 4 {
+		t.Fatalf("collected %d refusal(s), want 4", len(messages))
+	}
+	for _, msg := range messages {
+		if !strings.Contains(msg, "fugaro update --firebase-project") {
+			t.Errorf("the refusal does not name 'fugaro update --firebase-project', the door that deploys the rules it refuses: %s", msg)
+		}
+		for _, bad := range []string{"re-run init", "rerun init", "run init"} {
+			if strings.Contains(strings.ToLower(msg), bad) {
+				t.Errorf("the refusal sends the operator to %q, and the retired verb is a hidden tombstone that exits 1: name the door that deploys the rules instead: %s", bad, msg)
+			}
+		}
+	}
+}
+
 func TestDBRefusals(t *testing.T) {
 	for name, seed := range map[string]func(f *gcpfake.RTDB){
 		"unmarked data":    func(f *gcpfake.RTDB) { f.Set("data", "x") },
@@ -676,7 +741,7 @@ func TestDBApplyStopsOnAChangedNode(t *testing.T) {
 	f.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": "aurora", "gcp_project": "proj-1234", "version": 1, "extra": true})
 	err := d.Apply(context.Background())
 	var ue *UserError
-	if !errors.As(err, &ue) || !strings.Contains(err.Error(), "changed while init was running") {
+	if !errors.As(err, &ue) || !strings.Contains(err.Error(), "changed while fugaro was running") {
 		t.Fatalf("err = %v", err)
 	}
 	if f.RulePuts() != 0 {
@@ -728,9 +793,9 @@ func TestFirebaseOutputsMustBelongToOneProject(t *testing.T) {
 	for name, mut := range foreign {
 		o := good
 		mut(&o)
-		// Passed --firebase aurora-fp: nothing else is accepted.
+		// Passed --firebase-project aurora-fp: nothing else is accepted.
 		if err := CheckFirebaseOutputsFor(o, "aurora-fp", false); err == nil {
-			t.Errorf("%s accepted with --firebase aurora-fp", name)
+			t.Errorf("%s accepted with --firebase-project aurora-fp", name)
 		}
 		// Derived from the state: the three still have to agree.
 		if name != "project" {

@@ -28,7 +28,7 @@ import (
 // Two directions decide an entry, and leaving one out is the safe one: a
 // refused plan falls back to a confirmation, which is a working program, while
 // a permitted plan that should not have been is the failure this gate exists
-// to avoid. So the list is smaller than init's — the twelve entries in
+// to avoid. So the list is smaller than init's — the seventeen entries in
 // managedDropped are Fugaro's own plumbing, the project-level IAM authority
 // the deployer must not hold, or a type whose resources GCP names on the
 // server's side, where no prefix condition can tell the agent's from Fugaro's.
@@ -99,7 +99,9 @@ var managedTypeReasons = map[string]string{
 // allowedTypes by a later module fails that test until one of the two maps
 // decides it.
 var managedDropped = map[string]string{
-	"google_billing_budget":                  "a billing-account permission no project role can hold: Fugaro's own budget is created by the owner-run installation apply (fugaro init --budget)",
+	"google_billing_budget":                  "a billing-account permission no project role can hold: Fugaro's own budget is created by the owner-run installation apply (fugaro update --budget)",
+	"google_cloud_run_v2_service":            "the credentials service (installation/credentials.tf, C1.18): Fugaro's own infrastructure, applied by the owner-run installation root (D146), which `fugaro managed apply` never deploys. Dropped as the fail-closed default, and kept out of the deployer's role with it: the deployer holds no run.services.* permission at all (Task 1.5), so a plan containing one could not be applied anyway. An agent-authored service in a Fugaro-owned project would be a new reachable endpoint, so keeping it is the owner's decision",
+	"google_cloud_run_v2_service_iam_member": "a grant on the credentials service (C1.18), which a managed plan does not create: the deployer holds no run.services.setIamPolicy (Task 1.5), so it could not apply it, and an invoker grant on a service is what decides who may reach it. Dropped as the fail-closed default; keeping it is the owner's decision",
 	"google_compute_firewall":                "Fugaro's own compute-backend network (modules/compute/network.tf, main's compute root — the Cloud Batch backend, excluded from 0.9.0), applied by the owner-run compute root: a firewall rule in an agent-authored plan would open or close the network every run's VM stands on. Dropped on the merge of main into next-0.8.5 as the fail-closed default; keeping it is the owner's decision",
 	"google_compute_router":                  "Fugaro's own compute-backend network (modules/compute/network.tf), applied by the owner-run compute root; dropped on the merge of main into next-0.8.5 as the fail-closed default, keeping it is the owner's decision",
 	"google_compute_router_nat":              "Fugaro's own compute-backend network (modules/compute/network.tf): the NAT is the runs' egress path, applied by the owner-run compute root; dropped on the merge of main into next-0.8.5 as the fail-closed default, keeping it is the owner's decision",
@@ -112,7 +114,7 @@ var managedDropped = map[string]string{
 	"google_logging_project_sink":            "Fugaro's own log plumbing: a sink in an agent-authored plan would reroute the project's logs, applied by the owner-run installation root",
 	"google_monitoring_alert_policy":         "their resource names are server-assigned (projects/<p>/alertPolicies/<id>), so no prefix condition can tell the agent's from Fugaro's own: an update or a delete would reach the policy the installation's alerts use (D78)",
 	"google_monitoring_notification_channel": "their resource names are server-assigned (projects/<p>/notificationChannels/<id>), so no prefix condition can tell the agent's from Fugaro's own: an update or a delete would reach the email channel Fugaro's alerts use (D78)",
-	"google_project_iam_custom_role":         "the owner-run setup creates the deployer's two roles and no managed plan may: the deployer holds no iam.roles.* (D75 (iii)), so it could not apply it, and an account that can edit its own role can widen itself",
+	"google_project_iam_custom_role":         "the owner-run setup creates the deployer's eight roles and no managed plan may: the deployer holds no iam.roles.* (D75 (iii)), so it could not apply it, and an account that can edit its own role can widen itself",
 	"google_project_iam_member":              "a managed plan binds no project-level IAM at all: the deployer holds no project-level IAM permission (D75 (iii)), which is what keeps it out of the authority that could grant itself object access to the runs bucket and forge the marker",
 }
 
@@ -179,12 +181,14 @@ var managedGrantRules = map[string]bool{
 // is a refusal rather than an inheritance:
 //
 //   - the delete (the design's D72/D74 — the plan carries no task of its own
-//     for this rule, and Tasks 1.2 and 1.4 are where its material is): a delete
-//     or a replace is admitted only for an exact address on the owner's own
-//     list, and only when the resource it removes or creates is one the rules
-//     below admit — the list alone never admits one (NotCovered);
-//   - the type: managedTypes rather than allowedTypes, so the twelve entries
-//     of managedDropped ask for a confirmation instead;
+//     for this rule, and Tasks 1.2 and 1.4 are where its material is): an entry
+//     of the owner's own list admits a delete or a replace only when it names
+//     the address the change acts at AND its Before is the identity of the
+//     object the change removes (tf.Approves), and only when the resource it
+//     removes or creates is one the rules below admit — neither the address nor
+//     the list alone admits one (NotCovered);
+//   - the type: managedTypes rather than allowedTypes, so the seventeen
+//     entries of managedDropped ask for a confirmation instead;
 //   - the resource: every name a managed resource carries must carry
 //     ManagedPrefix, and the accounts a job or a scheduler runs as must be the
 //     managed project's own, so a plan cannot reach Fugaro's resources, the
@@ -232,13 +236,14 @@ var managedGrantRules = map[string]bool{
 // is Task 3.1's to refuse before init.
 type ManagedCover struct {
 	Cover
-	// AllowDelete are the exact addresses the owner approved a delete or a
-	// replace for, handed over by WithDeleteList beside the plan — the same
-	// list tf.Guard is handed, so the two cannot be given different ones. It
-	// is a copy of the caller's slice, so a cover cannot edit the list the
-	// guard was given. Absent and empty are the same thing here: no delete and
-	// no replace at all.
-	AllowDelete []string
+	// AllowDelete is the owner's delete list: the address and the identity of
+	// the object that was there when the owner approved it, handed over by
+	// WithDeleteEntries beside the plan — the same list tf.GuardEntries is
+	// handed, so the two cannot be given different ones. It is a copy of the
+	// caller's slice, so a cover cannot edit the list the guard was given.
+	// Absent and empty are the same thing here: no delete and no replace at
+	// all.
+	AllowDelete []DeleteEntry
 }
 
 // Deletable is a cover that can be told the owner's delete list, and the one
@@ -249,15 +254,15 @@ type ManagedCover struct {
 // alone admit a resource nothing read.
 type Deletable interface {
 	NotCovered(p *Plan, imports []ImportKey) []string
-	WithDeleteList(allowDelete []string) Deletable
+	WithDeleteEntries(entries []DeleteEntry) Deletable
 }
 
-// WithDeleteList is the managed cover with the owner's delete list, which is
-// what a managed apply's gate hands it. A copy, so the list the guard is
+// WithDeleteEntries is the managed cover with the owner's delete list, which
+// is what a managed apply's gate hands it. A copy, so the list the guard is
 // handed and the list this cover holds are the same list rather than two that
 // can drift.
-func (c ManagedCover) WithDeleteList(allowDelete []string) Deletable {
-	c.AllowDelete = slices.Clone(allowDelete)
+func (c ManagedCover) WithDeleteEntries(entries []DeleteEntry) Deletable {
+	c.AllowDelete = slices.Clone(entries)
 	return c
 }
 
@@ -273,13 +278,18 @@ func (c ManagedCover) WithDeleteList(allowDelete []string) Deletable {
 // it is read at all) and the project it is in (managedProject).
 //
 // A delete and a replace are the one part of that walk the list
-// changes: they are admitted for an exact address on the owner's list alone —
-// managedActions says which action sets they are — and the resource is then
-// judged by the same chain as a create, on the view of it the change shows
-// (removed says which), so a listed address whose resource is not one a
-// managed plan may carry is refused for the resource. The list is what
-// managed.Spec.notCovered hands this cover beside the plan, the same slice
-// tf.Guard is handed, and a cover that was handed none admits no delete at all.
+// changes: an entry of the owner's list admits one only when it names the
+// address the change acts at and its Before is the identity of the object the
+// change removes (tf.Approves) — managedActions says which action sets they
+// are — and the resource is then judged by the same chain as a create, on the
+// view of it the change shows (removed says which), so a listed address whose
+// resource is not one a managed plan may carry is refused for the resource.
+// The list is what managed.Spec.notCovered hands this cover beside the plan,
+// through WithDeleteEntries, and the entries it holds are the ones the guard's
+// managed-apply caller is handed: tf.GuardEntries, matched the same way. It is
+// not the list tf.Guard takes, which is addresses alone — the sessions' own
+// --allow-delete flags (Guard's own doc) — and a cover that was handed none
+// admits no delete at all.
 //
 // The whole chain is read on the removed view, and the two lock rules with it
 // (managedBucketLock, managedObjectLock): a listed delete of a bucket or an
@@ -299,6 +309,10 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 	out := append(managedPlanFields(p), managedConfiguration(p)...)
 	out = append(out, c.managedProviderProject(p)...)
 	declared := managedConfigResources(p.Configuration)
+	// The address is one Field, like every other value a plan wrote: an entry
+	// the owner's delete list approves carries it, so an address past
+	// safetext.FieldMax is printed cut and the entry recorded from it matches
+	// nothing — refused, not approved, the limit guard.go's addr records.
 	add := func(rc ResourceChange, why string) { out = append(out, safetext.Field(rc.Address)+" ("+why+")") }
 	for _, rc := range p.ResourceChanges {
 		acts := rc.Change.Actions
@@ -313,16 +327,18 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 			continue
 		}
 		// The actions, and then the resource. A delete, or a replace in either
-		// of terraform's two orders, is admitted only for an exact address on
-		// the owner's list (D72/D74) — the same list tf.Guard is
-		// handed, compared the same way, by string equality: no prefix, module
+		// of terraform's two orders, is admitted only for an entry of the
+		// owner's list that names its address AND the identity of the object
+		// the change removes (D72/D74, plan Task 6.3) — the same list
+		// tf.GuardEntries is handed, compared the same way: no prefix, module
 		// or instance key stands in for an address, so a listed x[0] admits
-		// nothing of x[1]. The list is not the decision about the resource:
-		// the resource is judged below exactly as a create is, and a resource
-		// that is not one a managed plan may carry is refused although its
-		// address is listed — otherwise the list would be a way past every
-		// rule about the resource, which is the failure this gate exists to
-		// avoid.
+		// nothing of x[1], and an entry that names the address for another
+		// object admits nothing at all (tf.Approves). The list is not the
+		// decision about the resource: the resource is judged below exactly as
+		// a create is, and a resource that is not one a managed plan may carry
+		// is refused although its address is listed — otherwise the list would
+		// be a way past every rule about the resource, which is the failure
+		// this gate exists to avoid.
 		// acts is one of managedActions' sets past the switch below, so a set
 		// that names "delete" is a destroy or a replace, and the two are told
 		// apart by how many actions it has.
@@ -335,8 +351,15 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 		case !managedActions(acts):
 			add(rc, "actions "+strings.Join(acts, ", "))
 			continue
-		case removes && !slices.Contains(c.AllowDelete, rc.Address):
-			add(rc, "actions "+strings.Join(acts, ", ")+": an address that is not on the owner's delete list")
+		case removes && !slices.ContainsFunc(c.AllowDelete, func(e DeleteEntry) bool { return e.Address == rc.Address }):
+			// The identity of the object the plan removes is printed beside
+			// the refusal, because the person who can approve it is the owner
+			// and this is where they read which object the entry must name
+			// (tf.RemoveIdentityText): without it the loop a refusal starts —
+			// the owner reads the address, runs fugaro allow-delete — has
+			// nothing to record but the address, which is no longer an
+			// approval.
+			add(rc, "actions "+strings.Join(acts, ", ")+": "+notOnDeleteListReason(rc))
 			continue
 		// The list names an address, and the object a removal takes away is
 		// the one in before: with a moved block that object was at another
@@ -348,6 +371,15 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 		case removes && !managedRemovalReasons[rc.ActionReason]:
 			add(rc, "actions "+strings.Join(acts, ", ")+": action_reason "+rc.ActionReason+", which the managed delete rule does not know")
 			continue
+		// And the last of the list's own rules: the entry names the address,
+		// and it must name the object the plan removes as well — an approval
+		// that survived the delete it was given for, or a plan whose object
+		// was replaced under the address, is refused here (Task 6.3).
+		case removes:
+			if ok, why := Approves(c.AllowDelete, rc); !ok {
+				add(rc, "actions "+strings.Join(acts, ", ")+": "+why)
+				continue
+			}
 		}
 		if allOf(acts, "no-op", "read") && rc.Change.Importing == nil {
 			continue

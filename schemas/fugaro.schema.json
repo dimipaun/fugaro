@@ -23,7 +23,7 @@
   "properties": {
     "version": { "const": 1 },
     "project": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$", "description": "The Fugaro project this repository belongs to." },
-    "gcp_project": { "type": "string", "pattern": "^[a-z][a-z0-9-]{4,28}[a-z0-9]$", "description": "The GCP project ID of the installation. Optional; the trust anchor that lets a teammate use the installation without running fugaro init (written by fugaro init). Never guessed from the project name." },
+    "gcp_project": { "type": "string", "pattern": "^[a-z][a-z0-9-]{4,28}[a-z0-9]$", "description": "The GCP project ID of the installation. Optional; the trust anchor that lets a teammate use the installation without running fugaro update (written by fugaro update). Never guessed from the project name." },
     "profile": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$", "description": "The project layer's profile of the implicit workflow \"default\", for a file with no workflows: (docs/project-layer.md). Absent: the project's default_profile. Needs fugaro 0.6.0." },
     "git": {
       "type": "object",
@@ -52,7 +52,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "auth": { "enum": ["vertex", "api-key", "oauth"] },
+        "auth": { "enum": ["vertex", "api-key", "oauth", "cascade"], "description": "Where the run's model calls are authenticated. cascade asks for the project's credentials cascade (docs/credentials-service): it is refused with followup.allow_public, needs budget.mode observe or enforce, and is enabled only by the project policy's routing.claude: {via: cascade}, which only the operator can set. Fugaro before 0.10.0 refuses the value." },
         "model": { "$ref": "#/$defs/modelName" },
         "models": {
           "type": "object",

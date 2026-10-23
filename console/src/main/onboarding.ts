@@ -52,16 +52,14 @@ export const GETTING_STARTED_URL = 'https://fugaro.dev/getting-started/'
  * FUGARO_SETUP_COMMAND is the one command the "set up your first installation"
  * screen offers, and it is the **only** place the console spells it.
  *
- * `fugaro init` is today's command (`Use: "init"` in
- * `internal/cli/config_init.go`; the plugin path `website/data/install.yaml`
- * documents, and README.md's getting-started steps are written in). The plan in
- * `docs/setup-wizard/` renames it to `fugaro setup` and folds the config
- * questions into a wizard -- when that lands, this constant is the one line that
- * changes here, and a unit test pins it to the two places the repository states
- * it (`website/data/install.yaml` and README.md) so the change cannot be
- * missed.
+ * `fugaro setup` is the command (`setupDoor`'s `name: "setup"` in
+ * `internal/cli/setup.go`; README.md's getting-started steps are written in it).
+ * The plan in `docs/setup-wizard/` renamed `fugaro init` to `fugaro setup` and
+ * retired the old name, and this constant is the one line that followed it; a
+ * unit test pins it to README.md's first step and to the CLI's own declaration,
+ * so a later rename cannot be missed.
  */
-export const FUGARO_SETUP_COMMAND = 'fugaro init'
+export const FUGARO_SETUP_COMMAND = 'fugaro setup'
 
 export { FUGARO_INSTALL_COMMAND }
 

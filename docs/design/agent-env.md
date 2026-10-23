@@ -60,7 +60,12 @@ mechanism this design is the first attempt to build.
   and — **last, so nothing declared or inherited can override it**
   (`env.go:133-140`, the comment says so explicitly) — the gateway's
   routing variables when the gateway is on. This ordering is the one
-  invariant every design below must not weaken.
+  invariant every design below must not weaken. `agent.auth` has a fourth
+  value, `cascade` ([credentials-service](../credentials-service/spec.md)):
+  it adds no credential variable of its own — the credentials service
+  carries that run's credential — and `BuildEnv`'s arm for it is that
+  work's Task C1.19, so a `cascade` run is refused here today with
+  `unknown agent auth`.
 - **Per-stage variables (model pins, and now the provider-route fix) go
   into both the process environment and the managed settings file — not
   `BuildEnv`.** `stagePins` (`internal/runner/agentenv.go:48-66`) computes

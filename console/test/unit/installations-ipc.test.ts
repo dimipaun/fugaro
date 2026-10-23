@@ -483,7 +483,7 @@ describe('the picker’s list', () => {
     const data = reply.data as { onboard: { kind: string; command: string }; rows: readonly unknown[] }
     expect(data.onboard.kind).toBe('first-installation')
     expect(data.onboard.command).toBe(FUGARO_SETUP_COMMAND)
-    expect(data.onboard.command).toBe('fugaro init')
+    expect(data.onboard.command).toBe('fugaro setup')
     expect(data.rows).toEqual([])
   })
 

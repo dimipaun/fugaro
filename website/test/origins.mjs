@@ -239,7 +239,13 @@ export function pageOriginFailures(html, rel, facts, { analyticsEnabled = facts.
       // reaching a page. Every external link is still resolved, host by host, by
       // `linkcheck.mjs`.
       const link = el.name === 'a' && name === 'href'
-      if (!analyticsEnabled && !link && ANALYTICS_NAMES.test(value)) named.push(`<${el.name} ${name}>`)
+      // An `id` is a name inside this document and a `#fragment` is a reference to one, so
+      // neither can reach a vendor: the zoom drawing names its shapes for what they draw
+      // (`#zoom-firebase` is the Firebase card of the owner's boards, and the label beside it
+      // is a text node this scan does not read), and a drawing naming a part of itself is not
+      // the site's measurement reaching a page (W3.2).
+      const local = name === 'id' || value.trim().startsWith('#')
+      if (!analyticsEnabled && !link && !local && ANALYTICS_NAMES.test(value)) named.push(`<${el.name} ${name}>`)
     }
     switch (el.name) {
       case 'base':
@@ -647,6 +653,13 @@ test('with the flag off a link naming a vendor is a reference, and a load of one
   // fetches or runs keeps being refused by name, which is the half worth having.
   const link = page({ body: '<p>The app reports to <a href="https://firebase.google.com/support/privacy">Google</a>.</p>' })
   assert.deepEqual(failuresOf(link), [], 'a link naming a vendor is read as an analytics load, so the page cannot point at the holder\'s own policy')
+
+  // An `id` names a thing inside this document and `#name` refers to one, so neither reaches a
+  // vendor however it is spelled: the zoom drawing names its Firebase card `zoom-firebase` and
+  // points the label beside it at `#zoom-firebase`, and that is a drawing naming a part of
+  // itself, not the page loading Google (the boards of 2026-10-22).
+  const named = page({ body: '<svg><symbol id="firebase-card"></symbol><use href="#firebase-card"></use></svg>' })
+  assert.deepEqual(failuresOf(named), [], 'a drawing naming its own part is read as an analytics load, so an SVG cannot name the Firebase card it draws')
 
   for (const [what, fixture] of [
     ['a script that loads one', { head: '<script src="https://firebase.google.com/x.js"></script>' }],

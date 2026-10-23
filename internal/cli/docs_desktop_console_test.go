@@ -132,6 +132,13 @@ func TestDocsDesktopConsoleDesignCarriesTheDecisions(t *testing.T) {
 // a bare "|" inside a code span (`example|show|layer|init|publish`), which
 // docTableAfter splits on, so the answer is read as the row's LAST cell -- the
 // column's position is what is fixed, not the cell count.
+//
+// Three acceptances carry an amendment appended to the cell, and each is
+// pinned as the clause that must be there: D10's owner's ruling of 2026-10-20
+// (Linux for 0.10.0, unsigned; Windows stays later), D12's Check 59 written as
+// 59a and 59b, and D13's pairing check. An amendment is the record of a later
+// ruling and it goes where the answer is, so a cell that lost one fails here
+// rather than in review.
 func TestDocsDesktopConsoleDesignCarriesTheOwnerAnswers(t *testing.T) {
 	const path = "docs/design/desktop-console.md"
 	doc := readDoc(t, path)
@@ -145,7 +152,7 @@ func TestDocsDesktopConsoleDesignCarriesTheOwnerAnswers(t *testing.T) {
 		}
 	}
 
-	// The ruled cells, exactly as the owner ruled them, and the two acceptances
+	// The ruled cells, exactly as the owner ruled them, and the three acceptances
 	// that carry a recorded amendment to the recommendation they accept.
 	const accepted = "**Accepted as recommended.**"
 	ruled := map[string]string{
@@ -157,10 +164,14 @@ func TestDocsDesktopConsoleDesignCarriesTheOwnerAnswers(t *testing.T) {
 
 	// The sixteen lines the plan calls "accepted as recommended", keyed to the
 	// clause that must follow the acceptance where the design records one; ""
-	// is the plain acceptance, and D12 and D13 are the two with an amendment.
+	// is the plain acceptance, and D10, D12 and D13 are the three with an
+	// amendment -- D10's being the owner's Linux ruling of 2026-10-20 (Linux
+	// ships from 0.10.0, unsigned; Windows stays later), which the design
+	// appends to the acceptance rather than to the recommendation.
 	acceptedSixteen := map[string]string{
 		"**D2**": "", "**D5**": "", "**D6**": "", "**D7**": "", "**D8**": "",
-		"**D9**": "", "**D10**": "",
+		"**D9**":  "",
+		"**D10**": "**Amended 2026-10-20 by the owner's ruling: Linux for 0.10.0, unsigned; Windows stays later.**",
 		"**D12**": "with Check 59 written as 59a and 59b",
 		"**D13**": "with the pairing check above recorded",
 		"**D14**": "", "**D15**": "", "**D16**": "", "**D17**": "", "**D18**": "",
@@ -358,6 +369,7 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(doctorCheck{}),
 		reflect.TypeOf(configListDoc{}),
 		reflect.TypeOf(configListInstallation{}),
+		reflect.TypeOf(configListCheckout{}),
 		reflect.TypeOf(plan.Document{}),
 		reflect.TypeOf(plan.Node{}),
 		reflect.TypeOf(plan.Edge{}),
@@ -422,6 +434,60 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 	}
 }
 
+// TestDocsDesktopConsoleContractNamesEveryReasonCode: §6.8 of the contract is
+// what the console is written against, so the list of reasons it gives must be
+// exactly the reasons `config list --json` can emit, and in the order it gives
+// them — the order is what a reader uses to say which of a row's problems is
+// *the* reason it is not valid. (An earlier revision of that block got the
+// order wrong and omitted `unreadable` entirely, which is the drift this pins.)
+//
+// The list is read out of the numbered block §6.8 introduces ("One row carries
+// one reason, and which one it is is fixed. In order:"), not searched for in
+// the prose: the field table further up names the codes too, so a `Contains`
+// over the whole document would pass with the ordered list wrong or a code
+// missing from it.
+//
+// Mutations (run, restore): delete the `unreadable` item, or move
+// `not_enrolled` off the end; each fails here. (Both leave the field table, and
+// so a whole-document search, untouched.)
+func TestDocsDesktopConsoleContractNamesEveryReasonCode(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	doc := readDoc(t, path)
+	const intro = "**One row carries one reason, and which one it is is fixed.** In order:"
+	i := strings.Index(doc, intro)
+	if i < 0 {
+		t.Fatalf("%s no longer states the order the reasons are reported in", path)
+	}
+	// The items that follow, up to the first line that is neither one nor a
+	// wrapped continuation of one (an item's prose is indented under it).
+	var got []string
+	for _, line := range strings.Split(doc[i+len(intro):], "\n") {
+		if line == "" || line[0] == ' ' || line[0] == '\t' {
+			continue
+		}
+		m := reasonItemRE.FindStringSubmatch(line)
+		if m == nil {
+			break
+		}
+		got = append(got, m[1])
+	}
+	want := []string{
+		checkoutNotRepresentable,
+		checkoutMissing,
+		checkoutUnreadable,
+		checkoutNotACheckout,
+		checkoutOtherProject,
+		checkoutOtherRepository,
+		checkoutNotEnrolled,
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("%s's ordered reason list = %v, want %v", path, got, want)
+	}
+}
+
+// reasonItemRE is one numbered item of §6.8's ordered list: "3. `unreadable` …".
+var reasonItemRE = regexp.MustCompile("^[0-9]+\\. `([a-z_]+)`")
+
 // jsonCellRE is a backticked identifier in a field table's first cell: the
 // field names of one row, one or more of them.
 var jsonCellRE = regexp.MustCompile("`([A-Za-z_][A-Za-z0-9_]*)`")
@@ -456,6 +522,7 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(report.JSONDoc{}), reflect.TypeOf(report.JSONLine{}),
 		reflect.TypeOf(report.JSONTokens{}), reflect.TypeOf(Diagnosis{}),
 		reflect.TypeOf(configListDoc{}), reflect.TypeOf(configListInstallation{}),
+		reflect.TypeOf(configListCheckout{}),
 		reflect.TypeOf(plan.Document{}), reflect.TypeOf(plan.Node{}),
 		reflect.TypeOf(plan.Edge{}), reflect.TypeOf(plan.Footprint{}),
 		reflect.TypeOf(runstore.ChangedFiles{}),
@@ -700,10 +767,16 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	"cancel":      newCancelCmd,
 	"secrets ls":  newSecretsLsCmd,
 	"accounts ls": newAccountsLsCmd,
-	"doctor":      newDoctorCmd,
-	"version":     newVersionCmd,
-	"config list": newConfigListCmd,
-	"plan graph":  newPlanGraphCmd,
+	// §6.5a documents the operator's write to the cascade's state
+	// (credentials-service C1.21). It is deliberately NOT on the design's
+	// spawn allow-list — the console never writes — but the document
+	// describes its flags, so they are checked against this constructor like
+	// any other's.
+	"accounts clear": newAccountsClearCmd,
+	"doctor":         newDoctorCmd,
+	"version":        newVersionCmd,
+	"config list":    newConfigListCmd,
+	"plan graph":     newPlanGraphCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document
@@ -731,8 +804,11 @@ func TestDocsDesktopConsoleContractNamesOnlyRealFlags(t *testing.T) {
 		cmd.Flags().VisitAll(func(f *pflag.Flag) { all[f.Name] = true })
 	}
 	// A documented negative: the document names --version in order to say the
-	// root command has no cobra Version field and `fugaro --version` fails
-	// (section 7), so it is checked for absence, the opposite of the rest.
+	// `version` subcommand has no flag of its own and that the root command's
+	// --version is the root's, never the handshake's (§6.7, §8), so it is
+	// checked for absence, the opposite of the rest. The root command is not
+	// one of the commands this document describes -- the console spawns
+	// subcommands -- so its own flag is not in `all` either.
 	documentedAbsent := map[string]bool{"version": true}
 
 	// (1) Every flag token in the document.
@@ -1027,6 +1103,63 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 	for _, argv := range []string{"doctor --check-github-app", "logs --follow"} {
 		if !never[argv] {
 			t.Errorf("%s: the never table no longer names %q", path, argv)
+		}
+	}
+}
+
+// TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode: §5.1 rule 6's
+// table is the console's whole read-only guarantee — D14 rests it on the
+// exact-argv table, because the CLI cannot tell an admin's identity from
+// anyone else's — and a read changes nothing on the machine. The remembered
+// checkouts are a file this machine keeps and the resolver every cloud
+// command goes through is what writes it, so the code has to know which
+// commands are console reads: consoleReadPaths (internal/cli/project.go) is
+// that knowledge, and this test reads it back off the design's own table, so
+// the two cannot drift. Adding an argv to §5.1 without adding its command
+// here fails, and so does a command on the list that the design does not
+// allow (bar the one read the design names for the console and §5.1 has no
+// row for yet).
+func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
+	const path = "docs/design/desktop-console.md"
+	doc := readDoc(t, path)
+	allowed := map[string]bool{}
+	argvs := 0
+	for _, cells := range docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |") {
+		argv := firstBacktick(cells[0])
+		if argv == "" {
+			continue
+		}
+		argvs++
+		// "budget show --json" is the command `fugaro budget show`: its own
+		// words, up to its first flag or its first ARGUMENT (the RUN a
+		// diagnose or a logs row takes, spelled in capitals in the table).
+		var words []string
+		for _, tok := range strings.Fields(argv) {
+			if strings.HasPrefix(tok, "-") || tok == strings.ToUpper(tok) {
+				break
+			}
+			words = append(words, tok)
+		}
+		cmdPath := "fugaro " + strings.Join(words, " ")
+		allowed[cmdPath] = true
+		if !consoleReadPaths[cmdPath] {
+			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
+		}
+	}
+	// Eleven commands: the ten dashboard reads (logs has two argvs) and the
+	// picker's `config list --json` (D13's amendment of 2026-10-20).
+	if len(allowed) != 11 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 11 (logs has two argvs)", path, argvs, len(allowed))
+	}
+	// The other direction: the list carries §5.1's commands and nothing else,
+	// except the one read the design names for the console and §5.1 has not
+	// grown a row for yet (V2.2.1, the graph document). A second name is a
+	// command someone decided the console spawns, and that is a design change,
+	// not a table entry.
+	namedNotAllowed := map[string]bool{"fugaro plan graph": true}
+	for cmdPath := range consoleReadPaths {
+		if !allowed[cmdPath] && !namedNotAllowed[cmdPath] {
+			t.Errorf("consoleReadPaths carries %q, which is neither an argv §5.1 allows nor the one read the design names for the console (%v): the read-only list is the design's, not this file's", cmdPath, namedNotAllowed)
 		}
 	}
 }
@@ -2000,9 +2133,39 @@ type consoleReleaseWorkflowJob struct {
 	If          string               `yaml:"if"`
 	RunsOn      string               `yaml:"runs-on"`
 	Environment string               `yaml:"environment"`
-	Needs       string               `yaml:"needs"`
+	Needs       consoleNeeds         `yaml:"needs"`
 	Permissions map[string]string    `yaml:"permissions"`
 	Steps       []consoleReleaseStep `yaml:"steps"`
+}
+
+// consoleNeeds is a job's `needs:` as a list, whichever of GitHub's two
+// spellings the file uses: one job name, or a list of them. It has to read
+// both, because this file is read in both of its states: while the Linux change
+// is staged, `publish` needs the one macOS leg; once the owner has copied it in,
+// the same `publish` needs `[release, linux]`, and a `needs: string` field
+// fails the whole file at parse time -- taking every test in this family with
+// it -- rather than reading the second job name.
+type consoleNeeds []string
+
+func (n *consoleNeeds) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		if node.Value == "" {
+			*n = nil
+			return nil
+		}
+		*n = consoleNeeds{node.Value}
+		return nil
+	case yaml.SequenceNode:
+		var names []string
+		if err := node.Decode(&names); err != nil {
+			return err
+		}
+		*n = consoleNeeds(names)
+		return nil
+	default:
+		return fmt.Errorf("`needs:` must be a job name or a list of job names, not %s", node.Tag)
+	}
 }
 
 type consoleReleaseStep struct {
@@ -2167,6 +2330,20 @@ var consoleArtifactPins = map[string]string{
 	"actions/download-artifact": "9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2",
 }
 
+// consoleReleaseActions is every action the console's signing pipeline may run
+// at all: the four the two build-and-publish halves need, and -- once the Linux
+// change is applied -- the cosign installer the keyless signature over the
+// merged sums file needs. It is an allow-list rather than a count because the
+// file is read in both of its states, and the Linux leg brings its own checkout,
+// setup-node and upload with it.
+var consoleReleaseActions = []string{
+	"actions/checkout",
+	"actions/setup-node",
+	"actions/upload-artifact",
+	"actions/download-artifact",
+	"sigstore/cosign-installer",
+}
+
 // consoleRunLines is a step's `run:` script as trimmed, non-empty lines with
 // shell comments dropped, so an assertion about a command cannot be satisfied
 // by a comment that names it.
@@ -2277,39 +2454,65 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	text, wf, _, rawJobs := readConsoleReleaseWorkflow(t)
 
 	// Every `uses:` is pinned to a full commit SHA with a `# vX.Y.Z` comment,
-	// and there are exactly four: checkout and setup-node before the signing
-	// step, upload-artifact after it, download-artifact in `publish`. The two
-	// artifact actions carry the pins release.yml and images.yml already use.
-	uses := 0
+	// and it names one of the actions this pipeline may run at all: checkout and
+	// setup-node before a build, upload-artifact after it, download-artifact in
+	// `publish`, and -- once the Linux change is applied -- the cosign installer
+	// the keyless signature over the merged sums file needs. The two artifact
+	// actions carry the pins release.yml and images.yml already use.
+	//
+	// The count is not pinned: four is a claim about which of the file's two
+	// states it is in -- the Linux leg adds its own checkout, setup-node, upload
+	// and the installer -- rather than about what it runs, and this test reads
+	// the file in both states. The allow-list is the property, and it holds in
+	// both: an action outside it is a trust decision nobody made.
+	used := map[string]int{}
 	for _, line := range strings.Split(text, "\n") {
 		if !strings.Contains(line, "uses:") || strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
 		}
-		uses++
 		if !consoleUsesLine.MatchString(line) {
 			t.Errorf("%s: %q is not a full 40-hex pin with a `# vX.Y.Z` comment", consoleReleaseWorkflowPath, strings.TrimSpace(line))
 		}
-		for action, pin := range consoleArtifactPins {
-			if strings.Contains(line, action+"@") && !strings.HasSuffix(strings.TrimSpace(line), action+"@"+pin) {
-				t.Errorf("%s pins %s as %q, want the repository's existing pin %s", consoleReleaseWorkflowPath, action, strings.TrimSpace(line), pin)
+		trimmed := strings.TrimSpace(line)
+		action, _, _ := strings.Cut(strings.TrimSpace(trimmed[strings.Index(trimmed, "uses:")+len("uses:"):]), "@")
+		used[action]++
+		for known, pin := range consoleArtifactPins {
+			if strings.Contains(line, known+"@") && !strings.HasSuffix(trimmed, known+"@"+pin) {
+				t.Errorf("%s pins %s as %q, want the repository's existing pin %s", consoleReleaseWorkflowPath, known, trimmed, pin)
 			}
 		}
 	}
-	if uses != 4 {
-		t.Errorf("%s pins %d actions, want exactly 4 (checkout, setup-node, upload-artifact, download-artifact)", consoleReleaseWorkflowPath, uses)
+	for action := range used {
+		if !slices.Contains(consoleReleaseActions, action) {
+			t.Errorf("%s runs the action %s: this pipeline runs checkout, setup-node, the two artifact actions and the cosign installer, and nothing else", consoleReleaseWorkflowPath, action)
+		}
+	}
+	for _, action := range consoleReleaseActions[:4] {
+		if used[action] == 0 {
+			t.Errorf("%s runs no %s: it builds the console, hands the artifacts to `publish`, and neither can happen without it", consoleReleaseWorkflowPath, action)
+		}
 	}
 
 	// Two jobs: `release` (environment, secrets, packer, read-only token) and
 	// `publish` (no environment, no packer, no Apple secret, the write token).
+	// The Linux change adds a third, `linux`, which its own test holds to its
+	// shape; here it may only be absent or present, never a fourth thing.
 	var keys []string
 	for name := range wf.Jobs {
 		keys = append(keys, name)
 	}
 	slices.Sort(keys)
-	if !slices.Equal(keys, []string{"publish", "release"}) {
-		t.Fatalf("%s has jobs %v, want exactly [publish release]", consoleReleaseWorkflowPath, keys)
+	if !slices.Equal(keys, []string{"publish", "release"}) && !slices.Equal(keys, []string{consoleReleaseLinuxJobName, "publish", "release"}) {
+		t.Fatalf("%s has jobs %v, want [publish release] while the Linux change is staged and [%s publish release] once it is applied", consoleReleaseWorkflowPath, keys, consoleReleaseLinuxJobName)
 	}
 	job, pub := wf.Jobs["release"], wf.Jobs["publish"]
+	// Whether the Linux change is applied, which is what decides the shape of
+	// the clauses below that the merge moves: `publish`'s step list and the
+	// asset line of its `gh release create`.
+	linuxApplied := false
+	if _, ok := wf.Jobs[consoleReleaseLinuxJobName]; ok {
+		linuxApplied = true
+	}
 	if job.RunsOn != "macos-15" {
 		t.Errorf("%s's release job runs on %q, want the pinned macos-15: the runner image is the signing toolchain, and macos-latest moves it without a reviewed edit", consoleReleaseWorkflowPath, job.RunsOn)
 	}
@@ -2322,8 +2525,12 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	if pub.Environment != "" {
 		t.Errorf("%s's publish job takes environment %q: it holds no Apple secret and needs none", consoleReleaseWorkflowPath, pub.Environment)
 	}
-	if pub.Needs != "release" {
-		t.Errorf("%s's publish job needs %q, want release: it publishes only what the release job verified", consoleReleaseWorkflowPath, pub.Needs)
+	// `publish` needs the release job -- it publishes only what that job
+	// verified -- and, once the Linux change is applied, the Linux leg with it:
+	// every leg has to have finished before anything is attached to a release
+	// that cannot take another asset afterwards. Nothing else may gate it.
+	if !slices.Contains(pub.Needs, "release") || (!slices.Equal(pub.Needs, []string{"release"}) && !slices.Equal(pub.Needs, []string{"release", "linux"})) {
+		t.Errorf("%s's publish job needs %v, want [release] while the Linux change is staged and [release, linux] once it is applied: it publishes only what the legs verified", consoleReleaseWorkflowPath, pub.Needs)
 	}
 
 	// Permissions: the write token is the publish job's alone. The release job
@@ -2337,8 +2544,15 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	if want := map[string]string{"contents": "read", "checks": "read"}; !reflect.DeepEqual(job.Permissions, want) {
 		t.Errorf("%s's release job permissions = %v, want exactly %v: the job that runs the packer never holds a token that can write a release", consoleReleaseWorkflowPath, job.Permissions, want)
 	}
-	if want := map[string]string{"contents": "write"}; !reflect.DeepEqual(pub.Permissions, want) {
-		t.Errorf("%s's publish job permissions = %v, want exactly %v", consoleReleaseWorkflowPath, pub.Permissions, want)
+	// `contents: write` to create and publish the release, and -- once the
+	// Linux change is applied -- `id-token: write` for the keyless cosign call
+	// over the merged sums file. Nothing else, in either state.
+	wantPub := map[string]string{"contents": "write"}
+	if linuxApplied {
+		wantPub["id-token"] = "write"
+	}
+	if !reflect.DeepEqual(pub.Permissions, wantPub) {
+		t.Errorf("%s's publish job permissions = %v, want exactly %v", consoleReleaseWorkflowPath, pub.Permissions, wantPub)
 	}
 
 	// **Nothing can skip a step or swallow its failure**, in either job: no
@@ -2361,6 +2575,15 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	jobs := []jobRef{
 		{"release", job, consoleReleaseRawSteps(t, rawJobs, "release")},
 		{"publish", pub, consoleReleaseRawSteps(t, rawJobs, "publish")},
+	}
+	// Once the Linux change is applied the file carries a third job, and the
+	// rules this loop asserts are about the file rather than about two of its
+	// jobs -- "no step can be skipped and no failure swallowed" is what makes
+	// the signing and the publishing unskippable, and a job outside the loop is
+	// a job outside that claim. Its own test holds the standalone staged file to
+	// its build-only shape; here it is held to the shared hygiene.
+	if linux, ok := wf.Jobs[consoleReleaseLinuxJobName]; ok {
+		jobs = append(jobs, jobRef{consoleReleaseLinuxJobName, linux, consoleReleaseRawSteps(t, rawJobs, consoleReleaseLinuxJobName)})
 	}
 	cleanup := -1
 	for _, j := range jobs {
@@ -2482,8 +2705,13 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 					t.Errorf("%s's step %q reads %s from a secret: secrets are in exactly one step's env, %q", consoleReleaseWorkflowPath, step.Name, name, consoleReleaseSigningStep)
 				}
 				if strings.Contains(value, "github.token") || name == "GH_TOKEN" || name == "GITHUB_TOKEN" {
-					if !(j.name == "release" && i == gateIdx) && step.Name != consoleReleasePublishStep {
-						t.Errorf("%s's step %q holds the token (%s): only the gate and the publish step do", consoleReleaseWorkflowPath, step.Name, name)
+					// The gate step is the one that runs the gate, whichever job
+					// it is in: this file runs it twice (the macOS leg and, once
+					// the Linux change is applied, the Linux leg), and the rule
+					// is about what a step does with the token rather than about
+					// which job it sits in.
+					if !strings.Contains(step.Run, "scripts/release-gate.sh") && step.Name != consoleReleasePublishStep {
+						t.Errorf("%s's step %q holds the token (%s): only a step running the release gate and the publish step do -- the gate reads GitHub's own API and the publish step creates the release, and no other step has any business with a token", consoleReleaseWorkflowPath, step.Name, name)
 					}
 				}
 			}
@@ -2858,13 +3086,15 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	sources := []struct {
 		where string
 		lines []string
-	}{{consoleNotarizeScriptPath, scriptLines}}
+		job   string
+	}{{consoleNotarizeScriptPath, scriptLines, "release"}}
 	for _, j := range jobs {
 		for _, step := range j.job.Steps {
 			sources = append(sources, struct {
 				where string
 				lines []string
-			}{step.Name, consoleRunLines(step.Run)})
+				job   string
+			}{step.Name, consoleRunLines(step.Run), j.name})
 		}
 	}
 	for _, src := range sources {
@@ -2890,6 +3120,14 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 			if !slices.Contains(retryCalls[src.where], line) {
 				t.Errorf("%s retries %q: the helper wraps the `xcrun stapler` calls this pipeline makes (%s) and nothing else -- behind codesign, the notarytool submission and its status, the gate, the team check or the secret check it would retry something that has already decided", src.where, line, strings.Join(retryCalls[src.where], ", "))
 			}
+		}
+		// The calls a step is required to make are required of the job whose
+		// pipeline makes them. Both legs verify what ships and both verification
+		// steps are named for it -- that name is not a lie in either file -- and
+		// the Linux leg staples nothing: an unsigned AppImage has no ticket to
+		// staple, so the calls below are the release job's.
+		if src.job != "release" {
+			continue
 		}
 		for _, want := range retryCalls[src.where] {
 			if !slices.Contains(src.lines, want) {
@@ -2996,15 +3234,39 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		}
 	}
 
-	// **The publish job**: downloads that artifact, re-checks every asset
-	// against the sums, then publishes `console-vX.Y.Z` and never the CLI's
-	// release.
-	if len(pub.Steps) != 3 || !strings.Contains(pub.Steps[0].Uses, "actions/download-artifact@") || pub.Steps[0].With["name"] != "console-release-assets" {
-		t.Fatalf("%s's publish job is not [download the console-release-assets artifact, check the sums, publish]", consoleReleaseWorkflowPath)
+	// **The publish job**: downloads what the build jobs verified, re-checks
+	// every asset against the sums, then publishes `console-vX.Y.Z` and never
+	// the CLI's release. The Linux change inserts a second download, a second
+	// sums check, the merge and the signature between the macOS artifact's
+	// download and the publish, so what is asserted here is what holds in both
+	// states: the job opens on the macOS artifact's download, it re-checks
+	// `console-sha256sums.txt` before it publishes, and it ends on the publish
+	// step.
+	if len(pub.Steps) < 3 || !strings.Contains(pub.Steps[0].Uses, "actions/download-artifact@") || pub.Steps[0].With["name"] != "console-release-assets" {
+		t.Fatalf("%s's publish job does not open on the download of the console-release-assets artifact", consoleReleaseWorkflowPath)
 	}
-	sums := consoleRunLines(pub.Steps[1].Run)
-	if !slices.Contains(sums, "sha256sum --strict --check console-sha256sums.txt") || pub.Steps[2].Name != consoleReleasePublishStep {
+	if last := pub.Steps[len(pub.Steps)-1]; last.Name != consoleReleasePublishStep {
+		t.Fatalf("%s's publish job ends on %q, want the publish step %q: the draft-then-publish sequence is the last thing the job does", consoleReleaseWorkflowPath, last.Name, consoleReleasePublishStep)
+	}
+	rechecks := false
+	for _, step := range pub.Steps[:len(pub.Steps)-1] {
+		if slices.Contains(consoleRunLines(step.Run), "sha256sum --strict --check console-sha256sums.txt") {
+			rechecks = true
+		}
+	}
+	if !rechecks {
 		t.Errorf("%s's publish job does not re-check the assets against console-sha256sums.txt before publishing", consoleReleaseWorkflowPath)
+	}
+	if linuxApplied {
+		linuxDownloads := 0
+		for _, step := range pub.Steps {
+			if strings.Contains(step.Uses, "actions/download-artifact@") && step.With["name"] == "console-linux-assets" {
+				linuxDownloads++
+			}
+		}
+		if linuxDownloads != 1 {
+			t.Errorf("%s's publish job downloads the console-linux-assets artifact %d times, want exactly 1: publishing before the Linux leg has arrived would ship a release with a leg missing", consoleReleaseWorkflowPath, linuxDownloads)
+		}
 	}
 	plines := consoleRunLines(publish.Run)
 	for _, want := range []string{
@@ -3012,11 +3274,32 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		`VERSION="${TAG#v}"`,
 		`gh release create "$CONSOLE_TAG" --repo "$GITHUB_REPOSITORY" --draft --latest=false \`,
 		`--target "$GITHUB_SHA" \`,
-		`"$DMG" "$APP_ZIP" "$RECORD" "$SUMS"`,
 		`gh release edit "$CONSOLE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false`,
 	} {
 		if !slices.Contains(plines, want) {
 			t.Errorf("%s's publish step does not run %q", consoleReleaseWorkflowPath, want)
+		}
+	}
+	// The assets it attaches: the macOS pair, the record and the sums in both
+	// states, and -- once the Linux change is applied -- the AppImage, the .deb,
+	// their own record and the Sigstore bundle over the merged sums file.
+	assets := -1
+	for i, line := range plines {
+		if strings.HasPrefix(line, `"$DMG" "$APP_ZIP"`) {
+			assets = i
+		}
+	}
+	if assets < 0 {
+		t.Fatalf("%s's publish step does not attach the macOS artifacts (%v)", consoleReleaseWorkflowPath, plines)
+	}
+	for _, want := range []string{`"$DMG" "$APP_ZIP"`, `"$RECORD"`, `"$SUMS"`} {
+		if !strings.Contains(plines[assets], want) {
+			t.Errorf("%s's publish step does not attach %s: every artifact and the sums file that covers it are the release", consoleReleaseWorkflowPath, want)
+		}
+	}
+	for _, want := range []string{`"$APPIMAGE"`, `"$DEB"`, `"$LINUX_RECORD"`, `"$BUNDLE"`} {
+		if got := strings.Contains(plines[assets], want); got != linuxApplied {
+			t.Errorf("%s's publish step attaches %s = %v, want %v: the Linux artifacts, their record and the signature over the sums file arrive with the Linux change and with nothing else", consoleReleaseWorkflowPath, want, got, linuxApplied)
 		}
 	}
 	for _, line := range plines {
@@ -3189,7 +3472,20 @@ exit 3
 	if err := os.MkdirAll(work, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"Fugaro Console-1.2.3-universal.dmg", "Fugaro Console-1.2.3-universal-mac.zip", "console-verification.txt", "console-sha256sums.txt"} {
+	// Every file the publish step requires, from both legs: the merged step
+	// (the state this file is in once the owner has copied the Linux change in)
+	// reads all eight, and the macOS-only step attaches four named ones and
+	// never looks at the rest, so one fixture runs the same step in both states.
+	for _, name := range []string{
+		"Fugaro Console-1.2.3-universal.dmg",
+		"Fugaro Console-1.2.3-universal-mac.zip",
+		"console-verification.txt",
+		"console-sha256sums.txt",
+		"Fugaro.Console-1.2.3-linux-x64.AppImage",
+		"Fugaro.Console-1.2.3-linux-x64.deb",
+		"console-linux-verification.txt",
+		"console-sha256sums.txt.sigstore.json",
+	} {
 		if err := os.WriteFile(filepath.Join(work, name), []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -5605,4 +5901,1680 @@ func verifySummaryLine(format, kind, n, status, code string) string {
 		format = format[:at] + value + format[at+2:]
 	}
 	return format
+}
+
+// ---------------------------------------------------------------------------
+// The Linux packaging change (2026-10-20).
+//
+// The owner's ruling of that date is "yes, Linux for 0.10.0, unsigned", and the
+// workflow half of it cannot be applied by an agent at all: GitHub rejects a
+// push that touches .github/workflows/**, so both changes are staged under
+// docs/pending-workflows/ for the owner to copy in
+// (docs/pending-workflows/README.md, and the `## console-linux.yml` and
+// `## console-release-linux.yml` sections there).
+//
+// These tests read the staged text as bytes and as YAML. Two of the three
+// claims are ordinary shape claims -- one secretless build job; a release
+// pipeline whose third job builds and verifies the Linux artifacts and whose
+// publish merges both legs behind one signed sums file. The third is the one a
+// *replacement* file needs and a second file would not: that
+// console-release-linux.yml, which supersedes console-release.yml, **leaves the
+// macOS leg byte-for-byte where it was**. It is asserted by comparing the
+// `release` job's parsed mapping between the two files and by requiring every
+// `run:` body the old `publish` had to still be in the new one -- so a rewrite
+// of the signing job cannot ride along inside a Linux change unseen.
+//
+// What none of this can check is the packaging itself: the pack, the AppImage
+// runtime, dpkg-deb and the three fuse read-backs run on a runner that this
+// container is not. Those are Check 59a's, and the staged files say so.
+// ---------------------------------------------------------------------------
+
+const (
+	// consoleLinuxWorkflowPath is the staged build-only CI job, and
+	// appliedConsoleLinuxPath is where the owner copies it. That copy-in removes
+	// the staged copy -- the file is new, so it has nothing to be byte-identical
+	// to -- which is why every reader below goes through consoleWorkflowText
+	// rather than reading one of the two paths.
+	consoleLinuxWorkflowPath = "docs/pending-workflows/console-linux.yml"
+	appliedConsoleLinuxPath  = ".github/workflows/console-linux.yml"
+	// consoleReleaseLinuxWorkflowPath is the staged replacement of
+	// consoleReleaseWorkflowPath with the Linux legs added. Its copy-in copies
+	// it over the staged console-release.yml and into .github/workflows/, then
+	// removes it: after that, the text it produced is the one that runs, and it
+	// is read from appliedConsoleReleasePath.
+	consoleReleaseLinuxWorkflowPath = "docs/pending-workflows/console-release-linux.yml"
+	// consoleLinuxJobName is the job's key AND its display name: a job name
+	// with an expression in it is a check name nobody can match, which is the
+	// reason console-tests.yml's own comment gives for its static `console`.
+	consoleLinuxJobName = "console-linux"
+	// consoleReleaseLinuxJobName is the Linux job's key in the *merged* release
+	// pipeline, console-release-linux.yml's third job -- a different job from
+	// consoleLinuxJobName, which is the standalone build check's: this one packs
+	// the release's artifacts and verifies the bytes that ship.
+	consoleReleaseLinuxJobName = "linux"
+)
+
+// docExists reports whether a repository-relative path exists in this tree. The
+// workflow tests ask it about the two homes a staged file has, so that they read
+// the file the copy-in has left rather than a path they remember.
+func docExists(t *testing.T, path string) bool {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join("..", "..", path)); err == nil {
+		return true
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	return false
+}
+
+// consoleWorkflowText is a workflow file's text as this tree holds it, read from
+// whichever of its two homes exists: the staged copy under
+// docs/pending-workflows/ while the change is pending, or the applied copy
+// under .github/workflows/ once the owner has copied it in and removed the
+// staged one. This is what makes these tests read the *file* rather than one of
+// its paths, so the same suite passes before and after the copy-in a human does
+// by hand.
+//
+// A file that exists in both places has to be byte-identical: that is what
+// makes a staged copy a copy of what runs rather than a second version of it,
+// and it is the clause the staging directory's README rests on. It is checked
+// here, once, for every reader.
+//
+// The path it read comes back with the text, because the messages in these
+// tests name the file they are about: before the copy-in that is the staged
+// path, and after it the applied one -- a failure has to point at the file a
+// reader can open.
+func consoleWorkflowText(t *testing.T, staged, applied string) (string, string) {
+	t.Helper()
+	stagedText, stagedErr := os.ReadFile(filepath.Join("..", "..", staged))
+	appliedText, appliedErr := os.ReadFile(filepath.Join("..", "..", applied))
+	switch {
+	case stagedErr == nil && appliedErr == nil:
+		if string(stagedText) != string(appliedText) {
+			t.Fatalf("%s and %s differ: while both exist, the staged copy has to be the file that runs, byte for byte (docs/pending-workflows/README.md)", staged, applied)
+		}
+		return string(stagedText), staged
+	case stagedErr == nil:
+		return string(stagedText), staged
+	case appliedErr == nil:
+		return string(appliedText), applied
+	default:
+		t.Fatalf("neither %s nor %s exists (%v; %v): this test reads a workflow file, not a comment about one", staged, applied, stagedErr, appliedErr)
+		return "", ""
+	}
+}
+
+// consoleReplacementText is consoleWorkflowText for a file that *replaces*
+// another one: the staged copy while the change is pending, the applied file
+// once its copy-in has written it there. There is no byte-identity clause
+// between the two, because until it is copied in the whole point of a
+// replacement is that it differs from what runs -- the identity clause is
+// consoleWorkflowText's, and it is asked of the file being replaced.
+func consoleReplacementText(t *testing.T, staged, applied string) (string, string) {
+	t.Helper()
+	if docExists(t, staged) {
+		return readDoc(t, staged), staged
+	}
+	return readDoc(t, applied), applied
+}
+
+// parseConsoleWorkflow is readConsoleTestsWorkflow's parsing half: the typed
+// shape (steps, permissions, matrix) and the raw mappings of the trigger block
+// and of each job, where a key this file does not model (`needs:`,
+// `environment:`, `paths:`) is still visible.
+func parseConsoleWorkflow(t *testing.T, path, text string) (consoleWorkflow, map[string]any, map[string]map[string]any) {
+	t.Helper()
+	var wf consoleWorkflow
+	if err := yaml.Unmarshal([]byte(text), &wf); err != nil {
+		t.Fatalf("%s is not valid YAML: %v", path, err)
+	}
+	var raw struct {
+		On   map[string]any            `yaml:"on"`
+		Jobs map[string]map[string]any `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal([]byte(text), &raw); err != nil {
+		t.Fatalf("%s is not valid YAML: %v", path, err)
+	}
+	if len(raw.On) == 0 || len(wf.Jobs) == 0 {
+		t.Fatalf("%s parsed with no triggers (%d) or no jobs (%d): these tests read the file, not a comment about it",
+			path, len(raw.On), len(wf.Jobs))
+	}
+	return wf, raw.On, raw.Jobs
+}
+
+// readConsoleWorkflow is consoleWorkflowText and parseConsoleWorkflow in one
+// call, for the two files whose staged copy the copy-in removes: it returns the
+// text, the path it read it from, and both parsed shapes.
+func readConsoleWorkflow(t *testing.T, staged, applied string) (string, string, consoleWorkflow, map[string]any, map[string]map[string]any) {
+	t.Helper()
+	text, path := consoleWorkflowText(t, staged, applied)
+	wf, on, jobs := parseConsoleWorkflow(t, path, text)
+	return text, path, wf, on, jobs
+}
+
+// readStagedWorkflow is a staged file read by its known path: the text, the
+// typed shape and the raw mappings. It is for a file that is staged and stays
+// staged -- readConsoleWorkflow is the one to use for a file a copy-in moves.
+func readStagedWorkflow(t *testing.T, path string) (string, consoleWorkflow, map[string]any, map[string]map[string]any) {
+	t.Helper()
+	text := readDoc(t, path)
+	wf, on, jobs := parseConsoleWorkflow(t, path, text)
+	return text, wf, on, jobs
+}
+
+// renderedJob marshals one parsed job back to YAML. The per-job text is what
+// the secretlessness assertions read: a claim about the `linux` job has to be
+// asked of that job, not of the file around it, or a `secrets.` in the signing
+// step would decide it.
+func renderedJob(t *testing.T, jobs map[string]map[string]any, path, name string) string {
+	t.Helper()
+	raw, ok := jobs[name]
+	if !ok {
+		t.Fatalf("%s has no %s job: it has %v", path, name, jobKeys(jobs))
+	}
+	out, err := yaml.Marshal(raw)
+	if err != nil {
+		t.Fatalf("%s's %s job does not marshal back to YAML: %v", path, name, err)
+	}
+	return string(out)
+}
+
+// jobKeys is the job names of a parsed workflow, sorted, for a message that
+// says what was there instead.
+func jobKeys(jobs map[string]map[string]any) []string {
+	keys := make([]string, 0, len(jobs))
+	for k := range jobs {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+// stepStrings is every step's `run` and `uses` of a workflow, in order: the
+// bodies a "nothing here changed" claim is compared against.
+func stepStrings(wf consoleWorkflow, job string) []string {
+	var out []string
+	for _, step := range wf.Jobs[job].Steps {
+		switch {
+		case step.Uses != "":
+			out = append(out, "uses:"+step.Uses)
+		case step.Run != "":
+			out = append(out, "run:"+step.Run)
+		}
+	}
+	return out
+}
+
+// TestConsoleLinuxWorkflowIsBuildOnlyAndSecretless holds the staged CI job to
+// what the task asked for and to what the file family requires: one job on
+// ubuntu-latest, no secret of any kind, no environment, every action pinned,
+// the packer's own script rather than a second copy of its command line, and no
+// version stamped into it (only a release knows the version).
+//
+// The mutations that prove it: give the job `environment: console-release`,
+// drop the `pull_request` trigger, replace `npm run package:linux` with an
+// inline `npx electron-builder --linux`, add a `paths:` filter, and add
+// `-c.extraMetadata.version=0.10.0`.
+func TestConsoleLinuxWorkflowIsBuildOnlyAndSecretless(t *testing.T) {
+	text, path, wf, rawOn, rawJobs := readConsoleWorkflow(t, consoleLinuxWorkflowPath, appliedConsoleLinuxPath)
+
+	// One job, keyed and named `console-linux`: the key is what a reader types
+	// and the name is what the check run is called.
+	if len(wf.Jobs) != 1 {
+		t.Fatalf("%s has jobs %v, want exactly one: it is a build-only job, and a second one would be a second check run on every pull request", path, jobKeys(rawJobs))
+	}
+	job, ok := wf.Jobs[consoleLinuxJobName]
+	if !ok {
+		t.Fatalf("%s has no %s job: it has %v", path, consoleLinuxJobName, jobKeys(rawJobs))
+	}
+	if job.Name != consoleLinuxJobName {
+		t.Errorf("%s's job is named %q, want the static %q: the gate and a reader both match the name", path, job.Name, consoleLinuxJobName)
+	}
+	if job.RunsOn != "ubuntu-latest" {
+		t.Errorf("%s runs on %q, want ubuntu-latest: this job's subject is the packaging path, and what must not move is pinned by the lockfile rather than by the runner image", path, job.RunsOn)
+	}
+
+	// Triggers: every pull request and every push to main, with no path filter.
+	// A filter here is not the design section 9.4 bug (this job is in no gate's
+	// list) and it is still refused: the Linux packaging path is what rots when
+	// only a tag runs it.
+	if _, ok := rawOn["pull_request"]; !ok {
+		t.Errorf("%s does not run on pull_request: %v", path, rawOn)
+	}
+	push, ok := rawOn["push"].(map[string]any)
+	if !ok {
+		t.Fatalf("%s's push trigger is not a mapping: %v", path, rawOn["push"])
+	}
+	if branches, _ := push["branches"].([]any); len(branches) != 1 || branches[0] != "main" {
+		t.Errorf("%s's push trigger is %v, want branches: [main]", path, push["branches"])
+	}
+	for name, trigger := range rawOn {
+		block, err := yaml.Marshal(trigger)
+		if err != nil {
+			t.Fatalf("%s's %s trigger does not marshal back: %v", path, name, err)
+		}
+		if strings.Contains(string(block), "paths") {
+			t.Errorf("%s's %s trigger carries a path filter (%s): the Linux packaging path is exercised by every change or it is not exercised", path, name, strings.TrimSpace(string(block)))
+		}
+	}
+
+	// No secret, no environment, no shape that could be one -- asked of the raw
+	// job as well as of the file, because a job-level `environment:` would be
+	// exactly the edit that puts a staging file next to release credentials.
+	rawJob := renderedJob(t, rawJobs, path, consoleLinuxJobName)
+	for _, forbidden := range []string{"secrets.", "environment:", "-----BEGIN", "pull_request_target", "workflow_run", "write-all"} {
+		if strings.Contains(text, forbidden) && forbidden != "environment:" {
+			t.Errorf("%s contains %q, which a job that runs on every pull request may never have (design section 9.4)", path, forbidden)
+		}
+		if strings.Contains(rawJob, forbidden) {
+			t.Errorf("%s's %s job contains %q: it packs an unsigned artifact and holds nothing", path, consoleLinuxJobName, forbidden)
+		}
+	}
+
+	// Permissions: declared, and read-only, both at the workflow and at the job.
+	if len(wf.Permissions) != 1 || wf.Permissions["contents"] != "read" {
+		t.Errorf("%s's workflow permissions = %v, want exactly contents: read", path, wf.Permissions)
+	}
+	if len(job.Permissions) != 1 || job.Permissions["contents"] != "read" {
+		t.Errorf("%s's %s job permissions = %v, want exactly contents: read declared on the job", path, consoleLinuxJobName, job.Permissions)
+	}
+	if _, ok := rawJobs[consoleLinuxJobName]["permissions"]; !ok {
+		t.Errorf("%s's %s job inherits permissions instead of declaring them", path, consoleLinuxJobName)
+	}
+
+	// Every action pinned to a full commit with a version comment, and at least
+	// one action: Dependabot does not watch docs/pending-workflows/.
+	uses := 0
+	for _, line := range strings.Split(text, "\n") {
+		if !strings.Contains(line, "uses:") {
+			continue
+		}
+		uses++
+		if !consoleUsesLine.MatchString(line) {
+			t.Errorf("%s: %q is not a full 40-hex pin with a `# vX.Y.Z` comment", path, strings.TrimSpace(line))
+		}
+	}
+	if uses == 0 {
+		t.Fatalf("%s pins no action at all: the job checks the repository out and installs Node", path)
+	}
+
+	// The install, and the pack.
+	runs := strings.Join(stepStrings(wf, consoleLinuxJobName), "\n")
+	if n := strings.Count(runs, "npm ci --ignore-scripts --no-audit --no-fund"); n != 1 {
+		t.Errorf("%s runs the lockfile install %d times, want exactly 1: it is the pinned toolchain step", path, n)
+	}
+	for _, want := range []string{
+		"node node_modules/electron/install.js",
+		"npm run build",
+		"npm run package:linux",
+	} {
+		if !strings.Contains(runs, want) {
+			t.Errorf("%s never runs %q", path, want)
+		}
+	}
+	// `package:linux` is the script -- `electron-builder --linux --publish
+	// never` -- and not a second copy of its command line: a pack that spelled
+	// the flags out here could drop `--publish never` without touching the
+	// script the release job also runs. (Asked of the step bodies: the file's
+	// own prose names the script and the packer on purpose.)
+	for _, forbidden := range []string{"npx ", "npm install", "electron-builder", "extraMetadata", "--publish"} {
+		if strings.Contains(runs, forbidden) {
+			t.Errorf("%s's steps contain %q: the packer is the lockfile's, through the npm script, and nothing stamps a version -- only a release knows one (console-release.yml)", path, forbidden)
+		}
+	}
+
+	// The artifacts are uploaded, both kinds, and an empty upload is a failure.
+	uploads := 0
+	for _, step := range job.Steps {
+		if !strings.Contains(step.Uses, "actions/upload-artifact@") {
+			continue
+		}
+		uploads++
+		if step.With["if-no-files-found"] != "error" {
+			t.Errorf("%s's upload step takes if-no-files-found %q, want error: a build that produced nothing and uploaded nothing, successfully, is the one outcome this job must not report", path, step.With["if-no-files-found"])
+		}
+		for _, want := range []string{"console/release/*.AppImage", "console/release/*.deb"} {
+			if !strings.Contains(step.With["path"], want) {
+				t.Errorf("%s's upload step uploads %q, which does not name %s", path, step.With["path"], want)
+			}
+		}
+	}
+	if uploads != 1 {
+		t.Errorf("%s has %d upload-artifact steps, want 1: the artifacts are the point of the job", path, uploads)
+	}
+}
+
+// TestConsoleReleaseLinuxAddsTheLinuxLegAndMovesNothingElse is the claim a
+// replacement file has to earn. Three jobs; the new one read-only and
+// secretless, building and verifying the shipped Linux bytes; `publish` waiting
+// for both legs, merging them behind one sums file, signing that file keyless
+// and attaching everything -- and the `release` job, the whole macOS signing
+// pipeline, byte-for-byte the same job it was.
+//
+// The mutations that prove it: give the `linux` job `contents: write` or an
+// `environment:`, drop `id-token: write` from `publish`, `needs: release` back
+// to one leg, drop the cosign step or the `.deb` from `gh release create`, and
+// -- the one this test exists for -- change a single character inside the
+// `release` job.
+func TestConsoleReleaseLinuxAddsTheLinuxLegAndMovesNothingElse(t *testing.T) {
+	// The replacement, from whichever home this tree holds it in: staged while
+	// the change is pending, `.github/workflows/console-release.yml` once the
+	// owner has copied it in. That copy-in writes this text over the staged
+	// console-release.yml and then removes the staged replacement, so after it
+	// the applied file is the one every reader below reads.
+	text, path := consoleReplacementText(t, consoleReleaseLinuxWorkflowPath, appliedConsoleReleasePath)
+	wf, _, rawJobs := parseConsoleWorkflow(t, path, text)
+
+	// Three jobs, and what each is for.
+	want := []string{"linux", "publish", "release"}
+	if got := jobKeys(rawJobs); !slices.Equal(got, want) {
+		t.Fatalf("%s has jobs %v, want %v", path, got, want)
+	}
+
+	// **The "and moves nothing else" half is a staging-time claim**, and the
+	// only one here that cannot be made in both states: it compares the macOS
+	// pipeline as it was with this file, and the copy-in's first command makes
+	// the staged console-release.yml this very text, so after it there is
+	// nothing left to compare. The state is read from the texts themselves
+	// rather than from a file's existence, so a tree that kept a staged copy of
+	// an applied file cannot pass this half vacuously; and the comparison is
+	// made by every run in the staged state, which is the state this file is
+	// committed in.
+	oldText, oldPath := consoleWorkflowText(t, consoleReleaseWorkflowPath, appliedConsoleReleasePath)
+	if oldText == text {
+		t.Logf("%s and %s carry the same text, so the 'moves nothing else' comparison has nothing to compare in this tree: the copy-in has been applied", oldPath, path)
+	} else {
+		oldWF, _, oldJobs := parseConsoleWorkflow(t, oldPath, oldText)
+
+		// The macOS leg, unchanged. This is a comparison of the parsed job
+		// rather than of a remembered copy of it: whatever console-release.yml
+		// says today is what this file must still say.
+		if !reflect.DeepEqual(oldJobs["release"], rawJobs["release"]) {
+			t.Errorf("%s's release job is not the one in %s: this file replaces that file, so a change to the signing pipeline has to be one it says out loud (it changes the header, the job inventory and the artifact-name bullets, and adds a job)", path, oldPath)
+		}
+		// And the job that did move kept everything it had. Its first two steps
+		// -- the download and the check of the macOS assets against the sums the
+		// release job recorded -- are the same two steps, and five are added
+		// after them (the Linux download, the Linux check, the cosign installer,
+		// the merge and the signature).
+		oldSteps, newSteps := stepStrings(oldWF, "publish"), stepStrings(wf, "publish")
+		if len(oldSteps) < 3 {
+			t.Fatalf("%s's publish job has %d steps: this test reads its last one as the release step", oldPath, len(oldSteps))
+		}
+		at := 0
+		for i, keep := range oldSteps[:2] {
+			next := slices.Index(newSteps[at:], keep)
+			if next < 0 {
+				t.Errorf("%s's publish job no longer has the step %d of %s (%s) after the ones before it: the merge and the signature are added to that job, not a rewrite of it", path, i+1, oldPath, strings.TrimSpace(keep))
+				break
+			}
+			at += next + 1
+		}
+		if len(newSteps) != len(oldSteps)+5 {
+			t.Errorf("%s's publish job has %d steps, want %d (%d plus the five this change adds)", path, len(newSteps), len(oldSteps)+5, len(oldSteps))
+		}
+		// The release step itself survives line for line, except the two lines
+		// this change edits on purpose: the notes, which have to describe
+		// artifacts that are unsigned, and the asset list, which has to carry
+		// them.
+		oldRelease := oldWF.Jobs["publish"].Steps[len(oldWF.Jobs["publish"].Steps)-1].Run
+		deliberatelyEdited := []string{
+			`--notes "The Fugaro desktop console built from the CLI's $TAG tag`,
+			`"$DMG" "$APP_ZIP" "$RECORD" "$SUMS"`,
+		}
+		for _, line := range strings.Split(oldRelease, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" {
+				continue
+			}
+			if slices.ContainsFunc(deliberatelyEdited, func(prefix string) bool { return strings.HasPrefix(trimmed, prefix) }) {
+				continue
+			}
+			if !strings.Contains(text, trimmed) {
+				t.Errorf("%s no longer carries the release step's line %q from %s: the publishing step is edited in two places (the notes and the asset list) and nowhere else", path, trimmed, oldPath)
+			}
+		}
+		// And the release step is still last, and still the one that publishes.
+	}
+	// The publish step is the last thing `publish` does, in both states: the
+	// draft-then-publish sequence cannot be followed by anything, or the release
+	// is published before the job that publishes it has finished.
+	if last := strings.TrimSpace(stepStrings(wf, "publish")[len(stepStrings(wf, "publish"))-1]); !strings.HasSuffix(last, `echo "published $CONSOLE_TAG"`) {
+		t.Errorf("%s's last publish step ends %q, want the release step: the draft-then-publish sequence is the last thing the job does", path, last[len(last)-60:])
+	}
+
+	// The linux job: the pinned runner, read-only, and nothing to keep secret.
+	linux := renderedJob(t, rawJobs, path, "linux")
+	for _, want := range []string{"runs-on: ubuntu-24.04", "contents: read", "checks: read"} {
+		if !strings.Contains(linux, want) {
+			t.Errorf("%s's linux job does not carry %q: %s", path, want, strings.TrimSpace(linux))
+		}
+	}
+	for _, forbidden := range []string{"secrets.", "environment:", "contents: write", "id-token", "-----BEGIN"} {
+		if strings.Contains(linux, forbidden) {
+			t.Errorf("%s's linux job carries %q: there is nothing to sign an AppImage with, so this job holds nothing (design section 5.1, the owner's ruling of 2026-10-20)", path, forbidden)
+		}
+	}
+
+	// What the linux job does: the same gate, the same pack, and -- added for
+	// Linux because an unsigned artifact has no other claim -- the shipped bytes
+	// opened and read.
+	linuxRuns := strings.Join(stepStrings(wf, "linux"), "\n")
+	for _, want := range []string{
+		`scripts/release-gate.sh "$TAG"`,
+		"npm run package:linux",
+		`sha256sum "$(basename "$APPIMAGE")" "$(basename "$DEB")"`,
+		"dpkg-deb --info",
+		"dpkg-deb --extract",
+		"--appimage-extract",
+		"getCurrentFuseWire",
+		"console-linux-verification.txt",
+	} {
+		if !strings.Contains(linuxRuns, want) {
+			t.Errorf("%s's linux job never runs %q: the release records what it verified, on the files it ships", path, want)
+		}
+	}
+	// The fuse read-back is the six flips src/main/fuses.ts makes, named one by
+	// one: a checker that read one fuse and called the artifact verified is the
+	// mutation this catches.
+	for _, fuse := range []string{
+		"FuseV1Options.RunAsNode",
+		"FuseV1Options.EnableNodeOptionsEnvironmentVariable",
+		"FuseV1Options.EnableNodeCliInspectArguments",
+		"FuseV1Options.EnableEmbeddedAsarIntegrityValidation",
+		"FuseV1Options.OnlyLoadAppFromAsar",
+		"FuseV1Options.GrantFileProtocolExtraPrivileges",
+	} {
+		if !strings.Contains(linuxRuns, fuse) {
+			t.Errorf("%s's linux job does not read %s back out of the shipped executable: the fuse hook's claim is about the packed tree, and this is the check on the artifact", path, fuse)
+		}
+	}
+	// And it reads the wire out of all three copies of the executable: the
+	// unpacked tree, the file inside the .deb and the one inside the AppImage.
+	if n := strings.Count(linuxRuns, "node check-fuses.mjs"); n != 3 {
+		t.Errorf("%s's linux job reads the fuse wire %d times, want 3 (the linux-unpacked tree, the .deb's own copy and the AppImage's)", path, n)
+	}
+
+	// publish: both legs, the write token and the signing identity, and nothing
+	// else.
+	needs, _ := rawJobs["publish"]["needs"].([]any)
+	if len(needs) != 2 || needs[0] != "release" || needs[1] != "linux" {
+		t.Errorf("%s's publish job needs %v, want [release, linux]: publishing before the Linux leg has verified would ship a release with a leg missing", path, rawJobs["publish"]["needs"])
+	}
+	pub := wf.Jobs["publish"]
+	if len(pub.Permissions) != 2 || pub.Permissions["contents"] != "write" || pub.Permissions["id-token"] != "write" {
+		t.Errorf("%s's publish job permissions = %v, want exactly contents: write and id-token: write (cosign keyless)", path, pub.Permissions)
+	}
+	pubJob := renderedJob(t, rawJobs, path, "publish")
+	for _, forbidden := range []string{"secrets.", "environment:", "-----BEGIN"} {
+		if strings.Contains(pubJob, forbidden) {
+			t.Errorf("%s's publish job carries %q: it holds no Apple secret and no Linux secret, and its identity is the run's OIDC token", path, forbidden)
+		}
+	}
+
+	// The cosign installer, at the pin release.yml and images.yml already carry:
+	// read out of release.yml rather than typed here, so a Dependabot bump that
+	// moves the applied workflows fails this instead of being copied by hand
+	// into a staged file nobody watches.
+	applied := readDoc(t, ".github/workflows/release.yml")
+	cosign := regexp.MustCompile(`sigstore/cosign-installer@[0-9a-f]{40} # v[0-9.]+`).FindString(applied)
+	if cosign == "" {
+		t.Fatalf(".github/workflows/release.yml no longer pins sigstore/cosign-installer: this test reads the pin from it")
+	}
+	if !strings.Contains(text, cosign) {
+		t.Errorf("%s does not carry %q, the cosign pin .github/workflows/release.yml uses: the keyless signing call here is the same one, so its installer is the same pin", path, cosign)
+	}
+	for _, want := range []string{
+		"cosign sign-blob --yes --bundle=console-sha256sums.txt.sigstore.json console-sha256sums.txt",
+		"name: console-linux-assets",
+		"name: console-release-assets",
+		"console-linux-sha256sums.txt",
+		"sha256sum --strict --check console-sha256sums.txt",
+		// The refusals a re-run must still meet, verbatim from the old file.
+		"the release $CONSOLE_TAG is already published",
+		"delete it (gh release delete",
+		"could not tell whether the tag $CONSOLE_TAG exists",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("%s lacks %q", path, want)
+		}
+	}
+	// The merge: one sums file over both legs, checked in the directory that
+	// ships, and a collision refused rather than overwritten.
+	for _, want := range []string{
+		`cat console-macos/console-sha256sums.txt console-linux/console-linux-sha256sums.txt > "$OUT/console-sha256sums.txt"`,
+		"refusing to publish a release that is missing a leg",
+		"refusing to overwrite one with the other",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("%s lacks %q: the release's sums file has to cover every asset in it", path, want)
+		}
+	}
+	// The release carries every artifact, and the bundle: a release created
+	// without the .deb or without the signature over the sums is not one an
+	// operator can verify.
+	create := regexp.MustCompile(`(?s)gh release create "\$CONSOLE_TAG".*?gh release edit`).FindString(text)
+	if create == "" {
+		t.Fatalf("%s has no `gh release create` line: this test reads the assets it carries from it", path)
+	}
+	for _, asset := range []string{`"$DMG"`, `"$APP_ZIP"`, `"$APPIMAGE"`, `"$DEB"`, `"$RECORD"`, `"$LINUX_RECORD"`, `"$SUMS"`, `"$BUNDLE"`} {
+		if !strings.Contains(create, asset) {
+			t.Errorf("%s's `gh release create` does not attach %s (it attaches %q): every artifact and the signature over the sums file are the release", path, asset, strings.Join(strings.Fields(create), " "))
+		}
+	}
+	if !strings.Contains(oldText, "console-verification.txt") {
+		t.Fatalf("%s no longer records a verification file: this test's `LINUX_RECORD` half is written against it", consoleReleaseWorkflowPath)
+	}
+}
+
+// TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere: the two staged files are
+// for a person to copy in by hand, and neither can be applied by an agent. What
+// this asserts is that the place that person reads -- the staging directory's
+// README, and each file's own header -- carries the command, says what happens
+// to the staged copy afterwards, and states the one thing about the Linux
+// artifacts that must not be misread: that an AppImage is not code-signed.
+//
+// The mutations that prove it: delete a cp line, delete the `git rm` line from
+// the console-linux block, drop the "not code-signed" sentence, and drop the
+// note that console-release-linux.yml supersedes the staged console-release.yml.
+func TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere(t *testing.T) {
+	doc := readDoc(t, "docs/pending-workflows/README.md")
+
+	// The count and the names, in the opening line: this directory says what it
+	// holds, and it holds two files more than it did. The claim is checked
+	// against the directory at the end of this test rather than pinned to the
+	// sentence this change writes, because the owner's two copy-ins move it --
+	// what must hold is that the sentence and the directory agree, in every
+	// state.
+	//
+	// The sections stay here after a copy-in: they are the record of the change,
+	// as `## images.yml` below is the record of that one.
+
+	// The build job's section: what it is, why it is its own workflow, and the
+	// command that applies it.
+	build := consoleReadmeSection(t, doc, "## `console-linux.yml`")
+	for _, want := range []string{
+		"cp docs/pending-workflows/console-linux.yml .github/workflows/console-linux.yml",
+		"git rm docs/pending-workflows/console-linux.yml",
+		"build-only",
+		"deriveConsoleCheckNames",
+		"TestReleaseGateRequiresTheConsoleCheck",
+		"ubuntu-latest",
+		"0.0.0",
+	} {
+		if !strings.Contains(build, want) {
+			t.Errorf("docs/pending-workflows/README.md's `console-linux.yml` section lacks %q: the owner is the one who copies it in, and this is where they read what it is and why it is staged apart", want)
+		}
+	}
+
+	// The two pairs that section prints are the sentences the owner writes when
+	// they apply this file, one per state `mobile-release.yml` can be in, and
+	// until this test read them nothing did: the copy-in proof splices the Linux
+	// pair's, out of `## console-release-linux.yml`. A pair whose names or count
+	// have drifted from the state its label describes is a sentence that reddens
+	// the two checks below in the owner's commit -- this file replaced in the
+	// opening line, and a count and a set the directory does not hold -- so each
+	// is held here to the directory that state leaves.
+	//
+	// The set each pair describes is stated rather than observed, because one of
+	// the two states is not this tree's: the pending set with this file gone, and
+	// with `mobile-release.yml` in it or out of it. Both are read in every tree,
+	// so neither pair can rot while the other is the one the repository is in.
+	if docExists(t, consoleLinuxWorkflowPath) {
+		const what = "docs/pending-workflows/README.md's `console-linux.yml` section"
+		withMobile := pendingWorkflows(t)
+		if !slices.Contains(withMobile, filepath.Base(stagedMobileReleaseWorkflowPath)) {
+			withMobile = append(withMobile, filepath.Base(stagedMobileReleaseWorkflowPath))
+		}
+		slices.Sort(withMobile)
+		for _, c := range []struct {
+			name, label, to string
+			want            []string
+		}{
+			{
+				name:  "already applied",
+				label: consoleLinuxCopyInMobileAppliedLabel,
+				to:    consoleLinuxCopyInMobileStagedLabel,
+				want: slices.DeleteFunc(slices.Clone(withMobile), func(n string) bool {
+					return n == filepath.Base(consoleLinuxWorkflowPath) || n == filepath.Base(stagedMobileReleaseWorkflowPath)
+				}),
+			},
+			{
+				name:  "still staged",
+				label: consoleLinuxCopyInMobileStagedLabel,
+				to:    consoleLinuxCopyInOtherOrderLabel,
+				want:  slices.DeleteFunc(slices.Clone(withMobile), func(n string) bool { return n == filepath.Base(consoleLinuxWorkflowPath) }),
+			},
+		} {
+			pair := readmeSectionPart(t, what, build, c.label, c.to)
+			for _, p := range []struct{ what, block, pattern string }{
+				{"the opening line", fencedBlockContaining(t, what, pair, "files are pending"), consolePendingBoldPattern},
+				{"the site's last paragraph", fencedBlockContaining(t, what, pair, "now holds"), consolePendingPathsPattern},
+			} {
+				names, count := consolePendingSentence(t, "the pair in `"+what+"` for `mobile-release.yml` "+c.name+", "+p.what, p.block, p.pattern)
+				slices.Sort(names)
+				if !slices.Equal(names, c.want) {
+					t.Errorf("the pair `%s` hands the owner in `%s` names %q, and applying `console-linux.yml` with `mobile-release.yml` %s leaves the directory holding %q: the sentences are held to the directory, and one that named a file that is not pending would be red in the owner's commit", c.label, what, names, c.name, c.want)
+				}
+				if count != len(c.want) {
+					t.Errorf("the pair `%s` hands the owner in `%s` says %d pending workflow(s), and applying `console-linux.yml` with `mobile-release.yml` %s leaves %d (%q): the count and the names are one claim", c.label, what, count, c.name, len(c.want), c.want)
+				}
+			}
+		}
+	}
+
+	// The release file's section: the three commands, in order, and the reason
+	// there are three.
+	release := consoleReadmeSection(t, doc, "## `console-release-linux.yml`")
+	first := strings.Index(release, "cp docs/pending-workflows/console-release-linux.yml docs/pending-workflows/console-release.yml")
+	second := strings.Index(release, "cp docs/pending-workflows/console-release.yml .github/workflows/console-release.yml")
+	third := strings.Index(release, "git rm docs/pending-workflows/console-release-linux.yml")
+	if first < 0 || second < first || third < second {
+		t.Errorf("docs/pending-workflows/README.md's `console-release-linux.yml` section does not carry the three copy-in commands in order (the staged file, then the applied file, then the removal): %v %v %v", first, second, third)
+	}
+	for _, want := range []string{
+		"supersedes",
+		"an AppImage is not code-signed",
+		"console-sha256sums.txt.sigstore.json",
+		"TestDocsConsoleReleaseWorkflowIsStagedAndPinned",
+		"website/README.md",
+	} {
+		if !strings.Contains(release, want) {
+			t.Errorf("docs/pending-workflows/README.md's `console-release-linux.yml` section lacks %q", want)
+		}
+	}
+
+	// And each staged file's own header carries its commands: a reader who opens
+	// the file rather than the README is the likelier one. A file whose copy-in
+	// has already been applied is gone, and the commands travel with it -- the
+	// text that runs under .github/workflows/ is not a place to keep
+	// instructions about a copy-in that has happened -- so this half is asked
+	// only of a file that is still here.
+	for path, want := range map[string][]string{
+		consoleLinuxWorkflowPath: {
+			"cp docs/pending-workflows/console-linux.yml .github/workflows/console-linux.yml",
+			"git rm docs/pending-workflows/console-linux.yml",
+		},
+		consoleReleaseLinuxWorkflowPath: {
+			"cp docs/pending-workflows/console-release-linux.yml docs/pending-workflows/console-release.yml",
+			"cp docs/pending-workflows/console-release.yml .github/workflows/console-release.yml",
+			"git rm docs/pending-workflows/console-release-linux.yml",
+		},
+	} {
+		if !docExists(t, path) {
+			continue
+		}
+		header := readDoc(t, path)
+		for _, line := range want {
+			if !strings.Contains(header, line) {
+				t.Errorf("%s's header lacks the copy-in line %q: the file is what the owner has open", path, line)
+			}
+		}
+	}
+
+	// The site's README counts and names the pending files, and this README's
+	// own opening line does too. Both are claims about a directory that changes
+	// as the owner copies files in, and both are held to the directory rather
+	// than to a remembered count: a sentence left behind by a copy-in is a
+	// reader told that a file is pending when it runs, or the other way round.
+	// `website/test/readme.mjs` makes the site's half of this check in Node;
+	// this is the same rule for the two sentences the Go suite can see.
+	wantPending := pendingWorkflows(t)
+	for _, c := range []struct {
+		what, text, pattern string
+	}{
+		{"website/README.md", readDoc(t, "website/README.md"), consolePendingPathsPattern},
+		{"docs/pending-workflows/README.md's opening line", pendingReadmeOpening(t, doc), consolePendingBoldPattern},
+	} {
+		names, count := consolePendingSentence(t, c.what, c.text, c.pattern)
+		if !slices.Equal(names, wantPending) {
+			t.Errorf("%s names %v as the pending workflows, and docs/pending-workflows/ holds %v: the sentence has to name exactly the files a copy-in has not taken yet (a staged file it does not name is a pending change nobody was told about, and a name for a file that runs is an instruction to copy in what is already there)", c.what, names, wantPending)
+		}
+		if count != len(wantPending) {
+			t.Errorf("%s says %d pending workflow(s) and docs/pending-workflows/ holds %d (%v): the count and the names are one claim", c.what, count, len(wantPending), wantPending)
+		}
+	}
+}
+
+// TestDocsPendingWorkflowsReadmeFencesCarryNoBlankLine: each of those sentences is handed
+// to the owner **inside a fenced block as the exact text to paste** -- one for
+// the opening line, one for the site's paragraph, in every state the two
+// copy-ins leave the directory in -- and a blank line inside such a block is a
+// paragraph break the owner's paste would carry into the sentence. It splits the
+// sentence in two when the README is read on GitHub, and nothing caught it: the
+// check above flattens whitespace before it reads a sentence, and
+// `website/test/readme.mjs` does the same, so a fence broken mid-sentence reads
+// exactly like an intact one to both. (One had: "(mobile plan Task" and "P4.3)"
+// were two paragraphs in the block for `console-release-linux.yml`'s copy-in.)
+//
+// A fence is one of these when its first line is one of the two sentence heads:
+// the opening line's `**N files are pending: …**`, or the site paragraph's
+// `\`docs/pending-workflows/\` now holds …`. The blocks of shell commands beside
+// them are left alone -- a blank line between two commands is ordinary, and the
+// rule would be about punctuation rather than about text a reader pastes.
+func TestDocsPendingWorkflowsReadmeFencesCarryNoBlankLine(t *testing.T) {
+	const path = "docs/pending-workflows/README.md"
+	doc := readDoc(t, path)
+
+	var blocks [][]string
+	var current []string
+	inFence := false
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			if inFence {
+				blocks = append(blocks, current)
+				current = nil
+			}
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			current = append(current, line)
+		}
+	}
+	if inFence {
+		t.Fatalf("%s has an unclosed fenced block: the sentences the owner pastes are read from these", path)
+	}
+
+	sentences := 0
+	for _, block := range blocks {
+		if len(block) == 0 {
+			continue
+		}
+		head := block[0]
+		if !consolePendingSentenceHeadRE.MatchString(head) && !strings.HasPrefix(head, "`docs/pending-workflows/` now holds") {
+			continue
+		}
+		sentences++
+		for i, line := range block {
+			if strings.TrimSpace(line) != "" {
+				continue
+			}
+			t.Errorf("%s: the sentence the owner pastes, starting %q, has a blank line at line %d of its fenced block: the block is the exact text, and a blank line is a paragraph break the paste carries into a sentence -- the whitespace-flattening checks above and in website/test/readme.mjs read a broken fence and an intact one the same", path, head, i+1)
+			break
+		}
+	}
+	if sentences == 0 {
+		t.Fatalf("%s hands the owner no fenced sentence: the copy-in sections carry the text to paste, and this test reads those blocks", path)
+	}
+}
+
+// pendingWorkflows is the workflows docs/pending-workflows/ still holds as
+// pending changes, sorted: every `.yml` in it except the two whose staged copies
+// are kept after their copy-in on purpose (`console-tests.yml` and
+// `console-release.yml`, whose staged copies are asserted byte-identical to the
+// files that run -- docs/pending-workflows/README.md says why). It is derived
+// from the directory rather than listed, so it is right in every state the
+// owner's copy-ins pass through.
+func pendingWorkflows(t *testing.T) []string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join("..", "..", "docs", "pending-workflows"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept := []string{"console-tests.yml", "console-release.yml"}
+	var names []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || (!strings.HasSuffix(name, ".yml") && !strings.HasSuffix(name, ".yaml")) {
+			continue
+		}
+		if slices.Contains(kept, name) {
+			continue
+		}
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// pendingReadmeOpening is the staging directory's own opening line: the
+// paragraph that says how many files are pending here and names them, up to the
+// sentence that separates them from the two staged copies that stay.
+func pendingReadmeOpening(t *testing.T, doc string) string {
+	t.Helper()
+	start := strings.Index(doc, "**")
+	if start < 0 {
+		t.Fatalf("docs/pending-workflows/README.md does not open with a claim about what is pending")
+	}
+	end := strings.Index(doc, "**Two other files stay staged here by design")
+	if end < start {
+		t.Fatalf("docs/pending-workflows/README.md no longer separates the pending files from the two staged copies that stay: this test reads the paragraph between the two")
+	}
+	return doc[start:end]
+}
+
+// consolePendingSentence reads one of those sentences: the names it gives, and
+// the count it states as a word. A sentence that states no count, or names no
+// file, fails here rather than passing as an empty list. `namePattern` is how
+// that sentence spells a name: the site's README names the files by their staged
+// paths -- the form `website/test/readme.mjs` reads -- while this directory's
+// own opening line bolds each bare name, and neither form may pick up a name
+// mentioned in passing beside it.
+func consolePendingSentence(t *testing.T, what, text, namePattern string) ([]string, int) {
+	t.Helper()
+	flat := strings.Join(strings.Fields(text), " ")
+	words := map[string]int{"no": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6}
+	count := -1
+	for _, pattern := range []*regexp.Regexp{
+		// "**Three files are pending: `shared-tests.yml`** ..."
+		consolePendingSentenceHeadRE,
+		// "`docs/pending-workflows/` now holds three pending workflows,"
+		regexp.MustCompile(`\b(?:holds|names)\s+(\w+) pending`),
+	} {
+		m := pattern.FindStringSubmatch(flat)
+		if m == nil {
+			continue
+		}
+		n, ok := words[strings.ToLower(m[1])]
+		if !ok {
+			t.Fatalf("%s says %q pending, which is not a count this test can read", what, m[1])
+		}
+		count = n
+		break
+	}
+	if count < 0 {
+		t.Fatalf("%s does not state how many workflows are pending (%q)", what, flat)
+	}
+	var names []string
+	add := func(name string) {
+		if !slices.Contains(names, name) {
+			names = append(names, name)
+		}
+	}
+	switch namePattern {
+	case consolePendingPathsPattern:
+		for _, name := range regexp.MustCompile(consolePendingPathsPattern).FindAllStringSubmatch(flat, -1) {
+			add(name[1])
+		}
+	case consolePendingBoldPattern:
+		// The opening line wraps each pending file in `**` ... `**`, one item
+		// per file, and explains each in a parenthetical that is not bold: a
+		// name mentioned in passing in one of those -- the staged
+		// `console-release.yml` this change supersedes -- is not a file the
+		// sentence is counting.
+		for _, span := range regexp.MustCompile(`\*\*(.*?)\*\*`).FindAllStringSubmatch(flat, -1) {
+			for _, name := range regexp.MustCompile("`([\\w.-]+\\.ya?ml)`").FindAllStringSubmatch(span[1], -1) {
+				add(name[1])
+			}
+		}
+	}
+	slices.Sort(names)
+	if len(names) == 0 {
+		t.Fatalf("%s names no workflow file: the sentence has to name the files it counts", what)
+	}
+	return names, count
+}
+
+// consolePendingPathsPattern and consolePendingBoldPattern are the two
+// spellings consolePendingSentence can read: the file names it is given as
+// patterns rather than as a mode, because the parsing differs, not just the
+// pattern.
+const (
+	consolePendingPathsPattern = "`docs/pending-workflows/([\\w.-]+\\.ya?ml)`"
+	consolePendingBoldPattern  = "bold"
+)
+
+// consolePendingSentenceHeadRE matches the head of the opening-line sentence
+// ("**Three files are pending: `shared-tests.yml`** ..."), which is also how
+// TestDocsPendingWorkflowsReadmeFencesCarryNoBlankLine recognises a fenced block that holds
+// a sentence rather than a list of commands. The two share it deliberately: a
+// sentence the parser reads has to be a sentence whose fence is checked.
+var consolePendingSentenceHeadRE = regexp.MustCompile(`\*\*(\w+) files? (?:is|are) pending`)
+
+// TestConsoleReleaseLinuxStagedFileIsNotTheAppliedOne keeps the files this
+// change moves in the relation it claims for them, in both of the states the
+// owner's copy-in passes through. Three claims, none of which depends on which
+// state the tree is in:
+//
+//   - the staged `console-release.yml` is byte-identical to the file that runs,
+//     before the copy-in and after it (the copy-in's first command makes it the
+//     replacement's text, which is what the second command copies in);
+//   - the build check is in exactly one of its two homes -- staged while the
+//     change is pending, applied once it has been copied in, never both (its
+//     copy-in is a `cp` and a `git rm`, so both would be a staged copy of a file
+//     that already runs);
+//   - the replacement, while it is staged, is a change rather than a copy of the
+//     file it supersedes; and once it has been applied, the text that runs is
+//     the merged one -- the Linux leg is in it -- because the staged
+//     replacement, the only other copy of it, is gone.
+//
+// The mutation that proves it: copy console-release-linux.yml's content over
+// docs/pending-workflows/console-release.yml without copying it in, which is the
+// state the README's commands pass through in one command and which the first
+// clause refuses.
+func TestConsoleReleaseLinuxStagedFileIsNotTheAppliedOne(t *testing.T) {
+	stagedBuild, appliedBuild := docExists(t, consoleLinuxWorkflowPath), docExists(t, appliedConsoleLinuxPath)
+	if stagedBuild == appliedBuild {
+		t.Errorf("the build check is %s: %s and %s must hold exactly one of the two -- it is staged until the owner copies it in, and the copy-in removes the staged copy, so a tree with both has a pending file that already runs and a tree with neither has lost it (docs/pending-workflows/README.md)",
+			map[bool]string{true: "in both places", false: "in neither place"}[stagedBuild], consoleLinuxWorkflowPath, appliedConsoleLinuxPath)
+	}
+
+	applied, err := os.ReadFile(filepath.Join("..", "..", appliedConsoleReleasePath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged, err := os.ReadFile(filepath.Join("..", "..", consoleReleaseWorkflowPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(applied) != string(staged) {
+		t.Errorf("%s and %s differ. That is the 2026-10-19 state this change is deliberately not in: %s is staged as a file of its own precisely so that the byte-identity clause stays green and main does not spend the window before the copy-in refusing every tag (docs/pending-workflows/README.md)",
+			appliedConsoleReleasePath, consoleReleaseWorkflowPath, consoleReleaseLinuxWorkflowPath)
+	}
+	if docExists(t, consoleReleaseLinuxWorkflowPath) {
+		replacement, err := os.ReadFile(filepath.Join("..", "..", consoleReleaseLinuxWorkflowPath))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(replacement) == string(staged) {
+			t.Errorf("%s is byte-identical to %s: then it is not a change, and its copy-in commands are instructions to do nothing", consoleReleaseLinuxWorkflowPath, consoleReleaseWorkflowPath)
+		}
+		return
+	}
+	// Applied: the replacement is gone, so the file that runs is the only copy
+	// of the Linux legs left, and it has to carry them.
+	for _, want := range []string{"name: console-linux-assets", "console-linux-verification.txt", "cosign sign-blob --yes --bundle=console-sha256sums.txt.sigstore.json"} {
+		if !strings.Contains(string(applied), want) {
+			t.Errorf("%s no longer carries %q, and %s is gone: the copy-in's first command writes the replacement over this file, so an applied tree that lacks it has lost the Linux legs entirely", appliedConsoleReleasePath, want, consoleReleaseLinuxWorkflowPath)
+		}
+	}
+}
+
+// TestStagedLinuxFilesSurviveTheCopyIn is the proof of the property every test
+// in this family is written for: **the copy-in the owner does by hand does not
+// turn `main` red.** The tests above read the two Linux files through
+// consoleWorkflowText, in whichever of their two homes the tree holds them, so
+// that the same suite is green while the change is staged and after it has been
+// applied -- and this is the test that checks that claim by making the change
+// happen: it copies this tree to a temporary directory, runs the copy-in
+// docs/pending-workflows/README.md prescribes on the copy (both files, both
+// `git rm`s and the two sentences that count what is pending here), and then
+// runs this family of tests **in the copy**.
+//
+// Why it exists. A clause that only holds before the copy-in is a clause that
+// fails on the commit the README tells the owner to make, and the window before
+// that commit is the only state anyone runs by hand. Two ways of getting it
+// wrong are both refused here rather than in the owner's commit: a test that
+// reads docs/pending-workflows/console-linux.yml directly fails once its staged
+// copy is gone, and a test that pins a remembered count of pending files fails
+// as soon as one of them is applied (and again when the next one is staged).
+//
+// The copy-in is the README's own text, not a retyped copy of it: its five
+// commands are checked against the commands the README prints, and the two
+// replacement sentences are read out of the fenced blocks in
+// `## console-release-linux.yml`. A README that prescribed a command or a
+// sentence this test cannot apply fails here, so the instructions and the
+// property cannot drift apart. `git` is not run at all -- the operations are
+// the file moves the commands make -- so this needs no repository, no branch
+// and no index: a copy of the tree is enough.
+//
+// The selection it runs is the family the staged files reach
+// (consoleCopyInRunPattern), which deliberately does not match this test: a
+// pattern that did would run this test inside the copy and recurse. That
+// selection is checked for coverage first (consoleCopyInUncoveredTests): a test
+// in this package that reads one of the moved files and is not selected fails
+// here, rather than being silently left out of the run in the copy.
+//
+// The mutations that prove it: make consoleWorkflowText read only the staged
+// path (fatal instead of falling back to the applied one); pin
+// TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere's count to the "three"
+// this change stages; and add a test outside the pattern that reads one of the
+// moved files. Each turns this test red -- the first two on the copied tree
+// while the staged tree stays green, the third before the copy is even made --
+// and nothing else in the suite notices.
+func TestStagedLinuxFilesSurviveTheCopyIn(t *testing.T) {
+	if !docExists(t, consoleLinuxWorkflowPath) || !docExists(t, consoleReleaseLinuxWorkflowPath) {
+		t.Skipf("the copy-in has been applied in this tree (%s or %s is gone): this test needs the staged state to copy from, and on the applied tree it has nothing left to prove -- the suite it would run is the suite running now",
+			consoleLinuxWorkflowPath, consoleReleaseLinuxWorkflowPath)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Skipf("this test runs the package's own test binary inside the copy, and it cannot find itself (%v)", err)
+	}
+	if regexp.MustCompile(consoleCopyInRunPattern).MatchString(t.Name()) {
+		t.Fatalf("%q matches this test's own name: the run inside the copy would run this test again, in a tree it would copy again, without end", consoleCopyInRunPattern)
+	}
+
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	copyRoot := filepath.Join(t.TempDir(), "fugaro")
+	copyTree(t, root, copyRoot)
+
+	// The copy-in, in the order the README gives it: the build check into
+	// .github/workflows/ and its staged copy removed; then the replacement over
+	// the staged console-release.yml, that staged file into
+	// .github/workflows/, and the replacement removed.
+	for _, step := range []struct{ from, to string }{
+		{consoleLinuxWorkflowPath, appliedConsoleLinuxPath},
+		{consoleReleaseLinuxWorkflowPath, consoleReleaseWorkflowPath},
+		{consoleReleaseWorkflowPath, appliedConsoleReleasePath},
+	} {
+		copyFile(t, filepath.Join(copyRoot, step.from), filepath.Join(copyRoot, step.to))
+	}
+	for _, gone := range []string{consoleLinuxWorkflowPath, consoleReleaseLinuxWorkflowPath} {
+		if err := os.Remove(filepath.Join(copyRoot, gone)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(copyRoot, gone)); !os.IsNotExist(err) {
+			t.Fatalf("%s is still there after the copy-in removed it (%v)", gone, err)
+		}
+	}
+
+	// And the two sentences the same commit has to carry, spliced in from the
+	// README's own blocks. `consolePendingSentence` in this file reads both
+	// sentences back in the copied tree when the suite runs there.
+	sentences := releaseLinuxCopyInSentences(t)
+	spliceOut(t, filepath.Join(copyRoot, "docs/pending-workflows/README.md"), sentences.opening,
+		"**", "**Two other files stay staged here by design")
+	spliceOut(t, filepath.Join(copyRoot, "website/README.md"), sentences.site,
+		"`docs/pending-workflows/` now holds", "the website's two manual")
+
+	// Before running anything, the selection is checked for coverage: a test
+	// that reads one of the files the copy-in moves and is not matched by the
+	// pattern would be a test this proof silently does not run.
+	for _, name := range consoleCopyInUncoveredTests(t) {
+		t.Errorf("%s reads what the copy-in changes and %q does not select it, so the run inside the copy would never exercise it: widen consoleCopyInRunPattern (or name the test into the family it belongs to), because this test's whole claim is about the tests that read the files a copy-in moves", name, consoleCopyInRunPattern)
+	}
+
+	// It runs **in the copy**: this package's own test binary, started from the
+	// copied package directory, so every readDoc and every workflow reader above
+	// opens the copied tree's file. The binary is the one this test is running
+	// in rather than a freshly built one -- the assertions are the same code
+	// either way, and only the files under test differ, which is the whole
+	// claim -- and compiling this package a second time from inside a test run
+	// costs a gigabyte of compiler memory the machine running the suite may not
+	// have (the first version of this test was killed for exactly that).
+	cmd := exec.Command(exe, "-test.run", consoleCopyInRunPattern, "-test.count", "1", "-test.timeout", "10m")
+	cmd.Dir = filepath.Join(copyRoot, "internal", "cli")
+	// The environment is this run's, so the child reads the same HOME, cache and
+	// configuration rather than reaching for anything of its own.
+	cmd.Env = os.Environ()
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return
+	}
+	t.Errorf("the suite is red in a tree with the copy-in applied, which is the commit docs/pending-workflows/README.md tells the owner to make: %v\n%s",
+		err, consoleTail(string(out), 60))
+}
+
+// consoleCopyInRunPattern is what TestStagedLinuxFilesSurviveTheCopyIn runs in
+// the copied tree: the console-workflow, docs and lint families, which is every
+// test that reads one of the two staged Linux files (the wider form of the
+// pattern a run uses day to day, `DesktopConsole|Docs|Lint`, which does not
+// spell the standalone Linux tests' names). It must not match the proof test
+// itself, and the proof test checks that it does not.
+//
+// It is kept honest by consoleCopyInSensitive and the coverage check in the
+// proof test: a test that reads one of the files the copy-in moves and is not
+// selected here fails that check rather than being quietly left out of the run
+// in the copy.
+const consoleCopyInRunPattern = `Console|Docs|Lint`
+
+// consoleCopyInSensitive is what a copy-in changes, as a test source spells it:
+// the two staged files by name, the constants that name their four homes, and
+// the two helpers this file reads the staging README's opening line through
+// (`pendingWorkflows` derives the pending set from the directory, and
+// `pendingReadmeOpening` is the paragraph that states it). A test whose body
+// mentions any of these is a test the copy-in can turn red.
+//
+// What it does not cover, deliberately: a test that reads the README's opening
+// line or the site's last paragraph without going through one of these -- the
+// check is over the text of the tests, and a string this list does not know
+// cannot be seen. The families that read them are selected by
+// consoleCopyInRunPattern in full, and a new reader is expected to be named into
+// one of them.
+// It is a regular expression with word boundaries rather than a list of
+// substrings: `pendingWorkflows` is a helper here and `pendingWorkflowsReadmePath`
+// is a constant in another file, and a substring search cannot tell them apart.
+var consoleCopyInSensitive = regexp.MustCompile(`\b(?:console-linux\.yml|console-release-linux\.yml|consoleLinuxWorkflowPath|appliedConsoleLinuxPath|consoleReleaseLinuxWorkflowPath|consoleReleaseWorkflowPath|appliedConsoleReleasePath|pendingReadmeOpening|pendingWorkflows)\b`)
+
+// consoleCopyInUncoveredTests is every test in this package whose source
+// mentions what a copy-in changes and which consoleCopyInRunPattern does not
+// select. The proof test refuses to run while it is non-empty: an unselected
+// reader is a test whose behaviour in the copied tree nobody has checked, which
+// is the whole failure this family was fixed for.
+func consoleCopyInUncoveredTests(t *testing.T) []string {
+	t.Helper()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("cannot list this package's sources: %v", err)
+	}
+	pattern := regexp.MustCompile(consoleCopyInRunPattern)
+	var uncovered []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Split on the top-level `func ` keyword: every test's body is the text
+		// up to the next one, which is enough to ask whether that test mentions
+		// what the copy-in moves.
+		for _, body := range strings.Split(string(raw), "\nfunc ")[1:] {
+			test := strings.SplitN(body, "(", 2)[0]
+			if !strings.HasPrefix(test, "Test") || test == t.Name() {
+				continue
+			}
+			if consoleCopyInSensitive.MatchString(body) && !pattern.MatchString(test) {
+				uncovered = append(uncovered, name+": "+test)
+			}
+		}
+	}
+	slices.Sort(uncovered)
+	return uncovered
+}
+
+// copyInSentences is the pair of replacement sentences the README prescribes for
+// the commit that applies both files: this directory's opening line and the
+// last paragraph of website/README.md.
+type copyInSentences struct {
+	opening, site string
+}
+
+// The `## console-release-linux.yml` section prints two pairs of follow-up
+// sentences, each under the sentence that says when it is the one to write,
+// because the two copy-ins of 2026-10-20 can be made in either order: the third
+// file staged that day, `mobile-release.yml`, has a copy-in of its own, and the
+// pair a commit needs names what the directory is left holding.
+const (
+	consoleCopyInMobileStagedLabel  = "**If `mobile-release.yml` is still staged when you make this copy-in**"
+	consoleCopyInMobileAppliedLabel = "**If it has already been copied in**"
+)
+
+// The `## console-linux.yml` section prints a pair of its own for each of the
+// same two states, under labels of its own: applying that file leaves a
+// different directory than applying the release file does, so the sentences it
+// hands the owner cannot be the Linux pair's. Nothing else read those two pairs
+// until TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere did, and a pair that
+// has drifted from its state is a sentence the owner writes into a red tree --
+// the two sentences it replaces are what that test checks against this
+// directory. The third marker is the paragraph that follows the second pair, and
+// it is what tells the two parts apart when they are read one at a time.
+const (
+	consoleLinuxCopyInMobileStagedLabel  = "**If `mobile-release.yml` is still staged**, it leaves four"
+	consoleLinuxCopyInMobileAppliedLabel = "**If `mobile-release.yml` has already been copied in**, applying this file leaves"
+	consoleLinuxCopyInOtherOrderLabel    = "**If the console's other two have been applied first**"
+)
+
+// readmeSectionPart returns the part of text that runs from `from` to the start
+// of the first `to` after it, or to the end of text when `to` is empty. A pair
+// of follow-up sentences is read out of the part its own label introduces, so a
+// pair printed under the wrong label -- or a label that lost its pair -- fails
+// where it is read.
+func readmeSectionPart(t *testing.T, what, text, from, to string) string {
+	t.Helper()
+	start := strings.Index(text, from)
+	if start < 0 {
+		t.Fatalf("%s no longer prints %q, the sentence that says when its pair of follow-up sentences is the one to write", what, from)
+	}
+	rest := text[start+len(from):]
+	if to != "" {
+		if end := strings.Index(rest, to); end >= 0 {
+			rest = rest[:end]
+		}
+	}
+	return rest
+}
+
+// releaseLinuxCopyInSentences reads those two sentences out of
+// `## console-release-linux.yml`'s fenced blocks -- the section that describes
+// the commit both copy-ins land in -- and checks the four commands that commit
+// runs are the ones this test ran. Both halves are read from the README because
+// both are the README's claim about the tree: a prescribed sentence that the
+// directory would contradict is not something this test should paper over by
+// writing its own.
+//
+// The section prints a pair for each of the two orders the copy-ins can be made
+// in, and this reads the pair for the tree it is run in: `mobile-release.yml`
+// staged beside this section's files means the console copy-in is the first of
+// the two, and the pair that names it is the one this copy-in leaves.
+func releaseLinuxCopyInSentences(t *testing.T) copyInSentences {
+	t.Helper()
+	const what = "docs/pending-workflows/README.md's `console-release-linux.yml` section"
+	doc := readDoc(t, "docs/pending-workflows/README.md")
+	section := consoleReadmeSection(t, doc, "## `console-release-linux.yml`")
+	for _, command := range []string{
+		"cp docs/pending-workflows/console-release-linux.yml docs/pending-workflows/console-release.yml",
+		"cp docs/pending-workflows/console-release.yml .github/workflows/console-release.yml",
+		"git rm docs/pending-workflows/console-release-linux.yml",
+	} {
+		if !strings.Contains(section, command) {
+			t.Fatalf("docs/pending-workflows/README.md's `console-release-linux.yml` section no longer prints %q, which is a command this test just ran: the copy-in it prescribes and the copy-in applied here have to be the same one", command)
+		}
+	}
+	build := consoleReadmeSection(t, doc, "## `console-linux.yml`")
+	for _, command := range []string{
+		"cp docs/pending-workflows/console-linux.yml .github/workflows/console-linux.yml",
+		"git rm docs/pending-workflows/console-linux.yml",
+	} {
+		if !strings.Contains(build, command) {
+			t.Fatalf("docs/pending-workflows/README.md's `console-linux.yml` section no longer prints %q, which is a command this test just ran", command)
+		}
+	}
+	pair := readmeSectionPart(t, what, section, consoleCopyInMobileStagedLabel, consoleCopyInMobileAppliedLabel)
+	if !docExists(t, stagedMobileReleaseWorkflowPath) {
+		pair = readmeSectionPart(t, what, section, consoleCopyInMobileAppliedLabel, "")
+	}
+	return copyInSentences{
+		// The marker is the count-free head of the opening-line block rather
+		// than a whole phrase of it: the block states a count ("One file is
+		// pending", "Two files are pending", ...), and a marker that spelled the
+		// count would have to be edited every time a file is staged or applied
+		// -- which is the edit the block itself exists to make in one place.
+		opening: fencedBlockContaining(t, what, pair, "files are pending"),
+		site:    fencedBlockContaining(t, what, pair, "now holds"),
+	}
+}
+
+// fencedBlockContaining is the one fenced block of a section that contains
+// marker, with the block's own leading and trailing whitespace removed: the
+// replacement sentences the README prescribes are written as fenced blocks so
+// that they are readable as the text they are.
+func fencedBlockContaining(t *testing.T, what, section, marker string) string {
+	t.Helper()
+	var found []string
+	var current []string
+	inFence := false
+	for _, line := range strings.Split(section, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			if inFence {
+				found = append(found, strings.Join(current, "\n"))
+				current = nil
+			}
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			current = append(current, line)
+		}
+	}
+	if inFence {
+		t.Fatalf("%s has an unclosed fenced block: the sentences this test splices in are read from it", what)
+	}
+	var matches []string
+	for _, block := range found {
+		if strings.Contains(block, marker) {
+			matches = append(matches, block)
+		}
+	}
+	if len(matches) != 1 {
+		t.Fatalf("%s has %d fenced blocks containing %q, and this test needs exactly one to splice in", what, len(matches), marker)
+	}
+	return strings.TrimSpace(matches[0])
+}
+
+// spliceOut replaces the span of a file in the tree copy that runs from the
+// first `from` to the start of the first `to` after it, and writes the file
+// back. It is how the two prescribed sentences are applied: the README hands
+// over the text to write, and the markers around the sentence it replaces are
+// its boundaries -- the head of the claim, and the words that follow it and do
+// not move. One space separates the two pieces, which is the separator both
+// sentences have today. `to` is required to follow `from`, so a README whose
+// wording moved fails here rather than splicing a paragraph into some other
+// place.
+func spliceOut(t *testing.T, path, replacement, from, to string) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	start := strings.Index(text, from)
+	end := -1
+	if start >= 0 {
+		if rel := strings.Index(text[start:], to); rel >= 0 {
+			end = start + rel
+		}
+	}
+	if start < 0 || end < start {
+		t.Fatalf("%s does not carry the text the README's copy-in splice needs (%q ... %q): the prescribed sentence and the sentence it replaces have to meet", path, from, to)
+	}
+	out := text[:start] + strings.TrimSpace(replacement) + " " + text[end:]
+	if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// copyTree copies a directory tree, skipping two directories that a test never
+// reads and that would dominate the copy: .git (history, not the tree) and
+// node_modules (the console's installed dependencies, which no Go test here
+// reads -- the files they are checked against are in the repository).
+func copyTree(t *testing.T, src, dst string) {
+	t.Helper()
+	err := filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			if rel == ".git" || rel == "node_modules" {
+				return filepath.SkipDir
+			}
+			return os.MkdirAll(filepath.Join(dst, rel), info.Mode().Perm())
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		return copyFileErr(filepath.Join(dst, rel), path, info.Mode().Perm())
+	})
+	if err != nil {
+		t.Fatalf("copying the tree to %s failed: %v", dst, err)
+	}
+}
+
+// copyFile copies one file into a tree copy, and copyFileErr is the same for
+// copyTree's walk, which reports through the walk's error rather than through
+// t.Fatal.
+func copyFile(t *testing.T, src, dst string) {
+	t.Helper()
+	info, err := os.Stat(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := copyFileErr(dst, src, info.Mode().Perm()); err != nil {
+		t.Fatalf("copying %s to %s failed: %v", src, dst, err)
+	}
+}
+
+func copyFileErr(dst, src string, mode os.FileMode) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	// The mode travels with the file: the executable bits are read by tests in
+	// this family (the console's notarise script, scripts/release-gate.sh), and a
+	// copy that dropped them would fail them for the wrong reason.
+	return os.WriteFile(dst, data, mode)
+}
+
+// consoleTail is the last n lines of the run in the copy. The child is not run
+// with -test.v -- a verbose run writes a line per passing test, which is
+// hundreds of lines of chatter around the failure -- and the testing package
+// prints a failing test's own output either way, so what comes back is the
+// `--- FAIL` blocks and the summary, and the assertion that matters is near the
+// end of it.
+func consoleTail(out string, n int) string {
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) > n {
+		lines = append([]string{fmt.Sprintf("... (%d lines before these)", len(lines)-n)}, lines[len(lines)-n:]...)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// consoleFuseHookPath is the module electron-builder calls after each platform
+// build: the hook that flips the six fuses into the packed executable and reads
+// the wire back. It is read here as bytes, like every other console/ path in
+// this file.
+const consoleFuseHookPath = "console/src/main/fuses.ts"
+
+// consoleSpawnPath is the module that resolves the CLI binary and builds the
+// child's environment, and the one table (§3.4 rules 4 and 5's lists, per
+// platform) the design's prose is held to.
+const consoleSpawnPath = "console/src/main/spawn.ts"
+
+// TestDocsConsoleLinuxFusesGoThroughThePackerContext pins the mechanism §7.6
+// states for Linux against the code that implements it, because the two were
+// written apart and disagreed: the design said the per-platform choice was made
+// by `process.platform`, and the hook makes it from the packer's context.
+//
+// The difference is not cosmetic. `afterPack` is a **packaging** hook: it runs
+// in electron-builder's own process on the machine doing the packing, so
+// `process.platform` there is the build host, not the platform being packed --
+// a hook that switched on it would resolve the Linux executable while packing
+// on Linux and the macOS one under any cross-pack, and the design's claim that
+// the two platforms "cannot drift into different postures" rests on the hook
+// reading the one value the packer is stating about the artifact in front of it.
+// `fuseTarget` switches on `context.electronPlatformName` for exactly that
+// reason, and the packer's docs are why the field exists.
+//
+// The second half is the same claim about the hook's own prose: the comment over
+// `AfterPackContext` used to justify reading `packager.executableName` with
+// "it exists on every packager (`PlatformPackager` sets it)", which is not true
+// -- the field is declared and assigned by `LinuxPackager` alone, and
+// `PlatformPackager`'s own reads of an executable name guard on
+// `this instanceof LinuxPackager` and fall back to `appInfo.productFilename`
+// elsewhere. The optional field and the `sanitizedName.toLowerCase()` fallback
+// are right either way; only the reason was wrong, and a reason that is wrong is
+// how the next reader concludes the field is safe to read on darwin.
+//
+// The mutations that prove it: put `process.platform` back into §7.6's fuse
+// sentence; change `fuseTarget`'s switch to `process.platform`; and write the
+// "exists on every packager" justification back over `AfterPackContext`. Each
+// fails one half of this test and nothing else.
+func TestDocsConsoleLinuxFusesGoThroughThePackerContext(t *testing.T) {
+	design := readDoc(t, "docs/design/desktop-console.md")
+	section := consoleReadmeSection(t, design, "### 7.6 Linux, unsigned")
+	// Flattened, because the claims below are made in prose that the file wraps:
+	// a phrase this test refuses must not be able to hide behind a line break.
+	hook := strings.Join(strings.Fields(readDoc(t, consoleFuseHookPath)), " ")
+
+	// §7.6's fuse sentence: the same hook, and the packer's own statement of
+	// which platform is being packed.
+	for _, want := range []string{"afterPack", "electronPlatformName"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("docs/design/desktop-console.md's §7.6 does not name %q in its fuse sentence: what decides which executable is patched on each platform is the claim that keeps the two platforms' postures identical, and %s is what decides it", want, consoleFuseHookPath)
+		}
+	}
+	if strings.Contains(section, "process.platform") {
+		t.Errorf("docs/design/desktop-console.md's §7.6 says `process.platform` decides which executable the fuse hook patches: the hook runs in the packer's process on the build host rather than in the app, so that value is the machine doing the packing, and the hook reads electron-builder's own `context.electronPlatformName` (fuseTarget in %s) instead", consoleFuseHookPath)
+	}
+
+	// And the hook does what the design says it does: one platform switch, on
+	// the packer's value, with no reach for the build host's platform anywhere in
+	// it.
+	if !strings.Contains(hook, "switch (context.electronPlatformName)") {
+		t.Errorf("%s no longer switches on `context.electronPlatformName`: that is the value electron-builder states the artifact's platform with, and the one §7.6 says the platform choice is made from", consoleFuseHookPath)
+	}
+	if strings.Contains(hook, "process.platform") {
+		t.Errorf("%s reads `process.platform`: this module runs inside the packer, where that is the build host rather than the platform being packed, and a fuse hook that patched the other platform's executable would produce a binary with the fuses unset", consoleFuseHookPath)
+	}
+
+	// The prose half: the field belongs to LinuxPackager, and the file has to
+	// say so rather than claim it is on every packager.
+	if !strings.Contains(hook, "LinuxPackager") {
+		t.Errorf("%s no longer names `LinuxPackager`: `packager.executableName` is declared and assigned by that class alone, with `appInfo.sanitizedName.toLowerCase()` as its fallback, and the hook's reason for reading it has to say where it comes from", consoleFuseHookPath)
+	}
+	if strings.Contains(hook, "exists on every packager") {
+		t.Errorf("%s claims `executableName` \"exists on every packager\": it does not -- `LinuxPackager` declares and assigns it, and the base `PlatformPackager` guards its own reads with `this instanceof LinuxPackager` and falls back to `appInfo.productFilename` elsewhere", consoleFuseHookPath)
+	}
+}
+
+// TestDocsConsoleSpawnListsCarryBothPlatforms pins §3.4's rules 4 and 5 -- the
+// two rules that state where the console looks for the CLI and what `PATH` it
+// gives the child -- to the table that implements them, per platform.
+//
+// The gap it closes was a citation with nothing behind it. §7.6 rule 1 sends the
+// reader to "§3.4 rule 4" for "Linux's own well-known locations", and the plan's
+// Task 5.1 note (the 2026-10-20 Linux amendment) names "§3.4 rules 4 and 5" as
+// where the per-platform resolution and child-`PATH` lists live -- and both rules
+// stated only the macOS lists. Linux's were in console/README.md, in
+// console/src/main/spawn.ts and in its tests, and nowhere in the document a
+// reader was sent to. So each rule now carries the Linux amendment the way D10's
+// cell carries its own, and this test holds both halves to spawn.ts's
+// DARWIN_LOCATIONS and LINUX_LOCATIONS -- the one table the app resolves against
+// (PLATFORM_LOCATIONS, through `locationsFor`).
+//
+// It is a per-platform, per-list, order-preserving comparison rather than a
+// "mentions Linux" check: rule 4's order IS the resolution order (a configured
+// path, then the platform's prefixes, and only then the app's own `PATH`) and
+// rule 5's is the order of the child's `PATH`, so a list whose entries are all
+// present in the wrong order is a different answer to the same question rather
+// than a rewording of the same one.
+//
+// The mutations that prove it: delete the Linux sentence from rule 4 (or from
+// rule 5); move one entry of spawn.ts's LINUX_LOCATIONS without moving it in the
+// design; and give either platform the other's Homebrew prefix.
+func TestDocsConsoleSpawnListsCarryBothPlatforms(t *testing.T) {
+	design := readDoc(t, "docs/design/desktop-console.md")
+	spawn := readDoc(t, consoleSpawnPath)
+
+	// §3.4's own rules, each bounded by the next numbered rule so that a phrase
+	// in rule 5 cannot satisfy rule 4's list.
+	recommendation := consoleReadmeSection(t, design, "### 3.4 The recommendation")
+
+	for _, tc := range []struct {
+		platform string
+		constant string
+		field    string
+		rule     int
+	}{
+		{"macOS", "DARWIN_LOCATIONS", "binaryPrefixes", 4},
+		{"Linux", "LINUX_LOCATIONS", "binaryPrefixes", 4},
+		{"macOS", "DARWIN_LOCATIONS", "childPathPrefixes", 5},
+		{"Linux", "LINUX_LOCATIONS", "childPathPrefixes", 5},
+	} {
+		want := consoleSpawnList(t, spawn, tc.constant, tc.field)
+		rule := consoleNumberedRule(t, recommendation, tc.rule)
+		if !consoleContainsRun(consoleBacktickedPaths(rule), want) {
+			t.Errorf(
+				"docs/design/desktop-console.md's §3.4 rule %d does not state %s's %s in the order %s gives it (%s): rule 4 is where the console looks for the CLI and rule 5 is the `PATH` the child gets, and §7.6 and the plan send a reader here for Linux's own lists",
+				tc.rule, tc.platform, tc.field, consoleSpawnPath, strings.Join(want, ", "),
+			)
+		}
+	}
+
+	// And the citations a reader follows resolve to those rules: §7.6 rule 1 is
+	// where the Linux section says which list the CLI is resolved from, and the
+	// plan's 2026-10-20 note is where the task says which rules carry the lists.
+	linux := consoleReadmeSection(t, design, "### 7.6 Linux, unsigned")
+	if !strings.Contains(linux, "§3.4 rule 4") {
+		t.Errorf("§7.6 no longer cites §3.4 rule 4 for the locations Linux's CLI is resolved from, and rule 4 is where Linux's own list is stated")
+	}
+	if plan := readDoc(t, "docs/plans/2026-10-15-desktop-console.md"); !strings.Contains(plan, "§3.4 rules 4 and 5") {
+		t.Errorf("the plan's 2026-10-20 Linux note no longer cites §3.4 rules 4 and 5 for the per-platform resolution and child-`PATH` lists, which are the two rules those lists are stated in")
+	}
+}
+
+// TestWebsiteConsoleTestHeadersCountTheirItems pins each console test file's own
+// account of how many things it checks to the list printed under it.
+//
+// The header is the first thing a reader of those files meets, and it is a claim
+// like every other claim in this repository: `website/test/console.mjs` said
+// "Seven things are checked here" over a list of nine -- the optional Linux block
+// and the site-wide download gate were added under it and the count was not --
+// which is the drift nobody notices by reading, and the one a reader trusts
+// instead of counting. The rule is mechanical: the header's numbered items run
+// 1..N in order, and the sentence says N.
+//
+// The mutations that prove it: write "Seven" back over the nine in
+// `website/test/console.mjs`, and number two of `console-option.mjs`'s items the
+// same way.
+func TestWebsiteConsoleTestHeadersCountTheirItems(t *testing.T) {
+	claimedRe := regexp.MustCompile(`(?m)^// .*?([A-Z][a-z]+) things are checked`)
+	itemRe := regexp.MustCompile(`(?m)^//\s+(\d+)\. \*\*`)
+	words := []string{"", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve"}
+
+	for _, path := range []string{"website/test/console.mjs", "website/test/console-option.mjs"} {
+		doc := readDoc(t, path)
+		claimed := claimedRe.FindStringSubmatch(doc)
+		if claimed == nil {
+			t.Errorf("%s no longer says how many things it checks (\"<N> things are checked here\"), and that sentence is where a reader takes the list's length from", path)
+			continue
+		}
+		items := itemRe.FindAllStringSubmatch(doc, -1)
+		if len(items) == 0 {
+			t.Errorf("%s says %q things are checked and carries no numbered item, so the count is about nothing", path, claimed[1])
+			continue
+		}
+		for i, m := range items {
+			if n, err := strconv.Atoi(m[1]); err != nil || n != i+1 {
+				t.Errorf("%s's header numbers its items %s at position %d: the list is 1..N in order, and a skipped or repeated number is a list nobody can count", path, m[1], i+1)
+			}
+		}
+		want := 0
+		for n, word := range words {
+			if word == claimed[1] {
+				want = n
+			}
+		}
+		if want == 0 {
+			t.Errorf("%s says %q things are checked, which is not a count this test reads (One to Twelve): write it as a word in that range, or extend the list here", path, claimed[1])
+			continue
+		}
+		if len(items) != want {
+			t.Errorf("%s says %q things are checked and lists %d: the sentence and the list are one fact, and the sentence is the one that drifts when an item is added under it", path, claimed[1], len(items))
+		}
+	}
+}
+
+// consoleNumberedRule is item n of a markdown numbered list, from its own marker
+// to the next item's.
+func consoleNumberedRule(t *testing.T, doc string, n int) string {
+	t.Helper()
+	start := strings.Index(doc, fmt.Sprintf("\n%d. **", n))
+	if start < 0 {
+		t.Fatalf("the section carries no numbered rule %d", n)
+	}
+	rest := doc[start+1:]
+	if end := strings.Index(rest, fmt.Sprintf("\n%d. **", n+1)); end >= 0 {
+		return rest[:end]
+	}
+	return rest
+}
+
+// consoleBacktickedPaths is the backticked tokens of a piece of prose that are
+// paths -- absolute or home-relative -- in the order they are written. A
+// backticked word that is not a path (`PATH`, a flag, a Go identifier) is not
+// collected.
+func consoleBacktickedPaths(text string) []string {
+	var out []string
+	for _, m := range regexp.MustCompile("`([^`]+)`").FindAllStringSubmatch(text, -1) {
+		if strings.HasPrefix(m[1], "/") || strings.HasPrefix(m[1], "~") {
+			out = append(out, m[1])
+		}
+	}
+	return out
+}
+
+// consoleContainsRun reports whether want appears in got as a contiguous run, in
+// order: these lists are orders, so a membership check would accept an answer
+// with the right directories in the wrong sequence.
+func consoleContainsRun(got, want []string) bool {
+	for i := 0; i+len(want) <= len(got); i++ {
+		if slices.Equal(got[i:i+len(want)], want) {
+			return true
+		}
+	}
+	return false
+}
+
+// consoleSpawnList is one list of console/src/main/spawn.ts's platform table, as
+// the strings the code carries: the field's Object.freeze([...]) inside the named
+// constant, read rather than remembered.
+func consoleSpawnList(t *testing.T, src, constant, field string) []string {
+	t.Helper()
+	at := strings.Index(src, "export const "+constant)
+	if at < 0 {
+		t.Fatalf("%s no longer declares %s, the constant the design's §3.4 rules 4 and 5 state", consoleSpawnPath, constant)
+	}
+	block := src[at:]
+	if next := strings.Index(block[len("export const "+constant):], "\nexport const "); next >= 0 {
+		block = block[:len("export const "+constant)+next]
+	}
+	m := regexp.MustCompile(regexp.QuoteMeta(field) + `:\s*Object\.freeze\(\[([^\]]*)\]\)`).FindStringSubmatch(block)
+	if m == nil {
+		t.Fatalf("%s's %s carries no %s: Object.freeze([...]) list", consoleSpawnPath, constant, field)
+	}
+	var out []string
+	for _, raw := range strings.Split(m[1], ",") {
+		if v := strings.Trim(strings.TrimSpace(raw), "'\""); v != "" {
+			out = append(out, v)
+		}
+	}
+	if len(out) == 0 {
+		t.Fatalf("%s's %s.%s is empty, and an empty list is nothing for the design to agree with", consoleSpawnPath, constant, field)
+	}
+	return out
 }

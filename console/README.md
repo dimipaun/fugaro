@@ -128,6 +128,7 @@ npm run test:e2e                               # playwright, test/e2e/*.spec.ts;
 npm run test:e2e -- security                   # just the window's spec
 npm run typecheck                              # tsc --noEmit over src/, test/, tools/ and the root config files
 npm run record-fixture -- --help               # the recorder; OWNER-RUN, see "Recorded, redacted fixtures"
+npm run screenshots                            # the website's pictures; OWNER-RUN on a Mac with a display, see "The console's screenshots for the website"
 ```
 
 `npm ci` — never `npm install` — is the install step in this file, in the plan's
@@ -465,10 +466,15 @@ import is erased, which is why the preload can still be typed against
 
 `NEVER_REACHABLE` names what the console must never reach, read off the code
 rather than off a paragraph — every `where` columns names the `internal/cli`
-file and line each entry was grepped from on 2026-10-16. It carries every
+file and line each entry was grepped from on 2026-10-16 (the three converge rows
+were re-read on 2026-10-21, after task W1.2 of
+`docs/setup-wizard/implementation-plan.md` split the old first-run `init` into
+`fugaro setup` and `fugaro update`). It carries every
 command the CLI has that writes (including `verify`, which runs a workflow's own
 build/test/lint commands in the checkout, and `image build`/`gate`/`record`/
-`refresh`), the `secrets` commands, `init`, `upgrade` and the hidden `exec`, the
+`refresh`), the `secrets` commands, the converge — `setup`, which creates the
+project and the installation, and `update`, which applies Terraform over one —
+the retired `init` tombstone, `upgrade` and the hidden `exec`, the
 hidden `budget history` job, `image git-credential` (it prints a credential),
 the project-centric phase 1 commands that write or publish (which do not exist
 on this tree yet, and are listed anyway so that the day one appears the
@@ -558,9 +564,9 @@ field this task reads out of a document is `day`, which the rollover needs.
 |---|---|
 | 1 — argv is an array, `shell: false`, never built from a job-written field | `argvFor` is the only place an argv is built. It walks the row's *declared* arguments, refuses an undeclared key by name, and passes every value through a conservative character whitelist, so a value that arrived from a document cannot become a command word. Every emitted element is its own array entry, every emitted flag is asserted against `SPAWN_FLAGS`, and the spawner is always called with the literal `shell: false`. The schema's kinds and the table's kinds are related by exactly one mapping, `SPAWN_KIND_FOR`, and `assertSpawnSurface` refuses a row whose kind disagrees with the operation's schema — so a validated value that argv cannot spell is a table-load failure rather than a refusal a user reads |
 | 3 — `--project` on every command that takes it | `SPAWN_COMMANDS` carries `takesProject` per row: the nine commands of `addCloudFlags` (`internal/cli/cloud.go:51`) plus a tenth row (the console has two operations over `logs`, `--json` and `--url`, and neither may be the one that forgets). The handshake's argv is exactly `["version"]`, because `newVersionCmd` is `cobra.NoArgs` with no flags. `--config <path>` follows `--project` whenever the installation declares one |
-| 4 — the binary is resolved explicitly | an installation's *configured* path if this console's store already has one (an **optional override**, and no migration: an entry that predates this keeps working), then `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `/usr/bin` — and **never the app's inherited `PATH`** (amended 2026-10-20 by the owner's ruling: the PATH step is gone, and the console asks the operator for no binary at all); the resolved path and version are what the header draws. **A candidate that exists but whose version cannot be read is refused rather than skipped** — falling through to the next `fugaro` on the machine would silently change which installation the numbers came from |
+| 4 — the binary is resolved explicitly | an installation's *configured* path if this console's store already has one (an **optional override**, and no migration: an entry that predates this keeps working), then the **platform's own well-known prefixes** — and **never the app's inherited `PATH`** (amended 2026-10-20 by the owner's ruling: the PATH step is gone, and the console asks the operator for no binary at all); the resolved path and version are what the header draws. **The prefixes are a constant per platform, chosen by `process.platform` in one place** (`PLATFORM_LOCATIONS`, read through `locationsFor`) and never read out of the environment: macOS gets `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `/usr/bin`, and Linux gets `/usr/local/bin`, `/usr/bin`, `~/.local/bin`, `/home/linuxbrew/.linuxbrew/bin`, `~/.linuxbrew/bin` — including the per-user Homebrew prefix neither list may take from the other. **A candidate that exists but whose version cannot be read is refused rather than skipped** — falling through to the next `fugaro` on the machine would silently change which installation the numbers came from |
 | 5 — the child's environment is built, not inherited | exactly `PATH`, `HOME`, `TMPDIR`, `LANG`, `LC_ALL`, the five `XDG_*` variables and the chosen installation's `FUGARO_PROJECT`. A hostile `GOOGLE_APPLICATION_CREDENTIALS`, `AWS_*`, `SSH_AUTH_SOCK` or ambient `FUGARO_PROJECT` in the app's environment cannot reach the child |
-| 5 — the child's `PATH` is a list, not one directory | the resolved binary's own directory first, then `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin` — because the CLI looks up external tools itself (`exec.LookPath`, `internal/cli/doctor.go:147`), and `terraform` and `cosign` do not sit beside the `fugaro` binary even under Homebrew. The app's inherited `PATH` still never reaches the child, and a tool outside that list is reported as *not on the `PATH` the console gives the CLI* rather than as "not installed" |
+| 5 — the child's `PATH` is a list, not one directory | the resolved binary's own directory first, then the platform's tool prefixes — macOS's `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`; Linux's `/usr/local/bin`, `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`, `/home/linuxbrew/.linuxbrew/bin`, again from the one `PLATFORM_LOCATIONS` table — because the CLI looks up external tools itself (`exec.LookPath`, `internal/cli/doctor.go:147`), and `terraform` and `cosign` do not sit beside the `fugaro` binary even under Homebrew. The app's inherited `PATH` still never reaches the child, and a tool outside that list is reported as *not on the `PATH` the console gives the CLI* rather than as "not installed" |
 | 5 — the working directory is set explicitly | the installation's checkout when it has one, otherwise a private `0700` directory the app owns under the system temporary directory, checked with `lstat` (not a link, owned by this uid, mode `0700`) rather than trusted to `mkdir`. Never `/`, which is nobody's checkout. `doctor` is called with `--dir <that directory>` and **never `--strict`**: outside a checkout its `plugin-pin` check is a warning that `--strict` turns into a failure about the checkout rather than about the environment on screen |
 | 7 — the app never reads the operator's config | the config's *path* is a string on the installation, passed to the child as `--config`; the CLI is the reader. The checkout's pairing check is a **spawn** for the same reason: one allow-listed `doctor --json` with the checkout as the child's working directory, and a checkout that belongs to another project is refused with the CLI's own `this checkout belongs to project %s; --project says %s` — the only screen that asks for a checkout at all, and it asks at that moment, because the checkout is optional and nothing in the first run wants one — and **not stored**, because storing it would leave every screen refused later with nothing on screen explaining why |
 | 10 — the spawn log (D20) | `src/main/spawnlog.ts`, documented below |
@@ -769,12 +775,14 @@ it copies has its own typed rule (numbers are copied; an enum is copied only if
 the value is in the CLI's vocabulary; a free string is refused unless the key has
 an explicit replacement). It replaces the project, repo, slug, run ID, title
 (`# Task: example task N`), models, requester and kill actor, PR URL, workflow,
-recipe and every dollar amount, and **shifts the whole clock by a random offset
-drawn for the run** (`now`, `day`, the header's `recorded`, `kill.at`, and the
-run IDs' timestamps, which are the shifted `now` minus the run's own age, so
-every `age_seconds` stays consistent). Totals, percentages, `runs` and
-`run_hours` are recomputed from the invented rows so the document's invariants
-hold. The result then goes through the console's redactor with a public key (as
+recipe, the 0.9.0 job triple (`job`, `profile`, `provider`) with the two people
+beside it (`account`, `launched_by`), the credential's **name** (`credential`,
+0.10.0) and every dollar amount, and **shifts the whole clock by a random offset
+drawn for the run** (`now`, `day`, the header's `recorded`, `kill.at`,
+`waiting_until`, and the run IDs' timestamps, which are the shifted `now` minus
+the run's own age, so every `age_seconds` stays consistent). Totals,
+percentages, `runs` and `run_hours` are recomputed from the invented rows so the
+document's invariants hold. The result then goes through the console's redactor with a public key (as
 `synthetic.ndjson` does), which is why the repo and slug read as pseudonyms
 (`r-...`, `slug-...`) and the project as `<project>`. Kept as the CLI wrote
 them, and only if in the fixed vocabulary listed in `scrub.ts` (`VOCAB`,
@@ -1980,9 +1988,25 @@ the six a fact rather than an intention:
   binary: the pinned `@electron/fuses` refuses that itself, both calls rejecting
   with "Could not find sentinel in the provided Electron binary", which
   `fuses.test.ts` asserts rather than assumes.)
-- **It refuses a platform that is not darwin** instead of skipping. A build on
-  any other platform would produce no `Contents/MacOS` bundle to flip, and a
-  silently skipped hook is the one outcome that ships the fuses unset.
+- **It refuses a platform this build is not packaged for** instead of skipping.
+  A build on Windows would produce no bundle to flip — no `Contents/MacOS` on
+  macOS, no bare executable in the pack directory on Linux — and a silently
+  skipped hook is the one outcome that ships the fuses unset. So `fuseTarget`
+  resolves the binary **per platform in one place**, from
+  `electronPlatformName`: darwin's
+  `<appOutDir>/<productName>.app/Contents/MacOS/<productName>`, and Linux's
+  `<appOutDir>/<executableName>` (the name `build.linux.executableName` sets,
+  or the sanitized product name lowercased when it sets none), and it
+  **refuses anything that is not darwin or linux**, naming the platform and the
+  two it packages. `SUPPORTED_PLATFORMS` is the one list both this hook and
+  `src/main/spawn.ts`'s location table are keyed on, so "which platforms does
+  this build support" has one answer. **The fuse set does not vary by
+  platform**: the same six flips, byte for byte, on both executables — including
+  `EnableEmbeddedAsarIntegrityValidation`, which Electron enforces on macOS and
+  ignores on Linux, because a per-platform fuse table would be a second policy
+  to keep in step. The one macOS-shaped word in the hook is the
+  `resetAdHocDarwinSignature` option, documented below as deliberately unset
+  for both platforms.
 - **It refuses a wire it has not accounted for.** After the flips, the hook
   compares the wire's length with the fuses `fuses.ts` decides about (six
   flipped, two left alone, one beyond the pin: nine) and stops the build if they
@@ -2180,7 +2204,7 @@ The two facts this rests on were **run, not assumed**, after `npm run build`:
 
 ```sh
 $ node -e "console.log(Object.keys(require('./dist/main/fuses.js')).join(','))"
-FLIPPED_FUSES,LEFT_ALONE_FUSES,afterPack,fuseConfig,macExecutable
+FLIPPED_FUSES,LEFT_ALONE_FUSES,BEYOND_PIN_FUSES,ACCOUNTED_FUSE_COUNT,SUPPORTED_PLATFORMS,fuseConfig,macExecutable,linuxExecutable,fuseTarget,afterPack
 $ node -e "console.log(JSON.stringify(require('./dist/main/fuses.js').fuseConfig()))"
 {"0":false,"2":false,"3":false,"4":true,"5":true,"7":false,"version":"1"}
 ```
@@ -2191,6 +2215,9 @@ uses), the six flips arrive at their documented indices with nothing else set,
 and calling the hook for a darwin context reaches the real `flipFuses` rather
 than a stub: it failed inside the Electron framework lookup for a path that has
 no bundle, which is what a real flip attempt against a non-bundle path does.
+**`fuseTarget` and the two platform functions are exported for the same reason
+the table is**: the resolution is the rule, and a test that could not call it
+with an injected platform could only assert one platform's answer.
 
 ### The packer is a pinned devDependency, and nothing it installs runs
 
@@ -2298,7 +2325,9 @@ nobody should trust:
 | `EnableNodeCliInspectArguments` given the index of the fuse above it (a copy-paste) | four named tests, including "knows every fuse this build names, at the index this build names it at" and "accounts for every fuse this pin knows" |
 | a value the plist parser does not understand (`<integer>`, a nested dict, a root array) | the parser fixtures: each throws rather than reporting an empty set |
 | a wire with `RunAsNode` left enabled, or with a fuse "removed" rather than set | the two `afterPack` verification tests, whose failure messages name the fuse and the binary |
-| `electronPlatformName: 'linux'` handed to the hook | "refuses a platform that is not darwin…", and `flipFuses` is never called |
+| `electronPlatformName: 'win32'` handed to the hook | "refuses a platform this build does not package, rather than shipping an unflipped binary", naming the platform and the two it packages, and `flipFuses` is never called |
+| `macExecutable` returned for a linux context, or the linux branch made to read `productName` instead of `executableName` | "names the Linux executable electron-builder produced, by its executableName", "falls back to the packager's sanitized name when no executableName is configured" and "refuses a Linux context that names no binary, rather than guessing a path to flip" |
+| `SUPPORTED_PLATFORMS` cut back to `['darwin']`, or `PLATFORM_LOCATIONS`'s `linux` row deleted from `src/main/spawn.ts` | that half's own list test: "refuses a platform this build does not package…" in `fuses.test.ts`, and the location-table test in `spawn.test.ts` — each module asserts the platform list it is keyed on, so neither can lose a platform unnoticed |
 | any entry added to `build.files`, or `asar` turned off, or `afterPack` repointed, or `productName` renamed | the packaging-configuration tests in `fuses.test.ts`, one named test each |
 | `asarUnpack: ["**/*"]`, `extraResources`, `extraFiles` or a `mas` block added to `build`; `extraResources` added to `build.mac` | "has exactly the build keys this task decided…" / "has exactly the mac keys this task decided" |
 | `publish` deleted (absent rather than `null`) | "publishes nowhere: publish is null, not merely absent" and the exact-keys test |
@@ -2698,6 +2727,30 @@ a scratch copy of the staged file and turned the named test red:
 | `curl … | sh`, `eval`, `env`, `printenv | sort`, `set | grep` added | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the download-and-run and environment-dump scans |
 | the publish job's `sha256sum --strict --check` removed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the publish job's steps |
 | the upload-artifact pin changed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the repository's existing pin |
+
+## The e2e goldens, as recorded (2026-10-18)
+
+The eight golden screenshots are committed under `test/e2e/__screenshots__/`
+(`live-{light,dark}-darwin.png`, and `{projects,spend,run}/{light,dark}-darwin.png`),
+**darwin only**. They were recorded on the owner's machine: macOS 26.7 (Darwin
+25.6.0, x64), Node 22.23.3, `@playwright/test` 1.64.1, Electron 44.7.2 (the
+lockfile's versions), device scale factor 1 as the specs launch the window (the
+PNGs are 1164 px wide), at main `82ba600d`, with `npm run build` then
+`playwright test --workers=1 --update-snapshots`. They were then compared twice in a
+plain run (`playwright test --workers=1`, 93 passed both times). Every frame is
+drawn from the specs' own invented documents (`example-owner/...`, `acme/...`,
+`redacted@example.invalid`); none holds a real name.
+
+**Linux baselines are not committed.** The name carries the platform
+(`{arg}-{platform}{ext}`), and Linux draws different pixels, so
+`live-light-linux.png` and the rest must be recorded on Linux, under
+`xvfb-run --auto-servernum`. **CI does not compare any golden today**:
+`.github/workflows/console-tests.yml` sets `FUGARO_CONSOLE_GOLDENS: skip` at job level
+(line 90), so on both `console (ubuntu-latest)` and `console (macos-latest)` the
+golden tests are skipped and the committed darwin files are compared only on a
+developer's Mac, never on the macos runner, whose rendering has not been compared
+with these files.
+||||||| 82ba600d9
 | `retry_apple_network` removed from `console/scripts/notarize-and-staple.sh` or from the verification step | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the helper's definition in each of the two places and on every call site it must have |
 | the retry wrapped around a step's `codesign --sign`, or around the script's `xcrun notarytool submit` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the only-lines-that-may-name-the-helper clause ("retries … the helper wraps the `xcrun stapler` calls this pipeline makes and nothing else") |
 | the script's `xcrun stapler staple` or `xcrun stapler validate` left unwrapped | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the two retried calls the script must run |
@@ -3723,8 +3776,9 @@ what it holds.
 
 Rule 4 is amended in the design document and in the table above: a *configured* path
 (if this console's store already has one — the field is an **optional override** and
-there is no migration), then `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`,
-`/usr/bin`. **The app's inherited `PATH` is never searched**, which was the previous
+there is no migration), then the platform's well-known prefixes (macOS:
+`/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `/usr/bin`; Linux: see "Resolution
+on Linux" below). **The app's inherited `PATH` is never searched**, which was the previous
 rule's last step and is exactly the "discoverable automatically" the ruling asks for.
 A candidate that exists but whose version cannot be read is refused rather than
 skipped, as before.
@@ -3792,7 +3846,7 @@ halves: the reason is drawn, and the fixed words claim no cause.
   as the answer gave it), `brew install dimipaun/tap/fugaro`, and a link button to
   `https://fugaro.dev/getting-started/`.
 - **A binary and no installation: "Set up your first installation"** — one sentence,
-  `fugaro init`, and the same link button.
+  `fugaro setup`, and the same link button.
 
 Both commands live in **one constant each** in `src/main/onboarding.ts`, and
 `test/unit/onboarding.test.ts` pins them to the repository's own copies: the install
@@ -3801,10 +3855,10 @@ pins those in turn to the `README.md` line each `source:` names), to `README.md`
 to `FUGARO_INSTALL_COMMAND`, the constant `src/source/cli.ts` has carried since Task
 4.4 (which `src/main/onboarding.ts` re-exports, so the console spells the command
 once); the setup command to `README.md`'s getting-started step (`1. Run …`) and to
-`internal/cli/config_init.go`'s `Use: "init"`, which is the thing that would have to
-change for the string to be wrong — and the module names `docs/setup-wizard/`, whose
-plan renames it to `fugaro setup`, so the rename is one line and one red test. The
-comment-stripped module is asserted to carry `fugaro init` **exactly once**, because
+`internal/cli/setup.go`'s `setupDoor` (`name: "setup"`), which is the thing that would
+have to change for the string to be wrong — and the module names `docs/setup-wizard/`,
+whose plan renamed `fugaro init` to `fugaro setup`, so that rename was one line here. The
+comment-stripped module is asserted to carry `fugaro setup` **exactly once**, because
 two spellings of one command is precisely the drift the file exists to catch. The URL
 is pinned to `website/src/pages/getting-started.astro` and to
 `website/data/site.yaml`'s `canonical_url` and `allowed_hosts`.
@@ -3856,7 +3910,7 @@ seeded (`test/fixtures/bin/fugaro`), rather than printing nothing — a stub who
 through the console's own parser. `test/e2e/installations.spec.ts` gained the
 case that state never had: an unseeded profile, the empty document, the picker
 D13 opens beside the dashboard, the "Set up your first installation" screen with
-its title, its one sentence, `fugaro init` and one link button, **no** row and
+its title, its one sentence, `fugaro setup` and one link button, **no** row and
 **no** warning line — and the same answer over real IPC
 (`onboard: { kind: 'first-installation', command: FUGARO_SETUP_COMMAND }`,
 `rows: []`). It is the one case in that file that can skip, because an unseeded
@@ -3989,3 +4043,386 @@ prints no `checkouts` offers none — and the console then offers no way to set 
 all, which is the truthful state rather than an invented directory. The stub's
 `seedInstallationsList` writes none today, so the e2e path for the button is unit
 coverage rather than a window.
+
+## The console's screenshots for the website (the owner's run, fixture data only)
+
+The website's Console page carries pictures of the real application (owner ruling of
+2026-10-20), and they are taken from **fixture data** by one command the owner runs:
+
+```sh
+./scripts/console-screenshots.sh        # from the repository root
+npm run screenshots                     # the same run, from console/ (it builds the console first)
+```
+
+The script installs the console's pinned toolchain (`npm ci`) and then runs the same
+`screenshots` script the second command names, which **builds the console first** (`npm run
+build`) and then runs `tools/screenshots/capture.ts`. The build is inside the script rather
+than in its caller because what the run launches is the **built** app
+(`package.json`'s `main`, `dist/main/index.js`) and `dist/` is git-ignored and untracked: a
+`screenshots` script that did not build would launch a file that is not there on a fresh
+checkout, or one from a branch ago on the machine of whoever runs it next (review of
+2026-10-20, high finding). It **needs a display**: Electron opens a real window, so this
+is a run on a Mac with a desktop session and never a run in CI — the script's own header says
+so, and with no display the launch fails and the command exits non-zero. It refuses to start
+on any Node but the exact one `package.json`'s `engines.node` pins (`.npmrc` sets
+`engine-strict=true`, so `npm ci` is the check) with a one-line error rather than a stack
+trace — and the version it wants is *read from that file* and compared exactly, because a
+major-only guard lets Node 22.11 through to precisely the `npm ci` EBADENGINE failure the
+guard exists to prevent, with a message that said the version was fine.
+
+### What it launches, and the checks that keep it fake
+
+The console under the camera is the **built** application, launched through the e2e suite's
+own Playwright/Electron path (`test/support/launch.ts`'s `launchConsole`, with the ETXTBSY
+retry) so its real startup handshake, resolver, `watch` supervisor and screens all run. What
+it is *not* is a console pointed at an installation. The fake CLI is the unit suite's own
+`test/unit/stub.ts`, installed into this run's scratch tree from the documents in
+`test/fixtures/screenshots/`, and it **refuses** (exit 2) any command the run did not prepare
+— so a screen whose read was not prepared is a picture of a refusal rather than of an empty
+document. It makes **one launch and takes four pictures from it**, and three rules are checked
+before the window exists, in `tools/screenshots/isolation.ts`:
+
+1. **the binary, asked the way the launch asks it.** Every launch seeds the console's own
+   store with one installation *chosen*, naming the fake's absolute path — and before the
+   window opens, `assertLaunchIsFixture` reads that store back with the console's own reader
+   (`readInstallationFile`) and resolves the chosen row with the console's own **one-path**
+   resolution (`resolveInstalledBinary`), refusing the launch unless the path is the fixture's
+   exactly, naming the path it resolved. The handshake itself treats that path as rule 4's
+   first candidate, so a path that is there and answers is the one it runs. A store that chooses *no* installation is refused
+   too, because the handshake of a console with nothing chosen walks
+   `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin` and `/usr/bin` — the directories where
+   the operator's own `fugaro` lives. It deliberately does **not** ask the machine's resolver
+   what it would find: that walk probes the winner by *executing* it, so the question itself
+   would run the operator's real CLI and then refuse the run — a check that both touched the
+   thing it exists to avoid and made the run impossible on the one machine it is for (review of
+   2026-10-20, high finding). The picker picture is opened from the console's own
+   `Installations…` menu item for the same reason: the second launch this run used to make —
+   a console with nothing chosen — was that walk;
+2. **the paths.** `PATH`, `HOME`, `XDG_CONFIG_HOME` and `TMPDIR` are written into one fresh
+   scratch tree, and the window is given a fresh `--user-data-dir` under it; a launch whose
+   environment or profile names anything else — or that names the operator's real `HOME` or
+   `XDG_CONFIG_HOME` — is refused, naming the key and the path. Nothing here reads
+   `~/.config`, and the seeded `installations.json` is written into the fresh profile.
+   `TMPDIR` is redirected rather than carried because the console builds the private working
+   directory its children run in as `$TMPDIR/fugaro-console-<uid>/cwd`: an ambient one is a
+   directory this run would write to and never remove;
+3. **the rest of the environment.** The child's environment is built from an allow-list of
+   eight window-drawing keys, not a denylist: `FUGARO_CONFIG`, `GOOGLE_APPLICATION_CREDENTIALS`
+   and `SSH_AUTH_SOCK` cannot reach the app or the CLI it spawns, and the run's own log ends
+   with the fake child's account of every spawn. **The only `fugaro` any child of this run
+   executes is the fake** — the binary check above is one path, and the probe it makes is that
+   fake's own `version`.
+
+### What comes back: four pictures, a manifest, and the check on the bytes
+
+The captures land in `console/screenshots/` — **git-ignored, never committed**: a picture of a
+window is an artefact of a machine and a day, and the website's owner copies the one they want
+into `website/` deliberately. Each is 1280x800 CSS pixels at device scale factor 2 (2560x1600
+pixels), dark theme, the platform's title bar excluded (a `page.screenshot` reads the window's
+web contents). The four captures — three screens of one window and the picker's own window,
+all from the **same launch** — are:
+
+| File | Screen |
+|---|---|
+| `console-live.png` | the Live screen: three runs (one in review with its verification passed, one in review and near its deadline, one queued), two repositories, and the day's spend at 34.85% of a $120 cap |
+| `console-run.png` | the run detail the Live screen's first row names: stages, verification, findings, the log tail |
+| `console-spend.png` | the Spend screen: thirty days of daily spend, the totals and the caps |
+| `console-installations.png` | the picker, opened from the console's own `Installations…` menu item: three installations, each naming the fake, with `acme-platform` the chosen one |
+| `console-first-run.png` | **not taken.** The no-installation onboarding page is #751, which is not on `main`, so there is no such screen in this console; the manifest carries the omission and the reason rather than a silence |
+
+The fifth row is the omission, and it is a row because that is where the four are: the manifest
+carries it as a fact (`omissions[]`), and a reader who expected the owner's fifth picture finds
+the reason beside the pictures that exist rather than after two paragraphs about alt text.
+
+**One picture carries a machine-specific path, and that is a decision.** The picker's rows draw
+each installation's stored binary path, and the path in these rows is the fake the run installed
+in its own scratch tree — `/var/folders/…/fugaro-console-screenshots-XXXXXX/bin/fugaro` on macOS,
+a different path on every run, and a directory that is gone when the run finishes. The
+alternative was to hide it, and hiding it was rejected: the console draws the stored path
+verbatim (`rowText`/`viewOf`), so a picture with a path-shaped hole in it would be a picture of
+something the console does not draw, and the point of this capture is that a real store is being
+drawn. What the path does *not* name: no home directory, no checkout, no real `fugaro`, and no
+project or repository that exists — the projects are invented. The alt text that travels with
+the picture therefore describes the path rather than quoting it (asserted in
+`test/unit/screenshots.test.ts`). **If the owner would rather not publish a path at all,
+`console-installations.png` is the one to leave out of `website/`**: it is the only capture whose
+subject is a path, and the other three carry none.
+
+Every alt text says only what its screen **draws**: the Live screen draws `runs`, `repos` and
+`total`, and the frame's `finished[]` list is decoded and drawn nowhere — an earlier version of
+that sentence counted it ("five runs … one that opened pull request acme/platform-core#412 and
+one that failed"), which was a fact about the fixture and in no picture, shipping to the
+website inside `MANIFEST.json` (review of 2026-10-20, medium finding). `test/unit/screenshots.test.ts`
+now asserts the *absences* as well as the figures.
+
+**And every figure in every alt text is read out of the screen's own model**, built from the same
+fixture the capture is taken of: the run detail's "build, test and lint verification" is the kinds
+of `buildRunModel(...).stages`, its "three findings" is that model's finding count, the spend
+picture's "thirty days" is `buildSpendModel(...).rows.length`, and the Live picture's round, stage,
+verification word, deadline flag and queued row are the last frame's own (review of 2026-10-20,
+medium finding — two of the four sentences were asserted by nothing). The run both pictures are of
+is held to one story as well: the Live row's `stage` and `verify` are the ones `diagnose.json`
+tells, because the run-detail capture is reached by clicking that row and the two screens draw the
+same run's words (review of 2026-10-20, medium finding). The picker's status line is *read out of*
+`src/renderer/installations.ts` rather than written into the test, so the sentence the alt quotes is
+the renderer's and not a copy of it (review of 2026-10-20, low finding).
+
+`tools/screenshots/png.ts` reads the PNG bytes itself and refuses a capture that is blank (the
+standard deviation of its pixel luminance, sampled, must be above `BLANK_STDDEV_FLOOR`) or is
+not exactly the size the manifest declares. It reads PNGs rather than adding an image library
+because every specifier in `package.json` is an exact pin (`test/unit/pinning.test.ts`), and
+reading its own bytes is forty lines of `node:zlib`. `tools/screenshots/manifest.ts` writes
+`screenshots/MANIFEST.json`: one entry per picture with its pixel size, its sha256 and a
+one-sentence alt text drafted from the fixture, plus what was omitted. And
+`tools/screenshots/failure.ts` is the run's failure path: the one sentence a failed run ends
+with, and the handler that prints it for the rejections `main()` never awaits — Playwright
+reports a failed launch on promises nobody holds, and Node 22's default
+`--unhandled-rejections=throw` would otherwise end the process on a playwright-core stack
+before the run's own words were printed (review of 2026-10-20, high finding).
+
+### The tests, and the mutations each one was run against
+
+`test/unit/screenshots.test.ts` holds everything the run decides **without a window** — 63
+tests, and every rule below was seen red against a planted change before it was committed:
+
+| Claim | Mutation it was run against |
+|---|---|
+| the launch's store is the only thing the handshake may read | `assertLaunchIsFixture`'s `assertFixtureBinary` call dropped — "refuses a store that names another binary" red |
+| a store that chooses no installation is refused | the `active === null` refusal removed — red, and it is the rule that keeps the machine's `fugaro` out of the walk |
+| the check runs its probe nowhere real | the probe's working directory changed from `isolation.userData` to `/tmp` — the child's own `cwd` in the fake's report red (it is taken from the `Isolation`, so no caller can point it elsewhere) |
+| the resolver must find the fixture binary | `assertFixtureBinary`'s equality check replaced by `return` — "the same path is not a refusal" and the store cases both red |
+| a path outside the scratch tree is refused | `assertIsolated`'s `inside.some(...)` check disabled — red, naming the planted `HOME` |
+| the operator's own `HOME` is refused **even inside** a scratch tree | the `forbidden` entry not set — red |
+| `TMPDIR` is redirected, not carried | `env['TMPDIR'] = isolation.tmp` removed — "drops an ambient key that is empty" / the allow-list case red, and `assertIsolated`'s `TMPDIR` check disabled — the refusal case red |
+| an empty ambient value is an absent one | `&& value !== ''` dropped from the allow-list loop — red |
+| no credential-shaped key reaches the child | `launchEnvironment`'s allow-list loop replaced by `Object.keys(ambient)` — the `GOOGLE_APPLICATION_CREDENTIALS`/`FUGARO_CONFIG`/`SSH_AUTH_SOCK`/`AWS_PROFILE` case red |
+| the alt text describes the screen, not the frame | `#412` restored to `LIVE_SCREEN.alt` — the absence assertions red; the picker's "none of them chosen" restored — red too |
+| every document the dashboard draws names one project | `diagnose.json`'s `project` key removed — the agreement test red (it was the key the fixture was missing) |
+| the fixtures are documents the console reads | the five fixtures driven through the console's **own** readers: `decodeSnapshot` for the feed's frames, `buildSpendModel` for `report`/`budget show`, `buildRunModel` for `diagnose` + `logs`. `max_reserve_usd` read from `global` instead of the top level — red |
+| the log window has no refused line | the fixture read as a bare list rather than through `parseLogEntries` — the `refused` assertion red |
+| a seed row must be sixteen hex characters | the id pattern loosened to `/^.*$/` — red |
+| two seed rows may not share an id | the duplicate check disabled — red |
+| the feed fixture must hold frames | the non-empty check disabled — red |
+| a missing fixture document is named | the wrapper's sentence replaced by the raw `ENOENT` — red |
+| the fake refuses an unknown command | `default.code` 2 → 0 — red |
+| the fake prints the version the console was built against | the version line replaced by `0.1.0` — red |
+| a manifest may not list one file twice | the duplicate check disabled — red |
+| a capture's name carries no path | `FILE_RE` loosened to `/^.*\.png$/` — red |
+| a size is a positive whole number | the `<= 0` half of the check dropped — red |
+| an entry carries an alt sentence | the empty-alt check disabled — red |
+| the manifest's key order is canonical | `screens` serialized before `window` — red |
+| a blank rectangle is refused | the `spread < BLANK_STDDEV_FLOOR` gate disabled — red |
+| a capture of the wrong size is refused | (driven directly: the test plants a 64x64 file against a 128x128 expectation) |
+| a Sub-filtered scanline is reversed | `case 1: value = raw + left` → `value = raw` — red |
+| an RGB file's channels are read apart | the green and blue bytes read from the red byte — red, two tests |
+| the entry point handles the rejection nobody awaits | `installFailureHandler(process)` not installed — red; the event name changed to `uncaughtException` — red; `String(reason)` instead of the `Error`'s message — red |
+| a run that printed a failure line does not report success | `target.exitCode = 1` dropped from the handler — red; `exitCodeFor` returning the work's own code — red |
+| the documented `screenshots` script builds the app it launches | `npm run build &&` removed from the script — red; the build moved after the capture — red; the README's sentence about it withdrawn — red |
+| the picture table is one table | the omission row moved back after the prose — red; the row dropped — red |
+| the shell script's header says what it reaches | the old "nothing here talks to GitHub, the cloud, or the network" restored — red; the registry read left unnamed — red |
+| the frames carry the e2e suite's ten keys | a key added to a frame — red; a key added to the recording the claim names — red |
+| the capture size is a number, not its own definition | the device scale factor set to 1 — red; the window set to 1440x800 — red |
+| the selectors are the renderers' own class names | `drawnBy` naming the wrong renderer — red; a selector renamed — red; a renderer renaming its class — red; the picker's list losing its id — red |
+| the picker's alt describes its path rather than quoting one | a path put into the sentence — red; the description removed — red |
+| the two pictures of one run tell one story | the feed's first row put back to `implement`/`pending` while `diagnose.json` says `review` with every verify record passed — the cross-file test red; the alt's "in review with its verification passed" changed — red |
+| every alt figure is the fixture's | `RUN_SCREEN`'s "three findings" → "four findings" — red; "build, test and lint" → "build and test" — red; `SPEND_SCREEN`'s "thirty days" → "thirty-one days" — red; the Live alt's round, deadline flag and queued row each changed — red |
+| the picker's sentence is the renderer's own | the alt's quoted sentence changed to `(reduced)` — red; `viewOf`'s own template reworded in `src/renderer/installations.ts` — red (the alt still quotes the old one) |
+| this file's index names its sections | the allow-list's `// 2.` banner removed — red, naming the header item with no banner |
+| the picture table says what the fixture holds, not what it used to | the Live row's "one in review with its verification passed" put back to "one implementing" — "describes each picture with the fixture's own words" red (the table test compared row names only, so the drift was unchecked; review of 2026-10-21, medium finding) |
+| the build's `include` list is the run's own import graph | `test/support/cliStub.ts` — the *e2e specs'* fake, which nothing the run reaches imports — put back into `tsconfig.screenshots.json`'s `include` — "compiles exactly the files the run reaches" red, naming the entry (review of 2026-10-21, low finding) |
+
+The blank check is driven by a PNG **encoder** written in the test file (`node:zlib`'s
+`deflateSync`, a CRC per chunk, filters 0 and 1 really applied), because the only way to drive
+a check that reads pixels is with a picture whose pixels are known, and an image library is a
+dependency the console is not allowed to gain.
+
+### What this run cannot prove from here
+
+**The Electron launch itself.** No test in this repository opens the console's window — there
+is no display in CI, and the container this was written in has none either — so "the window
+comes up, the screen draws, the capture is not blank" is exercised by the owner's own run of
+`./scripts/console-screenshots.sh`, which is also the only thing that can produce the pictures.
+The first run is the check: a screen that does not draw fails its `waitForSelector` with the
+selector it waited for, a blank capture fails on its own numbers, and the fake's spawn report
+prints which commands the console actually asked for. The menu click that opens the picker is
+in the same category: `test/e2e/installations.spec.ts` drives that same click, but only a run
+with a display exercises it against the built app and the frozen menu this run installs.
+
+## The Linux build, unsigned (the owner's ruling of 2026-10-20)
+
+**The owner ruled: *"yes, Linux for 0.10.0, unsigned"*.** Windows stays out. The
+ruling is recorded where the answer is — the design's **D10** cell carries it as
+a dated amendment after the 2026-10-15 acceptance it changes — and in its own
+section, [design §7.6](../../docs/design/desktop-console.md), with the four
+places that had read "later" amended in the same commit (§4.1 item 5, §4.2,
+§7.5's owner-run row, §9.4's runner bullet and staged-file table). The plan's
+Task 5.1 carries a dated note too, because two phrases of its own text are
+withdrawn by the ruling: "two **signed** deliverables", and Linux "via the
+distro channels this repo would have to choose".
+
+**One sentence is the whole of the security story here, and it is the one a
+reader must not have to infer: an AppImage is not code-signed.** Nothing on
+Linux signs, notarises or staples anything. There is no Linux key, no
+certificate, no owner-run signing step and no secret in any Linux job, because
+there is nothing to sign *with* — and the release's own words, the design's and
+this file's say unsigned rather than leaving it to be deduced.
+
+### What ships, and the configuration that produces it
+
+| | |
+|---|---|
+| Targets | `AppImage` and `deb`, **x64**, pinned in `build.linux.target` rather than passed on a command line |
+| Artifact names | `Fugaro.Console-<version>-linux-x64.AppImage` and `…-linux-x64.deb` — `build.linux.artifactName` is `Fugaro.Console-${version}-linux-${arch}.${ext}`, so the name comes from the tag's X.Y.Z and never from a file name typed into a workflow |
+| Icon | `console/build/icon.png` — **the same file `build.mac.icon` names**, so the two platforms cannot show different marks |
+| Desktop entry | `executableName: fugaro-console`, `category: "Development;Monitor"`, a `synopsis` and a `description`; the deb's `maintainer` is required rather than decorative — this `package.json` has no `author` with an email, so without it the deb leg fails at pack time |
+| Command | `npm run package:linux` — `electron-builder --linux --publish never`, the pinned local packer, never `npx`, and never publishing |
+
+**The bundle is exactly as strict on Linux as on macOS, and that is the point of
+putting the Linux keys beside the macOS ones rather than in a second file.**
+`asar` stays `true`, `build.files` is the same allow-list `build-files.test.ts`
+holds (the compiled main process, the preload, the shared and source modules,
+the renderer bundle and its two documents — and *not* `dist/main/fuses.js`,
+which is a build-time hook and not shipped code), `publish` stays `null`, and
+`npmRebuild` stays `false`. **`electronDownload.checksums` grew the Linux
+archive**: `electron-v44.7.2-linux-x64.zip` joins the two darwin zips, so every
+Electron archive this build downloads is verified against a hash in this
+repository — a platform whose download was unverified would be the one place the
+pinning story did not hold.
+
+### The same six fuses, on the Linux executable
+
+**`src/main/fuses.ts` resolves the binary per platform in one place.**
+`fuseTarget` reads `electronPlatformName` and returns either darwin's
+`<appOutDir>/<productName>.app/Contents/MacOS/<productName>` or Linux's
+`<appOutDir>/<executableName>` — `linuxExecutable` falls back to the packer's
+own `sanitizedName.toLowerCase()`, the name `LinuxPackager` uses when
+`executableName` is unset, and **refuses a context that names no binary at all**
+rather than guessing a path to flip. Anything that is not `darwin` or `linux` is
+**refused, naming the platform and the two this build packages**: a hook that
+skipped would ship the fuses unset, which is the one outcome it exists to
+prevent. `SUPPORTED_PLATFORMS` is that list, and it is the same list
+`src/main/spawn.ts`'s location table is keyed on.
+
+**The fuse set does not vary by platform.** The same six flips are written into
+the Linux executable, with byte-for-byte the same `fuseConfig()`, and the wire
+is read back on Linux too — a `RunAsNode` that came back enabled stops the build
+before the packer turns `linux-unpacked` into an AppImage or a deb.
+`EnableEmbeddedAsarIntegrityValidation` is enforced by Electron on macOS and
+ignored on Linux; it is set on Linux anyway, because a per-platform fuse table
+would be a second policy to keep in step with the first.
+
+### Resolution on Linux: two lists, chosen by the platform, never the inherited `PATH`
+
+`src/main/spawn.ts` has one table — `PLATFORM_LOCATIONS`, read through
+`locationsFor` — and it is the only place the platform is consulted:
+
+- **Rule 4's prefixes**, in order: macOS `/opt/homebrew/bin`, `/usr/local/bin`,
+  `~/.local/bin`, `/usr/bin`; **Linux** `/usr/local/bin`, `/usr/bin`,
+  `~/.local/bin`, `/home/linuxbrew/.linuxbrew/bin`, `~/.linuxbrew/bin`.
+  **Neither list is read out of the environment** and neither may take the
+  other's Homebrew prefix: `/opt/homebrew/bin` is the macOS prefix and
+  `/home/linuxbrew/.linuxbrew/bin` is Linux's, and a directory that does not
+  exist on the machine is not a place to look for a binary. The app's own
+  `PATH` is not a step at all (the owner's ruling of 2026-10-20, "The binary is
+  resolved, and the store is an override" above): the walk ends with the
+  platform's list.
+- **Rule 5's child `PATH`**, rebuilt from the resolved binary's own directory
+  and the platform's tool directories: for Linux `/usr/local/bin`, `/usr/bin`,
+  `/bin`, `/usr/sbin`, `/sbin`, `/home/linuxbrew/.linuxbrew/bin`. `~/.linuxbrew/bin`
+  is deliberately **not** in that list: nothing expands a tilde inside a `PATH`,
+  and the per-user case is covered by the resolved binary's own directory, which
+  always comes first. The app's inherited `PATH` never reaches the child on
+  either platform.
+- **A developer platform that is neither** (running the sources on Windows, which
+  this build does not package) falls back to the POSIX list rather than to the
+  environment: the fallback cannot find a binary that is not on the machine, and
+  the one thing it must not do is reach for the app's `PATH`.
+
+### The owner's commands, and what they do not need
+
+```sh
+cd console
+npm ci --ignore-scripts                      # exact pins, registry host, from the lockfile
+node node_modules/electron/install.js        # the distribution, verified against the pinned checksums
+npm run build && npm run package:linux       # AppImage and deb into release/, unsigned
+sha256sum release/*.AppImage release/*.deb   # what a reader checks against console-sha256sums.txt
+```
+
+**There is no signing step in that list and no secret in it** — no `CSC_LINK`, no
+keychain, no `--sign`, no environment. The macOS section below is the one with
+the owner-only pipeline, and none of it applies here.
+
+### CI: staged for the owner, and outside the release gate
+
+Two files, both staged under `docs/pending-workflows/` because no Fugaro run may
+create or edit anything under `.github/workflows/`:
+
+- **`console-linux.yml`** — one job, `console-linux`, on `ubuntu-latest`:
+  `contents: read`, **no environment and no secret**, the pinned toolchain,
+  Electron's own download verified against the three checksums `package.json`
+  pins, `npm run build`, `npm run package:linux`, an assertion that exactly one
+  `.AppImage` and one `.deb` came out, and `upload-artifact`. It runs on every
+  pull request and every push to `main`, with no path filter.
+- **`console-release-linux.yml`** — **the staged `console-release.yml` with the
+  Linux legs added**, so it supersedes that file and is copied over both the
+  staged copy and the workflow. Its third job, `linux`, holds no secret either;
+  it packs on the pinned `ubuntu-24.04` and then verifies **what ships** — the
+  SHA-256 of both artifacts, the `.deb` through `dpkg-deb`, the AppImage through
+  its own runtime's `--appimage-extract`, and the fuse wire read back with
+  `@electron/fuses` out of the executable *inside each artifact*, which is the
+  one claim the pack-time hook cannot make about the packaged result. `publish`
+  now merges both legs into **one** `console-sha256sums.txt`, re-checks it in the
+  directory that ships, signs that file keyless with cosign into
+  `console-sha256sums.txt.sigstore.json` (this workflow's own OIDC identity — not
+  a key of the owner's) and attaches everything to `console-vX.Y.Z`.
+
+**Neither file is in `scripts/release-gate.sh`'s required-check list, and that is
+a decision rather than an omission.** The gate's list is derived from
+`console-tests.yml`'s job set and asserted by `TestReleaseGateRequiresTheConsoleCheck`,
+which refuses a workflow with more than one job — so adding the Linux build to
+the gate is not a packaging change at all, it is a change to which checks gate a
+release tag, and that is the owner's call. `docs/pending-workflows/README.md`'s
+`## console-linux.yml` section carries the three edits it would take, and the
+copy-in commands for both files.
+
+### The website says nothing about Linux yet, and that is deliberate
+
+`website/content/downloads.json` may carry an optional per-platform block, and
+the reader that validates it (`website/src/lib/console-downloads.mjs`) holds it
+to the file's own assets: the block names the ids of the downloads it links, and
+every id must resolve to an entry of the file's `downloads` list — which is
+itself held to the release's published names and its sums file. So **a download
+link can only exist for an asset the data file names**, and **the block renders
+only when it is there** (`Downloads.astro` draws nothing for it otherwise: no
+heading, no sentence, no link, not even a word saying which platform is
+missing). The shipped file carries **no** Linux block, so both pages still say
+macOS only, exactly as they did before this ruling — the entry lands when a
+release actually carries a Linux asset, and not before.
+
+### What was verified here, and what was not
+
+- **Verified in this container**: the fuse hook's per-platform resolution, the
+  refusal of a platform this build does not package, the same-six-fuses claim,
+  the Linux wire read-back, the Linux executable-name fallback and its refusal
+  of a nameless context (`test/unit/fuses.test.ts`); both location lists and the
+  child's `PATH` on both platforms (`test/unit/spawn.test.ts`); the packaging
+  configuration — the two targets, x64, the artifact name, the icon, the
+  desktop-entry fields, the absence of any signature setting, and the Linux key
+  set (`test/unit/fuses.test.ts`); the two staged workflows' shape, their
+  pins and their secret-lessness (`internal/cli/docs_desktop_console_test.go`).
+  Every new guard was mutation-proven.
+- **Not verified here, and not verifiable in this container**: no
+  `electron-builder` run at all — this task's own rule is that the packaging is
+  unit-tested as a configuration rather than executed, and a real Linux pack
+  needs a Linux runner with a display-less AppImage toolchain. So **nothing in
+  this repository has yet produced an AppImage or a `.deb`**; the first one is
+  the staged `console-linux.yml` job's, and the first that ships is the tag's.
+
+### What is not here
+
+**No Linux auto-update** (design §7.3 is Squirrel.Mac and an `electron-updater`
+feed; the AppImage has no such feed here), **no arm64 Linux build** until one can
+be built and verified on a runner that has it, **no Flatpak, snap or rpm**, **no
+Linux Homebrew cask**, **no Windows build**, and **no signature of any kind**.
+Each is a later decision and not an oversight: this ruling is the smallest thing
+that makes "Linux is supported" true.

@@ -140,6 +140,49 @@ type InstallationOutputs struct {
 	// roles) and its Cloud Run job.
 	HistoryServiceAccount string `json:"history_service_account"`
 	HistoryJob            string `json:"history_job"`
+	// CredentialsService is the installation's credentials service, or null
+	// while it has not opted in (D146, D147) — which is every installation
+	// today, and the reason nothing here changes until an owner runs C1.20's
+	// stage. The repository roots read the same object from the tfvars'
+	// installation.credentials_service (RepoInstallation).
+	CredentialsService *CredentialsService `json:"credentials_service"`
+}
+
+// CredentialsService is the installation's credentials service (D146): the
+// Cloud Run service that alone holds the model credentials. One type serves
+// both ends of the contract — the installation root's output of that name and
+// the repository root's installation.credentials_service — because both carry
+// the same two values.
+//
+// Null means the installation has not opted in (D147), and null is what every
+// reader gates on: with it off, every job keeps its model-secret accessors,
+// no job account holds an invoker grant, and no run reaches a service.
+type CredentialsService struct {
+	// Name is the Cloud Run service's name, Region the region it runs in.
+	Name   string `json:"name"`
+	Region string `json:"region"`
+	// URL is the service's own URL — the audience its callers' Google ID
+	// tokens are minted for (C1.14) — and it is the INSTALLATION root's: the
+	// module's output carries it (outputs.tf, the service resource's uri) and
+	// the init stage writes it into var.credentials_service on the apply
+	// after the one that created the service. A repository root reads the
+	// first two fields and nothing else, so the object it writes into its own
+	// tfvars is built without it (repoCredentialsService).
+	URL string `json:"url,omitempty"`
+}
+
+// repoCredentialsService is the installation's credentials service as a
+// REPOSITORY root reads it: the name and the region the workflow module turns
+// into each job account's roles/run.invoker grant. The URL is left behind
+// because the module's variable carries no such attribute — an object
+// conversion in Terraform silently DROPS an extra attribute rather than
+// refusing it, so passing it would read as a value the repository root agreed
+// on while nothing used it.
+func repoCredentialsService(s *CredentialsService) *CredentialsService {
+	if s == nil {
+		return nil
+	}
+	return &CredentialsService{Name: s.Name, Region: s.Region}
 }
 
 // RoleIDs are the custom roles' full names, projects/<p>/roles/<id>.
@@ -148,7 +191,7 @@ type RoleIDs struct {
 	JobRunner      string `json:"job_runner"`
 	BuildSubmitter string `json:"build_submitter"`
 	// TagMover is empty in the outputs of an installation applied before
-	// the role existed; fugaro init --repo refuses those.
+	// the role existed; fugaro update refuses those.
 	TagMover string `json:"tag_mover"`
 }
 
@@ -263,6 +306,11 @@ type RepoInstallation struct {
 	RoleIDs                 RepoRoleIDs `json:"role_ids"`
 	Launchers               []string    `json:"launchers"`
 	Operators               []string    `json:"operators"`
+	// CredentialsService is the installation's credentials service, or absent
+	// while it has not opted in (D146, D147): the workflow module grants each
+	// job account roles/run.invoker on it and drops that job's model-secret
+	// accessors (D135, D145).
+	CredentialsService *CredentialsService `json:"credentials_service,omitempty"`
 }
 
 // RepoRoleIDs are the custom roles a repository root grants.
@@ -547,13 +595,25 @@ func Workflow(in Inputs, name string) (WorkflowSpec, error) {
 // Bitbucket's is the per-repository one of the two: a repository access token
 // is issued for one repository and works for no other, so it is never stored
 // project-wide (config.PerRepositorySecret, the owner's ruling of 2026-10-15).
-// GitHub's App key is a project's, mounted by every repository the App serves.
+// GitHub's App key is a project's, mounted by every repository the App serves,
+// and its logical name is config.GitHubAppKeySecret — the same constant
+// config.IsServiceHeldSecretEnv and the workflow module's
+// service_held_secret_names answer "is this the App key?" with. Review finding
+// F3: this function wrote both the App key's name and Bitbucket's out as
+// literals, so a rename in config would have left it returning a secret no job
+// mounts; the internal/cli code that spelled the App key out — doctor.go's
+// check, secrets.go's multilineSecret, githubapp.go's project-wide note,
+// init.go's App pre-check and project_enroll.go's --github-app-key read — now
+// names the constant too. What still spells the literal does so on purpose: the
+// flag's own name, the sentences a user reads ("fugaro secrets set
+// github-app-key …"), the tests that pin the name as the wire value, and
+// gcp/build.go's example of the ID this builds.
 func GitSecret(provider string) (string, bool) {
 	switch provider {
 	case gitprov.KindBitbucket:
-		return "bitbucket-token", true
+		return config.BitbucketSecret, true
 	case gitprov.KindGitHub:
-		return "github-app-key", true
+		return config.GitHubAppKeySecret, true
 	}
 	return "", false
 }
@@ -586,6 +646,15 @@ type SecretMount struct{ Logical, Env string }
 func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w config.Workflow, lc *localcfg.Config, repo string) ([]SecretMount, error) {
 	out := []SecretMount{{gitSecret, config.ReservedSecrets[gitSecret]}}
 	switch cfg.Agent.Auth {
+	case "cascade":
+		// The cascade mounts no model credential at all (D143, D146): the
+		// credentials service hands the run one at call time, through the
+		// in-runner gateway and the run's own identity (C1.19), so there is
+		// no tier-A token and no tier-B key in this job's environment — and
+		// the job's account holds no accessor on either
+		// (modules/workflow/sa.tf, D145). Stated as a case of its own rather
+		// than left to fall past the switch: the empty body is the decision.
+		// TestCascadeMountsNoOAuthToken holds it.
 	case "oauth":
 		out = append(out, SecretMount{config.ClaudeAccountSecret(token), config.ReservedSecrets["claude-oauth-token"]})
 	case "api-key":
@@ -766,6 +835,15 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 		ws.SecretEnv[m.Env] = m.Logical
 		ws.SecretIDs[m.Logical] = gcp.SecretID(slug, m.Logical)
 	}
+	// An installation that has opted in to the credentials service holds
+	// every model credential itself (D146, D147), so its jobs mount none of
+	// them: modules/workflow/sa.tf drops each job account's accessor, and a
+	// mount left behind would fail the job's own deploy. The containers stay
+	// declared — see dropModelMounts — so nothing here plans a secret's
+	// destruction.
+	if c.inst.CredentialsService != nil {
+		dropModelMounts(&ws)
+	}
 	ws.BuildSecrets = []string{c.gitSecret}
 	for _, s := range w.Secrets {
 		ws.BuildSecrets = append(ws.BuildSecrets, s.Name)
@@ -899,6 +977,7 @@ func Repo(in Inputs) (RepoSpec, error) {
 			RoleIDs:                 RepoRoleIDs{JobRunner: c.inst.RoleIDs.JobRunner, BuildSubmitter: c.inst.RoleIDs.BuildSubmitter, TagMover: c.inst.RoleIDs.TagMover},
 			Launchers:               c.inst.Launchers,
 			Operators:               c.inst.Operators,
+			CredentialsService:      repoCredentialsService(c.inst.CredentialsService),
 		},
 		GitHubAppID:              c.appID,
 		RepoURL:                  c.repoURL,
@@ -983,7 +1062,7 @@ func (c *repoCtx) projectSecretCandidates(rs RepoSpec) map[string]string {
 // provider's own key whose provider lists repo -- AllowsData uniformly
 // across the last three, so §3a's no-list/["*"]-means-any-repository rule
 // applies to a provider's key exactly as it does everywhere else. ok is
-// false, id "" otherwise. It is exported because fugaro init --repo's
+// false, id "" otherwise. It is exported because fugaro update's
 // secrets stage (before any RepoSpec exists) needs the identical answer.
 func ProjectSecretCandidate(lc *localcfg.Config, logical, repo string) (id string, ok bool) {
 	if lc == nil || logical == "" {
@@ -1239,7 +1318,24 @@ func (rs RepoSpec) Addresses() []string {
 		add(p + "google_storage_bucket_iam_member.job")
 		add(p + "google_storage_bucket_iam_member.job_tokens")
 		for _, logical := range uniqueSecrets(ws) {
+			// The credentials the service holds and the job has given up are
+			// its to hold once the installation has opted in (D145):
+			// modules/workflow/sa.tf drops the job's accessor on each — the
+			// model credentials by C1.18, the GitHub App's private key by C2.3
+			// — and the job's mount goes with it (Readiness drops it, and the
+			// module's job_mounts repeats the rule), so the mirror must not
+			// name a grant the spec no longer produces — it would read as one
+			// that survives a retirement. The App key's half is inert until
+			// config.ServiceHeldSecretNames names it (C2.2's release, review
+			// finding F1).
+			if rs.Installation.CredentialsService != nil && mountsServiceHeldSecret(ws, logical) {
+				continue
+			}
 			add(p + "google_secret_manager_secret_iam_member.job[" + q(logical) + "]")
+		}
+		if rs.Installation.CredentialsService != nil {
+			// The job account's roles/run.invoker on the service (D135).
+			add(p + "google_cloud_run_v2_service_iam_member.credentials[0]")
 		}
 		if ws.Vertex {
 			add(p + "google_project_iam_member.vertex[0]")
@@ -1253,6 +1349,38 @@ func (rs RepoSpec) Addresses() []string {
 	}
 	slices.Sort(out)
 	return slices.Compact(out)
+}
+
+// mountsServiceHeldSecret reports whether the logical secret name is one
+// whose credential the credentials service holds and the job's own account has
+// given up for ws: every secret_env entry naming it carries such a credential
+// (config.IsServiceHeldSecretEnv — a model credential by its variable, a name
+// config.ServiceHeldSecretNames lists by its name), so the service holds it
+// once an installation opts in (D145, D146) and the job's account keeps no
+// accessor on it (C1.18, C2.3). The App key's half of that list is empty until
+// C2.2's release (review finding F1), so this answers false for it today and
+// the job keeps the accessor it needs to read the key.
+//
+// It is the same question modules/workflow/sa.tf's job_secret_names asks, one
+// mount at a time, and it is written the same way — a name survives if ANY
+// entry that mounts it is not one the service holds — so the mirror
+// (RepoSpec.Addresses) and the Terraform cannot disagree about which grants
+// the spec produces. One secret mounted under two variables, one of them a
+// credential the service holds, is a shape config already refuses
+// (ReservedSecrets, ProviderBySecret), and this answers the same way either
+// way.
+func mountsServiceHeldSecret(ws WorkflowSpec, name string) bool {
+	held := false
+	for env, logical := range ws.SecretEnv {
+		if logical != name {
+			continue
+		}
+		if !config.IsServiceHeldSecretEnv(env, name) {
+			return false
+		}
+		held = true
+	}
+	return held
 }
 
 // Schedule is the check's daily cron schedule: a minute between 05:00 and

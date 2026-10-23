@@ -1,4 +1,4 @@
-# The installation root: the resources every repository shares. fugaro init
+# The installation root: the resources every repository shares. fugaro update
 # writes it into a workdir with terraform.tfvars.json and a backend config
 # naming the state bucket, and plans and applies it there.
 terraform {
@@ -46,6 +46,7 @@ module "installation" {
   log_isolation             = var.log_isolation
   enable_budget             = var.enable_budget
   history                   = var.history
+  credentials_service       = var.credentials_service
   project_secrets           = var.project_secrets
   managed_deployer_scoped   = var.managed_deployer_scoped
 }
@@ -57,7 +58,7 @@ module "installation" {
 #
 # They belong to the installation, not to a repository root: a project job
 # serves every repository admitted to its profile, and its account must
-# outlive any one repository's root. fugaro init computes every name, env
+# outlive any one repository's root. fugaro update computes every name, env
 # and condition of each entry (internal/infra.ProjectJobs); nothing here
 # derives one.
 module "project" {

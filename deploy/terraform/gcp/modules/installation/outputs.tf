@@ -1,5 +1,5 @@
 output "project_name" {
-  description = "The Fugaro project's name. fugaro init --repo copies it to each repository's jobs as FUGARO_PROJECT."
+  description = "The Fugaro project's name. fugaro update copies it to each repository's jobs as FUGARO_PROJECT."
   value       = var.fugaro_project
 }
 
@@ -67,18 +67,27 @@ output "log_view" {
 }
 
 output "registry_cleanup_dry_run" {
-  description = "Whether registry cleanup only logs what it would delete. fugaro init --repo copies it to each repository's registry."
+  description = "Whether registry cleanup only logs what it would delete. fugaro update copies it to each repository's registry."
   value       = var.registry_cleanup.dry_run
 }
 
 output "history_service_account" {
-  description = "The history job's account email, or null without enable_budget. fugaro init --firebase passes it to the Firebase root, which grants it its roles on the FP."
+  description = "The history job's account email, or null without enable_budget. fugaro update passes it to the Firebase root, which grants it its roles on the FP."
   value       = var.enable_budget ? google_service_account.history[0].email : null
 }
 
 output "history_job" {
   description = "The history job's name, or null while it isn't deployed."
   value       = local.deploy_history ? google_cloud_run_v2_job.history[0].name : null
+}
+
+output "credentials_service" {
+  description = "The credentials service's Cloud Run service name and region, or null while the installation has not opted in (D147). A repository root grants each job account roles/run.invoker on it from these, and drops the job's model-secret accessors with it. url is the service's own URL as Cloud Run assigned it (the resource's uri), which is the audience a caller's Google ID token is minted for: it is what C1.20's stage writes back into var.credentials_service.url, because nothing inside the service resource can read its own uri (credentials.tf)."
+  value = var.credentials_service == null ? null : {
+    name   = google_cloud_run_v2_service.credentials[0].name
+    region = var.region
+    url    = google_cloud_run_v2_service.credentials[0].uri
+  }
 }
 
 output "project_secrets" {

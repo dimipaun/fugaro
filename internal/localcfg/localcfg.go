@@ -2,7 +2,7 @@
 // Fugaro project: $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml (else under
 // ~/.config), holding the project's name, its GCP project, region and
 // buckets, and the onboarded repositories (design §2.4 and §5.4). fugaro
-// init writes them; Select picks the one a command acts on.
+// update writes them; Select picks the one a command acts on.
 package localcfg
 
 import (
@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -27,6 +28,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/mailbox/keychain"
 	"github.com/dimipaun/fugaro/internal/mirror"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
@@ -57,7 +59,7 @@ type Config struct {
 	BaseImages map[string]string `yaml:"base_images,omitempty"`
 	// ImageSource is the registry/owner prefix a base pin's images come
 	// from: "<host>/<owner>" (for example ghcr.io/dimipaun), the same
-	// string fugaro init's --image-source takes. It is the TRUSTED owner a
+	// string fugaro update's --image-source takes. It is the TRUSTED owner a
 	// base_images entry under the remote repository is checked against
 	// (design registry-remote-repository.md §3.6), recorded once by the run
 	// that pins, published in the shared config, and read from here by
@@ -151,6 +153,12 @@ type Config struct {
 	Profiles map[string]config.JobProfile `yaml:"profiles,omitempty"`
 	// Watch tunes fugaro watch.
 	Watch *Watch `yaml:"watch,omitempty"`
+	// Mailbox is what `fugaro mailbox` reads out of this project's config
+	// (mobile P4.1, T2). The pairing key itself is never here: the config
+	// holds the NAME of the OS keychain item the key lives at, which is not a
+	// secret and may be printed (M5, D113b — "the settings hold the item's
+	// name only").
+	Mailbox *Mailbox `yaml:"mailbox,omitempty"`
 	// UpdateCheck turns off the daily check for a newer fugaro release and
 	// its one-line stderr nag (FUGARO_NO_UPDATE_CHECK=1 does the same;
 	// `fugaro doctor`'s own cli-version check ignores both); nil or true
@@ -164,6 +172,23 @@ type Config struct {
 	// notes are warnings added after parsing (AddWarning), such as a
 	// published shared config's dropped legacy base_images entries.
 	notes []string
+}
+
+// Mailbox is the mailbox block: what the mailbox consumer needs from the
+// operator's own machine.
+type Mailbox struct {
+	// KeychainItem is the OS keychain item the pairing key lives at (M5,
+	// D113b). It is configuration and it is not a secret — it may be printed,
+	// and the diagnostic a missing key produces names it — but its shape is
+	// fixed, because it becomes an argv element of a keychain program: at most
+	// 64 characters of A-Z, a-z, 0-9, '.', '_' and '-', carrying this project's
+	// name, so a config file cannot name an arbitrary keychain query and two
+	// projects on one machine cannot be made to read each other's key.
+	//
+	// The shape is keychain.ParseItem's, not a second copy of the rule:
+	// validate refuses a name that package refuses, with that package's
+	// sentence.
+	KeychainItem string `yaml:"keychain_item,omitempty"`
 }
 
 // Watch is the watch block: how fugaro watch flags a fast burn.
@@ -205,13 +230,13 @@ type Budget struct {
 	AllowedModels []string `yaml:"allowed_models,omitempty"`
 	// RTDBURL is the project's Firebase Realtime Database (the budget
 	// backend of M9b), which fugaro budget reads and writes. Set by fugaro
-	// init --firebase; empty means the project has none.
+	// update --firebase-project; empty means the project has none.
 	RTDBURL string `yaml:"rtdb_url,omitempty"`
 	// FirebaseProject is the project's own Firebase project (the FP) and
 	// FirebaseAPIKey its restricted web API key (not a secret: it may call
 	// only Identity Toolkit and Secure Token). TokenSigner is the signer
 	// account the launcher mints run tokens as. All four are written by
-	// fugaro init --firebase from the Firebase root's outputs.
+	// fugaro update --firebase-project from the Firebase root's outputs.
 	FirebaseProject string `yaml:"firebase_project,omitempty"`
 	FirebaseAPIKey  string `yaml:"firebase_api_key,omitempty"`
 	TokenSigner     string `yaml:"token_signer,omitempty"`
@@ -361,7 +386,7 @@ func (c *Config) validateBudget(bad func(string, ...any)) {
 	}
 }
 
-// Terraform is what fugaro init needs to plan the installation again: its
+// Terraform is what fugaro update needs to plan the installation again: its
 // state bucket, and the inputs that exist only as flags.
 type Terraform struct {
 	StateBucket string   `yaml:"state_bucket,omitempty"`
@@ -370,7 +395,7 @@ type Terraform struct {
 	Operators   []string `yaml:"operators,omitempty"`
 	// BudgetAdmins are further budget admins on the Firebase project, IAM
 	// members (user:, group: or serviceAccount:); the GCP project's owners
-	// and editors are admins too, read when fugaro init --firebase runs.
+	// and editors are admins too, read when fugaro update --firebase-project runs.
 	BudgetAdmins []string `yaml:"budget_admins,omitempty"`
 	// RegistryCleanup (dry-run, on or off), NoLogIsolation and BudgetBackend
 	// are the installation's switches that exist as flags: adopt mode copies
@@ -427,7 +452,8 @@ type Batch struct {
 	// here too.
 	Image string `yaml:"image,omitempty"`
 	// MachineType is the Compute Engine machine type a run's VM is. Empty
-	// means the backend's own default (e2-standard-4); it must be one the
+	// means the backend's own default (e2-standard-8, the smallest type whose
+	// task share carries the config's default 4 CPU/8Gi); it must be one the
 	// price table carries, which the backend checks.
 	MachineType string `yaml:"machine_type,omitempty"`
 	// BootImage is the preloaded boot image a run's VM boots, as the family
@@ -468,6 +494,15 @@ type Batch struct {
 	// who wants the jobs bounded more tightly writes it here. The workflow's
 	// own timeouts.total is where this value comes from once the enable task
 	// reads it per workflow (internal/cli's batchTimeouts).
+	//
+	// It is also REFUSED above that ceiling (validateBatch): the reaper's
+	// deadline is max(the longest configured timeout, backend.MaxRunTime), and
+	// the reaper that runs from its own Cloud Run job's environment has no
+	// project config to read the first of those from, so it derives the base
+	// from the ceiling alone (internal/cli/reaper.go). A configured timeout
+	// above the ceiling makes the two disagree, in the one direction that ends
+	// a live run: the sweeper's bound would be shorter than the config's, and
+	// a job that is legitimately running would read as stuck.
 	TaskTimeout config.Duration `yaml:"task_timeout,omitempty"`
 }
 
@@ -522,6 +557,17 @@ func validateBatch(bad func(string, ...any), c *Config) {
 		// omitted key means.
 		bad("batch.task_timeout %v: it must be more than 0, or left out for the default (%v)", b.TaskTimeout.Duration, backend.MaxRunTime)
 	}
+	if b.TaskTimeout.Set && b.TaskTimeout.Duration > backend.MaxRunTime {
+		// The ceiling, and this refusal is the reaper's requirement rather
+		// than a cap for its own sake: no run may be given more than
+		// backend.MaxRunTime (--total-timeout is capped there), so a job sized
+		// past it is headroom no run can use -- while the reaper that runs
+		// from its own Cloud Run job's environment has no config to read this
+		// number from and derives its base from the ceiling
+		// (internal/cli/reaper.go). The two sources would disagree about when
+		// a live run has ended, and that disagreement deletes a running job.
+		bad("batch.task_timeout %v is longer than %v, the longest a run may be given (--total-timeout is capped there): a job sized past it is headroom no run can use, and the reaper of an installation whose config it cannot read derives its own bound from that ceiling, so the two would disagree about when a live run has ended", b.TaskTimeout.Duration, backend.MaxRunTime)
+	}
 	// Each entry is named by its position in the sorted map, and never by its
 	// key: neither side of the map is printed, because **either** side can hold
 	// a secret's value. The value slot is the one a value is usually written
@@ -566,7 +612,16 @@ type Endpoints struct {
 	// Engine root is not a CLI client's endpoint, it is the reaper job's
 	// (internal/backend/batch/reap.go's Endpoints).
 	Batch string `yaml:"batch,omitempty"`
-	// The APIs only fugaro init calls: bucket and IAM policy reads and
+	// Compute is the Compute Engine API root, read by `fugaro doctor`'s
+	// checks for an installation that carries a batch block (the preload
+	// image family, and the network and subnetwork a run's VMs are placed
+	// in: design compute-backend.md §4.4). Empty is the real endpoint, as
+	// for every other field here. It is not the reaper's root: the reaper
+	// runs as its own job with its own env (internal/backend/batch's
+	// Endpoints), and this one is a client the operator's own doctor run
+	// reads with.
+	Compute string `yaml:"compute,omitempty"`
+	// The APIs only fugaro update calls: bucket and IAM policy reads and
 	// writes, service accounts, registries, the project's number, and the
 	// enable of Cloud Resource Manager.
 	Storage          string `yaml:"storage,omitempty"`
@@ -575,22 +630,25 @@ type Endpoints struct {
 	ResourceManager  string `yaml:"resource_manager,omitempty"`
 	CloudScheduler   string `yaml:"cloud_scheduler,omitempty"`
 	ServiceUsage     string `yaml:"service_usage,omitempty"`
-	// CloudBilling is read by fugaro init --firebase to check that the
+	// CloudBilling is read by fugaro update --firebase-project to check that the
 	// Firebase project has billing.
 	CloudBilling string `yaml:"cloud_billing,omitempty"`
-	// FirebaseDatabase lists the Firebase project's databases (init --firebase).
+	// FirebaseDatabase lists the Firebase project's databases (fugaro update
+	// --firebase-project).
 	FirebaseDatabase string `yaml:"firebase_database,omitempty"`
-	// APIKeys reads the Firebase project's API keys (init --firebase).
+	// APIKeys reads the Firebase project's API keys (fugaro update
+	// --firebase-project).
 	APIKeys string `yaml:"api_keys,omitempty"`
-	// FirebaseManagement is where init --create-project adds Firebase to a
-	// project it creates (Firebase Management v1beta1).
+	// FirebaseManagement is where fugaro setup --create-project adds Firebase
+	// to a project it creates (Firebase Management v1beta1).
 	FirebaseManagement string `yaml:"firebase_management,omitempty"`
-	// IdentityToolkit is where init --firebase ensures Identity Platform is
-	// initialized in the Firebase project (Identity Toolkit's REST API).
+	// IdentityToolkit is where fugaro update --firebase-project ensures Identity
+	// Platform is initialized in the Firebase project (Identity Toolkit's REST
+	// API).
 	IdentityToolkit string `yaml:"identity_toolkit,omitempty"`
-	// Firestore and FirebaseRules are where init --firebase ensures the
-	// Firebase project's Firestore database exists and deploys its deny-all
-	// security rules (the Firestore and Firebase Rules REST APIs).
+	// Firestore and FirebaseRules are where fugaro update --firebase-project
+	// ensures the Firebase project's Firestore database exists and deploys its
+	// deny-all security rules (the Firestore and Firebase Rules REST APIs).
 	Firestore     string `yaml:"firestore,omitempty"`
 	FirebaseRules string `yaml:"firebase_rules,omitempty"`
 	// IAMCredentials is where the launcher signs a run's budget token (signJwt).
@@ -615,8 +673,8 @@ type Repo struct {
 	// repositories. It is not a secret.
 	GitHubAppID string `yaml:"github_app_id,omitempty"`
 	// Vertex records that one of the repository's workflows authenticates
-	// its agent through Vertex AI (agent.auth: vertex), so fugaro init
-	// enables the Vertex AI API. fugaro init --repo sets it.
+	// its agent through Vertex AI (agent.auth: vertex), so fugaro update
+	// enables the Vertex AI API. fugaro update sets it.
 	Vertex bool `yaml:"vertex,omitempty"`
 }
 
@@ -668,16 +726,15 @@ var (
 	signerRE          = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$`)
 )
 
-// configDir is $XDG_CONFIG_HOME/fugaro, else ~/.config/fugaro.
+// configDir is $XDG_CONFIG_HOME/fugaro, else the platform's own config
+// directory (UserDir): %APPDATA%\fugaro on Windows, ~/.config/fugaro
+// elsewhere.
 func configDir(getenv func(string) string) (string, error) {
-	if x := getenv("XDG_CONFIG_HOME"); x != "" {
-		return filepath.Join(x, "fugaro"), nil
+	d, err := UserDir(getenv, runtime.GOOS, DirConfig)
+	if err != nil {
+		return "", fmt.Errorf("%w, so there is no project config directory; pass --config", err)
 	}
-	home := getenv("HOME")
-	if home == "" {
-		return "", errors.New("neither XDG_CONFIG_HOME nor HOME is set, so there is no project config directory; pass --config")
-	}
-	return filepath.Join(home, ".config", "fugaro"), nil
+	return filepath.Join(d, "fugaro"), nil
 }
 
 // ProjectsDir is where the project configs live:
@@ -771,7 +828,7 @@ func LoadProject(getenv func(string) string, name string) (*Config, string, erro
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("%w at %s: run fugaro init to write it", ErrMissing, path)
+		return nil, fmt.Errorf("%w at %s: run fugaro setup to write it", ErrMissing, path)
 	}
 	if err != nil {
 		return nil, err
@@ -798,7 +855,7 @@ func BaseImageNameKind(ref string) string {
 	return ""
 }
 
-// ParseBaseImageFlag reads one fugaro init --base-image value: KIND=IMAGE, or
+// ParseBaseImageFlag reads one fugaro update --base-image value: KIND=IMAGE, or
 // a bare IMAGE whose repository name says the kind (fugaro-<kind>, as in
 // ghcr.io/dimipaun/fugaro-go:1 or <registry>/fugaro-base/fugaro-web-node:dev-abc).
 func ParseBaseImageFlag(v string) (kind, ref string, err error) {
@@ -1049,6 +1106,16 @@ func (c *Config) validate() error {
 			bad("watch.burn_alert_usd_per_hour: %v (a finite dollar amount, 0 or more)", err)
 		}
 	}
+	// The mailbox block's one field is a keychain item name, and the rule is
+	// keychain.ParseItem's: this file is the one place the name is written, and
+	// the package that turns it into an argv is the one that says what shape it
+	// may have. A name refused here is refused before `fugaro mailbox` can read
+	// a key, which is the run-level refusal §8's row 1 names.
+	if m := c.Mailbox; m != nil {
+		if _, err := keychain.ParseItem(m.KeychainItem, c.Name); err != nil {
+			bad("mailbox.keychain_item: %v", err)
+		}
+	}
 	for _, region := range slices.Sorted(maps.Keys(c.ComputePrices)) {
 		if !regionRE.MatchString(region) {
 			bad("compute_prices: %q is not a region such as us-central1", region)
@@ -1082,6 +1149,12 @@ func (c *Config) validate() error {
 		// Every sibling is refused here for that reason, and this one is no
 		// different.
 		{"batch", c.Endpoints.Batch},
+		// The Compute Engine root `fugaro doctor` reads a Batch
+		// installation's own facts through (the preload image family, the
+		// network, the subnetwork). Same kind of value as `batch` above and
+		// refused for the same reason: doctor attaches the operator's ADC to
+		// it.
+		{"compute", c.Endpoints.Compute},
 	} {
 		if ep.url == "" {
 			continue
@@ -1168,7 +1241,7 @@ func (c *Config) PriceOverride(region string) (backend.Prices, bool) {
 func (c *Config) Warnings() []string {
 	var w []string
 	if c.Build.ServiceAccount != "" {
-		w = append(w, "build.service_account is deprecated and will be ignored: each repository's builds run as its own build account; fugaro init drops it")
+		w = append(w, "build.service_account is deprecated and will be ignored: each repository's builds run as its own build account; fugaro update drops it")
 	}
 	return append(w, c.notes...)
 }
@@ -1202,7 +1275,7 @@ func (c *Config) RunsBucketName() string {
 // (builds/<slug>/<workflow>/image.json), as gs://<name>: always the runs
 // bucket, the only bucket a build account may write (under
 // builds/<slug>/), never another bucket_url. fugaro image build, fugaro
-// init's first build and the daily check send it; readiness, ls and
+// setup's first build and the daily check send it; readiness, ls and
 // image status read it. "" when there is no runs bucket name.
 func (c *Config) RecordBucketURL() string {
 	if name := c.RunsBucketName(); name != "" {

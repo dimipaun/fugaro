@@ -64,7 +64,7 @@ import (
 //     so is any object this build cannot read as this project's marker. The
 //     exception is the one object the apply cannot use and the gate's own
 //     refusal names this command as the way out of: a version-1 creation fact,
-//     which is what every `fugaro init --create-project` without --managed
+//     which is what every `fugaro setup --create-project` without --managed
 //     leaves behind. That fact records no amount, so the project is refused by
 //     every managed apply; the flag replaces it with the version that records
 //     the amount, under a write conditioned on the generation it read, so a
@@ -87,7 +87,7 @@ import (
 // budget alert. The amount it records is the amount the owner states, in the
 // marker, and the apply reads it as the evidence that a budget was chosen at
 // all (Task 4.4) — the billing account's alert thresholds are Terraform's,
-// created by fugaro init's installation root.
+// created by fugaro setup's installation root.
 
 // newManagedFlagCmd is `fugaro managed flag PROJECT_ID`.
 func newManagedFlagCmd() *cobra.Command {
@@ -103,7 +103,7 @@ marker in that project's own runs bucket.
 This is how a project Fugaro did not create becomes managed: the marker is
 what tells a later run that this project's applies may skip the typed
 confirmation, and it is normally written by the run that created the project
-(fugaro init --create-project --managed). Flagging is the after-the-fact way,
+(fugaro setup --create-project --managed). Flagging is the after-the-fact way,
 answered by the owner on 2026-10-16 (design D58).
 
 Run it in your own terminal, as an operator, with your own credentials, and
@@ -153,7 +153,7 @@ program, not a wall against one that goes around it.
 A project that already records an amount is refused: the amount is the owner's
 decision at the time it was taken, and this command adds a budget rather than
 editing one. The one object it does replace is a version-1 creation fact —
-what fugaro init --create-project without --managed leaves, and the state the
+what fugaro setup --create-project without --managed leaves, and the state the
 managed apply refuses for having no amount recorded. What it replaced is said
 in the output, and the write is conditioned on the object it read, so nothing
 is overwritten blind.`,
@@ -175,13 +175,6 @@ is overwritten blind.`,
 // any of them.
 func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, currency string) error {
 	ctx := cmd.Context()
-	// Managed projects are off in this release (managedDeployerShipped), and
-	// flagging one is how a project becomes managed: refused before anything
-	// is read, written or opened, with the refusal the other managed entry
-	// points give.
-	if err := refuseManagedNotShipped(); err != nil {
-		return err
-	}
 	// A credential leak first, before anything opens the cloud: GODEBUG is
 	// read before main runs and cannot be unset in time (refuseHTTP2Debug).
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
@@ -252,7 +245,7 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	// whose state read fails (CauseStateUnread) and whose every apply falls back
 	// to the typed confirmation this command exists to take away — the very
 	// thing flagging gives up (D55, printed below). This command has no
-	// --state-bucket of its own: what a project created with `fugaro init
+	// --state-bucket of its own: what a project created with `fugaro setup
 	// --state-bucket <other>` recorded is the local config's
 	// terraform.state_bucket, which is what infra.Installation resolves for it
 	// and what is left to check here. The refusal is the rule fugaro restore
@@ -284,7 +277,7 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	fmt.Fprintf(w, "  it gives up: the typed confirmation for this project's applies. From the next apply on, a plan a coding agent's session authored is applied with no human prompt when the deterministic gate admits it (D55), and what stands in the confirmation's place is the gate, the whole-project inventory, the owner's delete list (fugaro allow-delete) and the budget above.\n")
 	fmt.Fprintf(w, "  it creates nothing: no resource is created, no billing call is made, and the amount above is recorded rather than spent.\n")
 	fmt.Fprintf(w, "  it does not protect against: a coding agent's session, which holds these credentials and can write this object directly (SECURITY.md).\n")
-	fmt.Fprintf(w, "  if this project already records whether it is managed: nothing is written unless its marker is the creation fact that records no amount (what `fugaro init --create-project` without --managed leaves), which this replaces with the one above. A marker that already records an amount is refused, and so is any object this build cannot read as this project's.\n")
+	fmt.Fprintf(w, "  if this project already records whether it is managed: nothing is written unless its marker is the creation fact that records no amount (what `fugaro setup --create-project` without --managed leaves), which this replaces with the one above. A marker that already records an amount is refused, and so is any object this build cannot read as this project's.\n")
 	if err := confirmTypedGCPProject(cmd, lc.GCPProject); err != nil {
 		return err
 	}

@@ -3,12 +3,11 @@
   "available": true,
   "name": "The Fugaro desktop console",
   "what": {
-    "text": "A desktop application that is a graphical fugaro watch: live run monitoring and spending graphs. It has no backend, no service account, no database client and no credential of its own — the CLI is the data plane.",
+    "text": "A desktop app that is a live view of your runs: no backend, no service account, no database client and no credential of its own.",
     "source": "docs/design/desktop-console.md D1"
   },
   "released": {
-    "text": "The console ships for macOS only, as one universal disk image and one archive, signed with a Developer ID certificate and notarised by Apple. Install the CLI first: the CLI is the data plane, and the console runs its read-only commands. The SHA-256 the release published is printed beside each download, and the command below prints the same line for the file you downloaded.",
-    "verify": "shasum -a 256 Fugaro.Console-*",
+    "text": "The console ships for macOS only: one universal disk image and one archive, signed and notarised by Apple. Install the CLI first, because the CLI is the data plane. Windows and Linux builds do not exist yet.",
     "source": "docs/design/desktop-console.md D1 D4"
   },
   "not_released": {
@@ -20,19 +19,19 @@
     {
       "id": "read-only",
       "title": "Strictly read-only",
-      "text": "Every command the console runs is a read-only CLI command, and the commands that write — kill, resume and cancel — stay in the CLI, with the CLI's own typed confirmations, admin check and compare-and-set.",
+      "text": "Everything the console runs is read-only; kill, resume and cancel stay in the CLI.",
       "source": "docs/design/desktop-console.md D2"
     },
     {
       "id": "no-telemetry",
       "title": "No telemetry",
-      "text": "No telemetry, no crash reporting to a third party, no analytics, and no update check that carries an identifier: its only outbound requests are the CLI's own, to the cloud the operator already owns, and the update check itself.",
+      "text": "No telemetry, no crash reporting, no analytics, and an update check that carries no identifier.",
       "source": "docs/design/desktop-console.md D5"
     },
     {
       "id": "own-artifact",
       "title": "Its own artifact",
-      "text": "The console ships as its own artifact, published from the CLI's own vX.Y.Z tag — one release train and one gate — with the range of CLI versions it was built against declared and checked at startup.",
+      "text": "Its own release, published from the CLI's tag, declaring the CLI versions it was built against.",
       "source": "docs/design/desktop-console.md D11"
     }
   ],

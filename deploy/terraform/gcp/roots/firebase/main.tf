@@ -2,7 +2,7 @@
 # Firebase project (the FP: a GCP project of its own, or the installation's
 # own project, design D3 revised 2026-10-04): the APIs, Firebase,
 # the Realtime Database, the sign-in API key, the token signer and every
-# grant onto the FP. fugaro init --firebase writes it into a workdir with
+# grant onto the FP. fugaro update writes it into a workdir with
 # terraform.tfvars.json and a backend config naming the installation's state
 # bucket (state fugaro/firebase), and plans and applies it there.
 terraform {

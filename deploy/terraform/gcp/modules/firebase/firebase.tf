@@ -1,5 +1,5 @@
 # Firebase on the user's GCP project, and its Realtime Database. This root
-# never creates the project or links billing: fugaro init --firebase adopts
+# never creates the project or links billing: fugaro update adopts
 # a project that exists and has billing, and refuses otherwise.
 resource "google_firebase_project" "this" {
   provider = google-beta
@@ -12,10 +12,10 @@ resource "google_firebase_project" "this" {
 # RTDB offers three locations and can't move one later; D4 chose
 # us-central1. The default instance's ID is <project>-default-rtdb, which is
 # also the one Firebase creates itself. An instance that already exists is
-# adopted by fugaro init --firebase: its discovery checks it and writes an
+# adopted by fugaro update: its discovery checks it and writes an
 # import block for it (imports.tf.json), so this resource is not created
 # twice. It holds the budget counters and the run registry, so a plan never
-# deletes it. The rules and the /fugaro/mark are written by fugaro init over
+# deletes it. The rules and the /fugaro/mark are written by fugaro update over
 # REST, not by Terraform.
 resource "google_firebase_database_instance" "this" {
   provider = google-beta
@@ -57,5 +57,5 @@ resource "google_apikeys_key" "web" {
 # Identity Platform is deliberately not a resource here: it must be initialized
 # in the project (Identity Toolkit answers CONFIGURATION_NOT_FOUND until it is),
 # but google_identity_platform_config does not adopt a project where it already
-# is (400 INVALID_PROJECT_ID, found live). fugaro init --firebase ensures it
+# is (400 INVALID_PROJECT_ID, found live). fugaro update ensures it
 # over REST, idempotently, and refuses a configuration with sign-in enabled.

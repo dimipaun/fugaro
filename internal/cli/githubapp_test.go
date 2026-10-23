@@ -269,7 +269,11 @@ func TestFirstBuildWaitsForTheGitHubApp(t *testing.T) {
 		r, out, _ := run(t, g)
 		// Not claimed fine, not blocked: a warning, and the build is offered
 		// (and left only because this run cannot type the confirmation).
-		if r.buildHold != "" || len(r.buildsLeft) != 1 || !strings.Contains(out, "does not say the App is fine") || !strings.Contains(out, "billable and was not confirmed") {
+		// The rerun it names is the door this run is at, taken from the run's
+		// own options, not a hardcoded one (task W2.1): the warning is the
+		// converge's, and both doors offer builds.
+		if r.buildHold != "" || len(r.buildsLeft) != 1 || !strings.Contains(out, "does not say the App is fine") || !strings.Contains(out, "billable and was not confirmed") ||
+			!strings.Contains(out, "then "+r.o.doorProgram()+" --repo") {
 			t.Fatalf("hold %q\n%s", r.buildHold, out)
 		}
 	})
@@ -370,7 +374,7 @@ func TestCheckGitHubAppRefusedInAgentSession(t *testing.T) {
 		t.Run(marker, func(t *testing.T) {
 			g := newGitHubRig(t)
 			t.Setenv(marker, "1")
-			for _, args := range [][]string{{"init", "--check-github-app", "--plan-only"}, {"init", "--repo", "--check-github-app", "--plan-only"}, {"doctor", "--check-github-app", "--json"}} {
+			for _, args := range [][]string{{"setup", "--check-github-app", "--plan-only"}, {"setup", "--repo", "--check-github-app", "--plan-only"}, {"doctor", "--check-github-app", "--json"}} {
 				_, _, err := execute(t, args...)
 				if err == nil || !strings.Contains(err.Error(), "refused in a coding agent's session") || ExitCode(err) != ExitUserError {
 					t.Errorf("%v: %v", args, err)

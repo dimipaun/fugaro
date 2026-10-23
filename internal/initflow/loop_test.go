@@ -64,7 +64,7 @@ func (f *fake) Left() Left {
 	if f.left.Text != "" {
 		return f.left
 	}
-	return Left{Stage: f.name, Kind: LeftPrompt, Text: "run fugaro init in your terminal"}
+	return Left{Stage: f.name, Kind: LeftPrompt, Text: "run fugaro update in your terminal"}
 }
 func (f *fake) Missing() []string { return f.missing }
 
@@ -100,11 +100,11 @@ func states(r *Result) map[string]State {
 
 func TestStageOrderMatchesDependencies(t *testing.T) {
 	names := Names()
-	// Ten stages of the installation's own plus the compute backend's
-	// provisioning, which the design puts last (compute-backend §8.1
-	// task 6).
-	if len(names) != 11 {
-		t.Fatalf("the design has eleven stages, got %v", names)
+	// Ten stages of the installation's own plus the credentials service's
+	// owner-run apply (C1.20) and the compute backend's provisioning, which
+	// the design puts last (compute-backend §8.1 task 6).
+	if len(names) != 12 {
+		t.Fatalf("the design has twelve stages, got %v", names)
 	}
 	pos := map[string]int{}
 	for i, n := range names {
@@ -119,7 +119,7 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 		}
 	}
 	// The order the dogfooding run found by hand.
-	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Repository, Compute}
+	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Credentials, Repository, Compute}
 	if !slices.Equal(names, want) {
 		t.Errorf("order = %v, want %v", names, want)
 	}
@@ -228,7 +228,7 @@ func TestRerunReportsNoChangesPerStage(t *testing.T) {
 func TestStageFailureStopsLoop(t *testing.T) {
 	var log []string
 	stages := fakes(&log, Preflight, Installation, Firebase, Images)
-	stages[1].(*fake).applyErr = &StageError{Err: errors.New("terraform apply: quota exceeded\nDetails: {...}"), Fix: "raise the quota, then rerun fugaro init"}
+	stages[1].(*fake).applyErr = &StageError{Err: errors.New("terraform apply: quota exceeded\nDetails: {...}"), Fix: "raise the quota, then rerun fugaro update"}
 	res, err := Run(context.Background(), stages, yesOpts())
 	if err != nil {
 		t.Fatal(err)
@@ -236,7 +236,7 @@ func TestStageFailureStopsLoop(t *testing.T) {
 	if res.ExitCode() != 2 {
 		t.Errorf("exit %d, want 2", res.ExitCode())
 	}
-	if res.Failed == nil || res.Failed.Stage != Installation || res.Failed.Fix != "raise the quota, then rerun fugaro init" {
+	if res.Failed == nil || res.Failed.Stage != Installation || res.Failed.Fix != "raise the quota, then rerun fugaro update" {
 		t.Fatalf("failed = %+v", res.Failed)
 	}
 	if strings.Contains(res.Failed.Error, "\n") {
@@ -290,7 +290,7 @@ func TestResumeAfterFailedStage(t *testing.T) {
 func TestBlockedOnUserStopsWithLeftForYou(t *testing.T) {
 	var log []string
 	stages := fakes(&log, Preflight, Installation, Secrets, Repository)
-	stages[2].(*fake).status = Status{State: NeedsYou, Left: &Left{Stage: Secrets, Kind: LeftPrompt, Text: "run fugaro init in your terminal: github-app-key, claude-oauth-token (hidden prompts)"}}
+	stages[2].(*fake).status = Status{State: NeedsYou, Left: &Left{Stage: Secrets, Kind: LeftPrompt, Text: "run fugaro update in your terminal: github-app-key, claude-oauth-token (hidden prompts)"}}
 	res, _ := Run(context.Background(), stages, yesOpts())
 	if len(res.Left) != 1 || res.Left[0].Stage != Secrets || res.Left[0].Kind != LeftPrompt {
 		t.Fatalf("left = %+v", res.Left)
@@ -376,7 +376,7 @@ func TestNonInteractiveListsAllMissingFlags(t *testing.T) {
 	var log []string
 	stages := fakes(&log, Preflight, Installation, Firebase)
 	stages[1].(*fake).missing = []string{"--gcp-project (the GCP project ID)", "--region"}
-	stages[2].(*fake).missing = []string{"--firebase (the Firebase project)"}
+	stages[2].(*fake).missing = []string{"--firebase-project (the Firebase project)"}
 	_, err := Run(context.Background(), stages, Options{NonInteractive: true, Yes: true, Out: &bytes.Buffer{}})
 	var mi *MissingInputsError
 	if !errors.As(err, &mi) {
@@ -385,7 +385,7 @@ func TestNonInteractiveListsAllMissingFlags(t *testing.T) {
 	if len(mi.Flags) != 3 {
 		t.Errorf("flags %v", mi.Flags)
 	}
-	for _, f := range []string{"--gcp-project", "--region", "--firebase"} {
+	for _, f := range []string{"--gcp-project", "--region", "--firebase-project"} {
 		if !strings.Contains(err.Error(), f) {
 			t.Errorf("%q missing from %q", f, err)
 		}
@@ -435,7 +435,7 @@ func TestYesDoesNotCoverCreateOrBilling(t *testing.T) {
 	// prompt; without one they are never applied, they are left for you.
 	for _, name := range []string{Project, Secrets} {
 		var log []string
-		f := &fake{name: name, log: &log, left: Left{Stage: name, Kind: LeftCommand, Text: "fugaro init --create-project --gcp-project ID"}}
+		f := &fake{name: name, log: &log, left: Left{Stage: name, Kind: LeftCommand, Text: "fugaro setup --create-project --gcp-project ID"}}
 		opts := Options{Yes: true, Terminal: true, Out: &bytes.Buffer{}}
 		if _, err := Run(context.Background(), []Stage{f}, opts); err != nil {
 			t.Fatal(err)
@@ -445,7 +445,7 @@ func TestYesDoesNotCoverCreateOrBilling(t *testing.T) {
 		}
 
 		log = nil
-		f = &fake{name: name, log: &log, left: Left{Stage: name, Kind: LeftCommand, Text: "fugaro init --create-project --gcp-project ID"}}
+		f = &fake{name: name, log: &log, left: Left{Stage: name, Kind: LeftCommand, Text: "fugaro setup --create-project --gcp-project ID"}}
 		opts = Options{Yes: true, NonInteractive: true, Terminal: true, Out: &bytes.Buffer{}}
 		res, err := Run(context.Background(), []Stage{f}, opts)
 		if err != nil {
@@ -483,7 +483,7 @@ func TestStageDecliningIsNotAFailure(t *testing.T) {
 	// the loop with what to do, and the rest is blocked.
 	var log []string
 	stages := fakes(&log, Preflight, Installation, Firebase)
-	stages[1].(*fake).applyErr = &NeedsYouError{Left: Left{Stage: Installation, Kind: LeftPrompt, Text: "rerun fugaro init and type the project's name"}}
+	stages[1].(*fake).applyErr = &NeedsYouError{Left: Left{Stage: Installation, Kind: LeftPrompt, Text: "rerun fugaro setup and type the project's name"}}
 	res, _ := Run(context.Background(), stages, yesOpts())
 	if res.Failed != nil || res.ExitCode() != 1 || len(res.Left) != 1 {
 		t.Errorf("%+v exit %d", res, res.ExitCode())
@@ -507,7 +507,7 @@ func TestPredecessorNeedsYouBlocksApply(t *testing.T) {
 func TestSkippedPredecessorDoesNotBlock(t *testing.T) {
 	var log []string
 	stages := fakes(&log, Preflight, Firebase, Repository)
-	stages[1].(*fake).status = Status{State: Skipped, Detail: "no --firebase given"}
+	stages[1].(*fake).status = Status{State: Skipped, Detail: "no --firebase-project given"}
 	stages[2].(*fake).status = Status{State: Skipped, Detail: "no fugaro.yaml on the default branch"}
 	res, _ := Run(context.Background(), stages, yesOpts())
 	if res.ExitCode() != 0 || states(res)[Repository] != Skipped {
@@ -532,6 +532,33 @@ func TestOutputsContainNoSecretValues(t *testing.T) {
 	}
 }
 
+func TestProgramNameIsRedacted(t *testing.T) {
+	// The caller's Program reaches the header, both fix texts, the human
+	// account and --json, so it goes through the same redaction every other
+	// line does: a value the process holds is not printed because a caller
+	// put it in the name of the program.
+	const secret = "s3cr3t-in-program"
+	var log []string
+	var out bytes.Buffer
+	stages := fakes(&log, Preflight)
+	stages[0].(*fake).applyErr = errors.New("boom")
+	res, err := Run(context.Background(), stages, Options{Yes: true, Terminal: true, Out: &out,
+		Program: "fugaro run " + secret, Project: "aurora", Redact: []string{secret}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	js, err := res.JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), secret) || strings.Contains(string(js), secret) || strings.Contains(res.Failed.Fix, secret) {
+		t.Errorf("a held value reached the output through Program:\n%s\n%s", out.String(), js)
+	}
+	if !strings.Contains(out.String(), "fugaro run [redacted]") {
+		t.Errorf("the program name was dropped rather than redacted:\n%s", out.String())
+	}
+}
+
 func TestLeftTextIsOneLine(t *testing.T) {
 	var log []string
 	stages := fakes(&log, Secrets)
@@ -546,7 +573,7 @@ func TestJSONIsStable(t *testing.T) {
 	var log []string
 	stages := fakes(&log, Preflight, Installation, Secrets)
 	stages[0].(*fake).status = Status{State: Done}
-	stages[2].(*fake).status = Status{State: NeedsYou, Left: &Left{Stage: Secrets, Kind: LeftPrompt, Text: "run fugaro init in your terminal"}}
+	stages[2].(*fake).status = Status{State: NeedsYou, Left: &Left{Stage: Secrets, Kind: LeftPrompt, Text: "run fugaro update in your terminal"}}
 	opts := yesOpts()
 	opts.Project, opts.GCPProject, opts.Region = "aurora", "aurora-prod", "us-east5"
 	res, _ := Run(context.Background(), stages, opts)
@@ -578,7 +605,7 @@ func TestJSONIsStable(t *testing.T) {
     {
       "stage": "secrets",
       "kind": "prompt",
-      "text": "run fugaro init in your terminal"
+      "text": "run fugaro update in your terminal"
     }
   ]
 }
@@ -609,10 +636,69 @@ func TestPlanViewIsHonestAboutDependents(t *testing.T) {
 	if _, err := Run(context.Background(), stages, opts); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"fugaro init: project aurora (GCP aurora-prod, us-east5)", "[done]", "[will do]", "installation", "14 to create", "after installation"} {
+	for _, want := range []string{"fugaro: project aurora (GCP aurora-prod, us-east5)", "[done]", "[will do]", "installation", "14 to create", "after installation"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("%q not in the view:\n%s", want, out.String())
 		}
+	}
+}
+
+func TestLoopNamesTheCallerProgram(t *testing.T) {
+	// The loop is behind both front doors and cannot know which one is
+	// running (O2): the view's header, the result line and both fix texts
+	// name the caller's Program, and the loop names no command of its own.
+	var log []string
+	var out bytes.Buffer
+	stages := fakes(&log, Preflight, Installation)
+	stages[1].(*fake).applyErr = errors.New("terraform apply: quota exceeded")
+	opts := Options{Yes: true, Terminal: true, Out: &out, Program: "fugaro update",
+		Project: "aurora", GCPProject: "aurora-prod", Region: "us-east5"}
+	res, err := Run(context.Background(), stages, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "fugaro update: project aurora (GCP aurora-prod, us-east5)") {
+		t.Errorf("the view does not name the caller's program:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "fugaro update: result") {
+		t.Errorf("the result line does not name the caller's program:\n%s", out.String())
+	}
+	if res.Failed == nil || res.Failed.Fix != "fix what the error says and rerun fugaro update: it resumes at "+Installation {
+		t.Errorf("the failure's fix does not name the caller's program: %+v", res.Failed)
+	}
+	// A cancelled run is a failure as well, and its fix names it too.
+	out.Reset()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	res, err = Run(ctx, fakes(&log, Preflight), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Failed == nil || res.Failed.Fix != "rerun fugaro update: it resumes at "+Preflight {
+		t.Errorf("the cancelled run's fix does not name the caller's program: %+v", res.Failed)
+	}
+}
+
+func TestLoopDefaultProgramIsUnchanged(t *testing.T) {
+	// A caller that names no program gets the program alone: the loop must
+	// not invent a verb it cannot know (O2), and a caller that forgets the
+	// field is not silently given the wrong one.
+	var log []string
+	var out bytes.Buffer
+	stages := fakes(&log, Preflight)
+	stages[0].(*fake).applyErr = errors.New("boom")
+	res, err := Run(context.Background(), stages, Options{Yes: true, Terminal: true, Out: &out,
+		Project: "aurora", GCPProject: "aurora-prod", Region: "us-east5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"fugaro: project aurora (GCP aurora-prod, us-east5)", "fugaro: result"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("%q not in the default program's view:\n%s", want, out.String())
+		}
+	}
+	if res.Failed == nil || res.Failed.Fix != "fix what the error says and rerun fugaro: it resumes at "+Preflight {
+		t.Errorf("the default program's failure fix: %+v", res.Failed)
 	}
 }
 
@@ -922,6 +1008,28 @@ func TestNoTerminalErrorDropsTheYesHintForAnAgent(t *testing.T) {
 	}
 }
 
+// The zero value of ConfirmClass is Typed, the strictest: a caller that names
+// no class — a zero value, a field nobody set, a class left out of a table —
+// refuses a confirmation rather than giving one, the direction every mistake in
+// this package falls (as with Managed's zero value, and Covers and Removes
+// being methods rather than fields). --yes at a real terminal is the sharpest
+// way to say it: the permissive class takes it, the strictest does not.
+func TestZeroConfirmClassIsTheStrictest(t *testing.T) {
+	if ConfirmClass(0) != Typed {
+		t.Fatalf("the zero ConfirmClass is %d, want Typed (%d): a caller that names no class must not be handed the permissive one", ConfirmClass(0), Typed)
+	}
+	all := Conditions{Yes: true, Terminal: true}
+	if got, want := CanConfirm(ConfirmClass(0), all), CanConfirm(Typed, all); got != want || got {
+		t.Errorf("CanConfirm(zero class, --yes at a terminal) = %v, want %v (the Typed rule)", got, want)
+	}
+	if !CanConfirm(YesOrTyped, all) {
+		t.Error("YesOrTyped no longer takes --yes at a terminal")
+	}
+	if YesOrTyped == Typed {
+		t.Error("the two classes are no longer distinct")
+	}
+}
+
 func TestCanConfirm(t *testing.T) {
 	type c = Conditions
 	term := c{Terminal: true}
@@ -997,6 +1105,58 @@ func TestRunCovers(t *testing.T) {
 	for _, never := range []string{Project, Secrets, Plugin, Preflight, "unknown"} {
 		if RunCovers(never) {
 			t.Errorf("RunCovers(%s) is true", never)
+		}
+	}
+}
+
+// A stage's own fix text is as untrusted as its error: the process may hold a
+// value the stage does not know it holds, and the fix is printed in the human
+// account ("stopped at <stage>; fix: …") and carried in --json's failed.fix,
+// so a secret in it reaches a terminal and a CI log unless fail() redacts it.
+func TestStageFixTextIsRedacted(t *testing.T) {
+	const secret = "s3cr3t-in-a-fix"
+	var log []string
+	var out bytes.Buffer
+	stages := fakes(&log, Preflight)
+	stages[0].(*fake).applyErr = &StageError{
+		Err: errors.New("the state bucket is not there"),
+		Fix: "run gcloud auth with " + secret + " unset, then rerun",
+	}
+	res, err := Run(context.Background(), stages, Options{Yes: true, Terminal: true, Out: &out, Redact: []string{secret}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	js, err := res.JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Failed == nil {
+		t.Fatalf("the stage did not fail: %+v", res)
+	}
+	if strings.Contains(out.String(), secret) || strings.Contains(string(js), secret) || strings.Contains(res.Failed.Fix, secret) {
+		t.Errorf("a held value reached the output through a stage's fix:\n%s\n%s", out.String(), js)
+	}
+	if want := "fix: run gcloud auth with [redacted] unset, then rerun"; !strings.Contains(out.String(), want) {
+		t.Errorf("%q is not in the account:\n%s", want, out.String())
+	}
+}
+
+// --yes covers the stages the canonical order declares and nothing else. A
+// name no slot declares — a typo, a stage a later task registers before its
+// slot lands, a name from another version of this package — is refused, so the
+// mistake falls in the direction that asks rather than the one that confirms.
+func TestYesCoversOnlyDeclaredStages(t *testing.T) {
+	for _, name := range []string{"", "unknown", "install", "installation ", "installation2x", "Installation"} {
+		if YesCovers(name) {
+			t.Errorf("YesCovers(%q) is true: --yes may not reach a name the order does not declare", name)
+		}
+		if RunCovers(name) {
+			t.Errorf("RunCovers(%q) is true", name)
+		}
+	}
+	for _, name := range []string{Preflight, Installation, Services, Repository} {
+		if !YesCovers(name) {
+			t.Errorf("YesCovers(%s) is false: the order declares it and it is not noYes", name)
 		}
 	}
 }

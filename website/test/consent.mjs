@@ -128,6 +128,14 @@ const DOCUMENT_SELECTORS = new Map([
   ['[data-copy]', (el) => el.attrs.has('data-copy')],
   ['[data-copy-button]', (el) => el.attrs.has('data-copy-button')],
   ['[data-copy-status]', (el) => el.attrs.has('data-copy-status')],
+  // The site's sliders: one block per page, found by its own attribute and by nothing else —
+  // the console page's screenshot slider and the homepage's. `site.js` asks for this on every
+  // page it starts on, and the pages these cases run are the built ones, which include both.
+  // Nothing below reads a slider — a slider has nothing to do with consent — but the query is
+  // made on every page, and the stub's rule is that a selector is taught here rather than
+  // answered with nothing. What is inside a block is asked of the block, not of the document
+  // (the map below).
+  ['[data-slider]', (el) => el.attrs.has('data-slider')],
   ['.site-nav details[open]', (el) => el.name === 'details' && el.attrs.has('open')],
   // The keyboard's way into a group asks for the groups themselves, whatever the device answers
   // (the pointer's half above asks for the open ones). Every shipped page carries the menu, and
@@ -142,6 +150,21 @@ const DOCUMENT_SELECTORS = new Map([
 const ELEMENT_SELECTORS = new Map([
   ['[data-consent]', (el) => el.attrs.has('data-consent')],
   ['summary', (el) => el.name === 'summary'],
+  // The two sliders' own hooks, read inside the block the script finds each by — both pages'
+  // sliders are one component since 2026-10-21, so both carry the same four: the track the
+  // console side scrolls (and the homepage side reads to know it is not a track), the slides
+  // it counts, the dots it marks, and the bar it reveals. Every one of them is asked for on a
+  // page that carries a slider — the built pages these cases run are the homepage and the
+  // console page, one of each — so every one of them is taught here. The slides and the dots
+  // are asked of the block rather than of the document, which is why they are here and not in
+  // the map above; the two step controls, which both sliders read, are taught below.
+  ['[data-slider-track]', (el) => el.attrs.has('data-slider-track')],
+  ['[data-slider-bar]', (el) => el.attrs.has('data-slider-bar')],
+  ['[data-slider-counter]', (el) => el.attrs.has('data-slider-counter')],
+  ['[data-slider-slide]', (el) => el.attrs.has('data-slider-slide')],
+  ['[data-slider-dot]', (el) => el.attrs.has('data-slider-dot')],
+  ['[data-slider-prev]', (el) => el.attrs.has('data-slider-prev')],
+  ['[data-slider-next]', (el) => el.attrs.has('data-slider-next')],
 ])
 
 // The address a stubbed page is "at", and the page it was reached from: both carry a query
@@ -274,6 +297,7 @@ function stubDOM(html, location = PAGE_LOCATION) {
       hidden: node.attrs.has('hidden'),
       handlers: new Map(),
       children: [],
+      parent: null,
       addEventListener(type, handler) {
         if (!this.handlers.has(type)) this.handlers.set(type, [])
         this.handlers.get(type).push(handler)
@@ -312,6 +336,21 @@ function stubDOM(html, location = PAGE_LOCATION) {
         walkFrom(this)
         return out
       },
+      // The nearest ancestor-or-self matching a selector, which is the rule the sliders are
+      // read by: an element belongs to a block only when `closest('[data-slider]')` is that
+      // block (`site.js`'s `own()`), and that is what keeps one slider's own slides out of the
+      // other's reading since the homepage's "See it" panel became the shared component. A
+      // selector neither map above teaches is refused here for the same reason as everywhere
+      // else in this stub: matching nothing is not the same as answering.
+      closest(selector) {
+        const matches = DOCUMENT_SELECTORS.get(selector) ?? ELEMENT_SELECTORS.get(selector)
+        assert.ok(
+          matches,
+          `a page script asks an element for the closest ${selector}: this stub reads ${[...DOCUMENT_SELECTORS.keys(), ...ELEMENT_SELECTORS.keys()].join(', ')}, so a new one has to be taught here rather than silently matching nothing`,
+        )
+        for (let node = this; node !== null; node = node.parent) if (matches(node)) return node
+        return null
+      },
       querySelector(selector) {
         return this.querySelectorAll(selector)[0] ?? null
       },
@@ -321,7 +360,9 @@ function stubDOM(html, location = PAGE_LOCATION) {
     if (id !== undefined) byId.set(id, el)
     for (const child of node.children ?? []) {
       if (child.name === undefined) continue
-      el.children.push(build(child))
+      const built = build(child)
+      built.parent = el
+      el.children.push(built)
     }
     return el
   }

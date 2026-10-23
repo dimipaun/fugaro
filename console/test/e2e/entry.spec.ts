@@ -523,14 +523,19 @@ test.describe('the renderer entry, in the real window', () => {
           lines: [...(section?.querySelectorAll('p') ?? [])].map((line) => line.textContent),
         }
       })
-      // The binary line is the path as the console's sanitizer draws it (a
-      // scratch directory's random suffix can read as a token and is redacted,
-      // exactly as the picker's row draws it).
-      const drawnBinary = sanitizeRefusal(join(stub.dir, 'fugaro'), 'the installation’s binary')
-      expect(drawnBinary.ok).toBe(true)
+      // The binary line is the path **as written**: a filesystem path is not a
+      // token, and the scratch tree's `mkdtemp` suffix -- six characters mixing
+      // case and digits -- is exactly what a header that redacted it would be
+      // redacting. That is the owner's report of 2026-10-21, and
+      // `sanitize-path-runs.test.ts` holds the sanitizer's half of it; the
+      // screen's half is here, and it is an exact line rather than a redacted
+      // one, so a return of `[redacted-token]` fails this spec.
+      const binary = join(stub.dir, 'fugaro')
+      const drawnBinary = sanitizeRefusal(binary, 'the installation’s binary')
+      expect(drawnBinary.ok ? drawnBinary.text : null).toBe(binary)
       expect(header).toEqual({
         kind: 'chosen',
-        lines: ['e2e', drawnBinary.ok ? drawnBinary.text : '', '0.9.0 · reduced'],
+        lines: ['e2e', binary, '0.9.0 · reduced'],
       })
       // And the picker's status line, opened from the menu.
       const picker = await openPickerFromMenu(launched.app)
