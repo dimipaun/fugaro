@@ -527,12 +527,20 @@ func TestDocsMobileEasRunbookNamesEveryProtectedEnvironment(t *testing.T) {
 	if !exists {
 		t.Errorf("no workflow on this tree declares `environment: mobile-release`: §9's table and §10 are about it, and this reader reads docs/pending-workflows/ too, so the staged file of PR #777 should be here")
 	}
+	installed := false
 	for _, decl := range decls {
 		if filepath.Dir(decl.File) == ".github/workflows" {
-			t.Errorf("%s declares `environment: mobile-release`: that is an *installed* workflow, and §10 and §9 both describe the mobile release workflow as staged and copied in by the owner -- this page has to be rewritten as a description of a running pipeline", decl.File)
+			installed = true
 		}
 	}
-	if row := tableRow(raw, "| **`mobile-release`** |"); !strings.Contains(row, "staged, not applied") {
+	row := tableRow(raw, "| **`mobile-release`** |")
+	if installed {
+		// Copied in on 2026-10-23: the row has to say so, and must no longer
+		// read "staged, not applied" about a file that is running.
+		if !strings.Contains(row, "applied 2026-10-23") || strings.Contains(row, "staged, not applied") {
+			t.Errorf("%s's `mobile-release` row does not say \"applied 2026-10-23\" (or still says \"staged, not applied\"): .github/workflows/mobile-release.yml is installed, so the row has to describe a running pipeline", mobileEasRunbook)
+		}
+	} else if !strings.Contains(row, "staged, not applied") {
 		t.Errorf("%s's `mobile-release` row does not say \"staged, not applied\": the file is under docs/pending-workflows/, so a row that reads as an installed workflow claims a running pipeline this repository does not have", mobileEasRunbook)
 	}
 	// And which environment the page says it is, derived from how many the files
@@ -561,6 +569,25 @@ func TestDocsMobileEasRunbookNamesEveryProtectedEnvironment(t *testing.T) {
 // artifact and never runs `eas submit`"), so the page's account of it is the
 // part of this runbook most likely to drift from the tree.
 const stagedMobileReleaseWorkflow = "docs/pending-workflows/mobile-release.yml"
+
+// appliedMobileReleaseWorkflow is where the owner copied that file on
+// 2026-10-23. Once it exists and the staged copy is gone, §10 is an account of
+// the running file instead, and the page says so in the present tense.
+const appliedMobileReleaseWorkflow = ".github/workflows/mobile-release.yml"
+
+// mobileReleaseWorkflowForRunbook is the file §10 is an account of on this
+// tree: the staged copy while it exists, the applied file once the copy-in has
+// removed it. Both existing at once is the half-done copy-in, and the staged
+// copy (the reviewed text) is read then; neither existing is "".
+func mobileReleaseWorkflowForRunbook() string {
+	if _, err := os.Stat(filepath.Join("..", "..", stagedMobileReleaseWorkflow)); err == nil {
+		return stagedMobileReleaseWorkflow
+	}
+	if _, err := os.Stat(filepath.Join("..", "..", appliedMobileReleaseWorkflow)); err == nil {
+		return appliedMobileReleaseWorkflow
+	}
+	return ""
+}
 
 // workflowSecretRE finds a `secrets.NAME` reference. The reader below scans the
 // file's text rather than one parsed field because a secret can be reached from
@@ -601,13 +628,11 @@ func workflowSecrets(text string) []string {
 // which is the assertion that catches a page that has rediscovered a store
 // credential in CI.
 func TestDocsMobileEasRunbookMatchesTheStagedReleaseWorkflow(t *testing.T) {
-	if _, err := os.Stat(filepath.Join("..", "..", stagedMobileReleaseWorkflow)); err != nil {
-		t.Skipf("%s is not in this tree: §10 is this page's account of the staged release workflow PR #777 left here, so a tree without it has nothing for §10 to be an account of", stagedMobileReleaseWorkflow)
+	wfPath := mobileReleaseWorkflowForRunbook()
+	if wfPath == "" {
+		t.Skipf("neither %s nor %s is in this tree: §10 is this page's account of the app's release workflow, so a tree without it has nothing for §10 to be an account of", stagedMobileReleaseWorkflow, appliedMobileReleaseWorkflow)
 	}
-	if _, err := os.Stat(filepath.Join("..", "..", ".github", "workflows", "mobile-release.yml")); err == nil {
-		t.Errorf(".github/workflows/mobile-release.yml exists: the copy-in §10 and §9 describe as the owner's remaining step has happened, and this page has to be rewritten in the present tense as a description of a running pipeline")
-	}
-	text := readDoc(t, stagedMobileReleaseWorkflow)
+	text := readDoc(t, wfPath)
 	var wf struct {
 		On struct {
 			Push struct {
@@ -635,21 +660,21 @@ func TestDocsMobileEasRunbookMatchesTheStagedReleaseWorkflow(t *testing.T) {
 		} `yaml:"jobs"`
 	}
 	if err := yaml.Unmarshal([]byte(text), &wf); err != nil {
-		t.Fatalf("%s is not valid YAML: %v -- §10 claims the file as its authority, so a file this test cannot read is not one the page agrees with", stagedMobileReleaseWorkflow, err)
+		t.Fatalf("%s is not valid YAML: %v -- §10 claims the file as its authority, so a file this test cannot read is not one the page agrees with", wfPath, err)
 	}
 	raw := readDoc(t, mobileEasRunbook)
 	section := sectionText(raw, "## 10. ", "## 11. ")
 	if section == "" {
 		t.Fatal("§10 was renamed: this test reads the section between \"## 10. \" and \"## 11. \", and it has to be repointed at it")
 	}
-	if !strings.Contains(section, stagedMobileReleaseWorkflow) {
-		t.Errorf("§10 does not name %s: the file is what the section is an account of, and a reader has to be able to open it", stagedMobileReleaseWorkflow)
+	if !strings.Contains(section, wfPath) {
+		t.Errorf("§10 does not name %s: the file is what the section is an account of, and a reader has to be able to open it", wfPath)
 	}
 
 	// The trigger, and the refusals: the tag filter is derived from the file, so
 	// the page has to print the file's own filter rather than "a release tag".
 	if len(wf.On.Push.Tags) != 1 {
-		t.Errorf("%s declares %d tag filters (%v): §10 describes one, the filter the sibling release workflows use", stagedMobileReleaseWorkflow, len(wf.On.Push.Tags), wf.On.Push.Tags)
+		t.Errorf("%s declares %d tag filters (%v): §10 describes one, the filter the sibling release workflows use", wfPath, len(wf.On.Push.Tags), wf.On.Push.Tags)
 	}
 	for _, filter := range wf.On.Push.Tags {
 		if want := "`" + filter + "`"; !strings.Contains(section, want) {
@@ -657,11 +682,11 @@ func TestDocsMobileEasRunbookMatchesTheStagedReleaseWorkflow(t *testing.T) {
 		}
 	}
 	if wf.On.WorkflowDispatch.Inputs == nil {
-		t.Errorf("%s declares no workflow_dispatch input: §10 describes the dispatch and its one dry-run input", stagedMobileReleaseWorkflow)
+		t.Errorf("%s declares no workflow_dispatch input: §10 describes the dispatch and its one dry-run input", wfPath)
 	}
 	for name, input := range wf.On.WorkflowDispatch.Inputs {
 		if want := fmt.Sprintf("input `%s` **defaults to `%t`", name, input.Default); !strings.Contains(section, want) {
-			t.Errorf("§10 does not say %q: %s's dispatch input is %q with default %t, and the default is what decides whether a person trying the workflow reaches the store", want, stagedMobileReleaseWorkflow, name, input.Default)
+			t.Errorf("§10 does not say %q: %s's dispatch input is %q with default %t, and the default is what decides whether a person trying the workflow reaches the store", want, wfPath, name, input.Default)
 		}
 	}
 	for _, refused := range []struct {
@@ -674,7 +699,7 @@ func TestDocsMobileEasRunbookMatchesTheStagedReleaseWorkflow(t *testing.T) {
 		{"schedule", wf.On.Schedule},
 	} {
 		if refused.what != nil {
-			t.Errorf("%s declares a `%s` trigger: §10 says the file refuses it, because a job that builds on EAS and holds an Expo token must never run on a pull request", stagedMobileReleaseWorkflow, refused.event)
+			t.Errorf("%s declares a `%s` trigger: §10 says the file refuses it, because a job that builds on EAS and holds an Expo token must never run on a pull request", wfPath, refused.event)
 		}
 	}
 
@@ -682,7 +707,7 @@ func TestDocsMobileEasRunbookMatchesTheStagedReleaseWorkflow(t *testing.T) {
 	// least-privilege pair, each running the release gate as its first step --
 	// which is what §10's "Locks" row claims.
 	if len(wf.Jobs) != 2 {
-		t.Errorf("%s declares %d jobs (%v): §10 says the file is two jobs, one per platform, independent of each other", stagedMobileReleaseWorkflow, len(wf.Jobs), noteKeys(wf.Jobs))
+		t.Errorf("%s declares %d jobs (%v): §10 says the file is two jobs, one per platform, independent of each other", wfPath, len(wf.Jobs), noteKeys(wf.Jobs))
 	}
 	for _, name := range noteKeys(wf.Jobs) {
 		job := wf.Jobs[name]
@@ -697,7 +722,7 @@ func TestDocsMobileEasRunbookMatchesTheStagedReleaseWorkflow(t *testing.T) {
 				t.Errorf("§10 does not name %s, a scope the file's %s job declares: the page's claim is that the file holds no write scope of any kind", want, name)
 			}
 			if value != "read" {
-				t.Errorf("%s's %s job declares `%s: %s`: §10 says the file holds no write scope, and a write scope here is the page being wrong about the tree", stagedMobileReleaseWorkflow, name, key, value)
+				t.Errorf("%s's %s job declares `%s: %s`: §10 says the file holds no write scope, and a write scope here is the page being wrong about the tree", wfPath, name, key, value)
 			}
 		}
 		gate := false
@@ -707,7 +732,7 @@ func TestDocsMobileEasRunbookMatchesTheStagedReleaseWorkflow(t *testing.T) {
 			}
 		}
 		if !gate {
-			t.Errorf("%s's %s job runs no step naming scripts/release-gate.sh: §10 says each job runs that script as its own first step, and it is the second of the two locks the page describes", stagedMobileReleaseWorkflow, name)
+			t.Errorf("%s's %s job runs no step naming scripts/release-gate.sh: §10 says each job runs that script as its own first step, and it is the second of the two locks the page describes", wfPath, name)
 		}
 	}
 	if !strings.Contains(section, "scripts/release-gate.sh") {
@@ -718,13 +743,13 @@ func TestDocsMobileEasRunbookMatchesTheStagedReleaseWorkflow(t *testing.T) {
 	// file is the authority for both.
 	for key, value := range wf.Permissions {
 		if want := fmt.Sprintf("`%s: %s`", key, value); !strings.Contains(section, want) {
-			t.Errorf("§10 does not name %s, the workflow-level permission %s declares: least privilege is a claim about this block", want, stagedMobileReleaseWorkflow)
+			t.Errorf("§10 does not name %s, the workflow-level permission %s declares: least privilege is a claim about this block", want, wfPath)
 		}
 	}
 	pinRE := regexp.MustCompile(`^[^@\s]+@[0-9a-f]{40}$`)
 	for _, m := range regexp.MustCompile(`(?m)^\s*-?\s*uses:\s*(\S+)`).FindAllStringSubmatch(text, -1) {
 		if !pinRE.MatchString(m[1]) {
-			t.Errorf("%s uses %s: §10 says every action is pinned to a full 40-character commit SHA, and a tag or a short SHA here is the page being wrong about the tree", stagedMobileReleaseWorkflow, m[1])
+			t.Errorf("%s uses %s: §10 says every action is pinned to a full 40-character commit SHA, and a tag or a short SHA here is the page being wrong about the tree", wfPath, m[1])
 		}
 	}
 
@@ -734,7 +759,7 @@ func TestDocsMobileEasRunbookMatchesTheStagedReleaseWorkflow(t *testing.T) {
 	// the finding Check 89's step 5 exists to produce, written down as the plan.
 	read := workflowSecrets(text)
 	if len(read) != 1 {
-		t.Errorf("%s references the secrets %v: §10 says the file reads exactly one, the Expo token, because the store credentials stay on the EAS project", stagedMobileReleaseWorkflow, read)
+		t.Errorf("%s references the secrets %v: §10 says the file reads exactly one, the Expo token, because the store credentials stay on the EAS project", wfPath, read)
 	}
 	row := tableRow(raw, "| **Secrets** |")
 	if row == "" {
@@ -742,12 +767,12 @@ func TestDocsMobileEasRunbookMatchesTheStagedReleaseWorkflow(t *testing.T) {
 	}
 	for _, name := range workflowSecrets(row) {
 		if !slices.Contains(read, name) {
-			t.Errorf("§10's Secrets row names `secrets.%s`, which %s does not reference: the page's account of the file's secrets is derived from the file, and a secret the file does not read is a credential the page has put in CI", name, stagedMobileReleaseWorkflow)
+			t.Errorf("§10's Secrets row names `secrets.%s`, which %s does not reference: the page's account of the file's secrets is derived from the file, and a secret the file does not read is a credential the page has put in CI", name, wfPath)
 		}
 	}
 	for _, name := range read {
 		if want := "`secrets." + name + "`"; !strings.Contains(row, want) {
-			t.Errorf("§10's Secrets row does not name %s, the one secret %s reads: the row's whole claim is that the token is the only credential CI holds", want, stagedMobileReleaseWorkflow)
+			t.Errorf("§10's Secrets row does not name %s, the one secret %s reads: the row's whole claim is that the token is the only credential CI holds", want, wfPath)
 		}
 	}
 }
