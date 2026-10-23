@@ -260,9 +260,12 @@ export function isInside(directory: string, candidate: string): boolean {
  * as far as this console is concerned: `$XDG_CONFIG_HOME/fugaro`,
  * `$FUGARO_CONFIG`'s directory, and `~/.config/fugaro`.
  *
- * The home directory arrives as an argument -- Electron's `app.getPath('home')`
- * -- rather than being read here, which is what keeps `homedir()` out of this
- * module (`test/unit/configread.test.ts` refuses it anywhere outside binary
+ * The home directory arrives as an argument -- the app's own environment's
+ * `HOME`, the home `binDirectories` expands `~` with, and not Electron's
+ * `app.getPath('home')`, which on macOS is `NSHomeDirectory()` and ignores
+ * `HOME` (`installInstallationPicker` says why) -- rather than being read here,
+ * which is what keeps `homedir()` out of this module
+ * (`test/unit/configread.test.ts` refuses it anywhere outside binary
  * resolution) and keeps the function testable for a home it did not have.
  *
  * This is a *path* computation and it touches no file: knowing where the CLI's

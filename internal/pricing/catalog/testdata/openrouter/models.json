@@ -3,9 +3,9 @@
   {
    "id": "deepseek/deepseek-v4.1-flash",
    "pricing": {
-    "completion": "0.0000000112",
-    "input_cache_read": "0.0000000016",
-    "prompt": "0.0000000352"
+    "completion": "0.00000066",
+    "input_cache_read": "0.000000006",
+    "prompt": "0.000000165"
    }
   },
   {

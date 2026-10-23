@@ -668,7 +668,16 @@ run against the committed tree, and each made a named test red:
   design's eight recordings are still the owner's to make.
 - **`version --json` and a schema version.** The CLI has neither (contract §4.3
   gaps 1 and 3), so the handshake is the one human line and the console refuses a
-  binary whose line it cannot read rather than guessing.
+  binary whose line it cannot read rather than guessing. **The one line it reads
+  without a version in it is `dev`**, which `var Version = "dev"`
+  (`internal/cli/root.go`) prints for a binary built without the release
+  `-ldflags`: that is a *recognised* line and it is not one of the refusals — the
+  console accepts it in the **reduced** mode, with the banner naming it as
+  unplaceable, because refusing it would block the person building the CLI and
+  the console together. Nothing else is guessed at: a word the console does not
+  recognise stays the refusal above (plan open item 3, answered by the owner
+  2026-10-22; `src/shared/version.ts`'s `classifyCliVersion`, pinned in
+  `test/unit/version.test.ts` and `test/unit/window.test.ts`).
 
 ## Recorded, redacted fixtures, and the recorder (Task 1.4)
 
@@ -1482,6 +1491,27 @@ truncated.
 | `host` | a machine name: every value, hostname, IP address or anything else, is drawn as `<host>` (a recorder marker is kept) | — |
 | `path` | a filesystem path | redacted to `<path>` |
 | `url` | `https`, a non-empty host, no whitespace, no credential in the host, a path segment, the query or the fragment (each read as written and percent-decoded: the token families, a credential-named assignment such as `access_token=…`, and — in the host, the query and the fragment — the high-entropy rule, which there also reads a run that follows a dot), no random-looking host label (the host is read as written and as parsed, whole and label by label, each `xn--` label also punycode-decoded; a run of 20+ letters and digits with both, at 3.5+ bits per character, is refused even case-folded), and not a well-known webhook URL (Slack `hooks.slack.com/services/…`, Discord `…/api/webhooks/…`, Microsoft Teams, Zapier, IFTTT, Telegram); userinfo is dropped | refused — including `http:`, `javascript:` and a URL carrying a credential |
+
+**One key is drawn in a class other than the one `WIRE_TEXT_CLASSES` gives it,
+and it is deliberate.** `launched_by` — who started a run — is classified
+`person`, and the Live and Projects rows draw its **short form** (the CLI's own
+cut, `runview.LauncherShort`: the part before an address's first `@`, the whole
+value for anything else — the cut `fugaro runs ls`'s own `BY` column makes)
+through the **`label`** class. `person` is a validating class: it draws a login
+or a pseudonym and the console's marker for an address, and refuses everything
+else, so `dana.lopez@example.com` — the commonest corporate local part — and
+every display name would be a refused cell reading `n/a`, on nearly every row of
+a column whose whole purpose is to say who started the run. The short form is
+**not an address**: the cut is at the first `@`, and what the `label` class does
+here is what a cell needs — one line, the 200-character bound, the invisible
+characters stripped, a credential shape masked. The **whole** recorded value is
+drawn in the Run screen's header, through `person` as the map says, so an
+address is the console's marker there and **no address is drawn anywhere**.
+`src/shared/launcher.ts` is the module and the reasoning;
+`docs/design/desktop-console.md` §6.2 records the decision. This is not a
+narrowing of **D15**: that decision is about `report --by person`'s cost
+breakdown on the Spend screen, and the console already names people on Live and
+Projects without a switch — a killed repository's row reads `KILLED by <who>`.
 
 **The trade-off in the path, said out loud.** A path segment is not held to the
 high-entropy rule, because a commit link's 40-hex digest is a path segment and
@@ -2727,30 +2757,6 @@ a scratch copy of the staged file and turned the named test red:
 | `curl … | sh`, `eval`, `env`, `printenv | sort`, `set | grep` added | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the download-and-run and environment-dump scans |
 | the publish job's `sha256sum --strict --check` removed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the publish job's steps |
 | the upload-artifact pin changed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the repository's existing pin |
-
-## The e2e goldens, as recorded (2026-10-18)
-
-The eight golden screenshots are committed under `test/e2e/__screenshots__/`
-(`live-{light,dark}-darwin.png`, and `{projects,spend,run}/{light,dark}-darwin.png`),
-**darwin only**. They were recorded on the owner's machine: macOS 26.7 (Darwin
-25.6.0, x64), Node 22.23.3, `@playwright/test` 1.64.1, Electron 44.7.2 (the
-lockfile's versions), device scale factor 1 as the specs launch the window (the
-PNGs are 1164 px wide), at main `82ba600d`, with `npm run build` then
-`playwright test --workers=1 --update-snapshots`. They were then compared twice in a
-plain run (`playwright test --workers=1`, 93 passed both times). Every frame is
-drawn from the specs' own invented documents (`example-owner/...`, `acme/...`,
-`redacted@example.invalid`); none holds a real name.
-
-**Linux baselines are not committed.** The name carries the platform
-(`{arg}-{platform}{ext}`), and Linux draws different pixels, so
-`live-light-linux.png` and the rest must be recorded on Linux, under
-`xvfb-run --auto-servernum`. **CI does not compare any golden today**:
-`.github/workflows/console-tests.yml` sets `FUGARO_CONSOLE_GOLDENS: skip` at job level
-(line 90), so on both `console (ubuntu-latest)` and `console (macos-latest)` the
-golden tests are skipped and the committed darwin files are compared only on a
-developer's Mac, never on the macos runner, whose rendering has not been compared
-with these files.
-||||||| 82ba600d9
 | `retry_apple_network` removed from `console/scripts/notarize-and-staple.sh` or from the verification step | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the helper's definition in each of the two places and on every call site it must have |
 | the retry wrapped around a step's `codesign --sign`, or around the script's `xcrun notarytool submit` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the only-lines-that-may-name-the-helper clause ("retries … the helper wraps the `xcrun stapler` calls this pipeline makes and nothing else") |
 | the script's `xcrun stapler staple` or `xcrun stapler validate` left unwrapped | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the two retried calls the script must run |
@@ -2771,6 +2777,104 @@ with these files.
 | the `ditto -c -k --keepParent` zip of the bundle dropped | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on that line; and `TestDocsConsoleNotarizeAndStapleScript`, on the calls the fake `xcrun` and `ditto` log |
 | the script left non-executable | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on its file mode (the signing step runs it directly) |
 | the "Re-copy required" note deleted from `docs/pending-workflows/README.md` while the staged and applied files differ | `TestDocsConsoleReleaseStagedChangeSaysItNeedsACopyIn`: the owner is the one who has to copy the file in, and that section is where they read it |
+
+## The e2e goldens: how to re-record them, and what is committed today
+
+The eight golden screenshots are committed under `test/e2e/__screenshots__/`, one
+per screen per theme per platform (`playwright.config.ts`'s
+`snapshotPathTemplate` adds `-{platform}`):
+
+| Screen | Spec | Files on one platform |
+|---|---|---|
+| Live | `test/e2e/live.spec.ts` | `live-light-<platform>.png`, `live-dark-<platform>.png` |
+| Spend | `test/e2e/spend.spec.ts` | `spend/light-<platform>.png`, `spend/dark-<platform>.png` |
+| Projects | `test/e2e/projects.spec.ts` | `projects/light-<platform>.png`, `projects/dark-<platform>.png` |
+| Run detail | `test/e2e/run.spec.ts` | `run/light-<platform>.png`, `run/dark-<platform>.png` |
+
+`<platform>` is `process.platform` — `darwin` or `linux`. macOS and Linux draw
+different pixels, so **each platform's set is recorded on that platform**, and
+`updateSnapshots: 'none'` means a missing baseline fails a comparison run rather
+than being written by one. Recording is an explicit act:
+
+```
+cd console && npm run build && npx playwright test live.spec.ts --update-snapshots
+cd console && npm run build && npx playwright test spend.spec.ts --update-snapshots
+cd console && npm run build && npx playwright test projects.spec.ts --update-snapshots
+cd console && npm run build && npx playwright test run.spec.ts --update-snapshots
+```
+
+On Linux, Electron needs a display, so each line takes `xvfb-run --auto-servernum`
+before `npx playwright test`. **`npm run build` is part of the command, not a
+convenience**: the specs load the compiled renderer and the served bundle out of
+`dist/`, and `npx playwright test` does not build, so a re-record run without it
+photographs whatever `dist/` happened to hold. `--update-snapshots` is what
+overrides `updateSnapshots: 'none'` for that one run. Add `--workers=1` for a
+recording run: `fullyParallel: false` keeps one file's tests in one worker, and
+one worker keeps the whole run in one.
+
+`test/support/goldens.ts` is what the four specs share, and it is why a golden
+fails legibly rather than with a bare pixel diff:
+
+- **`expectGolden`** takes every recording. On a **comparison** run,
+  `assertGoldenFresh` refuses a golden that is **missing** or **older than the
+  theme directory** (compared by the commit that last touched each, which is the
+  only clock a checkout carries — a clone writes every file at the same moment),
+  and prints the exact command above, for that spec, for the platform it is
+  running on. A comparison that then fails is re-reported with Playwright's own
+  message kept and the same command appended: the matcher's own suggestion
+  (`npx playwright test <file> --update-snapshots`) is not that command. A
+  **recording** run (any `--update-snapshots` mode, which is what the commands
+  above use) is the one case the preflight stands aside for: it is the state that
+  fixes every reason a golden cannot be compared, and the matcher is what writes
+  the file, so a guard that fired there would refuse to let its own command work.
+- **`expectGrounded`** is the assertion that the screens are painted at all. It
+  draws each screen once per theme and holds the app's ground
+  (`getComputedStyle(document.body).backgroundColor`), the screen's own `h1`
+  colour and the two tokens they are painted from (`--ground`, `--text`) to the
+  literals `src/renderer/theme/palette.css` ships, and — because one value set
+  ships (the owner's Q1 ruling of 2026-10-19) — holds the two runs to the same
+  ground as each other. **It is not a golden test and
+  `FUGARO_CONSOLE_GOLDENS=skip` does not skip it**: it reads no PNG, and it is the
+  one case that is red when the stylesheet stops being served, linked or applied —
+  the regression that could otherwise be recorded as a fresh golden and never
+  noticed. (Every other read in those specs passes on a tree nothing paints: the
+  theme travels as a `data-theme` attribute the renderer stamps.)
+
+**What is committed today is darwin only, and it is superseded.** The eight
+`*-darwin.png` files are the recording of **2026-10-18**: macOS 26.7 (Darwin
+25.6.0, x64), Node 22.23.3, `@playwright/test` 1.64.1, Electron 44.7.2 (the
+lockfile's versions), device scale factor 1 as the specs launch the window (the
+PNGs are 1164 px wide), at main `82ba600d`, recorded with `npm run build` then
+`playwright test --workers=1 --update-snapshots`, and compared twice in a plain
+run (93 passed both times). Every frame is drawn from the specs' own invented
+documents (`example-owner/...`, `acme/...`, `redacted@example.invalid`); none
+holds a real name. **They are pictures of the unstyled tree**: they were taken
+before `src/renderer/theme/` existed, so no frame carries a rule of CSS. Three of
+the four light/dark pairs say so in the plainest way — the two themes' frames of
+the Live, Spend and Projects screens are the **same file byte for byte**
+(`live-light-darwin.png` and `live-dark-darwin.png` are both 38305 bytes of
+`f4b55fed…`, and so on) — while the Run screen's pair differs
+(`run/light-darwin.png` 129088 bytes, `run/dark-darwin.png` 129359) for a reason
+that has nothing to do with styling: `run.spec.ts` draws its light frame with a
+scrub time (`2026-10-15T12:05:00Z`) and its dark frame with `null`, so the two
+frames are different content either way. What all eight share is the absence of
+styling, and that is what makes them superseded: the theme landed after them
+(Tasks 6.1-6.5; the newest file in
+`src/renderer/theme/`, `base.css`, was last touched by `6d107527` on 2026-10-19),
+which is why they are superseded: re-record them on the Mac with the command above
+and commit the result. Until that is done the four golden tests fail on darwin
+with that command in the message rather than with a bare pixel diff — which is
+the intended state, and not a regression to chase. **Linux baselines are not
+committed** and have never been recorded; they need a Linux machine with a
+display (`xvfb-run`).
+
+**CI does not compare any golden today.** `.github/workflows/console-tests.yml`
+sets `FUGARO_CONSOLE_GOLDENS: skip` at job level, so on both
+`console (ubuntu-latest)` and `console (macos-latest)` the golden tests are
+skipped. That stays until both platforms' sets are committed: a skip that hides a
+comparison is better than a comparison against a picture of a tree that no longer
+exists, and the computed-ground assertion above is not skipped, so a tree with no
+styling is still red in CI.
 
 ## The theme's tokens, and the palette they are painted in (Task 6.1)
 
@@ -3109,8 +3213,11 @@ is a baseline nobody reviewed. What holds them is two things already in the tree
 is this README: `playwright.config.ts`'s `updateSnapshots: 'none'` (`test/unit/playwright.test.ts`
 pins it), so a run with no baseline **fails** rather than writing one, and each golden spec's
 `test.skip(SKIP_GOLDENS, …)` on `FUGARO_CONSOLE_GOLDENS=skip`, which the staged
-console-tests workflow sets. No golden PNG is committed yet, and none is until Task 6.6
-records all eight at once, on each platform.
+console-tests workflow sets. This task commits no golden PNG, and the ones that follow it
+in this phase do not either: the darwin set PR #629 committed in the meantime is a picture
+of the tree as this task found it — no stylesheet in the bundle — and is superseded rather
+than kept ("The e2e goldens", above). Task 6.6 is where all eight are recorded at once, on
+each platform.
 
 This task re-records nothing, and no frame is compared or written by it: the golden tests
 are among the ones the skip covers, and the eight baselines are Task 6.6's single recording
@@ -3857,7 +3964,8 @@ to `FUGARO_INSTALL_COMMAND`, the constant `src/source/cli.ts` has carried since 
 once); the setup command to `README.md`'s getting-started step (`1. Run …`) and to
 `internal/cli/setup.go`'s `setupDoor` (`name: "setup"`), which is the thing that would
 have to change for the string to be wrong — and the module names `docs/setup-wizard/`,
-whose plan renamed the old `init` command to `fugaro setup`, so that rename was one line here. The
+whose plan renamed the command to `fugaro setup` and retired its old spelling, so that
+rename was one line here. The
 comment-stripped module is asserted to carry `fugaro setup` **exactly once**, because
 two spellings of one command is precisely the drift the file exists to catch. The URL
 is pinned to `website/src/pages/getting-started.astro` and to
