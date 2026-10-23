@@ -728,10 +728,22 @@ func (l *BundleLoader) Scrub(s string) string {
 	l.mu.Unlock()
 	if b == nil {
 		// Nothing has been read yet, so this loader holds no value to remove.
-		// The service's own order makes that unreachable for an audit line — a
-		// probe loads the bundle (ServeHTTP) before it can be due — and a
-		// scrubber that invented a redaction for a value it does not hold would
-		// be redacting text that is not a credential.
+		//
+		// This is reachable for an audit line, and not only for a probe's: the
+		// auditor the service writes EVERY line through is armed with this
+		// (NewProbeAuditor), so every refusal answered between the identity
+		// check and the first bundle read — the binding, the stop switches, an
+		// unreadable policy, a body this endpoint cannot read, an unreadable
+		// bundle — is scrubbed here, against no values at all. That is safe
+		// rather than lucky: no field of such a line can hold a credential's
+		// value — the credential field is empty (no credential was chosen), the
+		// purpose and the status are this package's own constants, and the
+		// identity's four fields are the ones auth.go has already held to
+		// token.ValidSegment, ValidJobName and the account rule — and a scrubber
+		// that invented a redaction for a value it does not hold would be
+		// redacting text that is not a credential. A probe's own lines are
+		// written after its bundle read, which is what the loader's order
+		// guarantees for them.
 		return s
 	}
 	for _, e := range b.entries {
