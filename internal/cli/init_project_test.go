@@ -69,8 +69,18 @@ func newProjectRig(t *testing.T) *projectRig {
 	return &projectRig{initRig: r, fb: fb, bill: bill}
 }
 
-// existing makes the project exist with Firebase, and billing as given.
+// existing makes the project exist with Firebase, and billing as given: a
+// project an earlier run of fugaro setup created, so it carries the creation
+// label (infra.CreatedLabelKey) a rerun resumes it by.
 func (r *projectRig) existing(billing bool) {
+	r.foreign(billing)
+	r.crm.SetLabels(newProj, map[string]string{infra.CreatedLabelKey: infra.CreatedLabelValue})
+}
+
+// foreign makes the project exist, readable, with Firebase and billing as
+// given, and without the creation label: a project no run of fugaro setup
+// created, which a run refuses.
+func (r *projectRig) foreign(billing bool) {
 	r.crm.AddProject(newProj, 424242)
 	r.gcs.AddProject(newProj, 424242)
 	r.fb.AddFirebase(newProj)
@@ -287,26 +297,77 @@ func TestProjectAndBillingInConfirmationText(t *testing.T) {
 	r.nothingDone(t, "a declined creation")
 }
 
-// A project that exists and the caller can read is adopted: no create, no
+// A project an earlier run of fugaro setup created and finished (Firebase and
+// billing are there) is the resume with nothing left to do: no create, no
 // Firebase, no link, whatever the flags.
-func TestCreateAdoptsOwnProject(t *testing.T) {
+func TestCreateResumesItsOwnProject(t *testing.T) {
 	r := newProjectRig(t)
 	r.existing(true)
 	r.bill.AddAccount(billingAcc, true)
 	out, _, _ := r.run(t, true, newProj+"\n"+billingAcc+"\n", "--create-project", "--link-billing", billingAcc, "--plan-only")
-	r.nothingDone(t, "an adopted project (plan)")
+	r.nothingDone(t, "a resumed project (plan)")
 	if !strings.Contains(out, "[done]") || !strings.Contains(out, "billing is already linked") {
 		t.Errorf("the project stage is not reported done, with billing left as it is:\n%s", out)
 	}
 	_, _, _ = r.run(t, true, newProj+"\n"+billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
-	r.nothingDone(t, "an adopted project")
+	r.nothingDone(t, "a resumed project")
 }
 
-// An interrupted run: the project exists without Firebase; the rerun adds
-// Firebase behind a typed ID, and never creates a second project.
+// TestCreateRefusesAnExistingProjectItDidNotCreate: Fugaro only starts fresh
+// (the owner's ruling of 2026-10-23). A project that already exists, that the
+// caller can read, and that no run of fugaro setup created (it carries no
+// creation label) is refused with the one line that says so, before anything is
+// created, added, linked or applied — whatever billing it has, and in the plan
+// as in the apply.
+func TestCreateRefusesAnExistingProjectItDidNotCreate(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		billing bool
+		args    []string
+	}{
+		{"billing linked", true, nil},
+		{"no billing, --link-billing", false, []string{"--link-billing", billingAcc}},
+		{"--plan-only", false, []string{"--plan-only"}},
+		{"--yes", true, []string{"--yes"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newProjectRig(t)
+			r.foreign(tc.billing)
+			r.bill.AddAccount(billingAcc, true)
+			out, _, err := r.run(t, true, newProj+"\n"+billingAcc+"\n", append([]string{"--create-project"}, tc.args...)...)
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("exit %d (%v), want a user error\n%s", ExitCode(err), err, out)
+			}
+			if want := "Fugaro only starts fresh: " + newProj + " already exists; pick another id"; !strings.Contains(out+errString(err), want) {
+				t.Errorf("the refusal does not say %q:\n%s\n%v", want, out, err)
+			}
+			r.nothingDone(t, "an existing project setup did not create")
+			if n := len(r.ran(t, "apply")); n != 0 {
+				t.Errorf("an installation was applied into a project setup did not create: %q", r.calls(t))
+			}
+		})
+	}
+}
+
+// TestCreatedProjectCarriesTheCreationLabel: the label a rerun resumes by is
+// on the project from its creation — sent in the create request itself, so no
+// window exists in which the project is there and unlabelled.
+func TestCreatedProjectCarriesTheCreationLabel(t *testing.T) {
+	r := newProjectRig(t)
+	_, _, _ = r.run(t, true, newProj+"\n", "--create-project")
+	cs := r.crm.Creates()
+	if len(cs) != 1 || cs[0].Labels[infra.CreatedLabelKey] != infra.CreatedLabelValue {
+		t.Fatalf("creates = %+v, want one carrying %s=%s", cs, infra.CreatedLabelKey, infra.CreatedLabelValue)
+	}
+}
+
+// An interrupted run: the project an earlier run created exists without
+// Firebase; the rerun adds Firebase behind a typed ID, and never creates a
+// second project.
 func TestCreateRerunAddsFirebaseOnly(t *testing.T) {
 	r := newProjectRig(t)
 	r.crm.AddProject(newProj, 424242)
+	r.crm.SetLabels(newProj, map[string]string{infra.CreatedLabelKey: infra.CreatedLabelValue})
 	r.gcs.AddProject(newProj, 424242)
 	r.bill.SetBilling(newProj, true)
 	_, _, _ = r.run(t, true, newProj+"\n", "--create-project")
@@ -819,21 +880,22 @@ func TestRelinkNeverHappens(t *testing.T) {
 	}
 }
 
-// A foreign, readable project is adopted only with every change said to be
-// to an EXISTING project, each behind its own typed confirmation.
-func TestExistingProjectBannersSayExisting(t *testing.T) {
+// A project an earlier run created and did not finish is resumed with every
+// change said to be to that project, each behind its own typed confirmation.
+func TestResumedProjectBannersSayResuming(t *testing.T) {
 	r := newProjectRig(t)
 	r.crm.AddProject(newProj, 424242)
+	r.crm.SetLabels(newProj, map[string]string{infra.CreatedLabelKey: infra.CreatedLabelValue})
 	r.gcs.AddProject(newProj, 424242)
 	r.bill.SetBilling(newProj, false)
 	out, _, _ := r.run(t, true, "", "--create-project", "--link-billing", billingAcc, "--plan-only")
-	if !strings.Contains(out, "adopting an EXISTING project "+newProj) {
-		t.Errorf("the plan does not say the project exists:\n%s", out)
+	if !strings.Contains(out, "resuming project "+newProj) {
+		t.Errorf("the plan does not say the project is resumed:\n%s", out)
 	}
 	r.nothingDone(t, "the plan")
 
 	out, _, _ = r.run(t, true, newProj+"\n"+billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
-	if n := strings.Count(out, "⚠ CONFIRM: adopting an EXISTING project"); n != 2 {
+	if n := strings.Count(out, "⚠ CONFIRM: resuming project"); n != 2 {
 		t.Errorf("%d confirmations say existing, want 2 (Firebase, billing):\n%s", n, out)
 	}
 	if len(r.crm.Creates()) != 0 || len(r.fb.Adds()) != 1 || len(r.bill.Links()) != 1 {
@@ -843,6 +905,7 @@ func TestExistingProjectBannersSayExisting(t *testing.T) {
 	// The ID alone is not enough for billing; and nothing typed does nothing.
 	r = newProjectRig(t)
 	r.crm.AddProject(newProj, 424242)
+	r.crm.SetLabels(newProj, map[string]string{infra.CreatedLabelKey: infra.CreatedLabelValue})
 	r.gcs.AddProject(newProj, 424242)
 	r.bill.SetBilling(newProj, false)
 	_, _, _ = r.run(t, true, "", "--create-project", "--link-billing", billingAcc)
@@ -1029,14 +1092,13 @@ func TestFirebaseProjectPairingRuleIsUnchanged(t *testing.T) {
 	}
 }
 
-// TestFirebaseProjectIsRefusedWithoutCreateProject pins where the pairing
-// refusal lives, from both sides of it: it is checkCreateProject's, so it fires
-// for a run that creates the project and is not reached by a run that creates
-// nothing — where a Firebase project other than the installation's own is the
-// ordinary two-project layout (init_firebase.go's head comment) and must stay
-// accepted. A rule hoisted out of the creating branch would keep the first half
-// green and break the second, which is what the pair is here for.
-func TestFirebaseProjectIsRefusedWithoutCreateProject(t *testing.T) {
+// TestFirebaseProjectIsAlwaysTheInstallations pins the pairing refusal from
+// both sides: it fires for a run that creates the project and for one that
+// creates nothing. Fugaro only starts fresh (the owner's ruling of
+// 2026-10-23), so a Firebase project other than the installation's own is no
+// layout at all any more: check() refuses it wherever both ids are on the
+// command line, and runInit does where the GCP project comes from the config.
+func TestFirebaseProjectIsAlwaysTheInstallations(t *testing.T) {
 	// A creation whose Firebase project is another one: refused, naming the
 	// flag and the project.
 	with := &initOptions{door: setupDoor.name, createProject: true, cloud: cloudOptions{gcpProject: newProj}, firebase: fpID}
@@ -1044,10 +1106,20 @@ func TestFirebaseProjectIsRefusedWithoutCreateProject(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), fpID) || !strings.Contains(err.Error(), "--firebase-project") {
 		t.Errorf("--create-project with --firebase-project %s: err = %v, want a refusal naming the flag and the project", fpID, err)
 	}
-	// The same flags with no creation: the pair of projects is the adopt path.
-	without := &initOptions{door: setupDoor.name, cloud: cloudOptions{gcpProject: newProj}, firebase: fpID}
-	if err := without.check(); err != nil {
-		t.Errorf("--firebase-project %s with no --create-project: %v, want nil (the two-project layout)", fpID, err)
+	// The same flags with no creation: refused too, in both doors.
+	for _, door := range []string{setupDoor.name, updateDoor.name} {
+		without := &initOptions{door: door, cloud: cloudOptions{gcpProject: newProj}, firebase: fpID}
+		if err := without.check(); err == nil || !strings.Contains(err.Error(), fpID) {
+			t.Errorf("%s --firebase-project %s with no creation: %v, want a refusal", door, fpID, err)
+		}
+	}
+	// Its own project is the one id that passes.
+	same := &initOptions{door: updateDoor.name, cloud: cloudOptions{gcpProject: newProj}, firebase: newProj}
+	if err := same.check(); err != nil {
+		t.Errorf("--firebase-project %s (the installation's own): %v", newProj, err)
+	}
+	if err := checkFirebaseProject(fpID, newProj); err == nil {
+		t.Error("checkFirebaseProject accepted another project")
 	}
 }
 
@@ -1120,6 +1192,7 @@ func TestTheBillingListIsNarrow(t *testing.T) {
 	linked := pickerAccountID(t, "linked")
 	offered := pickerAccountID(t, "offered")
 	r.crm.AddProject(newProj, 424242)
+	r.crm.SetLabels(newProj, map[string]string{infra.CreatedLabelKey: infra.CreatedLabelValue})
 	r.gcs.AddProject(newProj, 424242)
 	r.fb.AddFirebase(newProj)
 	r.bill.SetSuspended(newProj, linked)

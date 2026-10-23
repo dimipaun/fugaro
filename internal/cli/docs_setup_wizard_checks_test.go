@@ -534,24 +534,21 @@ func TestDocsCheck111AssertModeRefusesAModeWithNoCapture(t *testing.T) {
 	}
 }
 
-// TestDocsCheck111EveryModeAnswersTheCreateAdoptQuestion: every mode's command
-// line carries --create-project, and the section says why in terms of what the
+// TestDocsCheck111EveryModeCarriesCreateProject: every mode's command line
+// carries --create-project, and the section says why in terms of what the
 // wizard does.
 //
-// The wizard's create/adopt question does **not** default to adoption: creation
-// is the default Enter takes (D11, setup.go's setupAnswerCreate), so a mode at a
-// terminal would depend on the answer typed there. Where the question cannot be
-// asked at all — modes 3 and 4, no TTY and --json — the run takes adoption, the
-// picker never runs (it is asked only for a run that creates) and the project
-// stage skips, so the guided line every mode asserts never prints. Either way
-// the mode would prove nothing about the code under test, which is what the flag
-// is for. With it, the project stage reads `P` (which is there, so nothing is
-// created) and the guided line has a path to the owner — the stage's own
+// There is no create/adopt question any more: Fugaro only starts fresh (the
+// owner's ruling of 2026-10-23). `P` has a local config (its installation has
+// converged), and a run with a project config registers the project stage only
+// when --create-project says so; with it, the stage reads `P` — which must be a
+// project `fugaro setup` created, carrying fugaro_created=true, or it is refused —
+// and resumes it, so the guided line has a path to the owner: the stage's own
 // left-for-you, which it prints only for a `P` that exists, is ACTIVE, has
-// Firebase and has no billing link, so the section states that state as the
+// Firebase and has no billing link. The section states that state as the
 // precondition every mode runs on, and mode 2(a) — the one mode whose picker
 // does list — tells the owner to answer its prompt `none`.
-func TestDocsCheck111EveryModeAnswersTheCreateAdoptQuestion(t *testing.T) {
+func TestDocsCheck111EveryModeCarriesCreateProject(t *testing.T) {
 	c111 := check111(t, readDoc(t, setupWizardChecklist))
 	code := codeLines(c111)
 	flat := flattenDoc(c111)
@@ -565,7 +562,7 @@ func TestDocsCheck111EveryModeAnswersTheCreateAdoptQuestion(t *testing.T) {
 	}
 	for _, line := range runs {
 		if !strings.Contains(line, "--create-project") {
-			t.Errorf("Check 111 runs %q without --create-project: a run at a terminal is asked whether to create a project or adopt one — creation is the default Enter takes (D11) — and a run that cannot be asked (modes 3 and 4) adopts, so either way the mode would depend on something other than the code, the picker would not run and the guided line it asserts would not print", strings.TrimSpace(line))
+			t.Errorf("Check 111 runs %q without --create-project: P has a local config, so without the flag the run registers no project stage and the guided line it asserts would not print", strings.TrimSpace(line))
 		}
 		if !strings.Contains(line, `--gcp-project "${P:?}"`) {
 			t.Errorf("Check 111 runs %q without --gcp-project: the run would converge on the id the wizard offers, fugaro-fugaro, and not on P", strings.TrimSpace(line))
@@ -588,15 +585,14 @@ func TestDocsCheck111EveryModeAnswersTheCreateAdoptQuestion(t *testing.T) {
 		t.Errorf("Check 111 no longer says what is still true — that no mode has been run — which is the reason the section is NOT RUN")
 	}
 
-	// The reasons the flag is there, as the code gives them: creation is the
-	// default Enter takes where the question can be asked, adoption is what a
-	// run that cannot be asked takes, and the guided line's own home is the
-	// project stage's left-for-you, which needs all four of these to be true of
-	// `P`. The opposite claim — adoption on an existing `P` at a terminal, and
-	// a fresh project being the easy one — is what the review found.
+	// The reasons the flag is there, as the code gives them: a run with a
+	// project config registers the project stage only on the flag, the stage
+	// resumes a `P` that fugaro setup created and refuses any other, and the
+	// guided line's own home is the project stage's left-for-you, which needs
+	// all four of these to be true of `P`.
 	for _, want := range []string{
-		"create is the default Enter takes",
-		"where it cannot be asked at all (modes 3 and 4) the run takes **adoption**",
+		"a run with a project config registers the project stage only when that flag says so",
+		"one that **`fugaro setup` created**, so it carries the label `fugaro_created=true`",
 		"the stage prints it as its **left-for-you** line only when `P` **exists**, is **`ACTIVE`**, **has Firebase** and has **no billing link**",
 		"**A fresh project is not the easy one**",
 		// mode 2(a) is the one mode whose picker lists, so it is the one mode
@@ -609,12 +605,14 @@ func TestDocsCheck111EveryModeAnswersTheCreateAdoptQuestion(t *testing.T) {
 	}
 	for _, gone := range []string{
 		"the answer would be **adoption**",
+		"create/adopt question",
+		"the run takes **adoption**",
 		"a fresh throwaway project is the easy one",
 		"Check 27's project is the easy one",
 		"asks for the typed confirmation a run with no terminal cannot give (it is not there yet)",
 	} {
 		if strings.Contains(flat, gone) {
-			t.Errorf("Check 111 still claims %q, which is not what the code does: the create/adopt question defaults to create where it can be asked (D11), and the guided line's left-for-you needs `P` to exist, be ACTIVE, have Firebase and have no billing link", gone)
+			t.Errorf("Check 111 still claims %q, which is not what the code does: there is no create/adopt question (Fugaro only starts fresh), and the guided line's left-for-you needs `P` to exist, be ACTIVE, have Firebase and have no billing link", gone)
 		}
 	}
 }

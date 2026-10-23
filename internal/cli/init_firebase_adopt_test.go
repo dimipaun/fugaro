@@ -15,10 +15,10 @@ import (
 // The four resources of the Firebase root's singletons, as the module
 // creates them, and the address and ID each is imported at.
 var fbAdoptImports = []infra.Import{
-	{To: "module.firebase.google_apikeys_key.web", ID: "projects/aurora-fp/locations/global/keys/fugaro-web"},
-	{To: "module.firebase.google_firebase_database_instance.this", ID: "projects/aurora-fp/locations/us-central1/instances/aurora-fp-default-rtdb"},
-	{To: "module.firebase.google_project_iam_custom_role.token_minter", ID: "projects/aurora-fp/roles/fugaroTokenMinter"},
-	{To: "module.firebase.google_service_account.signer", ID: "projects/aurora-fp/serviceAccounts/" + fpSigner},
+	{To: "module.firebase.google_apikeys_key.web", ID: "projects/proj-1234/locations/global/keys/fugaro-web"},
+	{To: "module.firebase.google_firebase_database_instance.this", ID: "projects/proj-1234/locations/us-central1/instances/proj-1234-default-rtdb"},
+	{To: "module.firebase.google_project_iam_custom_role.token_minter", ID: "projects/proj-1234/roles/fugaroTokenMinter"},
+	{To: "module.firebase.google_service_account.signer", ID: "projects/proj-1234/serviceAccounts/" + fpSigner},
 }
 
 // adoptExisting makes the Firebase project hold the four resources, as an
@@ -148,7 +148,7 @@ func TestInitFirebaseAdoptFour(t *testing.T) {
 			t.Errorf("no %q in\n%s", want, out)
 		}
 	}
-	for _, want := range []string{"applies 4 imports, 2 creates, 0 updates to the Firebase project aurora-fp (adopting the existing Realtime Database aurora-fp-default-rtdb, web API key fugaro-web, token signer and fugaroTokenMinter role;"} {
+	for _, want := range []string{"applies 4 imports, 2 creates, 0 updates to the Firebase project proj-1234 (adopting the existing Realtime Database proj-1234-default-rtdb, web API key fugaro-web, token signer and fugaroTokenMinter role;"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("no %q in\n%s", want, out)
 		}

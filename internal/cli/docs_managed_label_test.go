@@ -28,7 +28,7 @@ func TestDocsGCPManagedLabelSaysItsClaims(t *testing.T) {
 	for what, want := range map[string]string{
 		// The writer a project that already exists has, which is not the
 		// creating run: the flag writes both marks in the same command.
-		"the flag writes both marks": "`fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC` for one that already exists",
+		"the flag writes both marks": "`fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC` for a project `fugaro setup` created without `--managed`",
 		// 0.8.5's managed path is not this one: the mode was off from 0.8.6
 		// on, and 0.9.0 and 0.9.5 shipped with it off, which is what makes a
 		// project marked then a project of another mode (owner's ruling,
@@ -45,7 +45,7 @@ func TestDocsGCPManagedLabelSaysItsClaims(t *testing.T) {
 		"the flag refuses in 0.9.0": "the 0.9.0 binary carries that command and refuses with `managed projects are disabled in this release`",
 		// A creation without --managed writes the label too, on purpose —
 		// once managed mode is on; in 0.9.0 it writes the fact alone (m1).
-		"a plain creation labels the project": "A plain `fugaro setup --create-project` (no `--managed`) writes the label as well once a release turns managed mode on",
+		"a plain creation labels the project": "A plain first run of `fugaro setup` (no `--managed`) writes the label as well once a release turns managed mode on",
 		"a plain creation with the mode off":  "**In a release with managed mode off (0.8.6 through 0.9.5), a plain creation (`--create-project`, no `--managed`) wrote the creation fact alone and no label**",
 		// And the backfill a project marked before the label needs, still
 		// marked as unverified live.

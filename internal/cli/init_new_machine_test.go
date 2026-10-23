@@ -193,7 +193,7 @@ func TestNothingIsAppliedAfterAnAdoptInTheSameRun(t *testing.T) {
 	if n := len(r.ran(t, "apply")); n != 0 {
 		t.Errorf("applied after an adopt: %q", r.calls(t))
 	}
-	if len(res.Left) != 1 || !strings.Contains(res.Left[0].Text, "adopted") || res.ExitCode() != 1 {
+	if len(res.Left) != 1 || !strings.Contains(res.Left[0].Text, "this machine's local config") || res.ExitCode() != 1 {
 		t.Errorf("left %+v", res.Left)
 	}
 	// Each guarded stage refuses on its own, too.

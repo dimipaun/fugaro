@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 )
 
@@ -122,9 +123,9 @@ func TestManagedBudgetIsRequiredAtCreation(t *testing.T) {
 		noMarker(t, r.gcs, bucket)
 	})
 
-	// --managed is about the project this run creates: an existing project is
-	// flagged by the owner's own command instead, never by init (D58, Task
-	// 6.1), and update --firebase-project adds Firebase to such a project, which is
+	// --managed is about the project this run creates: a project setup
+	// created earlier gets its budget from the owner's own command instead,
+	// never from init (D58, Task 6.1), and update --firebase-project adds Firebase to such a project, which is
 	// never what makes one managed (D73).
 	t.Run("--managed without --create-project", func(t *testing.T) {
 		r := newProjectRig(t)
@@ -137,7 +138,7 @@ func TestManagedBudgetIsRequiredAtCreation(t *testing.T) {
 		if code := ExitCode(err); code != ExitUserError {
 			t.Errorf("exit %d, want %d:\n%s", code, ExitUserError, s)
 		}
-		if !strings.Contains(s, "--create-project") {
+		if !strings.Contains(s, "first run of fugaro setup") {
 			t.Errorf("the refusal does not say what --managed goes with:\n%s", s)
 		}
 		r.nothingDone(t, "--managed without --create-project")
@@ -273,18 +274,20 @@ func TestManagedBudgetHasNoDefault(t *testing.T) {
 	})
 }
 
-// --create-project --managed on a project that already exists: the project
-// stage adopts it and creates nothing, so there is no creation to record and
-// markCreated writes no fact. The owner asked for a managed project, and
+// --create-project --managed on a project an earlier run of fugaro setup
+// created (it carries the creation label): the project stage resumes it and
+// creates nothing, so there is no creation to record and markCreated writes no
+// fact. The owner asked for a managed project, and
 // getting an unmarked one with no word about it is the failure this pins:
 // the run must say --managed was not applied and that no fact was written.
 // The bucket is seeded as the managed creation's is, so the absence of the
 // fact is about the gate and not about an unwritable bucket.
-func TestManagedOnAnExistingProjectSaysItWasNotApplied(t *testing.T) {
+func TestManagedOnAResumedProjectSaysItWasNotApplied(t *testing.T) {
 	r := newProjectRig(t)
 	const number = 424242
 	bucket := "fugaro-runs-" + newProj
 	r.crm.AddProject(newProj, number)
+	r.crm.SetLabels(newProj, map[string]string{infra.CreatedLabelKey: infra.CreatedLabelValue})
 	r.gcs.AddProject(newProj, number)
 	r.bill.SetBilling(newProj, true)
 	r.bill.AddAccount(billingAcc, true)
@@ -304,14 +307,14 @@ func TestManagedOnAnExistingProjectSaysItWasNotApplied(t *testing.T) {
 		"--create-project", "--managed", "--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc)
 	all := refusalText(out, errOut, err)
 	if err != nil {
-		t.Fatalf("the run failed, so the warning would be about a failure rather than about adoption: %v\n%s", err, all)
+		t.Fatalf("the run failed, so the warning would be about a failure rather than about the resume: %v\n%s", err, all)
 	}
 	if n := len(r.crm.Creates()); n != 0 {
 		t.Fatalf("%d project(s) created: the project already existed:\n%s", n, all)
 	}
 	noMarker(t, r.gcs, bucket)
 	if !strings.Contains(all, "--managed was not applied") {
-		t.Errorf("the run adopted an existing project with --managed and did not say --managed was not applied:\n%s", all)
+		t.Errorf("the run resumed a project with --managed and did not say --managed was not applied:\n%s", all)
 	}
 	if !strings.Contains(all, "no creation fact was written") {
 		t.Errorf("the run did not say that no creation fact was written:\n%s", all)
@@ -325,7 +328,7 @@ func TestManagedOnAnExistingProjectSaysItWasNotApplied(t *testing.T) {
 }
 
 // The other half of that warning, and the reason it is two: an empty
-// r.res.Created is what adoption leaves behind and also what every other way
+// r.res.Created is what a resumed creation leaves behind and also what every other way
 // a --managed run creates nothing leaves behind, so the message may only say
 // "already existed" when the project stage actually read a project that was
 // already there. Here it does not exist and the typed confirmation is

@@ -201,11 +201,12 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 	// --firebase-project (b), a different stage. The bucket is the project's
 	// own, seeded and numbered as (c) seeds it, so a mutation that marks the
 	// project on adding Firebase really writes.
-	t.Run("--create-project adding Firebase to an existing project", func(t *testing.T) {
+	t.Run("--create-project adding Firebase to a resumed project", func(t *testing.T) {
 		r := newProjectRig(t)
 		const number = 424242
 		bucket := "fugaro-runs-" + newProj
 		r.crm.AddProject(newProj, number)
+		r.crm.SetLabels(newProj, map[string]string{infra.CreatedLabelKey: infra.CreatedLabelValue})
 		r.gcs.AddProject(newProj, number)
 		r.bill.SetBilling(newProj, true)
 		r.gcs.AddBucket(bucket, number, managedBucketLabels)

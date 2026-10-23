@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/infra"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -277,8 +276,8 @@ func TestProjectIDDefaultIsSanitised(t *testing.T) {
 // TestProjectIDDefaultIsNotTakenWhenItExists: the ID the wizard suggests is a
 // name to create, and a project that already carries it is not created twice.
 // The run reads the ID before anything is created — availability and ownership,
-// the check the typed confirmation has always rested on — keeps the project it
-// found, and asks again (its ID typed at the confirmation) rather than failing.
+// the check the typed confirmation has always rested on — refuses the project it
+// found, since Fugaro only starts fresh, before anything is created.
 func TestProjectIDDefaultIsNotTakenWhenItExists(t *testing.T) {
 	r := newProjectRig(t)
 	id := defaultGCPProject(initProjectName)
@@ -301,28 +300,18 @@ func TestProjectIDDefaultIsNotTakenWhenItExists(t *testing.T) {
 	e.lc.Endpoints = localcfg.Endpoints{ResourceManager: r.crm.URL + "/", FirebaseManagement: r.fb.URL + "/", CloudBilling: r.bill.URL + "/", NoAuth: true}
 	s := newProjectStage(e)
 	// First the read, which is where availability and ownership are settled —
-	// before anything is created — and it finds the project there.
-	st, err := s.Check(t.Context())
-	if err != nil {
-		t.Fatalf("the check of the wizard's own default id: %v", err)
-	}
-	if st.State != initflow.Todo || !strings.Contains(st.Detail, "adopting an EXISTING project "+id) {
-		t.Errorf("state %q, detail %q: want the existing project noticed, not a creation\n%s", st.State, st.Detail, out)
-	}
-	// Then the step, which asks again — the id typed at the confirmation — and
-	// creates nothing: a project that already carries the default is never made
-	// twice, and the run does not fail on it either.
-	if _, err := s.Apply(t.Context(), initflow.Env{Interactive: true}); err != nil {
-		t.Fatalf("the apply: %v\n%s", err, out)
+	// before anything is created — and it finds the project there, created by
+	// nobody's run of fugaro setup: Fugaro only starts fresh, so the check is
+	// the refusal, with the one line that says to pick another ID.
+	_, err := s.Check(t.Context())
+	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "Fugaro only starts fresh: "+id+" already exists; pick another id") {
+		t.Fatalf("the check of an existing default id: %v\n%s", err, out)
 	}
 	if n := len(r.crm.Creates()); n != 0 {
 		t.Errorf("the id already exists and %d project(s) were created:\n%s", n, out)
 	}
-	if adds := r.fb.Adds(); len(adds) != 1 || adds[0] != id {
-		t.Errorf("Firebase adds = %v, want the existing project once:\n%s", adds, out)
-	}
-	if !strings.Contains(out.String(), "adopting an EXISTING project "+id) {
-		t.Errorf("the confirmation does not say the project is already there:\n%s", out)
+	if adds := r.fb.Adds(); len(adds) != 0 {
+		t.Errorf("Firebase was added to a project setup did not create: %v\n%s", adds, out)
 	}
 }
 
@@ -447,14 +436,17 @@ func TestFirstRunAsksWithSuggestions(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The ID's suggestion is the new project named after this one (D4); the
-	// project the credentials name is offered beside it, second.
+	// project the credentials name exists, so setup does not offer it.
 	if o := r.o; o.name != "acme" || o.cloud.gcpProject != "fugaro-acme" || o.cloud.region != "us-east5" {
 		t.Errorf("name %q, project %q, region %q\n%s", o.name, o.cloud.gcpProject, o.cloud.region, out.String())
 	}
-	for _, want := range []string{"[acme]", "[fugaro-acme]", "env-proj-1", "[us-east5]"} {
+	for _, want := range []string{"[acme]", "[fugaro-acme]", "[us-east5]"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("no suggestion %s:\n%s", want, out.String())
 		}
+	}
+	if strings.Contains(out.String(), "env-proj-1") {
+		t.Errorf("setup suggested a project that already exists:\n%s", out.String())
 	}
 	// A bad answer is asked again; input that ends is a refusal.
 	r = &initRun{o: &initOptions{name: "aurora", cloud: cloudOptions{region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader("Not A Project\nproj-1234\n\n")), cmd: NewRootCmd()}

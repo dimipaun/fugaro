@@ -232,12 +232,12 @@ type ProjectInfo struct {
 	// not exist and one the caller may not read look the same (Google
 	// answers 403 for both), which is why a create's own refusal, not this,
 	// says "taken".
-	Exists   bool
-	State    string // ACTIVE, DELETE_REQUESTED, ...
+	Exists bool
+	State  string // ACTIVE, DELETE_REQUESTED, ...
 	// CreatedByFugaro is whether the project carries the label CreateProject
 	// puts on every project it creates (CreatedLabelKey=CreatedLabelValue).
 	CreatedByFugaro bool
-	Firebase bool
+	Firebase        bool
 	// BillingKnown is false when the caller cannot read the project's
 	// billing; BillingEnabled is meaningful only when it is true. The
 	// account the project is linked to is deliberately not read out.

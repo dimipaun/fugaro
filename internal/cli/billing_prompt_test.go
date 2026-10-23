@@ -484,7 +484,7 @@ func TestPickerNeverRunsUnderPrintVars(t *testing.T) {
 	// Every other input comes from the flags, so the run is past the questions
 	// that would refuse it: the only thing between this run and the account
 	// list is the condition under test.
-	r, out := pickerRun(t, true, "", &initOptions{printVars: true, createProject: true, name: "aurora",
+	r, out := pickerRun(t, true, "", &initOptions{printVars: true, name: "aurora",
 		cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}})
 	pickerSources(t, f)
 	if err := r.gatherInputs(t.Context()); err != nil {

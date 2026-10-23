@@ -763,21 +763,25 @@ func TestNonInteractiveNamesAppIDFromTheStage(t *testing.T) {
 	}
 }
 
-// A run that adopted an installation is told so before it is asked anything:
+// A run that wrote a new machine's config from an installation is told so
+// before it is asked anything:
 // an unlisted repository's typed opt-in would be a prompt for a step that is
 // then refused.
-func TestRepoStageAdoptRefusalComesBeforeTheTypedPrompt(t *testing.T) {
+func TestRepoStageNewMachineRefusalComesBeforeTheTypedPrompt(t *testing.T) {
 	dir := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", ""))
 	t.Chdir(dir)
 	fakeTerminal(t)
 	e, out := stageEngine(t, "acme/app\n", nil)
 	e.lc.Repos = nil // not listed: it would ask for owner/name
-	e.newMachine = "adopted"
+	e.newMachine = "wrote this machine's local config"
 	s := newRepositoryStage(e)
-	s.engineStage.run = func(context.Context) error { t.Error("the engine ran after an adopt"); return nil }
+	s.engineStage.run = func(context.Context) error {
+		t.Error("the engine ran after a new machine's config was written")
+		return nil
+	}
 	_, err := s.Apply(t.Context(), initflow.Env{Interactive: true})
 	var ny *initflow.NeedsYouError
-	if !errors.As(err, &ny) || !strings.Contains(ny.Left.Text, "adopted") {
+	if !errors.As(err, &ny) || !strings.Contains(ny.Left.Text, "this machine's local config") {
 		t.Fatalf("err %v\n%s", err, out.String())
 	}
 	if strings.Contains(out.String(), "Type") || strings.Contains(out.String(), "CONFIRM") {

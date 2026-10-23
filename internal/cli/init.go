@@ -349,7 +349,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	})
 	addCloudFlags(cmd, &o.cloud)
 	f := cmd.Flags()
-	f.StringVar(&o.name, "name", "", "the project's name: for a project config "+d.name+" creates, and what names an installation that has no name yet (with a config, it must be its name; an installation's name never changes; with several project configs it names the one to create or use; fugaro update on a machine with no config for an installation defaults it to the installation's)")
+	f.StringVar(&o.name, "name", "", "the project's name: for a project config "+d.name+" creates, and what names an installation that has no name yet (with a config, it must be its name; an installation's name never changes; with several project configs it names the one to create or use; on a machine with no config for an installation that exists, it defaults to the installation's)")
 	f.StringVar(&o.schedulerRegion, "scheduler-region", "", "Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers)")
 	f.StringVar(&o.runsBucket, "runs-bucket", "", "the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>)")
 	f.StringVar(&o.stateBucket, "state-bucket", "", "the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>)")

@@ -82,7 +82,8 @@ const (
 
 	// createdLabelKey=createdLabelValue is infra.CreatedLabelKey's label, named
 	// here only for ErrNotCreated's sentence (this package does not import
-	// internal/infra); TestCreatedLabelNamesAgree holds the two to one value.
+	// internal/infra); internal/cli's TestManagedFlagRefusesAProjectFugaroDidNotCreate
+	// holds the two to one value.
 	createdLabelKey   = "fugaro_created"
 	createdLabelValue = "true"
 )
