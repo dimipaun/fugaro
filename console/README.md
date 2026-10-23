@@ -3858,8 +3858,8 @@ once); the setup command to `README.md`'s getting-started step (`1. Run …`) an
 `internal/cli/setup.go`'s `setupDoor` (`name: "setup"`), which is the thing that would
 have to change for the string to be wrong — and the module names `docs/setup-wizard/`,
 whose plan renamed the first-run command from `init` to `setup` and retired the old
-name, so that rename was one line here. The
-comment-stripped module is asserted to carry `fugaro setup` **exactly once**, because
+name, so that rename was one line here. The comment-stripped module is asserted to
+carry `fugaro setup` **exactly once**, because
 two spellings of one command is precisely the drift the file exists to catch. The URL
 is pinned to `website/src/pages/getting-started.astro` and to
 `website/data/site.yaml`'s `canonical_url` and `allowed_hosts`.

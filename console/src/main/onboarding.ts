@@ -56,9 +56,8 @@ export const GETTING_STARTED_URL = 'https://fugaro.dev/getting-started/'
  * `internal/cli/setup.go`; README.md's getting-started steps are written in it).
  * The plan in `docs/setup-wizard/` renamed the first-run command from `init` to
  * `setup` and retired the old name, and this constant is the one line that
- * followed it; a
- * unit test pins it to README.md's first step and to the CLI's own declaration,
- * so a later rename cannot be missed.
+ * followed it; a unit test pins it to README.md's first step and to the CLI's
+ * own declaration, so a later rename cannot be missed.
  */
 export const FUGARO_SETUP_COMMAND = 'fugaro setup'
 
