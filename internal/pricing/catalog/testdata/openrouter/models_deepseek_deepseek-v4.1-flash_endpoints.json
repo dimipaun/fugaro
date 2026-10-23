@@ -5,10 +5,10 @@
     "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
-     "completion": "0.0000000112",
+     "completion": "0.0000005",
      "discount": 0,
-     "input_cache_read": "0.0000000016",
-     "prompt": "0.0000000352"
+     "input_cache_read": "0.000000008",
+     "prompt": "0.00000007"
     },
     "tag": "open-inference/fp4"
    },
@@ -16,23 +16,12 @@
     "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
-     "completion": "0.000000014",
+     "completion": "0.0000005",
      "discount": 0,
-     "input_cache_read": "0.000000016",
-     "prompt": "0.000000044"
+     "input_cache_read": "0.000000008",
+     "prompt": "0.00000007"
     },
     "tag": "relace"
-   },
-   {
-    "context_length": 1048576,
-    "max_completion_tokens": 943718,
-    "pricing": {
-     "completion": "0.0000006",
-     "discount": 0,
-     "input_cache_read": "0.000000007",
-     "prompt": "0.000000055"
-    },
-    "tag": "morph/fp8"
    },
    {
     "context_length": 1048576,
@@ -49,10 +38,10 @@
     "context_length": 1048576,
     "max_completion_tokens": 384000,
     "pricing": {
-     "completion": "0.00000015",
+     "completion": "0.00000025",
      "discount": 0,
-     "input_cache_read": "0.000000006735",
-     "prompt": "0.000000101"
+     "input_cache_read": "0.000000006",
+     "prompt": "0.00000009"
     },
     "tag": "sail-research/fp4/us"
    },
@@ -60,10 +49,10 @@
     "context_length": 1048576,
     "max_completion_tokens": 384000,
     "pricing": {
-     "completion": "0.00000015",
+     "completion": "0.00000025",
      "discount": 0,
-     "input_cache_read": "0.000000006735",
-     "prompt": "0.000000101"
+     "input_cache_read": "0.000000006",
+     "prompt": "0.00000009"
     },
     "tag": "sail-research/fp4"
    },
@@ -76,7 +65,29 @@
      "input_cache_read": "0.000000008",
      "prompt": "0.000000103"
     },
+    "tag": "inference-net/us"
+   },
+   {
+    "context_length": 1040000,
+    "max_completion_tokens": 393216,
+    "pricing": {
+     "completion": "0.000000715",
+     "discount": 0,
+     "input_cache_read": "0.000000008",
+     "prompt": "0.000000103"
+    },
     "tag": "inference-net/fp8"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 393216,
+    "pricing": {
+     "completion": "0.00000084",
+     "discount": 0.3,
+     "input_cache_read": "0.000000007",
+     "prompt": "0.000000105"
+    },
+    "tag": "reka"
    },
    {
     "context_length": 1048576,
@@ -137,12 +148,12 @@
     "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
-     "completion": "0.00000065",
+     "completion": "0.00000066",
      "discount": 0,
      "input_cache_read": "0.000000006",
-     "prompt": "0.00000016"
+     "prompt": "0.000000165"
     },
-    "tag": "wafer/mxfp4"
+    "tag": "digitalocean"
    },
    {
     "context_length": 1048575,
@@ -157,6 +168,17 @@
    },
    {
     "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.00000065",
+     "discount": 0,
+     "input_cache_read": "0.000000012",
+     "prompt": "0.00000019"
+    },
+    "tag": "wafer/mxfp4"
+   },
+   {
+    "context_length": 1048576,
     "max_completion_tokens": 393216,
     "pricing": {
      "completion": "0.00000078",
@@ -165,6 +187,17 @@
      "prompt": "0.000000195"
     },
     "tag": "novita/fp8"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 131072,
+    "pricing": {
+     "completion": "0.0000012",
+     "discount": 0,
+     "input_cache_read": "0.00000002",
+     "prompt": "0.0000002"
+    },
+    "tag": "modelrun/fp4"
    },
    {
     "context_length": 1048576,
@@ -182,22 +215,22 @@
     "max_completion_tokens": 943718,
     "pricing": {
      "completion": "0.00000084",
-     "discount": 0.3,
+     "discount": 0,
      "input_cache_read": "0.0000000042",
      "prompt": "0.00000021"
     },
-    "tag": "phala"
+    "tag": "fireworks/spot"
    },
    {
     "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
-     "completion": "0.0000009",
-     "discount": 0,
-     "input_cache_read": "0.000000006",
-     "prompt": "0.000000225"
+     "completion": "0.00000084",
+     "discount": 0.3,
+     "input_cache_read": "0.0000000042",
+     "prompt": "0.00000021"
     },
-    "tag": "digitalocean"
+    "tag": "phala"
    },
    {
     "context_length": 1048576,
@@ -214,17 +247,6 @@
     "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
-     "completion": "0.00000075",
-     "discount": 0,
-     "input_cache_read": "0.000000006",
-     "prompt": "0.00000027"
-    },
-    "tag": "ionstream"
-   },
-   {
-    "context_length": 1048576,
-    "max_completion_tokens": 943718,
-    "pricing": {
      "completion": "0.0000012",
      "discount": 0,
      "input_cache_read": "0.000000007",
@@ -233,11 +255,23 @@
     "tag": "crusoe/fp8"
    },
    {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.0000012",
+     "discount": 0,
+     "input_cache_read": "0.00000003",
+     "prompt": "0.0000003"
+    },
+    "tag": "google-vertex/global"
+   },
+   {
     "context_length": 1048000,
     "max_completion_tokens": 943200,
     "pricing": {
      "completion": "0.0000012",
      "discount": 0,
+     "input_cache_read": "0.00000001",
      "prompt": "0.0000003"
     },
     "tag": "nebius/fp8"
@@ -252,6 +286,17 @@
      "prompt": "0.0000003"
     },
     "tag": "primeintellect"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 384000,
+    "pricing": {
+     "completion": "0.0000012",
+     "discount": 0,
+     "input_cache_read": "0.000000003",
+     "prompt": "0.0000003"
+    },
+    "tag": "cohere"
    },
    {
     "context_length": 1048576,
@@ -351,6 +396,17 @@
      "prompt": "0.0000003"
     },
     "tag": "venice/fp8"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.0000006",
+     "discount": 0,
+     "input_cache_read": "0.000000027",
+     "prompt": "0.000000309"
+    },
+    "tag": "morph/fp8"
    },
    {
     "context_length": 1000000,

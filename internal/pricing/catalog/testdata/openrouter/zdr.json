@@ -2,6 +2,38 @@
  "data": [
   {
    "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "modelrun/fp4"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "fireworks/spot"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "fireworks/spot"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "google-vertex/global"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "inference-net/us"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "inference-net/us"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "inference-net/us/fast"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "pareto-alpha/us"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
    "tag": "nebius/fp8"
   },
   {
@@ -25,8 +57,8 @@
    "tag": "sail-research/fp4/us"
   },
   {
-   "model_id": "moonshotai/kimi-k3",
-   "tag": "parasail/fast"
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "cohere"
   },
   {
    "model_id": "deepseek/deepseek-v4.1-flash",
@@ -63,10 +95,6 @@
   {
    "model_id": "moonshotai/kimi-k3",
    "tag": "decart/mxfp4"
-  },
-  {
-   "model_id": "deepseek/deepseek-v4.1-flash",
-   "tag": "ionstream"
   },
   {
    "model_id": "deepseek/deepseek-v4-pro",
@@ -111,6 +139,10 @@
   {
    "model_id": "deepseek/deepseek-v4.1-flash",
    "tag": "digitalocean"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "reka"
   },
   {
    "model_id": "deepseek/deepseek-v4.1-flash",
@@ -175,10 +207,6 @@
   {
    "model_id": "deepseek/deepseek-v4.1-flash",
    "tag": "deepinfra/fp8"
-  },
-  {
-   "model_id": "deepseek/deepseek-v4-flash",
-   "tag": "open-inference/fp4"
   },
   {
    "model_id": "moonshotai/kimi-k3",
@@ -283,10 +311,6 @@
   {
    "model_id": "deepseek/deepseek-v4-flash",
    "tag": "deepinfra/fp8"
-  },
-  {
-   "model_id": "deepseek/deepseek-v4-pro",
-   "tag": "parasail/fp8"
   },
   {
    "model_id": "deepseek/deepseek-v4-flash",
