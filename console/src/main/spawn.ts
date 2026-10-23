@@ -1271,7 +1271,8 @@ export interface SpawnOptionsLike {
    * E). stdout and stderr are `'pipe'` for every read the console makes; the
    * one child whose output is nobody's is the stop sent **inside** a
    * distribution (T-F4), which is fired and never read -- and a pipe nobody
-   * drains is a child that blocks on write. */
+   * drains is a child that blocks on write. `nodeSpawner` passes this through
+   * as it stands, so the `'ignore'`s are what the stop's child really gets. */
   readonly stdio: readonly ['ignore', 'ignore' | 'pipe', 'ignore' | 'pipe']
 }
 
@@ -1342,13 +1343,19 @@ export interface ChildSpawner {
  * nodeSpawner is the real spawner. `shell` is passed as the literal `false` and
  * the arguments as an array, which with the argv table above is rule 1: nothing
  * the console runs goes through a shell, so nothing it runs can be re-parsed.
+ *
+ * `stdio` is the caller's, copied word for word: a read pipes stdout and
+ * stderr, and the stop sent **inside** a distribution asks for `'ignore'` on
+ * all three so nothing of its own is left in a pipe the console will never
+ * drain. Honouring the caller's request is what makes those `'ignore'`s a
+ * behaviour rather than a comment.
  */
 export const nodeSpawner: ChildSpawner = (command, args, options) =>
   spawn(command, [...args], {
     cwd: options.cwd,
     env: { ...options.env },
     shell: false,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: [...options.stdio],
   }) as unknown as SpawnedChildLike
 
 /**
@@ -1831,7 +1838,8 @@ export function planFor(
  * line stays the operator's record of what ran (D1) on both routes: unchanged
  * on the host route, where there is no wrapper at all, and
  * `['C:\\…\\wsl.exe', '-d', 'Ubuntu', '--cd', '/home/dimi', '--', 'sh', '-c',
- * 'echo …; exec …']` on the WSL one -- the CLI's own words are inside the last
+ * "printf '%s %s\n' 'fugaro-console: the WSL wrapper started' \"$$\" >&2; exec
+ * 'fugaro' 'version'"]` on the WSL one -- the CLI's own words are inside the last
  * element, quoted, which is where they are when it runs. It is the first element
  * of this array that is the program, and that is why the log's line is still
  * "the binary's absolute path first".
@@ -1979,26 +1987,39 @@ export function runToCompletion(
       if (settled) return
       settled = true
       clearDeadline()
+      // `endedOnItsOwn` is whether the child was **already gone when the stop
+      // began**, and it is the only thing the console may read as "the process
+      // inside the distribution is gone too": `wsl.exe` relays the
+      // distribution's command, so a `wsl.exe` that exited by itself exited
+      // because that command had finished. A `wsl.exe` that exits *after* the
+      // signal is not that evidence, and reading `exited` later in this function
+      // is the bug this flag exists for: on Windows the `SIGTERM` below is
+      // `TerminateProcess`, so the Windows-side process is gone within a tick
+      // while the Linux-side one -- the process F24 is about -- is still there.
+      const endedOnItsOwn = exited
       // The pid is read **now**, before the grace runs out: the shell prints it
       // before it `exec`s the CLI, so it is there as soon as the child is
       // running, and reading it here means the residual -- the one case where
       // the console *cannot* name the pid -- is known before the sentence is
       // built rather than after it has been sent.
-      const pid = !exited && wrapper !== null ? wrapperPidIn(stderrHead) : null
+      const pid = !endedOnItsOwn && wrapper !== null ? wrapperPidIn(stderrHead) : null
       const missed =
-        !exited && wrapper !== null && pid === null
+        !endedOnItsOwn && wrapper !== null && pid === null
           ? 'the wrapper reported no pid, so the process inside the distribution could not be stopped; it may still be running'
           : null
-      if (!exited) {
+      if (!endedOnItsOwn) {
         child.kill('SIGTERM')
         timers.setTimeout(() => {
-          if (!exited) {
-            // `wsl.exe` is still there after the grace, so it is not going to
-            // carry the signal: one `wsl.exe` more, inside the distribution,
-            // naming the pid the wrapper reported (T-F4, D6(a)).
-            child.kill('SIGKILL')
-            if (pid !== null) stopInsideDistribution({ plan, spawner, log: deps.log, pid })
-          }
+          // The Windows-side child gets the stronger signal only if it is still
+          // there to receive it -- but the stop **inside** the distribution is
+          // sent whatever `wsl.exe` did, because its own exit is not evidence
+          // about the Linux process (see `endedOnItsOwn`). A stop that waited
+          // for `wsl.exe` to still be alive would never be sent on Windows at
+          // all, which is F24's stated consequence: a cancelled read leaving a
+          // `fugaro` holding a lease inside the distribution with nothing on
+          // screen to say so.
+          if (!exited) child.kill('SIGKILL')
+          if (pid !== null) stopInsideDistribution({ plan, spawner, log: deps.log, pid })
         }, grace)
       }
       // The residual is stated where the operator reads it: appended to the
@@ -3088,10 +3109,21 @@ export function startSidecar(
       // for what it could not do -- rather than a stop that silently did not
       // happen.
       const wrapper = plan.wrapper
-      const pid = wrapper !== null && child !== null ? wrapperPidIn(stderrHead) : null
+      // `child` is not null here: a child that was already gone when `stop()`
+      // was called returned above, so this is a stop of a process that was
+      // running -- the same position `runToCompletion`'s `endedOnItsOwn` puts
+      // it in.
+      const pid = wrapper !== null ? wrapperPidIn(stderrHead) : null
       timers.setTimeout(() => {
-        if (child === null) return
-        child.kill('SIGKILL')
+        // The Windows-side child gets the stronger signal only if it is still
+        // there to receive it; the stop **inside** the distribution is sent
+        // whatever `wsl.exe` did, exactly as in `runToCompletion`. On Windows
+        // the `SIGTERM` above is `TerminateProcess`, so `close` arrives within
+        // a tick and `child` is null by the time this timer fires -- which is
+        // why `child === null` must not return here: that return is the normal
+        // case on Windows, and it is the one that leaves a `fugaro` holding a
+        // lease inside the distribution with nothing on screen to say so.
+        if (child !== null) child.kill('SIGKILL')
         if (wrapper === null) return
         if (pid === null) {
           events.onNotice({

@@ -126,7 +126,7 @@ function only<T>(entries: readonly T[]): T {
 
 /** waitFor polls until a condition holds, and throws with the sentence the case
  * needs when it never does. The wrapper case is the one asynchronous one: the
- * pid file is written *before* the CLI it `exec`s starts, so both have to be
+ * shell prints its pid line *before* it `exec`s the CLI, so both have to be
  * waited for rather than assumed. */
 async function waitFor(what: string, check: () => boolean): Promise<void> {
   for (let attempt = 0; attempt < 300; attempt += 1) {

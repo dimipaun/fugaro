@@ -560,16 +560,26 @@ Files: `console/src/main/spawn.ts`, `console/src/main/wsl.ts`,
 `console/test/unit/wslstub.ts` — named because the wrapper is the fake's (T-A1 step 7): it runs the
 `sh -c` script the console writes, so the pid inside the distribution is a live process the test can
 find and signal, and the second call this task asserts is one more invocation the report carries.
-Red step: through the fake — `abandon` sends `SIGTERM` to the `wsl.exe` child and, when the fake
-reports that the child is still alive after `SHUTDOWN_GRACE_MS` (`spawn.ts:298`), issues **one** kill
-inside the distribution naming the pid the wrapper recorded; the fake's report shows the pid it was
-given is the child's, not the wrapper's; and a cancellation where the child exited on its own sends
-**no** second call. All three fail today.
-The pid is captured by the wrapper, not guessed: the fake writes it where the real one must
-(`wsl.exe -d <d> -- sh -c 'echo $$ > <file>; exec fugaro …'`), and a design that cannot capture it is
-D6(c) with its residual **stated on the screen** rather than in a comment. U5 and U6 are the two facts
-this task cannot establish from Linux, and the plan's answer is to make the *fallback* honest rather
-than to assume the primary works.
+Red step: through the fake — `abandon` sends `SIGTERM` to the `wsl.exe` child and, after
+`SHUTDOWN_GRACE_MS` (`spawn.ts:298`), issues **one** kill inside the distribution naming the pid the
+wrapper reported; the fake's report shows the pid it was given is the child's, not the wrapper's; and
+a cancellation where the child had already exited **on its own** sends **no** second call. All three
+fail today.
+The pid is captured by the wrapper, not guessed and not written to a file: the shell prints
+`printf '%s %s\n' <marker> "$$" >&2` before it `exec`s the CLI, so the number on that line is the
+CLI's by the time it matters, and it travels on stderr — the channel the console already reads —
+because no spelling of a pid file works across the two sides (the shell's directory is the checkout,
+the console's is a host path) and reading one back would be a second `wsl.exe` per cancellation. The
+kill inside the distribution is sent whenever the CLI was started and is **not known to have exited
+inside the distribution**, and that condition is deliberately independent of `wsl.exe`'s own exit: on
+Windows the console's `SIGTERM` is `TerminateProcess`, so `wsl.exe` is gone within a tick and long
+before the grace runs out, and a stop that waited for it to still be alive would never be sent on the
+one platform this route exists for. The only thing the console reads as "the CLI is gone too" is a
+`wsl.exe` that had already exited **before** the stop began, because `wsl.exe` relays the
+distribution's command and one that exited by itself exited because that command had finished.
+A design that cannot capture the pid is D6(c) with its residual **stated on the screen** rather than in
+a comment. U5 and U6 are the two facts this task cannot establish from Linux, and the plan's answer is
+to make the *fallback* honest rather than to assume the primary works.
 `wsl.exe --terminate` is refused (D6(b)): a console that can terminate a distribution can destroy work
 it does not own, including the operator's own shells.
 Verification: `[unit]`, `[types]`. Tier A for the shape; Tier B to accept (U5, U6). Depends on: T-C5,
