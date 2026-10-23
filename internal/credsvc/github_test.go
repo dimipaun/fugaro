@@ -847,8 +847,9 @@ func TestAMintWhoseAnswerCannotBeBuiltIsRefusedUnaudited(t *testing.T) {
 	id := Identity{Slug: s.slug, Run: s.run, Job: s.job, JobAccount: testJobSA}
 	rec := httptest.NewRecorder()
 	// A token and an expiry encoding/json refuses: a year outside its range.
+	token := fakeCred(t, "installation-token")
 	s.server.answerMint(context.Background(), rec, id, MintResponse{
-		Token:      fakeCred(t, "installation-token"),
+		Token:      token,
 		ExpiresAt:  time.Date(10000, time.January, 1, 0, 0, 0, 0, time.UTC),
 		Repository: testRepo,
 	})
@@ -860,8 +861,8 @@ func TestAMintWhoseAnswerCannotBeBuiltIsRefusedUnaudited(t *testing.T) {
 	if e.Error != ErrorStateUnavailable || e.Message != mintAnswerRefusal {
 		t.Errorf("the refusal is %+v, want state_unavailable and this file's own sentence %q", e, mintAnswerRefusal)
 	}
-	// The token is in no answer and no line: the call it was minted for is over.
-	if strings.Contains(rec.Body.String(), "installation-token") {
+	// The token is in no answer: the call it was minted for is over.
+	if strings.Contains(rec.Body.String(), token) {
 		t.Fatalf("the refusal carries the token:\n%s", rec.Body.String())
 	}
 	if !strings.Contains(s.logs.String(), "the mint's answer could not be built") {

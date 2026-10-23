@@ -736,9 +736,11 @@ func (l *BundleLoader) Scrub(s string) string {
 		// unreadable policy, a body this endpoint cannot read, an unreadable
 		// bundle — is scrubbed here, against no values at all. That is safe
 		// rather than lucky: no field of such a line can hold a credential's
-		// value — the credential field is empty (no credential was chosen), the
-		// purpose and the status are this package's own constants, and the
-		// identity's four fields are the ones auth.go has already held to
+		// value — the credential field is either empty (no credential was
+		// chosen yet) or the App key's NAME, the one constant routeAct answers a
+		// mint with, and the purpose and the status are this package's own
+		// constants too, while the identity's four fields are the ones auth.go
+		// has already held to
 		// token.ValidSegment, ValidJobName and the account rule — and a scrubber
 		// that invented a redaction for a value it does not hold would be
 		// redacting text that is not a credential. A probe's own lines are
