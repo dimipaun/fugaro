@@ -65,7 +65,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { cssDeclarations, cssRules, findAll, filesUnder, parse, textOf, walk } from './lib/html.mjs'
@@ -596,6 +596,180 @@ test("the hero's subline is README.md's subline, byte for byte", () => {
   assert.ok(
     normalize(repoFile('README.md')).includes(normalize(lead)),
     `the hero's lead sentence ${JSON.stringify(lead)} is not a sentence of README.md: every sentence on the site is traceable to a document (D102, W1.4 step 1)`,
+  )
+})
+
+// ---- the latest release the hero names (the owner's request of 2026-10-22) ----------------
+
+/** The two files the hero's release line is read from: the release files, and the plugin's own
+ *  manifest, whose version decides which of them is published (`src/lib/changelog.mjs`). */
+const RELEASES_DIR = path.join(REPO, 'docs', 'releases')
+const PLUGIN_MANIFEST = 'plugin/.claude-plugin/plugin.json'
+
+/** The version triple of `x.y.z`, or null for anything else. */
+function releaseParts(version) {
+  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(version)
+  return m === null ? null : [Number(m[1]), Number(m[2]), Number(m[3])]
+}
+
+/** True when `parts` is at or below `other`, version for version. */
+function atOrBelow(parts, other) {
+  for (let i = 0; i < 3; i++) {
+    if (parts[i] !== other[i]) return parts[i] < other[i]
+  }
+  return true
+}
+
+/**
+ * The tag of the newest release `docs/releases/` carries that the plugin's own version says is
+ * published — the tag the homepage's line has to name — or `null` when nothing is published.
+ *
+ * **It is read here rather than taken from the generator's own output**, which is the rule every
+ * case in this file keeps: a check that asked `src/lib/changelog.mjs` what the newest release is
+ * would agree with a page built from the same answer, and the two have to be able to disagree.
+ * The release files, the `vX.Y.Z` name and the plugin's version are the whole of it, as
+ * `website/test/changelog-page.mjs` reads them for the same reason (D100).
+ */
+function newestReleasedTag() {
+  const manifest = JSON.parse(repoFile(PLUGIN_MANIFEST))
+  const published = releaseParts(manifest.version)
+  assert.ok(
+    published !== null,
+    `${PLUGIN_MANIFEST} carries the version ${JSON.stringify(manifest.version)}, and the homepage's release line compares it with the release files' versions: it is x.y.z`,
+  )
+  const releases = []
+  for (const name of readdirSync(RELEASES_DIR)) {
+    // `docs/releases/README.md` describes the format and is the one file there that is not a
+    // release; every other one is, so a name that is not `vX.Y.Z.md` is a defect this reading
+    // refuses rather than filters out (the same rule `website/test/changelog-page.mjs` keeps).
+    if (name === 'README.md') continue
+    const m = /^v(\d+)\.(\d+)\.(\d+)\.md$/.exec(name)
+    assert.ok(
+      m !== null,
+      `docs/releases/${name} is not a release file: every file in that directory is vX.Y.Z.md, and README.md is the only one that is not (docs/releases/README.md)`,
+    )
+    releases.push({ tag: name.slice(0, -'.md'.length), parts: [Number(m[1]), Number(m[2]), Number(m[3])] })
+  }
+  releases.sort((a, b) => {
+    for (let i = 0; i < 3; i++) if (a.parts[i] !== b.parts[i]) return b.parts[i] - a.parts[i]
+    return 0
+  })
+  const newest = releases.find((one) => atOrBelow(one.parts, published))
+  return newest === undefined ? null : newest.tag
+}
+
+/**
+ * Every way the homepage's release line departs from the newest published release, as the lines
+ * a reader of a failure gets. **The line is the hero's one piece of prose that is neither a
+ * document's sentence nor the board's**, so it is the one this file has to hold to the tree: a
+ * tag that is unreleased, stale or from nowhere reads exactly like the right one on the page.
+ */
+export function heroReleaseFailures(html, expected) {
+  const out = []
+  const lines = findAll(parse(html), (el) => el.name === 'p' && (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-release'))
+  if (lines.length !== 1) {
+    out.push(
+      `the homepage renders ${lines.length} \`p.hero-release\` element(s), and the hero carries one: the line that names the latest release (the owner's request of 2026-10-22)`,
+    )
+    return out
+  }
+  const line = lines[0]
+  const links = [...walk(line)].filter((el) => el.name === 'a')
+  if (links.length !== 1) {
+    out.push(
+      `the homepage's release line carries ${links.length} link(s), and it carries one: the changelog, where the release it names is rendered`,
+    )
+    return out
+  }
+  const tag = textOf(links[0]).trim()
+  const words = textOf(line).replace(/\s+/g, ' ').trim()
+  if (words !== `Latest release: ${tag}`) {
+    out.push(
+      `the homepage's release line reads ${JSON.stringify(words)}, and it is the label and the tag: ${JSON.stringify(`Latest release: ${tag}`)}`,
+    )
+  }
+  if (links[0].attrs.get('href') !== '/changelog/') {
+    out.push(
+      `the homepage's release line links ${JSON.stringify(links[0].attrs.get('href') ?? null)}, and the changelog is where the release it names is rendered: /changelog/`,
+    )
+  }
+  if (expected === null) {
+    out.push(
+      `the homepage renders a latest-release line and no release file under docs/releases/ is at or below the version in ${PLUGIN_MANIFEST}: the site's build refuses that tree rather than naming a release that has not shipped, so a page that carries the line at all was built from a tree this reading cannot hold it to`,
+    )
+  } else if (tag !== expected) {
+    out.push(
+      `the homepage's release line names ${JSON.stringify(tag)} and the newest published release is ${JSON.stringify(expected)}: ${PLUGIN_MANIFEST} says which release files are released, and a line that names another one is a reader sent to a changelog entry that is not the latest (the owner's request of 2026-10-22)`,
+    )
+  }
+  return out
+}
+
+test("the hero names the newest published release, and the changelog it links", () => {
+  // The line's tag is read off the built page and held to the tree — the release files and the
+  // plugin's own version — so the line cannot name an unreleased, stale or invented release, and
+  // the component cannot go on rendering a version somebody typed into it.
+  const html = builtPage('')
+  const expected = newestReleasedTag()
+  assert.notEqual(expected, null, 'no release file under docs/releases/ is published in this checkout, so this case would hold the line to nothing')
+  assert.equal(
+    findAll(parse(html), (el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-release')).length,
+    1,
+    'the homepage carries no single `p.hero-release`, and the hero names the latest release (the owner\'s request of 2026-10-22)',
+  )
+  const failures = heroReleaseFailures(html, expected)
+  assert.deepEqual(failures, [], failures.join('\n'))
+})
+
+test('the release-line reading refuses a stale tag and a dropped line, and only those', () => {
+  // The defect the reading exists for, planted twice: the page's tag moved to a release the
+  // tree carries but which is not the newest published one, and the line taken out whole. Both
+  // are invisible to a reading of the page's shape — the markup is the hero's either way — so
+  // the plants are what hold the reading to the tag rather than to the paragraph.
+  const html = builtPage('')
+  const expected = newestReleasedTag()
+  assert.deepEqual(heroReleaseFailures(html, expected), [], 'the shipped page does not pass its own reading, so the plants below would prove nothing')
+
+  const stale = html.replace(`>${expected}</a>`, '>v0.4.0</a>')
+  assert.notEqual(stale, html, 'the fixture did not move the line\'s tag: the page\'s own markup carries none to move')
+  assert.ok(
+    heroReleaseFailures(stale, expected).some((one) => /names "v0\.4\.0" and the newest published release/.test(one)),
+    'a release line naming a release that is not the newest published one was not refused, and a stale tag reads exactly like the right one',
+  )
+
+  const dropped = html.replace('<p class="hero-release"', '<p class="hero-release-gone"')
+  assert.notEqual(dropped, html, 'the fixture did not drop the line: the page\'s own markup carries none to drop')
+  assert.ok(
+    heroReleaseFailures(dropped, expected).some((one) => /renders 0 `p\.hero-release`/.test(one)),
+    'a homepage with the release line taken out was not refused, so a line that quietly disappears would pass',
+  )
+})
+
+test('a tree where no release is published stops the build, naming the component', (t) => {
+  // The refusal behind the line, and the half of it a built page cannot show: the line names the
+  // newest **published** release, so a tree whose release files are all ahead of the plugin's
+  // version has nothing to name. The copy's manifest is lowered below every release file, which
+  // is exactly the state the owner's release process never reaches and the one a mistyped
+  // version does: the build stops with the component in the message rather than printing the tag
+  // of a release that has not shipped.
+  const built = buildCopy(t, ({ root }) => {
+    const file = path.join(root, 'plugin', '.claude-plugin', 'plugin.json')
+    const text = readFileSync(file, 'utf8')
+    const lowered = text.replace(/("version"\s*:\s*)"[^"]*"/, '$1"0.0.1"')
+    assert.notEqual(lowered, text, `the copy's ${PLUGIN_MANIFEST} carries no "version" line to lower, so the fixture would build the released state`)
+    writeFileSync(file, lowered)
+  })
+
+  assert.notEqual(
+    built.status,
+    0,
+    'a tree whose release files are all ahead of the plugin\'s own version was built: the homepage would name a release that has not shipped',
+  )
+  assert.match(built.output, /Hero\.astro/, `the build that stopped names no file, and a reader has to be told which one to fix:\n${built.output}`)
+  assert.match(
+    built.output,
+    /latest-release line/,
+    `the build stopped for a reason other than the release line having nothing to name:\n${built.output}`,
   )
 })
 
