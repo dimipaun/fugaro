@@ -66,6 +66,13 @@ main:has(> .hero, > [data-security-page]) {
   padding: 0;
 }
 
+/* The home page's blocks are full-width bands (a field of colour runs to the window's edges)
+ * that pad their own content onto the page's one pair of margins with `--frame-gutter` (the
+ * owner's ruling of 2026-10-23, lever 6), so `main` does not narrow them. */
+main:has(> .hero) {
+  max-width: none;
+}
+
 /* ---- 2. the chrome ---------------------------------------------------------------------- */
 
 /* The skip link. `Base.astro` hides it until focus and positions it; this paints it in the
@@ -111,7 +118,8 @@ a.skip-link:focus {
   justify-content: space-between;
   gap: var(--space-2xs);
   padding-block: var(--space-sm);
-  border-bottom: var(--border-width) solid var(--border);
+  /* No rule under the row (the owner's ruling of 2026-10-23, lever 5: hairlines become tone
+   * steps or space). The header is the ground, and the page below it starts after its room. */
   background: var(--ground);
 }
 
@@ -288,7 +296,10 @@ a.skip-link:focus {
   right: 0;
   left: 0;
   padding: var(--space-sm);
-  border-bottom: var(--border-width) solid var(--border);
+  /* The surface and not the ground, and no outline (the owner's ruling of 2026-10-23, lever 5):
+   * a menu hanging over the page is a thing laid on the page, and the step between the ground
+   * and the surface is what says so. */
+  background: var(--surface);
   /* The panel and not the ground, since the bold redesign: a menu hanging over the page is a
    * thing laid on the page, and the step between the ground and the surface is what says so
    * without a shadow (a shadow would be a colour literal no palette token holds). */
@@ -372,8 +383,7 @@ a.skip-link:focus {
     right: 0;
     min-width: max-content;
     padding: var(--space-2xs);
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-md);
   }
 }
 
@@ -435,8 +445,7 @@ a.skip-link:focus {
 }
 
 .site-footer {
-  padding-block: var(--space-xl);
-  border-top: var(--border-width) solid var(--border);
+  padding-block: var(--space-2xl) var(--space-xl);
   color: var(--text-muted);
   font-size: var(--font-size-sm);
 }
@@ -537,7 +546,7 @@ a.skip-link:focus {
  * would win over the user agent's `[hidden]` rule and put the button back on the page. */
 .copy-button {
   padding: var(--space-3xs) var(--space-2xs);
-  border: var(--border-width) solid var(--border);
+  border: 0;
   border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--accent-on-dark);
@@ -545,11 +554,17 @@ a.skip-link:focus {
   font-size: var(--font-size-xs);
   font-weight: var(--weight-semibold);
   cursor: pointer;
-  transition: border-color var(--duration-fast) var(--ease-out);
+  transition: background-color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 
-.copy-button:hover {
-  border-color: var(--accent);
+.copy-button:active {
+  transform: scale(0.96);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .copy-button:hover {
+    background: var(--border);
+  }
 }
 
 /* What the control says: the live region the markup carries, and the visible half of the
@@ -615,74 +630,54 @@ a.skip-link:focus {
   font-size: clamp(var(--font-size-xl), 2.6vw, var(--font-size-3xl));
 }
 
-/* The gradient the wordmark's hue runs through, used as the emphasis on part of a headline.
- * It is a background clipped to the glyphs, so the glyphs themselves are filled with nothing:
- * `-webkit-text-fill-color` is the property that says so, and it is not a stylistic choice —
- * `color: transparent` means the same thing and is rewritten by the build's CSS minifier into
- * the hex literal `#0000`, which is a colour literal in a built stylesheet and so a rule the
- * colour scan in `website/test/a11y.mjs` refuses (a literal is a colour no palette token
- * holds). The `color` the display rules above set is left alone, so a browser that supports
- * the fill but not the clip draws the headline in `--text` rather than in nothing at all. The
- * three stops are palette tokens: the light cyan the accent is legible as, the accent itself,
- * and the green that means "finished". */
+/* The emphasis on part of a headline, which was the wordmark's gradient clipped to the glyphs.
+ * The owner's ruling of 2026-10-23 (the redesign's Step 3, levers 2 and 5) takes the gradient
+ * text off the site: the words keep their class, so every page that marks them still marks
+ * them, and the class now draws them in the accent's legible tone, flat. It is a `color` the
+ * contrast check reads, rather than a fill it cannot. */
 .gradient-text {
-  background-image: linear-gradient(
-    92deg,
-    var(--accent-on-dark) 0%,
-    var(--accent) 55%,
-    var(--ok) 100%
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--accent-on-dark);
 }
 
-/* The eyebrow: the small uppercase label the boards put above a section's headline. It is the
- * accent's legible form, because it is text and small text at that, and it is tracked wide
- * rather than tight so that a label of three words reads as a label and not as a heading. */
+/* The label a few pages still set above a heading. The ruling of 2026-10-23 drops the small
+ * tracked capitals (lever 5): it is sentence case, in the legible accent, at the small step. */
 .eyebrow {
   margin: 0;
   color: var(--accent-on-dark);
   font-family: var(--font-sans);
   font-size: var(--font-size-sm);
-  font-weight: var(--weight-black);
-  letter-spacing: 0.16em;
+  font-weight: var(--weight-semibold);
   line-height: var(--leading-snug);
-  text-transform: uppercase;
 }
 
-/* The pill: a short status or a badge of one or two words. The radius is the pill rather than
- * a corner, the ground it sits on is the panel so it reads as laid on the page, and its label
- * is the quieter tone — a pill is a note beside a heading, never the heading. */
+/* The pill: a short status or a badge of one or two words. A filled shape one tone step above
+ * the ground, with no outline (the ruling of 2026-10-23, lever 5: 1px outlined boxes become
+ * tone steps). */
 .pill {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2xs);
   padding: var(--space-3xs) var(--space-xs);
-  border: var(--border-width) solid var(--border);
   border-radius: var(--radius-pill);
-  background: var(--panel);
+  background: var(--surface);
   color: var(--text-muted);
   font-size: var(--font-size-sm);
   line-height: var(--leading-snug);
 }
 
-/* The card: the panel the boards draw everything on. One step above the ground, a hairline
- * border and the larger radius, with the padding as a step of the spacing scale rather than a
- * number — a card in a grid and a card standing alone are then the same box. The tone is the
- * surface rather than the panel, because a card is laid on the page and a panel is what a pill
- * or a tab bar is drawn on; the bold redesign's run band and "what you get" grid are the two
- * blocks that use it, and each adds only the layout and the marks its own block needs. */
+/* The card: a surface one tone step above the ground, and nothing drawn around it (the owner's
+ * ruling of 2026-10-23, lever 5). The padding is a step of the spacing scale, so a card in a
+ * grid and a card standing alone are the same box. A card that wants to be marked (the one a
+ * page leads with) is marked by a fill, never by an outline. */
 .card {
   padding: var(--space-lg);
-  border: var(--border-width) solid var(--border);
-  border-radius: var(--radius-xl);
+  border: 0;
+  border-radius: var(--radius-lg);
   background: var(--surface);
 }
 
-/* The numbered step badge: the square the flow's steps are numbered in. The accent is the
- * fill and the ground is the label on it — the pair the site's buttons already use — and the
- * green variant is the last step of a run, which is the one that finished. */
+/* The numbered step badge: the accent as the fill and the ground as the label, in the text
+ * face (the ruling of 2026-10-23 keeps monospace to real code). */
 .step-badge {
   display: inline-flex;
   flex: none;
@@ -693,7 +688,7 @@ a.skip-link:focus {
   border-radius: var(--radius-md);
   background: var(--accent);
   color: var(--ground);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--font-size-lg);
   font-weight: var(--weight-black);
   line-height: 1;
@@ -703,43 +698,26 @@ a.skip-link:focus {
   background: var(--ok);
 }
 
-/* The hero's background: the two soft glows and the grid the boards draw behind the headline.
- * It is one absolutely positioned layer at the top of the page and it is **decoration**: it is
- * `aria-hidden` in the markup, it paints no text, and its whole content is gradients of palette
- * tokens at an `opacity`, which is what keeps it out of the contrast pairs (a glow is not a
- * background any text is read against — the hero's own ground still is). The grid is two
- * one-pixel gradients sized to a 48 px tile and masked to fade out before the section ends, so
- * the pattern belongs to the top of the page rather than tiling the whole of it. A parent that
- * uses this must be `position: relative` and `overflow: hidden`. */
+/* The glow and grid texture the boards drew behind a page's title are retired with the
+ * owner's ruling of 2026-10-23 (lever 5: no gradients, no grid texture). The pages that still
+ * carry the empty, `aria-hidden` layer draw nothing in it. */
 .hero-glow {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
+  display: none;
 }
 
-.hero-glow::before,
-.hero-glow::after {
-  content: '';
-  position: absolute;
-  inset: 0;
+/* The entrances (the redesign's motion layer, the owner's rulings of 2026-10-23, lever 7). The
+ * script marks a part of a home section `data-reveal` only when it is below the first screen and
+ * the reader has not asked for less motion, and marks it `data-revealed` as it enters, so with
+ * no script nothing is ever held back. Transform and opacity only. */
+[data-reveal] {
+  transition:
+    opacity var(--duration-slow) var(--ease-out),
+    transform var(--duration-slow) var(--ease-out);
 }
 
-.hero-glow::before {
-  background-image:
-    linear-gradient(var(--border) 1px, transparent 1px),
-    linear-gradient(90deg, var(--border) 1px, transparent 1px);
-  background-size: 48px 48px;
-  opacity: 0.6;
-  -webkit-mask-image: linear-gradient(180deg, var(--ground) 0%, transparent 78%);
-  mask-image: linear-gradient(180deg, var(--ground) 0%, transparent 78%);
-}
-
-.hero-glow::after {
-  background-image:
-    radial-gradient(58% 46% at 78% 16%, var(--accent) 0%, transparent 70%),
-    radial-gradient(52% 44% at 6% 74%, var(--ok) 0%, transparent 70%);
-  opacity: 0.22;
+[data-reveal]:not([data-revealed]) {
+  opacity: 0;
+  transform: translateY(24px);
 }
 
 /* ---- 3. the element defaults (all zero-specificity) ------------------------------------- */
@@ -924,5 +902,10 @@ a.skip-link:focus {
   .site-header,
   .site-footer {
     padding-inline: max(var(--space-md), calc((100% - var(--page-max)) / 2 + var(--space-md)));
+  }
+
+  /* The same gutter for the home page's full-width bands (tokens.css, `--frame-gutter`). */
+  :root {
+    --frame-gutter: max(var(--space-md), calc((100% - var(--page-max)) / 2 + var(--space-md)));
   }
 }

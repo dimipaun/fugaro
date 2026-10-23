@@ -973,6 +973,9 @@
 
     function dismiss() {
       banner.hidden = true
+      // The early decision's mark (`consent-early.js`) is what draws the banner in the flow from
+      // the first frame; the decision is made, so the mark goes with the banner.
+      document.documentElement.removeAttribute('data-consent-ask')
       // Focus goes to the content, not back to the top of the page and not to a control
       // that has just disappeared. `tabindex="-1"` makes <main> a focus target without
       // putting it in the tab order.
@@ -1288,9 +1291,148 @@
     arm()
   }
 
+  // ---- the hero's live card (the owner's ruling of 2026-10-23, the redesign's lever 3) -------
+  //
+  // The card is the request `src/lib/agent-request.mjs` holds, the jobs it launches and the
+  // pull requests they end in. With no script it is the static picture of that one request.
+  // Here it becomes the one live thing on the page: the field is revealed, and whatever task the
+  // reader types is redrawn as the jobs Fugaro would launch for it, in the words `fugaro watch`
+  // prints (`implement`, `review`, `ready for review`). It is an illustration and says so in its
+  // caption; it sends nothing anywhere and stores nothing.
+  //
+  // How many jobs: one per line when the reader writes several lines, else the number the task
+  // names (a figure or a number word, `three bug fixes`), else one. The ceiling is README.md's
+  // `max_parallel` default, which the hero hands over as `data-live-max`.
+  var LIVE = '[data-live-run]'
+  var NUMBER_WORDS = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten',
+    'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen',
+    'nineteen', 'twenty']
+  var LIVE_STAGES = ['implement', 'review', 'ready for review']
+
+  function jobsIn(text) {
+    var lines = String(text || '').split(/\n/)
+    var named = []
+    for (var i = 0; i < lines.length; i++) if (/\S/.test(lines[i])) named.push(lines[i])
+    if (named.length === 0) return 0
+    if (named.length > 1) return named.length
+    var figure = /(^|[^\w.])(\d{1,4})(?![\w.])/.exec(named[0])
+    if (figure) return parseInt(figure[2], 10)
+    var lower = named[0].toLowerCase()
+    for (var w = NUMBER_WORDS.length - 1; w >= 0; w--) {
+      if (new RegExp('\\b' + NUMBER_WORDS[w] + '\\b').test(lower)) return w + 1
+    }
+    return 1
+  }
+
+  function liveRun() {
+    var card = document.querySelector(LIVE)
+    if (!card) return
+    var ask = card.querySelector('[data-live-ask]')
+    var field = card.querySelector('[data-live-field]')
+    var prompt = card.querySelector('[data-live-prompt]')
+    var status = card.querySelector('[data-live-status-text]')
+    var list = card.querySelector('[data-live-jobs]')
+    if (!ask || !field || !status || !list) return
+    var max = parseInt(card.getAttribute('data-live-max'), 10) || 20
+    // The rows are copies of the first row the page rendered, so they carry every attribute the
+    // build gave it (the scoped style's own among them) and this file writes no markup.
+    var model = list.firstElementChild ? list.firstElementChild.cloneNode(true) : null
+    if (!model || !model.querySelector('.hero-shot-job-name') || !model.querySelector('.hero-shot-stage')) return
+    var quiet = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null
+    var timers = []
+    var waiting = 0
+
+    function stop() {
+      for (var t = 0; t < timers.length; t++) window.clearTimeout(timers[t])
+      timers = []
+    }
+
+    function row(at, of) {
+      var item = model.cloneNode(true)
+      item.querySelector('.hero-shot-job-name').textContent = 'Pull request ' + at + ' of ' + of
+      var stage = item.querySelector('.hero-shot-stage')
+      return { item: item, stage: stage }
+    }
+
+    function advance(entry, step, delay) {
+      timers.push(window.setTimeout(function () {
+        entry.stage.textContent = LIVE_STAGES[step]
+        if (step === LIVE_STAGES.length - 1) entry.item.removeAttribute('data-stage')
+        else {
+          entry.item.setAttribute('data-stage', 'working')
+          advance(entry, step + 1, 700 + Math.floor(Math.random() * 900))
+        }
+      }, delay))
+    }
+
+    function draw() {
+      stop()
+      var asked = jobsIn(field.value)
+      var count = Math.min(asked, max)
+      if (count === 0) status.textContent = 'Type a task to launch a job'
+      else
+        status.textContent =
+          'Fugaro: launching ' + count + (count === 1 ? ' job' : ' jobs') +
+          (asked > max ? ' (max_parallel is ' + max + ' by default)' : '')
+      while (list.firstChild) list.removeChild(list.firstChild)
+      for (var n = 1; n <= count; n++) {
+        var entry = row(n, count)
+        entry.item.setAttribute('data-arrive', '')
+        list.appendChild(entry.item)
+        if (quiet && quiet.matches) entry.stage.textContent = LIVE_STAGES[LIVE_STAGES.length - 1]
+        else {
+          entry.item.setAttribute('data-stage', 'working')
+          entry.stage.textContent = 'queued'
+          advance(entry, 0, 300 + n * 180)
+        }
+      }
+    }
+
+    ask.hidden = false
+    if (prompt) prompt.hidden = true
+    field.addEventListener('input', function () {
+      window.clearTimeout(waiting)
+      waiting = window.setTimeout(draw, 250)
+    })
+    draw()
+  }
+
+  // ---- entrances (the redesign's motion layer, step 9) ------------------------------------
+  //
+  // The parts of each home section rise into place once, in reading order, as the section
+  // enters the window. Only what is below the first screen when the script runs is held back,
+  // so nothing a reader already sees blinks; with no script, or a reader who asks for less
+  // motion, everything is simply there.
+  function entrances() {
+    if (!('IntersectionObserver' in window)) return
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    var blocks = document.querySelectorAll('[data-reveal-block]')
+    if (blocks.length === 0) return
+    var seen = new IntersectionObserver(function (entries) {
+      for (var e = 0; e < entries.length; e++) {
+        if (!entries[e].isIntersecting) continue
+        entries[e].target.setAttribute('data-revealed', '')
+        seen.unobserve(entries[e].target)
+      }
+    }, { rootMargin: '0px 0px -12% 0px' })
+    var fold = window.innerHeight || 0
+    for (var b = 0; b < blocks.length; b++) {
+      var parts = blocks[b].querySelectorAll('h2, h3, p, li, figure, pre')
+      for (var p = 0; p < parts.length; p++) {
+        if (parts[p].getBoundingClientRect().top < fold) continue
+        parts[p].setAttribute('data-reveal', '')
+        parts[p].style.transitionDelay = Math.min(p, 6) * 70 + 'ms'
+        seen.observe(parts[p])
+      }
+    }
+  }
+
+
   function start() {
     menu()
     consent()
+    liveRun()
+    entrances()
     // The sliders first, and unconditionally: a slider's controls are not a convenience the
     // page can do without — the arrows, the count and the dots are the owner's feedback of
     // 2026-10-21 — so neither is behind the clipboard gate the copy controls stand behind below.

@@ -1,0 +1,238 @@
+---
+/**
+ * website/src/components/HomeCost.astro — what a run costs and what stops it, on the homepage
+ * (the owner's rulings of 2026-10-23, the redesign's Step 3, lever 1: "what it costs and what
+ * stops it, moving cost and caps onto the home page").
+ *
+ * **One figure, measured, not promised.** The figure is the median first task run from
+ * `website/data/typical-costs.yaml`, the owner's own measurement of this project's runs, which
+ * `/caps-and-costs/` leads with; the line under it says how many runs, over which days, and that
+ * it is an estimate. Nothing here is a price: there is no Fugaro service to pay, and the
+ * sentence that says so is README.md's own.
+ *
+ * **What stops a run** is README.md's "Safety and cost controls" list, quoted in four lines held
+ * to it below, ending with the README's own limit on what the caps are for.
+ *
+ * The picture is the console's real Spend screen (`website/data/console-screens.yaml`).
+ */
+import { loadConsoleScreens, loadSite } from '../content.ts'
+import { comparable, wholeFile } from '../lib/repo-quote.mjs'
+
+const typical = loadSite().typicalCosts
+const task = typical.jobs.find((job) => job.id === 'task')
+if (!task) {
+  throw new Error('website/src/components/HomeCost.astro: website/data/typical-costs.yaml has no "task" row, and the homepage leads its cost section with that row.')
+}
+
+function money(value: number): string {
+  return `$${value.toFixed(2)}`
+}
+
+const SPEND = loadConsoleScreens().screens.find((screen) => screen.src.endsWith('/console-spend.webp'))
+if (!SPEND) {
+  throw new Error('website/src/components/HomeCost.astro: website/data/console-screens.yaml lists no console-spend.webp row, and the cost section shows that screen.')
+}
+
+/** README.md's sentence about who is paid. */
+const NO_SERVICE =
+  'There is no Fugaro service in between: it uses your Google Cloud project and your model credentials (a Claude subscription token, an Anthropic API key or Vertex AI), and Cloud Run bills a task only while it runs.'
+
+/**
+ * What stops a run: each line is README.md's, with the markdown markers off and the first
+ * letter raised where the README's clause starts mid-sentence. `quote` is the README's own
+ * words the line is held to.
+ */
+const CONTROLS = [
+  {
+    html: 'Every stage passes Claude Code a dollar limit (<code>agent.max_budget_usd</code>, default 25).',
+    quote: 'every stage passes Claude Code a dollar limit (`agent.max_budget_usd`, default 25)',
+  },
+  {
+    html: 'With the budget on and an Anthropic API key, a gateway prices each call and, in <code>enforce</code> mode, halts the run at its dollar cap.',
+    quote: 'prices each call and, in `enforce` mode, halts the run at its dollar cap',
+  },
+  {
+    html: 'With a Firebase project, runs also share daily caps per repository and project, and kill switches (<code>fugaro budget kill</code>, or <code>k</code>/<code>K</code> in <code>fugaro watch</code>) halt running runs within seconds.',
+    quote: 'runs also share daily caps per repository and project, and kill switches (`fugaro budget kill`, or `k`/`K` in `fugaro watch`) halt running runs within seconds',
+  },
+  {
+    html: 'The caps guard against mistakes and expensive tasks, not against a hostile agent.',
+    quote: 'The caps guard against mistakes and expensive tasks, not against a hostile agent.',
+  },
+]
+
+{
+  const readme = comparable(wholeFile('README.md'))
+  for (const line of [NO_SERVICE, ...CONTROLS.map((control) => control.quote)]) {
+    if (!readme.includes(comparable(line))) {
+      throw new Error(
+        `website/src/components/HomeCost.astro: ${JSON.stringify(line)} is not README.md's own words, and the cost section quotes the README rather than writing its own claims about money (Global Constraint 6).`,
+      )
+    }
+  }
+}
+---
+
+<section class="home-cost" data-reveal-block aria-labelledby="home-cost-title" data-source="website/data/typical-costs.yaml">
+  <div class="home-cost-words">
+    <h2 class="home-cost-title display-lg" id="home-cost-title">What a run costs</h2>
+    <p class="home-cost-lead" data-source="README.md">{NO_SERVICE}</p>
+    <figure class="home-cost-shot">
+      <figcaption class="home-cost-caption">The console’s Spend screen</figcaption>
+      <img
+        class="home-cost-image"
+        src={SPEND.src}
+        alt={SPEND.alt}
+        width={SPEND.width}
+        height={SPEND.height}
+        loading="lazy"
+        decoding="async"
+      />
+    </figure>
+  </div>
+
+  <div class="home-cost-figure">
+    {/* The figure as a display numeral: the median, with the sample it was drawn from right
+        under it, so the number is never read without its terms. */}
+    <p class="home-cost-number">{money(task.medianUSD)}</p>
+    <p class="home-cost-terms">
+      The median first task run: {task.runs} of Fugaro's own runs, {typical.from} to {typical.to}, model plus
+      compute, an estimate. Nine runs in ten stayed under {money(task.nineInTenUnderUSD)}.
+    </p>
+
+    <h3 class="home-cost-stops">What stops a run</h3>
+    <ul class="home-cost-controls" data-source="README.md#Safety and cost controls">
+      {CONTROLS.map((control) => <li set:html={control.html} />)}
+    </ul>
+
+    <p class="home-cost-cta">
+      <a class="home-cost-button" href="/caps-and-costs/">See caps and costs</a>
+    </p>
+  </div>
+</section>
+
+<style>
+  /* Tokens only (W1.2). The section carries its gutter and its room below, and no top padding
+     (`website/test/base-styles.mjs`'s `homeRhythmFailures`). */
+  .home-cost {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2xl);
+    padding: 0 var(--frame-gutter) var(--space-4xl);
+  }
+
+  .home-cost-title {
+    margin: 0 0 var(--space-md);
+  }
+
+  .home-cost-lead {
+    margin: 0 0 var(--space-xl);
+    max-width: 40ch;
+    color: var(--text);
+    font-size: var(--font-size-lg);
+    line-height: var(--leading-normal);
+  }
+
+  .home-cost-shot {
+    margin: 0;
+  }
+
+  .home-cost-image {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16 / 10;
+    object-fit: cover;
+    object-position: left top;
+    border-radius: var(--radius-sm);
+  }
+
+  .home-cost-caption {
+    margin: 0 0 var(--space-2xs);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  /* The figure: the page's display numerals, tight, in the full ink. Tabular figures so the
+     digits sit on a grid. */
+  .home-cost-number {
+    margin: 0;
+    color: var(--text);
+    font-size: clamp(6rem, 22vw, 13rem);
+    font-weight: var(--weight-black);
+    letter-spacing: var(--tracking-display);
+    line-height: 0.85;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .home-cost-terms {
+    margin: var(--space-md) 0 var(--space-xl);
+    max-width: 44ch;
+    color: var(--text);
+    font-size: var(--font-size-lg);
+    line-height: var(--leading-normal);
+  }
+
+  .home-cost-stops {
+    margin: 0 0 var(--space-sm);
+    color: var(--text);
+    font-size: var(--font-size-xl);
+    font-weight: var(--weight-black);
+    letter-spacing: var(--tracking-tight);
+  }
+
+  /* Four plain lines, without ticks or bullets. */
+  .home-cost-controls {
+    display: grid;
+    gap: var(--space-sm);
+    margin: 0 0 var(--space-xl);
+    padding: 0;
+    list-style: none;
+    max-width: 52ch;
+    color: var(--text);
+    font-size: var(--font-size-base);
+    line-height: var(--leading-normal);
+  }
+
+  .home-cost-cta {
+    margin: 0;
+  }
+
+  /* The section's one button: the same shape as the hero's, as a quieter fill, because the
+     page's primary action is Get started. */
+  .home-cost-button {
+    display: inline-flex;
+    align-items: center;
+    box-sizing: border-box;
+    min-height: 52px;
+    padding: var(--space-xs) var(--space-lg);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--accent-on-dark);
+    font-size: var(--font-size-lg);
+    font-weight: var(--weight-black);
+    text-decoration: none;
+    transition: transform var(--duration-fast) var(--ease-out), background-color var(--duration-fast) var(--ease-out);
+  }
+
+  .home-cost-button:active {
+    transform: scale(0.97);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .home-cost-button:hover {
+      background: var(--border);
+    }
+  }
+
+  @media (min-width: 64rem) {
+    .home-cost {
+      grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+      align-items: start;
+    }
+
+    .home-cost-number {
+      font-size: clamp(8rem, 15vw, 15rem);
+    }
+  }
+</style>

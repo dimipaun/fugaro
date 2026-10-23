@@ -41,18 +41,11 @@
  * reader of the page counts four boxes. The names are marked up as `h3` under the section's
  * `h2`, so a screen reader gets four headings under one, in the README's order.
  *
- * **The owner's second feedback of 2026-10-19: "make them bigger, bolder, use an icon for
- * each point".** Each benefit therefore carries one glyph — one inline `<svg>` per `<li>`,
- * drawn with `currentColor` strokes in `--accent`, its box a step of the spacing scale — and
- * the type is a step up the type scale at every level of the block, so the four read as the
- * section's four points rather than as a paragraph broken into four. **The glyph is
- * decoration and says so**: `aria-hidden="true"` and `focusable="false"`, because the name
- * beside it carries the meaning and a screen reader given the glyph as well would read the
- * same point twice. It is inline SVG in this file and nothing else: no icon font, no image
- * file, no third-party anything, no JavaScript — a page of this site has to be readable with
- * the script off, and a glyph fetched from somewhere else is a request to somewhere else
- * (Global Constraints 4 and 8). `website/test/home.mjs` holds every benefit to exactly one
- * such icon from outside the build.
+ * **No icons since the redesign's Step 3** (the owner's rulings of 2026-10-23, lever 5: the row
+ * of identical icon cards becomes one composed section). The second feedback of 2026-10-19
+ * asked for an icon on each point; the 2026-10-23 audit flagged the result as a row of
+ * identical icon cards, and the points are now four headed paragraphs under a statement that
+ * carries real pictures inline.
  *
  * **Both size steps, and why the section's own heading moved with them.** The type scale has
  * one step between the body size (`--font-size-base`) and the size above it (`--font-size-lg`),
@@ -132,59 +125,38 @@ function reasons(section: string): { name: string; paragraph: string }[] {
 }
 
 const REASONS = reasons(readmeSection('Why Fugaro'))
+const readmeWhole = readFileSync(path.join(REPO_ROOT, 'README.md'), 'utf8')
 
 /**
  * The four reasons the page renders, in the README's order: the name the README gives each
  * one, and one line of the paragraph it is argued in. Nothing here is written for the page —
  * `line` is a sentence of the README's own reason paragraph, and the loop below is what
  * makes that true of the artifact rather than of this file.
- *
- * `icon` names the glyph the benefit is drawn with, and it is a key into `GLYPHS` rather than
- * markup, so the guard below can hold the four to one distinct glyph each: the glyph is
- * chosen for the point it sits under — a shield for a run that is safe by construction,
- * arrows leaving a centre for a fan-out, three people for a team's shared policy, a spark for
- * the newest tools — and the four are not illustrations of one another.
  */
 const BENEFITS = [
-  { name: 'Safe by construction', line: 'The agent does not run on your machine.', icon: 'shield' },
-  { name: 'Scale out, and walk away', line: 'Each task is its own job execution', icon: 'arrows' },
-  { name: 'Team control in one place', line: 'Policy lives in the project, not on each laptop.', icon: 'team' },
-  { name: 'The newest tools and models, ready to use', line: 'You choose the model per role', icon: 'spark' },
+  {
+    name: 'Safe by construction',
+    line: 'It runs in a throwaway container in your own cloud project, so it cannot read your laptop: not your files, your shell history, your SSH keys or your other credentials.',
+  },
+  {
+    name: 'Scale out, and walk away',
+    line: 'Start a batch (fugaro run --attempts N for best-of-N on one task, or many tasks at once), close the laptop and come back to pull requests with their reports, logs and cost.',
+  },
+  { name: 'Team control in one place', line: 'Policy lives in the project, not on each laptop.' },
+  { name: 'The newest tools and models, ready to use', line: 'You choose the model per role' },
 ]
 
 /**
- * The glyphs a benefit may be drawn with: four, and one point each (above). Each entry **is**
- * the drawing — the shapes the `<svg>` in the markup below holds — rather than a name the
- * template is expected to have a branch for, so a name and the picture that goes with it
- * cannot come apart: an entry with no shape in it is refused by the guard at the foot of this
- * block, and the section's `<svg>` renders whatever the entry holds. A rename that leaves the
- * drawing behind is therefore a build that stops here, not a point rendered with an empty
- * `<svg>` the way it would be if the drawing lived in the template's own branches.
- *
- * Inline SVG, one box of 24 by 24 user units, drawn with `currentColor` strokes by the rule
- * that carries `.benefit-icon`. No `<use>`, no `<image>`, nothing fetched: a glyph a reader's
- * browser has to download is another request, and this page's own drawing is shapes in its
- * markup (Global Constraints 4 and 8).
+ * The statement the section opens with: README.md's own sentence about what a run is, in
+ * three parts so that a picture can sit inline after each of the two things it names (the
+ * redesign's Step 3, the dealt intro "statement with inline thumbnails"). Each part is held to
+ * the README below, and the pictures are crops of the site's own real captures.
  */
-const GLYPHS = {
-  /* A shield: the run is a throwaway container in the reader's own project. */
-  shield: '<path d="M12 3l7 3v6c0 4-3.5 6.5-7 8-3.5-1.5-7-4-7-8V6Z" />',
-  /* Two arrows leaving a centre: one task, many job executions. */
-  arrows: '<path d="M11 13L19 5M13 5h6v6M13 11L5 19M11 19H5v-6" />',
-  /* Three people: the policy the project layer publishes, and everyone under it. */
-  team:
-    '<circle cx="12" cy="7.5" r="3" />' +
-    '<circle cx="5.5" cy="10.5" r="2.5" />' +
-    '<circle cx="18.5" cy="10.5" r="2.5" />' +
-    '<path d="M6.5 20.5c0-3 2.5-4.5 5.5-4.5s5.5 1.5 5.5 4.5" />' +
-    '<path d="M2 20.5c0-2.4 1.5-3.8 3.2-4.1" />' +
-    '<path d="M22 20.5c0-2.4-1.5-3.8-3.2-4.1" />',
-  /* A spark: the newest tools and models, ready to use. */
-  spark: '<path d="M12 4l2.2 5.8L20 12l-5.8 2.2L12 20l-2.2-5.8L4 12l5.8-2.2Z" />',
-}
-
-/** The shapes a glyph is drawn with: what has to be in an entry for it to draw anything. */
-const GLYPH_SHAPES = /<(?:path|circle|ellipse|rect|line|polyline|polygon)\b/
+const STATEMENT = [
+  { text: 'Each task gets its own Cloud Run job execution in your own Google Cloud project,', thumb: { src: '/screenshots/console-run.webp', crop: 'run' } },
+  { text: 'runs Claude Code headless to completion,', thumb: null },
+  { text: 'opens a pull request and disappears.', thumb: { src: '/images/fugaro-watch.png', crop: 'watch' } },
+]
 
 // Hold every benefit to the reason it is, in the reason's own paragraph, here, so a
 // paraphrase — or a line that moved from the reason above it to the one below — stops the
@@ -208,78 +180,55 @@ const GLYPH_SHAPES = /<(?:path|circle|ellipse|rect|line|polyline|polygon)\b/
         `website/src/components/Benefits.astro: benefit ${position}'s line ${JSON.stringify(benefit.line)} is not in ${SOURCE}'s reason ${position}, and every line of the benefits is a sentence of the reason its name names rather than one written for the page (the owner's feedback of 2026-10-19; Global Constraint 6). Either the reason was reworded or the line was edited.`,
       )
     }
-    if (GLYPHS[benefit.icon] === undefined) {
+  }
+  for (const part of STATEMENT) {
+    if (!comparable(readmeWhole).includes(comparable(part.text.replace(/[,.]$/, '')))) {
       throw new Error(
-        `website/src/components/Benefits.astro: benefit ${position}, ${JSON.stringify(benefit.name)}, is drawn with ${JSON.stringify(benefit.icon)}, which is no glyph this section draws (${Object.keys(GLYPHS).join(', ')}): the owner's feedback of 2026-10-19 asks each point for an icon, and a glyph a benefit names and the section has no drawing for is a point rendered with an empty <svg>.`,
+        `website/src/components/Benefits.astro: the statement's part ${JSON.stringify(part.text)} is not README.md's own words, and the statement is the README's sentence about what a run is (Global Constraint 6).`,
       )
     }
-  }
-  // No glyph in the map is empty. This is the half the membership check above cannot
-  // give: an entry that is an empty string (or a comment, or a group with nothing in it) is a
-  // name the section "has" and a `<svg>` with no shape in it — an invisible icon, which is the
-  // defect the owner's feedback is about, arriving with the build green.
-  for (const [name, shapes] of Object.entries(GLYPHS)) {
-    if (!GLYPH_SHAPES.test(shapes)) {
-      throw new Error(
-        `website/src/components/Benefits.astro: the glyph ${JSON.stringify(name)} holds no shape (${JSON.stringify(shapes)}), and a glyph with no shape in it is an empty <svg>: every point of the benefits is drawn with a picture (the owner's feedback of 2026-10-19), and an entry with nothing to draw is a name with no icon behind it.`,
-      )
-    }
-  }
-  // One distinct glyph per point (the owner's feedback of 2026-10-19): four benefits drawn
-  // with the same picture are one icon used four times, and the picture then says nothing
-  // about the point under it.
-  const drawn = new Set(BENEFITS.map((benefit) => benefit.icon))
-  if (drawn.size !== BENEFITS.length) {
-    throw new Error(
-      `website/src/components/Benefits.astro: the ${BENEFITS.length} benefits are drawn with ${drawn.size} distinct glyph(s) — ${[...drawn].join(', ')}: each point carries a glyph of its own (the owner's feedback of 2026-10-19).`,
-    )
   }
 }
-
-/**
- * **Where the section's gutter stands down.** A page that renders this section as a block of
- * its own gets the gutter and the room below with it (the rule below, and the round-6 fix that
- * put it here). The homepage renders it inside a panel of `HomeSlider.astro`, where the panel
- * is the block: the two gutters would stack, and the section's text would sit 32 px inside the
- * other panels'. So the caller says so, and the section's own rule is what stands down. It is
- * decided here rather than reached into from the panel with a `:global` selector, for the
- * reason the round-6 fix is about: a block's rule belongs where the block is rendered.
- */
-const { inPanel = false } = Astro.props
 ---
 
-<section
-  class:list={['home-benefits', inPanel && 'home-benefits-panel']}
-  aria-labelledby="benefits-title"
-  data-source={SOURCE}
->
-  <h2 class="benefits-title" id="benefits-title">Why Fugaro?</h2>
+<section class="home-benefits" data-reveal-block aria-labelledby="benefits-title" data-source={SOURCE}>
+  <h2 class="benefits-title display-lg" id="benefits-title">Why Fugaro?</h2>
+
+  {/* The statement: README.md's sentence about what a run is, at statement size, with a crop of
+      a real capture inline after each of the two things it names. The crops are decoration
+      beside words that already say it, so their alt text is empty. */}
+  <p class="benefits-statement" data-source="README.md">
+    {
+      STATEMENT.map((part) => (
+        <Fragment>
+          {part.text}
+          {part.thumb && (
+            <>
+              {' '}
+              <img
+                class="benefits-thumb"
+                src={part.thumb.src}
+                alt=""
+                width="96"
+                height="64"
+                loading="lazy"
+                decoding="async"
+                data-crop={part.thumb.crop}
+              />
+            </>
+          )}{' '}
+        </Fragment>
+      ))
+    }
+  </p>
+
+  {/* The four reasons: the README's names as headings and a sentence of each reason under it,
+      in two columns on a wide screen. A list, because the README counts them; no box drawn
+      around any of them. */}
   <ul class="benefit-list">
     {
       BENEFITS.map((benefit) => (
         <li class="benefit">
-          {/* The point's glyph: inline, decorative, and drawn with the accent by the rule
-              below (`stroke: currentColor` reads the `color` that rule sets). **The drawing is
-              the map's, not a branch here** (`GLYPHS`, above): a template branch per name could
-              be out of step with the map by one word and render an empty `<svg>` with nothing
-              to see it, and a name whose entry holds no shape is refused at the foot of the
-              frontmatter. The shapes are markup and nothing else — no `style` attribute, which
-              the deployed policy's `style-src` would have to admit, and no request: a
-              `<use href>` or an `<image>` is a file this page would fetch, and the page
-              fetches nothing for its own drawing (Global Constraints 4 and 8). */}
-          <svg
-            class="benefit-icon"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"
-            focusable="false"
-          >
-            <Fragment set:html={GLYPHS[benefit.icon]} />
-          </svg>
           <h3 class="benefit-name">{benefit.name}</h3>
           <p class="benefit-line">{benefit.line}</p>
         </li>
@@ -289,118 +238,81 @@ const { inPanel = false } = Astro.props
 </section>
 
 <style>
-  /* Tokens only (W1.2): the section names the palette, the spacing scale, the type scale and
-     the radii, and defines none of them.
-
-     **The section's own gutter and its room below are declared here, in this component's rule**
-     (review round 6). They were in `src/pages/index.astro`'s `.home-chat, .home-flow,
-     .home-benefits` rule, and Astro scopes a page's selector to the elements the page renders:
-     the `<div class="home-chat">` and `<div class="home-flow">` carry the page's scope, and this
-     `<section>` is rendered by this component and carries `Benefits.astro`'s — so the page's
-     rule never matched the section, the section kept no padding at all, and its text ran edge to
-     edge on a phone. The rule is where the element is rendered, the same as `Hero.astro`'s and
-     `HomeInstall.astro`'s; and it is one block's rule rather than the page's three, so a block
-     that pads both sides of a gap is now visible in one file. The gap is padded once: this
-     section pads below itself and not above, which is what
-     `website/test/base-styles.mjs`'s `homeRhythmFailures` refuses a pair of blocks for. */
+  /* Tokens only (W1.2). The section carries its own gutter and its room below, and no top
+     padding: the block above carries the gap between them (`website/test/base-styles.mjs`'s
+     `homeRhythmFailures`). */
   .home-benefits {
-    max-width: var(--page-max);
-    margin: 0 auto;
-    padding: 0 var(--space-md) var(--space-3xl);
+    padding: 0 var(--frame-gutter) var(--space-4xl);
   }
 
-  /* Inside the homepage's slider the panel is the block (see `inPanel` above): the section
-     keeps its heading, its list and its glyphs, and gives up the column and the room that the
-     panel around it already carries. */
-  .home-benefits-panel {
-    max-width: none;
-    margin: 0;
-    padding: 0;
-  }
-
-  /* The section's own label, one step above the point names under it and above the size the
-     page's other section headings are set in: the feedback of 2026-10-19 moves the four points
-     up one step of the type scale, and the block as a whole up two — one for the points, one
-     for this heading — because a section whose label stayed where it was would read as the
-     smallest thing in its own block. Nothing else about the heading moves. */
   .benefits-title {
-    margin: 0 0 var(--space-md);
-    font-family: var(--font-sans);
-    font-size: var(--font-size-xl);
-    font-weight: var(--weight-semibold);
-    letter-spacing: var(--tracking-tight);
-    color: var(--text);
+    margin: 0 0 var(--space-lg);
   }
 
-  /* The grid, and its one departure from the site's measure. `base.css` holds lists to the
-     measure (`:where(p, ul, ol, dl, blockquote, figcaption) { max-width: var(--measure) }`),
-     and two columns of a 68 ch box is a column of two words. The list is not prose; it is
-     the section's grid, and it is as wide as the page's column — the same escape, and the
-     same reason, as the flow's own list. */
+  /* The statement: a paragraph at statement size (32 px or less on a wide screen, 24 px on a
+     phone), in the full ink, three lines across the page's measure. */
+  .benefits-statement {
+    margin: 0 0 var(--space-2xl);
+    max-width: 40ch;
+    color: var(--text);
+    font-size: clamp(var(--font-size-xl), 2.6vw, var(--font-size-2xl));
+    font-weight: var(--weight-semibold);
+    line-height: 1.3;
+    letter-spacing: var(--tracking-tight);
+  }
+
+  /* A crop of a real capture, set in the line: about the height of a capital, a little wider
+     than tall, and never at the start of a line on its own (it follows the word it shows). */
+  .benefits-thumb {
+    display: inline-block;
+    width: 1.6em;
+    height: 0.9em;
+    margin-inline: 0.06em;
+    vertical-align: -0.08em;
+    border-radius: 0.12em;
+    object-fit: cover;
+  }
+
+  /* Where each crop looks: the run screen's stage ledger, and the watch screen's "ready for
+     review" rows. */
+  .benefits-thumb[data-crop='run'] {
+    object-position: 18% 30%;
+  }
+
+  .benefits-thumb[data-crop='watch'] {
+    object-position: 62% 62%;
+  }
+
   .benefit-list {
-    max-width: none;
     display: grid;
-    grid-template-columns: 1fr;
-    gap: var(--space-lg) var(--space-xl);
+    max-width: none;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-xl) var(--space-2xl);
     margin: 0;
     padding: 0;
     list-style: none;
   }
 
-  /* Two columns from 40 rem up: four reasons read as a two-by-two rather than as a column
-     of four, and the column repeats rather than `auto-fit`, so the grid is the same shape at
-     every width above the breakpoint instead of re-flowing into a row of three and a
-     widow. */
-  @media (min-width: 40rem) {
-    .benefit-list {
-      grid-template-columns: repeat(2, 1fr);
-    }
-  }
-
-  /* The benefit: a glyph, a name and its one line, with the site's own separator above them
-     rather than a card — a rule is what the site already draws between things that are not one
-     thing, and the icon the feedback of 2026-10-19 asks for is drawn inside the item. */
-  .benefit {
-    padding-top: var(--space-sm);
-    border-top: var(--border-width) solid var(--border);
-  }
-
-  /* The glyph: one box per point, a step of the spacing scale (48 px), drawn a line above the
-     name it belongs to. **The box is the glyph's box, and it is `display: block`** so a phone
-     reader sees the icon on its own line rather than as an inline mark set into the name — and
-     so the word-seam gate reads the boundary a reader sees (`website/test/spacing.mjs`). The
-     accent is the stroke: `--accent` on `--ground` is a pair `a11y.mjs` computes at 3:1 in all
-     four palettes, which is the ratio 1.4.11 asks of a graphic rather than prose. */
-  .benefit-icon {
-    display: block;
-    width: var(--space-xl);
-    height: var(--space-xl);
-    margin-bottom: var(--space-sm);
-    color: var(--accent);
-  }
-
   .benefit-name {
     margin: 0 0 var(--space-2xs);
-    font-family: var(--font-sans);
-    /* Larger and at the top of the weight scale: the feedback asks for "bigger, bolder", the
-       type scale has one step between the body size and this one, and `--weight-semibold` is
-       the weight the site's scale stops at. */
-    font-size: var(--font-size-lg);
-    font-weight: var(--weight-semibold);
     color: var(--text);
-    /* A name longer than its column breaks rather than running out of it. */
-    overflow-wrap: anywhere;
+    font-size: var(--font-size-xl);
+    font-weight: var(--weight-black);
+    letter-spacing: var(--tracking-tight);
+    line-height: var(--leading-tight);
   }
 
-  /* The line, muted and a step larger than the body size it was set in: `--text-muted` on
-     `--ground` is a pair `a11y.mjs` computes at 4.5:1 in all four palettes, the same
-     requirement as body text rather than a decorative grey, and the name above it is told
-     apart by weight and colour rather than by a size the scale does not have. */
   .benefit-line {
     margin: 0;
-    color: var(--text-muted);
+    max-width: 48ch;
+    color: var(--text);
     font-size: var(--font-size-lg);
     line-height: var(--leading-normal);
-    overflow-wrap: anywhere;
+  }
+
+  @media (min-width: 48rem) {
+    .benefit-list {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
   }
 </style>

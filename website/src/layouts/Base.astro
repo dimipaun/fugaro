@@ -45,6 +45,7 @@
  */
 import { loadSite } from '../content.ts'
 import ConsentBanner from '../components/ConsentBanner.astro'
+import { CONSENT_KEY } from '../lib/consent-key.mjs'
 
 // The design tokens (W1.2), then the page chrome and element defaults that apply them.
 //
@@ -319,6 +320,15 @@ const analyticsEnabled = facts.analytics.enabled
         file a reader can read. `defer` puts it after the parse, which is when the blocks it
         drives and the banner it reads its configuration from exist. */}
     <script src="/scripts/site.js" defer></script>
+
+    {/* The banner's early decision (the owner's ruling of 2026-10-23): a few lines, run before
+        the page is drawn, that mark `<html>` when the banner is to be shown, so the banner is in
+        the page's flow from the first frame and nothing below it moves when it appears. Not
+        deferred, on purpose; same origin, so `script-src 'self'` admits it. Rendered only when
+        the banner is. */}
+    {analyticsEnabled && (
+      <script src="/scripts/consent-early.js" data-consent-key={CONSENT_KEY} data-consent-always={alwaysOffer ? 'true' : undefined}></script>
+    )}
   </head>
 
   <body>

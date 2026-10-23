@@ -51,10 +51,10 @@ interface Props {
 
 const { alwaysOffer = false, measurementID, analyticsOrigin } = Astro.props
 
-// The key the decision is stored under. It is written once, here: `site.js` reads it back out
-// of the markup below, so the banner that writes the decision and the gate that reads it
-// cannot drift apart, and there is no second literal anywhere.
-const CONSENT_KEY = 'fugaro:analytics-consent'
+// The key the decision is stored under, written once in `src/lib/consent-key.mjs`: `site.js`
+// reads it back out of the markup below, so the banner that writes the decision and the gate
+// that reads it cannot drift apart.
+import { CONSENT_KEY } from '../lib/consent-key.mjs'
 ---
 
 <aside
@@ -83,30 +83,31 @@ const CONSENT_KEY = 'fugaro:analytics-consent'
 </aside>
 
 <style>
-  /* A bar at the foot of the window, so the page a visitor asked for is not pushed around by
-     a question about measurement. `.consent-banner` deliberately declares no `display`, so
-     that the `hidden` attribute keeps it hidden; the rule below says so out loud, because a
-     fixed-position element is exactly the one that grows a `display` later. Its `z-index` is
-     the scale's chrome layer (tokens.css): the banner is fixed to the window's foot and has to
-     be drawn over the page and over the header, whose own layer is named there too. */
+  /* The banner is a compact bar in the page's own flow, at the very top, above the header (the
+     owner's ruling of 2026-10-23, the redesign's Step 3: it must not cover the first screen's
+     content). It used to be fixed over the foot of the window, where it covered whatever was
+     there at every scroll position.
+
+     `.consent-banner` declares no `display` of its own, so the `hidden` attribute keeps it out of
+     the page; the one rule that draws it is the early decision's mark on `<html>`
+     (`public/scripts/consent-early.js`), set before the page is drawn, so the bar is in its
+     place from the first frame and nothing below it moves when it appears. `site.js` removes the
+     mark and sets `hidden` when the visitor decides. With scripts off the mark is never set and
+     the bar is never drawn, and nothing can load from Google either.
+
+     It is a tone step above the ground (the panel), with no rule under it. */
   .consent-banner {
-    position: fixed;
-    inset-inline: 0;
-    bottom: 0;
-    z-index: var(--z-chrome);
-    padding: var(--space-md);
-    /* The panel, since the bold redesign, and not the surface: the banner is a thing laid on
-       the page rather than a band of it, and the redesign's step between the ground and the
-       surface is what says so. It is drawn the same way every other raised thing on the site
-       is — a panel, a hairline border and a radius — because a shadow is a colour literal no
-       palette token holds (`src/styles/base.css`, section 2c). */
+    padding: var(--space-2xs) var(--frame-gutter);
     background: var(--panel);
     color: var(--text);
-    border-top: var(--border-width) solid var(--border);
   }
 
   .consent-banner[hidden] {
     display: none;
+  }
+
+  :global(html[data-consent-ask]) .consent-banner[hidden] {
+    display: block;
   }
 
   .consent-banner__inner {
@@ -114,16 +115,15 @@ const CONSENT_KEY = 'fugaro:analytics-consent'
     flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-xs) var(--space-md);
-    max-width: var(--page-max);
-    margin-inline: auto;
+    gap: var(--space-2xs) var(--space-md);
   }
 
   .consent-banner__text {
+    flex: 1 1 28rem;
     margin: 0;
-    max-width: var(--measure);
-    color: var(--text-muted);
+    color: var(--text);
     font-size: var(--font-size-sm);
+    line-height: var(--leading-snug);
   }
 
   .consent-banner__choices {
@@ -132,29 +132,37 @@ const CONSENT_KEY = 'fugaro:analytics-consent'
     gap: var(--space-2xs);
   }
 
-  /* One rule for both choices: the same control, at the same size, with nothing that makes
-     one of them easier to press than the other. */
+  /* The two choices are the same control, so neither is easier to press than the other: a
+     filled shape one tone step above the bar, with no outline. */
   .consent-banner__button {
-    padding: var(--space-2xs) var(--space-md);
-    border: var(--border-width) solid var(--accent);
-    border-radius: var(--radius-lg);
-    background: transparent;
+    min-height: 44px;
+    padding: var(--space-3xs) var(--space-md);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: var(--surface);
     color: var(--accent-on-dark);
     font: inherit;
     font-size: var(--font-size-sm);
     font-weight: var(--weight-semibold);
     cursor: pointer;
+    transition: background-color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
   }
 
-  .consent-banner__button:hover {
-    background: var(--accent);
-    color: var(--ground);
+  .consent-banner__button:active {
+    transform: scale(0.97);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .consent-banner__button:hover {
+      background: var(--border);
+      color: var(--text);
+    }
   }
 
   .consent-banner__status {
     flex-basis: 100%;
     margin: 0;
     color: var(--warn);
-    font-size: var(--font-size-xs);
+    font-size: var(--font-size-sm);
   }
 </style>
