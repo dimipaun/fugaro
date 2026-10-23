@@ -1004,19 +1004,16 @@ export const WSL_PREFIX_FLAGS: readonly string[] = Object.freeze(['-d', '--cd', 
  *   - the **empty name**, because `-d ''` names nothing.
  *   - an **absurd length** -- the bound the store's own values carry.
  *
- * **What it deliberately admits, and why the first version of this rule was
- * wrong.** Whitespace, quotes, `;`, `~` and non-ASCII letters are *inside* it.
- * With `shell: false` and an array argv there is no shell to re-parse a word and
- * nothing splits one element into two, so a space in a name is not argument
- * confusion -- it is a character in a name. A custom-registered distribution can
- * be called `My Linux` (`wsl --import`), `wsl.exe --list --quiet` prints that
- * name, and the console drives it: a rule built on the narrower alphabet
- * Microsoft's own store names use (`[A-Za-z0-9._-]+`) would have refused a
- * distribution that is listed and works, while claiming the narrowing cost
- * nothing. That alphabet is a fact about the store's names and not a rule this
- * console may refuse a drivable distribution by. **A review found this**; both
- * halves are asserted in `test/unit/spawn.test.ts`, and the "no metacharacter"
- * guard over the argv is not extended to this value for the same reason.
+ * **What it admits, and why that is not the route's rule.** This is the
+ * *argv-level* guard -- argument confusion on `wsl.exe`'s own command line --
+ * and whitespace, quotes, `;` and `~` are not argument confusion with an array
+ * argv. It is not the rule a distribution must meet to be *driven*: Part D's
+ * `isDistroName` (`DISTRO_NAME_PATTERN`, T-D3) is, because the WSL route runs
+ * the CLI through the distribution's own shell. `planFor` and the resolver hold
+ * the name to that narrower rule first and refuse with a sentence, so a
+ * distribution called `My Linux` is refused on the WSL route (fail closed, a
+ * known limit in `docs/console-windows/implementation-plan.md`); this guard is
+ * the last line under it, and both are asserted in `test/unit/spawn.test.ts`.
  */
 export function isSafeDistroName(value: string): boolean {
   if (value === '' || value.length > 256) return false
@@ -1039,9 +1036,9 @@ export function isSafeDistroName(value: string): boolean {
  *
  *   - **the distribution's name**, the one word here that reaches `wsl.exe` as a
  *     selector, is held to `isSafeDistroName`: not a flag, not a control
- *     character, not empty, not absurd -- and whitespace is admitted, because
- *     with an array argv a space is a character in a name rather than a second
- *     word (see that function's own note).
+ *     character, not empty, not absurd. That is the argv's rule only: the
+ *     route's rule is Part D's narrower `isDistroName`, which `planFor` applies
+ *     before this guard runs (see that function's own note).
  *   - **the directory** is a Linux path, and it is held to
  *     `isSafeInstallationValue` -- the rule the project name, the config path
  *     and the checkout already satisfy. `ARGUMENT_RE`, which the renderer's own
@@ -1051,11 +1048,9 @@ export function isSafeDistroName(value: string): boolean {
  *
  * So the two values are held to the same rule -- no control character or NUL, not
  * empty, not absurd, no leading `-` -- and the name differs only in its length
- * bound (256, the store's own). That is deliberate and it is a correction: an
- * earlier version of this guard gave the name a narrower alphabet
- * (`[A-Za-z0-9._-]+`) and refused a listed, drivable distribution called
- * `My Linux` while claiming the narrowing cost nothing. The two words differ in
- * what they mean, not in what they may contain (see `isSafeDistroName`).
+ * bound (256, the store's own). The narrower alphabet a distribution must meet
+ * to be driven at all (`DISTRO_NAME_PATTERN`, Part D) is enforced upstream, in
+ * `planFor` and the resolver; this guard is the argv's last line under it.
  */
 export function assertWslPrefix(prefix: readonly string[]): void {
   const words = [...prefix]
@@ -2411,6 +2406,23 @@ async function resolveInDistribution(
       reason:
         `the distribution this installation names, ${quote(distro)}, is listed by wsl.exe and is not a name ` +
         `this console will hand to wsl.exe: it must not begin with "-"`,
+    }
+  }
+  // The second half of the same answer, and Part D's rule (T-D3): the WSL route
+  // runs the CLI through the distribution's own shell, so a listed name outside
+  // `DISTRO_NAME_PATTERN` -- `My Linux`, `dimi's distro`, `Ubuntu;x` -- is
+  // refused here with a sentence (fail closed) rather than thrown out of
+  // `planFor`'s guard as an exception from an async read.
+  if (!isDistroName(distro)) {
+    return {
+      ok: false,
+      path: null,
+      kind: 'no-distro',
+      reason:
+        `the distribution this installation names, ${quote(distro)}, is listed by wsl.exe and is not a name ` +
+        `this console will run a shell in: a distribution name is ${String(MAX_DISTRO_NAME_LENGTH)} characters ` +
+        'or fewer of letters, digits, dot, dash and underscore -- register it under a plain name ' +
+        '(wsl --export and wsl --import) to drive it from the console',
     }
   }
 
