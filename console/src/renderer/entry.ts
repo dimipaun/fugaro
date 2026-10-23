@@ -1483,18 +1483,30 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * unavailable mark and matches no run in the model -- and a row whose id
    * cannot be drawn is a row with nothing to ask about, rather than one that
    * asks about whatever the mark happens to be.
+   *
+   * **The review inbox's rows are the same door** (v2 plan Task V2.7.1):
+   * `live-review-id` is a run id drawn the same way, and `model.review` is
+   * where it is checked. A finished run is a run -- `fugaro diagnose RUN` reads
+   * it from the runs bucket precisely because its registry entry is gone -- so
+   * a ready row that could not be opened would be the one run row on this
+   * screen with nothing behind it.
    */
   const wireRuns = (drawn: Drawn, model: LiveModel): void => {
     const known = new Set<string>()
     for (const repo of model.repos) for (const row of repo.runs) known.add(row.run)
     for (const row of model.orphans) known.add(row.run)
-    for (const row of classed(drawn, 'live-run')) {
-      const id = classed(row, 'live-run-id')[0]?.textContent ?? ''
-      if (!known.has(id)) continue
-      surface.nodeOf(row).addEventListener('click', () => {
-        void showRun(id)
-      })
+    for (const row of model.review) known.add(row.run)
+    const door = (rowClass: string, idClass: string): void => {
+      for (const row of classed(drawn, rowClass)) {
+        const id = classed(row, idClass)[0]?.textContent ?? ''
+        if (!known.has(id)) continue
+        surface.nodeOf(row).addEventListener('click', () => {
+          void showRun(id)
+        })
+      }
     }
+    door('live-run', 'live-run-id')
+    door('live-review-row', 'live-review-run-id')
   }
 
   // ---- Spend ------------------------------------------------------------
