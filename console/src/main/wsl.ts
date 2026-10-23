@@ -42,7 +42,16 @@
 
 import { win32, posix } from 'node:path'
 
-import { DEFAULT_BACKOFF, FUGARO_BINARY_NAME, childEnvironment, runToCompletion } from './spawn'
+import {
+  DEFAULT_BACKOFF,
+  FUGARO_BINARY_NAME,
+  WSL_EXEC_FLAG,
+  assertWslPrefix,
+  childEnvironment,
+  isDistroName,
+  isSafeInstallationValue,
+  runToCompletion,
+} from './spawn'
 import type { ChildSpawner, SpawnPlan, Timers, WslQueryName } from './spawn'
 import type { SpawnLogWriter } from './spawnlog'
 
@@ -186,13 +195,15 @@ export async function wslDistributions(options: {
   if (names === null) {
     // The one thing this module refuses to guess about: an answer that is not
     // text this decoder can read is not a list of names, and half of one would
-    // be a distribution the console then tries to run. See `parseDistributionList`
-    // for what T-F2 does about the encoding itself.
+    // be a distribution the console then tries to run. `decodeWslAnswer` reads
+    // both encodings WSL answers in (T-F2); what is left here is an answer that
+    // decoded and still carries a NUL, which is a name cut in half rather than
+    // a name.
     return {
       kind: 'absent',
       reason:
-        'wsl.exe answered `--list --quiet` in bytes that are not UTF-8 text: the list of ' +
-        'distributions cannot be read, and a partial read would name distributions that are not there',
+        'wsl.exe answered `--list --quiet` in bytes that are not a readable list of names: the ' +
+        'list of distributions cannot be read, and a partial read would name distributions that are not there',
     }
   }
 
@@ -230,8 +241,12 @@ type WslQueryResult =
  * `prefix` is the difference between the two kinds of question this module asks.
  * The questions *about the machine* (`--list`, `--status`) run `wsl.exe` on the
  * host and have no wrapper at all; the questions asked **inside a distribution**
- * (`wslpath`, T-D2) name it with `-d <distro> --`, and the program word after
- * the `--` is the distribution's own program rather than the CLI.
+ * (`wslpath`, T-D2) name it with `-d <distro> -e`, and the program word after
+ * the `-e` is the distribution's own program rather than the CLI. `-e` and not
+ * `--`: `--` hands the rest of the line to the distribution's login shell, which
+ * would re-read the path as shell syntax, while `-e` runs the program directly
+ * with each word as one argument (`WSL_EXEC_FLAG`). A non-empty prefix is held
+ * to `assertWslPrefix`, exactly as the CLI's plans are.
  */
 async function runWslQuery(options: {
   readonly operation: WslQueryName
@@ -248,11 +263,22 @@ async function runWslQuery(options: {
   readonly timers?: Timers
   readonly timeoutMs?: number
 }): Promise<WslQueryResult> {
+  if (options.prefix.length > 0) {
+    try {
+      assertWslPrefix(options.prefix)
+    } catch (error) {
+      return { ok: false, reason: describe(error) }
+    }
+  }
   const plan: SpawnPlan = Object.freeze({
     operation: options.operation,
     command: options.program,
     prefix: Object.freeze([...options.prefix]) as readonly string[],
     argv: Object.freeze([...options.argv]),
+    // A `wsl.exe` question is not the CLI being carried into a distribution:
+    // there is no pid to record, so there is no wrapper (T-F4's `sh -c` is for
+    // the CLI's own plans only).
+    wrapper: null,
     cwd: options.cwd,
     // The same environment rule as any other spawn, with the **win32** row's
     // child `PATH` -- which is Linux's (`WIN32_LOCATIONS`, T-C2), because the
@@ -260,12 +286,19 @@ async function runWslQuery(options: {
     // here is the CLI's bare name rather than the program being run: the
     // environment this builds is the one the *distribution* will see, and the
     // distribution resolves `fugaro` itself.
-    env: childEnvironment({
-      target: { project: options.project },
-      binaryPath: FUGARO_BINARY_NAME,
-      appEnv: options.appEnv,
-      platform: 'win32',
-    }),
+    env: {
+      ...childEnvironment({
+        target: { project: options.project },
+        binaryPath: FUGARO_BINARY_NAME,
+        appEnv: options.appEnv,
+        platform: 'win32',
+      }),
+      // T-F2's one addition, and it is this module's own word: ask WSL to answer
+      // in UTF-8. The answer is decoded from bytes either way (`decodeWslAnswer`),
+      // because the switch is not honoured on every machine -- but a machine that
+      // honours it hands the console the encoding it reads most simply.
+      [WSL_UTF8_VAR]: WSL_UTF8_VALUE,
+    },
     project: options.project,
     backoff: DEFAULT_BACKOFF,
   })
@@ -277,6 +310,13 @@ async function runWslQuery(options: {
       ...(options.log === undefined ? {} : { log: options.log }),
       ...(options.timers === undefined ? {} : { timers: options.timers }),
       timeoutMs: options.timeoutMs ?? WSL_QUERY_TIMEOUT_MS,
+      // The answer is read as **bytes**, not as text (T-F2): `wsl.exe` prints
+      // `--list --quiet` in UTF-16LE on the machines whose WSL does not honour
+      // `WSL_UTF8`, and a UTF-8 decode destroys the BOM before anything can
+      // look at it -- the one byte that says which of the two it is. `latin1`
+      // is a lossless carry of any byte string, and `decodeWslAnswer` below
+      // decides what the bytes are.
+      stdoutEncoding: 'latin1',
     })
   } catch (error) {
     return {
@@ -293,7 +333,82 @@ async function runWslQuery(options: {
         (said === '' ? ' and said nothing' : `: ${said}`),
     }
   }
-  return { ok: true, stdout: result.stdout }
+  const decoded = decodeWslAnswer(result.stdout)
+  if (decoded === null) {
+    return {
+      ok: false,
+      reason:
+        `wsl.exe answered \`${options.argv.join(' ')}\` in bytes that are neither UTF-8 nor UTF-16LE text: ` +
+        'the answer cannot be read, and half of it would be a value the console invented',
+    }
+  }
+  return { ok: true, stdout: decoded }
+}
+
+/** WSL_UTF8_VAR is the variable WSL reads to answer in UTF-8 rather than in the
+ * machine's console encoding (T-F2, U9: `wsl.exe --list --quiet` answers in
+ * UTF-16LE on the machines this was written against, and WSL's own switch is
+ * this one).
+ *
+ * **It is the console's own constant, not a value carried in from outside.** It
+ * is set on the *query* plans and nowhere else -- it is `wsl.exe`'s switch and
+ * not the CLI's -- and it is written here rather than read from the app's
+ * environment, so the credential boundary is unchanged: the console adds one
+ * word of its own to a child's environment and takes nothing from the operator's
+ * (`childEnvironment`'s allow-list still decides everything else). */
+export const WSL_UTF8_VAR = 'WSL_UTF8'
+
+/** WSL_UTF8_VALUE is what `WSL_UTF8_VAR` is set to: `1` is the spelling WSL
+ * documents. */
+export const WSL_UTF8_VALUE = '1'
+
+/**
+ * decodeWslAnswer turns the bytes `wsl.exe` printed into text (T-F2), or
+ * answers `null` when they are not text this module can read.
+ *
+ * **Why bytes are needed at all.** `--list --quiet` is an old Windows console
+ * program: with `WSL_UTF8=1` unset or ignored it prints UTF-16LE, and the two
+ * encodings are indistinguishable once a UTF-8 decode has replaced the BOM with
+ * U+FFFD. So the console carries the answer as bytes and decides here:
+ *
+ *   1. a UTF-16LE BOM (`FF FE`) -- UTF-16LE, the BOM dropped;
+ *   2. a UTF-8 BOM (`EF BB BF`) -- UTF-8, the BOM dropped;
+ *   3. bytes that are valid UTF-8 -- UTF-8. A UTF-16LE answer of ASCII names is
+ *      *also* valid UTF-8, and this is where the honest answer is the
+ *      conservative one: the names arrive with NULs in them and
+ *      `parseDistributionList` refuses them rather than half-reading a name the
+ *      console would then try to run a CLI in;
+ *   4. otherwise, nothing.
+ *
+ * The round-trip in step 3 is the validity test: a decode that produced a
+ * replacement character cannot re-encode to the bytes it came from, which is
+ * how invalid UTF-8 is told from valid without a second library.
+ */
+export function decodeWslAnswer(bytes: string): string | null {
+  if (bytes.startsWith('\u00ff\u00fe')) return decodeUtf16le(bytes.slice(2))
+  if (bytes.startsWith('\u00ef\u00bb\u00bf')) return decodeUtf8(bytes.slice(3))
+  if (roundTrips(bytes, 'utf8')) return decodeUtf8(bytes)
+  return null
+}
+
+/** decodeUtf16le reads byte pairs as UTF-16LE code units. An odd byte count is
+ * not a UTF-16LE string: the last byte is dropped from the decode and the value
+ * is refused by the caller's own checks rather than here -- `parseDistributionList`
+ * refuses NULs, and a truncated name is not a name. */
+function decodeUtf16le(bytes: string): string {
+  return Buffer.from(bytes, 'latin1').toString('utf16le')
+}
+
+/** decodeUtf8 reads the bytes as UTF-8. */
+function decodeUtf8(bytes: string): string {
+  return Buffer.from(bytes, 'latin1').toString('utf8')
+}
+
+/** roundTrips answers whether the bytes decode as `encoding` and re-encode to
+ * the same bytes: what a decoder is asked for is the string it was given, not a
+ * string like it. */
+function roundTrips(bytes: string, encoding: 'utf8' | 'utf16le'): boolean {
+  return Buffer.from(Buffer.from(bytes, 'latin1').toString(encoding), encoding).toString('latin1') === bytes
 }
 
 // ---------------------------------------------------------------------------
@@ -362,7 +477,7 @@ export interface WslPathQueryOptions {
 
 /**
  * wslpath asks the distribution to translate one path, in one direction, with
- * **one** `wsl.exe -d <distro> -- wslpath -a -u|-w <path>` call, through the same
+ * **one** `wsl.exe -d <distro> -e wslpath -a -u|-w <path>` call, through the same
  * spawner and the same deadline as every other child this console starts (D4(a)).
  *
  * The answer is trimmed and checked rather than trusted: an empty answer, one
@@ -376,16 +491,33 @@ export async function wslpath(options: WslPathQueryOptions): Promise<WslPathTran
   if (options.distro === '') {
     return { ok: false, reason: 'no distribution was named, so no path can be translated inside one' }
   }
+  // Part D's rules, before any process exists: the distribution is held to the
+  // name alphabet every `-d` this console writes is held to, and the path to the
+  // rule every other path it passes is (no control character or NUL, not empty,
+  // no leading `-` that `wslpath` would read as one of its own flags). `-e`
+  // below means no shell reads the path, so these are the whole of its rule.
+  if (!isDistroName(options.distro)) {
+    return {
+      ok: false,
+      reason: `${JSON.stringify(options.distro)} is not a WSL distribution name, so no path is translated inside it (T-D3)`,
+    }
+  }
+  if (!isSafeInstallationValue(options.path)) {
+    return {
+      ok: false,
+      reason: `${JSON.stringify(options.path)} is not a path this console will hand to \`wslpath\``,
+    }
+  }
   const program = options.wslPath ?? wslExecutable(options.appEnv)
   const answer = await runWslQuery({
     operation: 'wsl.path',
     program,
     // The one wrapper this module writes: the question is asked *inside* the
-    // distribution, so the distribution is named and `--` ends `wsl.exe`'s own
-    // words. `--cd` is deliberately absent: the translation is about a path, and
+    // distribution, so the distribution is named and `-e` ends `wsl.exe`'s own
+    // words and runs `wslpath` with no shell in between. `--cd` is deliberately absent: the translation is about a path, and
     // naming a directory to run it in would be a translation of a path the
     // console has not translated yet.
-    prefix: ['-d', options.distro, '--'],
+    prefix: ['-d', options.distro, WSL_EXEC_FLAG],
     argv: [
       WSLPATH_PROGRAM,
       WSLPATH_FLAG_ABSOLUTE,
