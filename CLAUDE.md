@@ -4,6 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Fugaro runs a coding agent's task (implement, test, review, fix, open a PR) as one throwaway Cloud Run job execution in the user's own GCP project. The Go CLI is the product; a Claude Code plugin, an Electron console, an Expo mobile app and an Astro website sit around it. Pre-1.0: reshape directly, no backward compatibility.
 
+## Working principles
+
+Don't assume, don't hide confusion, surface tradeoffs. State your assumptions; if more than one reading exists, present them instead of picking one silently; if a simpler approach exists, say so and push back; if something is unclear, stop and ask. Keep diffs small and reviewable, follow the surrounding patterns, add no new framework or dependency without asking, and don't reformat code you don't touch. When you ask the user something, use `AskUserQuestion` (structured options) rather than free text.
+
 ## Commands
 
 Go version is pinned in `go.mod`; Terraform 1.9+ for the `terraform` tag.
@@ -17,7 +21,7 @@ go test -tags terraform ./internal/infra/...     # also: firebase, docker, live 
 terraform fmt -check -recursive deploy/terraform # CI's terraform job starts here
 ```
 
-Use `GOFLAGS=-p=2` on a loaded machine. Other parts, each in its own directory:
+**Run targeted tests, not whole packages.** `internal/cli` and `internal/runner` each take about 25 minutes in full: name the test (`-run 'TestX|TestY'`, or the Docs filter `-run Docs` for doc changes) and run the whole package only when the change is broad. Use `GOFLAGS=-p=2` on a loaded machine. Other parts, each in its own directory:
 
 - `console/`: Node 22. `npm ci --legacy-peer-deps=false`, `npm run typecheck`, `npm run test:unit -- --maxWorkers=2`, `npm run test:e2e`.
 - `website/`: `npm run check` (build plus every test, ~7 min).
@@ -41,4 +45,5 @@ CI runs on pushes to `main` only, not on PRs (`.github/workflows/ci.yml`; see CO
 - **Hermetic tests.** No network, no home directory, no real cloud: use `internal/gcpfake`, `internal/testutil` and `t.TempDir()`. Anything needing an account is behind the `live` tag.
 - **No secret-shaped literals** in tests, docs, logs or fixtures.
 - **Never merge `main` into a branch with a cloud follow-up run** if `main` changed `.github/workflows/`: the run's push is refused and its work is lost. Merge locally first.
+- **Steps that must run after a deploy** (a backfill, a config or secret change, a rollout order) go in the release notes' `### For operators` section in the same PR (`docs/releases/README.md`); without an entry the release ships and nobody runs the step.
 - **Releases** go through `scripts/release.sh X.Y.Z` from a clean clone ([docs/release.md](docs/release.md)): the notes are `docs/releases/vX.Y.Z.md` plus a line in `website/data/release-summaries.yaml` (no backticks). The CLI, console and mobile app release independently (tags `vX.Y.Z`, `console-vX.Y.Z`, `mobile-vX.Y.Z`).
