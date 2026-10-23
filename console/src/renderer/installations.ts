@@ -212,6 +212,13 @@ export function drawn(raw: string, field: string): string {
   return result.ok ? result.text : UNDRAWABLE
 }
 
+/** REVEAL_LABEL is the reveal affordance's own word: the checkout's directory,
+ * opened by whatever this platform opens directories with (Explorer on Windows,
+ * Finder on macOS, the desktop's own handler on Linux). It names no path and no
+ * side, for the reason the button is drawn on the checkout and not on the
+ * spelling the file manager will get (D3(a), T-D3). */
+export const REVEAL_LABEL = 'Open the checkout folder'
+
 /** rowText is one row's line: the installation, the GCP project it is in, the
  * region it runs in, and the state this console knows about it.
  *
@@ -222,13 +229,6 @@ export function drawn(raw: string, field: string): string {
  * list says why. A row the CLI did not list at all says so too: it is a record
  * this console holds, not a fact of the machine, and the operator has to be able
  * to tell the two apart. */
-/** REVEAL_LABEL is the reveal affordance's own word: the checkout's directory,
- * opened by whatever this platform opens directories with (Explorer on Windows,
- * Finder on macOS, the desktop's own handler on Linux). It names no path and no
- * side, for the reason the button is drawn on the checkout and not on the
- * spelling the file manager will get (D3(a), T-D3). */
-export const REVEAL_LABEL = 'Open the checkout folder'
-
 export function rowText(row: InstallationsListRow): string {
   const project = drawn(row.project, 'the row’s project')
   if (row.listed && row.configUnreadable) return `${project} — the config could not be read`
