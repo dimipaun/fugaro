@@ -56,52 +56,71 @@ func (r *run) baseRef() string {
 }
 
 // runCommits counts the commits the run made itself: those after the commit
-// it was cut from and not on the base branch, whose commits are the base's
-// even when the agent merged or rebased them in. For a first run with no
-// start commit (startErr) the base branch is all there is to measure
-// against, as before.
+// it was cut from and on neither of the bases the run works from, whose own
+// commits are theirs even when the agent merged or rebased them in
+// (guardBounds). For a first run with no start commit (startErr) the
+// configuration's base branch is all there is to measure against, as
+// before.
 func (r *run) runCommits(ctx context.Context) (int, error) {
 	since, except := r.guardBounds(ctx)
-	return r.repo.CommitsAhead(ctx, since, except)
+	return r.repo.CommitsAhead(ctx, since, except...)
 }
 
 // guardBounds are the two revisions the run's own work is read between: the
-// commit the run was cut from (workBase), and the base of the run's work,
-// whose own commits are the base's even when the agent merged or rebased
-// them in.
+// commit the run was cut from (workBase), and the bases the run works from,
+// whose own commits are theirs even when the agent merged or rebased them
+// in.
 //
-// That base is the one the review stage diffs against (diffbase.go,
-// diffBase) — the ref a first run was cut from, the branch a follow-up's
-// pull request targets now — and not the configuration's base branch, which
-// is another branch whenever the run was started from one. Excluding the
-// wrong branch's commits does not shorten the range, it only misses the ones
-// it was there for: a run cut from integration that merged integration in
-// while it worked was refused for the workflow file integration's own commit
-// added, a change the review stage (which diffs origin/integration) never
-// sees (diffbase_matrix_test.go, cell (d)).
+// There are two of those, and each is the only one that leaves out its own
+// commits:
 //
-// The base is read from the remote, as a commit SHA, at the moment
-// of the check — never the checkout's origin/<base>, which the agent's own
-// git can repoint (at the run's own tip, say, which would subtract every
-// commit the run made and pass any workflow change). It can only ever make
-// the list shorter, so when the remote cannot say, or the checkout lacks the
-// commit it names (the agent never brought that base in), it is left out and
-// the comparison is the stricter one against the start commit alone. For a
-// start that has no start commit (startErr: workBase falls back to the base
+//   - the base the review stage diffs against (diffbase.go, diffBase) — the
+//     ref a first run was cut from, the branch a follow-up's pull request
+//     targets now. A run cut from integration that merged integration in
+//     while it worked was refused for the workflow file integration's own
+//     commit added, a change the review stage (which diffs
+//     origin/integration) never sees (diffbase_matrix_test.go, cell (d)).
+//   - the configuration's base branch (git.base_branch) — the branch the
+//     run's pull request is opened against, and the one a run started from
+//     another ref is most often told to keep up with. With only the first
+//     subtracted, a run cut from integration that merged main in was refused
+//     for the workflow file main's own commit added, the mirror image of the
+//     case above (diffbase_matrix_test.go, cell (e)).
+//
+// Each base is read from the remote, as a commit SHA, at the moment of the
+// check — never the checkout's origin/<base>, which the agent's own git can
+// repoint (at the run's own tip, say, which would subtract every commit the
+// run made and pass any workflow change). They can only ever make the list
+// shorter, so a base the remote cannot name, or whose commit the checkout
+// lacks (the agent never brought that base in), is left out and the
+// comparison is the stricter one against the start commit alone. For a start
+// that has no start commit (startErr: workBase falls back to the base
 // branch) there is only the one bound.
-func (r *run) guardBounds(ctx context.Context) (since, except string) {
+func (r *run) guardBounds(ctx context.Context) (since string, except []string) {
 	since = r.workBase()
 	if since == r.baseRef() {
-		return since, ""
+		return since, nil
 	}
-	tip, err := r.repo.RemoteTip(ctx, r.diffBase())
-	if err != nil || !gitops.IsFullSHA(tip) {
-		if err != nil {
-			r.d.Log.Warn("reading the base branch on origin failed; the run's work is measured against the commit it was cut from alone", "err", r.redact(err.Error()))
+	seen := map[string]bool{}
+	// The two bases, in the order the run's own work is read: what the diff
+	// is measured against, then the branch its configuration came from. They
+	// are the same branch for most runs, and reading it once is also what
+	// keeps one commit from being named twice.
+	for _, base := range []string{r.diffBase(), r.cfg.Git.BaseBranch} {
+		if base == "" || seen[base] {
+			continue
 		}
-		return since, ""
+		seen[base] = true
+		tip, err := r.repo.RemoteTip(ctx, base)
+		if err != nil || !gitops.IsFullSHA(tip) {
+			if err != nil {
+				r.d.Log.Warn("reading a base branch on origin failed; that base's own commits are not subtracted, so the run's work is measured against the bases that could be read", "base", base, "err", r.redact(err.Error()))
+			}
+			continue
+		}
+		except = append(except, tip)
 	}
-	return since, tip
+	return since, except
 }
 
 // workflowGuard returns the refusal GitHub is certain to give, without the
@@ -110,15 +129,17 @@ func (r *run) guardBounds(ctx context.Context) (since, except string) {
 // never has the `workflows` permission (a run able to edit CI could change
 // the merge gates or reach secrets). What is the run's own is read between
 // both bounds (gitops.WorkflowFilesExcept): the commit it was cut from,
-// which is the base branch only when the run started from it, and the base
-// branch, whose own commits a merged or rebased-in base brought. nil when
-// the push may go ahead, or when git can't tell (the push then decides).
+// which is a base branch only when the run started from it, and the bases
+// the run works from (the one its diffs are measured against and the one
+// its configuration came from), whose own commits a merged or rebased-in
+// base brought. nil when the push may go ahead, or when git can't tell (the
+// push then decides).
 func (r *run) workflowGuard(ctx context.Context) *gitops.PushRejected {
 	if r.providerKind != gitprov.KindGitHub {
 		return nil
 	}
 	since, except := r.guardBounds(ctx)
-	files, err := r.repo.WorkflowFilesExcept(ctx, since, except)
+	files, err := r.repo.WorkflowFilesExcept(ctx, since, except...)
 	return r.workflowRefusal(files, err)
 }
 
@@ -136,8 +157,8 @@ func (r *run) workflowGuardAt(ctx context.Context, since, until string) *gitops.
 	if r.providerKind != gitprov.KindGitHub {
 		return nil
 	}
-	if _, except := r.guardBounds(ctx); except != "" {
-		files, err := r.repo.WorkflowFilesInExcept(ctx, since, except, until)
+	if _, except := r.guardBounds(ctx); len(except) > 0 {
+		files, err := r.repo.WorkflowFilesInExcept(ctx, since, until, except...)
 		return r.workflowRefusal(files, err)
 	}
 	files, err := r.repo.WorkflowFilesIn(ctx, since, until)

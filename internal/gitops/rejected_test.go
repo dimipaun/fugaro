@@ -329,7 +329,7 @@ func TestWorkflowFilesExceptLeavesOutTheBasesOwnChanges(t *testing.T) {
 		t.Fatalf("WorkflowFilesExcept = %v, want %v", got, want)
 	}
 	// The same over the exact commit a checkpoint would push.
-	in, err := repo.WorkflowFilesInExcept(ctx, start, "origin/main", head)
+	in, err := repo.WorkflowFilesInExcept(ctx, start, head, "origin/main")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -746,7 +746,7 @@ func TestWorkflowFilesSeesWhatTheAgentHides(t *testing.T) {
 				"WorkflowFiles":         func() ([]string, error) { return repo.WorkflowFiles(ctx, base) },
 				"WorkflowFilesIn":       func() ([]string, error) { return repo.WorkflowFilesIn(ctx, base, head) },
 				"WorkflowFilesExcept":   func() ([]string, error) { return repo.WorkflowFilesExcept(ctx, base, base) },
-				"WorkflowFilesInExcept": func() ([]string, error) { return repo.WorkflowFilesInExcept(ctx, base, base, head) },
+				"WorkflowFilesInExcept": func() ([]string, error) { return repo.WorkflowFilesInExcept(ctx, base, head, base) },
 			} {
 				got, err := list()
 				if err != nil {

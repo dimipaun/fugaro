@@ -19,25 +19,29 @@ import (
 // The safety net #840 left: the review stage and the diff the run's own
 // writeback and readiness are read from must be measured against the SAME
 // base — the run's base of work, never the configuration's base branch when
-// they differ. Each of the four ways a run has a base is a cell below, and
-// every cell asks the same question of every diff the run takes: the review
+// they differ. Each of the ways a run has a base is a cell below, and every
+// cell asks the same question of every diff the run takes: the review
 // prompt's scope line, the input the runner builds for the reviewer, what
-// the prefetch fetches, and the run's own work as the writeback records it
-// and the readiness guard reads it.
+// the prefetch fetches, and the run's own work as the readiness guard reads
+// it.
 //
 //	(a) a fresh run on main;
 //	(b) `fugaro run --ref integration-0.9.6`, whose pull request still
 //	    targets the configured base;
 //	(c) `fugaro follow-up --pr N` on a pull request retargeted at the
 //	    integration branch;
-//	(d) a run whose base moved on while it worked, and whose branch merged
-//	    that move in: the base's own commit is not this run's work, and the
-//	    review and the guard must agree about that.
+//	(d) a run whose base of work moved on while it worked, and whose branch
+//	    merged that move in: the base's own commit is not this run's work,
+//	    and the review and the guard must agree about that;
+//	(e) a run cut from another ref whose *configuration's* base moves on,
+//	    and whose branch merges that in: the guard must leave out both
+//	    bases' own commits, or it refuses this run for a workflow file main
+//	    added (the mirror of (d) — with only the diff base subtracted, this
+//	    cell is the one that fails).
 //
 // Every cell names the base it must use (want) and a base a wrong answer
 // would name instead (stale): a diff measured against the stale base shows
-// up as `origin/<stale>` in a prompt or as a path the base owns in the
-// run's own record.
+// up as `origin/<stale>` in a prompt or as a path the stale base owns.
 
 // advanceBranch pushes one commit onto branch on the remote, cut from the
 // tip the branch already has: the base a run is measured against moving on
@@ -67,8 +71,7 @@ type baseRun struct {
 	provider *fake.Provider // the run's provider, for the pull request it opened
 }
 
-// ownFiles is the paths the writeback recorded as this run's own, sorted by
-// the runner itself.
+// ownFiles is the paths the writeback recorded, sorted by the runner itself.
 func (b baseRun) ownFiles() []string {
 	if b.rec == nil || b.rec.ChangedFiles == nil {
 		return nil
@@ -84,28 +87,36 @@ type baseCell struct {
 	// want is the base of work every diff must name; stale is the base a
 	// wrong answer names instead. Neither may be empty.
 	want, stale string
-	// own are the paths the run itself changed, and must be in its record;
-	// baseOwned are paths the base branch owns, and must not be.
-	own, baseOwned []string
+	// recordHolds are the paths the run record must hold, and recordOmits
+	// paths it must not. The record is read from the commit the run was cut
+	// from (workBase, refused.go) by design, so where a base moved on and the
+	// run merged it in, that base's own file IS in it: such a path is listed
+	// in recordHolds, and both cells of this shape say so. What neither list
+	// may hold is the stale base's own files — a record measured against the
+	// wrong branch blames the run for them (cells (a) to (e) all catch that).
+	recordHolds, recordOmits []string
 	// wantPRBase is the base the run's own pull request targets, when the
 	// cell opens one: the configuration's base, which is a different
 	// question from the base of the diff and must not move with it.
 	wantPRBase string
-	// run stages the cell's run and returns what the matrix reads. A cell
-	// whose base moves needs the prefetch a follow-up has, so only the cells
-	// that have one watch it.
+	// fetches is how many prefetch fetches the cell must make. A first run
+	// prefetches nothing (prefetch.go returns early without a clone job or a
+	// follow-up/review run), so only cell (c) is above zero, and it is the
+	// cell that proves the prefetch fetches the base of the diff.
+	fetches int
+	// run stages the cell's run and returns what the matrix reads.
 	run func(t *testing.T) baseRun
 }
 
-// The four cells. Order is the order of the report's own list.
+// The cells. Order is the order of the report's own list.
 var baseCells = []baseCell{
 	{
-		name:       "(a) a fresh run on main",
-		want:       "main",
-		stale:      integrationBranch,
-		own:        []string{"feature.txt"},
-		baseOwned:  []string{"person.txt", "integration.txt"},
-		wantPRBase: "main",
+		name:        "(a) a fresh run on main",
+		want:        "main",
+		stale:       integrationBranch,
+		recordHolds: []string{"feature.txt"},
+		recordOmits: []string{"person.txt", "integration.txt"},
+		wantPRBase:  "main",
 		run: func(t *testing.T) baseRun {
 			h := newHarness(t, "", nil)
 			// A person's commit is on main before the run is cut from it,
@@ -119,12 +130,12 @@ var baseCells = []baseCell{
 		},
 	},
 	{
-		name:       "(b) a run cut from another ref",
-		want:       integrationBranch,
-		stale:      "main",
-		own:        []string{"feature.txt"},
-		baseOwned:  []string{"integration.txt"},
-		wantPRBase: "main",
+		name:        "(b) a run cut from another ref",
+		want:        integrationBranch,
+		stale:       "main",
+		recordHolds: []string{"feature.txt"},
+		recordOmits: []string{"integration.txt"},
+		wantPRBase:  "main",
 		run: func(t *testing.T) baseRun {
 			spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: integrationBranch, Workflow: "app", Task: "Add a feature"}
 			h := newHarness(t, "", spec)
@@ -134,13 +145,21 @@ var baseCells = []baseCell{
 		},
 	},
 	{
-		name:      "(c) a follow-up whose pull request targets the integration branch",
-		want:      integrationBranch,
-		stale:     "main",
-		own:       []string{"more.txt"},
-		baseOwned: []string{"integration.txt", "feature.txt"},
+		name:        "(c) a follow-up whose pull request targets the integration branch",
+		want:        integrationBranch,
+		stale:       "main",
+		recordHolds: []string{"more.txt"},
+		recordOmits: []string{"integration.txt", "feature.txt"},
+		fetches:     3,
 		run: func(t *testing.T) baseRun {
-			h := followUpHarness(t, "", func(h *harness) { addBaseBranch(t, h, integrationBranch) })
+			// cloneYAML and cloneJob: a clone job is the one that prefetches,
+			// and the fetch is the half of this cell that proves the objects
+			// the reviewer's own git reads are the ones its prompt names
+			// (TestFollowUpPrefetchUsesThePRsCurrentBase is the same rig).
+			h := followUpHarness(t, cloneYAML, func(h *harness) {
+				addBaseBranch(t, h, integrationBranch)
+				h.cloneJob(t)
+			})
 			h.editState(t, func(st *fake.State) { st.PRs[0].Spec.Base = integrationBranch })
 			h.followUp(t, followID, runID, "Please continue.")
 			var mu sync.Mutex
@@ -159,11 +178,15 @@ var baseCells = []baseCell{
 		},
 	},
 	{
-		name:      "(d) a run whose base moved on while it worked",
-		want:      integrationBranch,
-		stale:     "main",
-		own:       []string{"feature.txt"},
-		baseOwned: []string{"integration.txt"},
+		name:  "(d) a run whose base of work moved on while it worked",
+		want:  integrationBranch,
+		stale: "main",
+		// The advance commit is the base of work's own, and the record is
+		// read from the commit the run was cut from, so its workflow file is
+		// in the record — the design's own choice (workBase), not a wrong
+		// base. What must not be is main's.
+		recordHolds: []string{"feature.txt", ".github/workflows/integration.yml"},
+		recordOmits: []string{"integration.txt"},
 		run: func(t *testing.T) baseRun {
 			spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: integrationBranch, Workflow: "app", Task: "Add a feature"}
 			h := newHarness(t, "", spec)
@@ -183,6 +206,36 @@ var baseCells = []baseCell{
 			return baseRun{rec: rec, err: err, prompt: reviewPromptOf(t, h.agent.calls), provider: h.provider}
 		},
 	},
+	{
+		name:  "(e) a run cut from another ref whose configured base moved on",
+		want:  integrationBranch,
+		stale: "main",
+		// Same as (d), on the other base: main's own workflow file is in the
+		// record (the run merged main in), and the guard is what must not
+		// blame the run for it.
+		recordHolds: []string{"feature.txt", ".github/workflows/person.yml"},
+		recordOmits: []string{"integration.txt"},
+		wantPRBase:  "main",
+		run: func(t *testing.T) baseRun {
+			spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: integrationBranch, Workflow: "app", Task: "Add a feature"}
+			h := newHarness(t, "", spec)
+			addBaseBranch(t, h, integrationBranch)
+			mergeTheMovedBase := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+				// The configuration's base branch — not the run's own base of
+				// work, which is the integration branch — moves on with a
+				// workflow file, and the run merges it in. Its commit is
+				// main's: subtracting only the base of the diff leaves it in
+				// the range the guard reads, and the run is refused for it.
+				advanceBranch(t, h.remote, "main", map[string]string{
+					".github/workflows/person.yml": "on: push\n",
+				})
+				shell(t, req, "git fetch -q origin main && git merge -q --no-edit origin/main")
+				return implement("feature")(t, ctx, req)
+			}
+			rec, err := h.run(t, mergeTheMovedBase, review("ship", 0))
+			return baseRun{rec: rec, err: err, prompt: reviewPromptOf(t, h.agent.calls), provider: h.provider}
+		},
+	},
 }
 
 // TestTheReviewStageAndTheWritebackUseTheSameBase is the matrix: every cell
@@ -193,7 +246,9 @@ var baseCells = []baseCell{
 // configuration's base (r.cfg.Git.BaseBranch in place of diffBase), or the
 // writeback's own record does, or the readiness guard's exclusion bound does
 // (refused.go's guardBounds reading cfg.Git.BaseBranch rather than the base
-// the review diffs against — cell (d)).
+// the review diffs against — cell (d)), or it reads only one of the two
+// bases the run works from (refused.go's guardBounds with a single bound —
+// cell (e)).
 func TestTheReviewStageAndTheWritebackUseTheSameBase(t *testing.T) {
 	for _, c := range baseCells {
 		t.Run(c.name, func(t *testing.T) {
@@ -225,18 +280,23 @@ func TestTheReviewStageAndTheWritebackUseTheSameBase(t *testing.T) {
 				t.Fatalf("the review input is not the diff against origin/%s:\n%s", c.want, got.prompt)
 			}
 
-			// 3. The writeback's own record of this run's work is measured
-			//    against that same base: the run's own paths are in it and
-			//    the base's are not.
-			own := got.ownFiles()
-			for _, want := range c.own {
-				if !contains(own, want) {
-					t.Errorf("the writeback recorded %v as this run's work, want %s among them", own, want)
+			// 3. The writeback's record of the run's work holds what it must
+			//    and not what the stale base owns. It is measured from the
+			//    commit the run was cut from (workBase, refused.go) rather
+			//    than from a base, which is deliberate — and that is why a
+			//    base the run merged in while it worked is in it, in the two
+			//    cells whose base moved (their recordHolds say so). What no
+			//    cell may hold is the stale base's own files: a record
+			//    measured against the wrong branch blames the run for them.
+			record := got.ownFiles()
+			for _, want := range c.recordHolds {
+				if !contains(record, want) {
+					t.Errorf("the writeback recorded %v, want %s among them", record, want)
 				}
 			}
-			for _, absent := range c.baseOwned {
-				if contains(own, absent) {
-					t.Errorf("the writeback recorded %v and blames the run for %s, which the base owns", own, absent)
+			for _, absent := range c.recordOmits {
+				if contains(record, absent) {
+					t.Errorf("the writeback recorded %v and blames the run for %s, which another branch owns", record, absent)
 				}
 			}
 
@@ -248,13 +308,22 @@ func TestTheReviewStageAndTheWritebackUseTheSameBase(t *testing.T) {
 					t.Errorf("the pull request targets %q, want the configured base %s", pr.Spec.Base, c.wantPRBase)
 				}
 			}
-			// 5. Where the run has a prefetch, it fetches the base of the
-			//    diff and nothing else: the objects the reviewer's own git
-			//    reads have to be the ones its prompt names.
+			// 5. Where the run prefetches at all, it fetches the base of the
+			//    diff and nothing else, the expected number of times: the
+			//    objects the reviewer's own git reads have to be the ones its
+			//    prompt names. A first run prefetches nothing (fetches is 0),
+			//    so this check is carried by cell (c) — and the count is
+			//    asserted, so a seam that is never wired fails the cell rather
+			//    than passing it vacuously.
+			total := 0
 			for base, n := range got.fetched {
+				total += n
 				if base != "origin/"+c.want {
 					t.Errorf("the prefetch fetched %s %d time(s), want only origin/%s", base, n, c.want)
 				}
+			}
+			if total != c.fetches {
+				t.Errorf("the prefetch fetched %d time(s) (%v), want %d against origin/%s", total, got.fetched, c.fetches, c.want)
 			}
 			// 6. A follow-up's own prompt reads the same range: the base it
 			//    says the pull request targets, and the stat below it.
