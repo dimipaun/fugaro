@@ -2493,11 +2493,13 @@ func splitLines(s string) []string {
 // docs/gcp-setup.md writes out ("What makes a project managed"). It is
 // deliberately spelled here rather than left to a document: a reader who asked
 // for the rollback of a managed installation has to be told what to do
-// instead, and the two commands are the same ones `fugaro managed flag` prints
-// beside the marker object as the undo of what it wrote.
+// instead, and the two things named are the two `fugaro managed flag` prints
+// beside each other as the undo of what it wrote — the marker object and the
+// label — spelled from the same constants that command writes them with, so a
+// reader who goes looking for them finds the same names.
 func managedForgetRefusal(project string) error {
-	return userErr("fugaro update --forget is the rollback of an installation from before managed projects, and %s is a managed project, so this run stops here: the installation's own resources include the managed deployer's fence — the seven scoped roles and their seven conditioned bindings — and the rollback's second phase removes every address of the installation from Terraform's state, the fourteen with them, which would leave them live in the project with nothing accounting for them (the inventory the managed apply reads before it plans would find them unaccounted on every later run) and no way to put them back, because a converge's plan creates roles that already exist. Nothing was read, planned or forgotten. Take the project out of managed mode first, in your own terminal: gcloud projects update %s --remove-labels=fugaro_managed, and delete the runs bucket's fugaro/managed.json beside it (docs/gcp-setup.md, \"What makes a project managed\"); the project is an ordinary one again and fugaro update converges it",
-		project, project)
+	return userErr("fugaro update --forget is the rollback of an installation from before managed projects, and %s is a managed project, so this run stops here: the installation's own resources include the managed deployer's fence — the seven scoped roles and their seven conditioned bindings — and the rollback's second phase removes every address of the installation from Terraform's state, the fourteen with them, which would leave them live in the project with nothing accounting for them (the inventory the managed apply reads before it plans would find them unaccounted on every later run) and no way to put them back, because a converge's plan creates roles that already exist. Nothing was read, planned or forgotten. Take the project out of managed mode first, in your own terminal: delete the runs bucket's %s as the operator, since no command of ours removes the marker in this release, and take the label %s=%s off the project with gcloud projects update %s --remove-labels=%s (docs/gcp-setup.md, \"What makes a project managed\"); the project is an ordinary one again and fugaro update converges it",
+		project, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, project, managed.ProjectLabelKey)
 }
 
 // forget is the rollback: a guarded apply that turns the log isolation and
