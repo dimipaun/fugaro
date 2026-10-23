@@ -1052,16 +1052,25 @@ function dedupe(values: readonly string[]): string[] {
  * about the checkout). The distribution answers instead, through the same
  * `version` probe every other route uses.
  *
- * `T-C7` gives it a platform argument, whose `win32` answer is "a regular file":
- * Windows reports two file modes, so the execute bit is never set there and the
- * POSIX question cannot be asked of a Windows path. That is a *different*
- * question from this one -- the host's own paths, on a host that has no execute
- * bit -- and neither replaces the other. */
-export function isExecutableFile(path: string): boolean {
+ * **The mode question is the platform's** (T-C7). On POSIX it is "a regular file
+ * with an execute bit"; on Windows there is no execute bit at all -- the
+ * filesystem reports two modes and neither of them is one -- so the answer is
+ * "a regular file", which is the same answer `CreateProcess` gives. Asking the
+ * POSIX question of a Windows path would answer "not executable" about every
+ * CLI on the machine. That is a *different* question from the one above about
+ * paths the host cannot see at all: both say "the host does not decide here",
+ * and neither replaces the other.
+ *
+ * `platform` is the platform of the filesystem being asked, which is the host's
+ * -- `resolveBinary` and `resolveInstalledBinary` pass the same value to
+ * `binDirectories`, so one route does not walk one platform's directories and
+ * then ask another platform's mode question about them. */
+export function isExecutableFile(path: string, platform: string = process.platform): boolean {
   try {
     if (!existsSync(path)) return false
     const stat = statSync(path)
     if (!stat.isFile()) return false
+    if (platform === 'win32') return true
     return (stat.mode & 0o111) !== 0
   } catch {
     return false
@@ -1756,6 +1765,12 @@ export async function resolveBinary(options: {
   readonly appEnv: Readonly<Record<string, string | undefined>>
   readonly home?: string
   readonly prefixes?: readonly string[] | undefined
+  /** `platform` is the host whose filesystem is being asked: it picks the
+   * well-known list *and* the mode question `isExecutableFile` answers, so the
+   * two cannot disagree (T-C7). It replaces `process.platform` for a test, and
+   * an injected platform cannot choose a list this module does not know --
+   * `binDirectories` reads it through `locationsFor`. */
+  readonly platform?: string | undefined
   readonly directory: string
   readonly target: SpawnTarget
   readonly spawner?: ChildSpawner
@@ -1783,9 +1798,10 @@ export async function resolveBinary(options: {
     configuredPath: options.configuredPath,
     ...(options.home === undefined ? {} : { home: options.home }),
     ...(options.prefixes === undefined ? {} : { prefixes: options.prefixes }),
+    ...(options.platform === undefined ? {} : { platform: options.platform }),
   })
   for (const candidate of candidates) {
-    if (!isExecutableFile(candidate)) continue
+    if (!isExecutableFile(candidate, options.platform)) continue
     const plan = planFor('cli.version', {}, {
       target: options.target,
       binaryPath: candidate,
@@ -1841,6 +1857,10 @@ export async function resolveInstalledBinary(options: {
    * points the route at the fake (T-A1), and the only reason it exists. */
   readonly wslPath?: string | undefined
   readonly appEnv: Readonly<Record<string, string | undefined>>
+  /** `platform` is the host's, for the mode question below (T-C7). The WSL
+   * branch never asks it: the distribution's CLI is not on this filesystem at
+   * all (F4, T-C6). */
+  readonly platform?: string | undefined
   readonly directory: string
   readonly target: SpawnTarget
   readonly spawner?: ChildSpawner
@@ -1867,7 +1887,7 @@ export async function resolveInstalledBinary(options: {
       reason: `the installation's binary is not there: ${path}`,
     }
   }
-  if (!isExecutableFile(path)) {
+  if (!isExecutableFile(path, options.platform)) {
     return {
       ok: false,
       path,

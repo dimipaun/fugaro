@@ -67,6 +67,7 @@ import {
   childEnvironment,
   childPath,
   cliSentence,
+  isExecutableFile,
   decodeFeedLine,
   isSafeArgumentValue,
   locationsFor,
@@ -1294,6 +1295,89 @@ describe('binary resolution', () => {
     // the row's `binaryPrefixes`, not a special case in `binDirectories` --
     // which is why the walk is the same code on all three platforms.
     expect([...binDirectories({ home: 'C:\\Users\\owner', platform: 'win32' })]).toEqual([])
+  })
+
+  it('asks the mode question of the platform whose filesystem it is asking (F4, T-C7)', () => {
+    // The runner this suite executes on is POSIX, so the Windows answer is
+    // driven rather than observed -- and the POSIX answer is asserted next to
+    // it, because a platform argument that changed both branches would be a
+    // different rule, not this one.
+    const directory = freshDirectory()
+    const plain = join(directory, 'plain')
+    writeFileSync(plain, '#!/bin/sh\n', { mode: 0o644 })
+    const runnable = join(directory, 'runnable')
+    writeFileSync(runnable, '#!/bin/sh\n', { mode: 0o755 })
+    const folder = join(directory, 'folder')
+    mkdirSync(folder)
+
+    // POSIX, unchanged: a regular file with an execute bit, and one without is
+    // not a candidate.
+    expect(isExecutableFile(runnable, 'linux')).toBe(true)
+    expect(isExecutableFile(plain, 'linux')).toBe(false)
+
+    // Windows reports two file modes and neither of them is an execute bit, so
+    // the POSIX question cannot be asked of a Windows path: there, a regular
+    // file is runnable -- the same answer `CreateProcess` gives.
+    expect(isExecutableFile(plain, 'win32')).toBe(true)
+    expect(isExecutableFile(runnable, 'win32')).toBe(true)
+    // A directory is still not a file, and neither is a path that is not there.
+    expect(isExecutableFile(folder, 'win32')).toBe(false)
+    expect(isExecutableFile(join(directory, 'gone'), 'win32')).toBe(false)
+  })
+
+  it('reads a Windows installation’s binary that has no execute bit, and refuses it on POSIX', async () => {
+    // The same file, two hosts. A CLI installed on Windows by copying a file is
+    // runnable -- the mode the copy happens to carry says nothing about it --
+    // while on POSIX that file is not a candidate at all. The platform reaches
+    // the *call site*, not only the function: this is `resolveInstalledBinary`,
+    // the route a stored installation takes.
+    //
+    // The child is scripted rather than real, because the runner this suite
+    // executes on is POSIX and would refuse to execute a 0644 file itself
+    // (EACCES) -- which is the host's rule, not the console's, and exactly the
+    // rule this test is about.
+    const directory = freshDirectory()
+    const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' } } })
+    chmodSync(stub.binary, 0o644)
+    const target = { project: PROJECT }
+    const ran: string[] = []
+    const spawner: ChildSpawner = (command) => {
+      ran.push(command)
+      const child = scriptedChild()
+      setImmediate(() => {
+        child.emitStdout('1.4.2\n')
+        child.exit(0, null)
+      })
+      return child
+    }
+
+    const windows = await resolveInstalledBinary({
+      binaryPath: stub.binary,
+      appEnv: {},
+      directory,
+      target,
+      platform: 'win32',
+      spawner,
+    })
+    expect(windows).toMatchObject({ ok: true, path: stub.binary, version: '1.4.2' })
+    expect(ran).toEqual([stub.binary])
+
+    const posix = await resolveInstalledBinary({
+      binaryPath: stub.binary,
+      appEnv: {},
+      directory,
+      target,
+      platform: 'linux',
+      spawner,
+    })
+    expect(posix.ok).toBe(false)
+    if (!posix.ok) {
+      expect(posix.kind).toBe('no-binary')
+      expect(posix.reason).toContain('not an executable file')
+    }
+    // The POSIX call added nothing to the list: the mode question answered
+    // before the runner was reached at all.
+    expect(ran).toEqual([stub.binary])
   })
 
   it('never takes the app’s own PATH as a place to find the binary', async () => {
