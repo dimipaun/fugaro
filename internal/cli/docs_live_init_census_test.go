@@ -516,6 +516,79 @@ func censusOutput(rel string) bool {
 	return false
 }
 
+// censusVendoredRoots are the root-level trees of vendored third-party agent
+// skills, which the census walks do not open: samber/cc-skills-golang, added
+// 2026-10-23 (skills-lock.json pins each skill's source and hash), in the
+// canonical install location the skills tooling writes, `.agents/`; the skills
+// Claude Code loads are symlinks into it under `.claude/skills/`. A second copy
+// the tooling wrote for another agent layout (`agent/`) was dropped the same
+// day. They are not Fugaro's text: their prose names other tools' `init --<flag>` (swag's,
+// in golang-swagger), and one ships a sample .gitignore for a generic Go
+// project. Neither is a rename Fugaro owes nor an output a Fugaro build writes;
+// the remedy for a mention there is re-vendoring, not editing.
+//
+// The match is ROOT-LEVEL and exact: internal/agent is a Fugaro package and
+// stays walked, and so does any sibling such as `agents/` or `agentx/`.
+// TestCensusVendoredIsRootLevelAndExact pins that.
+var censusVendoredRoots = []string{".agents"}
+
+// censusVendored reports whether a repository-relative path is one of
+// censusVendoredRoots or under one of them.
+func censusVendored(rel string) bool {
+	for _, root := range censusVendoredRoots {
+		if rel == root || strings.HasPrefix(rel, root+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// TestCensusVendoredIsRootLevelAndExact holds the vendored skip to the one
+// root-level tree it names, so it cannot widen into Fugaro's own code.
+//
+// Mutation (run, restore): match with strings.Contains -- the internal/agent
+// cases fail; drop the "/" boundary -- the agentx case fails.
+func TestCensusVendoredIsRootLevelAndExact(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+		want bool
+	}{
+		{".agents", true},
+		{".agents/x", true},
+		{".agents/skills/golang-swagger/references/swag-cli.md", true},
+		// The second install location was dropped: a root `agent/` is walked.
+		{"agent", false},
+		{"agent/skills/golang-project-layout/assets/.gitignore", false},
+		// Fugaro's own package of that name, and a file in it the census
+		// exemptions name, stay walked.
+		{"internal/agent", false},
+		{"internal/agent/relay.go", false},
+		{"internal/agent/relay_test.go", false},
+		{"agents/x", false},
+		{"agentx/x", false},
+		{".agentsx/x", false},
+		{"docs/agent/x.md", false},
+		{"", false},
+	} {
+		if got := censusVendored(tc.path); got != tc.want {
+			t.Errorf("censusVendored(%q) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+	// The package the skip must not reach is really there and really walked:
+	// internal/ is a live root, so liveInitCensus opens internal/agent.
+	for _, r := range liveRoots {
+		if censusVendored(r) {
+			t.Errorf("live root %s is also a vendored tree: the skip would hide a root the census claims to walk", r)
+		}
+	}
+	if !slices.Contains(liveRoots, "internal") {
+		t.Fatal("internal is not a live root: internal/agent would not be walked")
+	}
+	if info, err := os.Stat(filepath.Join(censusRoot, "internal", "agent")); err != nil || !info.IsDir() {
+		t.Fatalf("internal/agent is not a directory (%v): this test's negative cases name a package that is gone", err)
+	}
+}
+
 // censusBinarySniff is how much of a file censusNamesInit reads before it
 // decides whether the file is text. Eight KiB is enough for the two Windows
 // binaries at this repository's root, whose NUL bytes start at byte 4.
@@ -595,6 +668,11 @@ func liveInitCensus(t *testing.T, root string) []string {
 		err = filepath.WalkDir(p, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
+			}
+			// A symlink is not text of its own: `.claude/skills/<name>` points into the
+			// vendored `.agents/skills/<name>`, which is where its target is judged.
+			if d.Type()&fs.ModeSymlink != 0 {
+				return nil
 			}
 			rel, err := filepath.Rel(root, path)
 			if err != nil {
@@ -980,13 +1058,20 @@ func TestCensusOutputCoversEveryIgnoredPathTheWalksReach(t *testing.T) {
 		if err != nil {
 			return err
 		}
+		// A symlink is not text of its own: `.claude/skills/<name>` points into the
+		// vendored `.agents/skills/<name>`, which is where its target is judged.
+		if d.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
 		rel, err := filepath.Rel(censusRoot, path)
 		if err != nil {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
-			if rel == ".git" || censusOutput(rel) {
+			// A vendored skill tree's .gitignore is a sample for some other
+			// project and governs nothing here (censusVendoredRoots).
+			if rel == ".git" || censusOutput(rel) || censusVendored(rel) {
 				return fs.SkipDir
 			}
 			return nil
@@ -1160,7 +1245,9 @@ func TestLiveInitCensusRootsAreTheOnlyOnesThatNameIt(t *testing.T) {
 	read := 0
 	for _, e := range entries {
 		name := e.Name()
-		if name == ".git" || slices.Contains(liveRoots, name) || censusOutput(name) {
+		// censusVendored steps over the vendored third-party skill trees: their
+		// text is another project's, so neither remedy below applies to it.
+		if name == ".git" || slices.Contains(liveRoots, name) || censusOutput(name) || censusVendored(name) {
 			continue
 		}
 		p := filepath.Join(censusRoot, name)
@@ -1174,6 +1261,11 @@ func TestLiveInitCensusRootsAreTheOnlyOnesThatNameIt(t *testing.T) {
 		err := filepath.WalkDir(p, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
+			}
+			// A symlink is not text of its own: `.claude/skills/<name>` points into the
+			// vendored `.agents/skills/<name>`, which is where its target is judged.
+			if d.Type()&fs.ModeSymlink != 0 {
+				return nil
 			}
 			rel, err := filepath.Rel(censusRoot, path)
 			if err != nil {
