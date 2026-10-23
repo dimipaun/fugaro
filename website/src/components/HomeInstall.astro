@@ -82,7 +82,7 @@ const command = path_.commands[0]
      page, with the ground as its ink (the pair `a11y.mjs` computes for the buttons). It carries
      no top padding of its own beyond its field, because the block above pads the gap. */
   .home-install {
-    padding: var(--space-3xl) var(--frame-gutter);
+    padding: var(--space-3xl) var(--frame-gutter) var(--space-3xl);
     background: var(--accent);
     color: var(--ground);
   }
@@ -129,7 +129,7 @@ const command = path_.commands[0]
     border-radius: var(--radius-sm);
     background: var(--surface);
     color: var(--accent-on-dark);
-    font-family: var(--font-mono);
+    font-family: var(--font-mono); /* taste-skill-ignore: a real command in <pre><code> */
     font-size: var(--font-size-base);
   }
 

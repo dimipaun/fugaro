@@ -907,7 +907,12 @@ function roomAbove(css, viewport) {
 
   // The header: its own padding-block on both sides, its bottom border, and the row inside it.
   const headerPadding = px(declaredValue(css, '.site-header', 'padding-block'))
-  const border = (declaredValue(css, '.site-header', 'border-bottom') ?? '').trim().split(/\s+/)[0]
+  // The header draws no rule under it since the owner's ruling of 2026-10-23 (the redesign's
+  // Step 3, lever 5: hairlines become tone steps), so a header that declares no bottom border has
+  // a border of nothing. A declared one is still read, and one this check cannot turn into pixels
+  // is still a refusal.
+  const borderDeclared = declaredValue(css, '.site-header', 'border-bottom')
+  const border = borderDeclared === null || borderDeclared === undefined ? '0px' : borderDeclared.trim().split(/\s+/)[0]
   const header = total([headerPadding, headerPadding, border === undefined ? null : px(border), px(declaredValue(css, '.site-nav-group>details>summary', 'min-height'))])
 
   // The title band: its top padding, the headline it holds at the size the display scale sets it
@@ -2256,7 +2261,7 @@ test('the gate refuses each planted defect', (t) => {
   // same way — the one value the arithmetic is taken at is made unreadable — because a branch whose
   // refusal has never been seen to fire is a branch nobody knows the shape of, which is the same
   // reason every other rule here has a plant.
-  const noCeiling = planted(html, '--page-max:72rem;', '--page-max:fit-content;')
+  const noCeiling = planted(html, '--page-max:76rem;', '--page-max:fit-content;')
   assert.match(
     verdict(t, noCeiling).join('\n'),
     /that box is where the wide drawing's label size is taken/,

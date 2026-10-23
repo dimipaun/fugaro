@@ -97,6 +97,10 @@ import { CONSENT_KEY } from '../lib/consent-key.mjs'
 
      It is a tone step above the ground (the panel), with no rule under it. */
   .consent-banner {
+    /* In the flow, and still on the chrome's layer (tokens.css): the bar is the reader's own
+       chrome, drawn above the header's panel when a group opens under it. */
+    position: relative;
+    z-index: var(--z-chrome);
     padding: var(--space-2xs) var(--frame-gutter);
     background: var(--panel);
     color: var(--text);

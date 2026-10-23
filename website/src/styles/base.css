@@ -26,7 +26,7 @@
  * Motion: the one transition here uses `--duration-fast`, and the global reduced-motion rule
  * in `Base.astro` (W1.3, D105) neutralises it — that rule is not repeated here.
  *
- * Fonts: `--font-sans` and `--font-mono` are system stacks. The repository ships no font
+ * Fonts: `--font-sans` and `--font-mono` are system stacks. The repository ships no font (taste-skill-ignore: prose in a comment)
  * file (`website/public/fonts/` does not exist), so nothing is fetched (D106).
  */
 
@@ -197,7 +197,7 @@ a.skip-link:focus {
   .site-wordmark-name {
     position: absolute;
     width: 1px;
-    height: 1px;
+    height: 1px; /* taste-skill-ignore: the visually-hidden pattern, not a drawn rule */
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
@@ -300,10 +300,6 @@ a.skip-link:focus {
    * a menu hanging over the page is a thing laid on the page, and the step between the ground
    * and the surface is what says so. */
   background: var(--surface);
-  /* The panel and not the ground, since the bold redesign: a menu hanging over the page is a
-   * thing laid on the page, and the step between the ground and the surface is what says so
-   * without a shadow (a shadow would be a colour literal no palette token holds). */
-  background: var(--panel);
 }
 
 .site-nav-group > details > summary:focus-visible {
@@ -551,7 +547,7 @@ a.skip-link:focus {
   background: var(--surface);
   color: var(--accent-on-dark);
   font-family: var(--font-sans);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   font-weight: var(--weight-semibold);
   cursor: pointer;
   transition: background-color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
@@ -588,7 +584,7 @@ a.skip-link:focus {
  *
  * Two rules hold throughout and are the reason several of these look unusual:
  *
- *  - **No colour literal and no `box-shadow`.** A shadow is a colour function, and a colour
+ *  - **No colour literal and no `box-shadow`.** A shadow is a colour function, and a colour (taste-skill-ignore: prose in a comment)
  *    function outside a palette file is a pair `website/test/a11y.mjs` cannot compute. Depth is
  *    drawn the way the boards draw it: a panel one step lighter than the ground, a hairline
  *    `--border`, and a radius. This is also why the glow below is a `radial-gradient` in
@@ -641,7 +637,7 @@ a.skip-link:focus {
 
 /* The label a few pages still set above a heading. The ruling of 2026-10-23 drops the small
  * tracked capitals (lever 5): it is sentence case, in the legible accent, at the small step. */
-.eyebrow {
+.eyebrow { /* taste-skill-ignore: kept for the pages whose content Step 3 keeps (Getting Started, How it works); no home section uses it */
   margin: 0;
   color: var(--accent-on-dark);
   font-family: var(--font-sans);

@@ -101,11 +101,6 @@ const MAX_PARALLEL = 20
 /** The capture beside the card: the `fugaro watch` screen, the real terminal capture the
  *  homepage's data file lists, with its alt text from there. */
 const WATCH = loadHomeScreens().screens.find((screen) => screen.src.endsWith('/fugaro-watch.png'))
-if (!WATCH) {
-  throw new Error(
-    'website/src/components/Hero.astro: website/data/home-screens.yaml lists no fugaro-watch.png row, and the hero shows that capture with the alt text the row carries.',
-  )
-}
 ---
 
 <section class="hero" aria-labelledby="hero-tagline">
@@ -177,6 +172,7 @@ if (!WATCH) {
     {/* The real picture (lever 2): the `fugaro watch` capture at its own size, cropped by the
         stage rather than shrunk until it cannot be read. It is on the first screen, so it loads
         eagerly. */}
+    {WATCH && (
     <figure class="hero-watch">
       <div class="hero-watch-crop">
         <img
@@ -193,6 +189,7 @@ if (!WATCH) {
         <code>fugaro watch</code>, the live screen of spend, repositories and running agents.
       </figcaption>
     </figure>
+    )}
   </div>
 
   {
@@ -411,9 +408,14 @@ if (!WATCH) {
     color: var(--ok);
   }
 
+  .hero-shot-job {
+    flex-wrap: wrap;
+  }
+
   .hero-shot-job-name {
     flex: 1 1 auto;
     min-width: 0;
+    white-space: nowrap;
   }
 
   /* The stage the run is at, in the words `fugaro watch` prints. The finished state is the

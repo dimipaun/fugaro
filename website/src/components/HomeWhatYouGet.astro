@@ -102,7 +102,7 @@ const WATCH_TAIL = 'is the live screen of spend, repositories and running agents
   {/* The console's real screens, in the slider the console page uses: a track that scrolls
       sideways with snap points and dots that are anchors, so it works with no script. */}
   <div class="home-get-show">
-  <div class="home-get-screens" data-slot="watch-screenshot">
+  <div class="watch-shot" data-slot="watch-screenshot">
     <ScreenshotSlider
       screens={SCREENS}
       heading="Watch every run"
@@ -181,11 +181,13 @@ const WATCH_TAIL = 'is the live screen of spend, repositories and running agents
     gap: var(--space-xl);
   }
 
-  .home-get-screens {
-    min-width: 0;
+  /* The slot the screenshots are in: it draws no box of its own, and while it is empty it is
+     not in the page at all (`website/test/base-styles.mjs`'s `watchSlotFailures`). */
+  .watch-shot:empty {
+    display: none;
   }
 
-  .home-get-screens :global(.screens) {
+  .watch-shot > :global(.screens) {
     margin: 0;
   }
 
@@ -206,7 +208,7 @@ const WATCH_TAIL = 'is the live screen of spend, repositories and running agents
     border-radius: var(--radius-sm);
     background: var(--surface);
     color: var(--accent-on-dark);
-    font-family: var(--font-mono);
+    font-family: var(--font-mono); /* taste-skill-ignore: a real command in <pre><code> */
     font-size: var(--font-size-base);
   }
 

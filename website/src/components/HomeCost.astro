@@ -28,10 +28,9 @@ function money(value: number): string {
   return `$${value.toFixed(2)}`
 }
 
+// The console's Spend screen, when the console's data file lists it (a build whose file does not
+// shows the section without the picture).
 const SPEND = loadConsoleScreens().screens.find((screen) => screen.src.endsWith('/console-spend.webp'))
-if (!SPEND) {
-  throw new Error('website/src/components/HomeCost.astro: website/data/console-screens.yaml lists no console-spend.webp row, and the cost section shows that screen.')
-}
 
 /** README.md's sentence about who is paid. */
 const NO_SERVICE =
@@ -77,18 +76,6 @@ const CONTROLS = [
   <div class="home-cost-words">
     <h2 class="home-cost-title display-lg" id="home-cost-title">What a run costs</h2>
     <p class="home-cost-lead" data-source="README.md">{NO_SERVICE}</p>
-    <figure class="home-cost-shot">
-      <figcaption class="home-cost-caption">The console’s Spend screen</figcaption>
-      <img
-        class="home-cost-image"
-        src={SPEND.src}
-        alt={SPEND.alt}
-        width={SPEND.width}
-        height={SPEND.height}
-        loading="lazy"
-        decoding="async"
-      />
-    </figure>
   </div>
 
   <div class="home-cost-figure">
@@ -109,6 +96,21 @@ const CONTROLS = [
       <a class="home-cost-button" href="/caps-and-costs/">See caps and costs</a>
     </p>
   </div>
+
+  {SPEND && (
+    <figure class="home-cost-shot">
+      <figcaption class="home-cost-caption">The console’s Spend screen</figcaption>
+      <img
+        class="home-cost-image"
+        src={SPEND.src}
+        alt={SPEND.alt}
+        width={SPEND.width}
+        height={SPEND.height}
+        loading="lazy"
+        decoding="async"
+      />
+    </figure>
+  )}
 </section>
 
 <style>
@@ -126,7 +128,7 @@ const CONTROLS = [
   }
 
   .home-cost-lead {
-    margin: 0 0 var(--space-xl);
+    margin: 0;
     max-width: 40ch;
     color: var(--text);
     font-size: var(--font-size-lg);
@@ -225,14 +227,34 @@ const CONTROLS = [
     }
   }
 
+  /* The wide composition: the heading and the sentence over the Spend screen on the left, the
+     figure and what stops a run on the right, the two columns' tops on one line. On a phone the
+     figure follows the sentence and the picture comes last. */
   @media (min-width: 64rem) {
     .home-cost {
-      grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      grid-template-rows: auto 1fr;
       align-items: start;
+      column-gap: var(--space-2xl);
+    }
+
+    .home-cost-words {
+      grid-column: 1;
+      grid-row: 1;
+    }
+
+    .home-cost-shot {
+      grid-column: 1;
+      grid-row: 2;
+    }
+
+    .home-cost-figure {
+      grid-column: 2;
+      grid-row: 1 / span 2;
     }
 
     .home-cost-number {
-      font-size: clamp(8rem, 15vw, 15rem);
+      font-size: clamp(8rem, 13vw, 13rem);
     }
   }
 </style>

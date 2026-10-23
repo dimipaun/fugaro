@@ -67,6 +67,7 @@
   /* ---- type: families, then sizes, then the leading and weights that go with them ---- */
   --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
     sans-serif;
+  /* taste-skill-ignore: the face for real code (<pre>, <code>) and nothing else */
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
     "Liberation Mono", monospace;
 

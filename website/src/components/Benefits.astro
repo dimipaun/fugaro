@@ -150,12 +150,13 @@ const BENEFITS = [
  * The statement the section opens with: README.md's own sentence about what a run is, in
  * three parts so that a picture can sit inline after each of the two things it names (the
  * redesign's Step 3, the dealt intro "statement with inline thumbnails"). Each part is held to
- * the README below, and the pictures are crops of the site's own real captures.
+ * the README below, and the pictures are crops of the run's own zoom diagram (level 2: a job, and
+ * the draft pull request it opens).
  */
 const STATEMENT = [
-  { text: 'Each task gets its own Cloud Run job execution in your own Google Cloud project,', thumb: { src: '/screenshots/console-run.webp', crop: 'run' } },
+  { text: 'Each task gets its own Cloud Run job execution in your own Google Cloud project,', thumb: { src: '/images/zoom/level2.png', crop: 'job' } },
   { text: 'runs Claude Code headless to completion,', thumb: null },
-  { text: 'opens a pull request and disappears.', thumb: { src: '/images/fugaro-watch.png', crop: 'watch' } },
+  { text: 'opens a pull request and disappears.', thumb: { src: '/images/zoom/level2.png', crop: 'pull-request' } },
 ]
 
 // Hold every benefit to the reason it is, in the reason's own paragraph, here, so a
@@ -205,16 +206,9 @@ const STATEMENT = [
           {part.thumb && (
             <>
               {' '}
-              <img
-                class="benefits-thumb"
-                src={part.thumb.src}
-                alt=""
-                width="96"
-                height="64"
-                loading="lazy"
-                decoding="async"
-                data-crop={part.thumb.crop}
-              />
+              <span class="benefits-thumb" data-crop={part.thumb.crop}>
+                <img src={part.thumb.src} alt="" width="2560" height="1440" loading="lazy" decoding="async" />
+              </span>
             </>
           )}{' '}
         </Fragment>
@@ -261,26 +255,35 @@ const STATEMENT = [
     letter-spacing: var(--tracking-tight);
   }
 
-  /* A crop of a real capture, set in the line: about the height of a capital, a little wider
-     than tall, and never at the start of a line on its own (it follows the word it shows). */
+  /* A crop of the run's diagram, set in the line: a little taller than a capital, a box of the
+     diagram at about the size of a word. The picture is drawn larger than the frame and moved so
+     the box it shows sits in the frame; the frame clips the rest. */
   .benefits-thumb {
+    position: relative;
     display: inline-block;
-    width: 1.6em;
-    height: 0.9em;
+    width: 2.4em;
+    height: 1.3em;
     margin-inline: 0.06em;
-    vertical-align: -0.08em;
-    border-radius: 0.12em;
-    object-fit: cover;
+    vertical-align: -0.24em;
+    overflow: hidden;
+    border-radius: 0.14em;
+    background: var(--ground);
   }
 
-  /* Where each crop looks: the run screen's stage ledger, and the watch screen's "ready for
-     review" rows. */
-  .benefits-thumb[data-crop='run'] {
-    object-position: 18% 30%;
+  .benefits-thumb img {
+    position: absolute;
+    top: -2.55em;
+    width: 18em;
+    max-width: none;
+    height: auto;
   }
 
-  .benefits-thumb[data-crop='watch'] {
-    object-position: 62% 62%;
+  .benefits-thumb[data-crop='job'] img {
+    left: -11.22em;
+  }
+
+  .benefits-thumb[data-crop='pull-request'] img {
+    left: -14.42em;
   }
 
   .benefit-list {

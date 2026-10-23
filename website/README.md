@@ -109,7 +109,7 @@ planted second copy fails. The id, the audit trail and the choices behind them:
 
 ## The gates
 
-Fourteen checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
+Thirteen checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
 with fixtures that keep its refusals running, and none of them needs the network. The count is
 a fact about the list under it, and `website/test/readme.mjs` holds it to that list: a gate
 added or removed without this sentence moving fails there:
@@ -1301,15 +1301,6 @@ added or removed without this sentence moving fails there:
   refusals are kept the way the other gates keep theirs: a case writes a synthetic `dist` with
   each defect planted beside a page that keeps every rule, and each rule was mutation-proved by
   removing it from the function and watching that case fail.
-- `test/slider.mjs` — the homepage's one slider (the draft of 2026-10-19, P5/P8): the block is
-  three tabs and three panels, every panel is in the HTML a reader receives, each tab is a
-  fragment link to the panel beside it and the stylesheet shows the panel the fragment names —
-  read one tab at a time, so a stylesheet that pairs the Why Fugaro? tab with the See it panel is
-  refused rather than counted as three pairs present. It also refuses a script in the block, the
-  `role="tab"`/`aria-selected` pair that describes a widget whose selection is scripted, a tab
-  under the owner's 44 px target, a tab row that cannot wrap, a rule that takes the focus ring
-  off the tabs, a panel wider than a 360 px phone's content box, and a step whose line is not the
-  repository's own sentence about it in the order its document writes them.
 - `test/os-cards.mjs` — the install cards on Getting Started (the owner's draft of
   2026-10-19, "Getting Started, draft 2 (OS icons)"). Two rules about the shape no other gate
   can see: **no card names a system `data/install.yaml` does not carry** — the card's

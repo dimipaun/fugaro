@@ -7,9 +7,9 @@
  * **What it is.** The heading "How a task becomes a pull request", the run's four steps, and a
  * real picture beside each step: the zoom diagrams `/how-it-works/` draws in full, from the
  * developer's view down to the inside of one job, and the console's run screen for the pull
- * request a run ends in. On a wide screen each picture stays in place while its step is read
- * (`position: sticky` inside the step's own row, so it needs no script), and the next step's
- * picture takes over as the reader scrolls on. On a phone each step is followed by its picture.
+ * request a run ends in. On a wide screen each step is a row, its words beside its picture; on a
+ * phone each step is followed by its picture. A picture's name is its own title, drawn in it, and
+ * its alt text, so it carries no caption.
  *
  * **Every word of it is already held to a document.** The four step names and the line under
  * each one are `RunDiagram.astro`'s own (its `BOXES` names and four of its `LABELS`), held to the
@@ -24,17 +24,14 @@ import { loadConsoleScreens } from '../content.ts'
 import { BOXES, LABELS } from '../lib/run-labels.mjs'
 import { LEVELS } from '../lib/zoom-levels.mjs'
 
+// The console's run screen, when the console's data file lists it; a build whose file does not
+// (the gates build such copies of the site) shows the whole-project zoom diagram there instead.
 const RUN_SCREEN = loadConsoleScreens().screens.find((screen) => screen.src.endsWith('/console-run.webp'))
-if (!RUN_SCREEN) {
-  throw new Error(
-    'website/src/components/HomeRunBand.astro: website/data/console-screens.yaml lists no console-run.webp row, and the run section shows that screen beside the pull request step.',
-  )
-}
 
 const level = (id: string) => {
   const found = LEVELS.find((entry) => entry.id === id)
   if (!found) throw new Error(`website/src/components/HomeRunBand.astro: src/lib/zoom-levels.mjs has no ${id}.`)
-  return { src: found.src, alt: found.alt, width: 2560, height: 1440, caption: found.name }
+  return { src: found.src, alt: found.alt, width: 2560, height: 1440 }
 }
 
 const STEPS = [
@@ -45,7 +42,9 @@ const STEPS = [
     name: BOXES[3].name,
     line: LABELS.checkpoint,
     done: true,
-    picture: { src: RUN_SCREEN.src, alt: RUN_SCREEN.alt, width: RUN_SCREEN.width, height: RUN_SCREEN.height, caption: 'The console’s run screen' },
+    picture: RUN_SCREEN
+      ? { src: RUN_SCREEN.src, alt: RUN_SCREEN.alt, width: RUN_SCREEN.width, height: RUN_SCREEN.height }
+      : level('level-4'),
   },
 ]
 ---
@@ -66,7 +65,6 @@ const STEPS = [
             </p>
           </div>
           <figure class="home-run-figure">
-            <figcaption class="home-run-caption">{step.picture.caption}</figcaption>
             <img
               class="home-run-image"
               src={step.picture.src}
@@ -94,7 +92,7 @@ const STEPS = [
   /* Tokens only (W1.2). The band is a field one tone step above the ground, the width of the
      page, with no rule above or below it (lever 5: hairlines become tone steps). */
   .home-run {
-    padding: var(--space-3xl) var(--frame-gutter);
+    padding: var(--space-3xl) var(--frame-gutter) var(--space-2xl);
     margin-bottom: var(--space-4xl);
     background: var(--panel);
   }
@@ -156,12 +154,6 @@ const STEPS = [
     background: var(--ground);
   }
 
-  .home-run-caption {
-    margin: 0 0 var(--space-2xs);
-    color: var(--text-muted);
-    font-size: var(--font-size-sm);
-  }
-
   .home-run-more {
     margin: 0;
   }
@@ -176,27 +168,16 @@ const STEPS = [
   }
 
   /* The wide composition: each step is a row of two parts on a 5/7 split, the words on the left
-     and the picture on the right. The row is taller than the picture, and the picture is sticky
-     inside it, so it holds while its step is read and the next row's picture takes its place. */
+     and the picture on the right. */
   @media (min-width: 64rem) {
     .home-run-steps {
-      gap: 0;
+      gap: var(--space-2xl);
     }
 
     .home-run-step {
       grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-      align-items: start;
+      align-items: center;
       gap: var(--space-2xl);
-      min-height: 72vh;
-    }
-
-    .home-run-words {
-      padding-top: 14vh;
-    }
-
-    .home-run-figure {
-      position: sticky;
-      top: 12vh;
     }
   }
 </style>
