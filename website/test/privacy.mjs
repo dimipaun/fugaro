@@ -673,7 +673,10 @@ export const HOST_NAMING_TEST = 'internal/cli/docs_website_boundary_test.go'
 //
 // They are named one by one, with their full paths, so the exemption is exactly these two files
 // and nothing else: the rule stays in force for every other source, and the case below plants a
-// third file under the same directory and watches it refused.
+// third file under the same directory and watches it refused. What is exempt is the link and not
+// the file: the scan cannot see the host inside an allow-listed file, so the gate also reads both
+// for the ways a source reaches a service (`REACH_CALLS`) and refuses one, which is the only place
+// this rule could be defeated from.
 export const HOST_NAMING_CONSOLE = Object.freeze(['console/src/main/onboarding.ts', 'console/src/main/window.ts'])
 
 /** The roots of the production sources the reach scan reads, as the repository's own directories. */
