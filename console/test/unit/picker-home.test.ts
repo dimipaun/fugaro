@@ -34,13 +34,13 @@
 // environment names, and one for each of the two ways it can name none. The
 // last case reads it off the resolution itself, which is the behaviour the e2e
 // is about: it skips on a machine that has its own `fugaro` in one of the
-// platform's *absolute* prefixes, because there the machine decides the answer
-// before the `~` entry is reached -- the same reason, and the same honesty, as
-// the e2e's own `resolveConsoleBinary` skip.
+// platform's *absolute* prefixes **ahead of** its `~` entry, because there the
+// machine decides the answer before the `~` entry is reached -- the same reason,
+// and the same honesty, as the e2e's own `resolveConsoleBinary` skip.
 
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { afterAll, describe, expect, it } from 'vitest'
@@ -190,44 +190,73 @@ describe('the picker’s home', () => {
   })
 
   it.each(noHome)('falls back to Electron’s answer when the environment $spelling', ({ appEnv }) => {
-    // The other half of the same decision: a missing `HOME` is not a home, and
-    // neither is an empty one. The blank spelling is the worse of the two
-    // because it is *silently relative*: `join('', '.local', 'bin')` is
-    // `.local/bin` and `join('', '.config', 'fugaro')` is `.config/fugaro`, and
-    // both are then read against the directory the app happens to have been
-    // started in. Nothing downstream catches that -- rule 4 pushes every `~`
-    // entry into the candidate list whether or not its home made it absolute
-    // (`resolveBinary` refuses a relative **configured** path, not an expansion
-    // of `~`), and the refusal resolves the config entry the same way. So
-    // without the fallback a launch that scrubbed `HOME` would look for the CLI
-    // in `./.local/bin` and stop refusing to write into `./.config/fugaro`.
-    // Electron's own answer is the home the account actually has, so it is the
-    // one to fall back to.
+    // A missing `HOME` is not a home, and neither is an empty one. The blank
+    // spelling is the worse of the two because it is *silently relative*:
+    // `join('', '.local', 'bin')` is `.local/bin` and `join('', '.config',
+    // 'fugaro')` is `.config/fugaro`, and both are then read against the
+    // directory the app happens to have been started in. Nothing downstream
+    // catches that -- rule 4 pushes every `~` entry into the candidate list
+    // whether or not its home made it absolute (`resolveBinary` refuses a
+    // relative **configured** path, not an expansion of `~`), and the refusal
+    // resolves the config entry the same way. So without the fallback a launch
+    // that scrubbed `HOME` would look for the CLI in `./.local/bin` and stop
+    // refusing to write into `./.config/fugaro`. Electron's own answer is the
+    // home the account actually has, so it is the one to fall back to.
+    //
+    // `pickerOver` writes a `HOME` of its own first, and the spelling below
+    // overwrites it -- which is the point: this environment carries no home at
+    // all, so the only home left to answer with is Electron's.
     const account = accountHome('fallback-account-home')
     const userData = join(account, '.config', 'fugaro', 'console')
-    const picker = pickerOver({
-      // A home that is *not* Electron's answer, so a case that stopped reading
-      // the environment -- or stopped overriding it with the spelling above --
-      // fails rather than passing for the wrong reason.
-      envHome: accountHome('fallback-home'),
-      accountHome: account,
+    expectRefused(
+      pickerOver({
+        envHome: accountHome('fallback-home'),
+        accountHome: account,
+        userData,
+        appEnv,
+      }),
       userData,
-      appEnv,
-    })
-    expectRefused(picker, userData)
+    )
+    // **And the environment really was read**, which the refusal above cannot
+    // show on its own: a picker that never looked at `appEnv` answers Electron's
+    // home here too -- `accountHome` is the fake's answer either way -- and
+    // refuses this very directory for the same reason, so the assertion above
+    // would pass for the wrong reason. The spelling under test names no home, so
+    // the witness has to be another key of the same environment: `$FUGARO_CONFIG`
+    // names a directory of the CLI's configuration (`cliConfigDirectories`), and
+    // a profile under *it* is refused whatever the home is. Only a picker reading
+    // this environment can refuse it; one that ignored `appEnv` writes the store
+    // there instead, and `expectRefused` reports the sentence it did not print.
+    const fugaroConfig = join(scratch, 'fallback-fugaro-config', 'config.json')
+    const underIt = join(dirname(fugaroConfig), 'console')
+    expectRefused(
+      pickerOver({
+        envHome: accountHome('fallback-home'),
+        accountHome: account,
+        userData: underIt,
+        appEnv: { ...appEnv, FUGARO_CONFIG: fugaroConfig },
+      }),
+      underIt,
+    )
   })
 })
 
 /** machineFugaro is a `fugaro` this machine has in one of the platform's own
- * **absolute** prefixes -- the ones rule 4 walks before the `~` entry the case
- * below controls. It is the guard the e2e spells as a skip: a machine that has
- * one decides the resolution before the console's own home is ever reached, so
- * a case about which `~` was used would prove nothing there. A `~` prefix is
- * skipped because after this file's change it is the app's environment home,
- * which the case sets. */
+ * **absolute** prefixes -- and only in the ones rule 4 walks **before** its `~`
+ * entry, which is the entry the case below controls: a machine that has one there
+ * decides the resolution before the console's own home is ever reached, so a case
+ * about which `~` was used would prove nothing on it. It is the guard the e2e
+ * spells as a skip.
+ *
+ * The walk **stops** at the first `~` prefix rather than skipping the tildes and
+ * carrying on. Rule 4's list is ordered, and the entries *after* `~/.local/bin` --
+ * `/usr/bin` on macOS, Linuxbrew's two directories on Linux -- are walked after
+ * the home this case sets, so a binary in one of them cannot decide the answer
+ * here. Looking there anyway was this guard's first version, and it skipped the
+ * case on a machine where the case would have passed. */
 const machineFugaro = ((): string | undefined => {
   for (const prefix of locationsFor(process.platform).binaryPrefixes) {
-    if (prefix.startsWith('~')) continue
+    if (prefix.startsWith('~')) break
     const candidate = join(prefix, FUGARO_BINARY_NAME)
     if (isExecutableFile(candidate)) return candidate
   }

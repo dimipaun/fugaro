@@ -55,6 +55,15 @@ func newPlanGraphCmd() *cobra.Command {
 			"writes nothing.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			// `--done ""` is pflag's empty list, not a done set: it is
+			// silently accepted by StringSlice and would otherwise read as
+			// "no tasks are done". An empty id is refused on the flag for the
+			// same reason an unknown one is (see the long help) -- and the
+			// flag has to be *given* as empty, since with no --done at all
+			// no done set is a legitimate read.
+			if cmd.Flags().Changed("done") && len(done) == 0 {
+				return fmt.Errorf("--done names no task; an empty id is refused rather than ignored")
+			}
 			artifact, err := resolveGraphArtifact(planPath)
 			if err != nil {
 				return err
@@ -63,7 +72,7 @@ func newPlanGraphCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			graph, err := plan.Analyze(doc, done)
+			graph, err := plan.Analyze(artifact, doc, done)
 			if err != nil {
 				return err
 			}

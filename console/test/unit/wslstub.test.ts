@@ -252,6 +252,37 @@ describe('the fake wsl.exe', () => {
     for (const key of childKeys) expect([...CHILD_ENV_KEYS]).toContain(key)
   })
 
+  it('consumes the share list rather than handing it to the child', () => {
+    // T-E1 and T-E2. `WSLENV` is `wsl.exe`'s own share list -- the thing that
+    // says which *Windows* variables the distribution receives -- and not a
+    // variable of the distribution's, so the double takes it off the environment
+    // it builds for the child: the console writes the key (empty, T-E2) and the
+    // child never sees it at all. The mutation this catches is forwarding the
+    // hop's environment wholesale, which puts `WSLENV` in the child and, with a
+    // share list that named anything, would put the host's own variables there
+    // with it.
+    const { wsl, linux } = install(freshDirectory())
+    run(wsl, ['-d', 'Ubuntu', '--cd', linux, '--', FUGARO_BINARY_NAME, 'version'], {
+      env: { ...HOST_ENV, WSLENV: '' },
+    })
+    const hop = only(wsl.reports())
+    expect(hop.envKeys).toContain('WSLENV')
+    expect(Object.keys(hop.childEnv)).not.toContain('WSLENV')
+    expect(only(wsl.children()).envKeys).not.toContain('WSLENV')
+
+    // And with a share list that *does* name a variable, the safe direction is
+    // asserted rather than assumed: this fake passes the eleven keys and nothing
+    // else whatever the list says, so a listed host variable stays on the host's
+    // side of the boundary. The console writes the list empty for exactly this
+    // reason, and this case says what the fake would do if it did not.
+    const second = install(freshDirectory())
+    run(second.wsl, ['-d', 'Ubuntu', '--cd', second.linux, '--', FUGARO_BINARY_NAME, 'version'], {
+      env: { ...HOST_ENV, WSLENV: 'NOT_A_CHILD_KEY', NOT_A_CHILD_KEY: 'planted-on-the-host' },
+    })
+    expect(only(second.wsl.reports()).envKeys).toContain('NOT_A_CHILD_KEY')
+    expect(only(second.wsl.children()).envKeys).not.toContain('NOT_A_CHILD_KEY')
+  })
+
   it('refuses to be a general-purpose shell', () => {
     // T-A3. The children are the stub `fugaro`, the `wslpath` query and the
     // `sh -c` wrapper the plan writes -- and nothing else, because a double that

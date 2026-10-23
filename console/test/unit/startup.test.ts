@@ -942,7 +942,7 @@ function bodyOf(declaration: string): string {
 describe('the entry point puts the surface on ipcMain, and only when it may', () => {
   it('registers the whole allow-list, wrapped by the reduced-mode gate', () => {
     // The surface and the gate, in one line a reviewer can read: `gated` is the
-    // thirteen operations, `reducedModeHandlers` is what refuses the withheld
+    // fifteen operations, `reducedModeHandlers` is what refuses the withheld
     // views' reads *before* the source is reached, and the second argument is
     // the stored answer read per call rather than a copy of it.
     expect(indexSource).toContain(

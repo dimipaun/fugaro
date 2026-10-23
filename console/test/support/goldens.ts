@@ -11,15 +11,17 @@
 // the stylesheet declares, and an unstyled mount fails with a sentence naming
 // what is missing rather than a pixel diff nobody can read.
 //
-// The two elements are the two the design's section 6.2 names, and neither is
-// the screen's own root: a screen's root carries `color` and no `background`
-// (design section 2's inventory; `section.live` and its siblings are
-// `display: block; color: var(--text)`), because the ground is the *document's*
-// — `base.css` paints `--ground` on `body` and `--text` is inherited down from
-// it. Reading the screen root's own `background-color` would read
-// `rgba(0, 0, 0, 0)` in a perfectly styled window, which is why the assertion
-// reads the app's ground off `document.body` and the text colour off the
-// screen's own heading.
+// **The two elements read here are not the element design section 6.2 names**,
+// and the difference is the whole reason the read is written the way it is. 6.2
+// names exactly one: the **screen's own root** ("It reads a *computed* background
+// off a screen root", `paintedBackground(root)` in its two-set form). A screen's
+// root carries `color` and no `background` (design section 2's inventory;
+// `section.live` and its siblings are `display: block; color: var(--text)`),
+// because the ground is the *document's* — `base.css` paints `--ground` on
+// `body` and `--text` is inherited down from it. Reading the screen root's own
+// `background-color` would read `rgba(0, 0, 0, 0)` in a perfectly styled window,
+// which is why the assertion reads the app's ground off `document.body` and the
+// text colour off the screen's own heading — neither of them that root.
 //
 // **2. Taking a recording (`expectGolden`).** One call, so that every golden in
 // the suite fails the same way: on a *comparison* run the freshness preflight of 3
@@ -50,11 +52,19 @@
 // with the exact re-record command for its own file instead of a comparison
 // against a picture of a tree that no longer exists.
 //
-// **The #629 set is a different case, and the timestamp cannot see it**: those
-// PNGs were committed on 2026-10-22, three days *after* the newest file of the
-// theme directory, so by commit time they are newer than the stylesheet they
-// predate. What fails for them is the comparison itself, which is why 2 above
-// exists: the diff is real, and the command is what makes it actionable.
+// **PR #629's darwin set, and what this clock sees of it.** Those PNGs were
+// committed on 2026-10-22, *after* the newest file of the theme directory at the
+// time, so by commit time they were newer than the stylesheet they predate and
+// the timestamp could not see that they were pictures of the unstyled tree: the
+// comparison caught them, and that is the case 2 above exists for. **That is no
+// longer this tree's state.** The theme has been committed to since — 0.10.2's
+// `screens.css` change is the latest commit that touches it — so the committed
+// darwin baselines are now *older* than the stylesheet they predate, and
+// `assertGoldenFresh` refuses them by name with the re-record command rather than
+// letting the comparison run. Either way the answer is the same one, and it is
+// the owner's: those frames are pictures of a tree that no longer exists and want
+// re-recording; the guard's message is what says so, and it says the same thing
+// whichever clock found it.
 //
 // **Why this module is imported by a unit test as well as by four specs**, and
 // why every path in it is an argument rather than a constant derived from this
@@ -393,9 +403,12 @@ export function recordingRun(updateSnapshots: string): boolean {
  *   - **no golden at all** — nothing has been recorded for this spec on this
  *     platform (the baselines are owner-run, per platform);
  *   - **older than the stylesheet** — the picture predates the rules that paint
- *     the screens, so it is a picture of a tree that no longer exists: PR #629's
- *     darwin set is exactly this, recorded while the console served no CSS at
- *     all;
+ *     the screens, so it is a picture of a tree that no longer exists, and this
+ *     is the state the timestamp can see. **PR #629's darwin set is in it now**:
+ *     those PNGs were newer than the newest theme file when they were committed
+ *     (which is why the comparison, not this function, was what caught them
+ *     then — see the header), and the theme has been committed to since, so this
+ *     function refuses them by name and the comparison is never reached;
  *   - otherwise null, and the comparison decides.
  *
  * It is a question about a **comparison** run, and `expectGolden` is what decides

@@ -284,7 +284,7 @@ export function commandKey(argv: readonly string[]): string {
 
 /**
  * STUB_COMMAND_KEYS is every key a scenario may use: the console's own spawn
- * tables -- `src/main/spawn.ts`'s `SPAWN_COMMANDS` (the dashboard's fourteen
+ * tables -- `src/main/spawn.ts`'s `SPAWN_COMMANDS` (the dashboard's fifteen
  * operations) **and** `PICKER_COMMANDS` (the picker's one read, `config list
  * --json`) -- read through `commandKey`, so a new operation in either table is a
  * key the stub answers without this file changing and without a second list to

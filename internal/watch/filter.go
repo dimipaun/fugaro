@@ -18,18 +18,38 @@ const FinishedKeep = 3 * time.Minute
 // every run that ever happened. The zero Filter hides everything, so every
 // caller sets Keep, KeepCount and FailedKeep.
 type Filter struct {
-	All        bool
-	Keep       time.Duration // FinishedKeep (3m); --keep widens it
-	KeepCount  int           // default 15
-	FailedKeep time.Duration // FinishedKeep (3m), not a flag
+	All       bool
+	Keep      time.Duration // FinishedKeep (3m); --keep widens it
+	KeepCount int           // default 15
+	// FailedKeep is a FLOOR under a failed row's window, not a flag: a
+	// failure is the row a person most needs to see, so it is never kept for
+	// shorter than a success of the same age. --keep raises a failure's
+	// window with a success's — the 0.10.2 fix of #950, where a fixed 3m
+	// here made `watch --keep 24h` show a 10m-old success and hide a 10m-old
+	// failure (raising the window made a failure LESS visible). A caller
+	// that has no floor of its own passes FinishedKeep.
+	FailedKeep time.Duration
+}
+
+// window is how long a finished row stays shown: --keep, except that a
+// failed row keeps the wider of --keep and FailedKeep.
+func (f Filter) window(r RunRow) time.Duration {
+	if r.Failed && f.FailedKeep > f.Keep {
+		return f.FailedKeep
+	}
+	return f.Keep
 }
 
 // Apply hides v's finished rows per f and returns the result and how many it
 // hid. A dismissed run is hidden whatever its status — x means "I have seen
-// this one" (owner spec 2026-10-22, item 4) — and so is a failure older than
-// FailedKeep; a success, already newest first, is kept while it is younger
-// than Keep and fewer than KeepCount successes have been kept so far. All
-// bypasses every rule. acked may be nil (nothing is dismissed).
+// this one" (owner spec 2026-10-22, item 4). Every other finished row,
+// whatever its status, is kept while it is younger than its window (window:
+// --keep, never shorter for a failure than for a success) and fewer than
+// KeepCount finished rows have been kept before it; rows arrive newest
+// first, so KeepCount keeps the newest ones and a failure is displaced by a
+// newer row exactly as a success is (0.10.2 fix of #950: --keep and
+// --keep-count reach failed rows too). All bypasses every rule. acked may be
+// nil (nothing is dismissed).
 func (f Filter) Apply(v View, acked func(slug, run string) bool) (View, int) {
 	if acked == nil {
 		acked = func(string, string) bool { return false }
@@ -42,29 +62,19 @@ func (f Filter) Apply(v View, acked func(slug, run string) bool) (View, int) {
 			continue
 		}
 		var kept []RunRow
-		successes := 0
+		shown := 0 // finished rows kept so far in this block, failures included
 		for _, r := range b.Finished {
 			if f.All {
 				kept = append(kept, r)
 				continue
 			}
-			var keep bool
-			switch {
-			case acked(b.Slug, r.Run):
-				keep = false
-			case r.Failed:
-				keep = r.Age < f.FailedKeep
-			default:
-				keep = r.Age < f.Keep && successes < f.KeepCount
-				if keep {
-					successes++
-				}
-			}
-			if keep {
-				kept = append(kept, r)
-			} else {
+			keep := !acked(b.Slug, r.Run) && r.Age < f.window(r) && shown < f.KeepCount
+			if !keep {
 				hidden++
+				continue
 			}
+			shown++
+			kept = append(kept, r)
 		}
 		repos[i].Finished = kept
 	}

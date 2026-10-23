@@ -219,6 +219,7 @@ var consoleReadPaths = map[string]bool{
 	"fugaro budget show": true,
 	"fugaro report":      true,
 	"fugaro runs ls":     true,
+	"fugaro runs stats":  true,
 	"fugaro diagnose":    true,
 	"fugaro logs":        true,
 	"fugaro secrets ls":  true,
