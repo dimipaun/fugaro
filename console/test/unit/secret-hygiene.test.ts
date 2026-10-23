@@ -85,17 +85,15 @@ function findings(text: string): string[] {
 /**
  * CREDENTIAL_ENV_KEYS are the environment variable names the console must never
  * read: the cloud SDK's chain, the forges' tokens, the registries' and the
- * vendors' keys. They are **names and not values**, and a name is not a secret
- * (the plan's own rule for this file) -- but the list is still assembled from
- * fragments, because a file that lists the names a scanner looks for is a file
- * a scanner flags.
+ * vendors' keys.
  *
  * The console's environment rule is that it reads exactly the keys on
  * `CHILD_ENV_KEYS` and nothing else (`src/main/spawn.ts`), so the names below are
  * ones no module may reach for: reaching for one is a module that has grown a
- * second rule. They are names and not values, and a name is not a secret -- but
- * even the list is assembled from fragments, because a file that lists the names
- * a scanner looks for is a file a scanner flags.
+ * second rule. They are **names and not values**, and a name is not a secret (the
+ * plan's own rule for this file) -- but even the list is assembled from
+ * fragments, because a file that lists the names a scanner looks for is a file a
+ * scanner flags.
  */
 const CREDENTIAL_ENV_KEYS: readonly string[] = [
   inert('AWS_', 'ACCESS_KEY_ID'),
@@ -130,7 +128,9 @@ const NEVER_READ_KEYS: readonly string[] = [...CREDENTIAL_ENV_KEYS, inert('WSL',
  * explains why the console does *not* read `AWS_SECRET_ACCESS_KEY` is a sentence
  * worth having, and this scan is about executable lines. */
 function codeOf(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  // A block comment becomes its own whitespace rather than nothing, so the line
+  // numbers a finding reports are the file's own.
+  return text.replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, ' ')).replace(/^\s*\/\/.*$/gm, '')
 }
 
 /**
