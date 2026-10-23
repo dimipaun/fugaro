@@ -1980,8 +1980,8 @@ run "credentials_service_on" {
     condition = (length(google_project_iam_custom_role.credentials_database) == 1 &&
       google_project_iam_custom_role.credentials_database[0].role_id == "fugaroCredentialsDatabase" &&
       google_project_iam_custom_role.credentials_database[0].project == "aurora-fp" &&
-    google_project_iam_custom_role.credentials_database[0].permissions == toset([
-      "firebasedatabase.instances.get", "firebasedatabase.instances.update",
+      google_project_iam_custom_role.credentials_database[0].permissions == toset([
+        "firebasedatabase.instances.get", "firebasedatabase.instances.update",
     ]))
     error_message = "the service's database role is this installation's own fugaroCredentialsDatabase, on the Firebase project the variable names, holding exactly firebasedatabase.instances.get and .update: get for every read the service makes, update for its compare-and-set writes under creds/, and no instance lifecycle permission (no list, create, delete, disable, reenable or undelete)"
   }

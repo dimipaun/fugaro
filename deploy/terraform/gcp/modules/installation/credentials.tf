@@ -185,7 +185,7 @@ resource "google_project_iam_custom_role" "credentials_database" {
   role_id = "fugaroCredentialsDatabase"
   title   = "Fugaro credentials service (database data only)"
   permissions = [
-    "firebasedatabase.instances.get",   # read: the kill switches, the policy, a run's outcome node, and the credential state another revision wrote
+    "firebasedatabase.instances.get",    # read: the kill switches, the policy, a run's outcome node, and the credential state another revision wrote
     "firebasedatabase.instances.update", # write: the service's own creds/ nodes, by compare-and-set
   ]
 }
