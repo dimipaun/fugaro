@@ -135,8 +135,12 @@ export interface InstallationPickerDeps {
    * Node. The operation that calls it takes **no arguments**, so the URL is this
    * process's own constant and a renderer cannot name one. */
   readonly openExternal: (url: string) => Promise<boolean>
-  /** The app's own directories. `userData` is where the store lives, and
-   * `home` is passed to the path refusal -- this file never calls `homedir()`. */
+  /** The app's own directories. `userData` is where the store lives, and `home`
+   * is the operator's home as this app's own environment names it: it is what
+   * rule 4's `~` expands to (`binDirectories`' own `home` argument, which
+   * defaults to `homedir()`) and what the path refusal is asked about. This file
+   * never calls `homedir()` -- the entry point hands it in, and says there why
+   * it is not `app.getPath('home')`. */
   readonly userData: string
   readonly home: string
   /** The app's root, from which `pickerPreloadPath` derives the preload. */
@@ -848,6 +852,37 @@ export function installInstallationPicker(options: {
   readonly onRemoved?: InstallationPickerDeps['onRemoved']
 }): InstallationPicker {
   const { electron } = options
+  // **The home is this app's own environment's, and not `app.getPath('home')`.**
+  // On Linux the two agree -- both read `HOME`. On macOS they do not: Electron
+  // answers `home` with Chromium's `base::GetHomeDir()`, whose Apple
+  // implementation is Foundation's `NSHomeDirectory()`, which reads the user
+  // *record* and ignores `HOME` -- while `homedir()` (libuv) answers with
+  // `HOME` first. So a launch whose `HOME` is not the account's (`test/e2e`'s
+  // stub does exactly that: `test/support/cliStub`) had this picker resolve
+  // `/Users/<owner>/.local/bin` while the same process's own `homedir()` -- and
+  // the `HOME` every child is handed (`childEnvironment`) -- was the redirected
+  // one.
+  //
+  // The picker is the wrong place to be the only exception: the startup
+  // handshake resolves the *same* CLI with `homedir()` (`src/main/index.ts`
+  // passes `resolveHandshakeBinary` no home, so `binDirectories` falls back to
+  // it), so a picker that disagreed with the handshake about where the CLI is
+  // would draw "install the CLI first" over a console that is already running
+  // one, and would ask the operator to install it where it already is. The store
+  // path refusal (`installationStorePath`) reads this same home, and it is the
+  // right one there too: the two other config directories it checks
+  // (`$XDG_CONFIG_HOME`, `$FUGARO_CONFIG`) come from this environment, so the
+  // `~/.config/fugaro` beside them must be the one this environment's CLI would
+  // use.
+  //
+  // **This is not a change to rule 4.** The order -- the store's override first,
+  // then the platform's well-known prefixes -- and the list itself are
+  // untouched, and no search list is read out of the environment: the app's
+  // `PATH` is still never walked. This only says which directory `~` is, and it
+  // says the same thing the rest of the process does. An empty `HOME` is not a
+  // home, so Electron's answer stands in when the key is missing or blank.
+  const envHome = options.appEnv['HOME']
+  const home = envHome === undefined || envHome === '' ? electron.app.getPath('home') : envHome
   return createInstallationPicker({
     BrowserWindow: electron.BrowserWindow,
     session: electron.session,
@@ -859,7 +894,7 @@ export function installInstallationPicker(options: {
     // before Electron is asked to open anything.
     openExternal: (url: string) => openExternalValidated(electron.shell, url),
     userData: electron.app.getPath('userData'),
-    home: electron.app.getPath('home'),
+    home,
     appPath: electron.app.getAppPath(),
     appEnv: options.appEnv,
     ...(options.spawner === undefined ? {} : { spawner: options.spawner }),
