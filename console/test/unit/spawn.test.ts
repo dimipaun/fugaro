@@ -1161,18 +1161,30 @@ describe('binary resolution', () => {
     }
   })
 
-  it('falls back to the POSIX list on a platform this build is not packaged for', () => {
-    // The console is packaged for darwin and linux and the fuse hook refuses
-    // anything else, so this branch is a developer running the sources on an
-    // unpackaged platform and nothing more. `win32` is not in this list any
-    // more: it has a row of its own now -- the WSL route, above -- and this
-    // fallback is about the platforms nobody has decided at all.
-    expect(locationsFor('freebsd')).toBe(LINUX_LOCATIONS)
-    expect(locationsFor('sunos')).toBe(LINUX_LOCATIONS)
-    // and the darwin-only Homebrew prefix never leaks into it
-    for (const platform of ['freebsd', 'sunos', 'aix']) {
-      expect([...locationsFor(platform).binaryPrefixes]).not.toContain('/opt/homebrew/bin')
-    }
+  it('refuses a platform nobody decided, rather than answering with Linux’s directories', () => {
+    // F5's other half, and the half that used to be a fallback. A platform with
+    // no row answered with the POSIX list. That was survivable while the app
+    // shipped only for darwin and Linux: the branch was reached by a developer
+    // running the sources somewhere the app has never been packaged, and the
+    // POSIX layout was the nearest thing to a right answer.
+    //
+    // It is not survivable now that `win32` is a route the app actually takes.
+    // A Windows child handed a Linux `PATH` cannot resolve anything on it, and
+    // `/usr/local/bin` on Windows is a *relative* path under the current drive
+    // -- so the same silent answer would have the console looking for a binary
+    // in a directory that means something different on the machine it is
+    // running on. A platform with no row is a platform nobody has decided, and
+    // the honest answer is to say so rather than to guess at where to execute a
+    // program.
+    expect(() => locationsFor('freebsd')).toThrow(/freebsd/)
+    expect(() => locationsFor('sunos')).toThrow(/sunos/)
+    expect(() => locationsFor('aix')).toThrow(/aix/)
+    expect(() => locationsFor('')).toThrow(/platform/)
+    // and the three rows that were decided still answer, `win32` included: the
+    // refusal is about the platforms *nobody* decided, not about the new one.
+    expect(locationsFor('darwin')).toBe(DARWIN_LOCATIONS)
+    expect(locationsFor('linux')).toBe(LINUX_LOCATIONS)
+    expect(locationsFor('win32')).toBe(WIN32_LOCATIONS)
   })
 
   it('is the WSL route on win32, and it is not a directory list', () => {

@@ -290,12 +290,38 @@ export const PLATFORM_LOCATIONS: Readonly<Record<string, PlatformLocations>> = O
 
 /**
  * locationsFor is the one place the per-platform choice is made: the platform's
- * two lists, or -- for a platform this build is not packaged for -- the POSIX
- * ones. `win32` is a row of its own now (the WSL route, above); this branch is
- * about the platforms nobody has decided at all.
+ * row, or a refusal for a platform nobody has decided.
+ *
+ * **It used to answer with Linux's lists, and that fallback is gone** (T-C3).
+ * It was survivable while the app shipped only for darwin and Linux: the branch
+ * was reached by a developer running the sources somewhere the app has never
+ * been packaged, and the POSIX layout was the nearest thing to a right answer.
+ * It stopped being survivable when `win32` became a route this app takes: the
+ * same silent answer would hand a Windows child a Linux `PATH` -- entries no
+ * Windows lookup can use -- and send rule 4 to `/usr/local/bin`, which on
+ * Windows is a path relative to the current drive rather than the absolute
+ * directory the list means on POSIX. A wrong answer that is *shaped* like a
+ * right one is worse than no answer, and the platform nobody decided is exactly
+ * where the console should stop rather than guess at where to execute a
+ * program.
+ *
+ * The throw is a programming error and not an operator-facing refusal: the
+ * platforms the app is packaged for each have a row, and `fuses.ts`'s
+ * `SUPPORTED_PLATFORMS` refuses to build for any other one. It is reachable in
+ * a test, which is the point -- `locationsFor('freebsd')` is how the refusal is
+ * held.
  */
 export function locationsFor(platform: string = process.platform): PlatformLocations {
-  return PLATFORM_LOCATIONS[platform] ?? LINUX_LOCATIONS
+  const row = PLATFORM_LOCATIONS[platform]
+  if (row === undefined) {
+    throw new Error(
+      `there is no location row for the platform ${JSON.stringify(platform)}: this console ` +
+        `resolves the CLI on darwin, on linux and on win32 (inside a WSL distribution) and ` +
+        `nowhere else, and a guess at another platform's directories would be a guess at ` +
+        `where to execute a program.`,
+    )
+  }
+  return row
 }
 
 /**
