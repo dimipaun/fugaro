@@ -542,7 +542,7 @@ li.live-repo[data-killed='true'] {
  * `Ready for your review (52)`, with its parentheses hugging the number. It is
  * not laid out as a flex row of pieces -- a `display: flex` here is what spaced
  * a word, a `(`, a count and a `)` apart into `( 52 )`, text the CLI never
- * prints and both design docs disagree with (review of 0.10.1) -- so this rule
+ * prints and both design docs disagree with (a 0.10.x review) -- so this rule
  * carries the type and nothing that can space it. */
 h2.live-review-title {
   font-size: var(--font-size-md);

@@ -1260,7 +1260,7 @@ function reviewSection(factory: ScreenFactory, model: LiveModel): ScreenElement 
   // the CLI's own line, `Ready for your review (%d)`, and the four elements a
   // word-plus-`(`-plus-count-plus-`)` drawing needs are four flex items -- the
   // heading's `gap` then spaces them out to `( 52 )`, which is text the CLI
-  // never prints and both design docs disagree with (review of 0.10.1). One
+  // never prints and both design docs disagree with (a 0.10.x review). One
   // run cannot be spaced out, and there is nothing to lose by it: the count is
   // a *reading* and it is drawn as one -- through `formatReading`, the only
   // function that turns a reading into the text a person reads -- but it is
