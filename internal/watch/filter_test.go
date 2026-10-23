@@ -2,6 +2,7 @@ package watch
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -40,6 +41,26 @@ func TestFailedRunsStayUntilAcked(t *testing.T) {
 	got, _ = f.Apply(v, func(_, run string) bool { return run == "f" })
 	if len(got.Repos[0].Finished) != 0 {
 		t.Fatal("an acknowledged failure stayed")
+	}
+}
+
+// An acknowledgement dismisses any finished run, not only a failure (owner
+// spec 2026-10-22, item 4): x means "I have seen this one", and it is the
+// same local, per-viewer record the failures have always used. Mutation
+// caught: consulting the ack set only in the failure branch.
+func TestAckDismissesAnyFinishedRun(t *testing.T) {
+	v := View{Repos: []RepoBlock{{Slug: "a", Finished: []RunRow{
+		{Run: "ok-young", Finished: true, Age: time.Minute},
+		{Run: "ok-acked", Finished: true, Age: time.Minute},
+		{Run: "bad-acked", Finished: true, Failed: true, Age: time.Minute},
+	}}}}
+	f := Filter{Keep: time.Hour, KeepCount: 15, FailedKeep: time.Hour}
+	got, hidden := f.Apply(v, func(_, run string) bool { return strings.HasSuffix(run, "acked") })
+	if len(got.Repos[0].Finished) != 1 || got.Repos[0].Finished[0].Run != "ok-young" {
+		t.Fatalf("got %+v, want only the run nobody dismissed", got.Repos[0].Finished)
+	}
+	if hidden != 2 {
+		t.Fatalf("hidden = %d, want both dismissed runs", hidden)
 	}
 }
 

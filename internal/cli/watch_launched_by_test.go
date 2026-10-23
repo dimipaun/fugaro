@@ -116,8 +116,11 @@ func TestWatchAndLsAgreeOnTheLauncher(t *testing.T) {
 	}
 
 	// The text frames agree too: the short form of an address in both, the
-	// whole value for an identity with no @ to cut at.
-	watchText, _, err := execute(t, "watch", "--once", "--plain")
+	// whole value for an identity with no @ to cut at. --all, because the two
+	// finished runs here finished half an hour ago and the default window a
+	// finished run stays listed for is three minutes (owner spec 2026-10-22,
+	// item 3); runs ls lists them either way.
+	watchText, _, err := execute(t, "watch", "--once", "--plain", "--all")
 	if err != nil {
 		t.Fatal(err)
 	}
