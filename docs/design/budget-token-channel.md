@@ -234,8 +234,11 @@ Task 3b.1's "What it must not do") and from the designs it builds on.
    The CLI reads a *job's* whole environment through that API (`internal/backend/gcp/run.go`,
    `JobFullEnv`), and whether an execution reports the override on top of the template is design
    §4.2's D10 option (b), marked UNVERIFIED there and settled by plan Task 3.0 step 3 — the U2 probe,
-   Check 52 step 3, which has not run. **Until that probe reports, every sentence in this document
-   that would rest on the execution record or on an override view is a hypothesis, not a fact**, and
+   Check 52 step 3, which the owner ran on 2026-10-16: the API **accepts** the reference, and whether
+   the execution reports the override back is the half that run does not settle (the result is under
+   Check 52 of `docs/gcp-live-checklist.md`). **Until that half is recorded, every sentence in this
+   document that would rest on the execution record or on an override view is a hypothesis, not a
+   fact**, and
    it is marked as one where it appears (§7.1, §7.2, and Check 60 step 3). The part that does not
    depend on the answer is the audit log, which is stated by `m9-budget-and-dashboard.md` §6.4 and
    SECURITY.md above; §7.1 says so where the seal's audience is priced.
@@ -322,14 +325,16 @@ because the object it signs is still there.
   is a secret every peer run may read: the design would have to distinguish peers by something other
   than the account — a name prefix condition, which is the probe below — or grant each run's secret
   individually.
-- **The probe gates the prefix form, and it has not run.** Plan Task 3.0 (Check 52) step 4 is the U3
+- **The probe gates the prefix form, and it has run.** Plan Task 3.0 (Check 52) step 4 is the U3
   probe: whether Secret Manager IAM conditions accept a name-prefix condition and whether an
-  impersonated `versions access` is then allowed exactly on the matching prefix. The owner **has not
-  run Check 52**. If the probe answers **yes**, a `tokens/`-style prefix with a per-run condition is
-  expressible on secrets, and C2 becomes the same design as C3 with a different store — inheriting
-  C3's enumeration problem, because the condition can only name what the launcher wrote into it. If
-  the probe answers **no**, the only remaining shape is one secret per run, granted at the secret
-  level, which needs a new permission the launcher does not hold today
+  impersonated `versions access` is then allowed exactly on the matching prefix. The owner **ran
+  Check 52 on 2026-10-16 and the probe answered yes**: the condition **is** honoured for
+  `secretmanager.versions.access` — the inside read allowed, the outside read denied (the result is
+  under Check 52 of `docs/gcp-live-checklist.md`). So a `tokens/`-style prefix with a per-run
+  condition **is** expressible on secrets, and C2 is the same design as C3 with a different store —
+  inheriting C3's enumeration problem, because the condition can only name what the launcher wrote
+  into it. Had the probe answered **no**, the only remaining shape would have been one secret per
+  run, granted at the secret level, which needs a new permission the launcher does not hold today
   (`google_project_iam_custom_role.launcher` is metadata-only around secrets) and a revoke step
   after the run.
 - **Revocation is not fail-closed.** A grant created at launch and removed "after the run" has no
@@ -341,9 +346,13 @@ because the object it signs is still there.
   per-run object. Design §6.3's rule for project-scope keys (D2) points the other way: a project
   secret inside a shared job has no IAM line between repositories either.
 
-**Verdict: reject as stated; revivable only by a probe result, and even then it is C3's design in a
-heavier store.** The dependency is explicit: C2 depends on Check 52 step 4 (U3), and if that probe
-fails, C2 needs a new launcher permission and a revoke step that no phase currently owns.
+**Verdict: reject as stated; revivable now that the probe has answered, and even then it is C3's
+design in a heavier store.** The dependency is explicit: C2 depends on Check 52 step 4 (U3), **which
+the owner ran on 2026-10-16 and which answered yes — the condition is honoured** — so C2 is
+expressible, and this document's recommendation does not change: D14 uses neither Secret Manager nor
+a new condition. Reviving C2 is a later design's decision, not this document's; what would have
+closed it is the probe answering no, which would have left C2 needing a new launcher permission and
+a revoke step that no phase currently owns.
 
 ### C3. A `tokens/<run-hash>` prefix whose IAM condition names one run
 
@@ -495,8 +504,10 @@ documented and holds regardless of U2. The second half — the accounts that hol
 `run.executions.get` (the sweep's `fugaroHistory`, the launchers' `fugaroLauncher`, §3.1) are
 readers of the override as well — **is the half U2 leaves open, and it is stated here as a
 hypothesis, not as a fact**: it is true only if the API serves an execution's override back, which
-is D10 option (b), UNVERIFIED in the design and unprobed (Check 52 step 3). If U2 reports "no", this
-paragraph loses nothing it needs — the audit-log half is the audience constraint 1 is about. The
+is D10 option (b), UNVERIFIED in the design and not settled by Check 52's run (2026-10-16), whose
+U2 answer is that the API **accepts** the reference rather than that the execution reports it back.
+If it does not, this paragraph loses nothing it needs — the audit-log half is the audience constraint
+1 is about. The
 honest answer is the audience itself: the carrier is readable by the project's *readers* —
 launchers, operators, and anyone the owner has given log read, and, under U2, execution read — and
 it is **not** readable by a peer run of the shared job, which is
@@ -918,19 +929,19 @@ proposes **Check 60** for the later implementation task, which is the task that 
 `docs/gcp-live-checklist.md` in Check 43's block form, with the guard block, the FACT lines and the
 restore step that shape requires.
 
-Before anything: **Check 52 has not been run**, and two of its step 3 (U2) facts bear directly on
-this document. C2 depends on its step 4 (the U3 Secret Manager IAM condition probe), and D14's
-answer does not depend on it — the recommendation uses neither Secret Manager nor a new condition.
-If the owner runs Check 52 and step 4 fails, C2 is closed (it would need a new launcher permission
-and a revoke step nobody owns) and this document's recommendation is unaffected; if step 4 succeeds,
-C2 becomes viable *as C3's design in a different store*, and a later design could revisit it. Step
+Before anything: **Check 52 ran on 2026-10-16** — U2 accepted (the reference works), U3 honoured (a
+Secret Manager name-prefix condition is honoured for `secretmanager.versions.access`), U4 no
+service-account quota — and two of its step 3 (U2) facts bear directly on this document. C2 depends
+on its step 4 (the U3 probe), **which answered yes**, so C2 becomes viable *as C3's design in a
+different store* and a later design could revisit it; D14's answer does not depend on it — the
+recommendation uses neither Secret Manager nor a new condition, so it is unaffected. Step
 3's two facts are priced here as UNVERIFIED (§3.1, §7.1): whether a **secret reference** works
-inside a container env override — the alternative of carrying the key as a `valueSource.secretKeyRef`
-rather than a literal, which is not the recommendation because a shared job account reading a secret
-is C2's problem in another store — and whether an execution's own **overrides are visible to the
-container** (design §4.2's D10 option (b)). Neither changes the recommendation, and both bound what
-the later implementation may assert; Check 60 step 3 is where the owner records them again on the
-deployed shape. The audit-log half of the audience is *documented* rather than unverified, but it is
+inside a container env override — **answered yes on 2026-10-16**, the alternative of carrying the key
+as a `valueSource.secretKeyRef` rather than a literal, which is not the recommendation because a
+shared job account reading a secret is C2's problem in another store — and whether an execution's own
+**overrides are visible to the container** (design §4.2's D10 option (b)), which that run does not
+settle. Neither changes the recommendation, and both bound what the later implementation may assert;
+Check 60 step 3 is where the owner records the visibility half again on the deployed shape. The audit-log half of the audience is *documented* rather than unverified, but it is
 not thereby measured, and Check 60 step 4 is where the owner records what the RunJob audit entry
 actually carries — the sentence constraint 1 rests on, checked rather than cited.
 

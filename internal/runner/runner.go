@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -28,10 +29,13 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/github"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/logtail"
 	"github.com/dimipaun/fugaro/internal/policy"
@@ -39,6 +43,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
@@ -211,10 +216,17 @@ type run struct {
 	// haltStage: the cancel watcher and, with the gateway, its halt
 	// callback record into them from other goroutines. Whichever of a halt
 	// and a cancel is recorded first wins (see haltNow and markCancelled).
-	mu            sync.Mutex
-	failReason    string
-	cancelled     bool
-	halt          *runstore.Halt
+	mu         sync.Mutex
+	failReason string
+	cancelled  bool
+	halt       *runstore.Halt
+	// haltDone is closed by the first halt recorded (recordHaltLocked), so a
+	// caller waiting outside a stage stops at once: the credential wait
+	// (C1.17) sleeps for a reset that may be hours away, and nothing else
+	// would end it. It is never closed twice and never nil'd after Run
+	// creates it, so it is either open (no halt) or closed (halted).
+	// Guarded by mu; created by Run.
+	haltDone      chan struct{}
 	tokens        int64                   // the stages' tokens so far, for the token cap
 	gatewayTokens int64                   // the last stage's tokens as the gateway counted them
 	haltStage     context.CancelCauseFunc // the running stage's cancel; nil between stages
@@ -230,11 +242,17 @@ type run struct {
 	sess   *budget.Session
 	frozen bool
 	// The gateway, when the budget is on for an api-key or vertex run, and
-	// what its stages cost; all guarded by mu.
+	// what its stages cost; all guarded by mu. gwUsed is the money its calls
+	// settled -- the run's billed model spend -- and gwNotional is the tier-A
+	// part of them, which is the subscription's and never the run's (C1.16,
+	// D140): the two are disjoint, and their sum is the run's whole model
+	// figure (record.CostUSD, cost.model_usd). Only a cascade run's calls
+	// carry a tier, so gwNotional is 0 for every other run.
 	gw           *gateway.Server
 	gwAgent      *agent.Gateway
 	gwClosed     bool
 	gwUsed       pricing.Micros
+	gwNotional   pricing.Micros
 	lastStage    *gateway.StageReport
 	modelBy      map[string]pricing.Micros
 	routeBy      map[string]pricing.Micros
@@ -258,8 +276,14 @@ type run struct {
 	cacheBase string      // the base-image part of every cache key
 	toolchain string      // the toolchain part of every cache key (toolchainHash)
 	// sessionID is the session the latest implement or fix stage's result
-	// reported: the one the next fix resumes and writeback saves.
+	// reported: the one the next fix resumes, and the one saveSession
+	// uploads as the run's session.
 	sessionID string
+	// reviewSession is the session the latest review stage ran in (C1.17,
+	// D138). It is saved too, under its own objects, and never becomes the
+	// run's session: a review runs in a session of its own, and a follow-up
+	// resumes the work, not the review of it.
+	reviewSession string
 	// follow is a follow-up's state; nil for a first run.
 	follow *followState
 	// pr is the early draft pull request's state (prflow.go).
@@ -360,8 +384,9 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		d.Log = slog.New(slog.DiscardHandler)
 	}
 	r := &run{
-		d:      d,
-		stageN: map[string]int{},
+		d:        d,
+		stageN:   map[string]int{},
+		haltDone: make(chan struct{}),
 		rec: &runstore.Record{Version: 1, RunID: d.Store.RunID(), Execution: d.Execution, Status: runstore.StatusRunning,
 			Stage: "bootstrap", Outcome: runstore.OutcomeNone, StartedAt: d.Now().UTC()},
 		// A local run has no duplicate to tell apart: its record is its own.
@@ -434,7 +459,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		}
 		wctx, cancelWrite := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
 		defer cancelWrite()
-		if werr := writeRecord(d.Store, wctx, r.rec); werr != nil && err == nil {
+		if werr := writeRecord(d.Store, wctx, r.recordSnapshot()); werr != nil && err == nil {
 			err = fmt.Errorf("writing run record: %w", werr)
 		}
 		rec = r.rec
@@ -533,9 +558,39 @@ func (r *run) save(ctx context.Context) {
 	}
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
 	defer cancel()
-	if err := writeRecord(r.d.Store, wctx, r.rec); err != nil {
+	if err := writeRecord(r.d.Store, wctx, r.recordSnapshot()); err != nil {
 		r.d.Log.Warn("writing run record failed", "err", err)
 	}
+}
+
+// recordSnapshot is the record as a write encodes it: a copy taken under the
+// run's lock, so the encode -- which reads every field of the record -- cannot
+// read a field another goroutine is writing.
+//
+// The record has two writers that are not the goroutine a save runs on: the
+// credentials service's per-call answer, which names the credential the call
+// was served with (recordCredential, C1.19) and logs the switch it made
+// (recordSwitch, C1.16), and nothing else. Both hold r.mu, so a copy taken
+// under it is consistent with them; every other field is written by the run's
+// own goroutine, which is the one that saves, and by the checkpoint poll,
+// which is a goroutine of its own and writes the run branch's tip (C1.10's
+// poll) — the poll's own writes are ordered with its own save, which is what
+// makes the copy enough here rather than a lock held around the write.
+//
+// The copy is shallow, and that is deliberate: the callback goroutines only
+// ever append to the record's slices and set scalars, both under the lock, so
+// what a snapshot's slice header covers cannot be rewritten after it — an
+// append writes past the length the header was copied with. A field a
+// callback goroutine ever comes to mutate in place (a map entry, say) would
+// have to be deep-copied here, and this is the comment that says so.
+func (r *run) recordSnapshot() *runstore.Record {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.rec == nil {
+		return nil
+	}
+	cp := *r.rec
+	return &cp
 }
 
 // createRecord creates result.json if absent, within recordWriteTimeout.
@@ -543,6 +598,81 @@ func (r *run) createRecord(ctx context.Context) error {
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
 	defer cancel()
 	return createRecord(r.d.Store, wctx, r.rec)
+}
+
+// recordCredential is the cascade's own record (C1.19, D140): the name -- never
+// the value, which never leaves the service -- of the credential the run's
+// cascade answered a call with. It is written in two places, each the one its
+// reader has: the record the run ends with (runstore.Record.OAuthAccount,
+// which `fugaro runs` reads when a record exists) and the registry entry the
+// dashboard reads while the run is running (budget.AgentEntry.Credential).
+//
+// The name is whatever the service answered, so it is written as one word: a
+// name carrying a control or bidi character would have the whole PATCH denied
+// and freeze the run's registry, which clipEntry's clipString already strips
+// (internal/budget) -- this is the second bound, for the record, which no
+// clipEntry sees.
+//
+// A cascade run is the only run whose agent.auth makes a credential that is not
+// its own visible to it, and the gateway only ever forwards to the credentials
+// service for one, so no test of agent.auth is needed here to keep another
+// run's record untouched: a non-cascade run's answers carry no credential, the
+// gateway having answered them itself with its own route's key.
+//
+// Its one caller is serviceAnswer (internal/runner/gateway.go), the callback
+// startGateway hands the gateway: the write is here, with the run's other
+// record writers, and the answer that decides it arrives there.
+func (r *run) recordCredential(name string) {
+	name = safetext.Field(name)
+	if name == "" {
+		return
+	}
+	r.mu.Lock()
+	if r.rec != nil && r.rec.OAuthAccount != name {
+		r.rec.OAuthAccount = name
+	}
+	r.mu.Unlock()
+	r.noteRegistry(func(e *budget.AgentEntry) { e.Credential = name })
+}
+
+// recordSwitch writes the run's switch log (C1.16, D140): the call that just
+// was answered moved from one credential to another, and what the service said
+// about it -- from, to and the reason word -- joins the record beside the
+// cache-miss estimate only the gateway can make (F24, gateway.SwitchCost).
+//
+// raw is the contract's switch header exactly as it arrived (the gateway
+// validates nothing of its content: a switch is the run's record, not a ledger
+// input), so it is read back with the contract's own reader -- credsvc's, the
+// one the service writes it with -- rather than a second reading kept here. A
+// header that reader refuses is logged and dropped: the switch is a record of
+// what the run did and decides nothing, so a call whose switch this code cannot
+// read is still a call that was made, and nothing here echoes the value (it is
+// text from another process).
+//
+// Its caller is serviceAnswer (gateway.go), the same hand-off recordCredential
+// has, and for the same reason: the answer is the only place the switch exists,
+// and one writer of the record's switch log is what keeps its order the order
+// the gateway settled the calls in.
+func (r *run) recordSwitch(raw string, cost gateway.SwitchCost) {
+	if raw == "" {
+		return
+	}
+	h := http.Header{}
+	h.Set(credsvc.HeaderSwitch, raw)
+	sw, ok, err := credsvc.SwitchHeader(h)
+	if err != nil || !ok {
+		r.d.Log.Warn("the service's switch could not be read; the call is recorded without it")
+		return
+	}
+	e := runstore.Switch{
+		From: sw.From, To: sw.To, Reason: sw.Reason,
+		CacheMissUSD: cost.USD, CacheMissUnmeasured: cost.Unmeasured,
+	}
+	r.mu.Lock()
+	if r.rec != nil {
+		r.rec.Switches = append(r.rec.Switches, e)
+	}
+	r.mu.Unlock()
 }
 
 // errOwnerUnknown means the first record's create failed and nothing
@@ -716,11 +846,106 @@ func (r *run) openProvider(ctx context.Context, kind, from string) error {
 	if err != nil {
 		return fmt.Errorf("opening the %s provider: %w", kind, err)
 	}
+	// With the installation's credentials service on, the App's key is the
+	// service's and the provider was opened without one
+	// (providers.FromEnv): this is where the run hands it the service the
+	// installation opted into, so its installation tokens are minted there
+	// and nowhere else (C2.2, D145). The install must happen before the
+	// first GitAuth below, and it is not optional -- a provider that took
+	// ServiceHeldKey refuses every token until one is installed, so a run
+	// that skipped this would stop rather than mint in-job.
+	src, err := r.serviceTokens()
+	if err != nil {
+		return err
+	}
+	if src != nil {
+		if s, ok := p.(gitprov.ServiceTokenSetter); ok {
+			s.UseServiceTokens(src)
+		}
+	}
 	r.provider, r.providerKind, r.providerFrom = p, kind, from
 	if err := r.refreshGitAuth(ctx, bootstrapAuthMinValid); err != nil {
 		return fmt.Errorf("getting git credentials from the %s provider: %w", kind, err)
 	}
 	return nil
+}
+
+// serviceTokens returns the installation's credentials service as the source
+// of this run's installation tokens, or nil when the installation has not
+// opted into one (providers.EnvCredentialsServiceURL unset): with the
+// service off the App's key is the job's own and its provider mints tokens
+// itself, as it always did.
+//
+// A LOCAL run whose environment names a service is refused rather than
+// served, in the words serviceUpstream refuses the same situation in (D149):
+// `fugaro exec` runs on the developer's own credentials and never through
+// the credentials service, and a local run has no run identity for a mint to
+// be verified by, so the only thing the service could do here is refuse the
+// run later, further from the reason.
+//
+// The two identities a mint is verified by are the run's own Firebase ID
+// token (runIDToken) and the job's Google ID token for the service's URL
+// (metadataIDToken), and the job name is what the run reports it is in. The
+// App's ID is the job's own environment value: a number, not a credential.
+//
+// It is built per provider, so each provider has the cache ServiceTokens
+// documents -- one mint per hour per provider, not one per API call.
+func (r *run) serviceTokens() (*github.ServiceTokens, error) {
+	url := envLookup(r.d.Env, providers.EnvCredentialsServiceURL)
+	if url == "" {
+		return nil, nil
+	}
+	if r.d.Local {
+		return nil, fmt.Errorf("this is a local run (%s) and its environment names a credentials service in %s: %s runs on the developer's own credentials and never through the credentials service (D149), and a local run has no run identity for a mint to be verified by. Unset %s to use the credentials this environment holds, or run this as a job", execName, providers.EnvCredentialsServiceURL, execName, providers.EnvCredentialsServiceURL)
+	}
+	// The job name is a claim the service holds to its own rule and decides
+	// nothing from (C1.10), and a run that cannot name its job is a refusal
+	// there rather than a call that named something else: a jobName failure
+	// is reported as no job at all, which the service refuses.
+	job, err := r.jobName()
+	if err != nil {
+		job = ""
+	}
+	return &github.ServiceTokens{
+		URL:   url,
+		AppID: envLookup(r.d.Env, providers.EnvGitHubAppID),
+		IDToken: func(ctx context.Context) (string, error) {
+			return metadataIDToken(ctx, r.d.Env, url)
+		},
+		RunIDToken: r.runIDToken,
+		Job:        job,
+		Now:        r.d.Now,
+	}, nil
+}
+
+// runIDToken is the run's own Firebase ID token: the identity the budget
+// backend admitted the run by, which is what the credentials service
+// verifies a mint with (C1.10). It is the session's token as the run has it
+// now, and never a copy taken once -- the session refreshes it under the run.
+//
+// The session that admitted the run is the budget session (r.sess), and it
+// does not exist yet when the run's first git credential is fetched: the
+// clone comes before the budget opens, and the policy read is what exchanges
+// the launcher's custom token first (exchangeIdentity), so that read's
+// session is the run's identity until the budget session takes over. Both
+// are the same identity -- the claim check of the second exchange is the
+// first's own -- so which one answers is a question of what exists, not of
+// which the service trusts.
+//
+// An empty answer is not a fallback: a run with neither session cannot be
+// verified by the service, and ServiceTokens refuses rather than calling
+// under the job's identity alone.
+func (r *run) runIDToken() string {
+	r.mu.Lock()
+	sess, tok := r.sess, r.ident.tok
+	r.mu.Unlock()
+	if sess != nil {
+		return sess.IDToken()()
+	}
+	if tok != nil {
+		return tok.Token()
+	}
+	return ""
 }
 
 // refreshGitAuth gets git credentials valid for at least minValid and puts
@@ -1320,6 +1545,13 @@ func (r *run) bootstrap(ctx context.Context) error {
 		if err := r.checkPullRequest(ctx); err != nil {
 			return err
 		}
+		// The branch the pull request targets NOW — read above, by
+		// checkPullRequest, from the provider — is the base every diff this
+		// follow-up takes is measured against (diffbase.go, diffBase). For
+		// a pull request retargeted since the run before it (main ->
+		// integration-0.9.6) that is not the ref this follow-up read its
+		// configuration from. It is fetched below, with every other base the
+		// run diffs against, once the review heads are resolved.
 	}
 	// A job that runs without a derived image installs the repository's
 	// mise tools itself (provision.go, design generic-tool.md §2, G4): the
@@ -1335,6 +1567,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 			return err
 		}
 	}
+	// Every branch this run's diffs are measured against, brought in with
+	// the run's own credentials (diffbase.go, fetchDiffBases): a first run's
+	// --ref, which a clone job's --single-branch clone does not carry as a
+	// remote-tracking ref at all, a follow-up's retargeted pull request base,
+	// and each reviewed pull request's own base. Here, where all three are
+	// resolved — the last of them by checkReviewPRs just above — and before
+	// the prefetch reads them.
+	r.fetchDiffBases(ctx)
 	// A follow-up's and a review run's agent has no git credentials of its
 	// own, and a blobless clone fetches file contents lazily through
 	// origin: the runner brings in what the agent's own git will read while
@@ -1742,7 +1982,14 @@ func (r *run) agentLoop(ctx context.Context) {
 		}
 		sessionID = req.SessionID
 	}
-	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.cfg.Git.BaseBranch)
+	// The prompt as it is before the input each review round adds to it
+	// (reviewPromptWithInput): the diff under review is built per round,
+	// never once here, because a fix between two rounds changes the branch.
+	// The base is the run's own base of work, not the branch its
+	// configuration came from (diffbase.go, diffBase): a run started from
+	// another ref must review its own change, not the whole of that ref's
+	// divergence from the default branch.
+	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.reviewPromptBase(), r.reviewDiffSize(ctx), r.baseUnreadable())
 	if f := r.follow; f != nil {
 		if add := followup.ReviewAddendum(f.sel, f.nonce); add != "" {
 			reviewPrompt += "\n\n" + add
@@ -1776,7 +2023,11 @@ func (r *run) agentLoop(ctx context.Context) {
 // review step, since there is no cheap loop to bounce back to.
 func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, sys, sessionID string) {
 	for round := 1; round <= st.Rounds; round++ {
-		res, ok, _ := r.stage(ctx, "review", agent.Request{Prompt: reviewPrompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}, stageOpts{})
+		req := agent.Request{Prompt: r.reviewPromptWithInput(ctx, reviewPrompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
+		res, ok, _ := r.stage(ctx, "review", req, stageOpts{})
+		// The review's own session is saved like a work stage's (C1.17,
+		// D138), and not made the one a fix resumes: see noteReviewSession.
+		r.noteReviewSession(req, res)
 		r.countTokens(res)
 		if !ok {
 			return
@@ -1841,7 +2092,9 @@ func (r *run) fix(ctx context.Context, v Verdict, sys, sessionID string) (string
 // go on to the senior review.
 func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sessionID string) (string, bool) {
 	for round := 1; round <= rounds; round++ {
-		res, ok, err := r.stage(ctx, "review_first", agent.Request{Prompt: reviewPrompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}, stageOpts{Skippable: true})
+		req := agent.Request{Prompt: r.reviewPromptWithInput(ctx, reviewPrompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
+		res, ok, err := r.stage(ctx, "review_first", req, stageOpts{Skippable: true})
+		r.noteReviewSession(req, res)
 		r.countTokens(res)
 		sum := runstore.ReviewSummary{Round: round, Tier: runstore.TierFirst, Verdict: "none", Bounce: r.bounce}
 		var v Verdict
@@ -1920,7 +2173,78 @@ type stageOpts struct {
 // stage runs one agent stage and reports whether the loop may continue,
 // with the agent's error. The error is only for the caller to inspect: a
 // failure is already recorded, unless it is a recoveredError.
+//
+// It is stageOnce in a loop, because of the credentials cascade (C1.17,
+// D138): when the service answers its typed `exhausted_until` while a stage
+// runs, that stage did not fail — the runner waits for the reset the answer
+// names, inside the job's own timeout, and runs the very same stage again on
+// the session it had started, with --resume. The stage's own session, not
+// the run's: a review runs in a session of its own, and a wait during one
+// resumes that one.
+//
+// The loop is bounded (maxCredentialResumes): each wait is bounded by
+// waitForCredential's own check against the job's remaining time, but a
+// reset that has already passed resumes the stage at once, and a service
+// that kept answering that way would run the stage again and again with no
+// wait between. The bound ends the run named (HaltNoCredential) instead.
 func (r *run) stage(ctx context.Context, name string, req agent.Request, opts stageOpts) (agent.Result, bool, error) {
+	// resumes is how many times this stage has already been resumed on an
+	// exhausted answer, this one included.
+	resumes := 0
+	for {
+		res, ok, err := r.stageOnce(ctx, name, req, opts)
+		var ex *exhaustedError
+		if !errors.As(err, &ex) {
+			return res, ok, err
+		}
+		// The attempt that the exhausted answer ended spent what it spent,
+		// and it is a whole agent process: its tokens go on the run's total
+		// here, before the wait, because the caller's own countTokens only
+		// ever sees the last attempt of this stage (countTokens, halt.go).
+		// Without this a run could spend maxCredentialResumes attempts a
+		// stage and have the ceiling count one.
+		r.countTokens(res)
+		if resumes++; resumes > maxCredentialResumes {
+			h := runstore.Halt{Reason: runstore.HaltNoCredential, Scope: "run", At: r.d.Now().UTC(),
+				Detail: fmt.Sprintf("the credential service answered that no credential was usable %d times while stage %s ran, the last until %s; the run stopped rather than resume the stage again (see 'fugaro accounts ls' for the accounts' states)",
+					resumes, name, ex.Until.UTC().Format(time.RFC3339))}
+			r.haltNow(h)
+			return res, false, &HaltError{h}
+		}
+		// The session the ended stage ran in: what its result reported (the
+		// result event's ID, else its init event's, so a stage killed before
+		// its result still names it), or the one it was asked for when it
+		// reported none — that one is the runner's own fresh ID, and its file
+		// exists from the moment the agent started.
+		session := res.SessionID
+		if !agent.ValidSessionID(session) {
+			session = req.SessionID
+		}
+		if werr := r.waitForCredential(ctx, name, ex.Until); werr != nil {
+			return res, false, werr
+		}
+		r.d.Log.Info("the credential wait is over; resuming the stage", "stage", name, "session", session, "resume", resumes)
+		// The resumed stage is the same stage, on the same session. A
+		// further exhausted answer during it waits again, within the same
+		// bound.
+		req.SessionID, req.Resume = session, true
+	}
+}
+
+// maxCredentialResumes bounds one stage's resume loop (C1.17). The reset an
+// exhausted answer names is normally in the future, and the wait for it is
+// the whole of the runner's reaction; but an answer naming an instant that
+// has already passed resumes the stage at once, so a service that kept
+// answering that way — a stale mark, a reset that keeps moving back — would
+// run the stage again and again with no wait between, each attempt a whole
+// agent process. Three is more than the cascade needs: the service's answer
+// is already the wait-or-switch decision, and one wait covers every account
+// that is exhausted at that instant. A fourth answer ends the run named.
+const maxCredentialResumes = 3
+
+// stageOnce is one attempt at a stage: the whole of what stage did before
+// C1.17, including its own failure handling.
+func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opts stageOpts) (agent.Result, bool, error) {
 	if ctx.Err() != nil {
 		r.fail(r.stageReason(ctx, name, StageError(name, ctx, r.budget, ctx.Err())))
 		if errors.Is(context.Cause(ctx), ErrCancelled) {
@@ -1946,7 +2270,7 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 		}
 	}
 	pins := r.stagePins(name)
-	if err := r.writeManagedSettings(pins); err != nil {
+	if err := r.writeManagedSettings(name, pins); err != nil {
 		r.fail("stage " + name + ": " + err.Error())
 		return agent.Result{}, false, err
 	}
@@ -2064,14 +2388,7 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 		r.mu.Unlock()
 	}
 	if r.gw != nil {
-		// The gateway's figure is the run's cost; Claude Code's is only a
-		// cross-check. A halt it raised after the watcher looked is
-		// recorded now.
-		r.drainHalt()
-		r.crossCheckCost(name, res.CostUSD, stageCtx.Err() != nil || r.haltValue() != nil)
-		r.mu.Lock()
-		r.rec.CostUSD = r.gwUsed.USD()
-		r.mu.Unlock()
+		r.recordGatewayStageCost(name, res.CostUSD, stageCtx.Err() != nil || r.haltValue() != nil)
 	} else {
 		r.rec.CostUSD += res.CostUSD
 	}
@@ -2090,10 +2407,34 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 		r.save(ctx)
 		return res, false, &HaltError{*h}
 	}
+	// What the gateway saw a moment ago decides the stage before the
+	// credential service's answer does: a call the gateway refused as a
+	// violation — a model that is not pinned, a tool the policy forbids, a
+	// request shape it will not forward — is a fact about what the agent
+	// asked for, and a stage that is about to run again must not swallow it.
+	// The stage fails, named, and the resume never happens (C1.17): the
+	// refused call would simply be made again, and the record would lose the
+	// reason the run is not to continue.
 	if len(violations) > 0 {
 		r.fail("stage " + name + ": " + violations[0])
 		r.keepTail(fmt.Sprintf("%s-%d", name, n), stderrTail, transcriptTail)
 		return res, false, fmt.Errorf("stage %s: %s", name, violations[0])
+	}
+	// The credential service's typed answer (C1.17) ended this stage: it did
+	// not fail, and nothing is recorded about it — stage waits for the reset
+	// it names and resumes it. It comes after the halt check (a halt recorded
+	// first still decides) and after the violations above.
+	//
+	// A stage whose work was already done when the answer arrived is not
+	// resumed: the answer ends a stage that the exhaustion stopped, and an
+	// agent that exited with a result event and no error finished its work,
+	// so throwing that away to run the same prompt again would spend a stage
+	// on nothing. The answer changes nothing for it; the next stage gets its
+	// own.
+	var exhausted *exhaustedError
+	if errors.As(context.Cause(stageCtx), &exhausted) && (err != nil || res.IsError) {
+		r.save(ctx)
+		return res, false, exhausted
 	}
 
 	switch {

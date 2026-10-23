@@ -472,6 +472,14 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	r := d.Row
 	fmt.Fprintf(&b, "Run:      %s\n", oneLine(r.Run))
 	status := r.Status
+	// A status derived at read time carries what was derived in the same
+	// parentheses runs ls's table uses, so the one-run read says what happened
+	// to the run rather than leaving the reader to notice the reason line
+	// (runview.DerivedPreempted). Display only: the row's status stays the
+	// vocabulary it was read as.
+	if r.Derived != "" {
+		status += " (" + r.Derived + ")"
+	}
 	if r.Stage != "" {
 		status += " (stage " + r.Stage + ")"
 	}

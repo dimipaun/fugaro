@@ -111,6 +111,21 @@ type JSONRun struct {
 	// like every other bucket-derived string here, and never an authority — no
 	// policy, admission or budget rule reads it.
 	LaunchedBy string `json:"launched_by,omitempty"`
+	// Credential is the name — never the value — of the credential the run's
+	// cascade is currently using (budget.AgentEntry.Credential, written by the
+	// run itself under C1.3's rules; the credentials service chooses it). It is
+	// a name a run wrote, sanitised like every other database-derived string
+	// here, and absent when the run has not reported one — which is "not
+	// recorded", never "no credential".
+	Credential string `json:"credential,omitempty"`
+	// WaitingUntil is when a run waiting for a credential expects to resume,
+	// in RFC 3339 UTC, as the document spells every instant (`now`, a kill's
+	// `at`). It is derived from budget.AgentEntry.WaitingUntil (epoch ms,
+	// D152's "waiting, expected resume time") and is present only while the
+	// run is still waiting: presence is the state, so a reader that sees the
+	// field knows the run is held up rather than spending, and one that wants
+	// a countdown compares it with `now`.
+	WaitingUntil string `json:"waiting_until,omitempty"`
 }
 
 // JSONFinished is a finished run (design generic-tool §10.1 and §10.3): a
@@ -219,7 +234,11 @@ func BuildJSON(project string, v View) JSONDoc {
 				Profile:     run.Profile,
 				Provider:    run.Provider,
 				Account:     run.Account,
-				LaunchedBy:  run.LaunchedBy}
+				LaunchedBy:  run.LaunchedBy,
+				Credential:  run.Credential}
+			if run.Waiting {
+				j.WaitingUntil = time.UnixMilli(run.WaitingUntil).UTC().Format(time.RFC3339)
+			}
 			if run.HasSpent {
 				s := run.Spent.USD()
 				j.SpentUSD = &s

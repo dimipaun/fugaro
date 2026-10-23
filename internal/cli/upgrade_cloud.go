@@ -150,11 +150,11 @@ func cloudCheck(ctx context.Context, root string, co cloudOptions, rerun string)
 // (jobConfigCopyNote): --check makes no cloud call, so, unlike a real cloud
 // step, it can never tell whether the deployed job's copy of the local
 // project config is stale in either direction (docs/multi-model.md "Then run
-// fugaro init --repo"). It is printed whenever a real cloud step would run
+// fugaro update --repo"). It is printed whenever a real cloud step would run
 // (cloudStep), whatever the local config currently holds: an owner who just
 // removed every provider locally still needs to know the job might still
 // carry the old ones, which --check cannot see either.
-const checkJobCopyCaveat = "fugaro upgrade --check makes no cloud call, so it cannot tell whether the deployed job's copy of this local project config (providers, model_prices, budget settings, the region's compute price override and the GitHub App ID) still matches, or is stale, in either direction; run fugaro upgrade without --check to find out, or just run fugaro init --repo . in your own terminal to refresh it (never run automatically)"
+const checkJobCopyCaveat = "fugaro upgrade --check makes no cloud call, so it cannot tell whether the deployed job's copy of this local project config (providers, model_prices, budget settings, the region's compute price override and the GitHub App ID) still matches, or is stale, in either direction; run fugaro upgrade without --check to find out, or just run fugaro update --repo . in your own terminal to refresh it (never run automatically)"
 
 // jobConfigCopyTimeout bounds the cloud work jobConfigCopyNote does (opening
 // the runs bucket to check the project's name, then reading each existing
@@ -167,11 +167,11 @@ var jobConfigCopyTimeout = 30 * time.Second
 // whether any of the repository's deployed workflow jobs carries a copy of
 // the local project config that no longer matches what this local config
 // would write now. A version upgrade never refreshes that copy; only
-// fugaro init --repo does, and fugaro upgrade never runs it itself (its
+// fugaro update --repo does, and fugaro upgrade never runs it itself (its
 // Terraform confirmations stay the operator's). It compares every env var
 // infra.Workflow sets from the local config (spec.Env, minus
 // infra.PlatformEnv's installation-identity keys, which legitimately vary by
-// deploy and are not what fugaro init --repo refreshes from an edited local
+// deploy and are not what fugaro update --repo refreshes from an edited local
 // config): providers and model_prices (compared by field, since they carry
 // JSON, decoded and reflect.DeepEqual'd so key order or "0.14" vs "0.140" is
 // never a false difference) and every other key by exact match (the budget
@@ -195,7 +195,7 @@ var jobConfigCopyTimeout = 30 * time.Second
 // Only each workflow's default-account job: infra.Workflow always builds
 // the config.DefaultClaudeAccount variant (a repository may also deploy a
 // named-account job per docs/design/named-oauth-tokens.md, a separate job
-// this does not read). The same fugaro init --repo that refreshes the
+// this does not read). The same fugaro update --repo that refreshes the
 // default one also refreshes every named-account job, so running it fixes
 // both; this note just never checks the named ones itself.
 //
@@ -293,44 +293,58 @@ func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string
 		return "" // no workflow has a deployed job here yet
 	}
 	mount := jobConfigCopyMountNote(slices.Sorted(maps.Keys(projectScopes)))
+	// The credentials clause (C1.20) is orthogonal to both of the halves
+	// below: it is about the workflow's own auth mode and the two owner-run
+	// steps it needs, not about anything the deployed copy carries. It is
+	// therefore the LAST clause of every shape this note takes, and it is a
+	// reason to speak on its own — a cascade repository whose env copy
+	// matches still has something to be told, which is why the silent branch
+	// below is reached only when all three clauses are "".
+	creds := jobConfigCopyCredentialsNote(cfg)
 	if len(diffs) == 0 {
 		// The mount-only case: nothing the diff can see has drifted, but
 		// the mounts are the half it never sees, so the note is still
 		// owed a reader who created or deleted a project secret since
-		// the last init --repo. Nobody holds such a name, though: then
+		// the last update --repo. Nobody holds such a name, though: then
 		// there is nothing this note could tell them and it stays
 		// silent, exactly as it did before the mounts had a clause.
-		if mount == "" {
+		if mount == "" && creds == "" {
 			return ""
 		}
-		return "the deployed job's environment matches the local project config, but the mounts are not in that copy: " + mount
+		if mount == "" {
+			return "the deployed job's environment matches the local project config, but " + creds
+		}
+		return "the deployed job's environment matches the local project config, but the mounts are not in that copy: " + mount + joinClause(creds)
 	}
 	stale := fmt.Sprintf("the deployed job's copy of the local project config is STALE (%s): a version upgrade never refreshes it",
 		strings.Join(diffs, "; "))
 	// The policy half (plan task 1.6 step 5): with a policy published, the
 	// keys it governs are read from the node at run time, so drift in them is
-	// no longer a reason to re-run init --repo — and saying which keys still
+	// no longer a reason to re-run update --repo — and saying which keys still
 	// are is the difference between a note the operator acts on and one they
 	// learn to ignore.
 	if p := jobConfigCopyPolicyNote(cctx, lc); p != "" {
-		if mount == "" {
-			return stale + p
-		}
-		return stale + p + "; " + mount
+		return stale + p + joinClause(mount) + joinClause(creds)
 	}
-	tail := fmt.Sprintf("; runs on %s use the old copy until you run fugaro init --repo . in your own terminal (never run automatically)",
+	tail := fmt.Sprintf("; runs on %s use the old copy until you run fugaro update --repo . in your own terminal (never run automatically)",
 		pluginwire.Printable(repo))
-	if mount != "" {
-		tail += "; " + mount
+	return stale + tail + joinClause(mount) + joinClause(creds)
+}
+
+// joinClause is one "; "-separated clause, or nothing when the clause is ""
+// (so a caller never emits a trailing "; ").
+func joinClause(s string) string {
+	if s == "" {
+		return ""
 	}
-	return stale + tail
+	return "; " + s
 }
 
 // jobConfigCopyMountNote is the drift note's mount clause (plan Task 2.3
 // step 2): after D2 a name stored at project scope changes what a job
 // mounts when the project's copy is created or deleted, so the mounts are
 // the half of the job's configuration the policy does not carry and the
-// note has to keep sending the operator to init --repo for. Phase 3 moves
+// note has to keep sending the operator to update --repo for. Phase 3 moves
 // the mounts to a shared profile, which is the release that removes the
 // step, and saying so here is what keeps this note from reading as a
 // permanent tax.
@@ -339,7 +353,7 @@ func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string
 // project's container (infra.ProjectSecretCandidate), sorted, and it is the
 // only thing the clause is about: with none of them, no project secret can
 // change a mount of this repository's job, so there is no reason to send
-// anybody to init --repo for it and the clause is "" (the note is silent in
+// anybody to update --repo for it and the clause is "" (the note is silent in
 // the mount-only case then). The caller joins it with "; " after the STALE
 // sentence, or prints it alone.
 //
@@ -352,8 +366,41 @@ func jobConfigCopyMountNote(names []string) string {
 	if len(names) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("what a job mounts is still decided here: a project secret created or deleted after the last `fugaro init --repo .` changes what this repository's job mounts (`fugaro secrets set NAME`, D2's default), and for this repository those names are %s — that is what a re-run is for, while a new version of one of them or a rotated value needs no re-run, because the job mounts the container and not a copy of the value; a run picks a mount change up on the next `fugaro init --repo .` in your own terminal, until phase 3 gives the mounts to a shared profile",
+	return fmt.Sprintf("what a job mounts is still decided here: a project secret created or deleted after the last `fugaro update --repo .` changes what this repository's job mounts (`fugaro secrets set NAME`, D2's default), and for this repository those names are %s — that is what a re-run is for, while a new version of one of them or a rotated value needs no re-run, because the job mounts the container and not a copy of the value; a run picks a mount change up on the next `fugaro update --repo .` in your own terminal, until phase 3 gives the mounts to a shared profile",
 		strings.Join(names, ", "))
+}
+
+// jobConfigCopyCredentialsNote is the drift note's credentials clause (plan
+// task C1.20): the one thing `fugaro upgrade` has to say about the
+// credentials service, and the reason it has to say it here.
+//
+// `agent.auth: cascade` is a value the setup skill offers and the config
+// reader accepts (C1.1) from the release that carries the service, and a
+// repository whose file names it is a repository whose jobs must NOT mount a
+// model credential: the run asks the installation's service for one instead.
+// That is not something a version upgrade does. Two owner-run steps do it —
+// the installation's credentials stage, which turns the service on, and each
+// repository's own `fugaro update --repo .`, which drops the job's
+// model-secret accessors and grants its account an invoker on the service —
+// and until they have run, the checkout says `cascade` while its jobs are
+// unchanged, exactly the half-state the skill's offer is pinned against
+// (C1.19). An upgrade is where the operator learns it: the step names both,
+// in the order they have to run.
+//
+// "" for every other auth: nothing of this is about a workflow that mounts
+// its own credential, which is every repository until its file says
+// otherwise. The check is the resolved auth (the same defaulting the config
+// reader does), so a file that names none is judged by the default rather
+// than by the empty string.
+func jobConfigCopyCredentialsNote(cfg *config.Config) string {
+	auth := cfg.Agent.Auth
+	if auth == "" {
+		auth = config.DefaultAgentAuth
+	}
+	if auth != config.AuthCascade {
+		return ""
+	}
+	return fmt.Sprintf("this repository's workflows run with agent.auth: %s, and that mode's credential comes from the installation's credentials service at call time: a job that is `cascade` must mount no model credential at all, and the two steps that make it so are owner-run. Turn the service on in the installation with `fugaro update --provision-credentials` (a typed confirmation, and it needs the installation's Firebase rules redeployed with `fugaro update --firebase-project` first), then run `fugaro update --repo .` in this checkout and in every other repository of the project, which is what drops each job's model-secret accessors and grants its account an invoker on the service. Until both have run, a %s run is refused at launch and the deployed job still mounts the credential it should not", config.AuthCascade, config.AuthCascade)
 }
 
 // jobConfigCopyPolicyNote is the drift note's policy clause: what a
@@ -362,11 +409,11 @@ func jobConfigCopyMountNote(names []string) string {
 // database to read one from, or a read that failed: the note is advisory,
 // and the STALE sentence it would qualify stands on its own.
 //
-// The keys named as still needing init --repo are the ones a run cannot do
+// The keys named as still needing update --repo are the ones a run cannot do
 // without and does not read from the node: `providers`, which the node carries
 // and a run routes by the job's own copy of (the one cut to this repository's
 // allow_data_to, whose key name is the mounted secret — so a provider change
-// still reaches every repository through init --repo, and the routing switch
+// still reaches every repository through update --repo, and the routing switch
 // resolves against the copy the job has), the pointer that makes the policy
 // reachable at all (RTDBURLEnv, FirebaseAPIKeyEnv — task 1.4), the mounts
 // (a workflow's committed secrets and agent.auth, which come from the
@@ -377,7 +424,7 @@ func jobConfigCopyPolicyNote(ctx context.Context, lc *localcfg.Config) string {
 	if err != nil || !found {
 		return ""
 	}
-	return fmt.Sprintf("; the policy published at %s now governs model_prices, the budget mode, the per-run ceiling, the allowed models, the token limit, the allow-list and the routing switch, and runs read those from the node: drift in them is not a reason to re-run fugaro init --repo. The providers block is the part the node carries that a run does not read from it — a run routes by the copy in its own job's environment, cut to this repository with the key's mount, so a changed provider (its base URL, models, allow_data_to or route_fee_pct) is still a reason to re-run it, as are the keys the policy does not carry (%s and %s, without which a run never finds the policy; the repository's mounted secrets and agent.auth; the region's compute price and the GitHub App ID)",
+	return fmt.Sprintf("; the policy published at %s now governs model_prices, the budget mode, the per-run ceiling, the allowed models, the token limit, the allow-list and the routing switch, and runs read those from the node: drift in them is not a reason to re-run fugaro update --repo. The providers block is the part the node carries that a run does not read from it — a run routes by the copy in its own job's environment, cut to this repository with the key's mount, so a changed provider (its base URL, models, allow_data_to or route_fee_pct) is still a reason to re-run it, as are the keys the policy does not carry (%s and %s, without which a run never finds the policy; the repository's mounted secrets and agent.auth; the region's compute price and the GitHub App ID)",
 		projectpolicy.PathShared(), infra.RTDBURLEnv, infra.FirebaseAPIKeyEnv)
 }
 
@@ -427,7 +474,7 @@ func scalarConfigDiff(job, now map[string]string) string {
 // spec's env. SecretEnvsVar is a derived list of mounted variable NAMES, not
 // a local-config value in its own right: it also reflects the repository's
 // own fugaro.yaml (its workflow's committed secrets, its agent.auth), which
-// fugaro init --repo refreshes from the checkout, not from an edited local
+// fugaro update --repo refreshes from the checkout, not from an edited local
 // project config, so comparing it here would flag drift this note is not
 // about. A changed local-config provider already shows up directly, through
 // providersDiff, with or without this key.

@@ -450,6 +450,10 @@ the reporter writes the project record and **reads nothing back** into a launch 
 
 **Depends on.** P5 (the protocol), and for the coordinator half, the coordinator's own plan —
 which does not exist. **Half of this part is therefore blocked** (reconciliation #51).
+**Superseded 2026-10-21:** that plan now exists (`docs/coordinator/implementation-plan.md`,
+approved to build), and the owner answered its **D196 (B)** — the coordinator gets **its own**
+resident service, so this work's **P4/P5 no longer block it** and the reporter below is a
+**client** of that service rather than a writer into this one.
 
 **Reviewer tier.** Standard for the console; **careful** for the reporter. **Security-sensitive.**
 No — the console half adds no network surface (it adds an IPC operation beside an existing

@@ -35,6 +35,76 @@ func exec(state backend.State) *backend.Execution {
 	return e
 }
 
+// preemptedExec is an execution the platform reclaimed: a terminal failure the
+// backend read as a Spot preemption (backend.Execution.Preempted).
+func preemptedExec() *backend.Execution {
+	e := exec(backend.StateFailed)
+	e.Preempted = true
+	return e
+}
+
+// TestJoinDerivesAPreemption: a run whose record never finalized, whose
+// execution the platform reclaimed, is `failed (preempted)` with the reason
+// for it -- derived when read, and never written back anywhere (the owner's
+// 2026-10-21 ruling; design compute-backend.md §1.3). The cases are each half
+// of the rule and each way it could be wrongly applied:
+//
+//   - the record that never finalized plus a reclaimed execution is the
+//     derivation itself;
+//   - a run that DID finalize keeps its record: the record is the run's own
+//     account of itself and a platform fact about the machine it ran on does
+//     not overwrite it;
+//   - a terminal failure that is not a preemption stays what it is today
+//     (infra_error, `execution ended without finalizing`), so a crashed
+//     runnable is never called reclaimed;
+//   - a cancelled execution stays cancelled;
+//   - a PENDING or RUNNING execution is not derived: a live run must never be
+//     shown as failed;
+//   - and a run with no execution at all is not derived either, whether it is
+//     merely pending or has been given up for lost.
+func TestJoinDerivesAPreemption(t *testing.T) {
+	running := func() *runstore.Record {
+		r := rec(runstore.StatusRunning, nil)
+		deadline := now.Add(time.Hour)
+		r.Deadline = &deadline
+		return r
+	}
+	cases := []struct {
+		name, status, reason, derived string
+		in                            Input
+	}{
+		{"record never finalized", "failed", ReasonPreempted, DerivedPreempted,
+			Input{Task: spec, Launch: launch, Record: rec(runstore.StatusRunning, nil), Exec: preemptedExec()}},
+		{"no record at all", "failed", ReasonPreempted, DerivedPreempted,
+			Input{Task: spec, Launch: launch, Exec: preemptedExec()}},
+		{"the record finalized", "succeeded", "", "",
+			Input{Task: spec, Launch: launch, Record: rec(runstore.StatusSucceeded, nil), Exec: preemptedExec()}},
+		{"a terminal failure that is not a preemption", "infra_error", ReasonNoFinalRecord + " (failed)", "",
+			Input{Task: spec, Launch: launch, Record: rec(runstore.StatusRunning, nil), Exec: exec(backend.StateFailed)}},
+		{"a cancelled execution", "cancelled", "execution cancelled before the run finalized", "",
+			Input{Task: spec, Launch: launch, Record: rec(runstore.StatusRunning, nil), Exec: exec(backend.StateCancelled)}},
+		{"still running", "running", "", "",
+			Input{Task: spec, Launch: launch, Record: running(), Exec: exec(backend.StateRunning)}},
+		{"pending", StatusPending, "", "",
+			Input{Task: spec, Launch: launch, Exec: exec(backend.StatePending)}},
+		{"lost", "infra_error", ReasonLost, "",
+			Input{Task: spec, Launch: &runstore.Launch{Execution: "exec-1", LaunchedAt: now.Add(-runstore.ClaimTTL - time.Hour)}}},
+	}
+	for _, tc := range cases {
+		row := Join(tc.in, prices, now)
+		if row.Status != tc.status || row.Reason != tc.reason || row.Derived != tc.derived {
+			t.Errorf("%s: status %q reason %q derived %q, want %q %q %q",
+				tc.name, row.Status, row.Reason, row.Derived, tc.status, tc.reason, tc.derived)
+		}
+	}
+	// The derived row is terminal and settled: runs ls --watch must be able to
+	// stop on it, and nothing about it moves on its own.
+	row := Join(Input{Task: spec, Launch: launch, Record: rec(runstore.StatusRunning, nil), Exec: preemptedExec()}, prices, now)
+	if !row.Terminal || !row.Settled {
+		t.Errorf("the derived row is terminal=%v settled=%v, want both true", row.Terminal, row.Settled)
+	}
+}
+
 func TestJoinStatuses(t *testing.T) {
 	sub := runstore.NewCost(2, 0.1, runstore.BasisSubscription)
 	cases := []struct {
@@ -112,6 +182,31 @@ func TestJoinCostUsesExecutionAndBasis(t *testing.T) {
 	tot := Sum([]Row{row, api})
 	if tot.Runs != 2 || tot.ModelNotionalUSD != 2 || tot.ModelUSD != 2 || math.Abs(tot.TotalUSD-(row.Cost.TotalUSD+api.Cost.TotalUSD)) > 0.005 {
 		t.Fatalf("totals = %+v", tot)
+	}
+}
+
+// TestJoinCostKeepsAMixedRunsNotionalOutOfTheBill (P12, D140): a cascade run's
+// model figure is money and the subscription's dollars together, and its basis
+// is api-list for the whole run. Rebuilding the row's cost from ModelUSD and
+// the basis would bill the notional part -- in `runs ls`, in the console's
+// totals and in everything that reads a row -- so the row keeps the record's
+// notional part, and the totals split on it rather than on the basis.
+func TestJoinCostKeepsAMixedRunsNotionalOutOfTheBill(t *testing.T) {
+	mixed := runstore.NewCost(3, 0.5, runstore.BasisAPIList).WithNotional(2)
+	record := rec(runstore.StatusSucceeded, &mixed)
+	record.CostUSD = 3 // the record's own model figure, the whole of it
+	row := Join(Input{Task: spec, Launch: launch, Record: record, Exec: exec(backend.StateSucceeded)}, prices, now)
+	if row.Cost.ModelUSD != 3 || row.Cost.ModelNotionalUSD != 2 || row.Cost.ModelMoneyUSD() != 1 {
+		t.Fatalf("the row's cost = %+v, want model_usd 3 with 2 of it notional", row.Cost)
+	}
+	// 30 minutes × 4 vCPU × $0.00001 = $0.072 compute, billed beside the money
+	// part alone.
+	if row.Cost.TotalUSD != 1.07 {
+		t.Fatalf("the row's total_usd = %v, want the money part and the compute, not the notional", row.Cost.TotalUSD)
+	}
+	tot := Sum([]Row{row})
+	if tot.ModelNotionalUSD != 2 || tot.ModelUSD != 1 || tot.TotalUSD != 1.07 {
+		t.Fatalf("totals = %+v, want $1 of billed model spend and $2 notional", tot)
 	}
 }
 

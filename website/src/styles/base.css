@@ -150,19 +150,42 @@ a.skip-link:focus {
   color: var(--accent-on-dark);
 }
 
-/* The way home on a phone (the owner's brief of 2026-10-19, item 1): below about 380 px the
- * three group labels and the wordmark share the header's row, and it is the wordmark's TEXT
- * that gives way — the mark stays. 380 px is where the ruling puts the cut; the rule below is
- * at 390 px because the row measures the way it is drawn here, and the labels keep a 4 px
- * padding at the widths above this one: at 381 px the full row is a few pixels wider than the
- * header's content box, and a few pixels is a sideways scroll.
+/* The way home on a phone (the owner's brief of 2026-10-19, item 1; the owner's feedback of
+ * 2026-10-21, item 2): below the phone breakpoint the menu's items and the wordmark share the
+ * header's row, and it is the wordmark's TEXT that gives way — the mark stays. The brief of
+ * 2026-10-19 put the cut at about 380 px and this rule was at 390 px, because the row is
+ * measured rather than estimated: at 381 px the wordmark's text plus the three labels of the
+ * time was a few pixels wider than the header's content box in the font the built site falls
+ * back to, and a few pixels is a sideways scroll.
+ *
+ * **The row carried one more item when the feedback of 2026-10-21 put Home in the menu**, and
+ * the same arithmetic moved the cut: the Home link and its gap are about 45 px at this size, so
+ * the text leaves the row from about 432 px down (27 rem, rounded up from the 426 px the
+ * four-item figure implies) instead of from 390 px down. **The owner's feedback of the same day
+ * then dropped the Reference group**, so the row carries three items again — Home and two
+ * labels — and the cut is left at the wider, four-item one it was measured at rather than being
+ * re-tightened against a narrower row the check has not seen: the cost is the wordmark's text
+ * leaving the row a width earlier than a three-item row would need, and it is the safe
+ * direction of the two. Above the cut the labels have the row to themselves, and the text is
+ * drawn as it always was.
+ *
+ * **The Home item is what the row's own spacing gives up inside this block**, and those two
+ * rules stay with it: the 8 px between the wordmark and the menu becomes 4, and the items stand
+ * with no gap between them — their own 4 px padding either side is what separates them, which is
+ * the 8 px a phone's labels have always been drawn with. That is 16 px of the 45 px back, and it
+ * is the part of the row that is not the mark (the ruling of 2026-10-19 keeps the mark) and not
+ * the labels (their 44 px height is the brief's tap target). With a group fewer in the row they
+ * are headroom rather than the whole of the payment, and leaving them is what keeps the row
+ * measured the way it was measured. Whether the row then fits a 320 px phone's content box is a
+ * rendered measurement no hermetic test can take: it is the owner's live check (70a), as the
+ * three-item row was.
  *
  * The text is hidden from the eye and not from a screen reader: `display: none` would take the
  * word out of the link's accessible name, and the logo beside it is decoration with an empty
  * `alt` (`layouts/Base.astro`), so the link would be left naming nothing. This is the standard
  * "visually hidden" rule — one pixel, clipped, out of the flow — and it is why the link keeps
  * its name at every width. */
-@media (max-width: 24.375rem) {
+@media (max-width: 27rem) {
   .site-wordmark-name {
     position: absolute;
     width: 1px;
@@ -171,13 +194,24 @@ a.skip-link:focus {
     clip-path: inset(50%);
     white-space: nowrap;
   }
+
+  .site-header {
+    gap: var(--space-3xs);
+  }
+
+  .site-nav-groups {
+    gap: 0;
+  }
 }
 
-/* The section nav (P3, D182; the owner's brief of 2026-10-19, item 1): three groups of three,
- * their three labels in the header's one row at every width. There is no toggle in front of
- * the menu — the brief took the single "Menu" button away, so a phone reaches a section in one
- * tap — and what each label opens is a panel of that group's links: a drawer across the
- * header's width on a phone, a dropdown under the label on a wide viewport.
+/* The section nav (P3, D182; the owner's brief of 2026-10-19, item 1; the owner's feedback of
+ * 2026-10-21, item 2, and the Reference group dropped by the same day's feedback): the way home
+ * and then the site's groups — three items in the header's one row at every width. There is no
+ * toggle in front of the menu — the brief of
+ * 2026-10-19 took the single "Menu" button away, so a phone reaches a section in one tap — and
+ * what each group label opens is a panel of that group's links: a drawer across the header's
+ * width on a phone, a dropdown under the label on a wide viewport. Home is the first item and
+ * the one of the three that opens nothing: it is a link, so it is reached in one tap too.
  *
  * Both levels are `<details>` — the markup is in `layouts/Base.astro` — so the menu opens and
  * closes with JavaScript off. `public/scripts/site.js` adds only what `<details>` does not do
@@ -206,9 +240,10 @@ a.skip-link:focus {
   list-style: none;
 }
 
-/* The three labels, side by side. The gap is the phone's 4 px and the wide block below opens
- * it to 8 px: three words 4 px apart are three words apart, and at 320 px the row has none to
- * spare. */
+/* The menu's items, side by side: the way home and the labels. The gap is the phone's
+ * 4 px and the wide block below opens it to 8 px — and the phone block above takes it to none
+ * at all, the payment the feedback of 2026-10-21's Home item asks of the row's spacing on the
+ * narrowest phones (kept with the item, and headroom now the row carries one group fewer). */
 .site-nav-groups {
   display: flex;
   gap: var(--space-3xs);
@@ -302,7 +337,7 @@ a.skip-link:focus {
   text-underline-offset: 0.35em;
 }
 
-/* The wide viewport: the same three labels, and each one's list becomes a dropdown under it
+/* The wide viewport: the same two labels, and each one's list becomes a dropdown under it
  * rather than a drawer across the header. */
 @media (min-width: 48rem) {
   .site-header {
@@ -326,7 +361,8 @@ a.skip-link:focus {
    * header's own padding is still narrow, so a list opening rightwards from the last group
    * would run past the viewport and give the page a sideways scroll. Anchored right, no
    * group's list can reach that edge — and the wordmark at the other end leaves far more room
-   * than a three-item list needs at any width from 48rem up. */
+   * than either group's list needs at any width from 48rem up (five items under *Product*,
+   * five under *Project*). */
   .site-nav-group {
     position: relative;
   }
@@ -354,6 +390,30 @@ a.skip-link:focus {
   font-size: var(--font-size-sm);
   font-weight: var(--weight-medium);
   text-decoration: none;
+}
+
+/* The menu's first item, the way home (the owner's feedback of 2026-10-21: "I think we need a
+ * 'Home' as the first menu"). It is a link where the two items beside it are `<details>`
+ * disclosures, and it is drawn in the same box a link inside a list is — the rule above gives
+ * it the 44 px height, the muted colour and the small label — with the inline padding of the
+ * labels it shares the header's row with: the phone's 4 px, which the wide rule below opens to
+ * 8 px beside the labels' own. It is a link and not a group, so it has no summary, no list and
+ * no disclosure state: Home is one page. */
+.site-nav-home > a {
+  padding-inline: var(--space-3xs);
+}
+
+/* The wide viewport's 8 px, and it is here rather than in the wide block above because of the
+ * order a browser reads this file in: `.site-nav a` above sets the whole `padding` shorthand on
+ * every link in the menu, and at this rule's specificity — one class and one type, the same as
+ * `.site-nav a` — the later rule wins. A `padding-inline` written up in the wide block would be
+ * read first and then overwritten by that shorthand, which is exactly what it was: 4 px at every
+ * width while the three labels beside it opened to 8 px, the opposite of what the rule above
+ * says. `website/test/base-styles.mjs` holds the two declarations to this order. */
+@media (min-width: 48rem) {
+  .site-nav-home > a {
+    padding-inline: var(--space-2xs);
+  }
 }
 
 .site-nav a:focus-visible {

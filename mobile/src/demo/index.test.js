@@ -60,6 +60,24 @@ test('entering the demo runs the app\'s own pass: send, verify, speak, ack', asy
   assert.deepEqual(state.sent.map((entry) => entry.id), ['demo-utterance-1', 'demo-utterance-2', 'demo-utterance-3']);
   assert.deepEqual(state.sent.filter((entry) => entry.ok !== true), []);
 
+  // **What the phone is still holding, and why.** P6.10's gate refuses a send
+  // to a consumer nobody has looked at, so the pass polls BEFORE it sends -- and
+  // a verified reply is what retires the phone's own utterance from its outbox,
+  // so that look is over before there is anything of the phone's for the replies
+  // to answer. `pending()` is therefore the three utterances this pass wrote,
+  // landed (the store took them; the consumer has not answered). It was empty
+  // when the single poll came last. Both are real states; the demo runs one pass
+  // and shows this one. Asserted so the state is pinned rather than discovered:
+  // `landed`, not `false`, is the point -- nothing here is waiting to be
+  // re-sent, the phone is waiting to be answered.
+  assert.deepEqual(state.pending.map((entry) => entry.id), ['demo-utterance-1', 'demo-utterance-2', 'demo-utterance-3']);
+  assert.deepEqual(state.pending.filter((entry) => entry.landed !== true), []);
+  // ...and the replies really are answers to two of them: the ids the sample
+  // `reply_to` fields name are ids the CLIENT minted above, which is the join
+  // that makes them answers rather than two unrelated strings.
+  const minted = state.sent.map((entry) => entry.id);
+  for (const reply of DEMO_REPLIES) assert.ok(minted.includes(reply.replyTo), `${reply.id} names an id nobody sent`);
+
   // Every message the consumer wrote is spoken and acked: acking is the app's
   // "don't say it twice" ledger, and it can only land after the words were
   // spoken and the tag checked.

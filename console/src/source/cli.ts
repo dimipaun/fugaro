@@ -185,8 +185,6 @@ export interface NoInstallationState {
   readonly installCommand: string
   /** every candidate the resolution looked at, in the order it looked */
   readonly searched: readonly string[]
-  /** the path the installation named, when it named one */
-  readonly configuredPath: string | null
 }
 
 /**
@@ -212,12 +210,13 @@ export class NoInstallation extends SourceRefusal {
  * noInstallationState is the state, built from the resolution that failed. The
  * candidate list is re-derived from the same `binDirectories` the resolution
  * walked, with the same options -- so the screen names the directories this
- * machine would actually be searched in, not a list written down twice.
+ * machine would actually be searched in, not a list written down twice. The
+ * configured path is an *input* and not a field: it is one of those candidates,
+ * and the screen draws the count of them and never a path.
  */
 export function noInstallationState(options: {
   readonly reason: string
   readonly configuredPath?: string | undefined
-  readonly appEnv?: Readonly<Record<string, string | undefined>>
   readonly home?: string
 }): NoInstallationState {
   return {
@@ -226,10 +225,8 @@ export function noInstallationState(options: {
     installCommand: FUGARO_INSTALL_COMMAND,
     searched: binDirectories({
       ...(options.configuredPath === undefined ? {} : { configuredPath: options.configuredPath }),
-      appEnv: options.appEnv ?? {},
       ...(options.home === undefined ? {} : { home: options.home }),
     }),
-    configuredPath: options.configuredPath === undefined || options.configuredPath === '' ? null : options.configuredPath,
   }
 }
 
@@ -314,7 +311,6 @@ export class CliSource implements FugaroSource {
         noInstallationState({
           reason: resolution.reason,
           configuredPath: options.configuredBinaryPath,
-          appEnv: env,
           ...(options.home === undefined ? {} : { home: options.home }),
         }),
       )
@@ -531,16 +527,21 @@ interface ResolvedSource {
  * the source layer: it knows an installation's four fields and nothing about the
  * file they are kept in.
  *
- * `binaryPath` is the installation's **own** binary and it is passed to the
- * resolver as the configured path (rule 4's first place), so a source bound to
- * an installation reads that binary or refuses -- never another `fugaro` the
- * machine happens to have. That is the same rule the startup handshake follows
- * (`resolveHandshakeBinary`, review B1).
+ * `binaryPath` is the installation's **optional** binary override, and it is
+ * passed to the resolver as the configured path (rule 4's first place) only when
+ * a record carries one. **Absent is the ordinary case** (owner's ruling of
+ * 2026-10-20): the console never asks the operator for a binary and never stores
+ * the path it resolved, so a bound source resolves the installed `fugaro` itself
+ * -- `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `/usr/bin`, and
+ * never the app's inherited `PATH` -- exactly as the startup handshake does
+ * (`resolveHandshakeBinary`). An override that is there is tried first and
+ * falls through to those same locations when it has gone, so an old store entry
+ * keeps working.
  */
 export interface BoundInstallation {
   readonly id: string
   readonly project: string
-  readonly binaryPath: string
+  readonly binaryPath?: string | undefined
   /** the config path, when this installation is not the ambient one (rule 3). */
   readonly configPath?: string | undefined
   /** the checkout, which is also the child's working directory (rule 5). */
@@ -575,7 +576,13 @@ export function sourceFor(
       project: installation.project,
       ...(installation.configPath === undefined ? {} : { configPath: installation.configPath }),
     }),
-    configuredBinaryPath: installation.binaryPath,
+    // The store's override, when the record carries one. Absent means rule 4
+    // resolves the installed `fugaro`, which is what the console does by
+    // default -- and passing `undefined` as a configured path would be a second
+    // spelling of "no override", so it is left out.
+    ...(installation.binaryPath === undefined || installation.binaryPath === ''
+      ? {}
+      : { configuredBinaryPath: installation.binaryPath }),
     ...(installation.checkout === undefined ? {} : { checkout: installation.checkout }),
   })
 }
@@ -612,6 +619,34 @@ export interface BoundSource extends FugaroSource {
 }
 
 /**
+ * bindingKey is what "the same source" means: the fields of one installation
+ * that decide **what the child is and where it runs**. It is not the id alone,
+ * and that is the whole of a defect this function exists to prevent: the id is
+ * *which* installation this is -- `setCheckout` deliberately preserves it
+ * (`console/src/main/installations.ts`), and so does a record that gains or
+ * loses its override -- while the checkout is the child's working directory
+ * (`options.checkout ?? privateWorkingDirectory()`) and the override is rule 4's
+ * first candidate. A source cached by the id alone kept running in the directory
+ * the installation used to be in: the picker ran rule 7's `doctor` from the new
+ * one, the row and the header reported it, and every read still spawned with the
+ * old cwd, so the dashboard read the wrong repository (or was refused by the
+ * CLI's own pairing sentence) under a screen saying the new checkout was in use.
+ *
+ * It is serialised rather than joined with a separator: these are paths and
+ * project names, and a delimiter one of them may contain is a collision waiting
+ * to be a wrong directory.
+ */
+function bindingKey(installation: BoundInstallation): string {
+  return JSON.stringify([
+    installation.id,
+    installation.project,
+    installation.binaryPath ?? '',
+    installation.configPath ?? '',
+    installation.checkout ?? '',
+  ])
+}
+
+/**
  * createBoundSource is the join between the console's own state and the data
  * plane: every read resolves the installation that is active **now**, builds the
  * one source for it if there is not one already, and delegates.
@@ -620,10 +655,11 @@ export interface BoundSource extends FugaroSource {
  *
  *   - **no installation, no spawn.** `resolve` throws `NoInstallation` before
  *     anything is constructed, so a console with nothing chosen drives nothing.
- *   - **one source per installation.** The source is cached by the
- *     installation's id and the previous one is closed when the id changes, so a
- *     switch cannot leave a `fugaro watch` child running for an installation the
- *     console has stopped showing.
+ *   - **one source per binding.** The source is cached by `bindingKey` -- the
+ *     installation's id and the three fields the child is built from -- and the
+ *     previous one is closed when that key changes, so neither a switch nor a
+ *     checkout change can leave a `fugaro watch` child running for a directory
+ *     the console has stopped showing.
  *   - **`subscribeLive` stays synchronous and idempotent.** Building a
  *     `CliSource` is asynchronous (it resolves and probes the binary) and
  *     `FugaroSource.subscribeLive` is not, so the feed this returns is a
@@ -637,8 +673,8 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
   const { installation: _installation, create: injected, ...options } = deps
   const create =
     injected ?? ((installation: BoundInstallation): Promise<CliSource> => sourceFor(installation, options))
-  let bound: { readonly id: string; readonly source: CliSource } | null = null
-  let pending: { readonly id: string; readonly source: Promise<CliSource> } | null = null
+  let bound: { readonly key: string; readonly source: CliSource } | null = null
+  let pending: { readonly key: string; readonly source: Promise<CliSource> } | null = null
   const feeds = new Map<string, LiveFeed>()
 
   /**
@@ -657,7 +693,6 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     new NoInstallation(
       noInstallationState({
         reason: 'no installation is chosen, so there is no binary for the console to read',
-        ...(deps.appEnv === undefined ? {} : { appEnv: deps.appEnv }),
         ...(deps.home === undefined ? {} : { home: deps.home }),
       }),
     )
@@ -674,7 +709,10 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
    * not this one, with a `searched` list and an install command to match. The
    * store is read here, at the moment of the refusal, so the sentence is about
    * what actually happened: a removal is D13's state, and a switch is a read for
-   * an installation the console has stopped showing.
+   * an installation the console has stopped showing. A build superseded by a
+   * **checkout change** lands here too, and the sentence is right for it as well:
+   * the read was for the binding that named the previous directory, which is a
+   * binding the console is no longer showing.
    */
   const superseded = (): SourceRefusal =>
     deps.installation() === null
@@ -684,16 +722,17 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
   const resolve = async (): Promise<CliSource> => {
     const installation = deps.installation()
     if (installation === null) throw noInstallation()
-    if (bound !== null && bound.id === installation.id) return bound.source
-    if (pending !== null && pending.id === installation.id) return pending.source
-    // A different installation, or none bound: the previous source's children
-    // are stopped before a new one is built. `bound` is cleared first so a read
-    // that arrives while the close is in flight cannot be handed the source that
-    // is on its way out -- and the build is registered as `pending` **before**
-    // that close is awaited, so the read that arrives in the same window joins
-    // this build instead of starting a second one for the same installation
-    // (which would leave the first refused as a superseded build, and cost a
-    // second probe of a binary that was already being probed).
+    const key = bindingKey(installation)
+    if (bound !== null && bound.key === key) return bound.source
+    if (pending !== null && pending.key === key) return pending.source
+    // A different binding, or none: the previous source's children are stopped
+    // before a new one is built. `bound` is cleared first so a read that arrives
+    // while the close is in flight cannot be handed the source that is on its way
+    // out -- and the build is registered as `pending` **before** that close is
+    // awaited, so the read that arrives in the same window joins this build
+    // instead of starting a second one for the same binding (which would leave the
+    // first refused as a superseded build, and cost a second probe of a binary
+    // that was already being probed).
     const previous = bound
     bound = null
     feeds.clear()
@@ -703,18 +742,18 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
       if (previous !== null) await previous.source.close()
       const created = await create(installation)
       if (mine !== epoch) {
-        // Dropped, or superseded by a build for another installation, while this
+        // Dropped, or superseded by a build for another binding, while this
         // one was in flight. `forget` could not close what did not exist yet, so
         // this source is closed here -- nothing else holds it -- and the read
         // that asked for it is refused for what actually happened.
         void created.close().catch(() => undefined)
         throw superseded()
       }
-      bound = { id: installation.id, source: created }
+      bound = { key, source: created }
       pending = null
       return created
     })()
-    pending = { id: installation.id, source }
+    pending = { key, source }
     // A build that failed is not kept as this installation's pending build: the
     // probe can fail for a reason that passes (a `version` that did not answer
     // in time on a loaded machine, a binary mid-upgrade), and a rejection kept
@@ -727,12 +766,20 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
   }
 
   const installationRef = (installation: BoundInstallation): InstallationRef => ({
-    binaryPath: installation.binaryPath,
+    binaryPath: installation.binaryPath ?? '',
     version: installation.version ?? '',
     project: installation.project,
-    // The binary came from the installation the operator chose, which is rule
-    // 4's first place -- there is no second spelling of this vocabulary here.
-    source: 'configured',
+    // Which rule 4 place this installation's binary comes from, **as the
+    // binding knows it**: the store's own override when the record carries one
+    // (rule 4's first candidate), and the well-known install locations
+    // otherwise -- which is the ordinary case, because the console never stores
+    // the path it resolved (owner's ruling of 2026-10-20). The binding carries
+    // the override and nothing else, so an empty `binaryPath` here means rule 4
+    // will be walked, and this field is what says so while there is no source to
+    // ask. The *built* source answers the finer question from its own
+    // resolution (`resolution.source`, this file), where an override that has
+    // gone falls through and the word is the location that answered.
+    source: installation.binaryPath === undefined || installation.binaryPath === '' ? 'well-known' : 'configured',
     ...(installation.checkout === undefined ? {} : { checkout: installation.checkout }),
   })
 
@@ -1170,12 +1217,19 @@ class LiveStream implements LiveFeed {
  * project name, the config path when it is not the ambient one, the binary when
  * they chose one, and the checkout when they picked a directory. It is the D13
  * tuple minus the binary path and version the source resolves itself.
+ *
+ * **`distro` is the WSL one, and it is what puts the candidate on that route**
+ * (D2(a)): with it, `binaryPath` and `checkout` are Linux spellings *inside* the
+ * distribution and the CLI is reached through `wsl.exe`; without it -- the
+ * ordinary case, and every record this console wrote before Windows -- the
+ * installation is a host installation and the fields are host paths.
  */
 export interface InstallationCandidate {
   readonly project: string
   readonly configPath?: string | undefined
   readonly binaryPath?: string | undefined
   readonly checkout?: string | undefined
+  readonly distro?: string | undefined
 }
 
 /** InstallationStore is the in-memory list the app holds for one run. */

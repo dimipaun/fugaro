@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -377,23 +378,13 @@ func TestDocsRigorModesFindingsDecisionsAndItemsAreNumbered(t *testing.T) {
 // every row, and running that command reproduces the count the row states. A
 // count without its command is a figure a later reader cannot re-derive, and a
 // command that no longer produces its figure is worse than no command at all:
-// it is a claim that looks checked. The pins this repository's other folders ship
-// assert what they hold in prose; this census is the one table whose figures the
-// guard re-derives by running the command beside each row.
+// it is a claim that looks checked. The other 51 rows this repository's folders
+// assert in prose; this one is the only place the figure can be re-derived by
+// the test itself, so it is re-derived.
 //
 // The commands are POSIX shell on purpose — `sed`, `grep`, `ls`, `wc` and
 // `git grep` — because that is what a reader copies out of the table, so the
 // guard runs them the way a reader would, from the repository root.
-//
-// The rows that read the repository (`git grep`) are re-derived only where that
-// root is a checkout's own top level. A tree copy — the shape
-// TestStagedLinuxFilesSurviveTheCopyIn runs this package's Docs family in — has
-// every file the census counts and no `.git` at all, so a repository-reading
-// command there answers "not a git repository" and would report a figure as
-// broken that is only un-reproducible in that tree. Those rows are counted and
-// logged instead, the rows that read the tree are still re-derived everywhere,
-// and a run that re-derived none of them is an error, so the skip cannot become
-// the whole test.
 func TestDocsRigorModesCensusStatesItsCommands(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the census's commands are POSIX shell: sed, grep, ls, wc and git grep")
@@ -403,11 +394,6 @@ func TestDocsRigorModesCensusStatesItsCommands(t *testing.T) {
 		t.Skip("bash is not on PATH")
 	}
 	recon := readDoc(t, rigorModesRecon)
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	inCheckout := rigorModesIsCheckout(sh, root)
 
 	i := strings.Index(recon, rigorModesCensusHeading)
 	if i < 0 {
@@ -417,7 +403,20 @@ func TestDocsRigorModesCensusStatesItsCommands(t *testing.T) {
 	if j := strings.Index(body, "\n## 5."); j >= 0 {
 		body = body[:j]
 	}
-	rows, commands, checked, repoRows := 0, 0, 0, 0
+	rows, commands, checked, skipped := 0, 0, 0, 0
+	// Seven rows are `git grep`, and the census states its commands run from the
+	// repository root. A tree that is not the root of a git work tree is not
+	// that root, and `git grep` there fails -- exit 128, nothing on stdout --
+	// rather than printing a figure. That tree is not hypothetical: it is the
+	// copy docs_desktop_console_test.go's TestStagedLinuxFilesSurviveTheCopyIn
+	// makes and runs this family inside, a copy of the files deliberately
+	// without `.git` (the copy-in proof needs no repository, no branch and no
+	// index). So a row whose command reads the tree through git is skipped
+	// there and every row that reads the files directly still runs; the count
+	// is logged below rather than swallowed, because a skip is a row this run
+	// did not check.
+	_, statErr := os.Stat(filepath.Join(censusRoot, ".git"))
+	workTree := statErr == nil
 	for _, line := range strings.Split(body, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "|") {
@@ -452,16 +451,12 @@ func TestDocsRigorModesCensusStatesItsCommands(t *testing.T) {
 			t.Errorf("%s: census row %q carries no command inside its code span", rigorModesRecon, line)
 			continue
 		}
-		// A row that reads the repository rather than the tree is re-derived only
-		// where there is a repository to read: `git grep` in a tree copy has no
-		// index and answers "not a git repository", which is a fact about the tree
-		// the guard is running in and not about the figure the row states.
-		if !inCheckout && strings.HasPrefix(cmd, "git ") {
-			repoRows++
+		if !workTree && rigorModesCommandNeedsGit(cmd) {
+			skipped++
 			continue
 		}
 		c := exec.Command(sh, "-c", cmd)
-		c.Dir = root // the census states its commands run from the repository root
+		c.Dir = censusRoot // the census states its commands run from the repository root
 		out, err := c.Output()
 		// `grep` and `git grep` exit 1 when they match nothing, which is what a
 		// row stating 0 legitimately does; the figure is the output, so only a
@@ -483,34 +478,64 @@ func TestDocsRigorModesCensusStatesItsCommands(t *testing.T) {
 	if commands != rows {
 		t.Errorf("%s: %d of %d census rows carry a command, want all of them", rigorModesRecon, commands, rows)
 	}
-	if repoRows > 0 {
-		t.Logf("%s is not a checkout's own top level: %d of the census's %d rows read the repository and were not re-derived here, and %d that read the tree were",
-			root, repoRows, rows, checked)
-	}
 	if checked == 0 {
 		t.Errorf("%s: no census command was run: the figures are the point", rigorModesRecon)
 	}
+	if skipped > 0 {
+		t.Logf("%d of %d census rows were not run: their commands read the tree through git, and %s is not the root of a git work tree (the copy-in proof runs this family in a copy of the files, without a repository)", skipped, rows, censusRoot)
+	}
 }
 
-// rigorModesIsCheckout reports whether root is the top level of a checkout, which
-// is the one state a census row that reads the repository can be re-derived in:
-// `git grep` answers from the repository the working directory sits in, so a root
-// inside some *other* checkout would have those rows counting that checkout's
-// files rather than the tree this document is read in. The census states its
-// commands run "from the repository root", and this is what says the root is one.
-func rigorModesIsCheckout(sh, root string) bool {
-	c := exec.Command(sh, "-c", "git rev-parse --show-toplevel")
-	c.Dir = root
-	out, err := c.Output()
-	if err != nil {
-		return false
+// rigorModesCommandNeedsGit reports whether a census command reads the tree
+// through git rather than reading its files directly. `git grep` is the only
+// such command in the census today, and its seven rows all spell it at the front
+// of a command or of a pipeline; the slack in matching the word rather than the
+// prefix is for the row that grows one further along -- inside a `{ …; }` group
+// or after a pipe -- so a `git` anywhere a shell would run it is covered.
+// "Anywhere a shell would run it" is the rule, not "anywhere the three letters
+// appear": `git` has to sit at the start of a command, after `|`, `;`, `&`, `(`
+// or `{`, and be followed by whitespace or the end. That is what keeps
+// `.gitignore`, `.gitattributes` and docs/git-providers.md out of it -- paths a
+// census command may perfectly well read without a repository, and a row that
+// reads one is not skipped in a tree that has none.
+var rigorModesNeedsGitRE = regexp.MustCompile(`(?:^\s*|[|;&({]\s*)git(?:\s|$)`)
+
+func rigorModesCommandNeedsGit(cmd string) bool {
+	return rigorModesNeedsGitRE.MatchString(cmd)
+}
+
+// TestDocsRigorModesCensusSkipsGitOnlyWhereAShellRunsIt pins the skip rule above,
+// because its two mistakes are not symmetric. A command that really runs `git`
+// and is not skipped fails in a tree without a repository rather than printing a
+// figure, which is the failure this rule exists to prevent; a command that only
+// reads a path with the three letters in it and *is* skipped loses a row the
+// copy-in tree could have checked. So both directions are pinned: the shapes the
+// census's own `git` rows have, and the paths a census row may read.
+func TestDocsRigorModesCensusSkipsGitOnlyWhereAShellRunsIt(t *testing.T) {
+	runsGit := []string{
+		`git grep -l 'Severity' -- internal/runner ':!*_test.go' | wc -l`,
+		`git ls-tree --name-only 1d325928:internal/cli | grep -c '^docs_.*_test\.go$'`,
+		`{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; git grep -c Path internal/recipe/recipe.go; } | wc -l`,
+		`sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go | git grep -c Path`,
+		`grep -c x docs/a.md && git grep -c y docs/b.md`,
 	}
-	top, err := filepath.EvalSymlinks(strings.TrimSpace(string(out)))
-	if err != nil {
-		return false
+	for _, cmd := range runsGit {
+		if !rigorModesCommandNeedsGit(cmd) {
+			t.Errorf("rigorModesCommandNeedsGit(%q) = false: the command runs git, so in a tree without a repository it prints a failure instead of a figure, and the guard has to skip it there rather than fail on it", cmd)
+		}
 	}
-	here, err := filepath.EvalSymlinks(root)
-	return err == nil && top == here
+	readsFiles := []string{
+		`ls internal/cli/docs_*_test.go | wc -l`,
+		`sed -n 's/^const Version = //p' internal/projectpolicy/version.go`,
+		`grep -c gitignore .gitignore`,
+		`grep -c git docs/git-providers.md`,
+		`sed -n '/^## /p' .gitattributes | wc -l`,
+	}
+	for _, cmd := range readsFiles {
+		if rigorModesCommandNeedsGit(cmd) {
+			t.Errorf("rigorModesCommandNeedsGit(%q) = true: the command reads its files directly and needs no repository, so skipping it there would drop a row the copy-in tree can check", cmd)
+		}
+	}
 }
 
 // rigorModesCommand is the shell command inside a census row's code span, with
@@ -999,14 +1024,15 @@ func TestDocsRigorModesAnswersSayWhatTheyChange(t *testing.T) {
 		t.Errorf("%s states that checkpoints commit: they push commits the run already made (%s)", rigorModesRecon, rigorModesCheckpointSource)
 	}
 	//
-	// F40: HaltCredsRulesDenied is planned, not built. The vocabulary that would
-	// carry it is runstore's, so the guard reads that file: a document that
-	// names the halt has to say it is planned while the reason is not there.
+	// F40: HaltCredsRulesDenied was planned when F40 was first written and is
+	// built now (credentials-service plan task C1.17, merged from
+	// integration-0.9.6): runstore's HaltReason vocabulary carries it, and the
+	// finding has to say it is built rather than planned.
 	runstore := readDoc(t, rigorModesRunstoreSource)
-	if strings.Contains(runstore, "HaltCredsRulesDenied") {
-		t.Errorf("%s now carries HaltCredsRulesDenied: F40 marks it planned, and the sentence that says so has to move with this file", rigorModesRunstoreSource)
+	if !strings.Contains(runstore, "HaltCredsRulesDenied") {
+		t.Errorf("%s no longer carries HaltCredsRulesDenied: F40 says it is built, and the sentence that says so has to move with this file", rigorModesRunstoreSource)
 	}
-	for at := strings.Index(flat[rigorModesRecon], "HaltCredsRulesDenied"); at >= 0; {
+	if at := strings.Index(flat[rigorModesRecon], "HaltCredsRulesDenied"); at >= 0 {
 		lo, hi := at-rigorModesScopeWindow, at+len("HaltCredsRulesDenied")+rigorModesScopeWindow
 		if lo < 0 {
 			lo = 0
@@ -1014,13 +1040,8 @@ func TestDocsRigorModesAnswersSayWhatTheyChange(t *testing.T) {
 		if hi > len(flat[rigorModesRecon]) {
 			hi = len(flat[rigorModesRecon])
 		}
-		if !strings.Contains(strings.ToLower(flat[rigorModesRecon][lo:hi]), "planned") {
-			t.Errorf("%s names HaltCredsRulesDenied with no \"planned\" beside it: %s has no such halt reason, so F40 may not read it as one the tree has", rigorModesRecon, rigorModesRunstoreSource)
+		if !strings.Contains(strings.ToLower(flat[rigorModesRecon][lo:hi]), "built since") {
+			t.Errorf("%s names HaltCredsRulesDenied without saying it is built since: %s carries the halt reason now", rigorModesRecon, rigorModesRunstoreSource)
 		}
-		next := strings.Index(flat[rigorModesRecon][at+1:], "HaltCredsRulesDenied")
-		if next < 0 {
-			break
-		}
-		at += 1 + next
 	}
 }

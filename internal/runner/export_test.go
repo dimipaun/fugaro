@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/cache"
+	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -85,6 +87,17 @@ func SetMarkLockReleasing(t *testing.T, f func(l *lock.Lock, ctx context.Context
 // RecordWriteTimeout exposes recordWriteTimeout.
 const RecordWriteTimeout = recordWriteTimeout
 
+// MaxCredentialResumes exposes maxCredentialResumes.
+const MaxCredentialResumes = maxCredentialResumes
+
+// CredentialsServiceURLEnv and MetadataHostEnv are where a cascade run reads
+// its upstream from, exposed so a runner_test run can be pointed at a
+// stand-in the same way a job is pointed at the real service.
+const (
+	CredentialsServiceURLEnv = credentialsServiceURLEnv
+	MetadataHostEnv          = metadataHostEnv
+)
+
 // RunHandle reaches a run's halt and cancel hooks from a test's agent.
 type RunHandle struct{ r *run }
 
@@ -108,6 +121,32 @@ func SetStrictHaltCheck(t *testing.T) {
 	strictHaltCheck = true
 	t.Cleanup(func() { strictHaltCheck = prev })
 }
+
+// SetCredsWait replaces the sleep a credential wait takes (C1.17) for the
+// rest of t: a real wait is the reset the service named, minutes or hours
+// away, so a test either returns at once or holds the wait itself.
+func SetCredsWait(t *testing.T, f func(ctx context.Context, d time.Duration) error) {
+	prev := credsWait
+	credsWait = f
+	t.Cleanup(func() { credsWait = prev })
+}
+
+// NoteExhausted is the credential service's typed `exhausted_until` answer
+// (C1.10) as C1.15's upstream delivers it: it ends the stage in flight, and
+// stage then waits for the reset and resumes the stage's session.
+func (h *RunHandle) NoteExhausted(reset time.Time) {
+	h.r.noteExhausted(credsvc.ExhaustedUntil{ResetAt: reset})
+}
+
+// ServiceAnswer is the same answer arriving the way it does in a real run:
+// internal/gateway parses the credentials service's answer out of its wire
+// body and hands it to the run through the upstream's OnServiceAnswer hook
+// (C1.15), which is this function. A test that calls it therefore drives the
+// run through the wired path and not around it, without standing up the
+// service a whole cascade run needs to start (C1.19's own tests do, against
+// a stand-in: TestServiceAnswerReachesTheRunsWait and the record's tests in
+// gateway_service_internal_test.go).
+func (h *RunHandle) ServiceAnswer(a gateway.ServiceAnswer) { h.r.serviceAnswer(a) }
 
 func (h *RunHandle) HaltNow(hl runstore.Halt) bool      { return h.r.haltNow(hl) }
 func (h *RunHandle) CancelHaltedStage(hl runstore.Halt) { h.r.cancelHaltedStage(hl) }

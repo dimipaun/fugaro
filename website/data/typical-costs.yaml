@@ -32,13 +32,22 @@
 #                           a dash; a made-up range is not.
 #   jobs[].nine_in_ten_under_usd  the figure nine runs in ten stayed under.
 #   jobs[].worst_usd        the most expensive single run of that kind, or nothing at all.
-#   per_run_cap_usd         the per-run cap Fugaro's own installation sets, and so the cap
-#                           these runs ran under: the ceiling a looping run meets, and the
-#                           reason the worst figures above are what they are. It is NOT a CLI
-#                           default: `fugaro budget set --per-run N` sets it, and an enforcing
-#                           project with no per-run cap anywhere refuses every lease
-#                           (docs/gcp-setup.md, "Set caps"). A refresh confirms this figure
-#                           with the installation rather than assuming it.
+#   per_run_cap_usd         the per-run cap Fugaro's own installation sets today: the ceiling a
+#                           looping run meets, and the safety net rather than a price. It is NOT
+#                           a CLI default: `fugaro budget set --per-run N` sets it, and an
+#                           enforcing project with no per-run cap anywhere refuses every lease
+#                           (docs/gcp-setup.md, "Set caps"). A refresh confirms this figure with
+#                           the installation rather than assuming it.
+#   per_run_cap_since       the day that cap took effect, as `YYYY-MM-DD`. Printed beside it:
+#                           a cap is a decision with a date, and the page says which cap was in
+#                           force when the figures above were measured.
+#   measured_under_cap_usd  the per-run cap the figures above were measured under. It is a
+#                           second figure and not a copy of the one above: the runs in the
+#                           window finished under an earlier cap, the owner lowered the cap on
+#                           the date above, and a page that printed today's cap as the one these
+#                           runs ran under would be claiming a measurement under a cap that did
+#                           not exist yet. The bars are drawn against **this** cap, so every
+#                           mark sits inside its track, and today's cap is the callout's own.
 #
 # A row is never added without a sample behind it, and a figure is never rounded here: the page
 # prints the value in this file, and a value that is not in this file is a page's own invention
@@ -77,10 +86,20 @@ jobs:
     median_usd: 0.11
     nine_in_ten_under_usd: 0.22
 
-# The per-run cap Fugaro's own installation sets, and the cap every figure above ran under: the
-# ceiling that stops a run which loops. It is not a CLI default. The CLI's `--per-run` defaults
-# to 0, which sets no cap, and an enforcing project with no per-run cap anywhere refuses every
-# lease, so the figure below is a property of this installation and is confirmed with it, never
-# assumed. The daily cap is the other half of the same safety net, and `fugaro budget set`
-# changes both.
-per_run_cap_usd: 10
+# The per-run cap Fugaro's own installation sets today: the ceiling that stops a run which
+# loops, and the safety net rather than a price. It is not a CLI default. The CLI's `--per-run`
+# defaults to 0, which sets no cap, and an enforcing project with no per-run cap anywhere
+# refuses every lease, so the figure below is a property of this installation and is confirmed
+# with it, never assumed. The daily cap is the other half of the same safety net, and
+# `fugaro budget set` changes both. The owner lowered this cap from $10 to $5 on 2026-10-21
+# (the date below) because the cap is only the net under a looping run, which is why the
+# figures above were measured under a different one.
+per_run_cap_usd: 5
+per_run_cap_since: 2026-10-21
+
+# The per-run cap the figures above ran under, and the reason the page prints two of them: the
+# window closed on 2026-10-19, two days before the cap above took effect, so every run behind
+# every figure above finished under this cap. The bars are drawn against this one — a figure
+# placed against a cap that did not exist when it was measured is a figure the page has
+# misread — and the callout above the commands states the cap in force today.
+measured_under_cap_usd: 10

@@ -3,10 +3,14 @@ package schemas_test
 import (
 	"bytes"
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -170,6 +174,97 @@ func TestProjectLayerSchemaClaudeModels(t *testing.T) {
 			t.Errorf("claude_models: %s: schema ok = %v, config.ParseProjectLayer problems = %v", entry, schemaOK, ps)
 		}
 	}
+}
+
+// TestSchemasAgentAuthAgreesWithGo pins both schemas' agent.auth enum to
+// config.AgentAuths — the one list the validator (internal/config/validate.go),
+// the layer's own defaults.agent.auth (layer.go, KnownAgentAuth) and the
+// launcher (internal/cli/run.go) read. Each schema carries its own copy of that
+// list, and with additionalProperties: false and an enum, a copy that lags the
+// Go side refuses at authoring time — in an editor, before any command runs — a
+// file or layer the binary accepts. That is the drift the cascade value
+// introduced: fugaro.schema.json's auth gained it while
+// project-layer.schema.json's defaults.agent.auth kept the three older values,
+// even though config.ParseProjectLayer accepted it (TestLayerAcceptsCascade in
+// internal/config) and docs/project-layer.md lists agent.auth as a key a layer
+// may set.
+//
+// The layer's own round trip is the second half: the enum is compared here and
+// the node it lives on is exercised below, so a list that names the value while
+// the schema refuses the layer carrying it cannot pass. The file's half is
+// testdata/config/valid/agent-auth-cascade.yaml, which TestFugaroSchemaCorpus
+// validates against fugaro.schema.json.
+//
+// Mutation (run, restored): take "cascade" back out of either enum, or add a
+// value to config.AgentAuths, and the comparison fails naming the side that has
+// it.
+func TestSchemasAgentAuthAgreesWithGo(t *testing.T) {
+	for _, tc := range []struct {
+		file string
+		path []string
+	}{
+		{"fugaro.schema.json", []string{"properties", "agent", "properties", "auth"}},
+		{"project-layer.schema.json", []string{"properties", "defaults", "properties", "agent", "properties", "auth"}},
+	} {
+		data, err := os.ReadFile(tc.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(data, &doc); err != nil {
+			t.Fatal(err)
+		}
+		var node any = doc
+		for _, key := range tc.path {
+			m, ok := node.(map[string]any)
+			if !ok {
+				t.Fatalf("%s: %v: not an object at %q", tc.file, tc.path, key)
+			}
+			if node, ok = m[key]; !ok {
+				t.Fatalf("%s: %v: missing %q", tc.file, tc.path, key)
+			}
+		}
+		m, ok := node.(map[string]any)
+		if !ok {
+			t.Fatalf("%s: %v: not an object", tc.file, tc.path)
+		}
+		raw, ok := m["enum"].([]any)
+		if !ok {
+			t.Fatalf("%s: %v: no enum", tc.file, tc.path)
+		}
+		var got []string
+		for _, v := range raw {
+			s, ok := v.(string)
+			if !ok {
+				t.Fatalf("%s: %v: enum entry %v is not a string", tc.file, tc.path, v)
+			}
+			got = append(got, s)
+		}
+		if !sameStrings(got, config.AgentAuths) {
+			t.Errorf("%s: %v enum = %v, config.AgentAuths = %v", tc.file, tc.path, got, config.AgentAuths)
+		}
+	}
+
+	const layer = "version: 1\nproject: aurora\ngcp_project: proj-1234\ndefaults:\n  agent:\n    auth: cascade\n"
+	if err := compile(t, "project-layer.schema.json").Validate(yamlInstance(t, []byte(layer))); err != nil {
+		t.Errorf("project-layer.schema.json rejects a layer whose defaults.agent.auth is cascade: %v", err)
+	}
+	anchor := config.LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
+	if _, ps := config.ParseProjectLayer([]byte(layer), anchor); len(ps) > 0 {
+		t.Errorf("config.ParseProjectLayer rejects the same layer: %v", ps)
+	}
+}
+
+// sameStrings reports whether two string lists hold the same values, order
+// aside (an enum's order is the schema's business, not the Go list's).
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	as, bs := slices.Clone(a), slices.Clone(b)
+	slices.Sort(as)
+	slices.Sort(bs)
+	return slices.Equal(as, bs)
 }
 
 func TestFugaroSchemaCorpus(t *testing.T) {
@@ -371,7 +466,7 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	sch := compile(t, "result.schema.json")
 	at := time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
 	deadline, finished := at.Add(time.Hour), at.Add(10*time.Minute)
-	cost := runstore.NewCost(4.12, 0.38, runstore.BasisAPIList)
+	cost := runstore.NewCost(4.12, 0.38, runstore.BasisAPIList).WithNotional(0.42)
 	// A VM-backed run's estimate carries the price table it was priced from,
 	// which a record has to be able to store (design compute-backend.md
 	// §5.2, C17).
@@ -392,7 +487,15 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			Warning: "w", StartedAt: at, DurationS: 1.5,
 		}},
 		CostUSD: 4.12, Cost: &cost,
-		Stages:    []runstore.StageTiming{{Name: "implement", StartedAt: at, DurationS: 61, ModelUSD: 0.42, Model: "claude-sonnet-5-5"}},
+		Stages: []runstore.StageTiming{{Name: "implement", StartedAt: at, DurationS: 61, ModelUSD: 0.42, ModelNotionalUSD: 0.12, Model: "claude-sonnet-5-5"}},
+		// The switch log (C1.16, D140): the service's record of a credential
+		// change beside the cache-miss estimate only the gateway can compute,
+		// including the one a tier's unmeasured cache behaviour leaves
+		// unknown rather than free (F24).
+		Switches: []runstore.Switch{
+			{To: "repo-shared-b", Reason: "exhausted", CacheMissUSD: 0.00054},
+			{From: "repo-shared-b", To: "api-key", Reason: "not_admitted", CacheMissUnmeasured: true},
+		},
 		StartedAt: at, Deadline: &deadline, FinishedAt: &finished,
 		FinalizeReserveS: 90,
 		// The artifact fields ride along on the fully-populated record so a
@@ -444,6 +547,27 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	}
 	if err := sch.Validate(bad); err == nil {
 		t.Fatal("schema accepts a numeric compute_source")
+	}
+	// A switch log entry is closed too, and its estimate and its "unmeasured"
+	// fact are different things: a record that carries a string where the
+	// estimate goes, or drops the reason, is refused rather than stored.
+	miss := []byte(`"cache_miss_usd":0.00054`)
+	if !bytes.Contains(data, miss) {
+		t.Fatalf("fixture lacks the literal this test replaces: %s", data)
+	}
+	bad, err = jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, miss, []byte(`"cache_miss_usd":"unknown"`), 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(bad); err == nil {
+		t.Error("schema accepts a switch whose cache-miss estimate is not a number")
+	}
+	bad, err = jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, []byte(`"reason":"exhausted"`), []byte(`"why":"exhausted"`), 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(bad); err == nil {
+		t.Error("schema accepts a switch with no reason")
 	}
 	// The rigor block is closed as well (docs/rigor-modes T1.2, D22, D24,
 	// D25): the vocabulary, the layer names, D22's three moments and the
@@ -1020,6 +1144,7 @@ func TestResultSchemaHalted(t *testing.T) {
 	for _, r := range []runstore.HaltReason{
 		runstore.HaltKillSwitch, runstore.HaltRunCap, runstore.HaltRepoDailyCap, runstore.HaltGlobalDailyCap,
 		runstore.HaltNoCap, runstore.HaltTokenCap, runstore.HaltBudgetUnavailable, runstore.HaltBudgetTokenExpired,
+		runstore.HaltNoCredential, runstore.HaltCredsRulesDenied,
 	} {
 		if err := check(r); err != nil {
 			t.Errorf("schema rejects halt reason %q: %v", r, err)
@@ -1028,6 +1153,94 @@ func TestResultSchemaHalted(t *testing.T) {
 	if err := check("other"); err == nil {
 		t.Error(`schema accepts halt reason "other"`)
 	}
+}
+
+// TestResultSchemaHaltReasonsAgreeWithGo pins result.schema.json's halt.reason
+// enum to the HaltReason constants in internal/runstore, in both directions:
+// a reason the Go side can write but the enum lacks is a result.json a
+// consumer validating against the published schema refuses (the cascade's
+// no_credential and creds_rules_denied were exactly that — the enum was a
+// hand-written copy that no test compared to the constants), and a value only
+// the enum knows is a reason no run can produce.
+//
+// The Go constants are read from the source rather than listed here, so a
+// reason added to runstore.go without the schema fails this test instead of
+// silently widening the gap the next time someone reads the list above.
+// Mutation (run, restored): drop a value from the enum, or add one to
+// runstore.go, and this names the side that has it.
+func TestResultSchemaHaltReasonsAgreeWithGo(t *testing.T) {
+	var want []string
+	for _, vs := range haltReasonSpecs(t) {
+		for _, v := range vs.Values {
+			lit, ok := v.(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				t.Fatalf("a HaltReason constant's value is not a string literal: %v", v)
+			}
+			s, err := strconv.Unquote(lit.Value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want = append(want, s)
+		}
+	}
+	if len(want) == 0 {
+		t.Fatal("no HaltReason constants found in ../internal/runstore/runstore.go: this test proves nothing")
+	}
+	data, err := os.ReadFile("result.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	node, _ := doc["properties"].(map[string]any)
+	node, _ = node["halt"].(map[string]any)
+	node, _ = node["properties"].(map[string]any)
+	node, _ = node["reason"].(map[string]any)
+	raw, ok := node["enum"].([]any)
+	if !ok {
+		t.Fatal(`result.schema.json: halt.reason has no enum`)
+	}
+	var got []string
+	for _, v := range raw {
+		s, ok := v.(string)
+		if !ok {
+			t.Fatalf("result.schema.json: halt.reason enum entry %v is not a string", v)
+		}
+		got = append(got, s)
+	}
+	if !sameStrings(got, want) {
+		t.Errorf("result.schema.json halt.reason = %v, internal/runstore's HaltReason constants = %v", got, want)
+	}
+}
+
+// haltReasonSpecs returns every value spec in runstore.go whose declared type
+// is HaltReason.
+func haltReasonSpecs(t *testing.T) []*ast.ValueSpec {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "../internal/runstore/runstore.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []*ast.ValueSpec
+	for _, decl := range f.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gd.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			if id, ok := vs.Type.(*ast.Ident); ok && id.Name == "HaltReason" {
+				out = append(out, vs)
+			}
+		}
+	}
+	return out
 }
 
 func TestPolicyRecordSchema(t *testing.T) {

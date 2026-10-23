@@ -266,7 +266,7 @@ func profileNameOf(at string) string {
 
 // DeriveAccounts is the policy's accounts block, derived from the operator's
 // local config: the one anchor, one edit rule (D3, D5). It is publish's
-// function, and the deployer's — `fugaro init` validates the profiles it is
+// function, and the deployer's — `fugaro update` validates the profiles it is
 // about to deploy against the same block (internal/infra's ProjectJobs), so
 // the document that gates a run and the jobs that run are built from one
 // answer.
@@ -294,7 +294,7 @@ func profileNameOf(at string) string {
 //
 // Every refusal names the profile that lists the account and the block the
 // operator edits (design §4.4 rows 1 and 2): this runs at publish and at
-// `fugaro init`, and both readers are the operator, at a terminal.
+// `fugaro update`, and both readers are the operator, at a terminal.
 func DeriveAccounts(profiles map[string]Profile, accounts map[string]config.ClaudeAccount, projectSecrets map[string]config.ProjectSecret) (map[string]Account, error) {
 	named := map[string][]string{} // account name → the profiles naming it, sorted
 	for _, name := range profileMapNames(profiles) {

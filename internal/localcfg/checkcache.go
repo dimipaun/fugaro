@@ -2,10 +2,10 @@ package localcfg
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -38,13 +38,9 @@ func cachePath(getenv func(string) string, kind, name string) (string, error) {
 	if !config.ProjectNameRE.MatchString(name) {
 		return "", fmt.Errorf("%q is not a project name", name)
 	}
-	dir := getenv("XDG_CACHE_HOME")
-	if dir == "" {
-		home := getenv("HOME")
-		if home == "" {
-			return "", errors.New("neither XDG_CACHE_HOME nor HOME is set, so the " + kind + " cache can't be written")
-		}
-		dir = filepath.Join(home, ".cache")
+	dir, err := UserDir(getenv, runtime.GOOS, DirCache)
+	if err != nil {
+		return "", fmt.Errorf("%w, so the %s cache can't be written", err, kind)
 	}
 	return filepath.Join(dir, "fugaro", kind, name+".json"), nil
 }
@@ -88,7 +84,11 @@ func SaveNameCheck(getenv func(string) string, name string, c NameCheck) error {
 
 // writeCacheFile writes data to path, mode 0600 in a 0700 directory,
 // through a temporary file renamed over it: a reader sees the old file or
-// the new one, never a part.
+// the new one, never a part. The temporary file is synced before the rename,
+// so a crash cannot leave the new name pointing at a file whose contents never
+// reached the disk (for the remembered checkouts that would be a zero-length
+// state file, which the reader refuses and the writer would otherwise leave
+// refusing until someone deleted it).
 func writeCacheFile(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
@@ -103,6 +103,10 @@ func writeCacheFile(path string, data []byte) error {
 		return err
 	}
 	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
 		tmp.Close()
 		return err
 	}

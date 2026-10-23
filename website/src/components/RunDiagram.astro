@@ -502,14 +502,29 @@ const ALT =
 
   /* Paint: tokens only (W1.2), and the accent is the structure the draft asks for — the
      arrows, the numbers and the band's rule. The cards are the surface, the names are the
-     page's own text, and the labels under them are the quieter tone. */
-  .run-card {
+     page's own text, and the labels under them are the quieter tone.
+
+     **`:global()` around every shape, because the drawing arrives through `set:html`.** The
+     shapes these rules paint are markup this component generates and hands to `set:html`
+     (`drawWide`/`drawTall` above), and Astro appends the component's `data-astro-cid-…` to
+     **every** compound of a scoped selector: `.run-card` was built as `.run-card[cid]`, and a
+     `<rect>` the drawing writes carries no `cid` for that to match. Every rule of this block
+     was dead, and the drawing shipped as the owner found it on 2026-10-21 — a series of black
+     rectangles: SVG's own default `fill` is black and its default `stroke` is none, so each
+     card and each label painted black and the arrows, which are stroke alone, were not drawn
+     at all. `:global()` opts the shape's own compound out of the scoping and leaves
+     `.run-diagram` scoped to this component, so a rule reaches this drawing and nothing else
+     on the site; `website/test/how-it-works.mjs` reads whether a shape's paint comes from a
+     rule that can reach it rather than whether a rule with that class exists, and refuses a
+     shape left with SVG's own default. The rules above stay scoped: they style elements this
+     component's own template renders, which do carry the scope. */
+  .run-diagram :global(.run-card) {
     fill: var(--surface);
     stroke: var(--border);
     stroke-width: 1.5;
   }
 
-  .run-band {
+  .run-diagram :global(.run-band) {
     fill: var(--surface);
     stroke: var(--accent);
     stroke-width: 1.5;
@@ -520,58 +535,58 @@ const ALT =
      is what `spacing.mjs` reads a page's own stylesheet for. Two labels of the drawing are
      therefore never read as one glued word, and the wrapped rows of one label are as many
      lines as the drawing gives them. */
-  .run-name,
-  .run-band-title {
+  .run-diagram :global(.run-name),
+  .run-diagram :global(.run-band-title) {
     display: block;
     fill: var(--text);
     font-family: var(--font-sans);
     font-weight: var(--weight-semibold);
   }
 
-  .run-text {
+  .run-diagram :global(.run-text) {
     display: block;
     font-family: var(--font-sans);
   }
 
-  .run-number {
+  .run-diagram :global(.run-number) {
     display: block;
     fill: var(--accent-on-dark);
     font-family: var(--font-sans);
     font-weight: var(--weight-semibold);
   }
 
-  .run-small,
-  .run-cap {
+  .run-diagram :global(.run-small),
+  .run-diagram :global(.run-cap) {
     display: block;
     fill: var(--text-muted);
   }
 
-  .run-line,
-  .run-stage {
+  .run-diagram :global(.run-line),
+  .run-diagram :global(.run-stage) {
     display: block;
     fill: var(--text);
   }
 
-  .run-stage-pill {
+  .run-diagram :global(.run-stage-pill) {
     fill: var(--ground);
     stroke: var(--border);
     stroke-width: 1;
   }
 
-  .run-loop {
+  .run-diagram :global(.run-loop) {
     display: block;
     fill: var(--accent-on-dark);
   }
 
-  .run-arrow-line,
-  .run-loop-line {
+  .run-diagram :global(.run-arrow-line),
+  .run-diagram :global(.run-loop-line) {
     stroke: var(--accent);
     stroke-width: 2;
     fill: none;
   }
 
-  .run-arrow-head,
-  .run-loop-head {
+  .run-diagram :global(.run-arrow-head),
+  .run-diagram :global(.run-loop-head) {
     fill: var(--accent);
   }
 
@@ -655,12 +670,36 @@ const ALT =
   }
 
   /* The facts the picture does not carry: the board's panel list — the panel, the hairline and
-     the larger radius, with a hairline between two rows and none under the last. */
+     the larger radius, with a hairline between two rows and none under the last.
+
+     **Every item carries a bullet a reader can see** (the owner's feedback of 2026-10-21: "can
+     we have a bullet point for each of the items?", and again on 2026-10-22: the bullets were
+     not there to read). The board draws a mark of its own per row and this page draws none, so
+     the five facts read as one run-on paragraph; the marker is the list's own and the row's
+     typography is the board's, unchanged. Its colour is the quieter tone `base.css` gives every
+     marker on the site.
+
+     **The room is the list's own, and it is what the first fix left out.** The marker is drawn
+     outside the row's box and in the *list's* inline padding — which is why the browser's own
+     stylesheet gives every list 40 px of it — and this list had none: its padding was `0`, so
+     its markers were drawn to the left of its own padding box, where the panel's
+     `overflow: hidden` (the clip the rounded corners need) took them away. The rows were list
+     items with `list-style: disc` and not a bullet on any of them, which is what the owner read
+     on 2026-10-22 and what settles where the marker is drawn: the row's own start padding
+     (`--space-lg`, 32 px) is not the room it is drawn in. So the inset below is the one
+     `base.css` gives every list on the site (`:where(ul, ol) { padding-left: var(--space-md) }`),
+     the rows keep their own padding, and the bullet is drawn in the list's — pinned by
+     `website/test/how-it-works.mjs`, which refuses a marker drawn outside the list with no room
+     for it, and refuses a list drawn with no marker at all. */
   .run-also {
     max-width: none;
     margin: 0;
     padding: 0;
-    list-style: none;
+    /* The room the markers are drawn in: the same inset `base.css` gives every list on the
+       site. Without it the panel's clip takes them away, and the rows of this list read as the
+       run-on paragraph the owner read twice. */
+    padding-inline-start: var(--space-md);
+    list-style: disc;
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-xl);
     background: var(--panel);

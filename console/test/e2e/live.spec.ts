@@ -29,11 +29,19 @@
 //
 // **The goldens.** `test/e2e/__screenshots__/live-{light,dark}-<platform>.png`
 // (one per theme per platform: `darwin` and `linux`, because macOS and Linux
-// pixels differ and CI runs both) are compared, never written by a run: `playwright.config.ts` sets
-// `updateSnapshots: 'none'`, so a missing baseline FAILS (Playwright's
-// `'missing'` would write one and pass, comparing nothing). They are recorded by
-// an owner, once on each platform the comparison runs on, with
-// `npx playwright test live.spec.ts --update-snapshots`, and the
+// pixels differ and CI runs both) are compared, never written by a run:
+// `playwright.config.ts` sets `updateSnapshots: 'none'`, so a missing baseline
+// FAILS a comparison run (Playwright's `'missing'` would write one and pass,
+// comparing nothing). They are recorded by an owner, once on each platform the
+// comparison runs on, with
+//
+//   cd console && npm run build && npx playwright test live.spec.ts --update-snapshots
+//
+// — `npm run build` is in the line because the specs read `dist/` and
+// `npx playwright test` does not build, and on Linux it takes
+// `xvfb-run --auto-servernum` before `npx playwright test` because Electron
+// needs a display. `test/support/goldens.ts`'s `recordCommand` is that line, per
+// spec and per platform, and it is what a failed golden's message prints. The
 // three PNG-writing and PNG-reading tests below are the only ones that need
 // them. Until they are committed those tests fail, on purpose. The one way to
 // run the rest of the file without them is the explicit
@@ -86,6 +94,7 @@ import type { JSONDoc } from '../../src/source/source'
 import { LIVE_THEMES } from '../../src/renderer/screens/live'
 import { inRangeCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
+import { expectGolden, expectGrounded } from '../support/goldens'
 import { launchConsole } from '../support/launch'
 
 // The console's own directory, from this file's location: `test/e2e/x.spec.ts`
@@ -99,10 +108,15 @@ const goldenDir = join(consoleDir, 'test', 'e2e', '__screenshots__')
  * the golden tests run and a missing baseline fails them. */
 const SKIP_GOLDENS = process.env['FUGARO_CONSOLE_GOLDENS'] === 'skip'
 
+/** SPEC is this file's own name: what a re-record command has to name, and what
+ * every golden failure here quotes back to the reader. */
+const SPEC = 'live.spec.ts'
+
 /** The compiled modules the screen is made of, in dependency order. */
 const MODULES: readonly string[] = Object.freeze([
   'shared/availability.js',
   'shared/sanitize.js',
+  'shared/launcher.js',
   'shared/version.js',
   'shared/schema.js',
   'renderer/app.js',
@@ -421,18 +435,41 @@ test.describe('the Live screen', () => {
     expect(drawn.text).toContain('n/a')
   })
 
-  test('draws the live fixture', async () => {
-    test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
-    await mount(theLastFrame(), 'light')
-    await expect(page.locator(THE_MOUNT)).toHaveScreenshot('live-light.png')
+  test('is painted from the design tokens, not from the browser defaults', async () => {
+    // Design section 6.2's computed-ground assertion, and the one case in this
+    // file that is red when the stylesheet stops being linked. Every read above
+    // passes on a tree nothing paints: the theme travels as a `data-theme`
+    // attribute the renderer stamps (`root.setAttribute('data-theme', theme)`),
+    // so a document with no CSS at all satisfies all of them. This draws the
+    // screen once per theme and holds the app's ground, the screen's text colour
+    // and the two tokens they are painted from to the shipped palette
+    // (`test/support/goldens.ts`).
+    //
+    // NOT a golden test, deliberately: `FUGARO_CONSOLE_GOLDENS=skip` does not
+    // skip it. Nothing here reads a PNG -- it is the assertion that the
+    // stylesheet the console serves is the one the screens are drawn with, so an
+    // unstyled tree has to be red on its own account rather than recorded as a
+    // fresh baseline nobody compared.
+    await expectGrounded(page, (theme) => mount(theLastFrame(), theme), {
+      themes: LIVE_THEMES,
+      mount: THE_MOUNT,
+      text: 'h1.live-project',
+      screen: 'the Live screen',
+    })
   })
 
-  test('draws the live fixture in the dark theme', async () => {
+  test('draws the live fixture', async ({}, testInfo) => {
+    test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
+    await mount(theLastFrame(), 'light')
+    await expectGolden(page.locator(THE_MOUNT), 'live-light.png', { spec: SPEC, consoleDir, testInfo })
+  })
+
+  test('draws the live fixture in the dark theme', async ({}, testInfo) => {
     await mount(theLastFrame(), 'dark')
     const drawn = await screen(page)
     expect(drawn.theme).toBe('dark')
     test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
-    await expect(page.locator(THE_MOUNT)).toHaveScreenshot('live-dark.png')
+    await expectGolden(page.locator(THE_MOUNT), 'live-dark.png', { spec: SPEC, consoleDir, testInfo })
   })
 
   test('windows the burn sparkline at the document\'s own clock', async () => {

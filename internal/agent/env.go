@@ -90,6 +90,12 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 			// agent, whatever a workflow declares.
 			return nil, nil, fmt.Errorf("secret %s is a provider key, which the agent never gets", k)
 		}
+		if spec.Auth == config.AuthCascade && config.IsModelSecretEnv(k) {
+			// A cascade run's agent gets no model credential at all (D143):
+			// the credentials service holds them and attaches one per call,
+			// so a declared mount of one is refused rather than mounted.
+			return nil, nil, fmt.Errorf("secret %s is a model credential and agent.auth is %s, which holds none: the credentials service attaches a credential per call and this agent never gets one (D143)", k, config.AuthCascade)
+		}
 	}
 	// Provider keys are in the runner's environment (the gateway reads them)
 	// and nowhere in the allow-list above; they are registered for redaction
@@ -132,6 +138,23 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 			return nil, nil, fmt.Errorf("auth: oauth never goes through the gateway")
 		}
 		secretNames = append([]string{"CLAUDE_CODE_OAUTH_TOKEN"}, secretNames...)
+	case config.AuthCascade:
+		// A cascade run carries no credential of its own: the credentials
+		// service holds every model credential and attaches one per call
+		// (D143), so there is no secret to require, nothing to mount, and
+		// nothing of the job's own in the environment. What Claude Code
+		// presents is the gateway's per-run token, which GatewayVars sets
+		// below; a real key the runner's environment happens to hold is
+		// registered for redaction here and never handed to the agent.
+		if spec.Gateway == nil {
+			return nil, nil, fmt.Errorf("auth: %s runs through the gateway, and this agent has none: a cascade run has no credential of its own to fall back to (D143)", config.AuthCascade)
+		}
+		if realKey := p["ANTHROPIC_API_KEY"]; realKey != "" {
+			if len(realKey) < 4 {
+				return nil, nil, fmt.Errorf("secret ANTHROPIC_API_KEY is shorter than 4 bytes, so it cannot be redacted safely")
+			}
+			secretValues = append(secretValues, realKey)
+		}
 	default:
 		return nil, nil, fmt.Errorf("unknown agent auth %q", spec.Auth)
 	}
@@ -208,7 +231,11 @@ func GatewayVars(auth string, g Gateway, parent map[string]string) (map[string]s
 		"no_proxy": withLoopback(parent["no_proxy"]),
 	}
 	switch auth {
-	case "api-key":
+	case "api-key", config.AuthCascade:
+		// A cascade run is the api-key case's shape with no key behind it:
+		// Claude Code is pointed at the gateway and presents the gateway's
+		// own per-run token, and the real credential is attached to the call
+		// by the credentials service, which the job never holds (D143).
 		if g.Token == "" {
 			return nil, fmt.Errorf("the gateway has no token")
 		}

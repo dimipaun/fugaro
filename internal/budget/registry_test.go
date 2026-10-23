@@ -90,19 +90,19 @@ func TestRegistryClipsTheCredentialAndTheWaitingTime(t *testing.T) {
 // TestRegistryDropsNewKeysOnceWhenRulesRefuse (Review Focus 4): rules
 // deployed before 0.7.0 refuse an entry that carries action or tokens
 // (their $other). The session drops both for the rest of the run, warns
-// once naming fugaro init, and the entry is still written without them.
+// once naming fugaro update, and the entry is still written without them.
 func TestRegistryDropsNewKeysOnceWhenRulesRefuse(t *testing.T) {
 	f := newFixture(t)
 	logs := captureLog(f)
 	s := f.started(budget.AgentEntry{Stage: "bootstrap"})
 	f.db.DenyKeys("action", "tokens")
 	s.Update(func(e *budget.AgentEntry) { e.Action, e.Tokens = "tool Bash: go test", 1200 })
-	waitFor(t, "the fallback warning", func() bool { return strings.Contains(logs.String(), "fugaro init") })
+	waitFor(t, "the fallback warning", func() bool { return strings.Contains(logs.String(), "fugaro update") })
 	waitFor(t, "the entry to settle without the new keys", func() bool {
 		e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any)
 		return e != nil && e["stage"] == "bootstrap" && e["action"] == nil && e["tokens"] == nil
 	})
-	if n := strings.Count(logs.String(), "fugaro init"); n != 1 {
+	if n := strings.Count(logs.String(), "fugaro update"); n != 1 {
 		t.Fatalf("warned %d times, want once: %s", n, logs.String())
 	}
 	// The coder keeps calling Update with a new action after the drop (every
@@ -117,7 +117,7 @@ func TestRegistryDropsNewKeysOnceWhenRulesRefuse(t *testing.T) {
 	if e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any); e["action"] != nil || e["tokens"] != nil {
 		t.Fatalf("a later Update brought the dropped keys back: %v", e)
 	}
-	if n := strings.Count(logs.String(), "fugaro init"); n != 1 {
+	if n := strings.Count(logs.String(), "fugaro update"); n != 1 {
 		t.Fatalf("warned %d times after a later Update, want still once: %s", n, logs.String())
 	}
 }
@@ -198,7 +198,7 @@ func TestRegistryKeepsNewKeysWhenRulesAccept(t *testing.T) {
 		e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any)
 		return e != nil && e["action"] == "tool Bash: go test"
 	})
-	if strings.Contains(logs.String(), "fugaro init") {
+	if strings.Contains(logs.String(), "fugaro update") {
 		t.Fatalf("warned even though the rules accepted the keys: %s", logs.String())
 	}
 	if e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any); e["tokens"] != json.Number("1200") {
@@ -225,8 +225,8 @@ func TestRegistryRecoversFromATransientDoubleRefusal(t *testing.T) {
 		e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any)
 		return e != nil && e["stage"] == "bootstrap" && e["action"] == nil && e["tokens"] == nil
 	})
-	waitFor(t, "the fallback warning", func() bool { return strings.Contains(logs.String(), "fugaro init") })
-	if n := strings.Count(logs.String(), "fugaro init"); n != 1 {
+	waitFor(t, "the fallback warning", func() bool { return strings.Contains(logs.String(), "fugaro update") })
+	if n := strings.Count(logs.String(), "fugaro update"); n != 1 {
 		t.Fatalf("warned %d times, want once: %s", n, logs.String())
 	}
 }
@@ -234,7 +234,7 @@ func TestRegistryRecoversFromATransientDoubleRefusal(t *testing.T) {
 // TestRegistryReArmsAfterRulesStopAcceptingTheNewKeys (review focus 4):
 // checkNewKeys only ever probes once it has a definite answer, so once it
 // has found the rules accept the keys it never looks again. If the rules
-// are then redeployed older (an operator reran an old fugaro init, or
+// are then redeployed older (an operator reran an old fugaro update, or
 // rolled back), only heartbeat's own fallback — spotting a permission
 // refusal on a beat whose entry still carries the keys — can notice and
 // re-arm the probe; checkNewKeys's own per-beat retry (pinned by
@@ -254,7 +254,7 @@ func TestRegistryReArmsAfterRulesStopAcceptingTheNewKeys(t *testing.T) {
 		e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any)
 		return e != nil && e["action"] == nil && e["tokens"] == nil
 	})
-	waitFor(t, "the fallback warning", func() bool { return strings.Contains(logs.String(), "fugaro init") })
+	waitFor(t, "the fallback warning", func() bool { return strings.Contains(logs.String(), "fugaro update") })
 }
 
 // TestRegistryOutageDoesNotDropNewKeys (review focus 4): an outage (503, not
@@ -273,7 +273,7 @@ func TestRegistryOutageDoesNotDropNewKeys(t *testing.T) {
 		e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any)
 		return e != nil && e["action"] == "tool Bash: go test"
 	})
-	if strings.Contains(logs.String(), "fugaro init") {
+	if strings.Contains(logs.String(), "fugaro update") {
 		t.Fatalf("an outage was mistaken for old rules refusing the keys: %s", logs.String())
 	}
 }

@@ -153,6 +153,7 @@ func Validate(c *Config) []Problem {
 		add("agent.oauth_token", "must be a Claude account name")
 	}
 	ps = append(ps, validateAgentModels(c.Agent)...)
+	ps = append(ps, validateCascadeFollowup(c.Agent, c.Followup)...)
 	ps = append(ps, validateBudget(c.Budget)...)
 	ps = append(ps, validateFollowup(c.Git.Provider, c.Followup)...)
 	if c.Rigor != nil {
@@ -241,6 +242,17 @@ func Validate(c *Config) []Problem {
 				// value the repository chose. Refused whether or not a Codex
 				// provider ever names it.
 				add(sp+".name", "%s and names starting %s are reserved for the Codex harness's OAuth credential (codex-oauth-token), not a workflow secret", CodexOAuthToken, CodexOAuthTokenPrefix)
+			} else if s.Name == CredentialsBundleSecret {
+				// The credentials service's one bundle container (C1.11's
+				// review finding n2). Nothing mounts it: its document is every
+				// model credential the installation holds, and the service is
+				// the only reader. A workflow that declared the name would
+				// mount that document into a job — the whole credential set,
+				// into a container a run's agent can read — so the name is
+				// refused here, where every other reserved name is refused,
+				// and again at `fugaro secrets set` (internal/cli's
+				// credentialsBundleRefusal), which is the write path.
+				add(sp+".name", "%s is the credentials service's own bundle container (the platform's), not a workflow secret", CredentialsBundleSecret)
 			}
 			switch {
 			case !envNameRE.MatchString(s.Env):
@@ -378,6 +390,65 @@ func validateRigor(p string, mode rigor.Mode, areas []rigor.Area) []Problem {
 		}
 	}
 	return ps
+}
+
+// validateCascadeFollowup reports the one thing followup.allow_public cannot
+// be beside: a cascade credential. AllowPublic lets a follow-up run on a
+// public repository (config.go's Followup.AllowPublic, read at
+// internal/runner/followup.go), where a commenter who can push branches can
+// steer the run's prompts — and what the cascade puts behind those prompts is
+// a shared subscription credential (docs/credentials-service, D130: the
+// refusal the held OAuth reviewer-stage plan carried over, its P6), so a run
+// there may be steered by someone who was never trusted with it. It is a
+// refusal rather than a warning for that reason: the whole point of an
+// opt-in for a residual risk this size is that the dangerous combinations are
+// hard refusals. The message names both ways out — the key to remove, and the
+// auths a run that needs public follow-ups may use.
+func validateCascadeFollowup(a Agent, f Followup) []Problem {
+	if a.Auth != AuthCascade || !f.AllowPublic {
+		return nil
+	}
+	return []Problem{{Path: "followup.allow_public", Message: fmt.Sprintf(
+		"cannot be true with agent.auth: %s: a follow-up on a public repository can be steered by anyone who can push a branch, and a cascade run's prompts are carried by a shared subscription credential, which only trusted work may reach (D130). Remove followup.allow_public (follow-ups stay on private repositories), or run this repository with agent.auth: api-key or vertex",
+		AuthCascade)}}
+}
+
+// CheckCascadeGateway refuses a cascade workflow whose budget leaves the
+// gateway off. A cascade run has no credential of its own — the gateway is
+// what carries its calls to the credentials service and accounts for them
+// (D143) — so the mode has to be observe or enforce, and a mode that is off
+// (or unset, which the runner reads the same way) is refused, naming the mode
+// it found.
+//
+// mode is the run's *effective* budget mode (policy.Merge over the project's
+// ceiling and the file), not the file's own, and that is why this rule is a
+// function of a mode rather than a line inside Validate: Validate holds one
+// file, and the file's mode is only a lower bound on the run's (a later layer
+// may only tighten). A file that writes no budget under an installation whose
+// ceiling enforces is a cascade workflow whose gateway is on, and refusing it
+// here would refuse a valid repository.
+//
+// Its callers hold the merge, because Validate holds one file and the run's
+// mode is a function of the layers above it: `fugaro validate`
+// (internal/cli/validate.go, cascadeProblems) is the author's side, and the
+// launch (internal/cli/run.go, cascadeLaunchRefusal) is the operator's — a
+// launch refuses a cascade run whose effective mode leaves the gateway off,
+// before the claim is taken and before anything is written, rather than
+// letting the job fail on it.
+func CheckCascadeGateway(a Agent, mode string) []Problem {
+	if a.Auth != AuthCascade || mode == policy.ModeObserve || mode == policy.ModeEnforce {
+		return nil
+	}
+	found := fmt.Sprintf("budget.mode is %s", mode)
+	switch mode {
+	case "":
+		found = "budget.mode is not set (an absent mode and off are the same to the runner)"
+	case policy.ModeOff:
+		found = "budget.mode is off"
+	}
+	return []Problem{{Path: "agent.auth", Message: fmt.Sprintf(
+		"%s needs the budget gateway: %s, and the gateway is what carries a cascade run's calls and accounts for them (a cascade run has no credential of its own). Set budget.mode to %s or %s — in the project config, or in fugaro.yaml",
+		AuthCascade, found, policy.ModeObserve, policy.ModeEnforce)}}
 }
 
 // A trusted account ID, per provider: GitHub's numeric user ID, and

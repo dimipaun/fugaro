@@ -62,6 +62,19 @@ import type { TextClass } from './sanitize'
  * WIRE_TEXT_CLASSES is the class of every string key the wire carries that is
  * *text*: something a job or an installation wrote, which must be sanitized
  * before it is drawn.
+ *
+ * A screen draws a key in the class this map gives it (`app.ts`'s `putText`),
+ * **with one deliberate exception, and it is `launched_by`**: the Live and
+ * Projects rows draw its *short form* -- the CLI's own cut, the part before an
+ * address's first `@` (`shared/launcher.ts`) -- through the `label` class. The
+ * class below is a validating one and refuses a dotted local part
+ * (`dana.lopez@example.com`, the commonest corporate shape) along with every
+ * display name, so the column the owner asked for on 2026-10-18 would read `n/a`
+ * for most of the people who use it. The **whole** recorded value is drawn in
+ * the Run screen's header, in `person`, exactly as this map says -- so no
+ * address is drawn anywhere. `console/README.md`'s class table and
+ * `docs/design/desktop-console.md` §6.2 record the decision; `launcher.ts` is
+ * the module and carries the reasoning.
  */
 export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.freeze({
   // The document's own fields.
@@ -101,6 +114,16 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   provider: 'label',
   account: 'person',
   launched_by: 'person',
+  // 0.10.0's key on the live run shape (credentials-service C1.21): the **name**
+  // -- never the value -- of the credential the run's cascade is spending on.
+  // A label, the class an identifier a policy or the service wrote carries
+  // (`job`, `profile`, `provider`), and not `person`: it names a token's
+  // account, not a person. It goes through the free-text rules like every other
+  // label, so a document that carried a *value* here instead of a name draws
+  // the token marker -- which is the direction the contract's "never a value"
+  // promise has to fail in. `waiting_until`, the other 0.10.0 key, is not here:
+  // it is a stamp, and it is in `NON_TEXT_STRING_KEYS`.
+  credential: 'label',
   branch: 'branch',
   log_url: 'url',
   // A pull request's URL. It is *text* -- design section 4.3's gap 7 is that
@@ -164,8 +187,9 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
  * `mode`, `state`, `health`, `status`, `outcome`, `auth` and `deadline` are
  * enums the CLI writes from its own constant tables; `day`, `now`, `at` and
  * `created` are timestamps; `model_basis` is the spend basis (`subscription`
- * or `api-list`), which decides whether a dollar figure is notional and is
- * therefore a *value* the console compares and never a label it draws.
+ * or `api-list`) and is therefore a *value* the console compares and never a
+ * label it draws -- and since C1.16 the split itself is `model_notional_usd`,
+ * with the basis only the fallback for a row that carries none (P12).
  */
 export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   'mode',
@@ -178,6 +202,14 @@ export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   'state',
   'health',
   'status',
+  // `derived` is the read side's own derivation for a run whose record was
+  // never finalized (`runview.DerivedPreempted`, the CLI's 2026-10-21 ruling:
+  // a preempted Cloud Batch job is derived when the run is read and never
+  // written back). It sits beside `status` rather than replacing it -- the row
+  // reads `status: "failed"`, `derived: "preempted"` -- and it is an enum the
+  // CLI writes from its own one-entry table, the same kind of value `status`
+  // and `outcome` are. It is not drawn from free text and never sanitized.
+  'derived',
   'outcome',
   'auth',
   'deadline',
@@ -196,6 +228,14 @@ export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   'pushed_head',
   'started_at',
   'pr_status_at',
+  // 0.10.0 (credentials-service C1.21): when a run waiting for a credential
+  // expects to resume at, RFC 3339 UTC. It is a stamp for the same reason the
+  // others are -- an instant a reader compares with `now`, and one whose
+  // **presence** is the state ("this run is held up rather than spending")
+  // rather than a string to draw. The scrub shifts it with the rest of the
+  // clock (`tools/scrub-fixture/scrub.ts`'s `instant` rule, beside `now` and a
+  // kill's `at`), so a fixture's copy is a reading and not the wire's own value.
+  'waiting_until',
 ])
 
 /**
@@ -483,6 +523,12 @@ export interface RunView {
   readonly stuck: boolean
   readonly workflow: string
   readonly requestedBy: string
+  /** launchedBy is who started the run, as its own `launch.json` recorded the
+   * launcher (0.9.0). It is the **whole** recorded value and not the short form
+   * a column has room for: the cut belongs to the screen that draws a column
+   * (`shared/launcher.ts`), so the document's own text stays whole for the Run
+   * screen and for a reader of the model. */
+  readonly launchedBy: string
 }
 
 /**
@@ -521,19 +567,26 @@ export interface LiveDocument {
   readonly queuedNote: string | null
 }
 
-/** CostView is the six fields of `runstore.Cost` the console reads. */
+/** CostView is the seven fields of `runstore.Cost` the console reads. */
 export interface CostView {
   readonly modelUsd: Reading
+  /** modelNotionalUsd is the part of `modelUsd` a subscription paid for
+   * (C1.16, P12/D140: "every reader of the run's dollars must split on the new
+   * field rather than on `ModelBasis`"). `modelUsd` is the **whole** model
+   * figure -- money and the plan's list price together -- so a reader draws
+   * `modelUsd` minus this as the billed dollars, and never the whole figure. A
+   * row written before C1.16 has no such key (`omitempty`), and then the
+   * subscription basis is what says the row's whole figure was the plan's:
+   * unavailable here, which is the state the screens fall back on. */
+  readonly modelNotionalUsd: Reading
   readonly computeUsd: Reading
   readonly computeEstimated: boolean
   readonly totalUsd: Reading
-  /** modelBasis says what `modelUsd` *is*: billed when it is `api-list`, a
-   * subscription's notional spend when it is `subscription`
-   * (`runstore.BasisSubscription`). There is deliberately no
-   * `modelNotionalUsd` here: `runstore.Cost` has no such key -- the notional
-   * split exists once per *sum*, on `runview.Totals.model_notional_usd`, and
-   * reading it off a single row would have been a reading that is permanently
-   * unavailable on every document the CLI can produce. */
+  /** modelBasis is the basis the run's model figure was charged on
+   * (`api-list`, or `subscription` for an all-notional row, and it is
+   * `api-list` for the whole of a mixed cascade run -- `runstore.BasisSubscription`).
+   * It is the **fallback** for a row that carries no `modelNotionalUsd`, never
+   * the split itself. */
   readonly modelBasis: string
 }
 
@@ -553,6 +606,9 @@ export interface RecordView {
   readonly outcome: string
   readonly prUrl: string | null
   readonly requestedBy: string
+  /** launchedBy is who started the run, whole, as on `RunView`: the Run screen's
+   * header draws it (`shared/launcher.ts`'s `launcherFull`). */
+  readonly launchedBy: string
   readonly logUrl: string
   readonly created: string
   readonly cost: CostView
@@ -677,12 +733,28 @@ export const REPO_KEYS = [
  * **`job`, `profile`, `provider`, `account` and `launched_by` arrived with
  * 0.9.0** (the project-centric job triple, and who launched a run), and this
  * list did not have them: every 0.9.0 `watch --json` document was refused whole
- * as `runs[0].launched_by`. They are accepted and not read, like `title` on
- * `runview.Row`: no Live-screen column draws them yet. They are classified in
+ * as `runs[0].launched_by`. **`launched_by` is read now** -- the Live row draws
+ * it as its Started-by cell (`shared/launcher.ts`, owner request 2026-10-18) --
+ * and the other four are accepted and not read, like `title` on `runview.Row`:
+ * no Live-screen column draws them yet. They are classified in
  * `WIRE_TEXT_CLASSES` all the same -- `job`, `profile` and `provider` as
  * labels, `account` and `launched_by` as people -- because a string this shape
  * may carry is a string the sanitizer must have a class for the moment a screen
  * draws it.
+ *
+ * **`credential` and `waiting_until` arrived with 0.10.0** (credentials-service
+ * C1.21, the cascade's current credential and a held-up run's resume instant),
+ * and they are `JSONRun`'s alone: a finished run is spending on nothing and
+ * waiting for nothing, which is why `FINISHED_KEYS` does not carry them and the
+ * test that pins both lists names them separately. They are accepted and not
+ * read for the same reason as the five above -- no Live-screen column draws
+ * them -- and classified the same way: `credential` as a label (a name an
+ * operator or the service gave a token, never a value) and `waiting_until` as a
+ * stamp in `NON_TEXT_STRING_KEYS`, an instant a reader compares with `now`.
+ * The drift is the same drift, and it is worth naming as such: this list went
+ * two keys short when the fields landed, both console jobs failed on it, and
+ * nothing in the committed fixture could have caught it, because the recording
+ * predates the fields.
  *
  * Exported so `schema.test.ts` can pin it against the struct, as it pins
  * `RECORD_KEYS` and `REPO_KEYS`. */
@@ -712,6 +784,8 @@ export const RUN_KEYS = [
   'provider',
   'account',
   'launched_by',
+  'credential',
+  'waiting_until',
 ]
 /** FINISHED_KEYS is **every** JSON key of `JSONFinished`
  * (`internal/watch/json.go`), in the struct's own order -- `finished[]` and
@@ -751,11 +825,11 @@ const TOTALS_KEYS = ['runs', 'model_usd', 'model_notional_usd', 'compute_usd', '
  * console happens to read, and a key the CLI adds in a later version is *still*
  * refused -- which is the point of closing the shape: a document the console
  * does not fully understand becomes Task 3.2's skew state, not a half-drawn
- * list. Keys accepted and not read (`title`, `launched_by`, `project_layer`,
+ * list. Keys accepted and not read (`title`, `project_layer`,
  * `config_sha256`, `image_age_s`, `changed_files`, `rigor`, `artifact_count`, `artifact_bytes`,
  * `task_pr`, `record_pr`, `pr`, `pushed_head`, `started_at`, `draft_fallback`,
  * `pr_status_at`, `stale_draft`, `execution`, `batch`, `halt`, `previous_run`,
- * `base_branch`)
+ * `base_branch`, `derived`)
  * are the ones this screen has no use for yet; they are listed so that a
  * document carrying them is read rather than thrown away.
  *
@@ -775,14 +849,25 @@ const TOTALS_KEYS = ['runs', 'model_usd', 'model_notional_usd', 'compute_usd', '
  * skew state. It is accepted and not read: the Runs screen's rows are this
  * document's records, and nothing here renders a record's title yet.
  *
+ * **`derived` arrived with the read-side preemption derivation (2026-10-21)**,
+ * between `reason` and `halt` in the struct, and it is written only on a row
+ * whose status was derived while reading -- a run whose record was never
+ * finalized and whose Cloud Batch job the platform preempted. It is the same
+ * omission `title` and `launched_by` were: `closed()` refuses a key the shape
+ * does not list, so a `runs ls --json` document carrying one preempted run
+ * would be refused whole as `runs[0].derived` until this list had the key. It
+ * is accepted and not read yet -- the Runs screens draw `status` and `reason`,
+ * and no screen draws the derivation as its own marker.
+ *
  * **`launched_by` arrived with 0.9.0**, between `requested_by` and `pr_url` in
  * the struct, and is written on every row whose `launch.json` recorded a
  * launcher -- which is every launched run. This is `title`'s omission again,
  * and it fails the same way: a list without the key refuses a real
- * `runs ls --json` document whole, as `runs[0].launched_by`. It is accepted
- * and not read (no screen draws who launched a run yet), and it is classified
- * as a person's text in `WIRE_TEXT_CLASSES` -- the class `requested_by`
- * carries, and the class the recorder already gives it by its `_by` suffix.
+ * `runs ls --json` document whole, as `runs[0].launched_by`. **It is read
+ * now** -- the Run screen's header draws it and the Projects job row draws its
+ * short form (`shared/launcher.ts`, owner request 2026-10-18) -- and it is
+ * classified as a person's text in `WIRE_TEXT_CLASSES`, the class `requested_by`
+ * carries and the class the recorder already gives it by its `_by` suffix.
  *
  * **`rigor` arrived with the rigor modes (0.11.0)**, between `changed_files`
  * and `artifact_count` in the struct, and a run that resolved a mode writes it:
@@ -809,6 +894,7 @@ export const RECORD_KEYS = [
   'status',
   'stage',
   'reason',
+  'derived',
   'halt',
   'batch',
   'requested_by',
@@ -931,6 +1017,7 @@ function runAt(raw: unknown, index: number, where: string): RunView {
     stuck: optionalBool(run, 'stuck', field, where),
     workflow: optionalText(run, 'workflow', field, where),
     requestedBy: optionalText(run, 'requested_by', field, where),
+    launchedBy: optionalText(run, 'launched_by', field, where),
   }
 }
 
@@ -965,6 +1052,7 @@ function costAt(raw: unknown, field: string, where: string): CostView {
   const cost = objectAt(raw, field, where)
   return {
     modelUsd: readingOf(cost, 'model_usd', `${field}.model_usd`),
+    modelNotionalUsd: readingOf(cost, 'model_notional_usd', `${field}.model_notional_usd`),
     computeUsd: readingOf(cost, 'compute_usd', `${field}.compute_usd`),
     // `compute_estimated`: when it is false, `compute_usd` 0 means "not
     // estimated", not "free" -- so the flag is the state of the number, exactly
@@ -994,6 +1082,7 @@ function recordAt(raw: unknown, index: number, where: string): RecordView {
     outcome: optionalText(record, 'outcome', field, where),
     prUrl: prUrl === undefined || prUrl === null ? null : stringAt(prUrl, `${field}.pr_url`, where),
     requestedBy: optionalText(record, 'requested_by', field, where),
+    launchedBy: optionalText(record, 'launched_by', field, where),
     logUrl: optionalText(record, 'log_url', field, where),
     created: stringAt(required(record, 'created', field, where), `${field}.created`, where),
     cost: costAt(required(record, 'cost', field, where), `${field}.cost`, where),

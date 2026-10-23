@@ -115,10 +115,13 @@ func (c Claims) UID() string { return UID(c.Slug, c.Run) }
 // UID returns the Firebase uid of a run.
 func UID(slug, run string) string { return "r~" + slug + "~" + run }
 
-// validSegment reports whether s may be a slug or run id inside a uid and an
+// ValidSegment reports whether s may be a slug or run id inside a uid and an
 // object path: non-empty, no '~' (the uid separator: slug "a~b" with run "c"
 // must not collide with slug "a" and run "b~c"), no '/', no control or space.
-func validSegment(s string) bool {
+// It is exported because the credentials service re-checks the uid of a run
+// identity it is handed (internal/credsvc), and the rule it must apply there
+// is this one, not a copy of it.
+func ValidSegment(s string) bool {
 	if s == "" || len(s) > maxFieldLen || s == "." || s == ".." || !utf8.ValidString(s) {
 		return false
 	}
@@ -134,9 +137,9 @@ func (c Claims) validate(now time.Time) error {
 	switch {
 	case !utf8.ValidString(c.Slug) || !utf8.ValidString(c.Run) || !utf8.ValidString(c.FP) || !utf8.ValidString(c.RB):
 		return errors.New("budget token: a claim is not valid UTF-8")
-	case !validSegment(c.Slug):
+	case !ValidSegment(c.Slug):
 		return errors.New("budget token: invalid slug")
-	case !validSegment(c.Run):
+	case !ValidSegment(c.Run):
 		return errors.New("budget token: invalid run id")
 	case len(c.UID()) > maxUIDBytes:
 		return errors.New("budget token: the uid is longer than 128 bytes")

@@ -31,7 +31,7 @@ import (
 // files that may. And a step whose plan destroys, replaces or removes an IAM
 // grant is not covered either (tf.Cover): it asks its own typed confirmation.
 //
-// Fugaro-owned means: the project was created by this run (init
+// Fugaro-owned means: the project was created by this run (fugaro setup
 // --create-project), or the runs bucket's fugaro/project.json names this
 // project and this GCP project (read-only). A project that is neither (an
 // adopted one, an unmarked one, a failed read) keeps the per-step typed
@@ -109,9 +109,9 @@ func (r *initRun) runCovers() (bool, error) {
 // declinedRun is the needs-you of a run whose one confirmation was not typed:
 // nothing is applied, here or in a later stage.
 func (r *initRun) declinedRun() error {
-	args := []string{"init"}
+	args := []string{r.o.doorName()}
 	if r.o.firebase != "" {
-		args = append(args, "--firebase", quoteWord(r.o.firebase))
+		args = append(args, "--firebase-project", quoteWord(r.o.firebaseProject()))
 	}
 	fmt.Fprintln(r.w, "not confirmed (the project's name was not typed at the review); nothing was applied")
 	return &initflow.NeedsYouError{Left: promptLeft(initflow.Installation, "type the project's name at the review to apply all of its steps", args...)}
@@ -226,7 +226,7 @@ func (e *initEngine) accessLists(ctx context.Context) []access {
 		return "from the local config"
 	}
 	out := []access{
-		{what: "launchers", members: e.spec.Launchers, source: src(o.launchersChanged), note: "launch runs; also mint run tokens when --firebase's token signer is applied"},
+		{what: "launchers", members: e.spec.Launchers, source: src(o.launchersChanged), note: "launch runs; also mint run tokens when --firebase-project's token signer is applied"},
 		{what: "operators", members: e.spec.Operators, source: src(o.operatorsChanged), note: "onboard repositories and submit builds"},
 	}
 	if o.firebase != "" || e.lc.Terraform.BudgetBackend {
@@ -321,8 +321,8 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 	}
 	if todo[initflow.Firebase] {
 		_, fpWhy := e.firebaseVerified(ctx)
-		fmt.Fprintf(w, "  firebase:       Terraform applies of the installation root (GCP project %s) and of the Firebase root in %s, then the budget database's marks and rules and Identity Platform (planned when applied)\n", pluginwire.Printable(r.gcpProject), pluginwire.Printable(o.firebase))
-		fmt.Fprintf(w, "                  the Firebase project %s: %s\n", pluginwire.Printable(o.firebase), fpWhy)
+		fmt.Fprintf(w, "  firebase:       Terraform applies of the installation root (GCP project %s) and of the Firebase root in %s, then the budget database's marks and rules and Identity Platform (planned when applied)\n", pluginwire.Printable(r.gcpProject), pluginwire.Printable(o.firebaseProject()))
+		fmt.Fprintf(w, "                  the Firebase project %s: %s\n", pluginwire.Printable(o.firebaseProject()), fpWhy)
 	}
 	if todo[initflow.Images] {
 		fmt.Fprintln(w, "  "+e.images.reviewLine(ctx))

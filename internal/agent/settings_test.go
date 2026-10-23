@@ -59,10 +59,10 @@ func TestProviderRouteVars(t *testing.T) {
 func TestWriteManagedSettingsAtomic(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "managed-settings.json")
-	if err := WriteManagedSettings(path, map[string]string{"A": "1"}, false); err != nil {
+	if err := WriteManagedSettings(path, map[string]string{"A": "1"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteManagedSettings(path, map[string]string{"B": "2"}, false); err != nil {
+	if err := WriteManagedSettings(path, map[string]string{"B": "2"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
@@ -93,7 +93,7 @@ func TestWriteManagedSettingsRefusesSymlink(t *testing.T) {
 	if err := os.Symlink(target, path); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteManagedSettings(path, nil, false); err == nil {
+	if err := WriteManagedSettings(path, nil, nil); err == nil {
 		t.Fatal("a symlink was replaced")
 	}
 	if b, _ := os.ReadFile(target); string(b) != "keep" {
@@ -105,7 +105,7 @@ func TestWriteManagedSettingsRefusesSymlink(t *testing.T) {
 	if err := os.Mkdir(path, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteManagedSettings(path, nil, false); err == nil {
+	if err := WriteManagedSettings(path, nil, nil); err == nil {
 		t.Fatal("a directory was replaced")
 	}
 	entries, _ := os.ReadDir(dir)
@@ -128,7 +128,7 @@ func TestManagedSettingsHoldNoRealKey(t *testing.T) {
 		vars[k] = v
 	}
 	path := filepath.Join(t.TempDir(), "managed-settings.json")
-	if err := WriteManagedSettings(path, vars, true); err != nil {
+	if err := WriteManagedSettings(path, vars, DenyRules(true, false)); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)
@@ -142,7 +142,7 @@ func TestManagedSettingsHoldNoRealKey(t *testing.T) {
 
 func TestManagedSettingsDenyWebTools(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "managed-settings.json")
-	if err := WriteManagedSettings(path, map[string]string{"A": "1"}, true); err != nil {
+	if err := WriteManagedSettings(path, map[string]string{"A": "1"}, DenyRules(true, false)); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)
@@ -158,11 +158,83 @@ func TestManagedSettingsDenyWebTools(t *testing.T) {
 		t.Fatalf("settings = %s", data)
 	}
 	// Without the gateway the web tools stay as they were.
-	if err := WriteManagedSettings(path, map[string]string{"A": "1"}, false); err != nil {
+	if err := WriteManagedSettings(path, map[string]string{"A": "1"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if data, _ := os.ReadFile(path); strings.Contains(string(data), "permissions") {
 		t.Fatalf("pins alone deny tools: %s", data)
+	}
+}
+
+// denyExtensions are the file kinds the review stage's settings deny a Read
+// of: the ones the review input never carries as bytes, and whose bytes
+// Claude Code would put into the next Messages body as an image block.
+var denyExtensions = []string{"png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "pdf", "heic", "tiff"}
+
+// TestDenyRulesPerStage: the two parts of the deny list are independent, and
+// a review stage's is the web tools plus one Read rule per binary kind. That
+// list is what makes the review stage's prompt rule enforced rather than
+// merely said: the reviewer runs with --dangerously-skip-permissions and a
+// full Read tool, and one Read of a changed PNG is the whole of the failure
+// run 20261021-002046-31cc ended on (`images aren't priced for model ...`).
+//
+// Mutation (return deniedWebTools alone whatever review says): the review
+// assertion fails. Mutation (return the binary reads for every stage): the
+// non-review assertion fails. Mutation (drop one extension from
+// deniedBinaryReads): the list assertion fails. Mutation (add a rule the
+// specifier of which is not a Read of a file kind, e.g. "Read(/etc/**)"):
+// the list assertion fails.
+func TestDenyRulesPerStage(t *testing.T) {
+	var reads []string
+	for _, ext := range denyExtensions {
+		reads = append(reads, "Read(**/*."+ext+")")
+	}
+	for _, c := range []struct {
+		name    string
+		denyWeb bool
+		review  bool
+		want    []string
+	}{
+		{"implement, fix or plan", true, false, []string{"WebSearch", "WebFetch"}},
+		{"a review stage", true, true, append([]string{"WebSearch", "WebFetch"}, reads...)},
+		{"a review stage with no gateway", false, true, reads},
+		{"neither", false, false, nil},
+	} {
+		if got := DenyRules(c.denyWeb, c.review); !slices.Equal(got, c.want) {
+			t.Errorf("%s: DenyRules(%v, %v) = %v, want %v", c.name, c.denyWeb, c.review, got, c.want)
+		}
+	}
+}
+
+// TestManagedSettingsCarryTheReviewDenyRules: the review stage's settings
+// file holds the reads, so the reviewer's own Read tool is refused a PNG
+// whatever the prompt says. Nothing here robs the reviewer of the reads it
+// needs: a text file's rule is not in the list.
+//
+// Mutation (write the web tools alone for a review stage): the PNG assertion
+// fails.
+func TestManagedSettingsCarryTheReviewDenyRules(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "managed-settings.json")
+	if err := WriteManagedSettings(path, map[string]string{"A": "1"}, DenyRules(true, true)); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	var got struct {
+		Env         map[string]string
+		Permissions struct{ Deny []string }
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Read(**/*.png)", "Read(**/*.jpeg)", "Read(**/*.webp)", "WebSearch"} {
+		if !slices.Contains(got.Permissions.Deny, want) {
+			t.Errorf("the review stage's settings lack %q: %s", want, data)
+		}
+	}
+	for _, unwanted := range []string{"Read(**/*.go)", "Read(**/*.md)", "Read(**/*.svg)"} {
+		if slices.Contains(got.Permissions.Deny, unwanted) {
+			t.Errorf("the review stage's settings deny %q, which a reviewer reads: %s", unwanted, data)
+		}
 	}
 }
 

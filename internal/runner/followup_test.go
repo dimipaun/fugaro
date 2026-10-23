@@ -781,6 +781,47 @@ func TestFollowUpResumeFailureFallsBackFresh(t *testing.T) {
 	}
 }
 
+// TestFollowUpFreshFallbackSavesNoSession: the session a follow-up could not
+// resume must not be uploaded by the fresh retry. The stage that failed with
+// ErrNoSession had already recorded the session it was asked to resume
+// (noteSession takes the requested ID when the agent reports none, which is
+// what a process that died before its result event does), and the fresh retry
+// can end before the agent reports a session of its own — a refusal at the
+// top of stageOnce, an exhausted budget, a cancel. Left behind, that ID would
+// be uploaded at writeback with this run's head and Pushed flag, and a later
+// follow-up would resume a conversation that never saw this branch's commits.
+func TestFollowUpFreshFallbackSavesNoSession(t *testing.T) {
+	h := followUpHarness(t, "", nil, sessionFirst(firstSession)...)
+	h.followUp(t, followID, runID, "Tidy up.")
+	noSession := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if !req.Resume || req.SessionID != firstSession {
+			t.Errorf("the first implement request = %+v; want the saved session resumed", req)
+		}
+		return agent.Result{CostUSD: 0.01}, fmt.Errorf("%w: claude exited with code 1", agent.ErrNoSession)
+	}
+	// The fresh retry fails before the agent reports any session: a zero
+	// Result, exactly what a stage killed at the start leaves behind.
+	boom := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if req.Resume || req.SessionID == firstSession {
+			t.Errorf("the retry request = %+v; want a fresh session", req)
+		}
+		return agent.Result{}, errors.New("boom")
+	}
+	rec, err := h.run(t, noSession, boom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "stage implement failed: boom") {
+		t.Fatalf("rec = %+v; want the fresh retry's failure", rec)
+	}
+	if m, data, err := h.store.ReadSession(context.Background()); !errors.Is(err, runstore.ErrNotFound) {
+		t.Fatalf("the follow-up saved a session (%+v, %q, err %v); the one it could not resume must not be re-uploaded", m, data, err)
+	}
+	if objs := bucketObjects(t, h.bucket); objs[h.store.Prefix()+"session/"+firstSession+".jsonl"] != nil {
+		t.Fatalf("the session the follow-up could not resume was uploaded: %v", h.store.Prefix())
+	}
+}
+
 func TestFollowUpResumeOtherErrorFailsStage(t *testing.T) {
 	h := followUpHarness(t, "", nil, sessionFirst(firstSession)...)
 	h.followUp(t, followID, runID, "Tidy up.")

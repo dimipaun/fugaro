@@ -138,7 +138,10 @@ p.run-agent-message,
 p.run-reported-warning,
 p.run-pin-warning,
 p.run-draft-note,
-p.run-follow-up {
+p.run-follow-up,
+p.live-review-empty,
+p.live-review-note,
+p.live-review-capped {
   margin-block: var(--space-2xs);
   font-size: var(--font-size-base);
 }
@@ -184,6 +187,7 @@ p.run-follow-up {
 
 li.live-repo,
 li.live-run,
+li.live-review-row,
 li.spend-row,
 li.spend-point,
 li.spend-cap-repo,
@@ -224,6 +228,7 @@ ol.run-log-list,
 ol.run-log-tail,
 div.spend-accounts,
 div.spend-totals,
+section.live-review,
 section.spend-caps,
 section.projects-panel,
 section.run-ledger,
@@ -262,6 +267,10 @@ li.live-run {
  */
 
 span.live-run-id,
+span.live-review-run-id,
+span.live-review-repo,
+span.live-review-number,
+span.live-review-url,
 h1.run-id,
 span.run-repo,
 span.run-workflow,
@@ -481,6 +490,7 @@ span.live-run-models,
 span.live-run-recipe,
 span.live-run-auth,
 span.live-run-requester,
+span.live-run-started-by,
 span.live-run-workflow,
 span.live-run-contradiction {
   color: var(--text-muted);
@@ -519,6 +529,36 @@ span.run-halt-word {
 
 li.live-repo[data-killed='true'] {
   border-left: 3px solid var(--halted);
+}
+
+/* The review inbox (design F26; desktop-console v2 plan Task V2.7.1): the
+ * section the Live screen ends with -- the finished runs that are ready for a
+ * look, as rows of **text**. Its box is the panel group above, so what is here
+ * is the heading and the row's own pieces. The rows carry no link of any kind:
+ * the pull request's number and URL are drawn as text, and `data-href` -- the
+ * one attribute `link.openExternal` acts on -- is written nowhere in this
+ * section (`review.test.ts` walks it and asserts exactly that). */
+h2.live-review-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-xs);
+  font-size: var(--font-size-md);
+  font-weight: var(--weight-semibold);
+}
+
+/* The count's parentheses are drawn elements rather than CSS punctuation, so
+ * what the heading reads is in the document rather than in the stylesheet. */
+span.live-review-open,
+span.live-review-close {
+  color: var(--text-muted);
+}
+
+/* The title is a job's own sentence, so it takes the readable size the run
+ * rows' titles take; the age beside it is the `live-num` hook's, and the
+ * repository, the number, the URL and the run id are the identity group's. */
+span.live-review-run-title {
+  font-size: var(--font-size-base);
 }
 
 /* ---- Spend ---------------------------------------------------------------- */
@@ -726,6 +766,7 @@ span.projects-secret-allowed,
 span.projects-job-status,
 span.projects-job-stage,
 span.projects-job-by,
+span.projects-job-started-by,
 span.projects-cap-repo,
 span.projects-accounts-repo,
 span.projects-only-seen-repo,
@@ -805,6 +846,7 @@ span.run-outcome,
 span.run-stage,
 span.run-branch,
 span.run-requested-by,
+span.run-started-by,
 span.run-flags,
 span.run-settled,
 span.run-stale,
@@ -1007,7 +1049,7 @@ div.degraded-totals {
 }
 
 /* The unavailable screens: no binary, or a read the CLI refused. The install
- * command is a `code` and both leads are `span`s -- the tags are the code's, so
+ * command is a `code` and the leads are `span`s -- the tags are the code's, so
  * a rule spelled `pre.unavailable-install-command` would style nothing. */
 div.unavailable-body {
   display: block;
@@ -1023,9 +1065,7 @@ code.unavailable-install-command {
 }
 
 span.unavailable-install-lead,
-span.unavailable-picker-lead,
 span.unavailable-searched-lead,
-span.unavailable-configured,
 span.unavailable-operation,
 span.unavailable-searched-count {
   color: var(--text-muted);
@@ -1081,39 +1121,45 @@ main p {
   border-bottom: var(--rule-width) solid var(--border);
 }
 
-#picker-add {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-xs);
-  padding: var(--space-sm);
-  background: var(--surface);
-  border: var(--rule-width) solid var(--border);
-  border-radius: var(--radius-md);
+/* The CLI's own warning lines, under the list: one line each, in the muted
+ * colour, because they are the CLI's sentence about an installation it could
+ * not read rather than something this console claims (design section 2.2). */
+#picker-warnings {
+  margin-bottom: var(--space-md);
 }
 
-#picker-add label {
+#picker-warnings li {
   color: var(--text-muted);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
+  line-height: var(--leading-normal);
 }
 
-#picker-project {
+/* The onboarding screen (owner's ruling of 2026-10-20): a heading, one
+ * sentence, the one command and the one link button. It is a screen and not a
+ * panel -- no surface, no border -- because it replaces the list rather than
+ * sitting beside it, and it is the whole of what the window has to say. */
+#picker-onboarding h2 {
+  margin: 0 0 var(--space-md);
+  font-size: var(--font-size-lg);
+  font-weight: var(--weight-semibold);
+}
+
+#picker-onboarding code {
+  display: inline-block;
+  margin-bottom: var(--space-md);
   padding: var(--space-2xs) var(--space-xs);
-  font: inherit;
   color: var(--text);
   background: var(--surface-alt);
-  border: var(--border-width) solid var(--border-strong);
   border-radius: var(--radius-sm);
 }
 
-/* Every control of the picker is a button, and a button's boundary is
- * `--border-strong`: `--border` is a decorative hairline and may never mark a
- * control's extent (design section 3.2's role table, and the
+/* Every control of the picker is a button -- a row's Choose, Chosen, Use …
+ * and Remove, and the onboarding screen's one link -- and a button's boundary
+ * is `--border-strong`: `--border` is a decorative hairline and may never mark
+ * a control's extent (design section 3.2's role table, and the
  * `--border`-is-decorative case in `test/unit/theme-tokens.test.ts`). */
-#picker-pick-binary,
-#picker-pick-config,
-#picker-pick-checkout,
-#picker-add-submit {
+#picker-list button,
+#picker-onboarding button {
   padding: var(--space-2xs) var(--space-xs);
   color: var(--text);
   border: var(--border-width) solid var(--border-strong);
@@ -1121,26 +1167,17 @@ main p {
   transition: color var(--duration-fast) var(--ease-out);
 }
 
-#picker-add-submit {
-  color: var(--ink-on-fill);
-  background: var(--accent);
-}
-
-#picker-pick-binary:hover,
-#picker-pick-config:hover,
-#picker-pick-checkout:hover,
-#picker-add-submit:hover {
+#picker-list button:hover,
+#picker-onboarding button:hover {
   color: var(--accent-ink);
 }
 
-#picker-add-submit:hover {
-  color: var(--ink-on-fill);
-}
-
 /* A control waiting on a request is `disabled` (design section 4.3): the
- * system's own grey, and it keeps its ring and its label. */
-#picker-add button:disabled,
-#picker-add input:disabled {
+ * system's own grey, and it keeps its ring and its label. Every control this
+ * view draws is disabled together while a request is in flight, so this is one
+ * rule over both sets rather than a rule per button. */
+#picker-list button:disabled,
+#picker-onboarding button:disabled {
   color: var(--text-muted);
   border-style: dashed;
 }
@@ -1238,7 +1275,8 @@ main p {
   li.run-stage,
   li.run-log-line,
   div.unavailable-body,
-  #picker-add,
+  #picker-warnings li,
+  #picker-onboarding,
   #picker-list li {
     background: Canvas;
     color: CanvasText;
@@ -1287,9 +1325,7 @@ main p {
   span.degraded-compute-word,
   span.degraded-cap,
   span.unavailable-install-lead,
-  span.unavailable-picker-lead,
   span.unavailable-searched-lead,
-  span.unavailable-configured,
   span.unavailable-operation,
   span.unavailable-searched-count,
   span.live-run-title,
@@ -1300,12 +1336,14 @@ main p {
   span.live-run-recipe,
   span.live-run-auth,
   span.live-run-requester,
+  span.live-run-started-by,
   span.live-run-workflow,
   span.live-run-contradiction,
   span.run-status,
   span.run-outcome,
   span.run-branch,
   span.run-requested-by,
+  span.run-started-by,
   span.run-flags,
   span.run-log-severity,
   span.run-route-name,
@@ -1333,6 +1371,7 @@ main p {
   span.projects-job-status,
   span.projects-job-stage,
   span.projects-job-by,
+  span.projects-job-started-by,
   span.projects-cap-repo,
   span.projects-accounts-repo,
   span.projects-only-seen-repo,
@@ -1362,6 +1401,9 @@ main p {
   p.run-replay-note,
   p.run-replay-scrubbed,
   span.run-halt-detail,
+  p.live-review-empty,
+  p.live-review-note,
+  p.live-review-capped,
   p.degraded-notice,
   p.degraded-warning,
   p.unavailable-reason,
@@ -1439,17 +1481,17 @@ main p {
   div.spend-cap-limit[data-limit='max_reserve'],
   section.console-unavailable[data-kind='refused'],
   #picker-list li,
-  #picker-project,
-  #picker-pick-binary,
-  #picker-pick-config,
-  #picker-pick-checkout,
-  #picker-add-submit {
+  #picker-list button,
+  #picker-onboarding button,
+  #picker-onboarding code {
     border-color: CanvasText;
   }
 
-  #picker-add-submit {
-    background: Highlight;
-    color: HighlightText;
-    forced-color-adjust: none;
+  /* The onboarding screen's one command is a code sample rather than a
+   * control, so it keeps the system's own grey boundary and is not painted as
+   * a fill: a fill is this file's word for the two marks that were a fill
+   * (design section 4.4), and a command is neither of them. */
+  #picker-onboarding code {
+    border: var(--border-width) solid GrayText;
   }
 }

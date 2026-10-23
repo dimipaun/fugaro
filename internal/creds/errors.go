@@ -1,0 +1,110 @@
+package creds
+
+import (
+	"errors"
+	"time"
+)
+
+// ExhaustedUntil is the typed answer a selection gives when no candidate can be
+// used now and the run must wait for one: every candidate is exhausted, backed
+// off or held, and the earliest of them becomes usable at At.
+//
+// It carries a time and a wait, never a credential's value: the answer is
+// rendered on the wire (C1.10) and written to the audit line (C1.13), and a
+// subscription token must not reach either (F32). The names this answer is
+// about are the caller's own — it passed them in and knows them.
+//
+// The wait-or-switch rule is applied before this is returned (Select): it is
+// the answer for a wait inside the project's threshold, and for any wait at all
+// under `fallback: oauth-only`, where there is nothing to fail over to (D152).
+// A wait beyond the threshold under `auto` is not answered with this error —
+// the selection fails over to the next tier instead.
+type ExhaustedUntil struct {
+	// At is the earliest time one of the candidates becomes usable. With Probe
+	// set it is still that time and no earlier: a probe is due on the credential
+	// before then (see Probe), and with D142's first control on At is the end of
+	// the window the exhaustion opened rather than the wait the probe answers.
+	At time.Time
+	// Wait is At minus "now", never negative. It is returned alongside the
+	// error for a caller that only wants "how long", so that the one subtraction
+	// happens here and every caller answers with the same number.
+	Wait time.Duration
+	// Probe reports that the earliest candidate is a backed-off one whose own
+	// wait has passed, so C1.12's probe is due on it now and a caller that
+	// probes nothing must not route real work to it. It says the probe is owed,
+	// not that the probe is enough: At and Wait are when the credential could
+	// serve work, and with D142's first control on that is the end of the window
+	// its exhaustion opened — later than the wait that made the probe due. So
+	// Probe is true alongside a real, non-zero Wait, and both facts are true:
+	// probe it, and the earliest it can serve real work is At. (An earlier
+	// version of this comment said Probe meant the credential "becomes usable by
+	// being probed, not by waiting" and was false "when the wait is real", which
+	// is the opposite of what the control does — review finding.)
+	//
+	// It is false for an exhausted or broken candidate: a reset is a time rather
+	// than a question (C1.12), and a broken mark is the operator's (C1.21).
+	Probe bool
+}
+
+func (e *ExhaustedUntil) Error() string {
+	at := " (at " + e.At.UTC().Format(time.RFC3339) + ")"
+	if e.Probe {
+		// Both facts, because both are true: the probe is due, and the earliest
+		// the credential can serve work is the wait beside it — the window its
+		// exhaustion opened, when D142's first control is on, which a successful
+		// probe does not bring forward.
+		return "no credential is usable now: the earliest is backed off with its wait passed, so a probe is due on it, and it can serve work in " +
+			e.Wait.Round(time.Second).String() + at
+	}
+	return "no credential is usable now: the earliest becomes usable in " +
+		e.Wait.Round(time.Second).String() + at
+}
+
+// ErrNoCredential is what a selection answers when no candidate can be used and
+// none becomes usable by waiting. Three shapes of that, and the message names
+// all three because the message is what an operator reads while diagnosing —
+// the code answers it for any of them, not only for the first:
+//
+//   - every candidate is broken: a 401, or a token that was replaced (D139).
+//     Clearing a broken mark is the operator's, not a run's (C1.21);
+//   - a candidate's mark holds it with no time to wait for at all (Ready answers
+//     no time): a node this release cannot read as a hold, which fails closed
+//     rather than being served;
+//   - a candidate is refused by the concurrency cap with no lapse that frees it:
+//     a negative limit, which the policy itself refuses and only a hand-built
+//     setting produces (Free reads a negative as no room at all, and SlotFrees
+//     answers no time under it). A limit of 0 is the other shape and never
+//     reaches this message: 0 is D142's documented opt-out — the one value in
+//     the two controls that widens rather than bounds — and Free admits every
+//     candidate under it, so nothing is refused by a cap at all.
+//
+// It is a refusal, never a fallback: the caller answers it typed and issues no
+// credential (D143).
+var ErrNoCredential = errors.New("creds: no candidate is usable and none becomes usable by waiting: every candidate is broken (the operator clears one, C1.21), holds a mark with no time to wait for, or is refused by a concurrency cap no lapse frees")
+
+// ErrFallbackForbidden is what a selection answers when no shared subscription
+// credential can serve the call and the caller offered one that the
+// paid-fallback policy does not admit: the project's API key, under
+// `fallback: oauth-only` (the default, D152). Reaching for it would start
+// spending the project's money, so the call is refused instead.
+//
+// It is kept apart from ErrNoCredential deliberately, because the two tell an
+// operator different things: ErrNoCredential says a token was refused and needs
+// replacing or clearing (C1.21), and this says the platform declined to spend
+// and that only a written `fallback: auto` changes that. A subscription token
+// that has died is exactly the case where the difference matters most: the run
+// halts and says why, rather than quietly failing over to the paid key.
+var ErrFallbackForbidden = errors.New("creds: no shared subscription credential can serve this call, and the project's paid key is not spent without a written `fallback: auto` (D152)")
+
+// ErrNoCandidates is what a selection answers when it was offered nothing to
+// select from. It is a refusal rather than an empty answer, because an empty
+// candidate set is a caller's mistake (a policy read that found no account,
+// an admission that dropped every one) and answering it like an exhausted
+// account would hide the mistake behind a wait.
+var ErrNoCandidates = errors.New("creds: no candidate credentials were offered, so there is nothing to select from")
+
+// ErrContention is what a conditional write answers when the node kept changing
+// under it: the retry bound was reached without the write landing. The caller
+// fails closed — it never writes unconditionally (the state is the service's
+// alone, and a blind write would erase a mark another call just made).
+var ErrContention = errors.New("creds: the state kept changing under the write")

@@ -35,7 +35,11 @@
 //      path first -- an absolute one, since a relative path is checked against
 //      the app's working directory and run against the child's, which is a
 //      refusal and not a fallback (review of Task 4.1) -- then the platform's
-//      well-known directories, then `PATH`. **Which directories those are is a
+//      well-known directories, and **nothing else: the app's own inherited
+//      `PATH` is never searched** (owner's ruling of 2026-10-20: the console
+//      asks the operator for nothing, and resolves the `fugaro` that is
+//      *installed*). The configured path is an optional override a store may
+//      already carry, never a question the first run asks. **Which directories those are is a
 //      per-platform list chosen in one place** (`PLATFORM_LOCATIONS`, read
 //      through `locationsFor`): the design's macOS order is
 //      `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `/usr/bin`, and
@@ -43,7 +47,11 @@
 //      `/usr/bin`, `~/.local/bin`, `/home/linuxbrew/.linuxbrew/bin`,
 //      `~/.linuxbrew/bin`. Neither list is ever read out of the app's own
 //      environment -- "never the inherited `PATH`" is a property of the list,
-//      and `PATH` is the separate last step. The path and the version it reported
+//      and there is no step after it. **On Windows there is no list at all**:
+//      the CLI is a Linux program inside a WSL distribution, the row for
+//      `win32` is the WSL route rather than a set of directories (T-C2), and a
+//      platform with no row is refused rather than answered with Linux's
+//      (T-C3). The path and the version it reported
 //      are the header's ("the resolved absolute path and the version it reports
 //      are shown in the header"), and **a candidate that exists but whose version
 //      cannot be read is refused rather than skipped**: falling through to the
@@ -59,7 +67,10 @@
 //      `CHILD_ENV_KEYS`. **The `PATH` is the resolved binary's own directory
 //      first, then the platform's own tool directories** (rule 5's list, from
 //      the same `locationsFor` table: macOS gets `/opt/homebrew/bin`, Linux
-//      gets `/home/linuxbrew/.linuxbrew/bin`, and neither gets the other's) --
+//      gets `/home/linuxbrew/.linuxbrew/bin`, and neither gets the other's;
+//      **on the WSL route the list is Linux's, because the child is a Linux
+//      process** -- F5, and `WIN32_LOCATIONS.childPathPrefixes` says so by
+//      naming Linux's) --
 //      because the CLI looks up external tools itself (`doctor` resolves the SDK
 //      tools with `exec.LookPath`, `internal/cli/doctor.go:147`), and
 //      `terraform`, `cosign` and the rest do not sit beside the `fugaro` binary
@@ -102,6 +113,16 @@ import { dirname, isAbsolute, join } from 'node:path'
 import { CONSOLE_OPERATIONS, isNeverReachable } from './ipc'
 import type { ArgumentKind, OperationName, ValidatedArgument, ValidatedArguments } from './ipc'
 import type { SpawnLogWriter } from './spawnlog'
+// The WSL seam, and the one import that closes a cycle: `wsl.ts` imports this
+// module's `childEnvironment`, `runToCompletion` and `FUGARO_BINARY_NAME`, and
+// this module imports `wslExecutable` (which program a WSL plan runs) and
+// `wslDistributions` (which distributions the machine has, for the resolver's
+// two refusals, T-C5). The cycle is deliberate and safe: both modules use the
+// other's bindings **inside function bodies only**, so neither reads a
+// partially initialized module at load time, and the alternative -- a second
+// copy of `wslExecutable` here, or a resolver in `wsl.ts` -- would be two
+// answers to one question.
+import { wslDistributions, wslExecutable } from './wsl'
 
 /** JSONObject is a JSON object as it arrived: the CLI's document, undecoded.
  * Decoding it into the console's own shape is Task 2.0's `shared/schema.ts`;
@@ -119,6 +140,22 @@ export const CONFIG_FLAG = '--config'
 export const DIR_FLAG = '--dir'
 
 /**
+ * PlatformRoute is which *kind* of answer a platform's row is. It exists so a
+ * reader is never left to infer the route from a list's contents: an empty
+ * `binaryPrefixes` looks like an unfinished row, and the win32 row's emptiness
+ * is the opposite of unfinished -- it is the statement that the host is not
+ * where the CLI is.
+ *
+ *   - `host` -- the CLI is a program on this machine, so rule 4's walk is a
+ *     walk of this machine's directories and the child runs where the console
+ *     runs;
+ *   - `wsl` -- the CLI is a Linux program inside a distribution and is reached
+ *     through `wsl.exe`, so the walk is not a walk of the host at all (T-C2)
+ *     and the child's `PATH` is a Linux one (F5).
+ */
+export type PlatformRoute = 'host' | 'wsl'
+
+/**
  * PlatformLocations is the whole of what this file knows per platform: where
  * rule 4 looks for the CLI, and which tool directories rule 5 gives the child.
  * The two are not the same list on any platform and the difference is
@@ -126,18 +163,25 @@ export const DIR_FLAG = '--dir'
  * two constants that have to be kept in step by hand.
  */
 export interface PlatformLocations {
-  /** binaryPrefixes is rule 4's order, minus the last step: a configured path
-   * first (`SpawnTarget.binaryPath`), then these directories in this order, and
-   * only then every absolute entry of the app's own `PATH`. `~/.local/bin` is
+  /** route is which kind of answer this row is -- see `PlatformRoute`. */
+  readonly route: PlatformRoute
+  /** binaryPrefixes is rule 4's order, and it is the whole of it: a configured
+   * path first (`SpawnTarget.binaryPath`, the optional override an installation
+   * may carry), then these directories in this order. The app's own inherited
+   * `PATH` is **not** a step after them (owner's ruling of 2026-10-20). `~/.local/bin` is
    * spelled with `~` and joined with the home directory at resolution time,
-   * because the home directory is an argument rather than a constant. */
+   * because the home directory is an argument rather than a constant. **On the
+   * `wsl` route it is empty**: the host is not where the CLI is, and an empty
+   * list is how the row says so. */
   readonly binaryPrefixes: readonly string[]
   /** childPathPrefixes is the well-known *tool* directories the child's `PATH`
    * is built from: the resolved binary's own directory first, then these. It
    * answers "where may the CLI find `terraform`?", so it includes `/bin`,
    * `/usr/sbin` and `/sbin`, and it does not include `~/.local/bin` unless the
    * binary itself lives there. Every entry is absolute: the child receives a
-   * literal string and nothing expands a `~` inside a `PATH`. */
+   * literal string and nothing expands a `~` inside a `PATH`. **It is the list
+   * of the platform the child runs on, which is not always the platform the
+   * console runs on**: on the `wsl` route it is Linux's (F5). */
   readonly childPathPrefixes: readonly string[]
 }
 
@@ -151,6 +195,7 @@ export interface PlatformLocations {
  * system's.
  */
 export const DARWIN_LOCATIONS: PlatformLocations = Object.freeze({
+  route: 'host' as const,
   binaryPrefixes: Object.freeze(['/opt/homebrew/bin', '/usr/local/bin', '~/.local/bin', '/usr/bin']),
   childPathPrefixes: Object.freeze([
     '/opt/homebrew/bin',
@@ -181,6 +226,7 @@ export const DARWIN_LOCATIONS: PlatformLocations = Object.freeze({
  *     `PATH` always puts first.
  */
 export const LINUX_LOCATIONS: PlatformLocations = Object.freeze({
+  route: 'host' as const,
   binaryPrefixes: Object.freeze([
     '/usr/local/bin',
     '/usr/bin',
@@ -199,6 +245,37 @@ export const LINUX_LOCATIONS: PlatformLocations = Object.freeze({
 })
 
 /**
+ * WIN32_LOCATIONS is the row for the Windows console, and **it is not a list of
+ * directories** (T-C2, decision D1). It is the row for a route rather than a
+ * place: on Windows the CLI is a Linux program inside a WSL distribution, and
+ * the console reaches it by running `wsl.exe -d <distro> --cd <dir> -- fugaro
+ * …` rather than by executing a binary the host can see. There is no
+ * `fugaro.exe` to find, so there is nothing for rule 4 to walk.
+ *
+ * The two fields say that in the two ways they can:
+ *
+ *   - **`binaryPrefixes` is empty**, so `binDirectories` on this platform is
+ *     empty too -- the same code, told the truth about the host. It is not a
+ *     fallback to Linux's list: on Windows `/usr/local/bin` is a path relative
+ *     to the current drive, and looking for a binary there would be a search of
+ *     a directory that means something else on the machine it runs on. The
+ *     distro-side resolution is its own path (`src/main/wsl.ts`, T-C4/T-C5),
+ *     not a row in this table.
+ *   - **`childPathPrefixes` is Linux's**, by reference rather than by a copy
+ *     (F5). The process on the other end of `wsl.exe` is a Linux process: the
+ *     directories it may find `terraform`, `gcloud` or `cosign` in are Linux's,
+ *     and a `PATH` of Windows directories would give it entries no Linux lookup
+ *     can use. Naming `LINUX_LOCATIONS.childPathPrefixes` here rather than
+ *     writing the six strings out again is deliberate -- the child's tool list
+ *     is one fact about Linux, and two copies of it could drift.
+ */
+export const WIN32_LOCATIONS: PlatformLocations = Object.freeze({
+  route: 'wsl' as const,
+  binaryPrefixes: Object.freeze([] as string[]),
+  childPathPrefixes: LINUX_LOCATIONS.childPathPrefixes,
+})
+
+/**
  * PLATFORM_LOCATIONS is the per-platform table, and `locationsFor` is the only
  * reader of it. **The platform choice lives here and nowhere else**: no other
  * line in this module -- and none in `src/source/` -- names a well-known
@@ -209,30 +286,52 @@ export const LINUX_LOCATIONS: PlatformLocations = Object.freeze({
  * electron-builder uses for `electronPlatformName` -- so the two halves of "does
  * this build support this platform?" (this table and the fuse hook's
  * `SUPPORTED_PLATFORMS`) are keyed identically on purpose.
+ *
+ * **A row is a decision, and the table is the list of decisions that have been
+ * made**: darwin and Linux are host routes, win32 is the WSL route, and a
+ * platform that is not here is one nobody has decided -- which `locationsFor`
+ * refuses rather than answers (T-C3).
  */
 export const PLATFORM_LOCATIONS: Readonly<Record<string, PlatformLocations>> = Object.freeze({
   darwin: DARWIN_LOCATIONS,
   linux: LINUX_LOCATIONS,
+  win32: WIN32_LOCATIONS,
 })
 
 /**
  * locationsFor is the one place the per-platform choice is made: the platform's
- * two lists, or -- for a platform this build is not packaged for -- the POSIX
- * ones.
+ * row, or a refusal for a platform nobody has decided.
  *
- * The fallback is stated rather than silent. The console *ships* on darwin and
- * on Linux and the fuse hook refuses every other platform outright, so this
- * branch is reached only by a developer running the sources somewhere the app
- * has never been packaged. There, the POSIX layout is the nearest thing to a
- * right answer, and every entry in it is an absolute directory that either
- * exists or does not: the fallback cannot find a binary that is not on the
- * machine. Refusing instead would make the sources unrunnable, which is a worse
- * failure than searching the obvious directories -- and the one thing the
- * fallback must not do is reach for the app's own `PATH`, which is why the
- * lists are constants and not a read of the environment.
+ * **It used to answer with Linux's lists, and that fallback is gone** (T-C3).
+ * It was survivable while the app shipped only for darwin and Linux: the branch
+ * was reached by a developer running the sources somewhere the app has never
+ * been packaged, and the POSIX layout was the nearest thing to a right answer.
+ * It stopped being survivable when `win32` became a route this app takes: the
+ * same silent answer would hand a Windows child a Linux `PATH` -- entries no
+ * Windows lookup can use -- and send rule 4 to `/usr/local/bin`, which on
+ * Windows is a path relative to the current drive rather than the absolute
+ * directory the list means on POSIX. A wrong answer that is *shaped* like a
+ * right one is worse than no answer, and the platform nobody decided is exactly
+ * where the console should stop rather than guess at where to execute a
+ * program.
+ *
+ * The throw is a programming error and not an operator-facing refusal: the
+ * platforms the app is packaged for each have a row, and `fuses.ts`'s
+ * `SUPPORTED_PLATFORMS` refuses to build for any other one. It is reachable in
+ * a test, which is the point -- `locationsFor('freebsd')` is how the refusal is
+ * held.
  */
 export function locationsFor(platform: string = process.platform): PlatformLocations {
-  return PLATFORM_LOCATIONS[platform] ?? LINUX_LOCATIONS
+  const row = PLATFORM_LOCATIONS[platform]
+  if (row === undefined) {
+    throw new Error(
+      `there is no location row for the platform ${JSON.stringify(platform)}: this console ` +
+        `resolves the CLI on darwin, on linux and on win32 (inside a WSL distribution) and ` +
+        `nowhere else, and a guess at another platform's directories would be a guess at ` +
+        `where to execute a program.`,
+    )
+  }
+  return row
 }
 
 /**
@@ -393,12 +492,53 @@ export interface SpawnArgument {
 }
 
 /**
+ * PickerOperationName is the one spawn that belongs to the **installation
+ * picker** rather than to the dashboard: the local read that lists the
+ * installations this machine has (`fugaro config list --json`,
+ * `internal/cli/config_list.go`; `console/docs/json-contract.md` §6.8).
+ *
+ * It is not a `CONSOLE_OPERATIONS` entry and deliberately so: that table is the
+ * *dashboard's* IPC surface, mirrored one-for-one in `src/preload/index.ts` and
+ * pinned exactly by `test/unit/ipc.test.ts`, and the picker has its own surface
+ * on its own document (`src/preload/installations.ts`). Widening the dashboard's
+ * surface to carry a read only the picker makes would put a command in a
+ * renderer that has no business spawning it.
+ */
+export type PickerOperationName = 'installation.list'
+
+/** PICKER_OPERATION_NAMES is that vocabulary as a value, so the table check and
+ * a test can both read the closed set rather than restating it. */
+export const PICKER_OPERATION_NAMES: readonly PickerOperationName[] = Object.freeze(['installation.list'])
+
+/** INSTALLATION_LIST_COMMAND is the command the one picker row drives, spelled
+ * as the two words `words` starts with. It is here rather than inline so the
+ * check below and the row cannot disagree about which read the picker makes. */
+export const INSTALLATION_LIST_COMMAND = 'config list'
+
+/** SpawnOperationName is every operation this module will build an argv for. */
+export type SpawnOperationName = OperationName | PickerOperationName
+
+/**
+ * WslQueryName is the questions the console asks `wsl.exe` itself rather than
+ * the CLI (Part C, T-C4; `src/main/wsl.ts`). They are not CLI operations: they
+ * carry no `--project`, they produce no document, and `SPAWN_COMMANDS` must not
+ * grow a row for them -- `assertSpawnSurface`'s table is the table of reads the
+ * console makes *of the CLI*, and `wsl.exe --list --quiet` is not one.
+ *
+ * They are named anyway, because a query is a spawn like any other: it carries a
+ * plan, it goes through `runToCompletion`, and the spawn log records it. A plan
+ * whose `operation` field was a CLI operation would say the console had run that
+ * operation when it had not.
+ */
+export type WslQueryName = 'wsl.distributions'
+
+/**
  * SpawnCommand is one row of the table: the operation it serves, the argv words
  * the CLI's own command path needs, whether the command accepts `--project`,
  * and its declared arguments in the order they are emitted.
  */
 export interface SpawnCommand {
-  readonly operation: OperationName
+  readonly operation: SpawnOperationName
   readonly words: readonly string[]
   readonly takesProject: boolean
   readonly args: readonly SpawnArgument[]
@@ -520,6 +660,27 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
 ] as const satisfies readonly SpawnCommand[])
 
 /**
+ * PICKER_COMMANDS is the installation picker's own table, and it has exactly one
+ * row: the local read that enumerates the installations on this machine. It is a
+ * separate table rather than a row of `SPAWN_COMMANDS` because that table is
+ * held one-for-one to the dashboard's operation table (`assertSpawnSurface`),
+ * and this read is not one of the dashboard's operations.
+ *
+ * `fugaro config list` is cobra's `NoArgs` with one flag of its own (`--json`);
+ * it takes no `--project`, no `--config` and no `--dir`, and it opens no bucket,
+ * so the row carries the three false columns the check below holds it to.
+ */
+export const PICKER_COMMANDS: readonly SpawnCommand[] = Object.freeze([
+  {
+    operation: 'installation.list',
+    words: ['config', 'list', '--json'],
+    takesProject: false,
+    args: [],
+    dirFlag: false,
+  },
+] as const satisfies readonly SpawnCommand[])
+
+/**
  * ARGUMENT_RE is the alphabet a *renderer* argument may use. It is deliberately
  * a whitelist rather than a blacklist: a repository is `owner/name`, a run id is
  * `YYYYMMDD-HHMMSS-xxxx`, a day is `YYYY-MM-DD`, `--since` is `Nd`/`3h`/`0` or
@@ -571,7 +732,9 @@ function refused(message: string): never {
  * all -- gets an exception here, before any process exists.
  */
 export function spawnCommandFor(operation: string): SpawnCommand {
-  const row = SPAWN_COMMANDS.find((candidate) => candidate.operation === operation)
+  const row =
+    SPAWN_COMMANDS.find((candidate) => candidate.operation === operation) ??
+    PICKER_COMMANDS.find((candidate) => candidate.operation === operation)
   if (row === undefined) {
     return refused(
       `${operation} is not a console operation this process may spawn: the surface is src/main/ipc.ts's table`,
@@ -598,9 +761,9 @@ export function spawnCommandFor(operation: string): SpawnCommand {
  * no row, argument or later edit can emit a flag the console must never reach.
  */
 export function argvFor(
-  operation: OperationName,
+  operation: SpawnOperationName,
   args: ValidatedArguments,
-  context: { readonly target: SpawnTarget; readonly directory: string },
+  context: { readonly target: SpawnTarget; readonly directory: string | undefined },
 ): readonly string[] {
   const row = spawnCommandFor(operation)
   const declared = new Set(row.args.map((spec) => spec.key))
@@ -668,7 +831,13 @@ export function argvFor(
     }
   }
 
-  if (row.dirFlag) {
+  // A caller with no directory to name **omits the flag** rather than naming a
+  // wrong one. `directory` is `undefined` in exactly one place: the WSL route
+  // before Part D translates a host directory into the distribution's spelling
+  // (T-D4), where the alternative -- handing the CLI a `C:\...` path inside a
+  // distribution -- is the wrong-spelling bug T-A2's fake refuses by name. The
+  // host route always has one, so its argv is unchanged.
+  if (row.dirFlag && context.directory !== undefined) {
     if (!isSafeInstallationValue(context.directory)) refused('the working directory is not a value this console will pass')
     argv.push(DIR_FLAG, context.directory)
   }
@@ -701,7 +870,7 @@ export function assertArgvFlags(operation: string, argv: readonly string[]): voi
  * `assertSpawnSurface` holds every row's `takesProject` and `dirFlag` to these,
  * so the columns `argvFor` keys off cannot drift from the rule.
  */
-export const COMMANDS_WITHOUT_PROJECT: readonly string[] = Object.freeze(['version'])
+export const COMMANDS_WITHOUT_PROJECT: readonly string[] = Object.freeze(['version', 'config list'])
 export const COMMANDS_TAKING_DIR: readonly string[] = Object.freeze(['doctor'])
 
 /**
@@ -716,7 +885,10 @@ export const COMMANDS_TAKING_DIR: readonly string[] = Object.freeze(['doctor'])
  * it resolves a binary, so a console that cannot be built with a widened table
  * cannot be talked into spawning one later.
  */
-export function assertSpawnSurface(rows: readonly SpawnCommand[]): void {
+export function assertSpawnSurface(
+  rows: readonly SpawnCommand[],
+  pickerRows: readonly SpawnCommand[] = PICKER_COMMANDS,
+): void {
   const seen = new Set<string>()
   for (const row of rows) {
     if (seen.has(row.operation)) refused(`${row.operation} has two rows in the spawn table`)
@@ -775,17 +947,51 @@ export function assertSpawnSurface(rows: readonly SpawnCommand[]): void {
       refused(`${operation.name} has no row in the spawn table: the console would spawn nothing for it`)
     }
   }
+
+  // The picker's table, held to the same two rules that matter and to the
+  // vocabulary of the picker surface: a row here serves an operation the
+  // picker's own preload exposes (`PICKER_COMMANDS`' names are the whole set
+  // this function admits, and one outside it is refused), it carries no
+  // `--project` and no `--dir`, and it declares no arguments -- because every
+  // value this read takes is one the CLI itself printed.
+  for (const row of pickerRows) {
+    if (seen.has(row.operation)) refused(`${row.operation} has rows in both spawn tables`)
+    seen.add(row.operation)
+    if (!PICKER_OPERATION_NAMES.includes(row.operation as PickerOperationName)) {
+      refused(`${row.operation} is not an operation the installation picker may spawn`)
+    }
+    const command = row.words.filter((word) => !word.startsWith('--')).join(' ')
+    if (command !== INSTALLATION_LIST_COMMAND) {
+      refused(`${row.operation} drives ${command}, which is not the read the picker makes`)
+    }
+    if (row.takesProject !== !COMMANDS_WITHOUT_PROJECT.includes(command)) {
+      refused(
+        `${row.operation} ${COMMANDS_WITHOUT_PROJECT.includes(command) ? 'must not carry' : 'must carry'} ${PROJECT_FLAG}: the read takes no project`,
+      )
+    }
+    if (row.dirFlag !== COMMANDS_TAKING_DIR.includes(command)) {
+      refused(`${row.operation} must not carry ${DIR_FLAG}: it reads no checkout`)
+    }
+    if (row.args.length !== 0) {
+      refused(`${row.operation} declares an argument, and the read takes none`)
+    }
+    assertArgvFlags(row.operation, row.words)
+  }
 }
 
 /**
  * binDirectories is the resolution order of rule 4: the configured path, then
- * the well-known prefixes, then every entry of the app's own `PATH`. It is
- * exported because the order is the rule, and a test that could not read the
- * order could not assert it.
+ * the well-known prefixes -- and there is no third step. It is exported because
+ * the order is the rule, and a test that could not read the order could not
+ * assert it.
+ *
+ * There is deliberately **no `appEnv` parameter**: the app's own inherited
+ * `PATH` used to be the last step here, and taking it out of the signature is
+ * what keeps it out of the order -- a future edit cannot put the app's `PATH`
+ * back without changing every caller as well as this function.
  */
 export function binDirectories(options: {
   readonly configuredPath?: string | undefined
-  readonly appEnv: Readonly<Record<string, string | undefined>>
   /** `home` replaces `homedir()` for the `~` entries. It is an argument so the
    * resolution is a pure function of what it is given. */
   readonly home?: string
@@ -802,8 +1008,8 @@ export function binDirectories(options: {
 }): readonly string[] {
   const home = options.home ?? homedir()
   const candidates: string[] = []
-  // Only an absolute one, for the same reason as the `PATH` entries below. This
-  // list is what `isExecutableFile` is asked about, and that question is put to
+  // Only an absolute one, for the same reason as the well-known prefixes below.
+  // This list is what `isExecutableFile` is asked about, and that question is put to
   // the *app's* working directory; the child then runs with the installation's
   // directory as its cwd, and `argv[0]` is this string. A relative configured
   // path would therefore be checked in one place and run in another -- a
@@ -817,13 +1023,6 @@ export function binDirectories(options: {
   for (const prefix of wellKnown) {
     const base = prefix.startsWith('~') ? join(home, prefix.slice(2)) : prefix
     candidates.push(join(base, FUGARO_BINARY_NAME))
-  }
-  const path = options.appEnv['PATH'] ?? ''
-  // Only absolute entries: a relative one (`bin`, `.`, or the empty entry,
-  // which POSIX reads as `.`) resolves against the app's own working directory,
-  // which is nothing the operator chose.
-  for (const entry of path.split(':')) {
-    if (entry !== '' && isAbsolute(entry)) candidates.push(join(entry, FUGARO_BINARY_NAME))
   }
   return Object.freeze(dedupe(candidates))
 }
@@ -841,12 +1040,37 @@ function dedupe(values: readonly string[]): string[] {
 
 /** isExecutableFile answers whether a path is a regular file with an execute
  * bit. A directory named `fugaro` is not a candidate, and neither is a path the
- * process may not stat. */
-export function isExecutableFile(path: string): boolean {
+ * process may not stat.
+ *
+ * **It is a question about this host's filesystem, and it is only ever asked
+ * about a path on it** (F4, T-C6). The one path in this work that is not: a
+ * stored installation's `binaryPath` under a `distro`, which is a Linux spelling
+ * *inside* a distribution and which Windows cannot `stat` at all. Asking this
+ * function about it would answer "not executable" about a CLI that is there and
+ * works -- so that route does not ask it (`resolveInstalledBinary`'s WSL branch,
+ * and `installations.ts`'s `validateInstallation`, which skips the same question
+ * about the checkout). The distribution answers instead, through the same
+ * `version` probe every other route uses.
+ *
+ * **The mode question is the platform's** (T-C7). On POSIX it is "a regular file
+ * with an execute bit"; on Windows there is no execute bit at all -- the
+ * filesystem reports two modes and neither of them is one -- so the answer is
+ * "a regular file", which is the same answer `CreateProcess` gives. Asking the
+ * POSIX question of a Windows path would answer "not executable" about every
+ * CLI on the machine. That is a *different* question from the one above about
+ * paths the host cannot see at all: both say "the host does not decide here",
+ * and neither replaces the other.
+ *
+ * `platform` is the platform of the filesystem being asked, which is the host's
+ * -- `resolveBinary` and `resolveInstalledBinary` pass the same value to
+ * `binDirectories`, so one route does not walk one platform's directories and
+ * then ask another platform's mode question about them. */
+export function isExecutableFile(path: string, platform: string = process.platform): boolean {
   try {
     if (!existsSync(path)) return false
     const stat = statSync(path)
     if (!stat.isFile()) return false
+    if (platform === 'win32') return true
     return (stat.mode & 0o111) !== 0
   } catch {
     return false
@@ -915,9 +1139,21 @@ export function childEnvironment(options: {
  * -- see rule 4 in this file's header and design section 3.4 rule 5. Its tail is
  * the platform's own tool directories (`locationsFor`), so the macOS Homebrew
  * prefix is not on a Linux child's `PATH` and Linuxbrew's system directory is
- * not on a macOS one's. */
+ * not on a macOS one's.
+ *
+ * **Its head is the binary's own directory, or nothing at all.** `dirname`
+ * answers `.` for a path with no directory in it, and a `.` entry in a `PATH`
+ * means *the child's own working directory* -- which, for a child started in the
+ * operator's checkout, is the operator's checkout. That is not a directory the
+ * console decided to put on the `PATH`, and on the WSL route it is the only
+ * answer there could be: the CLI there is the bare name `fugaro`, resolved by
+ * the distribution's own `PATH`, so the console has no directory of its own to
+ * put in front of the tool list (F5, T-C5). The empty entry is dropped rather
+ * than passed. */
 export function childPath(binaryPath: string, platform: string = process.platform): string {
-  return dedupe([dirname(binaryPath), ...locationsFor(platform).childPathPrefixes]).join(':')
+  const directory = dirname(binaryPath)
+  const head = directory === '.' || directory === '' ? [] : [directory]
+  return dedupe([...head, ...locationsFor(platform).childPathPrefixes]).join(':')
 }
 
 /**
@@ -1088,12 +1324,49 @@ export const nodeSpawner: ChildSpawner = (command, args, options) =>
   }) as unknown as SpawnedChildLike
 
 /**
- * SpawnPlan is one spawn, fully decided: the argv (binary first), the working
- * directory, the built environment, the installation's project for the spawn
- * log, and the restart schedule. Nothing in it is read from a document.
+ * SpawnPlan is one spawn, fully decided: **the program the OS starts
+ * (`command`), the wrapper's own words (`prefix`), the CLI's argument vector
+ * (`argv`, program word first)**, the working directory, the built environment,
+ * the installation's project for the spawn log, and the restart schedule.
+ * Nothing in it is read from a document.
+ *
+ * **Why the program and its argv are two fields rather than one array.** On
+ * Windows the console does not start the CLI at all: it starts `wsl.exe`, which
+ * starts the CLI *inside a distribution* (docs/console-windows/
+ * implementation-plan.md, decision D1(a)). The words that run are then
+ * `wsl.exe -d <distro> --cd <dir> -- fugaro …`, and three different things are
+ * in that line: the program (`wsl.exe`), the wrapper's own flags (`-d … --`),
+ * and the CLI's argv (`fugaro …`). Keeping them in one array would mean the
+ * flag assertion could not tell a `wsl.exe` flag from a `fugaro` flag -- `--cd`
+ * is not a flag this console may emit to the CLI, and `--` is not one at all --
+ * and `runToCompletion` would read the binary out of a slot that, on this route,
+ * holds the word `fugaro`.
+ *
+ * **`argv` is what the CLI receives, program word first**, so the plan says the
+ * same thing on both routes: the host route's `argv[0]` is the resolved binary's
+ * path, the WSL route's is the bare name `fugaro` (resolved by the
+ * distribution's own `PATH`, which is the point of running it inside). The
+ * spawn log's `argv` line is the *whole* command line -- see `spawnedArgv` --
+ * and is therefore unchanged on the host route, where the wrapper is empty.
  */
 export interface SpawnPlan {
-  readonly operation: OperationName
+  /** `operation` is the CLI operation this plan runs, or the `wsl.exe` question
+   * it asks (`WslQueryName`). Nothing in this module reads it: it is what the
+   * plan says about itself, and `wsl.ts` is the one place that builds the
+   * second kind. */
+  readonly operation: SpawnOperationName | WslQueryName
+  /** `command` is the program handed to the spawner: the resolved binary on the
+   * host route, `wsl.exe` on the WSL route. It is what `runToCompletion` and
+   * `startSidecar` start, and what the spawn log's first word is. */
+  readonly command: string
+  /** `prefix` is the wrapper's own words, between the command and the CLI's
+   * argv, and it is empty on the host route. On the WSL route it is
+   * `['-d', <distro>, '--cd', <dir>, '--']` -- the distribution to run in, the
+   * directory to start in (in the **distribution's** spelling: the console
+   * translates before it builds the plan), and the separator after which the
+   * CLI's own argv begins. It is deliberately not part of `argv`: these words
+   * belong to `wsl.exe` and are asserted as `wsl.exe`'s, not as the CLI's. */
+  readonly prefix: readonly string[]
   readonly argv: readonly string[]
   readonly cwd: string
   readonly env: Readonly<Record<string, string>>
@@ -1101,22 +1374,114 @@ export interface SpawnPlan {
   readonly backoff: Backoff
 }
 
+/**
+ * WslRoute is how a plan reaches the CLI inside a distribution (T-C5, decisions
+ * D1(a) and D2(a)): the distribution's name, the directory the CLI starts in,
+ * and -- for a test only -- which `wsl.exe` to run.
+ *
+ * **`directory` is the distribution's spelling, not the host's.** The console
+ * translates before it builds the plan (T-D3: `wslpath`, D4(b)) because a
+ * `C:\...` path handed to a Linux child is the wrong-spelling bug T-A2's fake
+ * refuses by name. It may be `undefined`, and then the console names **no**
+ * directory at all -- neither `--cd` nor `doctor`'s `--dir` -- and the
+ * distribution starts the CLI where it starts it. That is the honest answer
+ * while the translation does not exist yet (T-D4 fills this in with the
+ * distribution's spelling of the private working directory): inventing a
+ * directory, or passing the host's, would be a path the operator never chose.
+ *
+ * **`executable` is `wsl.exe`, and it is not the CLI.** It is left out in the
+ * app, where `wslExecutable(appEnv)` computes the absolute path, and set by a
+ * test that must point the route at the fake (T-A1).
+ *
+ * **The plan's `binaryPath` is the record's Linux spelling of the CLI, not the
+ * program word.** The name `fugaro` is what `wsl.exe` hands the distribution, and
+ * the record's path is what the console states and what leads the child's `PATH`;
+ * `''` is the store's own spelling of "no path of my own" and the ordinary case.
+ */
+export interface WslRoute {
+  readonly distro: string
+  readonly directory?: string | undefined
+  readonly executable?: string | undefined
+}
+
+/** wslWrapper is the wrapper's own words: the distribution to run in, the
+ * directory to start in (in the distribution's spelling), and the separator
+ * after which the CLI's argv begins. `--cd` is left out when there is no
+ * directory to name -- see `WslRoute`. */
+function wslWrapper(wsl: WslRoute): readonly string[] {
+  const head = ['-d', wsl.distro]
+  if (wsl.directory === undefined) return Object.freeze([...head, '--'])
+  return Object.freeze([...head, '--cd', wsl.directory, '--'])
+}
+
 /** planFor assembles a plan from an operation, its validated arguments and
- * main-process state. It is the only producer of a `SpawnPlan`. */
+ * main-process state. It is the only producer of a `SpawnPlan`, and it builds
+ * both routes: the **host** route, where the command is the resolved binary and
+ * the wrapper is empty, and the **WSL** route (`context.wsl`), where the command
+ * is `wsl.exe`, the wrapper is `['-d', <distro>, '--cd', <dir>, '--']`, and the
+ * CLI's program word is `fugaro` (T-C5).
+ *
+ * **What differs between the two routes, and why.** The program word: on the
+ * host route it is the resolved binary's absolute path, because that is the file
+ * that runs; on the WSL route it is the bare name `fugaro`, because the
+ * distribution's own `PATH` is what finds the CLI there -- that is the point of
+ * running it inside (T-C5). The child's `PATH`: Linux's, on both the host
+ * route's win32 row and here (F5). And the working directory: `cwd` is where
+ * `wsl.exe` itself is started, which is a **host** directory, while the
+ * directory the CLI starts in is the wrapper's `--cd` and `argvFor`'s `--dir` --
+ * two different directories, which is why they are two different fields.
+ */
 export function planFor(
-  operation: OperationName,
+  operation: SpawnOperationName,
   args: ValidatedArguments,
   context: {
     readonly target: SpawnTarget
     readonly binaryPath: string
     readonly directory: string
     readonly appEnv: Readonly<Record<string, string | undefined>>
+    readonly wsl?: WslRoute | undefined
     readonly backoff?: Backoff
   },
 ): SpawnPlan {
+  const wsl = context.wsl
+  if (wsl !== undefined) {
+    return Object.freeze({
+      operation,
+      command: wsl.executable ?? wslExecutable(context.appEnv),
+      prefix: wslWrapper(wsl),
+      // **The program word is the name, and never a path.** The distribution's
+      // own `PATH` resolves it, which is the point of running the CLI inside
+      // (T-C5). A record's `binaryPath` is the *Linux spelling* of the same file
+      // (F15) and it is not what runs: it is what the console states (the
+      // resolution's `path`, D3(a)) and its directory leads the child's `PATH`
+      // below, so the `fugaro` the name resolves to is the one the record names.
+      argv: Object.freeze([
+        FUGARO_BINARY_NAME,
+        ...argvFor(operation, args, { target: context.target, directory: wsl.directory }),
+      ]),
+      // `cwd` is the host directory the console starts `wsl.exe` in. It is not
+      // the CLI's directory: that one is inside the distribution and is the
+      // wrapper's `--cd`.
+      cwd: context.directory,
+      // The `PATH` head is the record's own directory, exactly as on the host
+      // route, so a name and a stored path agree about which file runs; `''`
+      // (the ordinary case: no path of its own) puts nothing in front of the
+      // distribution's tool list.
+      env: childEnvironment({
+        target: context.target,
+        binaryPath: context.binaryPath,
+        appEnv: context.appEnv,
+        platform: 'win32',
+      }),
+      project: context.target.project,
+      backoff: context.backoff ?? DEFAULT_BACKOFF,
+    })
+  }
   const argv = argvFor(operation, args, { target: context.target, directory: context.directory })
   return Object.freeze({
     operation,
+    command: context.binaryPath,
+    prefix: Object.freeze([]) as readonly string[],
     argv: Object.freeze([context.binaryPath, ...argv]),
     cwd: context.directory,
     env: childEnvironment({
@@ -1127,6 +1492,36 @@ export function planFor(
     project: context.target.project,
     backoff: context.backoff ?? DEFAULT_BACKOFF,
   })
+}
+
+/**
+ * wrapperArgs is the words handed to `command` beyond the program itself: the
+ * wrapper's prefix, then the CLI's argv.
+ *
+ * The CLI's program word is dropped **exactly when the command already is that
+ * program** -- the host route, where `argv[0]` is the resolved binary's path and
+ * the OS would otherwise be handed it twice. On the WSL route the command is
+ * `wsl.exe` and the program word is `fugaro`, a word the distribution resolves,
+ * so it is kept. The rule is stated as the equality rather than as a route flag
+ * because the equality is the thing that matters: the program word is not
+ * repeated when the command *is* it.
+ */
+function wrapperArgs(plan: SpawnPlan): readonly string[] {
+  const cli = plan.argv[0] === plan.command ? plan.argv.slice(1) : plan.argv
+  return [...plan.prefix, ...cli]
+}
+
+/**
+ * spawnedArgv is the **whole command line as it is spawned**: the command, the
+ * wrapper's words, then the CLI's argv. It is what the spawn log records, so the
+ * log's `argv` line stays the operator's record of what ran (D1) on both routes
+ * -- unchanged on the host route, where there is no wrapper, and
+ * `['C:\\…\\wsl.exe', '-d', 'Ubuntu', '--cd', '/home/dimi', '--', 'fugaro', 'version']`
+ * on the WSL one. It is the first element of this array that is the program, and
+ * that is why the log's line is still "the binary's absolute path first".
+ */
+export function spawnedArgv(plan: SpawnPlan): readonly string[] {
+  return [plan.command, ...wrapperArgs(plan)]
 }
 
 /** RunResult is a child that was allowed to finish. */
@@ -1180,14 +1575,14 @@ export function runToCompletion(
   const timeoutMs = deps.timeoutMs ?? READ_TIMEOUT_MS
   const timers = deps.timers ?? NODE_TIMERS
   const grace = deps.shutdownGraceMs ?? SHUTDOWN_GRACE_MS
-  const binary = plan.argv[0]
-  if (binary === undefined) refused('a spawn plan with no binary is not a plan')
+  const binary = plan.command
+  if (binary === '') refused('a spawn plan with no binary is not a plan')
   const what = plan.argv.slice(1).filter((word) => !word.startsWith('-')).slice(0, 2).join(' ')
 
   return new Promise<RunResult>((resolve, reject) => {
     let child: SpawnedChildLike
     try {
-      child = spawner(binary, plan.argv.slice(1), {
+      child = spawner(binary, wrapperArgs(plan), {
         cwd: plan.cwd,
         env: plan.env,
         shell: false,
@@ -1205,7 +1600,7 @@ export function runToCompletion(
     // never ran (review). A spawner that throws, above, is the other half of
     // the same rule and records nothing either.
     child.on('spawn', () => {
-      deps.log?.record({ argv: plan.argv, cwd: plan.cwd, project: plan.project })
+      deps.log?.record({ argv: spawnedArgv(plan), cwd: plan.cwd, project: plan.project })
     })
     let stdout = ''
     let stderr = ''
@@ -1304,20 +1699,48 @@ function boundAppend(current: string, chunk: string, limit: number): string {
   return next.slice(from)
 }
 
-/** VersionProbe is what `resolveBinary` learned about a candidate. */
+/**
+ * BinaryRefusalKind is **which** failure a resolution is, and it exists because
+ * the four of them are four different instructions to the operator (Part G,
+ * T-G1). A screen that showed "no fugaro was found" for all four would send
+ * somebody to install a CLI when what is missing is WSL, and would send somebody
+ * to install WSL when the CLI is already there and merely not on the
+ * distribution's `PATH`.
+ *
+ *   - `no-binary` -- the existing state: a path that is not absolute, not there,
+ *     not an executable file, or a CLI that is there and will not answer. This
+ *     is the state the no-binary page has always drawn, and it is the fallback
+ *     for anything this vocabulary does not name;
+ *   - `no-wsl` -- `wsl.exe` could not answer at all (T-C4's `absent` outcome):
+ *     WSL is not installed, or the feature is off;
+ *   - `no-distro` -- WSL answered and the distribution this installation names
+ *     is not among them;
+ *   - `no-fugaro-in-distro` -- the distribution is there and the CLI is not in
+ *     it: nothing named `fugaro` is on the distribution's own `PATH`.
+ *
+ * The kinds are the *console's* vocabulary and not the CLI's: no CLI exit status
+ * reaches a screen through this field.
+ */
+export type BinaryRefusalKind = 'no-binary' | 'no-wsl' | 'no-distro' | 'no-fugaro-in-distro'
+
 export type BinaryResolution =
   | {
       readonly ok: true
       readonly path: string
       readonly version: string
       /** `configured` when the candidate is the path the installation named,
-       * `well-known` for every other candidate rule 4's list produced -- a
-       * prefix or a `PATH` entry, which is one set of "where else it can be"
-       * and stays one word so that no caller can read a distinction the
-       * resolution does not make. */
+       * `well-known` for every other candidate rule 4's list produced -- the
+       * well-known prefixes, which are one set of "where else it can be" and
+       * stay one word so that no caller can read a distinction the resolution
+       * does not make. */
       readonly source: 'configured' | 'well-known'
     }
-  | { readonly ok: false; readonly path: string | null; readonly reason: string }
+  | {
+      readonly ok: false
+      readonly path: string | null
+      readonly kind: BinaryRefusalKind
+      readonly reason: string
+    }
 
 /**
  * resolveBinary walks rule 4's order and returns the first candidate that is an
@@ -1331,12 +1754,23 @@ export type BinaryResolution =
  * for the same reason: it would be checked against the app's own working
  * directory and then run against the child's, so the file that answered the
  * version check need not be the file that runs.
+ *
+ * The configured path is a *candidate* and not a decision (owner's ruling of
+ * 2026-10-20, §3.4 rule 4): a store that already carries one is asked first, and
+ * if it has gone the walk carries on to the well-known locations rather than
+ * refusing. The console never asks the operator for a binary path.
  */
 export async function resolveBinary(options: {
   readonly configuredPath?: string | undefined
   readonly appEnv: Readonly<Record<string, string | undefined>>
   readonly home?: string
   readonly prefixes?: readonly string[] | undefined
+  /** `platform` is the host whose filesystem is being asked: it picks the
+   * well-known list *and* the mode question `isExecutableFile` answers, so the
+   * two cannot disagree (T-C7). It replaces `process.platform` for a test, and
+   * an injected platform cannot choose a list this module does not know --
+   * `binDirectories` reads it through `locationsFor`. */
+  readonly platform?: string | undefined
   readonly directory: string
   readonly target: SpawnTarget
   readonly spawner?: ChildSpawner
@@ -1352,17 +1786,22 @@ export async function resolveBinary(options: {
     return {
       ok: false,
       path: options.configuredPath,
-      reason: `the configured binary path is not absolute: ${options.configuredPath} -- give an absolute path, so the file that is checked is the file that runs`,
+      kind: 'no-binary',
+      // The sentence names the file and the field, and asks for nothing: the
+      // ruling of 2026-10-20 removed every screen that took a binary path, so
+      // "give an absolute path" would describe an affordance the console no
+      // longer draws. The one place an override can come from is the field.
+      reason: `the binaryPath in installations.json is not absolute: ${options.configuredPath} -- that field names the file the console runs, so it is read as written and never against a working directory`,
     }
   }
   const candidates = binDirectories({
     configuredPath: options.configuredPath,
-    appEnv: options.appEnv,
     ...(options.home === undefined ? {} : { home: options.home }),
     ...(options.prefixes === undefined ? {} : { prefixes: options.prefixes }),
+    ...(options.platform === undefined ? {} : { platform: options.platform }),
   })
   for (const candidate of candidates) {
-    if (!isExecutableFile(candidate)) continue
+    if (!isExecutableFile(candidate, options.platform)) continue
     const plan = planFor('cli.version', {}, {
       target: options.target,
       binaryPath: candidate,
@@ -1370,13 +1809,14 @@ export async function resolveBinary(options: {
       appEnv: options.appEnv,
     })
     const probe = await probeVersion(plan, options)
-    if (!probe.ok) return { ok: false, path: candidate, reason: probe.reason }
+    if (!probe.ok) return { ok: false, path: candidate, kind: 'no-binary', reason: probe.reason }
     const source = configuredSource(options.configuredPath, candidate)
     return { ok: true, path: candidate, version: probe.version, source }
   }
   return {
     ok: false,
     path: null,
+    kind: 'no-binary',
     reason: `no fugaro binary was found: looked at ${candidates.join(', ')}`,
   }
 }
@@ -1388,33 +1828,72 @@ export async function resolveBinary(options: {
  * That is the difference from `resolveBinary` with a `configuredPath`, and it is
  * the whole point (desktop-console plan Task 3.4b, step 4: "its handshake decides
  * the window"). `resolveBinary` skips a configured path that is missing or not
- * executable and carries on to the platform's well-known directories and then
- * `PATH` -- so a stored installation whose binary had gone
- * would have its window decided by some *other* `fugaro`, while the header still
- * named the stored path (review of 3.4b, B1). Here a stored binary that is not
- * there answers `path: null` (the handshake's `not-found`), one that is there
- * but is not an executable regular file answers its own path (`unreadable`), and
+ * executable and carries on to the platform's well-known directories -- so a
+ * stored installation whose binary had gone would be answered by some *other*
+ * `fugaro`. Here a stored binary that is not there answers `path: null`, one
+ * that is there but is not an executable regular file answers its own path, and
  * a probe that fails answers its reason -- and in every case nothing else on the
  * machine is asked.
+ *
+ * The startup handshake no longer calls this (owner's ruling of 2026-10-20: an
+ * installation's binary is an override, not a pin -- see
+ * `resolveHandshakeBinary`). Its remaining caller is the screenshot isolation
+ * check (`tools/screenshots/isolation.ts`), which must prove that exactly the
+ * fixture binary answered and nothing else on the machine did.
  */
 export async function resolveInstalledBinary(options: {
   readonly binaryPath: string
+  /** `distro` is the WSL distribution this installation's CLI runs in (D2(a)),
+   * or absent for an installation on the host. When it is set the binary is a
+   * program **inside** the distribution: the host's `statSync` cannot answer for
+   * it (F4, T-C6) and the question "is it there, and does it run?" is the
+   * distribution's, through the same `version` probe every other route uses. */
+  readonly distro?: string | undefined
+  /** `wslDirectory` is the directory the CLI starts in, in the **distribution's**
+   * spelling (T-D3). Absent means the console names none and the distribution
+   * chooses -- see `WslRoute`. */
+  readonly wslDirectory?: string | undefined
+  /** `wslPath` replaces the `wsl.exe` `wslExecutable` computes: how a test
+   * points the route at the fake (T-A1), and the only reason it exists. */
+  readonly wslPath?: string | undefined
   readonly appEnv: Readonly<Record<string, string | undefined>>
+  /** `platform` is the host's, for the mode question below (T-C7). The WSL
+   * branch never asks it: the distribution's CLI is not on this filesystem at
+   * all (F4, T-C6). */
+  readonly platform?: string | undefined
   readonly directory: string
   readonly target: SpawnTarget
   readonly spawner?: ChildSpawner
   readonly log?: SpawnLogWriter
   readonly timeoutMs?: number
 }): Promise<BinaryResolution> {
+  if (options.distro !== undefined && options.distro !== '') {
+    return resolveInDistribution(options, options.distro)
+  }
   const path = options.binaryPath
   if (path === '' || !isAbsolute(path)) {
-    return { ok: false, path, reason: `the installation's binary path is not absolute: ${path}` }
+    return {
+      ok: false,
+      path,
+      kind: 'no-binary',
+      reason: `the installation's binary path is not absolute: ${path}`,
+    }
   }
   if (!existsSync(path)) {
-    return { ok: false, path: null, reason: `the installation's binary is not there: ${path}` }
+    return {
+      ok: false,
+      path: null,
+      kind: 'no-binary',
+      reason: `the installation's binary is not there: ${path}`,
+    }
   }
-  if (!isExecutableFile(path)) {
-    return { ok: false, path, reason: `the installation's binary is not an executable file: ${path}` }
+  if (!isExecutableFile(path, options.platform)) {
+    return {
+      ok: false,
+      path,
+      kind: 'no-binary',
+      reason: `the installation's binary is not an executable file: ${path}`,
+    }
   }
   const plan = planFor('cli.version', {}, {
     target: options.target,
@@ -1423,8 +1902,146 @@ export async function resolveInstalledBinary(options: {
     appEnv: options.appEnv,
   })
   const probe = await probeVersion(plan, options)
-  if (!probe.ok) return { ok: false, path, reason: probe.reason }
+  if (!probe.ok) return { ok: false, path, kind: 'no-binary', reason: probe.reason }
   return { ok: true, path, version: probe.version, source: 'configured' }
+}
+
+/**
+ * resolveInDistribution is the WSL half of `resolveInstalledBinary` (T-C5), and
+ * it is where the four refusals are told apart. Each one is a different
+ * instruction, which is the whole reason `BinaryRefusalKind` exists:
+ *
+ *   - **`no-wsl`** -- `wsl.exe` could not answer at all (T-C4's `absent`
+ *     outcome): WSL is not installed, or the feature is off. The operator's
+ *     instruction is to install WSL, not to install a CLI;
+ *   - **`no-distro`** -- WSL answered, and the distribution this installation
+ *     names is not among them. The list `wsl.exe` gave is in the sentence,
+ *     because the distribution was renamed or removed and the operator is the
+ *     only one who can say which;
+ *   - **`no-fugaro-in-distro`** -- the distribution is there and the CLI is not
+ *     in it: the probe came back as a shell's miss (see
+ *     `SHELL_COMMAND_NOT_FOUND`). The instruction is to install the CLI inside
+ *     the distribution;
+ *   - **the probe's own refusal, unchanged** -- the distribution is there and
+ *     the CLI answered and the answer was not a version. A broken CLI must not
+ *     be reported as a missing one, so this is the same refusal the host route
+ *     has always produced, kind `no-binary`.
+ *
+ * **The classification is by the probe, not by a second call.** The `version`
+ * probe that decides the happy path is the only thing asked whether the CLI is
+ * there; a second question -- `command -v fugaro`, say -- would be another
+ * process in the common path, and U15 records that a *cold-starting*
+ * distribution can take seconds to answer its first invocation. So a healthy
+ * WSL resolution costs one `wsl.exe --list` (the enumeration, which is cached by
+ * the caller when it matters), and one `fugaro version`.
+ *
+ * **Exactly one distribution is tried** (F7): the one the installation names.
+ * A missing distribution is a stated failure, never a quiet switch to the
+ * default -- the operator would be reading another installation's numbers under
+ * the name of the one they chose.
+ */
+async function resolveInDistribution(
+  options: {
+    readonly binaryPath: string
+    readonly appEnv: Readonly<Record<string, string | undefined>>
+    readonly directory: string
+    readonly target: SpawnTarget
+    readonly wslDirectory?: string | undefined
+    readonly wslPath?: string | undefined
+    readonly spawner?: ChildSpawner
+    readonly log?: SpawnLogWriter
+    readonly timeoutMs?: number
+  },
+  distro: string,
+): Promise<BinaryResolution> {
+  const listed = await wslDistributions({
+    appEnv: options.appEnv,
+    // The query is `wsl.exe` itself, so its `cwd` is a **host** directory --
+    // the same one the plan will start `wsl.exe` in.
+    cwd: options.directory,
+    project: options.target.project,
+    ...(options.wslPath === undefined ? {} : { wslPath: options.wslPath }),
+    ...(options.spawner === undefined ? {} : { spawner: options.spawner }),
+    ...(options.log === undefined ? {} : { log: options.log }),
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+  })
+  if (listed.kind === 'absent') {
+    return { ok: false, path: null, kind: 'no-wsl', reason: listed.reason }
+  }
+  if (!listed.distributions.some((one) => one.name === distro)) {
+    const names = listed.distributions.map((one) => one.name)
+    return {
+      ok: false,
+      path: null,
+      kind: 'no-distro',
+      reason:
+        names.length === 0
+          ? `this machine has no WSL distributions, and this installation names ${quote(distro)}`
+          : `this machine has no distribution named ${quote(distro)}: wsl.exe lists ${names
+              .map(quote)
+              .join(', ')}`,
+    }
+  }
+
+  // The word `wsl.exe` hands the distribution: the bare name, which the
+  // distribution's own `PATH` resolves. The record's path, when it has one, is
+  // what the console *states* -- it is a Linux spelling inside the distribution
+  // (F15) and it is the same file the name resolves to, because `planFor` puts
+  // its directory at the head of the child's `PATH`.
+  const reported = options.binaryPath === '' ? FUGARO_BINARY_NAME : options.binaryPath
+  const plan = planFor('cli.version', {}, {
+    target: options.target,
+    binaryPath: options.binaryPath,
+    directory: options.directory,
+    appEnv: options.appEnv,
+    wsl: {
+      distro,
+      ...(options.wslDirectory === undefined ? {} : { directory: options.wslDirectory }),
+      ...(options.wslPath === undefined ? {} : { executable: options.wslPath }),
+    },
+  })
+  const probe = await probeVersion(plan, options)
+  if (!probe.ok) {
+    if (isShellMiss(probe)) {
+      return {
+        ok: false,
+        path: reported,
+        kind: 'no-fugaro-in-distro',
+        reason:
+          `the distribution ${quote(distro)} has no ${quote(FUGARO_BINARY_NAME)}: ` +
+          `${probe.said ?? 'the distribution said nothing'}`,
+      }
+    }
+    return { ok: false, path: reported, kind: 'no-binary', reason: probe.reason }
+  }
+  return { ok: true, path: reported, version: probe.version, source: 'configured' }
+}
+
+/** SHELL_COMMAND_NOT_FOUND is the status a POSIX shell uses for a command it
+ * could not find (127), and `126` for one it found and could not execute. It is
+ * a convention rather than a guarantee, which is why it is only ever read
+ * together with the sentence -- see `isShellMiss`. */
+export const SHELL_COMMAND_NOT_FOUND = 127
+
+/** SHELL_MISS_RE is how a shell says it could not find the command. It is
+ * deliberately narrow: "not found" alone is a sentence a CLI prints about its
+ * own config file, and a CLI that cannot read its config is not a CLI that is
+ * missing. Only a shell's own spellings count, and only beside the status. */
+const SHELL_MISS_RE = /command not found|not found, but can be installed|: not found/i
+
+/** isShellMiss answers whether a failed probe is a shell saying the command was
+ * not there -- **both** halves of it, because either half alone is ambiguous: a
+ * CLI may exit 127 for its own reasons, and a CLI may print "not found" about a
+ * file it was asked to read. */
+function isShellMiss(probe: VersionProbe): boolean {
+  if (probe.ok) return false
+  if (probe.code !== SHELL_COMMAND_NOT_FOUND) return false
+  return probe.said !== null && SHELL_MISS_RE.test(probe.said)
+}
+
+/** quote spells a name for a sentence an operator reads. */
+function quote(value: string): string {
+  return JSON.stringify(value)
 }
 
 /**
@@ -1432,41 +2049,83 @@ export async function resolveInstalledBinary(options: {
  * place a unit test can drive it (`src/main/index.ts` imports the Electron
  * runtime and cannot be imported under `vitest`).
  *
- * With an active installation it reads that installation's binary and nothing
- * else (`resolveInstalledBinary`), with that installation's project as the
- * target, so the spawn log records which installation the bare `version` was
- * for. With none it is Task 3.3's read: rule 4's resolution with the
- * project-less target -- and **no** project from anywhere else, not
- * `FUGARO_PROJECT`, not the working directory (D13: no guess).
+ * With an active installation it is rule 4's own walk with that installation's
+ * optional override asked first, and that installation's project as the target,
+ * so the spawn log records which installation the bare `version` was for. With
+ * none, the same walk with the project-less target -- and **no** project from
+ * anywhere else, not `FUGARO_PROJECT`, not the working directory (D13: no
+ * guess).
+ *
+ * An installation's binary is an *override* and never a pin (owner's ruling of
+ * 2026-10-20, §3.4 rule 4): the console resolves the `fugaro` that is installed
+ * on this machine, so a store entry that names a path which has since gone is
+ * not a refusal but the next candidate in the order. That replaces the narrower
+ * `resolveInstalledBinary` this function used to call for an active
+ * installation, which stopped at the stored path (review of 3.4b, B1): correct
+ * while the path was the operator's choice and asked for on first run, wrong now
+ * that the first run asks for nothing.
+ *
+ * **The WSL route is the one exception, and it is the opposite rule.** An
+ * installation that names a `distro` is read **inside** that distribution, by
+ * `resolveInstalledBinary` -- because on Windows there is no walk to fall through
+ * to, and the distribution is the installation's identity rather than a
+ * candidate. See the comment on the branch below.
  */
 export async function resolveHandshakeBinary(options: {
-  readonly installation: { readonly binaryPath: string; readonly target: SpawnTarget } | null
+  readonly installation: {
+    readonly binaryPath?: string | undefined
+    readonly distro?: string | undefined
+    readonly checkout?: string | undefined
+    readonly target: SpawnTarget
+  } | null
   readonly appEnv: Readonly<Record<string, string | undefined>>
   readonly directory: string
   readonly spawner?: ChildSpawner
   readonly log?: SpawnLogWriter
   readonly home?: string
   readonly prefixes?: readonly string[] | undefined
+  /** `wslPath` replaces the `wsl.exe` the route computes: how a test points the
+   * handshake at the fake (T-A1). */
+  readonly wslPath?: string | undefined
 }): Promise<BinaryResolution> {
   const shared = {
     appEnv: options.appEnv,
     directory: options.directory,
     ...(options.spawner === undefined ? {} : { spawner: options.spawner }),
     ...(options.log === undefined ? {} : { log: options.log }),
-  }
-  if (options.installation !== null) {
-    return resolveInstalledBinary({
-      ...shared,
-      binaryPath: options.installation.binaryPath,
-      target: options.installation.target,
-    })
-  }
-  return resolveBinary({
-    ...shared,
-    target: NO_INSTALLATION_TARGET,
     ...(options.home === undefined ? {} : { home: options.home }),
     ...(options.prefixes === undefined ? {} : { prefixes: options.prefixes }),
-  })
+  }
+  const installation = options.installation
+  // **On the WSL route the distro is the installation's identity, not an
+  // override.** Everywhere else an installation's binary is a *candidate* that
+  // rule 4 asks first and carries on from when it has gone (owner's ruling of
+  // 2026-10-20). There is nothing to carry on *to* inside a distribution: the
+  // walk is a walk of the host, the host has no `fugaro` to find (T-C2), and a
+  // console that answered a renamed distribution by looking for a second one
+  // would be reading numbers from an installation the operator did not choose
+  // (F7). So a `distro` sends the read inside it, and a distribution that has
+  // gone is a stated refusal -- `no-distro` -- rather than a silent switch.
+  if (installation !== null && installation.distro !== undefined && installation.distro !== '') {
+    return resolveInstalledBinary({
+      ...shared,
+      binaryPath: installation.binaryPath ?? '',
+      distro: installation.distro,
+      ...(installation.checkout === undefined ? {} : { wslDirectory: installation.checkout }),
+      ...(options.wslPath === undefined ? {} : { wslPath: options.wslPath }),
+      target: installation.target,
+    })
+  }
+  if (installation !== null) {
+    return resolveBinary({
+      ...shared,
+      ...(installation.binaryPath === undefined
+        ? {}
+        : { configuredPath: installation.binaryPath }),
+      target: installation.target,
+    })
+  }
+  return resolveBinary({ ...shared, target: NO_INSTALLATION_TARGET })
 }
 
 /**
@@ -1483,6 +2142,26 @@ function configuredSource(configuredPath: string | undefined, candidate: string)
   return 'well-known'
 }
 
+/** VersionProbe is what `probeVersion` learned: the version, or why there is
+ * none -- with the child's own exit status and its own last word beside it,
+ * because one caller classifies by them (T-C5's "the distribution has no
+ * `fugaro`" is a shell's 127-and-a-sentence, and the plan's rule is that the
+ * classification is by the *probe* rather than by a second call).
+ *
+ * `code` is `null` when there was no status to read: a child that was killed, or
+ * one that missed the deadline. `said` is what the child printed on stderr,
+ * trimmed, or `null` when it printed nothing -- and it is the **raw** text, not
+ * `cliSentence`'s, because the sentence being read here is a *shell's* about a
+ * missing command and not the CLI's about a refused read. */
+export type VersionProbe =
+  | { readonly ok: true; readonly version: string }
+  | {
+      readonly ok: false
+      readonly code: number | null
+      readonly said: string | null
+      readonly reason: string
+    }
+
 /** probeVersion runs `<binary> version` and reads the one human line it prints.
  * It is a spawn like any other: the spawn log records it, with the
  * installation's project, which is what Check 59a's `sort -u` over `.project`
@@ -1496,7 +2175,7 @@ export async function probeVersion(
     readonly timers?: Timers
     readonly shutdownGraceMs?: number
   },
-): Promise<{ readonly ok: true; readonly version: string } | { readonly ok: false; readonly reason: string }> {
+): Promise<VersionProbe> {
   // A probe that times out stops its child, exactly as every other stop path in
   // this module does: `SIGTERM`, then `SIGKILL` for the child that ignores it
   // (section 10.12). That is `runToCompletion`'s own deadline now, with the
@@ -1509,19 +2188,33 @@ export async function probeVersion(
       timeoutMs: deps.timeoutMs ?? VERSION_TIMEOUT_MS,
     })
   } catch (error) {
-    if (error instanceof SpawnTimeout) return { ok: false, reason: 'the binary did not answer `version` in time' }
+    if (error instanceof SpawnTimeout) {
+      return { ok: false, code: null, said: null, reason: 'the binary did not answer `version` in time' }
+    }
     throw error
   }
   if (result.signal !== null) {
-    return { ok: false, reason: `the binary was killed by ${result.signal} while reporting its version` }
+    return {
+      ok: false,
+      code: null,
+      said: null,
+      reason: `the binary was killed by ${result.signal} while reporting its version`,
+    }
   }
+  const said = result.stderr.trim() === '' ? null : result.stderr.trim()
   if (result.code !== 0) {
     return {
       ok: false,
+      code: result.code,
+      said,
       reason: `the binary exited ${String(result.code)} for \`version\`: ${cliSentence(result.stderr) ?? 'no message'}`,
     }
   }
-  return parseVersionLine(result.stdout)
+  // The child answered and the answer was not a version: `code` is 0, because
+  // the status is the child's own and it is not the failure here. A caller that
+  // classifies by the status must not read this as "the command was not found".
+  const parsed = parseVersionLine(result.stdout)
+  return parsed.ok ? parsed : { ok: false, code: result.code, said, reason: parsed.reason }
 }
 
 /** DecodedLine is the reader's rule, as a value: a document, a notice (a line
@@ -1817,15 +2510,15 @@ export function startSidecar(
   }
 
   const spawnOnce = (): void => {
-    const binary = plan.argv[0]
-    if (binary === undefined) {
+    const binary = plan.command
+    if (binary === '') {
       finish({ reason: 'unstartable', code: null, signal: null, sentence: 'the spawn plan has no binary', spawns })
       return
     }
     spawns += 1
     let started: SpawnedChildLike
     try {
-      started = spawner(binary, plan.argv.slice(1), {
+      started = spawner(binary, wrapperArgs(plan), {
         cwd: plan.cwd,
         env: plan.env,
         shell: false,
@@ -1842,7 +2535,7 @@ export function startSidecar(
       return
     }
     started.on('spawn', () => {
-      deps.log?.record({ argv: plan.argv, cwd: plan.cwd, project: plan.project })
+      deps.log?.record({ argv: spawnedArgv(plan), cwd: plan.cwd, project: plan.project })
     })
     child = started
     stderr = ''

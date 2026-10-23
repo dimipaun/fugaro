@@ -1,16 +1,20 @@
 // website/test/faq-community.mjs — the FAQ and the community page (website plan, W1.10).
 //
 // The two pages this file checks are the site's document pages, and the rules they answer to
-// are about what a page may *say* — and, for the community page, how it is *set*. Six of them
+// are about what a page may *say* — and, for the community page, how it is *set*. Eight of them
 // are checked here, and each one reads its source rather than the page's own copy of it
 // (Review Focus: "the test must read the source, not the generator's own output"):
 //
-//   1. **The FAQ's comparison section has provenance or it does not exist** (D103, F51–F52).
-//      A row about another tool is a claim the repository cannot verify, so a row carries a
-//      `source:` and a `date:` — and the page *refuses to build* without them, which is why
-//      the cases below mutate `website/data/faq.yaml` in a temp copy and require the build to
-//      stop with the row's own id in the message. The empty section is the honest state on
-//      day one, so the section renders no rows until the owner supplies sourced, dated ones.
+//   1. **The FAQ carries no comparison section** (the owner's feedback of 2026-10-21). The
+//      section headed "How Fugaro compares" was rendered from `website/data/faq.yaml`'s
+//      `comparison:` list, and that list never carried a row: D103's provenance rule — a row
+//      about another tool carries a `source:` and a `date:` or the build stops — is exactly
+//      what kept it empty, so what a reader met was a heading over a panel that said nothing.
+//      The owner had it removed: the section, the panel, the empty state and their styles are
+//      gone from the page, `faq.yaml` carries no `comparison:` key, and the two cases below
+//      hold both halves of that — the built page carries no leftover of the section, with a
+//      plant per shape a later edit would put back, and a `comparison:` key written into the
+//      file again stops the build rather than sitting in the tree with nothing rendering it.
 //   2. **The FAQ is owner-approved and says so by saying nothing** (D103; approved 2026-10-17).
 //      The built page carries no pending-review notice, and `faq.yaml` carries no review flag:
 //      a stale `review_pending:` key fails the build as a key the page does not read.
@@ -43,6 +47,18 @@
 //      edit drops by accident: a page whose title falls back to the element default still
 //      passes every other gate in this repository, because every one of them is about what
 //      the page says. Each rule below has a case that plants the defect it refuses.
+//   7. **The FAQ answers the cloud question, and both answers about the cloud reach the Why
+//      GCP page** (the owner's brief of 2026-10-21; the plan's Part 2 step 3, ZF55-ZF56). The
+//      seventh entry is `do-i-need-gcp`, its answer is plain text — the only links an answer
+//      carries are the file it is traceable to and its `more_*` pair — and the two entries
+//      whose subject is the cloud say it once and hand the argument to `/why-gcp/`.
+//   8. **The Why GCP page renders the rows `website/data/why-gcp.yaml` names, in the file's
+//      order, each citing a file that exists** (D243; the plan's Part 2 steps 1-2). The page
+//      writes none of its own facts: it renders the file's rows, each source is a link at the
+//      branch `ci.yml` pushes to, and the reader — `website/src/content.ts`'s `loadWhyGcp` —
+//      stops the build, naming the row, for a source that is not in the tree, an unknown key,
+//      an empty field, a date that is not a date or a fifth point. The sentence the page has
+//      to carry, and the phrases it may not be made of, are `wording.mjs`'s (D249).
 //
 // How it reads a page: `npm run check` builds the site before it runs anything here, so the
 // real pages are read from `website/dist/` — the artifact a reader gets, not a rendering of
@@ -52,10 +68,12 @@
 // network-free: `npm ci` is not run here, and the only executable started is the site's own
 // installed Astro.
 //
-// W1.10's red step is kept as the first two cases: with a comparison row carrying no source
-// in `faq.yaml`, the check reports `comparison row "rival-probe" carries no source` — and the
-// build refuses the row rather than the test skipping it, so the refusal cannot rot into a
-// comment about a check that no longer refuses anything.
+// The removal of 2026-10-21 is held the way the rest of this file holds a rule: over the
+// artifact, with a plant per shape a later edit would put back — and the file half of it is a
+// build case, because the page refuses a `faq.yaml` key it does not render, so re-adding the
+// section's data fails the build naming the key rather than leaving a fact nothing reads. A
+// gate that only read the built page would pass on the day the file grew the key back and the
+// page grew the section back with it over some later edit; the two cases fail on either.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -71,11 +89,6 @@ const REPO = path.dirname(SITE)
 
 const FAQ_FILE = 'website/data/faq.yaml'
 const CI_FILE = '.github/workflows/ci.yml'
-
-// The row every provenance fixture below is built from: a synthetic tool, because the page is
-// where a *sourced* comparison would be published and a test fixture naming a real product
-// would be an unsourced, undated claim about it in the repository (F51, D103).
-const PROBE = 'rival-probe'
 
 // ---- reading the repository's own sources ---------------------------------------------
 
@@ -270,98 +283,157 @@ function rewrite(file, replace) {
   writeFileSync(file, after)
 }
 
-/** The comparison rows of `faq.yaml`, as the file writes them. */
-function withComparison(rows) {
-  return (text) => text.replace(/^comparison: \[\]$/m, `comparison:\n${rows}`)
+// ---- the comparison section is gone (the owner's feedback of 2026-10-21) ------------------
+
+/**
+ * What is left of the FAQ's comparison section, as the failure lines a reader sees. The
+ * section rendered `website/data/faq.yaml`'s `comparison:` list, the list never carried a row,
+ * and the owner had the section removed on 2026-10-21 — so the shapes below are what a later
+ * edit would put back, and each one is refused by name:
+ *
+ *   1. the section itself — a band of the page heading nothing;
+ *   2. its heading, "How Fugaro compares" — an empty promise even if the band is renamed;
+ *   3. **the word `comparison` anywhere in the artifact**, which is what the section was
+ *      written in: its anchor and its class (`comparison`), its panel, its empty state and its
+ *      row count (`comparison-panel`, `comparison-empty`, `data-comparison-rows`) and the
+ *      seven stylesheet rule blocks that were inlined into the page (`.comparison`,
+ *      `.comparison-title`, `.comparison-panel`, `.comparison-empty`, `.comparison table`,
+ *      `.comparison caption`, `.comparison th, .comparison td`). The word is the rule rather
+ *      than that list: the list a first cut of this check carried named the three shapes a
+ *      reader sees and left five of the seven rule blocks free to come back unnoticed, which
+ *      is the way a "removed" section returns — one selector at a time;
+ *   4. and the anchor a reader could link to, which `website/test/linkcheck.mjs` refuses when
+ *      another page links it and nothing on this one carries it.
+ *
+ * It reads the built artifact, like every other case in this file, and it is a rule about the
+ * page a reader gets rather than about the template: a section deleted from `faq.astro` and
+ * rebuilt from somewhere else still fails here.
+ */
+function comparisonLeftovers(html) {
+  const out = []
+  if (/<section[^>]*\bid="comparison"/.test(html)) {
+    out.push('the FAQ renders a comparison section again: the owner removed it on 2026-10-21, because the section a reader met was a heading over a panel that carried no row')
+  }
+  if (/\bHow Fugaro compares\b/.test(pageText(html))) {
+    out.push('the FAQ carries the heading "How Fugaro compares" again: the section it headed was removed on 2026-10-21, and a heading with nothing under it is an empty promise')
+  }
+  // The word, in whatever token carries it: the whole identifier around it is matched so that
+  // the failure line names the shape that came back (`comparison-panel`, `data-comparison-rows`)
+  // rather than only the word, and so that a selector the list above did not know about is
+  // still caught.
+  const word = [...html.matchAll(/[\w-]*comparison[\w-]*/gi)].map((m) => m[0])
+  if (word.length > 0) {
+    const shapes = [...new Set(word)].join(', ')
+    out.push(`the FAQ still carries the removed section's own word (${shapes}, ${word.length} time(s)): every shape of the section was written in it — its anchor and class, its panel, its empty state, its row count and all seven of its stylesheet rule blocks — so the word coming back is the section coming back`)
+  }
+  return out
 }
 
-/** One comparison row, indented as `faq.yaml` writes one. */
-function row(id, fields) {
-  return Object.entries({ id, ...fields })
-    .map(([key, value]) => `    ${key}: ${value}\n`)
-    .join('')
-    .replace(/\n$/, '')
-}
+test('the FAQ carries no comparison section, and faq.yaml carries no comparison data', () => {
+  const page = builtPage('faq')
+  assert.deepEqual(
+    comparisonLeftovers(page),
+    [],
+    `the FAQ still carries the comparison section the owner removed on 2026-10-21:\n  ${comparisonLeftovers(page).join('\n  ')}`,
+  )
 
-// ---- the provenance rule (D103) ----------------------------------------------------------
+  // The file half of the same removal, and the half a page-level check cannot see: a
+  // `comparison:` key written into `faq.yaml` again is refused by the build (the case below),
+  // and this reads the file so that the day the key comes back the reason is on the failure
+  // line rather than only in the build's own message.
+  const faq = readFileSync(path.join(REPO, FAQ_FILE), 'utf8')
+  assert.ok(
+    !/^comparison:/m.test(faq),
+    `${FAQ_FILE} carries a \`comparison:\` key again, and the page that rendered it was removed on 2026-10-21: a fact nobody renders is a fact nothing holds to its source (W1.10 step 2)`,
+  )
+})
 
-test('the FAQ refuses a comparison row that carries no source', async (t) => {
-  const rows = `  - ${row(PROBE, { name: 'A rival tool', claim: 'It runs agents somewhere.', date: '2026-10-01' })}`
-  const built = buildWith(t, (copy) => rewrite(path.join(copy.site, 'data', 'faq.yaml'), withComparison(rows)))
+test('the FAQ is approved, and says so by saying nothing', () => {
+  // D103, approved 2026-10-17: no review flag in the file, no notice on the page. This used to
+  // be asserted inside the comparison case, which the removal of 2026-10-21 took away; the
+  // rule is the page's own and is held here.
+  const page = builtPage('faq')
+  const faq = readFileSync(path.join(REPO, FAQ_FILE), 'utf8')
+  assert.ok(!/^review_pending:/m.test(faq), `${FAQ_FILE} carries a review_pending flag again, and the FAQ is approved (D103)`)
+  assert.ok(!page.includes('id="review-pending"'), 'the built FAQ carries the pending-review notice, and the owner approved it on 2026-10-17 (D103)')
+  assert.ok(!/pending review/i.test(page), 'the built FAQ says it is pending review, and the owner approved it on 2026-10-17 (D103)')
+})
+
+test('every leftover of the comparison section is refused by its own line', () => {
+  const page = builtPage('faq')
+  assert.deepEqual(comparisonLeftovers(page), [], 'the removal rule fails on the built page, so the plants below are not proving what they name')
+
+  // Each plant is the defect as the edit that would bring the section back writes it, on a
+  // string the built page really carries, so a page whose markup moved fails here loudly
+  // rather than leaving a case passing over nothing.
+  const cases = [
+    {
+      what: 'the section put back',
+      plant: page.replace('<div class="faq', '<section id="comparison" class="comparison"></section><div class="faq'),
+      expected: /renders a comparison section again/,
+    },
+    {
+      what: 'the heading put back',
+      plant: page.replace('<h1', '<h2 class="comparison-title display-lg">How Fugaro compares</h2><h1'),
+      expected: /carries the heading "How Fugaro compares"/,
+    },
+    {
+      what: 'the panel put back',
+      plant: page.replace('<div class="questions', '<div class="comparison-panel"></div><div class="questions'),
+      expected: /comparison-panel/,
+    },
+    {
+      what: 'the empty state put back',
+      plant: page.replace('<div class="questions', '<p class="comparison-empty" id="comparison-empty">No comparison is published.</p><div class="questions'),
+      expected: /comparison-empty/,
+    },
+    {
+      what: 'the row count put back',
+      plant: page.replace('<div class="questions', '<section id="rivals" data-comparison-rows="0"></section><div class="questions'),
+      expected: /data-comparison-rows/,
+    },
+    {
+      // All seven of the rule blocks the section was drawn with, and not only the two the
+      // shapes above are caught by: `.comparison`, `.comparison-title`, `.comparison table`,
+      // `.comparison caption` and `.comparison th, .comparison td` are five a rule reading
+      // three class tokens let through, which is why this plant carries them and not
+      // `.comparison-panel` again.
+      what: 'the section’s stylesheet left behind',
+      plant: page.replace(
+        '</style>',
+        '.comparison { display: flex; }\n.comparison-title { margin: 0; }\n.comparison table { border-collapse: collapse; }\n.comparison caption { text-align: left; }\n.comparison th, .comparison td { text-align: left; }\n</style>',
+      ),
+      expected: /removed section's own word/,
+    },
+  ]
+
+  for (const { what, plant, expected } of cases) {
+    assert.notEqual(plant, page, `${what}: the plant changed nothing, so the case below would prove nothing`)
+    const failures = comparisonLeftovers(plant)
+    assert.ok(
+      failures.some((line) => expected.test(line)),
+      `${what} was not refused (${expected}); the rule said:\n  ${failures.join('\n  ') || '(nothing)'}`,
+    )
+  }
+})
+
+test('a comparison: key written into faq.yaml again stops the build', async (t) => {
+  // The file half of the removal, and the one thing the page cannot say about itself: the page
+  // reads `version` and `questions` and refuses every other key, so the data the removed
+  // section was rendered from cannot come back with nothing rendering it. The build names the
+  // key, which is what tells whoever added it why the page will not take it.
+  const built = buildWith(t, (copy) => rewrite(path.join(copy.site, 'data', 'faq.yaml'), (text) => `${text}\ncomparison: []\n`))
 
   assert.match(
     built.output,
-    new RegExp(`comparison row "${PROBE}" carries no source`),
-    `Expected: FAIL — comparison row "${PROBE}" carries no source. The build refused the row without naming it, so the author of a new row cannot find it (D103)`,
+    /the key "comparison" is not one this page reads/,
+    `Expected: FAIL — the key "comparison" is not one this page reads. The removed section's data came back and the build refused it without naming the key, so the failure line does not say what to remove (W1.10 step 2)`,
   )
   assert.notEqual(
     built.status,
     0,
-    `the build accepted a comparison row with no source, so a comparison can be added without provenance (D103, F51):\n${built.output}`,
+    `the build accepted a \`comparison:\` key in ${FAQ_FILE}, so the removed section's data can sit in the tree with nothing rendering it (the owner's feedback of 2026-10-21, W1.10 step 2):\n${built.output}`,
   )
-})
-
-test('the FAQ refuses a comparison row that carries no date', async (t) => {
-  const rows = `  - ${row(PROBE, { name: 'A rival tool', claim: 'It runs agents somewhere.', source: 'https://example.invalid/rival' })}`
-  const built = buildWith(t, (copy) => rewrite(path.join(copy.site, 'data', 'faq.yaml'), withComparison(rows)))
-
-  assert.match(
-    built.output,
-    new RegExp(`comparison row "${PROBE}" carries no date`),
-    `Expected: FAIL — comparison row "${PROBE}" carries no date: a claim about another tool without the date it was checked is a claim with no expiry (D103)`,
-  )
-  assert.notEqual(built.status, 0, `the build accepted a comparison row with no date:\n${built.output}`)
-})
-
-test('a comparison row with a source and a date is rendered, and the page carries no pending-review notice', async (t) => {
-  // The positive half of the same rule, in one build: a row that carries both fields is
-  // published, so the page is not merely refusing rows, it is rendering the sourced ones —
-  // and, with a row in it, the page still carries no pending-review notice.
-  const rows = `  - ${row(PROBE, {
-    name: 'A rival tool',
-    claim: 'It runs agents somewhere, according to its own documentation.',
-    source: 'https://example.invalid/rival',
-    date: '2026-10-01',
-  })}`
-  const built = buildWith(t, (copy) => {
-    rewrite(path.join(copy.site, 'data', 'faq.yaml'), withComparison(rows))
-  })
-
-  assert.equal(built.status, 0, `the build refused a sourced, dated comparison row:\n${built.output}`)
-  assert.ok(built.page, 'the build produced no page')
-  assert.ok(
-    built.page.includes('It runs agents somewhere, according to its own documentation.'),
-    'the sourced row is not on the page, so the section renders nothing even when faq.yaml carries a row',
-  )
-  assert.ok(built.page.includes('https://example.invalid/rival'), 'the row is rendered without its source')
-  assert.ok(built.page.includes('2026-10-01'), 'the row is rendered without its date')
-  assert.ok(
-    !built.page.includes('id="review-pending"') && !/pending review/i.test(built.page),
-    "the owner approved the FAQ on 2026-10-17 and the page still says it is pending the owner's review (D103)",
-  )
-})
-
-test('the comparison section renders no rows while faq.yaml carries none', async (t) => {
-  // The real file, as the owner has it: no rows. The section is empty and says so rather than
-  // rendering a table with nothing in it, and the two states are read from the same page:
-  // `data-comparison-rows` is the page's own count, and the empty state exists with it.
-  const page = builtPage('faq')
-  const faq = readFileSync(path.join(REPO, FAQ_FILE), 'utf8')
-  const empty = /^comparison:\s*\[\s*\]\s*$/m.test(faq)
-  const section = element(page, 'comparison')
-
-  if (empty) {
-    assert.equal(attribute(section, 'data-comparison-rows'), '0', 'faq.yaml carries no comparison row and the page counts a different number')
-    assert.ok(section.includes('id="comparison-empty"'), 'faq.yaml carries no comparison row and the section does not say so')
-  } else {
-    assert.notEqual(attribute(section, 'data-comparison-rows'), '0', 'faq.yaml carries comparison rows and the page renders none of them')
-    assert.ok(!section.includes('id="comparison-empty"'), 'faq.yaml carries comparison rows and the section still renders its empty state')
-  }
-
-  // The FAQ is approved (D103, 2026-10-17): no review flag in the file, no notice on the page.
-  assert.ok(!/^review_pending:/m.test(faq), `${FAQ_FILE} carries a review_pending flag again, and the FAQ is approved (D103)`)
-  assert.ok(!page.includes('id="review-pending"'), 'the built FAQ carries the pending-review notice, and the owner approved it on 2026-10-17 (D103)')
-  assert.ok(!/pending review/i.test(page), 'the built FAQ says it is pending review, and the owner approved it on 2026-10-17 (D103)')
 })
 
 // ---- the community page's facts -----------------------------------------------------------
@@ -733,6 +805,229 @@ test('the FAQ links the security page and the caps guide rather than summarizing
   assert.match(caps, /href="\/caps-and-costs\/"/, "the FAQ's cost answer does not link the caps-and-costs page")
 })
 
+test('the FAQ answers the cloud question, and both answers about the cloud reach the Why GCP page', () => {
+  // The owner's brief of 2026-10-21 asks for the seventh answer — "Do I need to be on GCP?" —
+  // and for the two entries that are about the cloud to send a reader to the page that argues
+  // it (the plan's Part 2 step 3, ZF55-ZF56). Three things make that true rather than asserted:
+  // the file's own entries, the artifact's `<article>` list in the file's order, and the link
+  // each entry's `more_href` names resolving to a page the build produced.
+  const entries = faqEntries()
+  const ids = entries.map((entry) => entry.id)
+  assert.deepEqual(ids, [...new Set(ids)], `website/data/faq.yaml carries a duplicate id: ${JSON.stringify(ids)} — an id is the anchor the page renders and the name a build error uses`)
+  assert.equal(
+    ids.length,
+    7,
+    `website/data/faq.yaml carries ${ids.length} answers: the FAQ answers the six W1.10 step 1 fixes and the brief's seventh, "Do I need to be on GCP?" (the owner's brief of 2026-10-21; the plan's Part 2 step 3)`,
+  )
+
+  const page = builtPage('faq')
+  const articles = [...page.matchAll(/<article\b[^>]*\bid="([^"]+)"/g)].map((m) => m[1])
+  assert.deepEqual(articles, ids, 'the FAQ renders its answers in an order that is not the file’s: the page maps `website/data/faq.yaml`’s `questions` in order, so the two lists are the same list')
+
+  const links = entries.filter((entry) => entry.more_href)
+  assert.ok(links.length >= 3, `only ${links.length} answers carry a second link: the two the redesign wrote and the cloud question's are what this case is about`)
+  for (const entry of links) {
+    assert.ok(
+      existsSync(path.join(SITE, 'dist', entry.more_href, 'index.html')),
+      `the FAQ's "${entry.id}" links ${entry.more_href}, and the build produced no page there: a \`more_href\` is a route this site serves (W1.10 step 1)`,
+    )
+    assert.notEqual(entry.more_label ?? '', '', `the FAQ's "${entry.id}" carries a \`more_href\` and no \`more_label\`, so the link a reader follows has no words`)
+  }
+
+  const where = entries.find((entry) => entry.id === 'where-it-runs')
+  const gcp = entries.find((entry) => entry.id === 'do-i-need-gcp')
+  assert.ok(where, 'website/data/faq.yaml carries no `where-it-runs` entry, which is the answer the brief asks to hand the argument over')
+  assert.ok(gcp, 'website/data/faq.yaml carries no `do-i-need-gcp` entry: the brief asks the FAQ the cloud question and the page answers it')
+  assert.equal(gcp.question, 'Do I need to be on GCP?', 'the seventh entry is not the brief’s question')
+  assert.equal(gcp.more_href, '/why-gcp/', 'the seventh entry does not reach the Why GCP page, which is the page the brief asks it to reach')
+  assert.equal(
+    where.more_href,
+    '/why-gcp/',
+    'the `where-it-runs` answer already answers the cloud question and does not reach the Why GCP page: the brief asks the two to say it once and hand the argument over',
+  )
+  assert.notEqual(where.answer, gcp.answer, 'the two answers about the cloud are the same answer, which is the page saying the same thing twice')
+
+  // The answer itself is plain text (ZF56): the only links an answer carries are the file it is
+  // traceable to and its `more_*` pair, so a link inside the answer's own paragraph is the
+  // defect — a page whose answer is a second copy of the page it points at.
+  const article = element(page, 'do-i-need-gcp')
+  const answer = /<p class="question-answer"[^>]*>([\s\S]*?)<\/p>/.exec(article)
+  assert.ok(answer, 'the seventh answer is not drawn as the page’s answer paragraph')
+  assert.ok(!/<a\b/.test(answer[1]), `the seventh answer carries a link inside itself: ${JSON.stringify(answer[1])} — an answer is plain text and its links are its source and its \`more_*\` pair (ZF56)`)
+  assert.equal(
+    [...article.matchAll(/<a\b/g)].length,
+    2,
+    'the seventh answer carries a number of links that is not the two it should: the file it is traceable to and the Why GCP page',
+  )
+})
+
+// ---- the Why GCP page (the owner's brief of 2026-10-21; the plan's Part 2) ----------------
+
+/**
+ * The rows `website/data/why-gcp.yaml` writes, read from the file rather than from the page.
+ * The page's own reader is `website/src/content.ts`'s `loadWhyGcp`; this is a second,
+ * independent read of the same file — the pattern `readCITriggers` above is the same one — so
+ * the case below holds the page to the file rather than to the page's opinion of it.
+ */
+function whyGcpRows(file = path.join(SITE, 'data/why-gcp.yaml')) {
+  const rows = { points: [], closing: [] }
+  let section = null
+  let row = null
+  for (const line of readFileSync(file, 'utf8').split('\n')) {
+    if (line.trimStart().startsWith('#') || line.trim() === '') continue
+    const top = /^([a-z]+):\s*$/.exec(line)
+    if (top) {
+      section = top[1]
+      row = section === 'framing' ? (rows.framing = {}) : null
+      continue
+    }
+    const item = /^\s+- id:\s*(\S+)\s*$/.exec(line)
+    if (item) {
+      row = { id: item[1] }
+      assert.ok(section in rows, `website/data/why-gcp.yaml writes an \`id\` under \`${section}\`, which is not a list the page renders`)
+      rows[section].push(row)
+      continue
+    }
+    const field = /^\s+([a-z]+):\s*(.*)$/.exec(line)
+    if (field && row) row[field[1]] = field[2]
+  }
+  return rows
+}
+
+/**
+ * The FAQ's entries as `website/data/faq.yaml` writes them: one block per `- id:`, with the
+ * folded `answer` joined the way the page's own reader joins it.
+ */
+function faqEntries(file = path.join(SITE, 'data/faq.yaml')) {
+  const entries = []
+  let row = null
+  let folded = null
+  for (const line of readFileSync(file, 'utf8').split('\n')) {
+    if (line.trimStart().startsWith('#')) continue
+    if (/^[a-z_]+:/.test(line)) {
+      row = null
+      folded = null
+      continue
+    }
+    if (!row && !/^\s+- id:/.test(line)) continue
+    const item = /^\s+- id:\s*(\S+)\s*$/.exec(line)
+    if (item) {
+      row = { id: item[1] }
+      entries.push(row)
+      folded = null
+      continue
+    }
+    const field = /^\s{4}([a-z_]+):\s*(.*)$/.exec(line)
+    if (field) {
+      if (/^[>|][-+]?$/.test(field[2])) {
+        row[field[1]] = ''
+        folded = field[1]
+      } else {
+        row[field[1]] = field[2]
+        folded = null
+      }
+      continue
+    }
+    if (folded && /^\s{6}\S/.test(line)) row[folded] = `${row[folded]} ${line.trim()}`.trim()
+  }
+  return entries
+}
+
+test('the Why GCP page renders the rows its file names, in order, each citing a file that exists', () => {
+  const rows = whyGcpRows()
+  const page = builtPage('why-gcp')
+  const ci = ciTriggers()
+  const repository = /^repository:\s*(\S+)$/m.exec(readFileSync(path.join(SITE, 'data/site.yaml'), 'utf8'))[1]
+
+  // The four points are the brief's, and the page draws them as the brief's list: the count is
+  // the file's, so a row added or dropped moves the two together or fails here.
+  assert.equal(rows.points.length, 4, `website/data/why-gcp.yaml carries ${rows.points.length} points: the page's \`<ol>\` is the brief's four numbered points, as the tree supports them (the plan's Part 2 step 2)`)
+  assert.ok(rows.closing.length >= 1 && rows.framing, 'website/data/why-gcp.yaml carries no closing rows or no framing row, so the page has nothing to render below its list')
+
+  const readList = (tag, cls) => {
+    const list = new RegExp(`<${tag} class="claims ${cls}"[^>]*>([\\s\\S]*?)</${tag}>`).exec(page)
+    assert.ok(list, `the built page carries no \`<${tag} class="claims ${cls}">\`: the page renders the file's rows in the two lists \`loadWhyGcp\` returns`)
+    return [...list[1].matchAll(/<li\b([^>]*)>([\s\S]*?)<\/li>/g)].map((m) => ({
+      id: /\bid="([^"]+)"/.exec(m[1])?.[1],
+      html: m[2],
+    }))
+  }
+
+  for (const [cls, wanted] of [['points', rows.points], ['closing', rows.closing]]) {
+    const items = readList(cls === 'points' ? 'ol' : 'ul', cls)
+    assert.deepEqual(
+      items.map((item) => item.id),
+      wanted.map((row) => row.id),
+      `the ${cls} the page renders are not the rows website/data/why-gcp.yaml names, in the file's order: the page maps the file's rows, so the two lists are the same list`,
+    )
+    for (const [at, item] of items.entries()) {
+      const row = wanted[at]
+      assert.match(item.html, new RegExp(`Source: <a href="${escaped(`${repository}/blob/${ci.branches[0]}/${row.source}`)}"`), `the page's "${row.id}" does not link ${row.source} at ${ci.branches[0]}, the branch ${CI_FILE} pushes to: a source link at another branch is a link into nothing (W1.10)`)
+      assert.ok(existsSync(path.join(REPO, row.source)), `website/data/why-gcp.yaml's "${row.id}" names ${row.source} as the file that proves it, and this repository does not have that file`)
+      assert.match(item.html, new RegExp(`<time datetime="${escaped(row.date)}"`), `the page's "${row.id}" does not carry ${row.date} as its date: a claim about another cloud is one whose age a reader has to be able to judge (ZF58)`)
+    }
+  }
+
+  // The framing row is the page's one-sentence answer, and it renders as itself with its own
+  // source: the sentence's text is pinned by `wording.mjs` (D249), so what is held here is that
+  // it is a row of the file rather than a sentence written into the template.
+  assert.match(page, new RegExp(`>${escaped(rows.framing.text)}<`), `the built page does not render website/data/why-gcp.yaml's framing sentence ${JSON.stringify(rows.framing.text)}: the page renders the file's rows and writes none of them`)
+  assert.match(page, new RegExp(`href="${escaped(`${repository}/blob/${ci.branches[0]}/${rows.framing.source}`)}"`), `the framing sentence does not carry its source (${rows.framing.source}) as a link`)
+})
+
+test('the Why GCP reader refuses a row the file cannot support, naming it', (t) => {
+  // The reader is `website/src/content.ts`'s `loadWhyGcp`, and what it refuses is the shape
+  // `loadFaq` refuses in (the plan's Part 2 step 2): an unknown key, an empty field, a `source`
+  // that is not a file in the tree, a date that is not a date. Each case below plants one of
+  // them in a copy of the repository and requires the build to stop with the row named —
+  // because a row nothing renders, or a citation into nothing, is the defect a page of facts
+  // has to fail on rather than ship.
+  const file = path.join('website', 'data', 'why-gcp.yaml')
+  const cases = [
+    {
+      what: 'a source that is not a file in this repository',
+      edit: (text) => text.replace('    source: docs/backends.md\n', '    source: docs/backends-that-do-not-exist.md\n'),
+      wanted: /names "docs\/backends-that-do-not-exist\.md"/,
+    },
+    {
+      what: 'an unknown key',
+      edit: (text) => text.replace('    source: docs/backends.md\n', '    source: docs/backends.md\n    reviewed_by: nobody\n'),
+      wanted: /reviewed_by/,
+    },
+    {
+      what: 'an empty field',
+      edit: (text) => text.replace(/    text: >-\n      Fugaro's control plane[\s\S]*?backend seam\.\n/, "    text: ''\n"),
+      wanted: /\.text is empty/,
+    },
+    {
+      what: 'a date that is not a date',
+      edit: (text) => text.replace('    date: 2026-10-22\n', '    date: the 22nd of October\n'),
+      wanted: /\.date is "the 22nd of October"/,
+    },
+    {
+      what: 'a fifth point',
+      edit: (text) => text.replace('\nclosing:', "\n  - id: one-more-point\n    text: >-\n      A fifth point the brief does not make.\n    source: docs/backends.md\n    date: 2026-10-22\n\nclosing:"),
+      // The reader's own message counts the rows it read, so the case can only pass on it: a
+      // loose pattern would match some other failure's output and hold nothing.
+      wanted: /carries 5 points, and the page renders the brief's four/,
+    },
+    {
+      // A row's id is rendered as the row's own `id`, so two rows sharing one are two
+      // elements with one name: a link to either resolves to the first, and the page has an
+      // anchor a reader cannot reach the second claim by.
+      what: 'two rows with one id',
+      edit: (text) => text.replace('  - id: gcp-project\n', '  - id: control-plane\n'),
+      wanted: /two rows share the id "control-plane"/,
+    },
+  ]
+
+  for (const one of cases) {
+    const built = buildWith(t, (copy) => rewrite(path.join(copy.root, file), one.edit), 'why-gcp')
+    assert.notEqual(built.status, 0, `the build passed with ${one.what} in ${file}, and the page renders facts a reader acts on: a row the file cannot support has to stop the build:\n${built.output}`)
+    assert.match(built.output, one.wanted, `the build stopped for ${one.what} without naming it, so nothing says which row to fix:\n${built.output}`)
+  }
+})
+
 // ---- the bold look (the owner's approved boards of 2026-10-20) ----------------------------
 
 test('the FAQ wears the site’s bold look, in the shapes the site writes once', () => {
@@ -779,13 +1074,6 @@ test('the FAQ wears the site’s bold look, in the shapes the site writes once',
     answers.filter((answer) => !answer.card).map((answer) => answer.id),
     [],
     'these answers are not drawn as the site’s card (`base.css`’s `.card`): the redesign lays each answer on one, so the six read as a set a reader scans rather than as a document',
-  )
-
-  const section = element(page, 'comparison')
-  assert.match(
-    section,
-    /class="comparison-panel"/,
-    'the FAQ’s comparison section is not drawn in a panel, which is the box every raised block of the redesigned site stands in',
   )
 })
 

@@ -7,13 +7,14 @@
 // installation:
 //
 //   1. **the binary.** The console's startup handshake resolves its `fugaro`
-//      from the *store*: with a chosen installation it reads that
-//      installation's one path and nothing else (`src/main/spawn.ts`'s
+//      from the *store*: with a chosen installation it asks that
+//      installation's one path first (rule 4's configured candidate; this
+//      module checks it with `src/main/spawn.ts`'s one-path
 //      `resolveInstalledBinary`); with nothing chosen it walks rule 4's list --
 //      the configured path, then this platform's well-known directories
 //      (`spawn.ts`'s table: on macOS `/opt/homebrew/bin`, `/usr/local/bin`,
 //      `~/.local/bin` and `/usr/bin`, and Linux has its own list since the
-//      owner's ruling of 2026-10-20), then the app's own `PATH`. That second
+//      owner's ruling of 2026-10-20); the app's own `PATH` is never a step. That second
 //      walk reaches directories this run cannot change, and on the owner's Mac
 //      the first of them holds their own CLI, so a launch that walked would
 //      photograph real runs. `assertLaunchIsFixture` is the rule that makes
@@ -273,7 +274,7 @@ export function assertFixtureBinary(found: string | null, expected: string, step
  *   - **a store that chooses no installation is refused**, because the
  *     handshake with `installation === null` is `resolveBinary` over rule 4's
  *     list: it walks `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin` and
- *     `/usr/bin` before it reaches the app's `PATH`, and on the owner's Mac one
+ *     `/usr/bin`, and on the owner's Mac one
  *     of those holds their own `fugaro`. Every launch this run makes seeds a
  *     chosen installation, so this is a check on the run's own seeding rather
  *     than a machine's luck -- and it is why the picker capture opens the
@@ -313,7 +314,7 @@ export async function assertLaunchIsFixture(options: {
     raw = readFileSync(file, 'utf8')
   } catch {
     throw new Error(
-      `the screenshot run refuses to start: the profile it seeded (${profile}) holds no ${INSTALLATIONS_FILE_NAME}, so the console's startup handshake would resolve a fugaro by walking ${walk()} and this app's PATH`,
+      `the screenshot run refuses to start: the profile it seeded (${profile}) holds no ${INSTALLATIONS_FILE_NAME}, so the console's startup handshake would resolve a fugaro by walking ${walk()}`,
     )
   }
   const read = readInstallationFile(raw)
@@ -323,12 +324,20 @@ export async function assertLaunchIsFixture(options: {
   const active = read.file.active
   if (active === null) {
     throw new Error(
-      `the screenshot run refuses to start: the store it seeded (${file}) chooses no installation, and the startup handshake of a console with nothing chosen resolves a fugaro by walking ${walk()} and this app's PATH -- the directories where the operator's own fugaro lives. Every launch this run makes names the fixture as its chosen installation.`,
+      `the screenshot run refuses to start: the store it seeded (${file}) chooses no installation, and the startup handshake of a console with nothing chosen resolves a fugaro by walking ${walk()} -- the directories where the operator's own fugaro lives. Every launch this run makes names the fixture as its chosen installation.`,
     )
   }
   const row = read.file.installations.find((installation) => installation.id === active)
   if (row === undefined) {
     throw new Error(`the screenshot run refuses to start: the store it seeded chooses ${active}, which it does not hold`)
+  }
+  // The store's `binaryPath` is an optional override: a chosen row without one
+  // is a handshake that walks rule 4's list, which is the walk this check
+  // exists to refuse.
+  if (row.binaryPath === undefined) {
+    throw new Error(
+      `the screenshot run refuses to start: the store it seeded chooses the ${row.project} installation but names no binaryPath for it, so the console's startup handshake would resolve a fugaro by walking ${walk()}`,
+    )
   }
   const resolved = await resolveInstalledBinary({
     binaryPath: row.binaryPath,

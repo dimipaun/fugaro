@@ -846,7 +846,7 @@ func TestBuildEnvNoGatekeeperNeedsTheKeyActionably(t *testing.T) {
 	if err == nil {
 		t.Fatal("api-key with no gateway and no key started")
 	}
-	for _, want := range []string{"ANTHROPIC_API_KEY", "fugaro secrets set anthropic-api-key", "fugaro init --repo", "route the model through a provider"} {
+	for _, want := range []string{"ANTHROPIC_API_KEY", "fugaro secrets set anthropic-api-key", "fugaro update", "route the model through a provider"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
@@ -855,5 +855,69 @@ func TestBuildEnvNoGatekeeperNeedsTheKeyActionably(t *testing.T) {
 	// Anthropic key has an action worth naming.
 	if _, _, err := BuildEnv([]string{"PATH=/bin", "ANTHROPIC_API_KEY=key-123"}, EnvSpec{Auth: "api-key", Secrets: []string{"MISSING"}}); err == nil || strings.Contains(err.Error(), "fugaro secrets set anthropic-api-key") {
 		t.Errorf("a missing declared secret err = %v, want the plain message", err)
+	}
+}
+
+// TestCascadeAgentEnvHoldsNoCredential (C1.19): a cascade run's agent holds no
+// model credential at all. Nothing of the job's own reaches it — not the
+// Anthropic key the runner's environment may carry, not a subscription OAuth
+// token — and what Claude Code presents is the gateway's own per-run token,
+// which the credentials service (a different process, with the credential) is
+// behind. D143: there is no credential in the job to fall back to.
+func TestCascadeAgentEnvHoldsNoCredential(t *testing.T) {
+	// Every value is built here, from this test's own name: no fixture in this
+	// repository is a literal that looks like a key (Convention 2).
+	realKey := "key-" + strings.ReplaceAll(t.Name(), "/", "-")
+	oauthToken := "oauth-" + strings.ReplaceAll(t.Name(), "/", "-")
+	gw := &Gateway{BaseURL: "http://127.0.0.1:4000", Token: "tok-" + strings.ReplaceAll(t.Name(), "/", "-")}
+	parent := []string{
+		"PATH=/bin", "ANTHROPIC_API_KEY=" + realKey,
+		"CLAUDE_CODE_OAUTH_TOKEN=" + oauthToken,
+		"CLAUDE_CODE_OAUTH_TOKEN_WORK=" + oauthToken,
+	}
+	env, secrets, err := BuildEnv(parent, EnvSpec{Auth: config.AuthCascade, Gateway: gw})
+	if err != nil {
+		t.Fatalf("a cascade run's agent env: %v", err)
+	}
+	for _, kv := range env {
+		for _, leak := range []string{realKey, oauthToken} {
+			if strings.Contains(kv, leak) {
+				t.Errorf("a credential is in the cascade agent's env: %s", kv)
+			}
+		}
+	}
+	for _, want := range []string{"ANTHROPIC_API_KEY=" + gw.Token, "ANTHROPIC_BASE_URL=" + gw.BaseURL} {
+		if !slices.Contains(env, want) {
+			t.Errorf("env lacks %s: %v", want, env)
+		}
+	}
+	// The real key is registered for redaction (a transcript never carries
+	// it) and the gateway's token never is: it is this run's own, dead with
+	// the run.
+	if !slices.Contains(secrets, realKey) {
+		t.Errorf("the job's own key is not registered for redaction: %v", secrets)
+	}
+	if slices.Contains(secrets, gw.Token) {
+		t.Errorf("the gateway's per-run token is registered as a secret: %v", secrets)
+	}
+	// A declared mount of a model credential is refused rather than mounted:
+	// the service holds it, and this job has no reason to (D143).
+	for _, logical := range []string{"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"} {
+		if _, _, err := BuildEnv(parent, EnvSpec{Auth: config.AuthCascade, Gateway: gw, Secrets: []string{logical}}); err == nil {
+			t.Errorf("a cascade run mounted %s", logical)
+		}
+	}
+	// A cascade run with no gateway is refused: there is nothing to carry its
+	// calls and no credential of its own.
+	if _, _, err := BuildEnv(parent, EnvSpec{Auth: config.AuthCascade}); err == nil {
+		t.Error("a cascade run's agent env was built with no gateway")
+	}
+	// GatewayVars is the same answer where the managed settings file is written.
+	vars, err := GatewayVars(config.AuthCascade, *gw, nil)
+	if err != nil {
+		t.Fatalf("GatewayVars for cascade: %v", err)
+	}
+	if vars["ANTHROPIC_API_KEY"] != gw.Token || vars["ANTHROPIC_BASE_URL"] != gw.BaseURL {
+		t.Errorf("the managed settings route cascade to %v", vars)
 	}
 }

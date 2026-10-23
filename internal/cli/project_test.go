@@ -60,6 +60,35 @@ func writeProject(t *testing.T, name, gcp string) string {
 	return path
 }
 
+// enrollRepo adds repo (owner/name) to project's config, as a real project
+// config enrolls one. The entry names no provider on purpose: provider: is
+// optional there and the checkout's own fugaro.yaml git.provider decides it
+// when the entry is silent, which is what makes this a fixture that says
+// "this repository belongs to this project" without also pinning a forge the
+// test may be varying.
+//
+// It may be called more than once for a project: repos: is written once, and
+// every later call adds a line to that block (a second repos: key would be a
+// duplicate key, which the strict parser refuses).
+func enrollRepo(t *testing.T, project, repo string) {
+	t.Helper()
+	path, err := localcfg.ProjectPath(os.Getenv, project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	add := "  " + repo + ": {}\n"
+	if !strings.Contains(string(b), "repos:\n") {
+		add = "repos:\n" + add
+	}
+	if err := os.WriteFile(path, append(b, add...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // Every cloud command says which project it acts on, as the first line
 // of its stderr, even when it fails after the project is selected.
 func TestCloudCommandsPrintProjectHeader(t *testing.T) {
@@ -166,7 +195,7 @@ func TestJSONOutputsCarryProject(t *testing.T) {
 	}
 }
 
-// fugaro init with no project config creates projects/<name>.yaml from
+// fugaro setup with no project config creates projects/<name>.yaml from
 // --name, --gcp-project and --region. (Writing it needs the installation's
 // outputs, a cloud call, so the file is written here the way writeConfig
 // does.)
@@ -182,7 +211,7 @@ func TestInitCreatesProjectConfig(t *testing.T) {
 	if path != want || old != nil || lc.Name != "aurora" || lc.GCPProject != "proj-1234" || lc.Region != "us-east5" || lc.RunsBucket != "fugaro-runs-proj-1234" {
 		t.Fatalf("config %+v at %s (old %q)", lc, path, old)
 	}
-	cmd := newInitCmd()
+	cmd := newSetupCmd()
 	cmd.SetOut(io.Discard)
 	r := newInitRun(cmd, &initOptions{yes: true})
 	if err := r.writeLocalConfig(lc, path, old, true); err != nil {
@@ -223,13 +252,13 @@ func TestInitCreatesProjectConfig(t *testing.T) {
 	}
 }
 
-// With no project config and nothing naming the project, fugaro init needs
+// With no project config and nothing naming the project, fugaro setup needs
 // --name; it refuses before any cloud call.
 func TestInitWithoutNameRefused(t *testing.T) {
 	isolateProjects(t, t.TempDir())
 	t.Chdir(t.TempDir())
 	for _, args := range [][]string{
-		{"init", "--gcp-project", "proj-1234", "--region", "us-east5"},
+		{"setup", "--gcp-project", "proj-1234", "--region", "us-east5"},
 	} {
 		_, _, err := execute(t, args...)
 		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "pass --name") {
@@ -239,11 +268,11 @@ func TestInitWithoutNameRefused(t *testing.T) {
 	// --config-only takes the name from the installation, so it needs the
 	// GCP project and region to find it (and with them it goes on to the
 	// cloud, which a test can't let it do: see TestInitConfigOnlyTakesNameFromOutputs).
-	_, _, err := execute(t, "init", "--config-only")
+	_, _, err := execute(t, "setup", "--config-only")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--gcp-project <id>") || !strings.Contains(err.Error(), "--region <region>") {
 		t.Errorf("--config-only with nothing: exit %d, err %v", ExitCode(err), err)
 	}
-	_, _, err = execute(t, "init", "--name", "aurora", "--region", "us-east5")
+	_, _, err = execute(t, "setup", "--name", "aurora", "--region", "us-east5")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--gcp-project") {
 		t.Errorf("no --gcp-project: exit %d, err %v", ExitCode(err), err)
 	}
@@ -282,7 +311,7 @@ func TestCheckoutProjectFromBrokenFugaroYAML(t *testing.T) {
 	}
 }
 
-// init --repo PATH onboards PATH's checkout, so PATH's fugaro.yaml selects
+// update --repo PATH onboards PATH's checkout, so PATH's fugaro.yaml selects
 // the project, not the working directory's.
 func TestInitRepoSelectsFromPath(t *testing.T) {
 	isolateProjects(t, t.TempDir())
@@ -314,19 +343,19 @@ func TestInitRepoSelectsFromPath(t *testing.T) {
 	}
 }
 
-// Every Google call of fugaro init uses the GCP project ID, never the
+// Every Google call of the converge uses the GCP project ID, never the
 // project's name.
 func TestInitGCPCallsUseID(t *testing.T) {
 	noEnableWait(t, 5)
 	r := newInitRig(t)
 	r.stateBucket()
 	r.su.Disable("cloudresourcemanager.googleapis.com", r.crm.Server)
-	_, _, err := executeStdin(t, "", "init", "--plan-only")
+	_, _, err := executeStdin(t, "", "setup", "--plan-only")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), enableCommand) {
 		t.Fatalf("the enable hint: exit %d, err %v", ExitCode(err), err)
 	}
 	fakeTerminal(t)
-	if _, errOut, err := executeStdin(t, initProjectName+"\n", "init", "--plan-only"); err != nil {
+	if _, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--plan-only"); err != nil {
 		t.Fatalf("%v\n%s", err, errOut)
 	}
 	sawID := false
@@ -344,20 +373,20 @@ func TestInitGCPCallsUseID(t *testing.T) {
 	}
 }
 
-// fugaro init's typed confirmation is the project's name, not the GCP ID,
+// fugaro setup's typed confirmation is the project's name, not the GCP ID,
 // and the prompt names both.
 func TestInitConfirmationTypesName(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, initProject+"\n", "init")
+	out, _, err := executeStdin(t, initProject+"\n", "setup")
 	if ExitCode(err) != ExitUserError || len(r.ran(t, "apply")) != 0 {
 		t.Fatalf("typing the GCP ID: exit %d, err %v, calls %q", ExitCode(err), err, r.calls(t))
 	}
 	if !strings.Contains(out, "Type aurora to apply to GCP project proj-1234: ") {
 		t.Errorf("prompt:\n%s", out)
 	}
-	if _, _, err := executeStdin(t, "aurora\n", "init"); err != nil || len(r.ran(t, "apply")) != 1 {
+	if _, _, err := executeStdin(t, "aurora\n", "setup"); err != nil || len(r.ran(t, "apply")) != 1 {
 		t.Fatalf("typing the name: %v, calls %q", err, r.calls(t))
 	}
 }
@@ -397,7 +426,7 @@ func TestInitInCheckoutWithoutConfig(t *testing.T) {
 	}
 	// Every other command is refused there: it has no config to act on.
 	_, _, err = execute(t, "runs", "ls")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro init --config-only --gcp-project <id>") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro setup --config-only --gcp-project <id>") {
 		t.Fatalf("ls: exit %d, err %v", ExitCode(err), err)
 	}
 }
@@ -425,7 +454,7 @@ func TestSelectionNotesFollowHeader(t *testing.T) {
 		t.Fatalf("ls: %v, stderr %q", err, stderr)
 	}
 
-	// fugaro init creating a project config announces it once it exists.
+	// fugaro setup creating a project config announces it once it exists.
 	t.Setenv("FUGARO_PROJECT", "")
 	t.Setenv("FUGARO_CONFIG", writeProject(t, "cyan", "proj-9999"))
 	t.Chdir(gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: delta\n"))
@@ -440,19 +469,19 @@ func TestSelectionNotesFollowHeader(t *testing.T) {
 	}
 }
 
-// init --repo needs project: in the checkout's fugaro.yaml, before any
+// update --repo needs project: in the checkout's fugaro.yaml, before any
 // cloud call, and names what to add when a project config is selectable.
 func TestInitRepoRequiresProject(t *testing.T) {
 	isolateProjects(t, t.TempDir())
 	writeProject(t, "aurora", "proj-1234")
 	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\ngit: { provider: github }\n")
 	t.Chdir(t.TempDir())
-	_, _, err := execute(t, "init", "--repo", "--project", "aurora", root)
+	_, _, err := execute(t, "setup", "--repo", "--project", "aurora", root)
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "fugaro.yaml has no `project:`; add `project: aurora`") {
 		t.Fatalf("selectable: exit %d, err %v", ExitCode(err), err)
 	}
 	isolateProjects(t, t.TempDir())
-	_, _, err = execute(t, "init", "--repo", root)
+	_, _, err = execute(t, "setup", "--repo", root)
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "fugaro.yaml has no `project:`; add `project: <name>`") {
 		t.Fatalf("not selectable: exit %d, err %v", ExitCode(err), err)
 	}

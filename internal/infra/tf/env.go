@@ -55,7 +55,7 @@ func Env(parent []string, workdir, cache string) ([]string, error) {
 			continue
 		}
 		if k == impersonate {
-			return nil, errors.New("terraform: " + impersonate + " is set; fugaro init runs Terraform as your own credentials only, so unset it")
+			return nil, errors.New("terraform: " + impersonate + " is set; fugaro update runs Terraform as your own credentials only, so unset it")
 		}
 		if passThrough[k] || strings.HasPrefix(k, "XDG_") {
 			kept[k] = v // the last one wins, as in exec
