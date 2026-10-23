@@ -3715,6 +3715,26 @@ describe('the wrapper into a distribution', () => {
     expect(second.calls).toHaveLength(1)
   })
 
+  it('never terminates a distribution: `--terminate` is refused', () => {
+    // D6(b) of docs/console-windows/implementation-plan.md. `wsl.exe
+    // --terminate <distro>` would end every process in the distribution,
+    // including the operator's own shells and anything else they have running
+    // there: a console that can do that can destroy work it does not own, for a
+    // cancellation it was not even asked to make. The one `wsl.exe` this route
+    // sends beyond the spawn is the stop, and it names a single pid.
+    // Comments are stripped first, and only then is the scan a scan of code:
+    // this test's own subject is *named* in the comments beside the stop, which
+    // is the opposite of a refusal being violated -- the rule is that no
+    // `wsl.exe` is ever handed the word.
+    const codeOnly = (source: string): string =>
+      source.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((line) => line.replace(/\/\/.*$/, '')).join('\n')
+    for (const file of ['spawn.ts', 'wsl.ts', 'pidfile.ts']) {
+      const code = codeOnly(readFileSync(join(SOURCE_ROOT, 'main', file), 'utf8'))
+      expect(code, `${file} terminates a distribution`).not.toContain('--terminate')
+      expect(code, `${file} shuts WSL down`).not.toContain('--shutdown')
+    }
+  })
+
   it('names the stop’s own words for wsl.exe, never for the CLI', () => {
     // `wslStopArgs` is the second invocation's whole argv, and the pid is a
     // **number**: the value comes from a file, and a file that said anything
