@@ -204,6 +204,51 @@ func TestRunThatMergesANewerBaseIsNotRefused(t *testing.T) {
 	}
 }
 
+// The guard reads the run's own commits between both bounds — the commit it
+// was cut from and the bases it works from — and with both of them in place a
+// workflow file the run changed itself is still refused, and named. What a
+// bound leaves out is that base's own commits, never the run's, however many
+// bounds there are.
+//
+// Mutation: drop the second bound (guardBounds reading only the base the diff
+// is measured against) and this run is refused for main's own file, which the
+// assertion below catches; widen a bound until it swallows the run's own
+// commit (subtract HEAD, say) and the refusal disappears, which runRefused
+// catches.
+func TestARunWithBothBoundsStillRefusesItsOwnWorkflowFile(t *testing.T) {
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: integrationBranch, Workflow: "app", Task: "Add a feature"}
+	h := newHarness(t, "", spec)
+	addBaseBranch(t, h, integrationBranch)
+	marker := ""
+	editCI := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		// Both bases the guard subtracts move on while the run works, each
+		// with a workflow file of its own, and the run merges them in as one
+		// told to keep up with its bases does.
+		advanceBranch(t, h.remote, integrationBranch, map[string]string{".github/workflows/integration.yml": "on: push\n"})
+		advanceBranch(t, h.remote, "main", map[string]string{".github/workflows/person.yml": "on: push\n"})
+		// The hook is installed only now: the two advances above are pushes
+		// onto the base branches, which a person makes.
+		marker = refuseAll(t, h.remote, "this hook must never run")
+		shell(t, req, "git fetch -q origin "+integrationBranch+" main && git merge -q --no-edit origin/"+integrationBranch+" origin/main")
+		// The run's own workflow change, which is the run's whatever the
+		// bases did.
+		shell(t, req, "mkdir -p .github/workflows && echo 'on: pull_request' > .github/workflows/mine.yml && echo x > feature.txt && git add -A && git commit -qm 'Add CI'")
+		return implementVerified(t, ctx, req)
+	}
+	rec := runRefused(t, h, editCI, review("ship", 0))
+	if !strings.Contains(rec.Reason, ".github/workflows/mine.yml") {
+		t.Fatalf("reason = %q, want it to name the run's own workflow file", rec.Reason)
+	}
+	for _, other := range []string{".github/workflows/person.yml", ".github/workflows/integration.yml"} {
+		if strings.Contains(rec.Reason, other) {
+			t.Fatalf("reason = %q, and it blames the run for %s, which a base branch's own commit added", rec.Reason, other)
+		}
+	}
+	if exists(marker) || remoteHasBranch(t, h) {
+		t.Fatal("a push was attempted")
+	}
+}
+
 // "The agent made no commits" is about the run's own commits: a run cut
 // from a ref with commits of its own, which the agent adds nothing to, made
 // none — measured against the base branch alone it always looks ahead.
