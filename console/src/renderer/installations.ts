@@ -63,6 +63,9 @@ export interface InstallationsListRow {
   readonly saved: boolean
   readonly active: boolean
   readonly mode: string
+  /** `checkout` is the **Linux** spelling of the directory this installation is
+   * used from: the one the row's line draws, and the one the operator can paste
+   * into a terminal inside the distribution (D3(a), F16). */
   readonly checkout?: string
   readonly checkouts: readonly string[]
 }
@@ -219,6 +222,13 @@ export function drawn(raw: string, field: string): string {
  * list says why. A row the CLI did not list at all says so too: it is a record
  * this console holds, not a fact of the machine, and the operator has to be able
  * to tell the two apart. */
+/** REVEAL_LABEL is the reveal affordance's own word: the checkout's directory,
+ * opened by whatever this platform opens directories with (Explorer on Windows,
+ * Finder on macOS, the desktop's own handler on Linux). It names no path and no
+ * side, for the reason the button is drawn on the checkout and not on the
+ * spelling the file manager will get (D3(a), T-D3). */
+export const REVEAL_LABEL = 'Open the checkout folder'
+
 export function rowText(row: InstallationsListRow): string {
   const project = drawn(row.project, 'the row’s project')
   if (row.listed && row.configUnreadable) return `${project} — the config could not be read`
@@ -305,7 +315,7 @@ export interface PickerDocument {
   createElement(tag: string): PickerElement
 }
 
-/** PickerBridge is the view's whole capability: the picker's five operations,
+/** PickerBridge is the view's whole capability: the picker's six operations,
  * and nothing else. It is an interface rather than the preload's own type so a
  * test can hand in a fake without pretending to be Electron.
  *
@@ -318,6 +328,10 @@ export interface PickerBridge {
   choose(args: Readonly<Record<string, string>>): Promise<InstallationReply>
   checkout(args: Readonly<Record<string, string>>): Promise<InstallationReply>
   remove(args: Readonly<Record<string, string>>): Promise<InstallationReply>
+  /** `reveal` opens the row's directory in the platform's file manager. It takes
+   * the project and **no path**: what is opened is the main process's own
+   * `explorerPath` for that record (T-D3). */
+  reveal(args: Readonly<Record<string, string>>): Promise<InstallationReply>
   openExternal(): Promise<InstallationReply>
 }
 
@@ -472,6 +486,23 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge): Pic
         button('Stop using this checkout', async () => {
           const reply = await bridge.checkout(project)
           await refresh()
+          if (!reply.ok) say(reply.reason)
+        }),
+      )
+    }
+    // The reveal affordance (D3(a), T-D3). The line above draws the row's
+    // **Linux** spelling; this hands the main process the project and opens the
+    // directory in the platform's file manager, which is where the other
+    // spelling lives -- the UNC form for a WSL installation, the checkout
+    // itself for a host row. **The view names no path and is sent none**: what
+    // is opened is the main process's own record for this project, so the window
+    // that draws a Linux path never holds a Windows one. A row with no checkout
+    // (rule 5's ordinary case) has nothing to open and offers no button, rather
+    // than a control that would answer a sentence.
+    if (row.checkout !== undefined) {
+      item.appendChild(
+        button(REVEAL_LABEL, async () => {
+          const reply = await bridge.reveal(project)
           if (!reply.ok) say(reply.reason)
         }),
       )

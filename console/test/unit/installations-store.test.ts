@@ -39,6 +39,7 @@ import {
   MAX_INSTALLATION_FILE_BYTES,
   cliConfigDirectories,
   createInstallationFileStore,
+  explorerPathFor,
   createInstallationRegistry,
   installationStorePath,
   isInside,
@@ -1273,6 +1274,58 @@ describe('the two path rules of Part D', () => {
     // host, and no host path is inside a Linux home (F13's "vacuous, and it must
     // stay vacuous rather than become wrong").
     expect(isInside('/home/dimi/.config/fugaro', 'C:\\Users\\dimi\\AppData\\Fugaro Console')).toBe(false)
+  })
+
+  it('composes the spelling the file manager opens, and only where there is one (T-D3)', () => {
+    // The second half of D3(a): a row's `checkout` is the Linux spelling and it
+    // stays the one the console states and passes; the file manager is handed
+    // this instead. The UNC form is **composed**, not asked of `wslpath`: the
+    // translation the console *uses* is a process (D4(b)), and this is a
+    // convenience over a path the record already holds.
+    expect(explorerPathFor({ checkout: '/home/dimi/src/acme', distro: 'Ubuntu' })).toBe(
+      '\\\\wsl.localhost\\Ubuntu\\home\\dimi\\src\\acme',
+    )
+    // A host row's checkout is already the spelling its own file manager opens,
+    // so it is handed back unchanged and no UNC form is invented for it.
+    expect(explorerPathFor({ checkout: '/home/dimi/src/acme' })).toBe('/home/dimi/src/acme')
+    expect(explorerPathFor({ checkout: 'C:\\Users\\dimi\\src' })).toBe('C:\\Users\\dimi\\src')
+    // Nothing to open: no checkout at all (rule 5's ordinary case), and the
+    // empty string, which the schema refuses to store but a spread would carry.
+    expect(explorerPathFor({})).toBeUndefined()
+    expect(explorerPathFor({ checkout: '', distro: 'Ubuntu' })).toBeUndefined()
+  })
+
+  it('carries both spellings on the row, each with one reader', () => {
+    // A stored WSL installation: the row draws `checkout` (the Linux spelling,
+    // `rowText` in the picker's view) and the reveal affordance reads
+    // `explorerPath` (the UNC one). The two are different fields on purpose --
+    // one row cannot have a single path that is right for both.
+    const rowsOf = (entries: readonly StoredInstallation[]): ReturnType<ReturnType<typeof createInstallationRegistry>['rows']> => {
+      const store = createInstallationFileStore({ path: join(freshDirectory(), INSTALLATIONS_FILE_NAME) })
+      store.save({ version: INSTALLATION_FILE_VERSION, active: null, installations: entries })
+      const registry = createInstallationRegistry({ store })
+      registry.load()
+      return registry.rows()
+    }
+    const rows = rowsOf([
+      { id: '0123456789abcdef', project: 'acme', checkout: '/home/dimi/src/acme', distro: 'Ubuntu' },
+    ])
+    expect(rows).toEqual([
+      expect.objectContaining({
+        project: 'acme',
+        checkout: '/home/dimi/src/acme',
+        explorerPath: '\\\\wsl.localhost\\Ubuntu\\home\\dimi\\src\\acme',
+      }),
+    ])
+    // A host record has no distro, so its one path is the same on both fields.
+    const host = rowsOf([{ id: '0123456789abcdef', project: 'acme', checkout: '/home/dimi/src/acme' }])
+    expect(host).toEqual([expect.objectContaining({ checkout: '/home/dimi/src/acme', explorerPath: '/home/dimi/src/acme' })])
+    // ...and a record with no checkout carries the field on neither, rather than
+    // an empty one a reader would have to test for emptiness.
+    const bare = rowsOf([{ id: '0123456789abcdef', project: 'acme' }])
+    expect(bare).toEqual([expect.objectContaining({ project: 'acme' })])
+    expect(bare[0]).not.toHaveProperty('explorerPath')
+    expect(bare[0]).not.toHaveProperty('checkout')
   })
 
   it('keeps the store on the host', () => {

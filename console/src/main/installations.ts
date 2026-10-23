@@ -64,6 +64,7 @@ import {
   privateWorkingDirectory,
   resolveBinary,
   resolveInstalledBinary,
+  wslUncPath,
 } from './spawn'
 import type { ChildSpawner, SpawnTarget } from './spawn'
 import { createSpawnLog } from './spawnlog'
@@ -309,6 +310,44 @@ export function isInside(directory: string, candidate: string): boolean {
   const inner = parts.resolve(candidate)
   const separator = windows ? '\\' : '/'
   return inner === outer || inner.startsWith(outer.endsWith(separator) ? outer : `${outer}${separator}`)
+}
+
+/**
+ * explorerPathFor is the spelling the **file manager** opens for one
+ * installation's checkout, or `undefined` when there is nothing to open (D3(a),
+ * T-D3).
+ *
+ * It is the second half of the rule "the Linux spelling everywhere the console
+ * states or passes; the UNC spelling only where the platform itself opens the
+ * path". A row's `checkout` is the Linux spelling -- what the operator can paste
+ * into a terminal inside the distribution, and what every word the console
+ * passes carries -- while a reveal affordance needs the spelling the *file
+ * manager* understands, which for a path inside a distribution is
+ * `\\wsl.localhost\<distro>\…` (`wslUncPath`), because a drive path does not
+ * exist for `/home/dimi/src`.
+ *
+ * **The UNC form is composed here rather than asked of `wslpath`.** The two are
+ * not the same question: `wslpath -w` answers how *this distribution* spells a
+ * path Windows can open, and a custom mount or an `/etc/wsl.conf` can change it
+ * (D4(b), which is why the translation the console *uses* is a process). The
+ * affordance is a convenience on top of a path the console already holds --
+ * `\\wsl.localhost\` is the documented form Windows accepts for any
+ * distribution -- and it is never what the console passes to the CLI.
+ *
+ * A host row's checkout is **already** the spelling its own file manager opens
+ * -- that is what the host route resolves, and what the operator's own terminal
+ * uses -- so it is handed back unchanged, and this function needs no idea of
+ * which platform it is running on.
+ */
+export function explorerPathFor(entry: {
+  readonly distro?: string | undefined
+  readonly checkout?: string | undefined
+}): string | undefined {
+  const checkout = entry.checkout
+  if (checkout === undefined || checkout === '') return undefined
+  const distro = entry.distro ?? ''
+  if (distro !== '') return wslUncPath(distro, checkout)
+  return checkout
 }
 
 /**
@@ -949,7 +988,7 @@ export async function validateInstallation(
  * list the CLI printed, one button per row, and the two onboarding screens --
  * so a renderer cannot name a path this process did not itself obtain.
  */
-export type InstallationOperationName = 'list' | 'choose' | 'checkout' | 'remove' | 'openExternal'
+export type InstallationOperationName = 'list' | 'choose' | 'checkout' | 'remove' | 'reveal' | 'openExternal'
 
 /**
  * InstallationArgumentKind is the closed set of shapes one argument may take.
@@ -1006,6 +1045,12 @@ export const INSTALLATION_OPERATIONS: readonly InstallationOperation[] = Object.
     ],
   },
   { name: 'remove', method: 'remove', args: [{ key: 'project', kind: 'installationName', required: true }] },
+  // `reveal` takes a **project name** and no path: the path the file manager is
+  // handed is computed in this process from its own record (`explorerPathFor`,
+  // T-D3), so a renderer cannot name a directory for Explorer to open -- the
+  // same rule the checkout row keeps by checking membership of the CLI's own
+  // list.
+  { name: 'reveal', method: 'reveal', args: [{ key: 'project', kind: 'installationName', required: true }] },
   // No arguments at all: `GETTING_STARTED_URL` is this process's constant, and
   // the one path that opens it is `openExternalValidated`. A renderer that sends
   // a URL has sent a key no row declares, and it is refused by name.
@@ -1119,8 +1164,18 @@ export interface InstallationRow {
   readonly checkout?: string
   /** `distro` is the WSL distribution this row's CLI runs inside, when it has
    * one (T-D1). A screen that draws a path for this row states the **Linux**
-   * spelling and never the UNC one, which is Windows' (`wslUncPath`, D3(a)). */
+   * spelling (`checkout`) and never the UNC one, which is Windows' and lives on
+   * `explorerPath` below (D3(a)). */
   readonly distro?: string
+  /** `explorerPath` is the spelling **Windows opens** for this row's checkout,
+   * and it is the only field a reveal affordance reads (D3(a), T-D3). It is the
+   * UNC form (`\\wsl.localhost\<distro>\…`) for a WSL row and the checkout
+   * itself for a host row on Windows, and it is **absent** when there is
+   * nothing for Windows to open -- no checkout, or a platform that has no
+   * Explorer for this console's paths. It is never what a screen draws as "the
+   * installation's path": that line is `checkout`, the Linux spelling, which is
+   * the one the operator can paste into a terminal inside the distribution. */
+  readonly explorerPath?: string
   readonly active: boolean
   readonly mode: InstallationMode
 }
@@ -1307,6 +1362,7 @@ export function createInstallationRegistry(options: {
         ...(installation.configPath === undefined ? {} : { config: installation.configPath }),
         ...(installation.checkout === undefined ? {} : { checkout: installation.checkout }),
         ...(installation.distro === undefined ? {} : { distro: installation.distro }),
+        ...(explorerPathFor(installation) === undefined ? {} : { explorerPath: explorerPathFor(installation) }),
         active: installation.id === file.active,
         mode: compatibility.get(installation.project)?.mode ?? 'unknown',
       }))
