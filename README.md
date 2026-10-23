@@ -26,7 +26,7 @@ Four reasons, in the order most people decide on them.
 
 ## Getting started
 
-You need Claude Code, a Google Cloud project with billing (or a billing account and `--create-project`), `gcloud` signed in with Application Default Credentials, Terraform 1.9 or newer, and a GitHub or Bitbucket Cloud repository; for GitHub, create the GitHub App first ([docs/git-providers.md](docs/git-providers.md#github); the full list is in [Requirements](#requirements)). Install the CLI:
+You need Claude Code, a billing account (`fugaro setup` creates a fresh Google Cloud project for Fugaro; it never uses one that already exists), `gcloud` signed in with Application Default Credentials, Terraform 1.9 or newer, and a GitHub or Bitbucket Cloud repository; for GitHub, create the GitHub App first ([docs/git-providers.md](docs/git-providers.md#github); the full list is in [Requirements](#requirements)). Install the CLI:
 
 ```sh
 brew install dimipaun/tap/fugaro                      # Homebrew cask (tested on macOS)
