@@ -1,4 +1,4 @@
-// website/src/lib/consent-key.mjs — the key the analytics decision is stored under.
+// website/src/lib/consent-key.mjs: the key the analytics decision is stored under.
 //
 // It is written once, here. The banner carries it in its markup for `public/scripts/site.js`,
 // which writes and reads the decision; the layout carries it on the tag of

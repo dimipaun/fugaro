@@ -1,4 +1,4 @@
-// website/src/lib/zoom-levels.mjs — the four zoom diagrams of a run, in one place.
+// website/src/lib/zoom-levels.mjs: the four zoom diagrams of a run, in one place.
 //
 // `/how-it-works/` draws all four (`ZoomLevels.astro`), and since the redesign's Step 3 (the
 // owner's rulings of 2026-10-23, levers 1 and 4) the homepage's one section about the run shows

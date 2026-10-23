@@ -1758,8 +1758,8 @@ export function homeRhythmFailures(css, html) {
       const b = vertical(below, width)
       if (a === null || b === null) continue
       // **A field of colour pads inside itself** (the owner's ruling of 2026-10-23, the redesign's
-      // Step 3: a section may be a whole field of colour). A block that paints its own ground —
-      // the run band on the panel tone, the install section on the accent — carries its room
+      // Step 3: a section may be a whole field of colour). A block that paints its own ground
+      // (the run band on the panel tone, the install section on the accent) carries its room
       // inside that ground, so its padding is part of the field a reader sees and not blank page
       // added to the gap: the gap between it and its neighbour is the neighbour's padding alone.
       if (a.field || b.field) continue
@@ -2030,8 +2030,8 @@ export function watchSlotFailures(css, html) {
 test('the watch slot reserves no space until the image lands, and the image scales in it', () => {
   // The slot as it ships, first: the cases below are the real rules with one thing taken out,
   // and a case that never read the shipped stylesheet would pass on a page whose slot had no
-  // rules at all. The homepage is the page the slot is on — the "what you get" section since the
-  // owner's ruling of 2026-10-23 — and `watchSlotFailures` returns early on a page
+  // rules at all. The homepage is the page the slot is on (the "what you get" section since the
+  // owner's ruling of 2026-10-23), and `watchSlotFailures` returns early on a page
   // with no slot, so this assertion is also what holds the slot to the artifact.
   const home = readFileSync(path.join(DIST, 'index.html'), 'utf8')
   const css = pageCss(home)

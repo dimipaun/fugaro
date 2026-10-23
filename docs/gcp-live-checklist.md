@@ -5771,7 +5771,11 @@ chosen, so the first command a reader *meets* without choosing a slide is the in
 page's last section. The command-above-the-fold claim this check's step 2 used to carry for the
 homepage is Getting Started's alone (step 3). **The picture is still there**: #655's capture of
 the owner's real `fugaro watch` screen is in that block, above the command, so step 2 reads the
-block's three parts in order — heading, screenshot, command — on the panel its dot opens. **The numbers above are the owner's record of the page before the
+block's three parts in order — heading, screenshot, command — on the panel its dot opens. **The
+owner's rulings of 2026-10-23 (the redesign's Step 3) changed the page again**: the slider is
+retired, the page is six sections (the hero with a live card and the real `fugaro watch` capture,
+"Why Fugaro?", the run, what you get, what a run costs, the install block), and the consent banner
+moved into the page's flow at the top; steps 2 and 4 below read that page. **The numbers above are the owner's record of the page before the
 redesign** (`docs/website/redesign/reconciliation.md` §6, the capture set described by
 `docs/website/redesign/current/README.md`): they are not measurements of the page as it is now, and
 every number this check passes or fails on is one it takes itself.
@@ -5792,7 +5796,7 @@ find website/dist -name index.html | sort
 # The three numbers this check reads, and the two viewports it reads them at, out of the
 # measurement script rather than typed here: the `h1`'s bottom, the lead paragraph's bottom and
 # the bottom of the first command a reader can see — the first `pre` under `main` with a
-# rectangle of its own, because the homepage's slider keeps two of its three panels hidden — at
+# rectangle of its own, because a block may keep a `pre` hidden (the retired slider did) — at
 # 390 × 844 and 1280 × 900.
 grep -oE 'h1Bottom|leadBottom|firstCommandBottom' docs/website/redesign/capture-screenshots.mjs | sort -u
 grep -oE 'width: [0-9]+, height: [0-9]+' docs/website/redesign/capture-screenshots.mjs
@@ -5806,34 +5810,26 @@ grep -n 'DOCUMENT_PAGES' website/test/lib/exempt.mjs
 # searches every page for.
 sed -n '/^export const PHRASES = \[/,/^\]/p' website/test/meta.mjs
 # The homepage's blocks in the order the page renders them, out of the page's own source rather
-# than remembered: the hero, then the slider, then the install block (#623 moved the commands out
-# of the hero and into the page's last section; the draft of 2026-10-19 put the page's middle
-# into the slider).
-grep -n "Hero\|HomeSlider\|HomeInstall" website/src/pages/index.astro
-# The dots, the panels and the fragment each dot carries, out of the component that renders them:
-# the three ids step 2 opens are the panels' own, and the class the slider's block carries.
-grep -n "home-panel-\|SLIDES = \|home-slider" website/src/components/HomeSlider.astro
-# The clock, out of the one script the site ships, because it is what decides which slide a reader
-# finds on screen: six seconds after the page lands the block moves on by itself, and it holds
-# while the pointer or the keyboard's focus is inside it. `AUTO_MS` is the six seconds both of the
-# site's sliders stand a slide for — the homepage's and the console page's — and it is declared
-# once, with the console's section.
+# than remembered: the hero, "Why Fugaro?", the run, what you get, what a run costs and the install
+# block (the owner's rulings of 2026-10-23, the redesign's Step 3, which retired the slider).
+grep -n "Hero\|Benefits\|HomeRunBand\|HomeWhatYouGet\|HomeCost\|HomeInstall" website/src/pages/index.astro
+# The hero's live card, out of the component that renders it: the hook the script reads, and the
+# field it reveals (step 2 reads the card with and without the script).
+grep -n "data-live-run\|hero-task\|hero-stage" website/src/components/Hero.astro
+# The screenshot slider's clock, out of the one script the site ships: six seconds after the page
+# lands it moves on by itself, and it holds while the pointer or the keyboard's focus is inside it.
 grep -n "AUTO_MS\|prefers-reduced-motion" website/public/scripts/site.js
 # The one install path the homepage renders, and the markup its command is in: the path the
 # component names, and the class its command block carries.
 grep -n "HOME_PATH\|home-install-command" website/src/components/HomeInstall.astro
-# The page's first command in the HTML, out of the component that renders it: the slider's
-# `fugaro watch` block, inside the panel step 2 opens.
-grep -n "watch-command\|WATCH = " website/src/components/HomeSlider.astro
-# The screenshot that block carries above the command (#655), out of the component that renders
-# it rather than remembered: the slot the picture goes in, the file the picture is, and the hook
-# the site's own gate reads it by — which is what step 2's "heading, screenshot, command" is read
-# against.
-grep -n "watch-shot\|fugaro-watch\|watch-screenshot" website/src/components/HomeSlider.astro
-# The two links under the promise, and the flag that decides whether a third one is rendered:
-# the console's link is what `features.console_downloads` renders, and while it is false the
-# hero's row is the two links step 2 reads.
-grep -n "hero-actions\|hero-cta\|consoleExists" website/src/components/Hero.astro
+# The page's first command in the HTML, out of the component that renders it: the "what you get"
+# section's `fugaro watch` block, beside the console's screenshots.
+grep -n "watch-block\|watch-command\|WATCH = " website/src/components/HomeWhatYouGet.astro
+# The screenshots' slot in that section, and the console link the flag renders there: the slot
+# the site's own gate reads, and `consoleExists`, which `features.console_downloads` decides.
+grep -n "watch-shot\|watch-screenshot\|consoleExists" website/src/components/HomeWhatYouGet.astro
+# The hero's one action, and the `fugaro watch` capture the hero shows (#655's picture).
+grep -n "hero-actions\|hero-cta\|fugaro-watch" website/src/components/Hero.astro
 grep -n "console_downloads" website/data/site.yaml
 # The gate that already refuses a hero disagreeing with that flag, read out of the test rather
 # than remembered: step 2 says the row is the site's flag's doing, and this is the case that
@@ -5843,9 +5839,10 @@ grep -n "hero-actions" website/test/home.mjs
 # the command share one row rather than the control sitting above it, which is what step 2 reads
 # the command's and the control's rectangles for.
 grep -n "flex-direction: row-reverse" -B4 -A2 website/src/styles/base.css
-# The banner that is over the page on a first visit, and where it sits: the consent banner, fixed
-# at the foot of the window, which is what step 4 measures.
-grep -n "position: fixed" -A3 website/src/components/ConsentBanner.astro
+# The consent banner on a first visit, and where it sits: in the page's flow at the very top, drawn
+# from the first frame by the early decision's mark on <html>, which is what step 4 measures.
+grep -n "data-consent-ask" -A3 website/src/components/ConsentBanner.astro
+grep -n "data-consent-ask" website/public/scripts/consent-early.js
 ```
 
 1. **At 390 × 844, every page's point is above the fold.** Set the viewport to **390 × 844** (the
@@ -5871,75 +5868,42 @@ grep -n "position: fixed" -A3 website/src/components/ConsentBanner.astro
 2. **The homepage's first screen is the promise and its call to action, and the page under it is
    the page the design asks for.** The homepage's argument is its order, and the order is read out
    of the page's own source rather than remembered: `website/src/pages/index.astro` renders the
-   hero, then the slider, then the install block — `Hero.astro`, `HomeSlider.astro`,
-   `HomeInstall.astro` — and the install block is the page's **last** section, the commands
-   having moved out of the hero with #623 and the page's middle folded into the slider by the
-   draft of 2026-10-19. So
-   at 390 × 844 the first screen holds the headline (`Lambdas for coding agents`, README's own
-   line) and the lead of step 1, then the **two** links under them, and **no command**: what this
-   step reads is that no command block has climbed back into the first screen. **Two links and not
-   three**, because the site's own flag is what renders the console's: `website/data/site.yaml`
-   carries `features.console_downloads: false`, so `Hero.astro` renders nothing about the console
-   — no link, no sentence, no placeholder — and the row is "Get started" and "How it works". This
-   check describes the site **without** a console link for that reason, and the site's own gate
-   holds the row to the flag (`website/test/home.mjs` refuses a hero whose call to action is not
-   exactly the two links while the flag is false); a hero with three links is a site whose flag
-   has been flipped, which is a later reading of this step rather than a failure of it.
+   hero, "Why Fugaro?", the run, what a run leaves behind, what a run costs and the install block,
+   in that order (`Hero.astro`, `Benefits.astro`, `HomeRunBand.astro`, `HomeWhatYouGet.astro`,
+   `HomeCost.astro`, `HomeInstall.astro`; the owner's rulings of 2026-10-23, the redesign's Step 3,
+   which retired the slider). The install block is the page's **last** section. So at 390 × 844 the
+   first screen holds the headline (`Lambdas for coding agents`, README's own line), the lead of
+   step 1 and **one** link under them, "Get started", and **no command**: what this step reads is
+   that no command block has climbed back into the first screen. The console is not in the hero
+   since those rulings: it is the "what you get" section's link under the console's screenshots,
+   rendered while `website/data/site.yaml` carries `features.console_downloads: true`
+   (`website/test/console-option.mjs` holds that row to the flag).
 
-   **The page's middle is one slider with three slides** (the draft of 2026-10-19; the owner's
-   feedback of 2026-10-21 turned the strip of tabs into the slider): `HomeSlider.astro` renders
-   `.home-slider`, a row of three dots — each one a fragment link to the panel it opens, named
-   "Slide 1 of 3: Easy to use", "Slide 2 of 3: Why Fugaro?" and "Slide 3 of 3: See it" — beside
-   two step controls, and three panels, of which the stylesheet shows one at a time (`.panel` is
-   `display: none`; the panel the address's fragment names, or the first one while no fragment
-   does, is `display: block`). All three panels are in the HTML the page serves, so read the
-   middle by **clicking each dot** rather than by scrolling: the panel a dot opens is the element
-   the address names, and a reader with no JavaScript gets the same three panels. **The block
-   advances on its own every six seconds** once the page has loaded — the script moves it on,
-   wrapping at the third slide back to the first — so a slide you are reading stays where it is
-   only while the pointer or the keyboard's focus is inside the block: put the pointer over the
-   block (or Tab into one of its dots) before you start reading a panel, and it holds. A reader
-   whose system asks for less motion gets no clock at all, and the dots and the two step controls
-   work for them as they do for everyone. What step 2 reads on the first screen is that the
-   slider's row of dots is what follows the hero, and that no command has climbed back above it.
-   The page's first command **in the HTML** is the slider's `fugaro watch` block — `.watch-block`
-   inside the "See it" panel, which is the panel the third dot opens — and the first command a
-   reader meets *without choosing a slide* is the install
-   command in the page's last section, `HomeInstall.astro`'s `.home-install-command`. On the
-   "See it" panel the block is three things in that order: the panel's "See it" heading, the
-   owner's real `fugaro watch` screenshot above the command (`div.watch-shot`'s `img`,
-   `public/images/fugaro-watch.png`, #655, the slot `website/test/home.mjs` reads), and then the
-   command. So the command sits **under the picture**, and the picture's own height is between
-   the heading and it: read the screenshot's rectangle too, because a picture that grew is a
-   command pushed down. `firstCommandBottom` for `/` is the bottom of the first command a reader
-   can **see** in `main`, measured from the top of the document: the script's key, which takes
-   the first `pre` under `main` that has a rectangle of its own —
-   `document.querySelectorAll('main pre')`'s first element whose `getClientRects()` is not
-   empty — rather than the first one in the HTML. The distinction is this page's, and the
-   script's own comment says so: the slider keeps all three panels in the HTML and hides the two
-   the address does not name, and the page's first `pre` in document order is the `fugaro watch`
-   block inside the "See it" panel, where an element with `display: none` has no rectangle and a
-   reading taken from `document.querySelector('main pre')` alone would be an empty box's 0. The
-   number this step reports for the homepage is therefore the install command's — the command
-   above, the one a reader meets without choosing a slide — and the reading is the one that claim
-   is read against: at 390 × 844 that bottom has to be **below** 844, because the homepage's
-   first screen holds the promise and its call to action and **no** command. To read the watch
-   command's own place inside the "See it" panel, choose that dot first and take that element's
-   rectangle; the key is the page as it lands, with no fragment chosen. Beside
-   it read the copy control's own rectangle: the control is `website/src/lib/copy-control.mjs`'s
-   markup, `.command-controls` inside the same `.command-block`, and the block lays the two out in
-   **one row** — `website/src/styles/base.css`: `display: flex; flex-direction: row-reverse;
-   align-items: flex-start` — with the control the row's first item reversed to the right end and
-   the command wrapping in the width that is left. What the second rectangle is read for is the
-   arrangement that has left the row: a control rendered **below** its command — the case the
-   Fails-when block below names — where the command is visible and the button is not, and which
-   no reading of the command's own rectangle can see. **FACT:** the first screen's blocks in
-   order and whether any of them is a command block; the hero's links as rendered and how many
-   they are, against `features.console_downloads`; the three dots and, per dot, the panel it
-   opens with the block's three parts in order — heading, screenshot, command — the screenshot's
-   own height and whether it is above the command; the page's first command as rendered, the
-   block it is in, its bottom in pixels and whether it is above or below 844; and the control's
-   top and bottom beside the command's.
+   **The hero's live card** (`data-live-run` in `Hero.astro`) sits on the hero's stage beside the
+   headline, over the real `fugaro watch` capture. With the script it shows a "Type a task" field
+   holding the request; typing a task redraws the jobs it would launch. With no script it is the
+   static picture of the request and its three jobs. Neither is a command block: the card prints no
+   `pre`. The page's first command **in the HTML** is the "what you get" section's `fugaro watch`
+   block, `.watch-block`, beside the console's screenshots (`div.watch-shot`, the slot
+   `website/test/home.mjs` reads), and the first command a reader meets scrolling down from there is
+   the install command in the page's last section, `HomeInstall.astro`'s `.home-install-command`.
+   `firstCommandBottom` for `/` is the bottom of the first command a reader can **see** in `main`,
+   measured from the top of the document: the script's key, which takes the first `pre` under
+   `main` that has a rectangle of its own (`document.querySelectorAll('main pre')`'s first element
+   whose `getClientRects()` is not empty). At 390 × 844 that bottom has to be **below** 844,
+   because the homepage's first screen holds the promise and its call to action and **no** command.
+   Beside it read the copy control's own rectangle: the control is
+   `website/src/lib/copy-control.mjs`'s markup, `.command-controls` inside the same
+   `.command-block`, and the block lays the two out in **one row** (`website/src/styles/base.css`:
+   `display: flex; flex-direction: row-reverse; align-items: flex-start`), with the control the
+   row's first item reversed to the right end and the command wrapping in the width that is left.
+   What the second rectangle is read for is the arrangement that has left the row: a control
+   rendered **below** its command (the case the Fails-when block below names), where the command
+   is visible and the button is not. **FACT:** the first screen's blocks in order and whether any
+   of them is a command block; the hero's links as rendered and how many they are; the live card's
+   field with the script on and its static rows with the script off; the page's first command as
+   rendered, the block it is in, its bottom in pixels and whether it is above or below 844; and the
+   control's top and bottom beside the command's.
 
 3. **Getting Started's first command block is above the fold on both sizes.** At 390 × 844 and at
    1280 × 900, read `firstCommandBottom` for `/getting-started/` and check the first command
@@ -5952,19 +5916,19 @@ grep -n "position: fixed" -A3 website/src/components/ConsentBanner.astro
    this step is where the position of the result is read. **FACT:** the command, its bottom at
    both widths, and whether the whole block is above the fold at each.
 
-4. **The consent banner is over the page, and it covers nothing this check claims.** The banner is
-   `position: fixed` at the foot of the window (read where it sits out of
-   `website/src/components/ConsentBanner.astro`, in the block above), so it is over the first
-   screen rather than in the page's flow: it cannot push the commands below the fold, and it does
-   cover whatever is at the bottom of the viewport. It is rendered whenever `site.yaml` says
-   analytics are on, and they are on, so it is there on **every first visit** — which is the visit
-   this check is about. In a fresh profile, with no stored decision, at the top of the page,
-   measure the banner's own rectangle and the first command's — the same first rendered command
-   step 2 reads — at 390 × 844 and at 1280 × 900. A
-   command under the banner is not a command above the fold, and the fix for it is spacing or the
-   banner's own height rather than a fold moved for it. **FACT:** per size, the banner's height
-   and its top edge, the first command's bottom, what the banner's rectangle covers — the command,
-   its control, or neither — and the scroll position the page was at when it was measured.
+4. **The consent banner is in the page's flow, and it covers nothing.** Since the owner's rulings
+   of 2026-10-23 the banner is a compact bar at the very top of the page, above the header, in the
+   page's own flow rather than fixed over the window (read where it sits out of
+   `website/src/components/ConsentBanner.astro` and `website/public/scripts/consent-early.js`, in
+   the block above): it covers nothing, and it pushes the page down by its own height. It is drawn
+   from the first frame by the early decision's mark on `<html>` (`data-consent-ask`), so nothing
+   moves when it appears. It is rendered whenever `site.yaml` says analytics are on, and they are
+   on, so it is there on **every first visit**, which is the visit this check is about. In a fresh
+   profile, with no stored decision, at the top of the page, measure the banner's own rectangle,
+   the `h1`'s and the first command's, at 390 × 844 and at 1280 × 900, then accept or decline and
+   measure again. **FACT:** per size, the banner's height, the `h1`'s bottom with and without the
+   banner, whether anything moved between the first paint and the banner being drawn, and that the
+   banner's rectangle overlaps nothing.
 
 5. **The word ceilings hold, read from the site's own gate.** D188's two numbers are the gate's:
    `website/test/budget.mjs` reads them out of `website/README.md`, and they are a page's **lead
@@ -6050,13 +6014,12 @@ line, so its top edge came up over the first command's bottom. The **ordering** 
 of those — the lead region's shape — is already refused by `website/test/fold.mjs` and its
 **word** half by `budget.mjs`, so a failure here that the build did not catch is a **rendered**
 fact — a position, a height, an overlap — and the fix belongs in `website/src/pages/*.astro`,
-`Hero.astro`, `HomeSlider.astro`, `HomeInstall.astro` or `base.css`'s spacing, with the case that would have caught it
+`Hero.astro`, `HomeWhatYouGet.astro`, `HomeInstall.astro` or `base.css`'s spacing, with the case that would have caught it
 added to the gate that can see it.
 
 **Paste back:** per page at 390 × 844, the `h1`'s bottom and the lead's bottom, and whether each is
 above the fold; the homepage's first screen's blocks in order, the hero's links as rendered and how
-many they are, the three dots with the panel each opens and the block's three parts in order with
-the screenshot's height, and the page's first command as
+many they are, the live card with and without the script, and the page's first command as
 rendered with the block it is in, its bottom and its control's rectangle;
 Getting Started's first command block's bottom at both widths; the consent banner's height and top
 edge on a first visit at both widths, and what it covers; per page, the lead's and the page's word

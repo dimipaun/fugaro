@@ -454,7 +454,7 @@ test('every page, and the whole site, is within the byte budget the README state
 // The site's JavaScript is one file, and this is the case that says so about the ARTIFACT
 // rather than about the budget line above it: every page loads `public/scripts/site.js`
 // exactly once, however many times it references it, and the artifact holds no other script
-// at all — but one. A page that grew another script — or an inline one — fails here first,
+// at all, but one. A page that grew another script, or an inline one, fails here first,
 // with the page named, before it fails the budget with a number.
 //
 // **The one other file is the consent banner's early decision**, `public/scripts/consent-early.js`

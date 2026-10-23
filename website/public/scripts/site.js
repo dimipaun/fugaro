@@ -1154,8 +1154,8 @@
     menu()
     consent()
     // The sliders first, and unconditionally: a slider's controls are not a convenience the
-    // page can do without — the arrows, the count and the dots are the owner's feedback of
-    // 2026-10-21 — so none is behind the clipboard gate the copy controls stand behind below.
+    // page can do without (the arrows, the count and the dots are the owner's feedback of
+    // 2026-10-21), so none is behind the clipboard gate the copy controls stand behind below.
     var sliders = document.querySelectorAll(SLIDER)
     for (var s = 0; s < sliders.length; s++) {
       slider(sliders[s])

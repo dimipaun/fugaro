@@ -1,4 +1,4 @@
-// website/public/scripts/consent-early.js — decides, before the page is drawn, whether the
+// website/public/scripts/consent-early.js: decides, before the page is drawn, whether the
 // analytics banner is shown (the owner's ruling of 2026-10-23, the redesign's Step 3).
 //
 // Since that ruling the banner is a compact bar in the page's own flow, at the very top, above
