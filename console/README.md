@@ -3146,8 +3146,11 @@ is a baseline nobody reviewed. What holds them is two things already in the tree
 is this README: `playwright.config.ts`'s `updateSnapshots: 'none'` (`test/unit/playwright.test.ts`
 pins it), so a run with no baseline **fails** rather than writing one, and each golden spec's
 `test.skip(SKIP_GOLDENS, …)` on `FUGARO_CONSOLE_GOLDENS=skip`, which the staged
-console-tests workflow sets. No golden PNG is committed yet, and none is until Task 6.6
-records all eight at once, on each platform.
+console-tests workflow sets. This task commits no golden PNG, and the ones that follow it
+in this phase do not either: the darwin set PR #629 committed in the meantime is a picture
+of the tree as this task found it — no stylesheet in the bundle — and is superseded rather
+than kept ("The e2e goldens", above). Task 6.6 is where all eight are recorded at once, on
+each platform.
 
 This task re-records nothing, and no frame is compared or written by it: the golden tests
 are among the ones the skip covers, and the eight baselines are Task 6.6's single recording
