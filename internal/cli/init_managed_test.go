@@ -770,7 +770,10 @@ func TestManagedInitWritesTheDeployerScopeFromTheCreationFact(t *testing.T) {
 }
 
 // TestForgetRefusesAManagedInstallation: the rollback stops on a managed
-// installation, and it stops before anything is read, planned or written.
+// installation, and it stops before anything of the installation is read,
+// planned or written. (The run's own preflight has already read the project's
+// number by then, as every run of this door does; what the sentence refuses to
+// touch is the installation.)
 //
 // The installation's own resources include the managed deployer's fence — the
 // seven scoped roles and their seven conditioned bindings, created by the same
