@@ -916,7 +916,10 @@ describe('the wrapper’s own words', () => {
         wsl: { distro: 'Ubuntu', directory: '/home/Ann Lee/src', executable: 'C:\\Windows\\System32\\wsl.exe' },
       }),
     )
-    const [distroFlag, distro, ...rest] = [...plan.prefix]
+    const prefix = [...plan.prefix]
+    const distroFlag = prefix[0] ?? ''
+    const distro = prefix[1] ?? ''
+    const rest = prefix.slice(2)
     expect(distroFlag).toBe('-d')
     expect(distro).toBe('Ubuntu')
     for (const word of [distroFlag, distro, ...rest.filter((word) => !word.startsWith('/'))]) {
@@ -1107,10 +1110,10 @@ describe('the child environment', () => {
     // Windows variable is shared with the distribution" is then a sentence this
     // console wrote.
     //
-    // The mutations this case catches: drop the key, and the first assertion
-    // fails; write `'PATH'` (or anything else) into it, and the second fails --
-    // which is the mutation that matters, because a shared `PATH` is a Windows
-    // path in a Linux child.
+    // The mutations this case catches: drop the key, and both assertions here
+    // fail; write `'PATH'` (or anything else) into it, and the value assertion
+    // fails -- which is the mutation that matters, because a shared `PATH` is a
+    // Windows path in a Linux child.
     const wsl = childEnvironment({
       target: { project: PROJECT },
       binaryPath: FUGARO_BINARY_NAME,
@@ -2126,6 +2129,31 @@ describe('the WSL resolution path', () => {
     expect(resolution.reason).toContain('"Ubuntu"')
     expect(resolution.reason).toContain('"Debian"')
     // Nothing was started in any distribution.
+    expect(arrangement.wsl.childCalls()).toBe(0)
+    expect(arrangement.wsl.reports().filter((report) => report.kind === 'spawn')).toHaveLength(0)
+  })
+
+  it('refuses, with a sentence, a listed distribution whose name it will not hand to `wsl.exe`', async () => {
+    // T-E3's edge, and the reason the guard is a name check and not a crash: a
+    // custom-registered distribution can be called something outside
+    // `DISTRO_NAME_RE` -- here a space -- and `wsl.exe --list --quiet` lists it
+    // happily. The console states that it will not drive it rather than letting
+    // the wrapper's own guard throw an exception out of an async read (which is
+    // the mutation this case exists for: answer it here, and the case fails with
+    // an unhandled error instead of a refusal).
+    const arrangement = wslRoot({
+      list: 'Ubuntu\r\nMy Linux\r\n',
+      status: 'Default Distribution: Ubuntu\r\nDefault Version: 2\r\n\r\nWSL version: 2.6.1.0\r\n',
+    })
+    const resolution = await resolveInside(arrangement, { distro: 'My Linux' })
+    expect(resolution.ok).toBe(false)
+    if (resolution.ok) throw new Error('unreachable')
+    expect(resolution.kind).toBe('no-distro')
+    expect(resolution.path).toBeNull()
+    // The sentence names the name and the alphabet, so the operator can see what
+    // the console will not do rather than only that something failed.
+    expect(resolution.reason).toContain('"My Linux"')
+    expect(resolution.reason).toContain(String(DISTRO_NAME_RE))
     expect(arrangement.wsl.childCalls()).toBe(0)
     expect(arrangement.wsl.reports().filter((report) => report.kind === 'spawn')).toHaveLength(0)
   })

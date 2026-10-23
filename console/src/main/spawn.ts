@@ -2151,6 +2151,27 @@ async function resolveInDistribution(
     }
   }
 
+  // A name this machine *lists* but this console will not hand to `wsl.exe`
+  // (T-E3, `isSafeDistroName`): `wsl.exe` lists the names it has, and a
+  // custom-registered distribution can be called something outside the alphabet
+  // -- `My Linux`, say. It is answered here, with a sentence, rather than left to
+  // the wrapper's own guard: `assertWslPrefix` is the last line of the boundary
+  // and not an error path an operator should meet as a crash, so the two
+  // refusals are told apart by where the name came from and both are refusals.
+  // The kind is `no-distro`, which is the honest one of the four: as far as this
+  // console is concerned there is no distribution it can drive by that name, and
+  // the reason carries the instruction the other three carry in different words.
+  if (!isSafeDistroName(distro)) {
+    return {
+      ok: false,
+      path: null,
+      kind: 'no-distro',
+      reason:
+        `the distribution this installation names, ${quote(distro)}, is not a name this console will hand to ` +
+        `wsl.exe: a distribution's name is ${String(DISTRO_NAME_RE)}`,
+    }
+  }
+
   // The word `wsl.exe` hands the distribution: the bare name, which the
   // distribution's own `PATH` resolves. The record's path, when it has one, is
   // what the console *states* -- it is a Linux spelling inside the distribution
