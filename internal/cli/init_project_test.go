@@ -676,6 +676,37 @@ func TestProjectQuotaAndUnknownFailuresKeepTheirOwnMessages(t *testing.T) {
 		}
 	})
 
+	// The 400 guard (infra's refusalWords): a message that names a quota is
+	// not a refusal even when it also holds a refusal word, so the word in it
+	// is what the guard is for.
+	t.Run("a 400 that names a quota", func(t *testing.T) {
+		r := newProjectRig(t)
+		const msg = "Project quota exceeded: you do not have permission to create more projects until the quota is raised"
+		r.crm.FailCreates(400, "FAILED_PRECONDITION", msg)
+		_, _, err := r.run(t, true, newProj+"\n", "--create-project")
+		if err == nil || ExitCode(err) != ExitRemoteError {
+			t.Fatalf("exit %d (%v), want 2: a quota keeps the exit code it had", ExitCode(err), err)
+		}
+		if !strings.Contains(err.Error(), msg) || strings.Contains(err.Error(), "Fugaro could not") {
+			t.Errorf("err = %q: a quota keeps its own message", err.Error())
+		}
+	})
+
+	// The operation guard (infra's refusedOperation): a FAILED_PRECONDITION
+	// is a refusal only when its message reads like one.
+	t.Run("an operation's FAILED_PRECONDITION that is not a refusal", func(t *testing.T) {
+		r := newProjectRig(t)
+		const msg = "Precondition check failed: the parent resource is being deleted"
+		r.crm.FailOperation(9, msg)
+		_, _, err := r.run(t, true, newProj+"\n", "--create-project")
+		if err == nil || ExitCode(err) != ExitRemoteError {
+			t.Fatalf("exit %d (%v), want 2", ExitCode(err), err)
+		}
+		if !strings.Contains(err.Error(), msg) || strings.Contains(err.Error(), "Fugaro could not") {
+			t.Errorf("err = %q: a failed precondition that is not a refusal keeps its own message", err.Error())
+		}
+	})
+
 	t.Run("an unrecognised failure", func(t *testing.T) {
 		r := newProjectRig(t)
 		r.crm.FailCreates(500, "INTERNAL", "the backend went away")

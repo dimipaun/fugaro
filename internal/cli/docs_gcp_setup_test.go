@@ -36,27 +36,16 @@ const gcpSetupDoc = "docs/gcp-setup.md"
 // theirs, and a rename is what would take that away.
 const gcpSetupWindowsSection = "## On Windows and in WSL: the two commands you run yourself"
 
-// TestDocsGCPSetupNamesTheWindowsForm: the guide carries both forms of the two
-// commands it has a Windows reader run. The login's two *files* are the claim
-// that makes the environment rule necessary — a Windows gcloud and a WSL gcloud
-// write different files, so signing in on one does not sign the user in on the
-// other — and the `unset` half is the Fix line's own command in each shell the
-// page names, with F6 recorded so the page cannot present the Windows form as
-// what the CLI prints while the printed line is still POSIX.
 // TestDocsGCPSetupNotAnOwnerSaysWhatCreatingAndLinkingNeed: the project stage
 // answers a refused creation with `See docs/gcp-setup.md#not-an-owner.`
 // (refusedCreate, internal/cli/init_project.go), and a refused billing link
-// with the two roles that link needs, so #not-an-owner is where a reader with
-// no project at all lands. The section was written for the reader who has the
-// project and lacks Owner on it: its first instruction is a
-// `gcloud projects get-iam-policy` on a project, which is not a command a
-// reader with no project can run. So the section says what creating a project
-// and linking billing need before it sends anyone to check roles on one, and
-// it names the roles as their administrators name them -- those are the words
-// the reader repeats, and neither role is anywhere else on the page.
+// with the two roles that link needs, so #not-an-owner is where the reader
+// lands. The section says what creating a project and linking billing need,
+// and it names the roles as their administrators name them: those are the
+// words the reader repeats.
 func TestDocsGCPSetupNotAnOwnerSaysWhatCreatingAndLinkingNeed(t *testing.T) {
 	doc := readDoc(t, gcpSetupDoc)
-	sec := docSection(t, gcpSetupDoc, doc, "### If you are not an Owner")
+	sec := docSection(t, gcpSetupDoc, doc, "### If setup cannot create the project or link billing")
 	for _, want := range []string{
 		"roles/resourcemanager.projectCreator",
 		"roles/billing.user",
@@ -73,6 +62,13 @@ func TestDocsGCPSetupNotAnOwnerSaysWhatCreatingAndLinkingNeed(t *testing.T) {
 	}
 }
 
+// TestDocsGCPSetupNamesTheWindowsForm: the guide carries both forms of the two
+// commands it has a Windows reader run. The login's two *files* are the claim
+// that makes the environment rule necessary — a Windows gcloud and a WSL gcloud
+// write different files, so signing in on one does not sign the user in on the
+// other — and the `unset` half is the Fix line's own command in each shell the
+// page names, with F6 recorded so the page cannot present the Windows form as
+// what the CLI prints while the printed line is still POSIX.
 func TestDocsGCPSetupNamesTheWindowsForm(t *testing.T) {
 	doc := readDoc(t, gcpSetupDoc)
 
@@ -131,7 +127,7 @@ func TestDocsGCPSetupNamesTheWindowsForm(t *testing.T) {
 		// else was `fugaro`, which is false of the quota project, billing,
 		// serviceusage, Terraform and the build identity — gcloud and
 		// terraform commands the reader runs in every subsection.
-		"The `gcloud` lines under Install, Log in, Have ready and Before you onboard a repository",
+		"The `gcloud` lines under Install, Log in and Before you onboard a repository",
 		"`terraform version` under Install",
 	} {
 		if !strings.Contains(flat, want) {

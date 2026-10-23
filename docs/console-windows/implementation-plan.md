@@ -159,8 +159,9 @@ executable named `wsl.exe` too — the name is data, not a platform fact) that:
    translating a path is a process the console calls rather than a mapping it computes (T-D2, D4(b)):
    the table is the test's own, and a path it does not carry is refused with the path in the sentence
    rather than guessed at;
-7. runs the `sh -c` wrapper the CLI goes inside (`sh -c 'echo $$ > <file>; exec fugaro …'`) as the
-   distribution's own shell would, which is what makes T-F4's pid capturable — the wrapper's `PATH`
+7. runs the `sh -c` wrapper the CLI goes inside (`wsl.exe … -e sh -c '<script>'`, where the script
+   prints `<marker> $$` on stderr and then `exec`s `fugaro …`, T-F4) as the distribution's own shell
+   would, which is what makes T-F4's pid capturable — the wrapper's `PATH`
    is the distribution's with the directory the stub was installed in in front of it, the double's
    stand-in for the `/usr/local/bin` a real distribution has the CLI in.
 
@@ -186,8 +187,9 @@ Red step: a case asserting that the fake **fails** when a test asks it to run so
 three children the plan writes — the stub `fugaro`, the `wslpath` query (T-A1 step 6) and the `sh -c`
 wrapper (step 7) — the double must not become a general-purpose shell, because a fake that runs
 anything makes every assertion about *what was run* meaningless. A `bash -c`, a `sh -x`, a `sh -c`
-with no script, `/bin/echo`, `--terminate`, a missing `--` and a missing `-d` are each refused with a
-sentence and a non-zero status.
+with no script, `/bin/echo`, `--terminate`, a missing `-e`, a `--` (which on a real `wsl.exe` hands the
+command to the distribution's login shell) and a missing `-d` are each refused with a sentence and a
+non-zero status.
 Verification: `[unit]`. Tier A. Depends on: T-A1.
 Commit (A1–A3): `console/test: a fake wsl.exe that reports what the Linux side received`
 
@@ -561,16 +563,31 @@ Files: `console/src/main/spawn.ts`, `console/src/main/wsl.ts`,
 `console/test/unit/wslstub.ts` — named because the wrapper is the fake's (T-A1 step 7): it runs the
 `sh -c` script the console writes, so the pid inside the distribution is a live process the test can
 find and signal, and the second call this task asserts is one more invocation the report carries.
-Red step: through the fake — `abandon` sends `SIGTERM` to the `wsl.exe` child and, when the fake
-reports that the child is still alive after `SHUTDOWN_GRACE_MS` (`spawn.ts:298`), issues **one** kill
-inside the distribution naming the pid the wrapper recorded; the fake's report shows the pid it was
-given is the child's, not the wrapper's; and a cancellation where the child exited on its own sends
-**no** second call. All three fail today.
-The pid is captured by the wrapper, not guessed: the fake writes it where the real one must
-(`wsl.exe -d <d> -- sh -c 'echo $$ > <file>; exec fugaro …'`), and a design that cannot capture it is
-D6(c) with its residual **stated on the screen** rather than in a comment. U5 and U6 are the two facts
-this task cannot establish from Linux, and the plan's answer is to make the *fallback* honest rather
-than to assume the primary works.
+Red step: through the fake — `abandon` sends `SIGTERM` to the `wsl.exe` child and, after
+`SHUTDOWN_GRACE_MS` (`spawn.ts:397`), issues **one** kill inside the distribution naming the pid the
+wrapper reported; the fake's report shows the pid it was given is the child's, not the wrapper's; and
+a cancellation where the child had already exited **on its own** sends **no** second call. All three
+fail today.
+The pid is captured by the wrapper, not guessed and not written to a file: the shell prints
+`printf '%s %s\n' <marker> "$$" >&2` before it `exec`s the CLI, so the number on that line is the
+CLI's by the time it matters, and it travels on stderr — the channel the console already reads —
+because no spelling of a pid file works across the two sides (the shell's directory is the checkout,
+the console's is a host path) and reading one back would be a second `wsl.exe` per cancellation. The
+kill inside the distribution is sent whenever the CLI was started and is **not known to have exited
+inside the distribution**, and that condition is deliberately independent of `wsl.exe`'s own exit: on
+Windows the console's `SIGTERM` is `TerminateProcess`, so `wsl.exe` is gone within a tick and long
+before the grace runs out, and a stop that waited for it to still be alive would never be sent on the
+one platform this route exists for. The only thing the console reads as "the CLI is gone too" is a
+`wsl.exe` that had already exited **before** the stop began, because `wsl.exe` relays the
+distribution's command and one that exited by itself exited because that command had finished.
+Every `wsl.exe` this part writes — the CLI's plan, the stop and the `wslpath` question — ends its own
+words with `-e` rather than `--`: `--` hands the rest of the line to the distribution's login shell,
+which would re-read the script under whatever shell the operator's account has, while `-e` runs the
+console's own `sh -c` directly, so the quoting in the script is the only quoting that applies. The
+stop's `-d` passes the same `isDistroName` and `assertWslPrefix` checks as the plan's.
+A design that cannot capture the pid is D6(c) with its residual **stated on the screen** rather than in
+a comment. U5 and U6 are the two facts this task cannot establish from Linux, and the plan's answer is
+to make the *fallback* honest rather than to assume the primary works.
 `wsl.exe --terminate` is refused (D6(b)): a console that can terminate a distribution can destroy work
 it does not own, including the operator's own shells.
 Verification: `[unit]`, `[types]`. Tier A for the shape; Tier B to accept (U5, U6). Depends on: T-C5,

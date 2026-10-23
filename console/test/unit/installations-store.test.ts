@@ -670,7 +670,12 @@ describe('validation', () => {
     const spawn = only(wsl.reports().filter((report) => report.kind === 'spawn'))
     expect(spawn.distro).toBe('Ubuntu')
     expect(spawn.cd).toBe(linuxCheckout)
-    expect(spawn.argv).toEqual(['-d', 'Ubuntu', '--cd', linuxCheckout, '--', 'fugaro', 'version'])
+    // `wsl.exe`'s own words, then the shell that carries the CLI (T-F4): the
+    // CLI's argv is inside the script, because the shell is what records the pid
+    // a cancellation has to name.
+    expect(spawn.argv.slice(0, 5)).toEqual(['-d', 'Ubuntu', '--cd', linuxCheckout, '-e'])
+    expect(spawn.argv.slice(5, 7)).toEqual(['sh', '-c'])
+    expect(spawn.wrapper).toContain(`exec 'fugaro' 'version'`)
     // `wsl.exe` itself was started in a **host** directory, which the checkout
     // (a Linux path) is not.
     expect(spawn.cwd).toBe(privateWorkingDirectory())
