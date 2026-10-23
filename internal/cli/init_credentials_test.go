@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
 // The credentials stage (docs/credentials-service, D146, D147; plan task
@@ -670,9 +671,13 @@ func TestProvisionCredentialsAndBatchAreIndependentApplies(t *testing.T) {
 //   - what the opt-in removes is every REPOSITORY job's model credential, in
 //     EVERY agent.auth mode (internal/infra/spec.go's dropModelMounts, which
 //     the repository roots run for oauth and api-key as much as for cascade),
-//   - the runner half that would fetch one from the service at call time
-//     (C1.19) is not in this release, so until it lands no re-applied
-//     repository job has a model credential at all, and
+//   - the runner half is in, and it is the cascade's and the GitHub mint's:
+//     the launch puts the service's address on a per-repository job
+//     (internal/cli/run.go's credentialsServiceLaunchEnv), so a cascade run
+//     takes its credential from the service and a GitHub run mints there —
+//     while an oauth or api-key repository job has nothing to replace the
+//     mount that went, and the bundle has to hold the App key before a GitHub
+//     run can mint at all, and
 //   - the SHARED project jobs are outside it: credentials_service reaches the
 //     installation and workflow modules only, so modules/project keeps
 //     mounting its provider keys and CLAUDE_CODE_OAUTH_TOKEN with their
@@ -688,8 +693,9 @@ func TestProvisionCredentialsAndBatchAreIndependentApplies(t *testing.T) {
 // Mutation (verified, run and restored): restore either old sentence ("stops
 // mounting one and asks this service instead" in the confirmation, "stops
 // mounting each job's model credential and asks the service instead" in the
-// flag's help), or drop the shared-jobs sentence from either text: this test
-// fails.
+// flag's help), drop the shared-jobs sentence from either text, or put back
+// the dormancy sentence this release retires ("the part that ... is not in
+// this release yet"): this test fails.
 func TestCredentialsStageTextsSayWhatTheOptInDoes(t *testing.T) {
 	r := credentialsStageRig(t)
 	r.setPlanAt(t, "installation")
@@ -709,8 +715,16 @@ func TestCredentialsStageTextsSayWhatTheOptInDoes(t *testing.T) {
 		"oauth and api-key as much as cascade",
 		"does NOT reach the shared project jobs",
 		"CLAUDE_CODE_OAUTH_TOKEN",
-		"in this release yet",
-		"no re-applied repository job has a model credential at all",
+		// What this release wires, which is the cascade's half and the
+		// GitHub mint's — and what it leaves unwired, which is every other
+		// agent.auth mode's own credential (the mount drop is auth-blind
+		// while only the cascade's calls reach the service).
+		"And it is wired",
+		"a cascade run takes its model credential from the service",
+		"its installation token minted there",
+		"fugaro creds set github-app-key",
+		"no model credential of its own and nothing yet to replace it",
+		"agent.auth: cascade",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("the confirmation does not say %q:\n%s", want, s)
@@ -719,6 +733,12 @@ func TestCredentialsStageTextsSayWhatTheOptInDoes(t *testing.T) {
 	for _, unwanted := range []string{
 		"asks this service instead",
 		"every model credential the installation holds",
+		// The two claims this release retires: the runner's half is here,
+		// and "no re-applied repository job has a model credential at all"
+		// is false of a cascade job now that the launch hands the job the
+		// service's address.
+		"not in this release yet",
+		"no re-applied repository job has a model credential at all",
 	} {
 		if strings.Contains(s, unwanted) {
 			t.Errorf("the confirmation still says %q:\n%s", unwanted, s)
@@ -742,15 +762,25 @@ func TestCredentialsStageTextsSayWhatTheOptInDoes(t *testing.T) {
 		"oauth and api-key as much as cascade",
 		"does NOT reach the shared project jobs",
 		"CLAUDE_CODE_OAUTH_TOKEN",
-		"in this release yet",
-		"no re-applied repository job has a model credential to use",
+		"And it is wired",
+		"a cascade run takes its model credential from the service",
+		"its installation token minted there",
+		"fugaro creds set github-app-key",
+		"has no model credential to use and nothing yet to replace it",
+		"agent.auth: cascade",
 	} {
 		if !strings.Contains(f.Usage, want) {
 			t.Errorf("the flag's help does not say %q:\n%s", want, f.Usage)
 		}
 	}
-	if strings.Contains(f.Usage, "asks the service instead") {
-		t.Errorf("the flag's help still promises that a job asks the service instead:\n%s", f.Usage)
+	for _, unwanted := range []string{
+		"asks the service instead",
+		"not in this release yet",
+		"no re-applied repository job has a model credential to use",
+	} {
+		if strings.Contains(f.Usage, unwanted) {
+			t.Errorf("the flag's help still says %q:\n%s", unwanted, f.Usage)
+		}
 	}
 }
 
@@ -799,6 +829,99 @@ func TestOrdinaryInitAfterTheOptInKeepsTheCredentialsService(t *testing.T) {
 	}
 	if string(got) != string(want) {
 		t.Errorf("credentials_service = %s, want it carried forward exactly as %s", got, want)
+	}
+}
+
+// The opt-in records the service's URL in the project config, and that is what
+// makes it reach a run at all: `fugaro run` puts FUGARO_CREDENTIALS_SERVICE_URL
+// on a job from the selected config's credentials_service block (run.go's
+// credentialsServiceLaunchEnv), and the block is published with the rest of the
+// installation's facts (localcfg.Shared/MergeShared) so a teammate's machine
+// gets it too. The value is the installation's own record and never something
+// this stage composes: it is what the installation root's outputs carry, which
+// is the service resource's own uri.
+//
+// It is written in the opt-in run ITSELF and not left to the next ordinary
+// init: the installation stage's writeConfig ran before the service existed, so
+// waiting would leave a one-run window in which the service is on, the
+// repository jobs have lost their model credentials, and every launch still
+// goes out without the variable — the run the owner launches right after this
+// one, which is the whole point of the stage.
+//
+// Mutation (verified, run and restored): drop the recordURL call from Apply's
+// apply branch: this test fails, the config carrying no block.
+func TestInitCredentialsStageRecordsTheURLInTheProjectConfig(t *testing.T) {
+	r := credentialsStageRig(t)
+	r.setPlanAt(t, "installation")
+	// The outputs as the run really meets them: the installation stage reads
+	// them BEFORE the apply that creates the service, so its read carries no
+	// credentials service (the module's output answers null while the tfvars
+	// have no key), and every read from the credentials stage on carries the
+	// URL. Scripting the list is what makes this test about recordURL at all —
+	// with one static answer the installation stage would write the block and
+	// the stage's own write would be invisible. The first two steps are the
+	// reads before the service exists (the installation stage's own output
+	// read and the writeConfig that follows it); the third is this stage's.
+	noService := map[string]any{"stdout": outputsJSONWith(t, nil)}
+	withService := map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"credentials_service": map[string]any{"name": infra.CredentialsServiceName, "region": "us-east5", "url": credentialsServiceURL},
+	})}
+	r.script["output"] = []any{noService, noService, withService}
+	r.save(t)
+	typedThroughYes(t)
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials")
+	if err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	data, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc, err := localcfg.Parse(data)
+	if err != nil {
+		t.Fatalf("the project config the opt-in wrote does not parse: %v\n%s", err, data)
+	}
+	if lc.CredentialsService == nil || lc.CredentialsService.URL != credentialsServiceURL {
+		t.Fatalf("credentials_service = %+v, want the URL the installation's outputs carry (%s): without it every launch of this project goes out with no address on the job while the installation has the service on\n%s", lc.CredentialsService, credentialsServiceURL, data)
+	}
+	if !strings.Contains(out, credentialsServiceURL) {
+		t.Errorf("the stage did not say it recorded the URL:\n%s", out)
+	}
+	// The block is published: a machine that has no local config reads it from
+	// the runs bucket (localcfg.Select), which is the ledger item of PR #903.
+	pub, err := lc.Shared().Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(pub), "credentials_service:") || !strings.Contains(string(pub), credentialsServiceURL) {
+		t.Errorf("the published shared config carries no credentials service:\n%s", pub)
+	}
+}
+
+// An installation that has NOT opted in records no block, and that is the
+// off position of every reader: `fugaro run` puts no variable on the job, so
+// the launch is byte for byte what it was before the wiring existed. An
+// ordinary init of such an installation must therefore not invent one — there
+// is no URL for it to write, and a block with an empty url is a config the
+// loader refuses (localcfg's validCredentialsServiceURL).
+func TestAnOrdinaryInitOfAnInstallationWithoutTheServiceRecordsNoBlock(t *testing.T) {
+	r := credentialsStageRig(t)
+	r.setPlanAt(t, "installation")
+	// The outputs of an installation that never opted in: the field is absent,
+	// which is what the module's output answers (outputs.tf).
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, nil)}
+	r.save(t)
+	typedThroughYes(t)
+	if out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes"); err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	data, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "credentials_service") {
+		t.Errorf("an ordinary init of an installation without the service wrote a credentials_service block:\n%s", data)
 	}
 }
 

@@ -261,23 +261,38 @@ not read is drawn **with the CLI's warning line underneath it**, never hidden.
 The default screen: one glance at what is spending money now. Regions in tree order:
 header → total block → `ol.live-repos` of `li.live-repo`, each with a cap bar, a burn
 sparkline and a kill banner and an `ol.live-runs` of `li.live-run` → an optional
-`ol.live-orphans`. The header is `header.live-header` (`h1.live-project`, mode, day, the
+`ol.live-orphans` → **`section.live-review`**, the review inbox (v2 plan Task V2.7.1,
+design F26). The header is `header.live-header` (`h1.live-project`, mode, day, the
 connection cell, an optional note, and — when the caller keeps a feed reading — the
 `p.live-since` "last read" line, with the `div.live-stale` banner after it once that feed is
 stale). **The stale banner and the last-read line are the header's last children, not
-siblings after the repositories**: `header()` appends them itself (`live.ts` 1038-1039,
-inside the `header` it builds at 1005), and `renderLive` appends exactly four things to the
-root — the header, the total, `ol.live-repos` and the optional `ol.live-orphans` (1115-1124).
+siblings after the repositories**: `header()` appends them itself, inside the `header` it
+builds, and `renderLive` appends exactly five things to the
+root — the header, the total, `ol.live-repos`, the optional `ol.live-orphans` and
+`section.live-review`.
 A rule that puts the banner below the repos list is a rule that selects it in a place it
 never occupies.
+
+**The review inbox is drawn whether or not it has a row**, which is why its section is not
+in the optional list above: "nothing is waiting for you" is an answer, and a section that
+vanishes when it is empty is a section the operator has to remember to interpret. What it
+holds is the feed's `ready[]` — the finished runs whose outcome is `ready`, which is the
+CLI's own list (`internal/watch/filter.go`'s `ReadyForReview`, drawn as `Ready for your
+review (N)` by `internal/watch/render.go`). **Its pull requests are text and never links**:
+the number is drawn as text through `literal` and the URL through `putText` with the `url`
+class, and **nothing in the section carries `data-href`** — the one attribute
+`link.openExternal` acts on — because no document on this tree says which provider a run's
+repository is on (v1 design §5.1 rule 2 and its gap 7; design F26). There is no `<a>` in the
+section at all: not an inert one, and not one waiting for a provider.
 
 | Group | Class hooks |
 |---|---|
 | Header | `live-header`, `live-project`, `live-mode`, `live-day`, `live-connection`, `live-connection-age`, `live-connection-reason`, `live-note` |
 | Total | `live-total`, `live-counted`, `live-cap`, `live-percent`, `live-total-notional`, `live-total-percent` |
 | Repository | `live-repos`, `live-repo`, `live-repo-name`, `live-repo-counted`, `live-repo-cap`, `live-repo-percent`, `live-repo-notional`, `live-burn-rate`, `live-burn`, `live-burn-bar`, `live-burn-unit`, `live-runs`, `live-orphans` |
-| Run row | `live-run`, `live-run-id`, `live-run-title`, `live-run-stage`, `live-run-round`, `live-run-verify`, `live-run-models`, `live-run-recipe`, `live-run-auth`, `live-run-spend`, `live-run-age`, `live-run-flag`, `live-run-contradiction`, `live-run-workflow`, `live-run-requester` |
+| Run row | `live-run`, `live-run-id`, `live-run-title`, `live-run-stage`, `live-run-round`, `live-run-verify`, `live-run-models`, `live-run-recipe`, `live-run-auth`, `live-run-spend`, `live-run-age`, `live-run-flag`, `live-run-contradiction`, `live-run-workflow`, `live-run-requester`, `live-run-started-by` |
 | Condition classes on a row | `live-run-queued`, `live-run-stuck` |
+| Review inbox | `live-review`, `live-review-title`, `live-review-word`, `live-review-open`, `live-review-count`, `live-review-close`, `live-review-list`, `live-review-row`, `live-review-repo`, `live-review-number`, `live-review-url`, `live-review-run-title`, `live-review-age`, `live-review-run-id`, `live-review-empty`, `live-review-note`, `live-review-capped`, `live-review-dropped` (the count of rows the cap left out), `live-review-of`, `live-review-total` |
 | Kill banner | `live-kill`, `live-kill-word`, `live-kill-by`, `live-kill-at`, `live-kill-reason` |
 | Stale / recency | `live-stale`, `live-stale-word`, `live-stale-silence`, `live-stale-threshold`, `live-stale-at`, `live-since`, `live-since-word`, `live-since-at`, `live-since-age` |
 | Bars and numbers | `live-bar`, `live-num` (every numeric cell) |
@@ -397,7 +412,7 @@ Eight panels, each `section.projects-panel` carrying `data-panel`, `data-state` 
 | Caps | `projects-caps`, `projects-reserve`, `projects-reserve-value`, `projects-cap-list`, `projects-cap`, `projects-cap-repo`, `projects-cap-scope`, `projects-cap-value`, `projects-cap-source` |
 | Kill | `projects-kills`, `projects-kill-global`, `projects-kill-scope`, `projects-kill-none`, `projects-kill-row`, `projects-kill-repo`, `projects-kill`, `projects-kill-word`, `projects-kill-by`, `projects-kill-at`, `projects-kill-reason` |
 | Repositories | `projects-repos`, `projects-enrolled`, `projects-enrolled-count`, `projects-enrolled-list`, `projects-enrolled-repo`, `projects-seen`, `projects-seen-count`, `projects-seen-list`, `projects-seen-repo`, `projects-only-seen`, `projects-only-seen-repo`, `projects-only-enrolled`, `projects-only-enrolled-repo`, `projects-repos-label` |
-| Jobs | `projects-jobs`, `projects-job-list`, `projects-job`, `projects-job-run`, `projects-job-repo`, `projects-job-workflow`, `projects-job-status`, `projects-job-stage`, `projects-job-by`, `projects-job-created`, `projects-job-model`, `projects-job-compute`, `projects-job-total`, `projects-jobs-note`, `projects-jobs-dropped`, `projects-jobs-total`, `projects-jobs-total-of` |
+| Jobs | `projects-jobs`, `projects-job-list`, `projects-job`, `projects-job-run`, `projects-job-repo`, `projects-job-workflow`, `projects-job-status`, `projects-job-stage`, `projects-job-by`, `projects-job-started-by`, `projects-job-created`, `projects-job-model`, `projects-job-compute`, `projects-job-total`, `projects-jobs-note`, `projects-jobs-dropped`, `projects-jobs-total`, `projects-jobs-total-of` |
 | Accounts | `projects-accounts`, `projects-accounts-repo`, `projects-account-list`, `projects-account`, `projects-accounts-note` |
 | Secrets | `projects-secrets`, `projects-secret-list`, `projects-secret`, `projects-secret-name`, `projects-secret-scope`, `projects-secret-versions`, `projects-secret-latest`, `projects-secret-label`, `projects-secret-label-key`, `projects-secret-label-value`, `projects-secret-allowed` |
 
@@ -433,7 +448,7 @@ request → logs → diagnosis → replay → warnings.
 
 | Group | Class hooks |
 |---|---|
-| Header | `run-header`, `run-id`, `run-repo`, `run-workflow`, `run-status`, `run-outcome`, `run-stage`, `run-branch`, `run-requested-by`, `run-flags`, `run-settled`, `run-stale`, `run-follow-up`, `run-halt`, `run-halt-word`, `run-halt-reason`, `run-halt-scope`, `run-halt-at`, `run-halt-detail` |
+| Header | `run-header`, `run-id`, `run-repo`, `run-workflow`, `run-status`, `run-outcome`, `run-stage`, `run-branch`, `run-requested-by`, `run-started-by`, `run-flags`, `run-settled`, `run-stale`, `run-follow-up`, `run-halt`, `run-halt-word`, `run-halt-reason`, `run-halt-scope`, `run-halt-at`, `run-halt-detail` |
 | Ledger | `run-ledger`, `run-ledger-model`, `run-ledger-model-value`, `run-ledger-compute`, `run-ledger-compute-value`, `run-ledger-total`, `run-ledger-total-value`, `run-number`, `run-panel-title` |
 | Stages | `run-stages`, `run-stage-list`, `run-stage`, `run-stage-name`, `run-stage-passed`, `run-stage-tests`, `run-stage-failures`, `run-stage-duration`, `run-stage-spend`, `run-stage-deadline` |
 | Pull request | `run-pr`, `run-pr-repo`, `run-pr-number`, `run-pr-sep`, `run-pr-url`, `run-pr-reason` |
@@ -529,7 +544,7 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 | skew (refused / reduced) | chrome | the version-skew banner; the nav is missing the withheld buttons |
 | the rail's row states (§4.1) | chrome (the installation rail) | `span.console-rail-state` with the **word** `running` / `silent` / `idle` beside its glyph `●` / `▲` / `○`. **Not a state the code emits today** — the rail is the canvas's addition, and what a row reads is §4.1's open item — so whichever task draws the row draws the word with it: the word is what makes the tone redundant, and the collapsed rail keeps it in the row's accessible name |
 | not built | Projects (`policy`, `enrollment`) | `data-state="not-built"` + a `projects-because` sentence |
-| empty | picker (status line), Live (a `gap` bar), Spend (a `gap` point, a caps note) | the console's own sentence, never an empty box |
+| empty | picker (status line), Live (a `gap` bar, and `p.live-review-empty` with the review inbox's own sentence), Spend (a `gap` point, a caps note) | the console's own sentence, never an empty box. The inbox's sentence says "in this feed" on purpose: `ready[]` ships empty when the runs bucket could not be read as well as when nothing is waiting, and the CLI's own `queued_note` — drawn in the header as `p.live-note` — is what tells the two apart |
 | cap reached | **none — not a state in the code.** The cap is a `percent` reading and a bar's `data-fill` | the stylesheet may colour a threshold; the code emits no flag |
 | loading | **none — not a state in the code** | the entry draws nothing before the handshake answers |
 
@@ -541,12 +556,15 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 | **Share** | `percent` | Live (cap percent, bar fills), Spend (`data-height`) | 1 decimal + `%` |
 | **Duration / time** | `seconds` | Live (run age, connection age, silence), Run (stage duration, replay window), degraded (feed age) | 0 decimals + ` s` |
 | **Time (money-shaped)** | `hours` | Spend (run hours, totals) | 2 decimals + ` h` |
-| **Count** | `count` | Spend (runs, tokens), Projects (counts, versions), Run (tests, lines, records), degraded (runs, searched) | 0 decimals + grouping |
+| **Count** | `count` | Live (**the review inbox only**: the ready rows it holds, how many it drew and how many the document carried), Spend (runs, tokens), Projects (counts, versions), Run (tests, lines, records), degraded (runs, searched) | 0 decimals + grouping |
 
-**Live draws no `count` reading at all**, which is why the row above does not name it: its
-numbers are `usd`, `percent` and `seconds`, and `data-segments` — the one integer it does put
-on an element — is a bare attribute on the sparkline list (`String(line.segments)`), not a
-reading drawn through `formatReading`, so it carries no mark, no `title` and no state.
+**Live's money, shares and durations are what its *run* rows are made of**; the only `count`
+readings on the screen are the review inbox's three (v2 plan Task V2.7.1), each a count of a
+list the document carries and therefore `measured` — which is why the section can draw it
+without a reason. The rest of the screen's numbers are `usd`, `percent` and `seconds`, and
+`data-segments` — the one other integer it puts on an element — is a bare attribute on the
+sparkline list (`String(line.segments)`), not a reading drawn through `formatReading`, so it
+carries no mark, no `title` and no state.
 
 **Four of the five screens have a number hook, and the fifth does not.** Live, Spend,
 Projects and Run each have their own `numberCell` — one per screen file, not one in
