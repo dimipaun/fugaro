@@ -51,6 +51,7 @@ import {
   unavailable,
 } from '../../shared/availability'
 import type { Reading, Sample } from '../../shared/availability'
+import { launcherCell } from '../../shared/launcher'
 import { sanitizeText } from '../../shared/sanitize'
 import type { BurnView, KillView, LiveDocument, RunView, TotalsView } from '../../shared/schema'
 import { putReading, putText } from '../app'
@@ -550,6 +551,9 @@ export interface LiveRunRow {
   readonly auth: string
   readonly workflow: string | null
   readonly requestedBy: string | null
+  /** the run's whole recorded launcher (`launched_by`), `null` when the record
+   * carries none; the cell draws `launcherShort` of it (`shared/launcher.ts`) */
+  readonly launchedBy: string | null
   readonly spend: Reading
   readonly age: Reading
   readonly flags: readonly RunFlag[]
@@ -659,6 +663,7 @@ function rowOf(run: RunView): LiveRunRow {
     auth: run.auth,
     workflow: run.workflow === '' ? null : run.workflow,
     requestedBy: run.requestedBy === '' ? null : run.requestedBy,
+    launchedBy: run.launchedBy === '' ? null : run.launchedBy,
     spend: spendReading(run),
     age: run.ageSeconds,
     flags,
@@ -963,6 +968,14 @@ function runRow(factory: ScreenFactory, row: LiveRunRow): ScreenElement {
   }
   if (row.requestedBy !== null) {
     textCell(element, factory, 'span', row.requestedBy, 'person', 'runs[].requested_by', 'live-run-requester')
+  }
+  // Who started the run, as the short form a row has room for: the CLI's own
+  // cut (`runview.LauncherShort`), drawn as a `label` -- `shared/launcher.ts`
+  // says why the class is not `person` here. A run whose record carries no
+  // launcher draws no cell at all, never another person's name.
+  const startedBy = launcherCell(row.launchedBy)
+  if (startedBy !== null) {
+    textCell(element, factory, 'span', startedBy, 'label', 'runs[].launched_by', 'live-run-started-by')
   }
   return element
 }

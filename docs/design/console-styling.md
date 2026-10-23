@@ -261,7 +261,7 @@ never occupies.
 | Header | `live-header`, `live-project`, `live-mode`, `live-day`, `live-connection`, `live-connection-age`, `live-connection-reason`, `live-note` |
 | Total | `live-total`, `live-counted`, `live-cap`, `live-percent`, `live-total-notional`, `live-total-percent` |
 | Repository | `live-repos`, `live-repo`, `live-repo-name`, `live-repo-counted`, `live-repo-cap`, `live-repo-percent`, `live-repo-notional`, `live-burn-rate`, `live-burn`, `live-burn-bar`, `live-burn-unit`, `live-runs`, `live-orphans` |
-| Run row | `live-run`, `live-run-id`, `live-run-title`, `live-run-stage`, `live-run-round`, `live-run-verify`, `live-run-models`, `live-run-recipe`, `live-run-auth`, `live-run-spend`, `live-run-age`, `live-run-flag`, `live-run-contradiction`, `live-run-workflow`, `live-run-requester` |
+| Run row | `live-run`, `live-run-id`, `live-run-title`, `live-run-stage`, `live-run-round`, `live-run-verify`, `live-run-models`, `live-run-recipe`, `live-run-auth`, `live-run-spend`, `live-run-age`, `live-run-flag`, `live-run-contradiction`, `live-run-workflow`, `live-run-requester`, `live-run-started-by` |
 | Condition classes on a row | `live-run-queued`, `live-run-stuck` |
 | Kill banner | `live-kill`, `live-kill-word`, `live-kill-by`, `live-kill-at`, `live-kill-reason` |
 | Stale / recency | `live-stale`, `live-stale-word`, `live-stale-silence`, `live-stale-threshold`, `live-stale-at`, `live-since`, `live-since-word`, `live-since-at`, `live-since-age` |
@@ -382,7 +382,7 @@ Eight panels, each `section.projects-panel` carrying `data-panel`, `data-state` 
 | Caps | `projects-caps`, `projects-reserve`, `projects-reserve-value`, `projects-cap-list`, `projects-cap`, `projects-cap-repo`, `projects-cap-scope`, `projects-cap-value`, `projects-cap-source` |
 | Kill | `projects-kills`, `projects-kill-global`, `projects-kill-scope`, `projects-kill-none`, `projects-kill-row`, `projects-kill-repo`, `projects-kill`, `projects-kill-word`, `projects-kill-by`, `projects-kill-at`, `projects-kill-reason` |
 | Repositories | `projects-repos`, `projects-enrolled`, `projects-enrolled-count`, `projects-enrolled-list`, `projects-enrolled-repo`, `projects-seen`, `projects-seen-count`, `projects-seen-list`, `projects-seen-repo`, `projects-only-seen`, `projects-only-seen-repo`, `projects-only-enrolled`, `projects-only-enrolled-repo`, `projects-repos-label` |
-| Jobs | `projects-jobs`, `projects-job-list`, `projects-job`, `projects-job-run`, `projects-job-repo`, `projects-job-workflow`, `projects-job-status`, `projects-job-stage`, `projects-job-by`, `projects-job-created`, `projects-job-model`, `projects-job-compute`, `projects-job-total`, `projects-jobs-note`, `projects-jobs-dropped`, `projects-jobs-total`, `projects-jobs-total-of` |
+| Jobs | `projects-jobs`, `projects-job-list`, `projects-job`, `projects-job-run`, `projects-job-repo`, `projects-job-workflow`, `projects-job-status`, `projects-job-stage`, `projects-job-by`, `projects-job-started-by`, `projects-job-created`, `projects-job-model`, `projects-job-compute`, `projects-job-total`, `projects-jobs-note`, `projects-jobs-dropped`, `projects-jobs-total`, `projects-jobs-total-of` |
 | Accounts | `projects-accounts`, `projects-accounts-repo`, `projects-account-list`, `projects-account`, `projects-accounts-note` |
 | Secrets | `projects-secrets`, `projects-secret-list`, `projects-secret`, `projects-secret-name`, `projects-secret-scope`, `projects-secret-versions`, `projects-secret-latest`, `projects-secret-label`, `projects-secret-label-key`, `projects-secret-label-value`, `projects-secret-allowed` |
 
@@ -418,7 +418,7 @@ request → logs → diagnosis → replay → warnings.
 
 | Group | Class hooks |
 |---|---|
-| Header | `run-header`, `run-id`, `run-repo`, `run-workflow`, `run-status`, `run-outcome`, `run-stage`, `run-branch`, `run-requested-by`, `run-flags`, `run-settled`, `run-stale`, `run-follow-up`, `run-halt`, `run-halt-word`, `run-halt-reason`, `run-halt-scope`, `run-halt-at`, `run-halt-detail` |
+| Header | `run-header`, `run-id`, `run-repo`, `run-workflow`, `run-status`, `run-outcome`, `run-stage`, `run-branch`, `run-requested-by`, `run-started-by`, `run-flags`, `run-settled`, `run-stale`, `run-follow-up`, `run-halt`, `run-halt-word`, `run-halt-reason`, `run-halt-scope`, `run-halt-at`, `run-halt-detail` |
 | Ledger | `run-ledger`, `run-ledger-model`, `run-ledger-model-value`, `run-ledger-compute`, `run-ledger-compute-value`, `run-ledger-total`, `run-ledger-total-value`, `run-number`, `run-panel-title` |
 | Stages | `run-stages`, `run-stage-list`, `run-stage`, `run-stage-name`, `run-stage-passed`, `run-stage-tests`, `run-stage-failures`, `run-stage-duration`, `run-stage-spend`, `run-stage-deadline` |
 | Pull request | `run-pr`, `run-pr-repo`, `run-pr-number`, `run-pr-sep`, `run-pr-url`, `run-pr-reason` |

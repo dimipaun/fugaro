@@ -733,6 +733,7 @@ describe('a screen writes only its own vocabulary through literal', () => {
   it('reads the shared modules as well, so a drawer outside the screens is scanned', () => {
     expect([...SHARED_FILES]).toEqual([
       '../../shared/availability.ts',
+      '../../shared/launcher.ts',
       '../../shared/replay.ts',
       '../../shared/sanitize.ts',
       '../../shared/schema.ts',
