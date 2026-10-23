@@ -45,7 +45,14 @@ import {
   invokeOperation,
 } from '../../src/preload/installations'
 import { createInstallationPicker } from '../../src/main/picker'
-import { INSTALLATIONS_MENU_LABEL, OPEN_EXTERNAL_FAILED, PICKER_ENTRY_URL, pickerOptions, pickerPreloadPath } from '../../src/main/picker'
+import {
+  INSTALLATIONS_MENU_LABEL,
+  OPEN_EXTERNAL_FAILED,
+  PICKER_ENTRY_URL,
+  REVEAL_FAILED,
+  pickerOptions,
+  pickerPreloadPath,
+} from '../../src/main/picker'
 import { GETTING_STARTED_URL, FUGARO_INSTALL_COMMAND, FUGARO_SETUP_COMMAND } from '../../src/main/onboarding'
 import { ALLOWED_EXTERNAL_HOSTS, consoleWebPreferences, validateExternalUrl } from '../../src/main/window'
 import {
@@ -179,6 +186,7 @@ function pickerOver(
     readonly onChosen?: Parameters<typeof createInstallationPicker>[0]['onChosen']
     readonly onRemoved?: Parameters<typeof createInstallationPicker>[0]['onRemoved']
     readonly openExternal?: (url: string) => Promise<boolean>
+    readonly reveal?: (path: string) => Promise<boolean> | boolean
   } = {},
 ) {
   const ipcMain = fakeIpcMain()
@@ -191,6 +199,7 @@ function pickerOver(
   } as unknown as new (options: unknown) => never
   let applicationMenu: unknown = null
   const opened: string[] = []
+  const revealed: string[] = []
   const picker = createInstallationPicker({
     BrowserWindow: BrowserWindow as never,
     session: {
@@ -213,6 +222,13 @@ function pickerOver(
       opened.push(url)
       return options.openExternal === undefined ? true : options.openExternal(url)
     },
+    // The reveal affordance's handover, held for the same reason `openExternal`
+    // is: the path the file manager is handed is the whole of what a test can
+    // observe about it, and it must be this process's own.
+    reveal: async (path: string) => {
+      revealed.push(path)
+      return options.reveal === undefined ? true : options.reveal(path)
+    },
     userData: options.userData ?? freshDirectory(),
     home: options.home ?? freshDirectory(),
     prefixes: options.prefixes ?? [],
@@ -221,7 +237,7 @@ function pickerOver(
     ...(options.onChosen === undefined ? {} : { onChosen: options.onChosen }),
     ...(options.onRemoved === undefined ? {} : { onRemoved: options.onRemoved }),
   })
-  return { picker, ipcMain, windows, opened, menu: () => applicationMenu }
+  return { picker, ipcMain, windows, opened, revealed, menu: () => applicationMenu }
 }
 
 /** dashboardEvent and pickerEvent are forged events from each document, with the
@@ -270,16 +286,18 @@ function listableStub(): Stub {
 // ---------------------------------------------------------------------------
 
 describe('the picker’s allow-list', () => {
-  it('is closed, frozen, and five rows wide', () => {
-    // Five, because the form is gone (owner's ruling of 2026-10-20): the list,
-    // one click that opens an installation, the checkout it is used from, the
-    // removal of this console's own record, and the one link. A row that came
-    // back -- `add`, `pickBinary` -- fails here by name.
+  it('is closed, frozen, and six rows wide', () => {
+    // Six, because the form is gone (owner's ruling of 2026-10-20) and the
+    // reveal affordance arrived with Part D: the list, one click that opens an
+    // installation, the checkout it is used from, the removal of this console's
+    // own record, the one directory Explorer opens, and the one link. A row that
+    // came back -- `add`, `pickBinary` -- fails here by name.
     expect(INSTALLATION_OPERATIONS.map((row) => row.name)).toEqual([
       'list',
       'choose',
       'checkout',
       'remove',
+      'reveal',
       'openExternal',
     ])
     expect(Object.isFrozen(INSTALLATION_OPERATIONS)).toBe(true)
@@ -321,7 +339,9 @@ describe('the picker’s bridge', () => {
       },
     })
     const keys = Object.keys(bridge).sort()
-    expect(keys).toEqual(['checkout', 'choose', 'list', 'openExternal', 'operations', 'remove', 'version'].sort())
+    expect(
+      keys,
+    ).toEqual(['checkout', 'choose', 'list', 'openExternal', 'operations', 'remove', 'reveal', 'version'].sort())
     // The three names a bridge would have, and their absence is the design's
     // rule 5: there is no general invoker to point at a channel.
     for (const forbidden of ['invoke', 'send', 'on', 'channel']) expect(keys).not.toContain(forbidden)
@@ -962,6 +982,96 @@ function pickerOverWithFailingOpen() {
 // ---------------------------------------------------------------------------
 // The window
 // ---------------------------------------------------------------------------
+
+describe('the picker’s reveal', () => {
+  /** record seeds the store with one installation, which is what the reveal
+   * affordance exists for: its checkout is a directory only the platform's own
+   * file manager can open -- and for a WSL installation, only under a spelling
+   * this window never draws. */
+  const record = (installation: Record<string, string>): { readonly userData: string } => {
+    const root = freshDirectory()
+    const userData = join(root, 'user-data')
+    mkdirSync(userData, { recursive: true, mode: 0o700 })
+    writeFileSync(
+      join(userData, INSTALLATIONS_FILE_NAME),
+      serializeInstallationFile({
+        version: 1,
+        active: '0123456789abcdef',
+        installations: [{ id: '0123456789abcdef', project: 'acme', ...installation }],
+      }),
+      { mode: 0o600 },
+    )
+    return { userData }
+  }
+  const CHECKOUT = '/home/dimi/src/acme'
+  const UNC = '\\\\wsl.localhost\\Ubuntu\\home\\dimi\\src\\acme'
+
+  it('hands the file manager the UNC spelling of a WSL checkout, composed in this process (T-D3)', async () => {
+    const { userData } = record({ checkout: CHECKOUT, distro: 'Ubuntu' })
+    const { ipcMain, revealed } = pickerOver({ userData })
+    const reply = await answer(ipcMain, 'reveal', { project: 'acme' })
+    expect(reply).toMatchObject({ ok: true })
+    // The UNC spelling, and not the record's checkout: `checkout` is the Linux
+    // path the picker *draws* (the row's own line, `rowText`), and this is the
+    // spelling the file manager opens. A drive path does not exist for
+    // `/home/dimi/src` (D3(a)).
+    expect(revealed).toEqual([UNC])
+  })
+
+  it('hands a host row’s own checkout, unchanged', async () => {
+    // No distribution: the checkout is already the spelling this platform's file
+    // manager opens, so there is nothing to translate and `wslUncPath` is not
+    // consulted -- a UNC form here would be a path Windows would refuse.
+    const { userData } = record({ checkout: '/home/dimi/src/acme' })
+    const { ipcMain, revealed } = pickerOver({ userData })
+    const reply = await answer(ipcMain, 'reveal', { project: 'acme' })
+    expect(reply).toMatchObject({ ok: true })
+    expect(revealed).toEqual([CHECKOUT])
+  })
+
+  it('takes no path from the renderer: an argument the row does not declare is refused', async () => {
+    // The path the file manager is handed is the main process's own, so a frame
+    // on the picker's document cannot name a directory for it to open. This is
+    // the rule the external link's URL keeps, checked the same way.
+    const { userData } = record({ checkout: CHECKOUT, distro: 'Ubuntu' })
+    const { ipcMain, revealed } = pickerOver({ userData })
+    const smuggled = await answer(ipcMain, 'reveal', { project: 'acme', path: 'C:\\Windows\\System32' })
+    expect(smuggled.ok).toBe(false)
+    expect(revealed).toEqual([])
+  })
+
+  it('refuses a project this console has no record for, and one with nothing to open', async () => {
+    const { userData } = record({ checkout: CHECKOUT, distro: 'Ubuntu' })
+    const { ipcMain, revealed } = pickerOver({ userData })
+    const unknown = await answer(ipcMain, 'reveal', { project: 'never-listed' })
+    expect(unknown).toMatchObject({ ok: false, reason: REVEAL_FAILED })
+    // A record with no checkout (rule 5's ordinary case) is the same refusal,
+    // rather than a success that opened nothing.
+    const bare = record({})
+    const none = pickerOver({ userData: bare.userData })
+    const nothing = await answer(none.ipcMain, 'reveal', { project: 'acme' })
+    expect(nothing).toMatchObject({ ok: false, reason: REVEAL_FAILED })
+    expect(revealed).toEqual([])
+  })
+
+  it('reports a handover the platform declined, rather than a success that drew nothing', async () => {
+    const { userData } = record({ checkout: CHECKOUT, distro: 'Ubuntu' })
+    const { ipcMain, revealed } = pickerOver({ userData, reveal: () => false })
+    const reply = await answer(ipcMain, 'reveal', { project: 'acme' })
+    expect(reply).toMatchObject({ ok: false, reason: REVEAL_FAILED })
+    expect(revealed).toHaveLength(1)
+  })
+
+  it('keeps the Windows spelling out of the answer', async () => {
+    // The renderer drew the button from the row's own checkout; the reply names
+    // no path, so the one spelling this window keeps to itself is not echoed
+    // across the boundary for a reader that does not exist.
+    const { userData } = record({ checkout: CHECKOUT, distro: 'Ubuntu' })
+    const { ipcMain } = pickerOver({ userData })
+    const reply = await answer(ipcMain, 'reveal', { project: 'acme' })
+    expect(JSON.stringify(reply)).not.toContain('wsl.localhost')
+  })
+})
 
 describe('the picker’s window', () => {
   it('opens its own document, once, on the first run', async () => {

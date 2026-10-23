@@ -557,7 +557,7 @@ export type SpawnOperationName = OperationName | PickerOperationName
  * whose `operation` field was a CLI operation would say the console had run that
  * operation when it had not.
  */
-export type WslQueryName = 'wsl.distributions'
+export type WslQueryName = 'wsl.distributions' | 'wsl.path'
 
 /**
  * SpawnCommand is one row of the table: the operation it serves, the argv words
@@ -746,6 +746,74 @@ export function isSafeInstallationValue(value: string): boolean {
   if (value.startsWith('-')) return false
   // eslint-disable-next-line no-control-regex
   return !/[\u0000-\u001f\u007f]/.test(value)
+}
+
+/**
+ * DISTRO_SHELL_METACHARACTERS_RE matches a character the **distribution's
+ * shell** would read as syntax rather than as part of a word.
+ *
+ * **Why this rule exists on the WSL route alone.** The host route spawns the CLI
+ * with `shell: false` and an array argv, so a word is a word and there is no
+ * parser between the console and the program -- `isSafeInstallationValue` is the
+ * whole of that rule. On the WSL route the CLI is started *inside* a
+ * distribution, and the words after `--` are handed to the distribution's own
+ * shell (`sh -c …`, which is also what makes the Linux pid capturable, T-F4).
+ * A word carrying `$(…)`, a backtick, a `;` or a newline is therefore not a
+ * value there: it is a program the operator never asked the console to run.
+ *
+ * The console refuses such a word where the plan is built rather than escaping
+ * it, because the escaping belongs to the shell's own layer: `shellQuoteWord`
+ * below is that layer's function, and Part F's wrapper is where it is applied.
+ * Until then a word that only *could* be quoted safely is refused outright --
+ * `$(touch x)` as a project name must never reach a shell as syntax (Part D's
+ * carry-over, F7's "one word, one value"). */
+// eslint-disable-next-line no-control-regex
+const DISTRO_SHELL_METACHARACTERS_RE = /[\s$`;()|&<>!*?[\]{}~#'"\\\u0000-\u001f\u007f]/
+
+/** distroShellUnsafe reports whether `word` carries a character the
+ * distribution's shell would read as syntax. See the regex above. */
+export function distroShellUnsafe(word: string): boolean {
+  return DISTRO_SHELL_METACHARACTERS_RE.test(word)
+}
+
+/** MAX_DISTRO_NAME_LENGTH bounds a WSL distribution's name. It is the same bound
+ * a project name gets: both are short single-token names. */
+export const MAX_DISTRO_NAME_LENGTH = 200
+
+/** DISTRO_NAME_PATTERN is the alphabet a WSL distribution's name is drawn from:
+ * letters, digits, `.`, `_` and `-`, with a first character that is not `-` (a
+ * name that began with one would read as `wsl.exe`'s own flag).
+ *
+ * **It is the narrowest alphabet in this file, and it is on purpose.** The name
+ * arrives from a document -- `wsl.exe --list --quiet`'s lines are data -- and it
+ * becomes the value of `-d`, the distribution the console then runs a shell
+ * inside (T-D3, T-E3). `installations.ts` reads the same rule for the field it
+ * stores, so the store and the plan builder cannot disagree about what a
+ * distribution is called. */
+export const DISTRO_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+
+/** isDistroName is the distribution-name rule: a bounded, non-empty name in the
+ * alphabet above. */
+export function isDistroName(value: string): boolean {
+  return value.length <= MAX_DISTRO_NAME_LENGTH && DISTRO_NAME_PATTERN.test(value)
+}
+
+/**
+ * shellQuoteWord renders one word so that the distribution's shell hands it to
+ * the CLI **unchanged**: a POSIX single-quoted string, where the only character
+ * that needs anything at all is the single quote itself (`'\''`, the standard
+ * four-character splice). Nothing is interpolated inside single quotes -- no
+ * `$`, no backtick, no `*` -- so `$(touch x)` in a project name is the fourteen
+ * characters of that name and not a command substitution.
+ *
+ * A NUL cannot be quoted and cannot be in an argv at all: it is refused rather
+ * than silently dropped. This function is the shell layer's half of the rule
+ * above, and Part F's wrapper is its caller; `distroShellUnsafe` is what the
+ * plan builder applies today.
+ */
+export function shellQuoteWord(word: string): string {
+  if (word.includes('\u0000')) refused('a spawn word carries a NUL byte, which no shell can quote')
+  return `'${word.split("'").join("'\\''")}'`
 }
 
 function refused(message: string): never {
@@ -1357,13 +1425,34 @@ export function childPath(binaryPath: string, platform: string = process.platfor
  * nothing else". The installations file is the other write and it is a record;
  * it is reconciled there rather than here, because `src/main/installations.ts`
  * owns it and this module writes neither file. This directory is still neither.
- */
+ *
+ * **On Windows it makes no mode claim at all** (F12, F45, T-D4). NTFS reports
+ * two file modes and neither is a POSIX one: `chmodSync` is a no-op there,
+ * `process.getuid` is undefined, and a directory's `0700` is therefore not a
+ * fact this console can state -- repeating the POSIX claim on Windows would be
+ * a promise the filesystem does not keep. What the Windows branch does is what
+ * it can: create the directory under `tmpdir()`, refuse a link or a
+ * non-directory planted at that name, and return it. The protection that does
+ * hold there is the user profile's own ACL, and it is the operator's, not ours.
+ *
+ * **On the WSL route this directory is a host directory** and its *Linux*
+ * spelling is what goes into the wrapper's `--cd` (T-D2, D4(a)): the directory
+ * belongs to the host -- it is where `wsl.exe` itself is started from -- while
+ * the CLI inside the distribution is started in the translation of it. */
 export function privateWorkingDirectory(options: {
   readonly base?: string
   readonly uid?: number | null
+  /** `platform` is the platform whose filesystem this asks, so a test on one
+   * machine can drive the other branch (T-D4). It is the host's platform: on the
+   * WSL route the directory is still created on the host. */
+  readonly platform?: string | undefined
 } = {}): string {
-  const ownUid = typeof process.getuid === 'function' ? process.getuid() : null
-  const uid = options.uid === undefined ? ownUid : options.uid
+  const platform = options.platform ?? process.platform
+  // Windows has no uid, so the branch below makes the same answer the
+  // `uid === null` path already makes, and it never asks the process for one:
+  // `process.getuid` does not exist there.
+  const ownUid = platform === 'win32' || typeof process.getuid !== 'function' ? null : process.getuid()
+  const uid = platform === 'win32' ? null : options.uid === undefined ? ownUid : options.uid
   // The uid is in the **base** name, which is the level two users on one machine
   // would otherwise share. With one `fugaro-console` for everybody, the first
   // user created it 0700 and every other user then found a directory owned by
@@ -1390,14 +1479,22 @@ export function privateWorkingDirectory(options: {
   const stat = lstatSync(path)
   if (stat.isSymbolicLink()) refused(`${path} is a symbolic link: the console will not spawn from it`)
   if (!stat.isDirectory()) refused(`${path} is not a directory: the console has nowhere to spawn from`)
-  if (uid !== null && stat.uid !== uid) {
-    refused(`${path} is owned by uid ${stat.uid}, not ${uid}: the console will not spawn from it`)
-  }
-  // A directory of our own with a wider mode (an older build, a umask) is taken
-  // back to owner-only; one that still is not 0700 afterwards is refused.
-  if ((stat.mode & 0o777) !== PRIVATE_DIR_MODE) chmodSync(path, PRIVATE_DIR_MODE)
-  if ((lstatSync(path).mode & 0o777) !== PRIVATE_DIR_MODE) {
-    refused(`${path} is not mode 0700: the console will not spawn from it`)
+  // **The mode question is POSIX's and it is not asked on Windows** (F12, F45).
+  // `chmodSync` there is a no-op and NTFS reports two modes rather than a POSIX
+  // one, so a `0700` claim would be a sentence about a state the filesystem does
+  // not have -- and a refusal built on it would refuse a perfectly good
+  // directory. A directory someone else can write to is then the profile ACL's
+  // business, which is the operator's.
+  if (platform !== 'win32') {
+    if (uid !== null && stat.uid !== uid) {
+      refused(`${path} is owned by uid ${stat.uid}, not ${uid}: the console will not spawn from it`)
+    }
+    // A directory of our own with a wider mode (an older build, a umask) is
+    // taken back to owner-only; one that still is not 0700 afterwards is refused.
+    if ((stat.mode & 0o777) !== PRIVATE_DIR_MODE) chmodSync(path, PRIVATE_DIR_MODE)
+    if ((lstatSync(path).mode & 0o777) !== PRIVATE_DIR_MODE) {
+      refused(`${path} is not mode 0700: the console will not spawn from it`)
+    }
   }
   // The canonical spelling (`/private/var/...` on macOS), so the `--dir` the
   // child is given and the working directory it reports are one path.
@@ -1590,6 +1687,106 @@ function wslWrapper(wsl: WslRoute): readonly string[] {
   return Object.freeze(prefix)
 }
 
+/**
+ * isWindowsPathSpelling reports whether a path is written the way **Windows**
+ * spells it: a drive-rooted `C:\…`, or anything carrying a backslash (a Linux
+ * path never does -- `/` is the only separator there, and a backslash is an
+ * ordinary character in a Linux file name).
+ *
+ * It exists so that the one spelling rule of this route is enforced where the
+ * plan is built rather than discovered where it fails: a `C:\…` handed to a
+ * Linux child is a path inside the distribution that does not exist, and the
+ * distribution's `wsl.exe` would report it as a missing directory -- a sentence
+ * that says nothing about which side spelled the path wrong (T-D2, T-D3).
+ */
+export function isWindowsPathSpelling(path: string): boolean {
+  return path.includes('\\') || /^[A-Za-z]:/.test(path)
+}
+
+/**
+ * wslUncPath is the spelling Windows opens a distribution's path by:
+ * `\\wsl.localhost\<distro>\home\dimi\src` for `/home/dimi/src`.
+ *
+ * **It is not the spelling the console states and not the one it passes** (D3(a),
+ * F16). What the console shows and hands the CLI is the **Linux** spelling --
+ * the one the operator can paste back into a terminal inside the distribution --
+ * and this one exists for exactly one consumer: the field an affordance that
+ * hands a path to Windows itself reads (an Explorer reveal, a file dialog). The
+ * two are separate functions rather than one function with a flag because the
+ * distinction is the rule, and a caller that reached for the wrong one would be
+ * reaching for a spelling whose only justification is "Windows opens this".
+ */
+export function wslUncPath(distro: string, linuxPath: string): string {
+  const tail = linuxPath.replace(/^\/+/, '').split('/').join('\\')
+  return `\\\\wsl.localhost\\${distro}\\${tail}`
+}
+
+/**
+ * assertDistroWordsAreSafe refuses the plan whose words the distribution's shell
+ * could read as syntax, and the plan whose paths are spelled for the wrong side.
+ * It runs on the WSL route alone: the host route's argv never meets a shell and
+ * its paths are the host's.
+ *
+ * Two rules, one reason -- neither word may mean something other than itself
+ * once it is inside the distribution:
+ *
+ *   - **every word that is not a fixed constant** (the CLI's own program word
+ *     and the flags this console emits) must be free of shell metacharacters
+ *     (`distroShellUnsafe`), because Part F puts the CLI inside `sh -c` and a
+ *     word like `$(touch x)` would be a command rather than a project name;
+ *   - **the distribution's own spelling** for the wrapper's distro, its `--cd`
+ *     and the installation's `--config`: a Windows spelling there is the
+ *     wrong-spelling bug the fake `wsl.exe` refuses by name, and it is refused
+ *     here -- before any process exists -- so the failure names the rule rather
+ *     than arriving as an `ENOENT` from inside a distribution.
+ */
+function assertDistroWordsAreSafe(wsl: WslRoute, configPath: string | undefined, cli: readonly string[]): void {
+  // **The name first, against the narrowest alphabet in this file.** A
+  // distribution is the one word in this line that names *where the shell runs*,
+  // and it arrives from a document. `planFor` is the last place it is still a
+  // string: a name outside the alphabet is refused here rather than handed to
+  // `wsl.exe`, which is what "the plan checks the distro itself" means for a
+  // function that starts no process.
+  if (!isDistroName(wsl.distro)) {
+    refused(
+      `${JSON.stringify(wsl.distro)} is not a WSL distribution name: a distribution is ` +
+        `${String(MAX_DISTRO_NAME_LENGTH)} characters or fewer of letters, digits, dot, dash and underscore, ` +
+        'and the console runs a shell in whatever it names (T-D3)',
+    )
+  }
+  if (distroShellUnsafe(wsl.distro)) {
+    refused(
+      `the distribution’s name (${JSON.stringify(wsl.distro)}) carries a character the distribution’s shell would read as syntax: ` +
+        'the console will not hand a shell a word that is not a name',
+    )
+  }
+  // **The spellings before the shell check**, so a Windows-spelled `--config`
+  // is refused as the wrong spelling rather than as a word full of backslashes:
+  // both are refusals, and only one of them tells the operator what to do.
+  const spellings: readonly (readonly [string, string | undefined])[] = [
+    ['the directory the CLI starts in', wsl.directory],
+    ['the installation’s config path', configPath],
+  ]
+  for (const [what, path] of spellings) {
+    if (path === undefined || path === '') continue
+    if (isWindowsPathSpelling(path)) {
+      refused(
+        `${what} is a Windows spelling (${path}): on the WSL route every path the console passes is the ` +
+          'distribution’s own, translated by `wslpath` (D3(a), T-D2)',
+      )
+    }
+  }
+  for (const word of cli) {
+    if (word === FUGARO_BINARY_NAME || word.startsWith('--')) continue
+    if (distroShellUnsafe(word)) {
+      refused(
+        `this console will not pass ${JSON.stringify(word)} to the CLI inside a distribution: it carries a character ` +
+          'the distribution’s shell would read as syntax rather than as part of the word (T-D3)',
+      )
+    }
+  }
+}
+
 /** planFor assembles a plan from an operation, its validated arguments and
  * main-process state. It is the only producer of a `SpawnPlan`, and it builds
  * both routes: the **host** route, where the command is the resolved binary and
@@ -1621,6 +1818,11 @@ export function planFor(
 ): SpawnPlan {
   const wsl = context.wsl
   if (wsl !== undefined) {
+    const cli = argvFor(operation, args, { target: context.target, directory: wsl.directory })
+    // Both rules of this route, and both before a process exists: the words the
+    // distribution's shell would read as syntax, and the paths spelled for the
+    // wrong side (T-D3, and Part D's carry-over for `$(…)` in a project name).
+    assertDistroWordsAreSafe(wsl, context.target.configPath, cli)
     return Object.freeze({
       operation,
       command: wsl.executable ?? wslExecutable(context.appEnv),
@@ -1631,10 +1833,7 @@ export function planFor(
       // (F15) and it is not what runs: it is what the console states (the
       // resolution's `path`, D3(a)) and its directory leads the child's `PATH`
       // below, so the `fugaro` the name resolves to is the one the record names.
-      argv: Object.freeze([
-        FUGARO_BINARY_NAME,
-        ...argvFor(operation, args, { target: context.target, directory: wsl.directory }),
-      ]),
+      argv: Object.freeze([FUGARO_BINARY_NAME, ...cli]),
       // `cwd` is the host directory the console starts `wsl.exe` in. It is not
       // the CLI's directory: that one is inside the distribution and is the
       // wrapper's `--cd`.

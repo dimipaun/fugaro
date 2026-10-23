@@ -56,6 +56,7 @@ export const INSTALLATION_OPERATIONS = Object.freeze([
   ['choose', 'choose'],
   ['checkout', 'checkout'],
   ['remove', 'remove'],
+  ['reveal', 'reveal'],
   ['openExternal', 'openExternal'],
 ] as const) satisfies readonly (readonly [string, string])[]
 
