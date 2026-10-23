@@ -29,11 +29,19 @@
 //
 // **The goldens.** `test/e2e/__screenshots__/live-{light,dark}-<platform>.png`
 // (one per theme per platform: `darwin` and `linux`, because macOS and Linux
-// pixels differ and CI runs both) are compared, never written by a run: `playwright.config.ts` sets
-// `updateSnapshots: 'none'`, so a missing baseline FAILS (Playwright's
-// `'missing'` would write one and pass, comparing nothing). They are recorded by
-// an owner, once on each platform the comparison runs on, with
-// `npx playwright test live.spec.ts --update-snapshots`, and the
+// pixels differ and CI runs both) are compared, never written by a run:
+// `playwright.config.ts` sets `updateSnapshots: 'none'`, so a missing baseline
+// FAILS a comparison run (Playwright's `'missing'` would write one and pass,
+// comparing nothing). They are recorded by an owner, once on each platform the
+// comparison runs on, with
+//
+//   cd console && npm run build && npx playwright test live.spec.ts --update-snapshots
+//
+// — `npm run build` is in the line because the specs read `dist/` and
+// `npx playwright test` does not build, and on Linux it takes
+// `xvfb-run --auto-servernum` before `npx playwright test` because Electron
+// needs a display. `test/support/goldens.ts`'s `recordCommand` is that line, per
+// spec and per platform, and it is what a failed golden's message prints. The
 // three PNG-writing and PNG-reading tests below are the only ones that need
 // them. Until they are committed those tests fail, on purpose. The one way to
 // run the rest of the file without them is the explicit

@@ -40,10 +40,12 @@ import {
   STYLESHEET,
   TEXT_TOKEN,
   THEME_DIR,
+  assertGoldenFresh,
   goldenMismatch,
   groundProblems,
   normalizeColour,
   recordCommand,
+  recordingRun,
   staleGolden,
   themeStylesheets,
 } from '../support/goldens'
@@ -348,9 +350,9 @@ describe('a golden older than the stylesheet', () => {
   })
 
   it('is refused when there is no golden at all', () => {
-    // The baselines are owner-run and `updateSnapshots: 'none'` writes nothing,
-    // so "there is no recording for this platform yet" is a state a reader has
-    // to be told about in the same words.
+    // The baselines are owner-run and a comparison run writes nothing, so "there
+    // is no recording for this platform yet" is a state a reader has to be told
+    // about in the same words.
     const root = scratch('missing')
     plant(root, join(THEME_DIR, 'screens.css'), NOW - 60)
     const missing = join(root, '__screenshots__', 'projects', 'dark-linux.png')
@@ -360,5 +362,51 @@ describe('a golden older than the stylesheet', () => {
     expect(stale).not.toBeNull()
     expect(stale).toContain(missing)
     expect(stale).toContain(recordCommand('projects.spec.ts'))
+  })
+})
+
+describe('a recording run, which is the one the preflight stands aside for', () => {
+  it('is every mode but the config\'s none -- the matcher\'s own rule', () => {
+    // `--update-snapshots` arrives as `changed` (the flag's preset), and `=all`
+    // and `=missing` are the other two the CLI accepts; Playwright's `'default'`
+    // writes a missing file and fails the test that created it. `'none'` is the
+    // config's value here (`playwright.config.ts`) and the only mode that writes
+    // nothing, which is the mode the freshness preflight belongs to.
+    for (const mode of ['changed', 'all', 'missing', 'default']) {
+      expect(recordingRun(mode), mode).toBe(true)
+    }
+    expect(recordingRun('none')).toBe(false)
+  })
+
+  it('is not refused by the freshness preflight, which would block its own fix', () => {
+    // The regression this holds: `assertGoldenFresh` throws, and it runs before
+    // `toHaveScreenshot`, so a preflight that fired on a recording run would stop
+    // the matcher from writing the baseline -- and the message the reader got
+    // would name the command that had just failed. On Linux, whose baselines are
+    // not committed, no recording could be taken at all.
+    const root = scratch('recording')
+    plant(root, join(THEME_DIR, 'screens.css'), NOW - 60)
+    const missing = join(root, '__screenshots__', 'run', 'dark-linux.png')
+
+    // A comparison run refuses it, with the command ...
+    expect(() => assertGoldenFresh(missing, 'run.spec.ts', root, 'none')).toThrow(
+      recordCommand('run.spec.ts'),
+    )
+    // ... and a recording run does not, which is what lets that command write the
+    // very file the message names.
+    for (const mode of ['changed', 'all', 'missing', 'default']) {
+      expect(() => assertGoldenFresh(missing, 'run.spec.ts', root, mode), mode).not.toThrow()
+    }
+  })
+
+  it('stands aside for a stale golden too, not only a missing one', () => {
+    // The other half: a recording run has to be able to replace a picture of the
+    // tree before the stylesheet landed, which is the state PR #629's set is in.
+    const root = scratch('recording-stale')
+    plant(root, join(THEME_DIR, 'screens.css'), NOW - 60)
+    const golden = plant(root, join('__screenshots__', 'live-light-darwin.png'), NOW - 6000)
+
+    expect(() => assertGoldenFresh(golden, 'live.spec.ts', root, 'none')).toThrow()
+    expect(() => assertGoldenFresh(golden, 'live.spec.ts', root, 'changed')).not.toThrow()
   })
 })

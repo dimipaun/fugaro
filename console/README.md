@@ -2738,8 +2738,8 @@ per screen per theme per platform (`playwright.config.ts`'s
 
 `<platform>` is `process.platform` — `darwin` or `linux`. macOS and Linux draw
 different pixels, so **each platform's set is recorded on that platform**, and
-`updateSnapshots: 'none'` means a missing baseline fails the test rather than
-being written by a run. Recording is an explicit act:
+`updateSnapshots: 'none'` means a missing baseline fails a comparison run rather
+than being written by one. Recording is an explicit act:
 
 ```
 cd console && npm run build && npx playwright test live.spec.ts --update-snapshots
@@ -2760,14 +2760,18 @@ one worker keeps the whole run in one.
 `test/support/goldens.ts` is what the four specs share, and it is why a golden
 fails legibly rather than with a bare pixel diff:
 
-- **`expectGolden`** takes every recording. Before comparing, `assertGoldenFresh`
-  refuses a golden that is **missing** or **older than the theme directory**
-  (compared by the commit that last touched each, which is the only clock a
-  checkout carries — a clone writes every file at the same moment), and prints the
-  exact command above, for that spec, for the platform it is running on. A
-  comparison that then fails is re-reported with Playwright's own message kept and
-  the same command appended: the matcher's own suggestion
-  (`npx playwright test <file> --update-snapshots`) is not that command.
+- **`expectGolden`** takes every recording. On a **comparison** run,
+  `assertGoldenFresh` refuses a golden that is **missing** or **older than the
+  theme directory** (compared by the commit that last touched each, which is the
+  only clock a checkout carries — a clone writes every file at the same moment),
+  and prints the exact command above, for that spec, for the platform it is
+  running on. A comparison that then fails is re-reported with Playwright's own
+  message kept and the same command appended: the matcher's own suggestion
+  (`npx playwright test <file> --update-snapshots`) is not that command. A
+  **recording** run (any `--update-snapshots` mode, which is what the commands
+  above use) is the one case the preflight stands aside for: it is the state that
+  fixes every reason a golden cannot be compared, and the matcher is what writes
+  the file, so a guard that fired there would refuse to let its own command work.
 - **`expectGrounded`** is the assertion that the screens are painted at all. It
   draws each screen once per theme and holds the app's ground
   (`getComputedStyle(document.body).backgroundColor`), the screen's own `h1`
@@ -2790,9 +2794,17 @@ PNGs are 1164 px wide), at main `82ba600d`, recorded with `npm run build` then
 run (93 passed both times). Every frame is drawn from the specs' own invented
 documents (`example-owner/...`, `acme/...`, `redacted@example.invalid`); none
 holds a real name. **They are pictures of the unstyled tree**: they were taken
-before `src/renderer/theme/` existed, so the two themes' frames of one screen are
-byte-identical pictures of markup with no CSS at all, and each light/dark pair is
-the same file. The theme landed after them (Tasks 6.1-6.5; the newest file in
+before `src/renderer/theme/` existed, so no frame carries a rule of CSS. Three of
+the four light/dark pairs say so in the plainest way — the two themes' frames of
+the Live, Spend and Projects screens are the **same file byte for byte**
+(`live-light-darwin.png` and `live-dark-darwin.png` are both 38305 bytes of
+`f4b55fed…`, and so on) — while the Run screen's pair differs
+(`run/light-darwin.png` 129088 bytes, `run/dark-darwin.png` 129359) for a reason
+that has nothing to do with styling: `run.spec.ts` draws its light frame with a
+scrub time (`2026-10-15T12:05:00Z`) and its dark frame with `null`, so the two
+frames are different content either way. What all eight share is the absence of
+styling, and that is what makes them superseded: the theme landed after them
+(Tasks 6.1-6.5; the newest file in
 `src/renderer/theme/`, `base.css`, was last touched by `6d107527` on 2026-10-19),
 which is why they are superseded: re-record them on the Mac with the command above
 and commit the result. Until that is done the four golden tests fail on darwin

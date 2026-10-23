@@ -22,22 +22,31 @@
 // screen's own heading.
 //
 // **2. Taking a recording (`expectGolden`).** One call, so that every golden in
-// the suite fails the same way: the freshness preflight of 3 below runs first,
-// and a comparison that *did* fail is re-reported with the exact re-record
-// command appended to Playwright's own message. The command is the point — the
-// message `toHaveScreenshot` prints on its own offers
+// the suite fails the same way: on a *comparison* run the freshness preflight of 3
+// below runs first, and a comparison that *did* fail is re-reported with the exact
+// re-record command appended to Playwright's own message. The command is the point
+// — the message `toHaveScreenshot` prints on its own offers
 // `npx playwright test <file> --update-snapshots`, which does not build and
 // therefore photographs whatever `dist/` happens to hold, and does not work at
 // all on Linux without a display.
 //
+// A **recording** run (`--update-snapshots`, i.e. any mode but the config's
+// `'none'`) is the one case the preflight must keep out of: it throws before
+// `toHaveScreenshot` is reached, and the matcher is what writes the baseline, so
+// a guard that fired on a recording run would refuse to let the command it names
+// do its job. `recordingRun` is that decision, and it is the matcher's own
+// (`handleMissing` writes whenever the mode is not `'none'`).
+//
 // **3. The recording's freshness.** The eight baselines are OWNER-RUN
-// (`playwright.config.ts` sets `updateSnapshots: 'none'`, so a missing baseline
-// fails rather than being written) and the darwin set committed by PR #629 is a
-// picture of the tree **before the stylesheet landed**: the four specs passed
-// with no CSS in the bundle, so the two themes' frames were byte-identical
-// pictures of unstyled markup. `assertGoldenFresh` is what makes *that* state
-// legible: when the golden is older than the stylesheet — by the commit that last
-// touched each, which is the only clock a checkout has — the golden test fails
+// (`playwright.config.ts` sets `updateSnapshots: 'none'`, so a comparison run
+// fails a missing baseline rather than writing one) and the darwin set committed
+// by PR #629 is a picture of the tree **before the stylesheet landed**: the four
+// specs passed with no CSS in the bundle, so the frames are pictures of unstyled
+// markup — the Live, Spend and Projects pairs byte-identical, the Run pair not,
+// because that screen's two tests draw different content (a scrub time in the
+// light frame, `null` in the dark one). `assertGoldenFresh` is what makes *that*
+// state legible: when the golden is older than the stylesheet — by the commit that
+// last touched each, which is the only clock a checkout has — the golden test fails
 // with the exact re-record command for its own file instead of a comparison
 // against a picture of a tree that no longer exists.
 //
@@ -357,6 +366,27 @@ export function recordCommand(spec: string, platform: string = process.platform)
 }
 
 /**
+ * recordingRun says whether the run a test is part of **writes baselines**
+ * instead of only comparing them: `--update-snapshots` (`'changed'` by default,
+ * or whatever mode was given) and Playwright's own `'default'` — which writes a
+ * missing file and fails the test that created it — against the config's
+ * `'none'` (`playwright.config.ts`, pinned by `test/unit/playwright.test.ts`).
+ *
+ * It is the matcher's own rule, not a second one: `handleMissing` writes whenever
+ * the mode is not `'none'`, and the mode the matcher reads is the very
+ * `testInfo.config.updateSnapshots` this is given.
+ *
+ * **Why `expectGolden` asks.** `assertGoldenFresh` *throws*, so a preflight that
+ * ran on a recording run would stop the comparison before `toHaveScreenshot` —
+ * the thing that writes the baseline — and the reader would be told to run the
+ * command that had just failed with that same message. On Linux, whose baselines
+ * are not committed, that is a recording that can never be taken at all.
+ */
+export function recordingRun(updateSnapshots: string): boolean {
+  return updateSnapshots !== 'none'
+}
+
+/**
  * staleGolden is why a golden cannot be compared, or null when it can. Three
  * states, and each names the file and the command:
  *
@@ -367,6 +397,11 @@ export function recordCommand(spec: string, platform: string = process.platform)
  *     darwin set is exactly this, recorded while the console served no CSS at
  *     all;
  *   - otherwise null, and the comparison decides.
+ *
+ * It is a question about a **comparison** run, and `expectGolden` is what decides
+ * whether this run is one (`recordingRun`): a recording run is the state that
+ * fixes all three, so refusing it would be the loop the recording exists to
+ * break.
  */
 export function staleGolden(goldenPath: string, spec: string, consoleDir: string): string | null {
   const record = recordCommand(spec)
@@ -392,8 +427,20 @@ export function staleGolden(goldenPath: string, spec: string, consoleDir: string
  * why it cannot be compared, and the exact command — **before** the comparison,
  * so the report says what happened rather than printing a pixel diff against a
  * recording of the tree that preceded the stylesheet.
+ *
+ * `updateSnapshots` is the run's own mode, and a **recording** run is the one
+ * case this stands aside for (`recordingRun`): it is the state that fixes every
+ * reason a golden cannot be compared, and it is `toHaveScreenshot` — which this
+ * would otherwise pre-empt, since it throws before the matcher runs — that writes
+ * the file.
  */
-export function assertGoldenFresh(goldenPath: string, spec: string, consoleDir: string): void {
+export function assertGoldenFresh(
+  goldenPath: string,
+  spec: string,
+  consoleDir: string,
+  updateSnapshots: string,
+): void {
+  if (recordingRun(updateSnapshots)) return
   const stale = staleGolden(goldenPath, spec, consoleDir)
   if (stale !== null) throw new Error(stale)
 }
@@ -438,10 +485,14 @@ export function goldenMismatch(goldenPath: string, reported: string, spec: strin
  * instead:
  *
  *   - **the recording cannot be compared at all** — there is none, or it predates
- *     the stylesheet that paints the screens. `assertGoldenFresh` runs first and
- *     says which, naming the file and the command, *before* a comparison against
- *     a picture of a tree that no longer exists can print a pixel diff nobody can
- *     read;
+ *     the stylesheet that paints the screens. On a comparison run
+ *     `assertGoldenFresh` runs first and says which, naming the file and the
+ *     command, *before* a comparison against a picture of a tree that no longer
+ *     exists can print a pixel diff nobody can read. It is deliberately not run on
+ *     a **recording** run (`recordingRun`): the preflight throws, and the write is
+ *     `toHaveScreenshot`'s own (`handleMissing` writes whenever the mode is not
+ *     `'none'`), so guarding a recording would refuse the command it names — on
+ *     Linux, whose baselines are not committed, no recording could be taken;
  *   - **the comparison failed.** The matcher's own message is kept — the diff
  *     ratio and the snapshot's name — and the exact re-record command is appended
  *     to it. The `-actual`/`-expected`/`-diff` images under `test-results/` are
@@ -467,7 +518,9 @@ export async function expectGolden(
 ): Promise<void> {
   const segments = typeof name === 'string' ? [name] : name
   const goldenPath = where.testInfo.snapshotPath(...segments)
-  assertGoldenFresh(goldenPath, where.spec, where.consoleDir)
+  // The mode the matcher itself will read, so the preflight and the write can
+  // never disagree about which run this is.
+  assertGoldenFresh(goldenPath, where.spec, where.consoleDir, where.testInfo.config.updateSnapshots)
   try {
     await expect(locator).toHaveScreenshot(name)
   } catch (error) {
