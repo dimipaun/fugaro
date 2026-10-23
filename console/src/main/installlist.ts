@@ -204,11 +204,15 @@ function textField(entry: Record<string, unknown>, key: string): string | null {
  * checkoutsOf reads the optional `checkouts` array: the directories this
  * installation is used from, as the CLI listed them.
  *
- * The field is a later addition (the setup-wizard work), so its shape is
- * tolerated rather than assumed: entries that are not non-empty strings are
- * dropped, and the *count* is bounded by `MAX_DISCOVERED_INSTALLATIONS`. What
- * this refuses to do is guess: an entry is kept verbatim and is never a path the
- * console went and looked at.
+ * Each entry is an object (`console/docs/json-contract.md` §6.8: `repository`,
+ * `path`, `enrolled`, `valid`, `reason`), and **only an entry with `valid: true`
+ * and an absolute `path` is kept** -- the contract's one exception to "nothing in
+ * this document is a path the console acts on" is a row the CLI has just
+ * re-validated, and a `valid: false` row (any `reason`, including
+ * `not_representable`) is never used for anything. Entries of any other shape
+ * are dropped, an absent key is an empty list (an older CLI), and the *count* is
+ * bounded by `MAX_DISCOVERED_INSTALLATIONS`. What this refuses to do is guess: a
+ * kept path is verbatim and is never a path the console went and looked at.
  *
  * **Past the bound it refuses the document, and does not return a short
  * array.** The picker draws one button per checkout this carries
@@ -224,9 +228,11 @@ function checkoutsOf(entry: Record<string, unknown>): readonly string[] | null {
   if (!Array.isArray(value)) return Object.freeze([])
   if (value.length > MAX_DISCOVERED_INSTALLATIONS) return null
   const checkouts: string[] = []
-  for (const candidate of value) {
+  for (const entry of value) {
+    if (!isRecord(entry) || entry['valid'] !== true) continue
+    const candidate = entry['path']
     if (typeof candidate !== 'string') continue
-    if (candidate === '' || candidate.length > MAX_DOCUMENT_STRING) continue
+    if (candidate === '' || candidate.length > MAX_DOCUMENT_STRING || !candidate.startsWith('/')) continue
     // eslint-disable-next-line no-control-regex
     if (/[\u0000-\u001f\u007f]/.test(candidate)) continue
     checkouts.push(candidate)

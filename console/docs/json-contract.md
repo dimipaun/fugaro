@@ -899,7 +899,8 @@ ever becomes (or embeds) `localcfg.Config`.
 absent, null and a malformed entry are each an empty list rather than a refusal,
 because a console that refused a document over a field it only *offers* would stop
 listing installations on the day the field is added. Where it is present the
-console offers those directories and nothing else: a directory the document never
+console offers the `path` of each entry carrying `valid: true` (an absolute path;
+a `valid: false` entry is never offered, whatever its `reason`) and nothing else: a directory the document never
 named is refused by name, so the list is the CLI's own enumeration even at the
 point of use. An installation listed with no `checkouts` is drawn with no way to
 set one, which is the truthful state — the console does not invent a directory.

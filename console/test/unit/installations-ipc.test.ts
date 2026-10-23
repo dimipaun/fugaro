@@ -715,7 +715,7 @@ describe('the picker’s checkout', () => {
         version: { stdout: `${CLOCKED}\n` },
         doctor: { stdout: '{"ok":true,"checks":[]}\n' },
         'config list': {
-          stdout: `${JSON.stringify({ installations: [{ name: 'sandbox', gcp_project: 'p', region: 'r', checkouts: [checkout] }], warnings: [] })}\n`,
+          stdout: `${JSON.stringify({ installations: [{ name: 'sandbox', gcp_project: 'p', region: 'r', checkouts: [{ repository: 'github/o/r', path: checkout, enrolled: true, valid: true }] }], warnings: [] })}\n`,
         },
       },
     })
@@ -747,7 +747,7 @@ describe('the picker’s checkout', () => {
       commands: {
         version: { stdout: `${CLOCKED}\n` },
         'config list': {
-          stdout: `${JSON.stringify({ installations: [{ name: 'sandbox', checkouts: [checkout] }], warnings: [] })}\n`,
+          stdout: `${JSON.stringify({ installations: [{ name: 'sandbox', checkouts: [{ repository: 'github/o/r', path: checkout, enrolled: true, valid: true }] }], warnings: [] })}\n`,
         },
         doctor: { stderr: 'the checkout is not the project named\n', code: 1 },
       },
@@ -781,7 +781,7 @@ describe('the picker’s checkout', () => {
         version: { stdout: `${CLOCKED}\n` },
         doctor: { stdout: '{"ok":true,"checks":[]}\n' },
         'config list': {
-          stdout: `${JSON.stringify({ installations: [{ name: 'sandbox', checkouts: [checkout] }], warnings: [] })}\n`,
+          stdout: `${JSON.stringify({ installations: [{ name: 'sandbox', checkouts: [{ repository: 'github/o/r', path: checkout, enrolled: true, valid: true }] }], warnings: [] })}\n`,
         },
       },
     })

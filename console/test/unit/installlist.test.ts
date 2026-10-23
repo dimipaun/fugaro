@@ -82,7 +82,18 @@ describe('the installation list document', () => {
           name: 'sandbox',
           gcp_project: 'p',
           region: 'r',
-          checkouts: ['/Users/owner/src/fugaro', '/Users/owner/src/fugaro-work', '', 42, 'bad\u0000path'],
+          checkouts: [
+            { repository: 'github/o/fugaro', path: '/Users/owner/src/fugaro', enrolled: true, valid: true },
+            { repository: 'github/o/fugaro', path: '/Users/owner/src/fugaro-work', enrolled: true, valid: true },
+            // never used for anything, whatever the reason (§6.8)
+            { repository: 'github/o/gone', path: '/Users/owner/src/gone', enrolled: true, valid: false, reason: 'missing' },
+            { repository: 'github/o/x', path: 'relative/dir', enrolled: true, valid: true },
+            { repository: 'github/o/x', path: '', enrolled: true, valid: true },
+            { repository: 'github/o/x', path: '/bad\u0000path', enrolled: true, valid: true },
+            { repository: 'github/o/x', path: 42, valid: true },
+            '/Users/owner/src/a-bare-string',
+            42,
+          ],
         },
       ],
       warnings: [],
@@ -109,7 +120,14 @@ describe('the installation list document', () => {
     // That is the silent omission rule 3 forbids, so the document is refused
     // instead -- the same bound, the same idiom as the installation count above.
     const one = (checkouts: readonly string[]): unknown => ({
-      installations: [{ name: 'sandbox', gcp_project: 'p', region: 'r', checkouts: [...checkouts] }],
+      installations: [
+        {
+          name: 'sandbox',
+          gcp_project: 'p',
+          region: 'r',
+          checkouts: checkouts.map((path) => ({ repository: 'github/o/r', path, enrolled: true, valid: true })),
+        },
+      ],
       warnings: [],
     })
     const at = Array.from({ length: MAX_DISCOVERED_INSTALLATIONS }, (_unused, index) => `/src/checkout-${String(index)}`)
