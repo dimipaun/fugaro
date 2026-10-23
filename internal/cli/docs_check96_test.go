@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
 // pipeIntoPythonHeredocRE matches a pipe into `python3` on a line that opens a
@@ -260,13 +262,29 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	// its one grant; a database role added to the account from another module
 	// would not be seen by this line, and that is a review question rather than
 	// something a string match can answer.
-	const cannotServe = "**The service is configured from its own deployment now, and refuses every call.**"
-	if credentialsDatabaseRoleRE.MatchString(readDoc(t, "deploy/terraform/gcp/modules/installation/credentials.tf")) {
-		if strings.Contains(check, cannotServe) {
-			t.Errorf("deploy/terraform/gcp/modules/installation/credentials.tf now grants a database role to the credentials service's account — the service can serve — and Check 96 still says every call is refused: the gap was closed and this check did not notice")
+	// Since 0.10.1 the role is the credentials service's OWN custom role
+	// (fugaroCredentialsDatabase, in the Firebase project, the two data
+	// permissions), so the sentence that has to be there is the one that says
+	// what the service can read, and the one that has to go is the refusal.
+	// Both directions are read against the module, so neither sentence can be
+	// left behind by a change to the other side.
+	const refusedEveryCall = "**The service is configured from its own deployment now, and refuses every call.**"
+	const readsTheDatabase = "**The service is configured from its own deployment now, and reads the installation's database.**"
+	hasRole := credentialsDatabaseRoleRE.MatchString(readDoc(t, "deploy/terraform/gcp/modules/installation/credentials.tf"))
+	if hasRole {
+		if strings.Contains(check, refusedEveryCall) {
+			t.Errorf("deploy/terraform/gcp/modules/installation/credentials.tf grants the credentials service's account a database role (%s) — the service reads the database and can serve — and Check 96 still says every call is refused: the gap was closed and this check did not notice", tf.CredentialsDatabaseRole)
 		}
-	} else if !strings.Contains(check, cannotServe) {
-		t.Errorf("deploy/terraform/gcp/modules/installation/credentials.tf grants the credentials service's account no role on the installation's database (its one grant is the bundle's accessor, Q6), so the first read a call makes — the operator's stop switches — is denied and the call is refused `state_unavailable` rather than served, and Check 96 does not say so: that is what decides whether the mint of step 3 can be made at all")
+		if !strings.Contains(check, readsTheDatabase) {
+			t.Errorf("deploy/terraform/gcp/modules/installation/credentials.tf grants the credentials service's account its database role (%s, the two data permissions) now, so a call's reads — the operator's stop switches first among them — are allowed and step 3's mint can be made, and Check 96 does not say so", tf.CredentialsDatabaseRole)
+		}
+	} else {
+		if !strings.Contains(check, refusedEveryCall) {
+			t.Errorf("deploy/terraform/gcp/modules/installation/credentials.tf grants the credentials service's account no role on the installation's database, so the first read a call makes — the operator's stop switches — is denied and the call is refused `state_unavailable` rather than served, and Check 96 does not say so: that is what decides whether the mint of step 3 can be made at all")
+		}
+		if strings.Contains(check, readsTheDatabase) {
+			t.Errorf("deploy/terraform/gcp/modules/installation/credentials.tf grants the credentials service's account no database role and Check 96 says it reads the installation's database: a reader would take step 3's mint as one this tree can make")
+		}
 	}
 	// And the half of the same sentence that names the configuration: the check
 	// states it as the deployment's own seven names, so the list it names has to
@@ -276,9 +294,25 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	}
 }
 
-// credentialsDatabaseRoleRE matches a role grant of the installation's database
-// in a Terraform module: the shape the guard above reads credentials.tf for.
-var credentialsDatabaseRoleRE = regexp.MustCompile(`role\s+= "roles/firebasedatabase`)
+// credentialsDatabaseRoleRE matches the credentials service's database role in
+// credentials.tf: the shape the guard above reads. Two spellings, because
+// there are two ways to give that account a database role.
+//
+//   - the custom role 0.10.1 adds: role_id = "fugaroCredentialsDatabase" (the
+//     ID is read from internal/infra/tf's own constant, so a rename cannot
+//     leave this guard watching a name nothing writes any more), declared in
+//     the installation module and bound to the service's own account;
+//   - a predefined database role granted directly (role = "roles/firebasedatabase…"),
+//     which is what the guard saw FIRST and all it saw: that line alone is the
+//     narrower role this release deliberately did not take (viewer cannot
+//     write; admin adds the instance lifecycle), and it would still mean the
+//     account holds a database reach.
+//
+// The old regex was the second spelling alone, and its own comment said a
+// database role added to the account from another shape "would not be seen by
+// this line, and that is a review question". 0.10.1 answered it: the custom
+// role is what the tree writes now, so the guard reads it.
+var credentialsDatabaseRoleRE = regexp.MustCompile(`role_id\s*=\s*"` + regexp.QuoteMeta(tf.CredentialsDatabaseRole) + `"|role\s+= "roles/firebasedatabase`)
 
 // check96FuncBody returns one function's body out of a source file the test
 // already read: from the signature to the next top-level `func `, so a call
