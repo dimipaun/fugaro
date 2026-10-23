@@ -20,13 +20,26 @@
 #     git rm docs/pending-workflows/dependabot-console.yml
 #     git commit -m "dependabot: watch console/ (desktop-console plan, open item 5)"
 #
-# ... then update the two sentences that count what this directory holds, as
-# the other staged files' copy-ins do: `docs/pending-workflows/README.md`'s
-# opening line and its `## dependabot-console.yml` section, and the paragraph
-# in `website/README.md` that says how many workflows are pending here.
-# `TestDependabotConsoleStagingIsPinned`'s staging clause fails in each tree
-# whose files and sentences disagree, so a copy-in that skips that step is red
-# rather than silently stale.
+# ... then update the three sentences that describe what this directory holds,
+# as the other staged files' copy-ins do:
+#
+#   - `docs/pending-workflows/README.md`'s opening line, from **Five files are
+#     pending: ...** to **Four files are pending: ...** with this file's name
+#     dropped (the section below quotes the exact sentence to write);
+#   - that document's `## dependabot-console.yml` section, whose opening line
+#     `**Status: `dependabot-console.yml` is staged and pending.**` becomes
+#     `**Status: `dependabot-console.yml` is applied, not pending.**` -- the
+#     copy-in changes it, because the section can no longer be about a staged
+#     copy once there is none;
+#   - `website/README.md`'s paragraph that says how many workflows are pending
+#     here, from **five** to **four**, with the name
+#     `docs/pending-workflows/dependabot-console.yml` removed from it.
+#
+# None of the three is optional and none is prose only:
+# `TestDependabotConsoleStagingIsPinned` (`internal/cli/docs_dependabot_console_test.go`)
+# reads the section's opening line, the file that runs and the tree together,
+# and fails in each tree whose files and sentences disagree -- so a copy-in that
+# skips a step is red rather than silently stale.
 #
 # What the added entry is, and what it deliberately is not:
 #
@@ -58,9 +71,16 @@ updates:
     schedule:
       interval: weekly
   # The console's own dependencies (desktop-console plan Task 1.0; design
-  # section 5.2 and this plan's open item 5). `directory` is the console's
-  # package directory rather than the repository root: there is exactly one
-  # package.json in this repository that is an npm package, and it is there.
+  # section 5.2 and this plan's open item 5). `directory` is the console's own
+  # package directory, and the reason is that it is the one Dependabot is being
+  # asked to watch: this repository ships several npm packages -- `shared/`,
+  # `website/`, `mobile/`, `deploy/sandbox/` and the two test harnesses under
+  # `images/base/harnesses/` and `internal/budget/rules/emulator/`, each with a
+  # committed lockfile installed by `npm ci` -- and the owner's ruling extends
+  # Dependabot's scope to the console and to no other. `/console` names it;
+  # `directory: /` would name the repository root, which is not a package at
+  # all, so the field is the scope decision and not an incidentally correct
+  # path.
   - package-ecosystem: npm
     directory: /console
     schedule:

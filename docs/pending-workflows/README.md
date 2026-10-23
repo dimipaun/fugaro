@@ -1782,13 +1782,28 @@ The `git rm` is load-bearing rather than cleanup: while the staged file exists,
 `TestDependabotConsoleStagingIsPinned` reads IT, so leaving it in place would
 freeze that test on its bytes and hide a later edit of the file that runs.
 
-**The same commit has to update the two sentences that count this directory**,
-because both are held to the directory rather than to a remembered count: this
-document's opening line (`TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere`
-reads it, and `website/test/readme.mjs` reads the site's), and the site's own
-paragraph, which `website/test/readme.mjs` checks in both directions — the count
-and the set of names, with `docs/pending-workflows/` scanned page-wide, so every
-backticked mention has to move with it.
+**The same commit has to update three sentences, and they are not prose only.**
+Two of them count what this directory holds, because both are held to the
+directory rather than to a remembered count: this document's opening line
+(`TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere` reads it, and
+`website/test/readme.mjs` reads the site's), and the site's own paragraph, which
+`website/test/readme.mjs` checks in both directions — the count and the set of
+names, with `docs/pending-workflows/` scanned page-wide, so every backticked
+mention has to move with it.
+
+The third is **this section's own opening line**, and it is the one a reader of
+the copy-in instructions would otherwise miss: `TestDependabotConsoleStagingIsPinned`
+reads it against the tree — the way
+`TestSharedTestsWorkflowStagingStateIsWhatTheReadmeSays` reads
+`shared-tests.yml`'s — so the copy-in changes it to
+
+```md
+**Status: `dependabot-console.yml` is applied, not pending.**
+```
+
+A section that kept opening with "staged and pending" after the file was copied
+in would be describing a staged copy that is not there, and the test is red
+rather than silent about it.
 
 The opening line's exact text for the state the copy-in leaves — **four** files
 pending, this one gone — is:
