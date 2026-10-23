@@ -65,11 +65,11 @@
 //      test, and the console's two files, which hold the project's own link and not a service the
 //      software reports to (the note below `HOST_NAMING_CONSOLE` gives the reason and the ruling,
 //      and the case that plants a third file proves the rule still holds for every other source).
-//      The selector carries `.go`, because the CLI and the server are mostly Go: a scan that reads the tree's
-//      scripts and manifests but not its Go source reads everything except the software this
-//      page is about, and it reads enough files to look busy while doing it. The case below goes
-//      through the selector rather than around it for that reason, and the case above counts the
-//      Go sources it selected.
+//      The selector carries `.go`, because the CLI and the server are mostly Go: a scan that reads
+//      the tree's scripts and manifests but not its Go source reads everything except the software
+//      this page is about, and it reads enough files to look busy while doing it. The case below
+//      goes through the selector rather than around it for that reason, and the case above counts
+//      the Go sources it selected.
 //   6. **The contact route, and no address.** The page's contact section points at the issue
 //      tracker and at `SECURITY.md`'s reporting route, and the page carries no e-mail address
 //      anywhere: the owner's ruling of 2026-10-19 is that there is no address to publish, so a
