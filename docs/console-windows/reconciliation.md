@@ -4,7 +4,7 @@
 document. The twelve decisions in §4 are answered** — the owner answered all twelve on 2026-10-20,
 and the table at the head of §4 records each one with its why — **and answering a decision is not
 approving the build — the two are separate: the answers are 2026-10-20, and the plan's OWNER APPROVAL
-GATE was passed on 2026-10-21, for the target release 0.11.0 on the branch `console-windows-wsl`.**
+GATE was passed on 2026-10-22, for the target release 0.11.0; pull requests target `main`.**
 It reads the tree at
 `ccc406b2` and every path and symbol in it was read at that commit. Where it disagrees with the brief
 in §0, **this document wins** and says so.
@@ -223,8 +223,8 @@ path that exists and is unused.
 Each is a real fork with a recommendation first, the alternative and what it costs. **The owner
 answered all twelve on 2026-10-20**, and the table below is the record: the option taken and the
 reason in one line. **Answering a decision is not approving the build** — the plan's OWNER APPROVAL
-GATE is where approval happens, and it **passed on 2026-10-21** (target release 0.11.0, branch
-`console-windows-wsl`). The namespaces are local: **D1–D12 are
+GATE is where approval happens, and it **passed on 2026-10-22** (target release 0.11.0; pull
+requests target `main`). The namespaces are local: **D1–D12 are
 this folder's**, they are unrelated to
 [docs/design/desktop-console.md](../design/desktop-console.md)'s D1–D20 and to
 [docs/windows-cli/](../windows-cli/README.md)'s D1–D16, and O6 records the collision.

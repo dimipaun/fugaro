@@ -243,9 +243,13 @@ describe('the fake wsl.exe', () => {
     expect(Object.keys(hop.childEnv).sort()).toEqual(['FUGARO_PROJECT', 'HOME', 'PATH'])
 
     const child = only(wsl.children())
-    expect(child.envKeys).toEqual(['FUGARO_PROJECT', 'HOME', 'PATH'])
+    // macOS adds __CF_USER_TEXT_ENCODING to every process it starts (as in
+    // spawn.test.ts): named rather than waved through, so any other key fails.
+    const platformKeys = process.platform === 'darwin' ? ['__CF_USER_TEXT_ENCODING'] : []
+    const childKeys = child.envKeys.filter((key) => !platformKeys.includes(key))
+    expect(childKeys).toEqual(['FUGARO_PROJECT', 'HOME', 'PATH'])
     expect(child.envKeys).not.toContain('NOT_A_CHILD_KEY')
-    for (const key of child.envKeys) expect([...CHILD_ENV_KEYS]).toContain(key)
+    for (const key of childKeys) expect([...CHILD_ENV_KEYS]).toContain(key)
   })
 
   it('refuses to be a general-purpose shell', () => {

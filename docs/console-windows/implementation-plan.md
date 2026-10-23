@@ -1,6 +1,6 @@
 # The console on Windows — the implementation plan
 
-**Status: approved to build on 2026-10-21 — target release 0.11.0, branch `console-windows-wsl`; the
+**Status: approved to build on 2026-10-22 — target release 0.11.0, pull requests target `main`; the
 twelve decisions are answered and the OWNER APPROVAL GATE in §5 is passed.** Parts land in the order
 §3 gives, and each merges alone. **Part A is built** (T-A1 to T-A3, the fake `wsl.exe`): it touches no
 production behaviour, which is why it is first and why it is safe first.
@@ -829,18 +829,17 @@ before it, which is the risk the ruling accepts and the dry run above is there t
 
 ## 5. OWNER APPROVAL GATE
 
-**Passed on 2026-10-21: approved to build — target release 0.11.0, branch `console-windows-wsl`.**
+**Passed on 2026-10-22: approved to build — target release 0.11.0, pull requests target `main`.**
 The owner approved **this plan**: the eight parts, the order in §3, the staged workflow in
 `docs/pending-workflows/console-windows.yml`, the owner-run checklist in §4, and the risk the D7
 ruling accepts (a packaging break shows at release time and is fixed then). Parts land in §3's order,
-each merging alone, and the long-lived branch `console-windows-wsl` is where they collect until
-0.11.0 — the pull request that carries each part is retargeted to that branch rather than to `main`.
+each merging alone into main, for 0.11.0.
 
 **Answering a decision was not approving the build, and the two dates are separate.** The five
 conditions this gate used to list were the twelve decisions, and **the owner answered all twelve on
 2026-10-20** — each with its one-line why in [reconciliation.md](reconciliation.md) §4. That removed
 the *decisions* from the gate; it did not pass it. The approval of the plan itself is the ruling of
-**2026-10-21**, and it is what this section now records.
+**2026-10-22**, and it is what this section now records.
 
 | Decision | Answered | What it settled |
 |---|---|---|
