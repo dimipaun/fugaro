@@ -150,12 +150,12 @@ setting this folder picks.
 
 ## The 2026-10-22 addendum: Rigor Levels
 
-On 2026-10-22 the owner gave a second spec for the same dial, written as **five personas** (`poc`, `startup`, `pro`, `critical`, `hotfix`) with a new way to scope them (areas of interest that need not be one repository), a **promote** task, **review matching** and a **debt artefact** per level. It **layers on** the approved work above and changes none of its answers except where it says so. The documents:
+On 2026-10-22 the owner gave a second spec for the same dial, written as **five personas** (`poc`, `startup`, `pro`, `critical`, `hotfix`) with a new way to scope them (areas of interest that need not be one repository), a **promote** task, **review matching** and a **debt artefact** per level. It **layers on** the approved work above and changes none of its answers except where it says so: after an independent review, five of them (D6, D20, D23, D27, D30) carry an **amended after review** pointer to the addendum's §3a, pending the owner's confirmation. The documents:
 
 | Document | What it is |
 | --- | --- |
 | [levels-spec.md](levels-spec.md) | the owner's second spec, **verbatim**, in its own commit |
-| [levels-reconciliation.md](levels-reconciliation.md) | what the tree says back: **LF1–LF14**, the owner's answers **LD1–LD11** (2026-10-22), three open tensions and the UNVERIFIED list |
-| [levels-implementation-plan.md](levels-implementation-plan.md) | the overlay plan: seven slices (LV1–LV7), parallel levels, critical path; **nothing is approved to build** |
+| [levels-reconciliation.md](levels-reconciliation.md) | what the tree says back: **LF1–LF14**, the owner's answers **LD1–LD11** (2026-10-22), the amendments after review (§3a), twelve open items for the owner and the UNVERIFIED list |
+| [levels-implementation-plan.md](levels-implementation-plan.md) | the overlay plan: seven slices (LV1–LV7), the approved tasks it changes, parallel levels, critical path; **nothing is approved to build** |
 
 The numbers this addendum holds: decisions **LD1–LD11**, findings **LF1–LF14**, no new check number (Slice 8's Check 119 gains one step per level). The word is **level** from here on (LD2); the 2026-10-20 documents keep saying *mode* until LV1.1 renames the code and LV1.2 restates their sentences.
