@@ -33,10 +33,11 @@ type initEngine struct {
 	envErr error // the environment check's refusal, kept as the error init always returned
 	envRan bool
 
-	ready bool
-	c     *infra.Clients
-	t     *tf.TF
-	wd    *infra.Workdir
+	ready   bool
+	rmReady bool // the Resource Manager readiness, done once (setupCloud)
+	c       *infra.Clients
+	t       *tf.TF
+	wd      *infra.Workdir
 
 	authorized map[string]bool // repositories the user typed in this run (see init_repo_gate.go)
 	declined   map[string]bool // repositories the user was asked about and did not type
@@ -66,7 +67,8 @@ func (e *initEngine) environment() error {
 }
 
 // setup is the workdir, the clients and the Resource Manager readiness
-// every installation engine needs, done once.
+// every installation engine needs, done once. The cloud half is setupCloud,
+// which the rollback's refusal takes on its own before the workdir exists.
 func (e *initEngine) setup(ctx context.Context) error {
 	if e.ready {
 		return nil
@@ -83,13 +85,39 @@ func (e *initEngine) setup(ctx context.Context) error {
 		return err
 	}
 	e.r.res.Workdir = e.wd.Dir
-	if e.c, err = newInitClients(ctx, e.lc); err != nil {
+	if err := e.setupCloud(ctx); err != nil {
 		return err
+	}
+	e.ready = true
+	return nil
+}
+
+// setupCloud is the half of setup that reaches the cloud and touches no
+// workdir: the environment, the clients, and the Resource Manager readiness
+// every read of the project is made after. setup calls it, and so does the
+// rollback's own refusal, which is decided before the workdir is prepared (see
+// runInit's --forget door: the preparation rebuilds the tree, so a refused run
+// may not reach it). Both callers share it so the work is done once:
+// the engine's fields are the guard, and the environment's check prints its
+// warnings once for the same reason.
+func (e *initEngine) setupCloud(ctx context.Context) error {
+	if err := e.environment(); err != nil {
+		return err
+	}
+	if e.c == nil {
+		c, err := newInitClients(ctx, e.lc)
+		if err != nil {
+			return err
+		}
+		e.c = c
+	}
+	if e.rmReady {
+		return nil
 	}
 	if err := e.r.resourceManager(ctx, e.c); err != nil {
 		return err
 	}
-	e.ready = true
+	e.rmReady = true
 	return nil
 }
 

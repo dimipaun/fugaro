@@ -32,9 +32,16 @@ import (
 // token source that is not there); a repository field added to
 // credsvc.MintRequest → FAIL (the document says a mint call carries no
 // repository field, and that is what makes "a run identity for X cannot mint for
-// Y" true); the "Nothing on this tree puts that variable in a job's environment"
-// known-limit sentence changed → FAIL (the document would claim the mint is the
-// service's while nothing here switches the keyless path on).
+// Y" true); the retired "Nothing on this tree puts that variable in a job's
+// environment" paragraph put back → FAIL, on the ban — the document would claim
+// the keyless path is in the tree and not in effect while
+// internal/cli/run.go's credentialsServiceLaunchEnv sets the variable on a
+// repository job; the "The launch is what puts it there" paragraph's
+// "a repository's own job and on no other" clause changed to include shared
+// project jobs → FAIL, because the service refuses a shared job's account
+// (Global Constraint 6) and the variable is what opens the provider keyless; the
+// "An installation that has not opted in gets no variable at all" sentence
+// deleted → FAIL; the ErrMintNoAppKey sentence deleted → FAIL.
 func TestDocsGitProvidersStateWhatReachesTheAgentExactly(t *testing.T) {
 	providers := readDoc(t, "docs/git-providers.md")
 
@@ -50,6 +57,21 @@ func TestDocsGitProvidersStateWhatReachesTheAgentExactly(t *testing.T) {
 	// so no release of the credentials service makes that sentence true.
 	if strings.Contains(providers, "the long-lived credential behind each one never is") {
 		t.Errorf("docs/git-providers.md says \"the long-lived credential behind each one never is\" in the agent's environment: false on Bitbucket, where the run's git credential is this repository's access token (`FUGARO_GIT_TOKEN`), the same value the job's environment holds as `FUGARO_BITBUCKET_TOKEN` (`internal/runner/runner.go`'s `refreshGitAuth`, `internal/gitops/credentials.go`). State it per provider, as a known limit")
+	}
+	// And the third stale claim, retired by this release: the document used to
+	// say the keyless path was "in the tree, not in effect" because nothing set
+	// the variable. internal/cli/run.go's credentialsServiceLaunchEnv sets it on
+	// a repository job's execution now, so every one of those sentences is a
+	// reader being told a run behaves one way while it behaves another.
+	for _, stale := range []string{
+		"Nothing on this tree puts that variable in a job's environment",
+		"Nothing on this tree names it, so this is the release's behaviour and not today's",
+		"an installation's runner still reads the App key from its environment and mints the installation token in the job",
+		"the release that wires it end to end — the one that sets the variable on a job — is the one after this",
+	} {
+		if strings.Contains(providers, stale) {
+			t.Errorf("docs/git-providers.md still says %q: the launch of an opted-in installation's repository job sets `FUGARO_CREDENTIALS_SERVICE_URL` (`internal/cli/run.go`'s `credentialsServiceLaunchEnv`), so the keyless path is in effect and the runner mints at the service rather than in the job — this is the release that wires it, not the one after it", stale)
+		}
 	}
 
 	// The exact one, and the four properties of the mint a reader of this
@@ -71,12 +93,17 @@ func TestDocsGitProvidersStateWhatReachesTheAgentExactly(t *testing.T) {
 		"a run identity for repository X cannot mint a token for Y",
 		"Bitbucket is untouched",
 		"`config.ServiceHeldSecretNames`",
-		// The known limit, which the documents carry because it is what is true
-		// on this tree: the keyless path is switched on by the job's environment
-		// naming the service, and nothing here puts that name there, so an
-		// opted-in runner still reads the key and mints in the job today.
-		"Nothing on this tree puts that variable in a job's environment",
-		"still reads the App key from its environment and mints the installation token in the job",
+		// The wiring, which is what this document had to be rewritten for: the
+		// launch puts the variable on a repository job's execution, and on no
+		// other, and an installation that has not opted in is unchanged. The
+		// retired claim ("Nothing on this tree puts that variable in a job's
+		// environment") is banned below.
+		"**The launch is what puts it there**",
+		"`internal/cli/run.go`'s `credentialsServiceLaunchEnv`",
+		"a repository's own job and on no other",
+		"An installation that has not opted in gets no variable at all",
+		// The bundle has to hold the key, or the mint is a named refusal.
+		"`ErrMintNoAppKey`",
 	} {
 		if !strings.Contains(providers, want) {
 			t.Errorf("docs/git-providers.md does not say %q: with the credentials service on, the App's key is the service's and the run's installation token is minted by it, and this is the document an operator reads to find that out", want)
@@ -121,12 +148,21 @@ func TestDocsGitProvidersStateWhatReachesTheAgentExactly(t *testing.T) {
 // security claim of this task's documents: once an installation opts into the
 // credentials service, the App's key is the service's — the run's installation
 // token is minted by the service for the run's own repository and permission
-// set, and the job holds no key to sign with — and the job's own accessor and
-// mount leave in the release that also stops the runner reading them, which has
-// NOT landed on this tree. SECURITY.md has to state both halves exactly: a
-// document that claimed the key was out of the job today would be false, and one
-// that left the App's key as "the agent can read it from /proc, always" would
-// hide what the opt-in changes.
+// set, and the job reads no key to sign with — while the job's own accessor and
+// mount stay until the release that flips config.ServiceHeldSecretNames, which
+// has NOT landed on this tree. SECURITY.md has to state both halves exactly: a
+// document that claimed the key was OUT OF the job today would be false (it is
+// still mounted and still granted), and one that left the App's key as "the
+// agent can read it from /proc, always" would hide what the opt-in changes.
+//
+// This test's second half moved with the wiring (0.10.1). It used to pin the
+// sentence "nothing on this tree sets that variable, so today the key that
+// signs an opted-in run's tokens is still the job's own" — true while no launch
+// set `FUGARO_CREDENTIALS_SERVICE_URL`, and false the moment
+// internal/cli/run.go's credentialsServiceLaunchEnv put it on a repository
+// job's execution. What the document states instead is the two halves that
+// remain: an opted-in installation mints at the service, and an installation
+// that has NOT opted in still mints in-job.
 //
 // Mutations (verified, run and restored): the "that release has not landed on
 // this tree" caveat deleted from the new section → FAIL, because
@@ -137,25 +173,23 @@ func TestDocsGitProvidersStateWhatReachesTheAgentExactly(t *testing.T) {
 // "no code path in the job mints a token or reads the App key **when the job's
 // environment names the service**" clause deleted → FAIL, because that is the
 // property the keyless path gives and the sentence the residual in "Known
-// limits" points at; the known-limit sentence ("nothing on this tree sets that
-// variable, so today the key that signs an opted-in run's tokens is still the
-// job's own") changed to claim the service's key signs today → FAIL.
-//
-// The known-limit half is what this test was extended for after review: the
-// document said "A run's installation token is **minted by the service**" flat,
-// and that is false on this tree — internal/gitprov/providers/providers.go opens
-// the keyless provider only when `FUGARO_CREDENTIALS_SERVICE_URL` is in the
-// job's environment, and nothing in this tree (no installation field, no
-// Terraform module) puts it there — so an opted-in runner still reads the key
-// and mints in the job. The pin is the sentence that says so.
+// limits" points at; the sentence about the installation that has not opted in
+// deleted → FAIL, because the document would then read as if every installation
+// minted at the service; the retired "nothing on this tree sets that variable"
+// sentence put back → FAIL.
 func TestSecurityMdStatesTheAppKeyIsTheServicesWhenTheServiceIsOn(t *testing.T) {
 	sec := readDoc(t, "SECURITY.md")
 
 	for _, want := range []string{
 		"### The GitHub App's key, when the credentials service holds it",
-		"**Signing is the service's, not the job's — from the release that tells a job where the service is, and not before it.**",
+		"**Signing is the service's, not the job's, from the release that tells a job where the service is.**",
 		"`fugaro creds set github-app-key`",
-		"On the release that sets the variable, a run's installation token is **minted by the service**",
+		// The release that sets the variable is THIS one, and the document
+		// says so in the terms the code does: the launch puts it on a
+		// repository's own job, and on no other.
+		"on an opted-in installation a run's installation token is minted by the service and the run's runner opens its git provider with no key at all",
+		"a bundle that holds none is a named refusal rather than a fall back to the job's copy (D143)",
+		"**A shared project job is deliberately not told**",
 		"A mint call carries the App's ID and nothing else — there is no repository field to fill in.",
 		"**calling job's account is bound to**",
 		"(see \"The GitHub App's key, when the credentials service holds it\" above)",
@@ -166,11 +200,10 @@ func TestSecurityMdStatesTheAppKeyIsTheServicesWhenTheServiceIsOn(t *testing.T) 
 		// review of this round, which is a reader's map to the wrong place.
 		"the residual in \"What one run's agent can reach\" below",
 		"no code path in the job mints a token or reads the App key **when the job's environment names the service**",
-		// The known limit of this release, which the document states because the
-		// keyless path is gated on a variable nothing on this tree sets: an
-		// opted-in runner still reads the key and mints in the job today.
-		"today an opted-in installation's runner still reads the App key from its environment and mints the installation token in the job",
-		"nothing on this tree sets that variable, so today the key that signs an opted-in run's tokens is still the job's own",
+		// What is true of an installation that has NOT opted in, which is the
+		// half the retired sentence was reaching for: no variable is set
+		// there, and its jobs mint in-job exactly as before.
+		"On an installation that has not opted in, no variable is set and the job reads the App key and mints in-job exactly as it did before the service existed.",
 	} {
 		if !strings.Contains(sec, want) {
 			t.Errorf("SECURITY.md does not say %q: with the credentials service on the App's key is the service's and the run's token is minted by it (D145), and this document is where a reader is told what that reaches", want)
@@ -186,8 +219,12 @@ func TestSecurityMdStatesTheAppKeyIsTheServicesWhenTheServiceIsOn(t *testing.T) 
 
 	// The caveat, held to the code: while the held-secrets list is empty the
 	// job still mounts the key, and the document has to say so; the day the
-	// list names it, the same sentence is the one that has to go.
-	const caveat = "that release has not landed on this tree"
+	// list names it, the same sentences are the ones that have to go. The
+	// caveat moved with the wiring: the document used to say the release that
+	// drops the mount "has not landed on this tree", and now that the launcher
+	// sets the variable it says the mount stays while the runner no longer
+	// reads the key, and names the live check the flip waits on.
+	const caveat = "the flip is held until the owner's live Check 96 has proven the deployed service mints"
 	if heldSecretsListNamesTheAppKey(t) {
 		if strings.Contains(sec, caveat) || strings.Contains(sec, "still mounts `FUGARO_GITHUB_APP_PRIVATE_KEY`") {
 			t.Errorf("internal/config/providers.go's ServiceHeldSecretNames names the App key — the job has given it up — and SECURITY.md still says the job keeps its accessor and its mount: the release landed and this document did not")
@@ -195,6 +232,18 @@ func TestSecurityMdStatesTheAppKeyIsTheServicesWhenTheServiceIsOn(t *testing.T) 
 	} else {
 		if !strings.Contains(sec, caveat) || !strings.Contains(sec, "still mounts `FUGARO_GITHUB_APP_PRIVATE_KEY`") {
 			t.Errorf("internal/config/providers.go's ServiceHeldSecretNames is still empty — the job keeps its accessor and its mount — and SECURITY.md does not say so plainly: this is the one claim in the document a reader would take as done today")
+		}
+	}
+	// And the retired half of that claim, which said no job ever carries the
+	// variable: the launcher sets it, so the sentence is banned rather than
+	// merely unpinned.
+	for _, stale := range []string{
+		"nothing on this tree sets that variable",
+		"nothing on this tree sets `FUGARO_CREDENTIALS_SERVICE_URL`",
+		"no job is ever given its address",
+	} {
+		if strings.Contains(sec, stale) {
+			t.Errorf("SECURITY.md still says %q: internal/cli/run.go's credentialsServiceLaunchEnv sets `FUGARO_CREDENTIALS_SERVICE_URL` on an opted-in installation's repository job, so the keyless path is in effect and this is the release that sets it", stale)
 		}
 	}
 }

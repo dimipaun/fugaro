@@ -260,7 +260,7 @@ describe('a failed read crosses as a category, never as text', () => {
       `the binary exited 2 for \`version\`: ${HOSTILE_LINE}`,
     ]
     for (const reason of quoting) {
-      const read = versionReadFrom({ ok: false, path: '/opt/homebrew/bin/fugaro', reason })
+      const read = versionReadFrom({ ok: false, path: '/opt/homebrew/bin/fugaro', kind: 'no-binary', reason })
       expect(read).toEqual({ ok: false, failure: 'unreadable' })
       const compatibility = await runVersionHandshake({ readVersion: async () => read })
       expect(compatibility.mode).toBe('refused')
@@ -276,6 +276,7 @@ describe('a failed read crosses as a category, never as text', () => {
     const read = versionReadFrom({
       ok: false,
       path: null,
+      kind: 'no-binary',
       reason: 'no fugaro binary was found: looked at /Users/someone/secret-dir/fugaro',
     })
     expect(read).toEqual({ ok: false, failure: 'not-found' })

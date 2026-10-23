@@ -172,6 +172,7 @@ fences, are `src/demo/`'s; the words the owner pastes into the Play form are
 | `src/feed/` | The feed reader: the four granted families and the gate every read passes (`paths.js`), the wire node shapes (`nodes.js`), the contract's document rules (`document.js`) and the two figures the phone recomputes (`recompute.js`), the screen's rules (`view.js`) and the reader itself (`reader.js`). `index.js` is the one door; `fixtures/nodes.js` is the synthetic recording the tests read. |
 | `src/jobs/` | The job list (P3.3): the field table (`fields.js`), the project's row (`row.js`), the heartbeat line (`heartbeat.js`), the list and its wiring (`list.js`), what the screen says (`lines.js`) and the scope scan (`scope.test.js`). `index.js` is the one door; the section below is the rule sheet. |
 | `src/audio/` | The voice ports and their fakes (P3.4): the capture path (`audio-in.js`), transcription (`stt.js`), speech output (`tts.js`), the transcript-to-message rule (`message.js`) and the pipeline that wires them (`pipeline.js`). **No engine, no device, no SDK**: `index.js` is the one door, and its test scans the directory for exactly that. |
+| `src/voice-session/` | The voice session's state machine (VS0.1–VS0.3 of `docs/mobile/voice-session/implementation-plan.md`): the event contract — the six kinds, their fields and the audio routes exactly as the spec's §5 writes them, plus the one field P8 adds (`interruptionBegan.suspended`, so a suspension notification is not read as a call) (`events.js`) — and the machine that reduces it (`machine.js`) — §4's table as one pure function, `reduce(state, event, ctx)`, with `ctx` carrying `{ now, resumeTimeoutMs, pipeline }`. **No clock, no timer, no I/O and no stored `speaking`**: `listening`/`speaking` are asked of P3.4's pipeline on every call that enters the pair (D205, D206, F3), §8's three minutes is a `tick` the caller injects, and D201 is open so the timeout is the caller's value with no default here. `index.js` is the one door, and its test scans the directory for exactly that — including two fences of its own: a paused session reaches no credential and no mailbox call (F24: nothing here resolves into `src/accounts/` or `src/mailbox/`, and the module's own code imports nothing outside its directory) and no file here carries words the user said (F9, D213). Nothing in the app imports it yet: the controller that drives it is VS1.1, and the native port that emits §5's events is VS1.2. Approved by the owner on 2026-10-22 (D205 answered as recommended; **VS0.1–VS0.3 and nothing else**). |
 | `src/voice/` | The voice screen (P3.5) and the spoken confirmation (P6.12): the interrupt switch and the pure decision it gates (`interrupt.js`), the screen itself — the queue, P1.4's offline refusal, P1.2's lease and D122's microphone state (`screen.js`) — the adapter that puts P3.4's pipeline behind P3.6's speaker port (`speaker.js`), and the dialogue that routes a transcript, speaks a read-back and waits (`dialogue.js`). **No engine, no device, no database**: `index.js` is the one door, and its test scans the directory for exactly that. |
 | `src/boundary.test.js` | The scan that says **which files may write a credential** (below). |
 | `src/dependencies.test.js` | The scan that says **which packages the app is made of**: `expo`, `react` and `react-native` are declared, every bare import under `index.js` and `src/` is declared, and `package-lock.json` is the lockfile `npm ci` installs. It is what makes `eas build` able to find an SDK. |
@@ -287,10 +288,13 @@ alone, and the reason is the same one that names it the store profile:
 store, so incrementing for them would spend this release's build numbers on
 artifacts nobody ever submits. The build number is **not** the version the
 stores show, and it is not the version check 89 step 4 compares with the tag:
-that one is `expo.version` in `app.json`, the line C6 ties to the release tag,
-so releasing this app means setting it to the version being released (`0.0.0` in
-the tree is the placeholder a release replaces — nothing here bumps it for
-you). And `cli.requireCommit` is `true` (a store build records the commit it was
+that one is `expo.version` in `app.json`, the line the app's own release tag
+(`mobile-vX.Y.Z`) names — and `version` in `package.json` with it, the two being
+one number that `src/app-config.test.js` pins together. So releasing this app
+means setting **both** to the version being released, in one commit, before the
+tag (`0.0.0` in the tree is the placeholder a release replaces — nothing here
+bumps either for you, and the staged release workflow refuses a tag that
+disagrees with either). And `cli.requireCommit` is `true` (a store build records the commit it was
 made from). `development` is a dev client on internal distribution and
 `preview` is an internal-distribution build — neither reaches a store — and
 each profile
@@ -342,7 +346,8 @@ processes the build first, and the owner does four things:
    Store Connect shows it anyway, the answer is the declared one.
 4. **Install through the TestFlight app** on the device — the console hands out
    no build by itself. This is Check 89 step 4's install, and what it records is
-   the version the app reports against the release's tag (C6).
+   the version the app reports against the release's own tag, `mobile-vX.Y.Z`
+   (C6's "the app is versioned with the CLI's tag" is superseded).
 
 **The Android equivalent.** `eas submit --profile internal --platform android`
 uploads the **AAB** to Play's **internal testing** track — `eas.json`'s

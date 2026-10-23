@@ -1475,9 +1475,13 @@ added or removed without this sentence moving fails there:
     repository or a shorter cache each fails;
   - **the host the project operates** — no production source under `cmd/`, `internal/`,
     `console/src/`, `mobile/src/` or `shared/` may name the site's canonical host, since the page
-    says the software talks "to nothing the Fugaro project operates" (the one file that names it
-    is a Go test whose fixtures test the boundary rule itself, recorded in the test so the
-    exception stays visible);
+    says the software talks "to nothing the Fugaro project operates". Every exception is recorded
+    in the test by name rather than inferred from a filter, and there are three: a Go test whose
+    fixtures test the boundary rule itself, and two console files — `onboarding.ts`, which holds
+    the console's own link to the project's website (a URL handed to the reader's own browser and
+    never a request the console makes), and `window.ts`, which carries only the host in
+    `ALLOWED_EXTERNAL_HOSTS` so that link may open — neither of which may carry a request call of
+    its own;
   - **the contact route and no address** — the contact section links the issue tracker and
     `SECURITY.md`'s reporting route and nothing else, and the page carries no e-mail address, by
     the owner's ruling that there is no address to publish; and
@@ -2097,12 +2101,17 @@ The deploy workflow is still W2.1's and **not a Fugaro run's to write**: W2.1 st
 workflow under `docs/pending-workflows/` for the owner to copy in, and the owner runs it to
 deploy to the Firebase project created for the website only (D91, D109) — a run may not
 change `.github/workflows/`. `docs/pending-workflows/` now holds four pending workflows,
-`docs/pending-workflows/images.yml` — the credentials service's image leg (credentials-service plan, task C1.14) — `docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
-P4.3) — `docs/pending-workflows/console-windows.yml` — the console's Windows installer pack,
-which runs at release time only rather than on a pull request, and is copied in only after the
-packer and the unit suite can pass on a Windows runner — and
-`docs/pending-workflows/mobile-release.yml` — the mobile app's build and store submissions
-(2026-10-20). None of the four is this site's: the website's two manual
+`docs/pending-workflows/images.yml` — the credentials service's image leg (credentials-service
+plan, task C1.14) — `docs/pending-workflows/shared-tests.yml` — the shared package's test job
+(mobile plan Task P4.3) — `docs/pending-workflows/console-windows.yml` — the console's Windows
+installer pack, which runs at release time only rather than on a pull request, and is copied in
+only after the packer and the unit suite can pass on a Windows runner —
+`docs/pending-workflows/dependabot-console.yml`
+— Dependabot's watch over the console's npm dependencies (2026-10-23), which is a settings file
+rather than a workflow and is copied over `.github/dependabot.yml` rather than into
+`.github/workflows/`. None of the four is this site's (the mobile app's release workflow,
+`mobile-release.yml`, and the console's own release stream, `console-release-tag.yml`, were
+copied in on 2026-10-23 and are no longer staged): the website's two manual
 workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the
 owner, and no deploy workflow is staged. The only other workflow files left there are the desktop
 console's `console-tests.yml` and `console-release.yml`, which the owner has copied in as well:

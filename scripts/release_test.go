@@ -544,6 +544,243 @@ func TestDryRunCreatesNothing(t *testing.T) {
 	}
 }
 
+// writePluginTestStub writes the stand-in for `go test ./plugin/` that
+// TestDryRunChecksThePluginBudgetOnABumpedTree puts in
+// RELEASE_SH_PLUGIN_TEST_CMD. It runs inside the scratch worktree release.sh
+// bumped, so it fails unless that tree really carries the new version -- the
+// check under test is what applies the bump -- and it records the path it ran
+// in, so the test can assert the worktree is gone afterwards. STUB_RC is the
+// status the test wants it to exit with.
+func writePluginTestStub(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "plugin-test-stub.sh")
+	script := `#!/usr/bin/env bash
+set -eu
+version=$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' plugin/.claude-plugin/plugin.json | head -1)
+echo "tree=$PWD version=$version" >> "$STUB_LOG"
+[ "$version" = "$STUB_WANT" ] || { echo "plugin.json says $version, want $STUB_WANT" >&2; exit 1; }
+grep -q "fugaro-version=$STUB_WANT" plugin/skills/setup/SKILL.md || { echo "the skill headers are not bumped" >&2; exit 1; }
+exit "${STUB_RC:-0}"
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestDryRunChecksThePluginBudgetOnABumpedTree checks that --dry-run applies
+// the version bump to a scratch worktree and runs the plugin tests there. The
+// bump rewrites two version stamps in every skill file, so it can push a skill
+// file over its byte budget by itself: 0.10.0's bump commit did exactly that
+// to the setup skill, two bytes over, and failed TestPluginSkillsLintClean on
+// main (#929). Nothing else can see it -- the version strings all agree, so
+// scripts/bump-plugin-version.sh --check passes on the same tree.
+func TestDryRunChecksThePluginBudgetOnABumpedTree(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		rc       string
+		wantFail bool
+	}{
+		{"the plugin tests pass", "0", false},
+		{"the plugin tests fail", "1", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newReleaseRepo(t)
+			log := filepath.Join(t.TempDir(), "stub.log")
+			g := newGHState(t, r, greenChecks()).with(
+				"RELEASE_SH_PLUGIN_TEST_CMD=bash "+writePluginTestStub(t),
+				"STUB_LOG="+log, "STUB_WANT=1.0.0", "STUB_RC="+tc.rc)
+
+			res := runRelease(t, r, g, "", "1.0.0", "--dry-run")
+
+			// The stub's one line says where it ran: a worktree of the tree
+			// being released, carrying the bump, and removed when the script
+			// exited.
+			b, err := os.ReadFile(log)
+			if err != nil {
+				t.Fatalf("the plugin test command did not run: %v\n%s", err, res.out)
+			}
+			lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+			if len(lines) != 1 {
+				t.Fatalf("want one plugin test run, got %q:\n%s", lines, res.out)
+			}
+			scratch := strings.TrimPrefix(strings.Fields(lines[0])[0], "tree=")
+			if !strings.Contains(lines[0], "version=1.0.0") {
+				t.Errorf("the plugin tests did not run on a bumped tree: %s", lines[0])
+			}
+			if _, err := os.Stat(scratch); !os.IsNotExist(err) {
+				t.Errorf("the scratch worktree %s was not removed (stat: %v)", scratch, err)
+			}
+			if out := strings.TrimSpace(testutil.Git(t, r.local, "worktree", "list")); strings.Contains(out, "\n") || !strings.Contains(out, r.local) {
+				t.Errorf("want exactly the checkout's own worktree left, got:\n%s", out)
+			}
+			if out := testutil.Git(t, r.local, "status", "--porcelain"); out != "" {
+				t.Errorf("--dry-run changed the checkout: %s", out)
+			}
+
+			if tc.wantFail {
+				res.requireFailureContaining(t, "the plugin tests fail on a tree with the 1.0.0 bump applied")
+				if strings.Contains(res.out, "Dry run for v1.0.0") {
+					t.Errorf("a failed plugin check must not print the plan:\n%s", res.out)
+				}
+				return
+			}
+			res.requireSuccess(t)
+			if !strings.Contains(res.out, "the plugin tests pass on a tree with the 1.0.0 bump applied") {
+				t.Errorf("want the plugin check reported, got:\n%s", res.out)
+			}
+			if !strings.Contains(res.out, "Dry run for v1.0.0") {
+				t.Errorf("expected a dry-run plan, got:\n%s", res.out)
+			}
+		})
+	}
+}
+
+// TestDryRunReportsASkippedPluginBudgetCheck: the fixture repository holds no
+// go.mod, so with no RELEASE_SH_PLUGIN_TEST_CMD the check cannot run at all.
+// The plan has to say that rather than print the sentence the check exists to
+// earn: the check is what --dry-run is for, and a skip reported as a pass is
+// worse than no check, because it is read as one.
+func TestDryRunReportsASkippedPluginBudgetCheck(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := newGHState(t, r, greenChecks())
+
+	res := runRelease(t, r, g, "", "1.0.0", "--dry-run")
+
+	res.requireSuccess(t)
+	if !strings.Contains(res.out, "the plugin budget check did not run (this checkout holds no go.mod)") {
+		t.Errorf("want the skipped check named in the plan, got:\n%s", res.out)
+	}
+	if strings.Contains(res.out, "the plugin tests pass on a tree") {
+		t.Errorf("a check that did not run must not read as a pass:\n%s", res.out)
+	}
+	if !strings.Contains(res.out, "Dry run for v1.0.0") {
+		t.Errorf("a skipped check is not a refusal, so the plan still prints:\n%s", res.out)
+	}
+}
+
+// TestDryRunRefusesWhenGoIsMissing: `go` missing from PATH is the one skip that
+// is a refusal. The check cannot run, and it is the check the dry run exists
+// for, so printing a plan that does not mention it -- or a plan at all -- would
+// vouch for a release nothing verified. go.mod is what tells the two cases
+// apart: without it there is no module to test and the check is skipped.
+func TestDryRunRefusesWhenGoIsMissing(t *testing.T) {
+	r := newReleaseRepo(t)
+	writeFixtureFile(t, r.local, "go.mod", "module example.com/fixture\n")
+	g := newGHState(t, r, greenChecks()).with("PATH=" + pathWithoutGo(t, fakeBinDir(t)))
+
+	res := runRelease(t, r, g, "", "1.0.0", "--dry-run")
+
+	res.requireFailureContaining(t, "go is not on PATH")
+	if strings.Contains(res.out, "Dry run for v1.0.0") {
+		t.Errorf("a refused dry run must not print the plan:\n%s", res.out)
+	}
+}
+
+// writeFixtureFile writes name into the fixture checkout, commits it on main
+// and pushes it, so release.sh's clean-tree and main-equals-origin/main
+// preconditions still hold when a test needs one more file on main.
+func writeFixtureFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, dir, "add", name)
+	testutil.Git(t, dir, "commit", "--quiet", "-m", "fixture: "+name)
+	testutil.Git(t, dir, "push", "--quiet", "origin", "main")
+}
+
+// pathWithoutGo returns a directory holding a link to every command on PATH
+// except go itself, plus the fake gh in extra (which must shadow any real one).
+// Emptying PATH is not an option: the script, the gate and the fake gh all need
+// git, mktemp, awk, sed and friends, and there is no way to stub a command out
+// of PATH -- so the absence is built by subtraction.
+func pathWithoutGo(t *testing.T, extra ...string) string {
+	t.Helper()
+	dir := t.TempDir()
+	link := func(src string) {
+		name := filepath.Base(src)
+		if name == "go" || name == "gofmt" {
+			return
+		}
+		dst := filepath.Join(dir, name)
+		if _, err := os.Lstat(dst); err == nil {
+			return // an earlier PATH entry already supplied this name
+		}
+		_ = os.Symlink(src, dst)
+	}
+	for _, d := range append(append([]string{}, extra...), filepath.SplitList(os.Getenv("PATH"))...) {
+		ents, err := os.ReadDir(d)
+		if err != nil {
+			continue
+		}
+		for _, e := range ents {
+			if !e.IsDir() {
+				link(filepath.Join(d, e.Name()))
+			}
+		}
+	}
+	return dir
+}
+
+// writeSignalStub writes the stand-in for `go test ./plugin/` that
+// TestDryRunRemovesTheScratchWorktreeOnASignal uses: it records the worktree it
+// runs in, then sends the release script the signal a Ctrl-C sends, so the run
+// ends through on_signal's exit 130 and not through the check's own cleanup --
+// which is the path that used to leave the worktree and its registration
+// behind. The script is the lowest-numbered process whose command line carries
+// its path: the subshells it forks carry the same line.
+func writeSignalStub(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "plugin-test-signal-stub.sh")
+	script := `#!/usr/bin/env bash
+set -eu
+echo "tree=$PWD" >> "$STUB_LOG"
+pid=$(pgrep -f -- "$STUB_SCRIPT" | sort -n | head -1)
+kill -TERM "$pid"
+exit 0
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestDryRunRemovesTheScratchWorktreeOnASignal: the script's header,
+// docs/release.md and the check's own comment all say the scratch worktree is
+// removed however the check ends. An interrupted run ends through on_signal,
+// which exits 130 -- before the EXIT trap held the worktree, that exit left the
+// directory and its .git/worktrees entry behind, and the test could not see it
+// because no other case interrupts a run.
+func TestDryRunRemovesTheScratchWorktreeOnASignal(t *testing.T) {
+	r := newReleaseRepo(t)
+	log := filepath.Join(t.TempDir(), "stub.log")
+	g := newGHState(t, r, greenChecks()).with(
+		"RELEASE_SH_PLUGIN_TEST_CMD=bash "+writeSignalStub(t),
+		"STUB_LOG="+log,
+		"STUB_SCRIPT="+filepath.Join(r.local, "scripts", "release.sh"))
+
+	res := runRelease(t, r, g, "", "1.0.0", "--dry-run")
+
+	if res.err == nil {
+		t.Fatalf("the interrupted run succeeded:\n%s", res.out)
+	}
+	if !strings.Contains(res.out, "interrupted") {
+		t.Errorf("want the interrupt reported, got:\n%s", res.out)
+	}
+	b, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatalf("the plugin test command did not run: %v\n%s", err, res.out)
+	}
+	scratch := strings.TrimPrefix(strings.Fields(strings.TrimSpace(string(b)))[0], "tree=")
+	if _, err := os.Stat(scratch); !os.IsNotExist(err) {
+		t.Errorf("the scratch worktree %s survived the interrupt (stat: %v)", scratch, err)
+	}
+	if out := strings.TrimSpace(testutil.Git(t, r.local, "worktree", "list")); strings.Contains(out, "\n") || !strings.Contains(out, r.local) {
+		t.Errorf("want no worktree left registered after the interrupt, got:\n%s", out)
+	}
+}
+
 // TestHappyPathAnsweringYes drives release.sh through a real bump, PR,
 // squash merge and the tag (no prompt) — checking that exactly
 // one branch, one commit and one PR were created, and the tag matches the
@@ -1185,6 +1422,15 @@ func TestStrictSemVerRejectsMultiLine(t *testing.T) {
 		{"bump-plugin-version.sh", []string{"01.0.0"}, 2},
 		{"release-gate.sh", []string{"v1.0.0\nx"}, 1},
 		{"release-gate.sh", []string{"v01.0.0"}, 1},
+		// The mobile app's stream under the same rule: the prefix is stripped
+		// and the version under it is held to the strict shape, so a tag that
+		// carries the prefix without a strict version -- one with no `v`, one
+		// with a leading zero, one with a newline smuggled into it -- is
+		// refused exactly as the CLI's own malformed tags are.
+		{"release-gate.sh", []string{"mobile-1.0.0"}, 1},
+		{"release-gate.sh", []string{"mobile-v01.0.0"}, 1},
+		{"release-gate.sh", []string{"mobile-v1.0.0\nx"}, 1},
+		{"release-gate.sh", []string{"mobile-vtest"}, 1},
 	} {
 		cmd := exec.Command("bash", append([]string{filepath.Join(root, "scripts", c.script)}, c.args...)...)
 		cmd.Dir = root
@@ -1193,6 +1439,73 @@ func TestStrictSemVerRejectsMultiLine(t *testing.T) {
 			t.Errorf("%s %q: want exit %d, got %v\n%s", c.script, c.args, c.code, err, out)
 		}
 	}
+}
+
+// TestReleaseGateAcceptsTheMobileStreamsTag: the mobile app releases on its own
+// tag (`mobile-vX.Y.Z`, docs/release.md's "Mobile releases"), and the gate is
+// the one script every publishing workflow in this repository runs. It strips
+// that single prefix and holds the version under it to the same strict vX.Y.Z
+// shape, so the app's release is gated exactly as the CLI's is -- and the tag it
+// names in the log is the tag the run was started from, not a rewritten one.
+func TestReleaseGateAcceptsTheMobileStreamsTag(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := newGHState(t, r, greenChecks())
+	sha := strings.TrimSpace(testutil.Git(t, r.local, "rev-parse", "HEAD"))
+
+	accepted := runGate(t, r, g, sha, "mobile-v1.0.0")
+	accepted.requireSuccess(t)
+	// The log names the mobile tag: a run that passed under a rewritten `v1.0.0`
+	// would read as a CLI release in the actions log, which is the confusion the
+	// two streams exist to end.
+	if !strings.Contains(accepted.out, "gate passed for mobile-v1.0.0") {
+		t.Errorf("the gate did not report the mobile tag it was given:\n%s", accepted.out)
+	}
+
+	// And the CLI's own tag is untouched by the change: the same commit passes
+	// the same gate under `v1.0.0`, which is what every other release workflow
+	// passes it.
+	runGate(t, r, g, sha, "v1.0.0").requireSuccess(t)
+
+	// Every refused shape is refused by the *shape* check and not later: an
+	// off-shape tag must not reach the fetch, the checks API or a store, and the
+	// message has to name the two shapes the gate accepts. The call count is read
+	// around the loop, so a refusal that got as far as the API is visible.
+	apiCalls := countLog(t, g, "api")
+	for _, tag := range []string{"mobile-1.0.0", "mobile-v01.0.0", "mobile-v1.0", "mobile-v1.0.0-rc1", "mobile-vtest", "mobile-", "console-v1.0.0"} {
+		res := runGate(t, r, g, sha, tag)
+		if res.err == nil {
+			t.Errorf("the gate accepted %q: only a strict vX.Y.Z and the app's strict mobile-vX.Y.Z name a release, and a tag of any other shape has no version to gate", tag)
+			continue
+		}
+		if !strings.Contains(res.out, "not a strict vX.Y.Z or mobile-vX.Y.Z release tag") {
+			t.Errorf("the gate refused %q for the wrong reason -- it must be the shape check, before any API call:\n%s", tag, res.out)
+		}
+	}
+	if after := countLog(t, g, "api"); after != apiCalls {
+		t.Errorf("the refused tags made %d gh api call(s): the shape check comes before the checks API is read, so a tag that is not a release of either stream reaches nothing", after-apiCalls)
+	}
+}
+
+// runGate runs scripts/release-gate.sh from r.local against the commit sha, with
+// the fake gh on PATH and g's checks: the gate reads the tag's check-runs, so
+// its answer depends on the same state a release.sh run would see.
+func runGate(t *testing.T, r *releaseRepo, g *ghState, sha, tag string) runResult {
+	t.Helper()
+	bin := fakeBinDir(t)
+	cmd := exec.Command("bash", filepath.Join(r.local, "scripts", "release-gate.sh"), tag)
+	cmd.Dir = r.local
+	cmd.Env = append(os.Environ(),
+		"PATH="+bin+":"+os.Getenv("PATH"),
+		"GITHUB_SHA="+sha,
+		"GITHUB_REPOSITORY="+repoSlug(r.bare),
+		"GATE_WAIT_SECONDS=0",
+		"GATE_POLL_SECONDS=1",
+	)
+	cmd.Env = append(cmd.Env, g.env...)
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	err := cmd.Run()
+	return runResult{out: out.String(), err: err}
 }
 
 // TestLatestTagIgnoresNonStrictTags: -rc and four-part tags never count as

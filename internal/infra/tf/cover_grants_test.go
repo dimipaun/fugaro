@@ -75,6 +75,11 @@ func deployerGrantAccountFor(typ, role string) string {
 func TestGrantRulesMatrix(t *testing.T) {
 	const person = "user:me@example.com"
 	const account = "serviceAccount:fugaro-history@proj-1.iam.gserviceaccount.com"
+	// The credentials service's account is a fourth kind of principal, not a
+	// second spelling of `account`: only the two rows that name it may hold it,
+	// and every other cell of the table refuses it (the ledger finding #903 —
+	// while it was one of FugaroAccounts, every account row accepted it).
+	const credentials = "serviceAccount:" + CredentialsAccountID + "@proj-1.iam.gserviceaccount.com"
 	all := map[string]bool{}
 	for _, row := range grantRules {
 		for k := range row {
@@ -87,7 +92,7 @@ func TestGrantRulesMatrix(t *testing.T) {
 	for typ, row := range grantRules {
 		for key := range all {
 			role := grantRoleString(key)
-			for kind, member := range map[who]string{toPeople: person, toAccounts: account, toDeployer: "serviceAccount:" + DeployerAccount("proj-1")} {
+			for kind, member := range map[who]string{toPeople: person, toAccounts: account, toDeployer: "serviceAccount:" + DeployerAccount("proj-1"), toCredentials: credentials} {
 				want := row[key]&kind != 0
 				after := map[string]any{"member": member, "role": role, "bucket": "fugaro-runs-proj-1"}
 				if acct := deployerGrantAccountFor(typ, role); acct != "" {
@@ -185,7 +190,7 @@ func TestGrantRulesNameOnlyKnownTypesAndRoles(t *testing.T) {
 			t.Errorf("%s has no roles", typ)
 		}
 		for key, w := range row {
-			if w == 0 || w&^(toPeople|toAccounts|toDeployer) != 0 {
+			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials) != 0 {
 				t.Errorf("%s %s: bad principal kinds %d", typ, key, w)
 			}
 			if id, ok := strings.CutPrefix(key, customKey); ok {
@@ -294,6 +299,9 @@ func TestCoverCheckSpecBuildAccount(t *testing.T) {
 func TestGrantRulesPinnedCells(t *testing.T) {
 	const person = "user:me@example.com"
 	const account = "serviceAccount:fugaro-history@proj-1.iam.gserviceaccount.com"
+	// The credentials service's account (0.10.1, ledger #903): its own kind of
+	// principal, so exactly two rows hold it.
+	const credentials = "serviceAccount:" + CredentialsAccountID + "@proj-1.iam.gserviceaccount.com"
 	const (
 		project = "google_project_iam_member"
 		sacct   = "google_service_account_iam_member"
@@ -329,6 +337,26 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		{runjob, "projects/proj-1/roles/fugaroJobRunner", person, true},
 		{runjob, "roles/run.invoker", account, true},
 		{logview, "roles/logging.viewAccessor", person, true},
+		// The credentials service's two rows, and only these two (0.10.1,
+		// ledger #903): the bundle's accessor and its own database role. The
+		// database role is declared in the Firebase project (credentials.tf,
+		// var.credentials_service.firebase_project), so the two-project shape
+		// is a cell of its own — the account stays the installation's.
+		{secret, "roles/secretmanager.secretAccessor", credentials, true},
+		{project, "projects/proj-1/roles/" + CredentialsDatabaseRole, credentials, true},
+		{project, "projects/fp-2/roles/" + CredentialsDatabaseRole, credentials, true},
+		// ... and every other role it could be handed is refused, the two
+		// predefined database roles first: viewer cannot write and admin could
+		// delete the installation's database.
+		{project, "roles/firebasedatabase.admin", credentials, false},
+		{project, "roles/firebasedatabase.viewer", credentials, false},
+		{project, "projects/proj-1/roles/" + CredentialsDatabaseRole, account, false},
+		{project, "projects/proj-1/roles/" + CredentialsDatabaseRole, person, false},
+		{project, "roles/logging.logWriter", credentials, false},
+		{project, "roles/datastore.user", credentials, false},
+		{project, "projects/proj-1/roles/fugaroHistory", credentials, false},
+		{sacct, "roles/iam.serviceAccountUser", credentials, false},
+		{bkt, "roles/storage.objectViewer", credentials, false},
 		// Roles on the wrong type, or to the wrong kind of principal.
 		{bkt, "roles/storage.objectAdmin", account, false},
 		{project, "roles/storage.objectAdmin", person, false},
@@ -541,6 +569,141 @@ func TestOnlyTheDeployerRolesNameTheDeployer(t *testing.T) {
 	if slices.Contains(FugaroAccounts, DeployerAccountID) {
 		t.Error("the deployer is one of FugaroAccounts, so every account row accepts it")
 	}
+}
+
+// The credentials service's account is its own kind of principal (0.10.1,
+// ledger #903), and this is the test the finding asked for: a role granted to
+// it OUTSIDE its allowed set fails the cover.
+//
+// The finding, exactly. While fugaro-credentials was one of FugaroAccounts, the
+// toAccounts rows accepted it: a plan — written by hand, by an agent, or by a
+// module edited in a hurry — granting the service account roles/datastore.user,
+// roles/batch.jobsEditor, a job runner's run.jobs.run or a launcher's role was
+// covered by init's ONE typed confirmation, because the account's NAME was on a
+// list that means "a Fugaro service account of this run" and never "an account
+// that may hold this role". The service reads one secret and one database and
+// must hold nothing else: a role it does not need is reach at the budget
+// backend, at Fugaro's own secrets or at the authority to run jobs, held by the
+// one identity that holds every model credential.
+//
+// So both halves are asserted: fugaro-credentials is NOT in FugaroAccounts (the
+// list, which is where the finding started), and the table plus the cover refuse
+// it every role but its two — the table row by row, and the cover for real, on
+// the roles the modules grant elsewhere, on the roles the table does not name at
+// all, and on the one predefined role that would be the easy mistake
+// (roles/firebasedatabase.admin, which could delete the installation's
+// database).
+func TestCredentialsAccountIsItsOwnPrincipalKind(t *testing.T) {
+	const credentials = "serviceAccount:" + CredentialsAccountID + "@proj-1.iam.gserviceaccount.com"
+
+	if slices.Contains(FugaroAccounts, CredentialsAccountID) {
+		t.Errorf("the credentials service's account is one of FugaroAccounts, so every toAccounts row accepts it: one confirmation then covers a grant of the history account's datastore.user, a job runner's or a launcher's role to the identity that holds every model credential (ledger #903)")
+	}
+	// The two rows it may hold, and nothing else. A row that gains
+	// toCredentials is a role this account may be granted, so it is a decision
+	// this test makes deliberate.
+	allowed := map[string]map[string]bool{
+		"google_secret_manager_secret_iam_member": {"roles/secretmanager.secretAccessor": true},
+		"google_project_iam_member":               {customKey + CredentialsDatabaseRole: true},
+	}
+	for typ, row := range grantRules {
+		for key, w := range row {
+			if (w&toCredentials != 0) != allowed[typ][key] {
+				t.Errorf("%s %s: toCredentials is %v, want %v — the service's account holds the bundle's accessor and its database role, and no other role of the installation", typ, key, w&toCredentials != 0, allowed[typ][key])
+			}
+		}
+	}
+	for typ, row := range allowed {
+		for key := range row {
+			if grantRules[typ][key]&toCredentials == 0 {
+				t.Errorf("%s %s does not accept the credentials service's account, so the module's own grant of it is refused and init cannot cover the plan that turns the service on", typ, key)
+			}
+		}
+	}
+
+	// ... and the cover, role by role. Every role of every row, the roles the
+	// table names for other kinds of principal included, plus roles no row
+	// names at all.
+	roles := map[string][]string{}
+	for typ, row := range grantRules {
+		for key := range row {
+			roles[typ] = append(roles[typ], grantRoleString(key))
+		}
+	}
+	roles["google_project_iam_member"] = append(roles["google_project_iam_member"],
+		"roles/owner", "roles/editor", "roles/firebasedatabase.admin", "roles/firebasedatabase.viewer",
+		"projects/proj-1/roles/fugaroEverything", "projects/fp-2/roles/"+CredentialsDatabaseRole)
+	for typ, list := range roles {
+		for _, role := range slices.Sorted(slices.Values(list)) {
+			after := map[string]any{"member": credentials, "role": role, "bucket": "fugaro-runs-proj-1"}
+			withCondFor(after, typ, role, false)
+			ch := rc(typ, after, map[string]any{}, "create")
+			got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
+			want := allowed[typ][mustRoleKey(t, role)]
+			if (len(got) == 0) != want {
+				t.Errorf("%s: %s to the credentials service's account: NotCovered = %q, covered want %v", typ, role, got, want)
+			}
+		}
+	}
+
+	// A member computed from a service account the module creates is one of
+	// Fugaro's accounts, and it is NOT this one: the database role to a computed
+	// account is refused, the way the deployer's own bindings are (a plan that
+	// hands this role to an account nobody can name is not the module's). The
+	// module's own grant names its member, which is a literal plan-time string:
+	// google_service_account.credentials[0].member is
+	// serviceAccount:<account_id>@<project>.iam.gserviceaccount.com as soon as
+	// the account's ID and project are known.
+	sa := rc("google_service_account", map[string]any{}, map[string]any{}, "create")
+	ch := rc("google_project_iam_member", map[string]any{"role": "projects/proj-1/roles/" + CredentialsDatabaseRole, "bucket": "fugaro-runs-proj-1"}, map[string]any{"member": true}, "create")
+	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{sa, ch}}, nil); len(got) == 0 {
+		t.Errorf("the database role to a computed account is covered: only the credentials service's own account may hold it")
+	}
+
+	// The account in ANOTHER project is not it either: the module creates it in
+	// the installation's project, and the role's project does not move the
+	// account (a lookalike address in the Firebase project is refused).
+	for _, member := range []string{
+		"serviceAccount:" + CredentialsAccountID + "@fp-2.iam.gserviceaccount.com",
+		"serviceAccount:" + CredentialsAccountID + "-0123abcd@proj-1.iam.gserviceaccount.com",
+	} {
+		after := map[string]any{"member": member, "role": "projects/fp-2/roles/" + CredentialsDatabaseRole, "bucket": "fugaro-runs-proj-1"}
+		ch := rc("google_project_iam_member", after, map[string]any{}, "create")
+		if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
+			t.Errorf("%s: the database role is covered: the service's account is %s@proj-1 and nothing else", member, CredentialsAccountID)
+		}
+	}
+
+	// The account is not a person either: a review screen that listed its
+	// address (a project admin who added it by mistake) does not make any role
+	// grantable to it.
+	listed := Cover{Projects: testCover.Projects, Listed: []string{credentials}, Region: testCover.Region, Buckets: testCover.Buckets}
+	for _, tc := range []struct {
+		role    string
+		covered bool
+	}{
+		{"projects/proj-1/roles/" + CredentialsDatabaseRole, true},
+		{"roles/logging.logWriter", false},
+		{"roles/datastore.user", false},
+	} {
+		after := map[string]any{"member": credentials, "role": tc.role, "bucket": "fugaro-runs-proj-1"}
+		ch := rc("google_project_iam_member", after, map[string]any{}, "create")
+		if got := listed.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); (len(got) == 0) != tc.covered {
+			t.Errorf("listed on the review screen: %s to the credentials account: NotCovered = %q, covered want %v", tc.role, got, tc.covered)
+		}
+	}
+}
+
+// mustRoleKey is grantRules' key for a role as a module writes it, for the
+// table lookups above. It is the cover's own roleKey, so the test cannot
+// disagree with the code about which row a role lands on.
+func mustRoleKey(t *testing.T, role string) string {
+	t.Helper()
+	key, ok := testCover.roleKey(role)
+	if !ok {
+		return role
+	}
+	return key
 }
 
 // The fence of D75 (Task 1.5 step 5), tested the way it is applied: a project

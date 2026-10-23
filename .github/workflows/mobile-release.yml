@@ -30,9 +30,13 @@
 #
 #   1. the `mobile-release` GitHub environment, with the owner as its only
 #      required reviewer, and its deployment branches and tags set to `main`
-#      and to tags `v*`. This is the gate: the job holds an Expo access token
-#      and publishes to two stores, so the run waits for a person's click
-#      exactly as `console-release` and `website-live` do.
+#      and to tags `mobile-v*`. This is the gate: the job holds an Expo access
+#      token and publishes to two stores, so the run waits for a person's click
+#      exactly as `console-release` and `website-live` do. **The tag policy is
+#      the app's own stream, not `v*`**: GitHub refuses a deployment to an
+#      environment from a ref its policy excludes, so a policy that still said
+#      `v*` would leave every `mobile-vX.Y.Z` tag unable to reach the
+#      environment at all.
 #   2. the environment secret `EXPO_TOKEN`: an Expo access token the owner
 #      creates in their own Expo account. **Only the name is written down
 #      anywhere in this repository** -- no agent has ever seen a value, and the
@@ -51,7 +55,9 @@
 #     Every tag-triggered publishing workflow in this repository runs
 #     `scripts/release-gate.sh` first (`.github/workflows/release.yml`,
 #     `images.yml`, `console-release.yml`), and this one is no exception: the
-#     gate is the first step of each job on a **tag push**. The gate reads the
+#     gate is the first step of each job on a **tag push** -- after the version
+#     step described above, which can only refuse a tag, never allow one. The
+#     gate reads the
 #     tagged commit's check-runs, so each job carries `checks: read` beside
 #     `contents: read`, and the checkout is full-depth (`fetch-depth: 0`)
 #     because the gate asks whether that commit is reachable from `origin/main`.
@@ -59,7 +65,7 @@
 #     approval is a person deciding to *run* this workflow, not a review of the
 #     commit it would submit, and a dispatch can name a tag as well as a branch
 #     (`gh workflow run --ref v1.2.3`): without the second gate step a dispatch
-#     on an off-main branch, or on a `vtest` tag, would build on EAS and submit
+#     on an off-main branch, or on a `mobile-vtest` tag, would build on EAS and submit
 #     to a store behind nothing but that click. So a dispatch whose `dry_run` is
 #     not `true` runs a second gate step: a dispatched **tag** is held to the
 #     whole gate, and a dispatched **branch** to its second half -- the commit is
@@ -117,18 +123,40 @@
 #     name rather than the ref, so two releases queue instead of submitting at
 #     once, and a release that is mid-submission is never cancelled.
 #
-# The tag filter is the one the sibling release workflows use
-# (`.github/workflows/release.yml`, `images.yml`, `console-release.yml`):
-# `v[0-9]+.[0-9]+.[0-9]+`. A bare `v*` would also start a release on `vtest` or
-# on a `v1.2.3-rc1` tag, which is not a release of anything.
+# THE APP'S OWN TAG STREAM (the owner's ruling of 2026-10-22)
+#
+#   - **The tag is `mobile-vX.Y.Z`, and this workflow triggers on that and
+#     nothing else.** The app is its own artifact with its own release cadence
+#     (D125), and it now has its own tag: `v[0-9]+.[0-9]+.[0-9]+` is the CLI's
+#     stream and `console-vX.Y.Z` is the console's, so a tag pattern that also
+#     fires on every CLI release built and submitted the app whenever the CLI
+#     was released, whether or not the app had changed. The revision of
+#     2026-10-22 splits the three streams apart; docs/release.md's "Mobile
+#     releases" section is where the whole rule is written down.
+#   - **The filter is strict for the same reason the siblings' are.** A bare
+#     `mobile-*` would also start a release on `mobile-vtest` or on a
+#     `mobile-v1.2.3-rc1` tag, which is not a release of anything.
+#   - **The version comes from the tag, and the app config has to agree with
+#     it.** The first step of each job holds the pushed tag to a strict
+#     `mobile-vX.Y.Z` shape and compares its version with both of the app's own
+#     version lines -- `expo.version` in `mobile/app.json` and `version` in
+#     `mobile/package.json` -- refusing a tag whose version differs from either:
+#     EAS reports the config's version, not the tag, so a build made from a
+#     mismatched tag would be submitted as a version no tag names, and the
+#     manifest is the second line because the app's own suite pins the two to
+#     each other (`mobile/src/app-config.test.js`) while no workflow in this
+#     repository runs that suite. The step runs on any tag ref
+#     (`github.ref_type == 'tag'`), so a manual dispatch naming a tag is
+#     held to it as well.
 
 name: mobile-release
 
 on:
   push:
-    # Every release tag, spelled the way the sibling release workflows spell it.
-    # Nothing else starts this workflow by itself.
-    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+    # The app's own release tags, and nothing else: the CLI's `vX.Y.Z` and the
+    # console's `console-vX.Y.Z` start their own workflows and neither starts
+    # this one.
+    tags: ["mobile-v[0-9]+.[0-9]+.[0-9]+"]
   workflow_dispatch:
     inputs:
       dry_run:
@@ -181,10 +209,66 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      # **The tag's version is the app's version.** The app's stream carries its
+      # own tag (`mobile-vX.Y.Z`, docs/release.md's "Mobile releases") and its
+      # own version line (`expo.version` in `mobile/app.json`), and EAS reports
+      # that line rather than the tag: a build made from a tag whose version
+      # disagrees with the config is a store listing whose version is not the
+      # one the tag names. So the strict shape is checked here, then the tag is
+      # compared with **both** lines the app's version lives in -- the config,
+      # and `version` in `mobile/package.json`, which the app's own test pins
+      # `expo.version` to (`mobile/src/app-config.test.js`: "the config and the
+      # manifest agree on the version"). A mismatch on either stops the job
+      # before the gate below and long before a store -- the version is never in
+      # the tag alone. The manifest is compared here and not left to the app's
+      # suite because nothing this repository runs executes that suite: no
+      # workflow mentions `mobile/`, so `scripts/release-gate.sh`'s required
+      # checks cannot see it, and a release that bumped only the config would
+      # submit a build and land on `main` with a red test nobody runs.
+      # The condition is a fact about the ref rather than the event: a manual
+      # dispatch can name a tag too (`gh workflow run --ref mobile-v0.1.0`),
+      # and a dispatched tag reaches a store exactly as a pushed one does.
+      - name: The tag's version is the app's version
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${TAG}" =~ ^mobile-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::'${TAG}' is not a strict mobile-vX.Y.Z tag: refusing to build an app whose version would be anything else" >&2
+            exit 1
+          fi
+          version="${TAG#mobile-v}"
+          # `jq -er` prints a value only when the field is there, is not null
+          # and is a string, and exits non-zero otherwise; `set -e` above stops
+          # the job on that. A config this step cannot read is not a config that
+          # agrees with the tag, and the read is a read of the file this
+          # repository commits, never of a resolved app.config.js (which
+          # requires the store identity only on EAS's own build machines).
+          app_version="$(jq -er '.expo.version | select(type == "string")' mobile/app.json)"
+          if [[ "${app_version}" != "${version}" ]]; then
+            echo "::error::the tag names ${version} and mobile/app.json carries expo.version ${app_version}: refusing to build, because EAS reports the app's version and this build would be submitted as a version no tag names. Set expo.version to ${version} in a commit on main and tag that commit." >&2
+            exit 1
+          fi
+          # The app's version is two checked-in lines, and the second one is the
+          # one a release that followed a rule naming only `app.json` would
+          # forget: `mobile/src/app-config.test.js` asserts `expo.version` equals
+          # `mobile/package.json`'s `version`, and nothing in this repository
+          # runs that suite (no workflow mentions `mobile/`), so a tag over a
+          # bumped config and an unbumped manifest would be built, submitted and
+          # merged with a red test behind it. Read the same way as the config's.
+          manifest_version="$(jq -er '.version | select(type == "string")' mobile/package.json)"
+          if [[ "${manifest_version}" != "${version}" ]]; then
+            echo "::error::the tag names ${version} and mobile/package.json carries version ${manifest_version}: refusing to build, because the app's own test pins expo.version to the manifest (mobile/src/app-config.test.js) and no check this repository runs executes that suite -- this release would submit a build and leave the app's tests red on the tagged commit. Set version in mobile/package.json to ${version} in the same commit on main." >&2
+            exit 1
+          fi
+          echo "the tag ${TAG} names ${version}, and both of the app's version lines (mobile/app.json's expo.version, mobile/package.json's version) carry it"
       # The gate every tag-triggered publishing workflow here runs first: the
-      # tag is a strict `vX.Y.Z`, its commit is reachable from `origin/main`,
-      # and the required checks succeeded on it. Without it a tag pushed on an
-      # off-main or red commit would still build on EAS and submit to a store.
+      # tag is a strict `vX.Y.Z` -- or the app's strict `mobile-vX.Y.Z`, the one
+      # tag stream the gate accepts under a prefix, which `scripts/release-gate.sh`
+      # strips -- its commit is reachable from `origin/main`, and the required
+      # checks succeeded on it. Without it a tag pushed on an off-main or red
+      # commit would still build on EAS and submit to a store.
       - name: The tag is strict, on main, and its checks passed
         if: github.event_name == 'push'
         env:
@@ -217,7 +301,7 @@ jobs:
           else
             git fetch --quiet origin main
             if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
-              echo "::error::this manual dispatch names ${REF_NAME} (${GITHUB_SHA}), which is not on main. A manual submission is a release, so it may be made only from a commit on main or from a strict vX.Y.Z tag; nothing was built or submitted." >&2
+              echo "::error::this manual dispatch names ${REF_NAME} (${GITHUB_SHA}), which is not on main. A manual submission is a release, so it may be made only from a commit on main or from a strict vX.Y.Z or mobile-vX.Y.Z tag; nothing was built or submitted." >&2
               exit 1
             fi
           fi
@@ -269,7 +353,18 @@ jobs:
           # is asked to hide.
           mask() {
             local name="${1}" value
-            if ! value=$(eas env:exec --non-interactive production "printenv ${name}" 2>/dev/null); then
+            if ! value=$(eas env:exec --non-interactive production "printenv ${name}" 2>"${RUNNER_TEMP}/eas_read_error"); then
+              # The tool's own error text, never a value: a failed read has none, and
+              # EXPO_TOKEN is masked by Actions. Without this a real cause (a scope,
+              # a version, a project) looked like a missing variable.
+              echo "the EAS environment read failed for ${name}:"
+              sed -e 's/^/    /' "${RUNNER_TEMP}/eas_read_error" | head -n 20
+              # Who the token is and which variable NAMES the environment returns:
+              # the account's login (first line only, no email) and the names with
+              # every value cut off, so no value reaches this log.
+              echo "token account: $(eas whoami --non-interactive 2>/dev/null | head -n 1)"
+              echo "names EAS returns for production:"
+              eas env:list production --non-interactive 2>/dev/null | sed -n 's/^\([A-Z][A-Z0-9_]*\)=.*/    \1/p' | head -n 40
               echo "::error::${name} could not be read from the EAS project's production environment, so it cannot be masked, and this job will not build: a build resolves mobile/app.config.js and would print the identity into this public log. Check that ${name} exists in that environment and that the EXPO_TOKEN secret can read it, then run this workflow again. Nothing was built or submitted." >&2
               exit 1
             fi
@@ -381,6 +476,33 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      # The same version rule as the iOS job's, run independently of it: a tag
+      # whose version disagrees with either of the app's two version lines
+      # (`mobile/app.json`'s `expo.version` and `mobile/package.json`'s
+      # `version`, which the app's own suite pins to each other) must not reach a
+      # store from either job, and each job is this platform's whole release.
+      - name: The tag's version is the app's version
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${TAG}" =~ ^mobile-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::'${TAG}' is not a strict mobile-vX.Y.Z tag: refusing to build an app whose version would be anything else" >&2
+            exit 1
+          fi
+          version="${TAG#mobile-v}"
+          app_version="$(jq -er '.expo.version | select(type == "string")' mobile/app.json)"
+          if [[ "${app_version}" != "${version}" ]]; then
+            echo "::error::the tag names ${version} and mobile/app.json carries expo.version ${app_version}: refusing to build, because EAS reports the app's version and this build would be submitted as a version no tag names. Set expo.version to ${version} in a commit on main and tag that commit." >&2
+            exit 1
+          fi
+          manifest_version="$(jq -er '.version | select(type == "string")' mobile/package.json)"
+          if [[ "${manifest_version}" != "${version}" ]]; then
+            echo "::error::the tag names ${version} and mobile/package.json carries version ${manifest_version}: refusing to build, because the app's own test pins expo.version to the manifest (mobile/src/app-config.test.js) and no check this repository runs executes that suite -- this release would submit a build and leave the app's tests red on the tagged commit. Set version in mobile/package.json to ${version} in the same commit on main." >&2
+            exit 1
+          fi
+          echo "the tag ${TAG} names ${version}, and both of the app's version lines (mobile/app.json's expo.version, mobile/package.json's version) carry it"
       # The same gate as the iOS job's, run independently of it: this job is
       # this platform's release, and a tag that is off-main or red must not
       # reach a store from either job.
@@ -408,7 +530,7 @@ jobs:
           else
             git fetch --quiet origin main
             if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
-              echo "::error::this manual dispatch names ${REF_NAME} (${GITHUB_SHA}), which is not on main. A manual submission is a release, so it may be made only from a commit on main or from a strict vX.Y.Z tag; nothing was built or submitted." >&2
+              echo "::error::this manual dispatch names ${REF_NAME} (${GITHUB_SHA}), which is not on main. A manual submission is a release, so it may be made only from a commit on main or from a strict vX.Y.Z or mobile-vX.Y.Z tag; nothing was built or submitted." >&2
               exit 1
             fi
           fi
@@ -429,7 +551,18 @@ jobs:
           set -euo pipefail
           mask() {
             local name="${1}" value
-            if ! value=$(eas env:exec --non-interactive production "printenv ${name}" 2>/dev/null); then
+            if ! value=$(eas env:exec --non-interactive production "printenv ${name}" 2>"${RUNNER_TEMP}/eas_read_error"); then
+              # The tool's own error text, never a value: a failed read has none, and
+              # EXPO_TOKEN is masked by Actions. Without this a real cause (a scope,
+              # a version, a project) looked like a missing variable.
+              echo "the EAS environment read failed for ${name}:"
+              sed -e 's/^/    /' "${RUNNER_TEMP}/eas_read_error" | head -n 20
+              # Who the token is and which variable NAMES the environment returns:
+              # the account's login (first line only, no email) and the names with
+              # every value cut off, so no value reaches this log.
+              echo "token account: $(eas whoami --non-interactive 2>/dev/null | head -n 1)"
+              echo "names EAS returns for production:"
+              eas env:list production --non-interactive 2>/dev/null | sed -n 's/^\([A-Z][A-Z0-9_]*\)=.*/    \1/p' | head -n 40
               echo "::error::${name} could not be read from the EAS project's production environment, so it cannot be masked, and this job will not build: a build resolves mobile/app.config.js and would print the identity into this public log. Check that ${name} exists in that environment and that the EXPO_TOKEN secret can read it, then run this workflow again. Nothing was built or submitted." >&2
               exit 1
             fi

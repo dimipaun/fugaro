@@ -23,6 +23,7 @@
 version: 1
 
 summaries:
+  v0.10.1: The credentials service is wired end to end and gets its own database role while staying dormant until an owner opts in, fugaro watch is easier to read, fugaro update --forget is safe on a managed installation, and a run's review and writeback now judge the same diff.
   v0.10.0: Setup now asks every question before it changes anything, a separate update command brings an existing installation up to date and the old init command is gone, a credentials service that keeps model credentials out of the job ships switched off until the next release wires it end to end, and managed projects are available again for a project Fugaro created or that its owner flags.
   v0.9.7: The job images publish again after 0.9.6's failed their security scan, so the cheaper review stage of 0.9.6 reaches cloud runs once a repository refreshes its images.
   v0.9.6: The first-run and upgrade commands are now fugaro setup and fugaro update, and cloud runs on long-lived branches review only their own change, so they cost far less.

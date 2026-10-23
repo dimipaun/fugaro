@@ -30,8 +30,10 @@
 //     names no frame, and `playwright.test.ts` holds `test/e2e/__screenshots__`
 //     to the Live screen's two by name, so a PNG appearing here would fail that
 //     test rather than be reviewed. The screenshots for the skew states are the
-//     maintainer's to record with `npx playwright test --update-snapshots` on a
-//     machine with a display; this file asserts the drawn tree instead, which is
+//     maintainer's to record with `cd console && npm run build && npx playwright
+//     test --update-snapshots` on a machine with a display (the build is in the
+//     line because the specs read `dist/`; see `test/support/goldens.ts`); this
+//     file asserts the drawn tree instead, which is
 //     what can be asserted on every machine.
 
 import { readFileSync } from 'node:fs'
@@ -71,6 +73,7 @@ const consoleDir = join(__dirname, '..', '..')
 const MODULES: readonly string[] = Object.freeze([
   'shared/availability.js',
   'shared/sanitize.js',
+  'shared/launcher.js',
   'shared/schema.js',
   'shared/version.js',
   'renderer/app.js',

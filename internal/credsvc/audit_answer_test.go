@@ -16,7 +16,9 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -25,6 +27,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // auditSvc is the fixture with the service's own audit lines in a buffer of
@@ -432,7 +435,7 @@ func TestTheRefusalOfAnUnauditedIssuanceIsAudited(t *testing.T) {
 // answer path (D143): an issuance this service cannot audit is not made. The
 // upstream answered — the call is out of this service's hands by then — so what
 // is withheld is the credential's EFFECT: no byte of the upstream's answer
-// reaches the run, and the run is halts on the refusal instead.
+// reaches the run, and the run halts on the refusal instead.
 func TestACallIsRefusedWhenItCannotBeAudited(t *testing.T) {
 	s, _ := auditSvc(t, func(_ *svc, cfg *Config) { cfg.AuditLog = silentHandler{} })
 	s.up.Script = []anthropicfake.Reply{anthropicfake.MessageOK(testModel, testUsage)}
@@ -607,5 +610,500 @@ func TestAProbeBesideAnAnswerIsAuditedApart(t *testing.T) {
 		if strings.Contains(auditLog.String(), v) {
 			t.Errorf("an audit line carries a credential's value: %s", auditLog.String())
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Every refusal of the answer path, and the line beside it
+// ---------------------------------------------------------------------------
+
+// TestEveryRefusalBeforeACredentialAnswersIsAudited is the refusal half of
+// C1.13's rule, one case per refusal the answer path answers before the
+// upstream is ever reached — the project's policy, its model prices, the
+// bundle, the repository's admissions, the cascade's own state, and a mark the
+// service could not write.
+//
+// Each case asserts the two things together and not one of them: the run gets
+// the typed refusal it is owed, AND the operator's log carries one line for it
+// — the run, its repository, the job the run reported and the account that
+// called, the purpose the route asked for, the refusal's own wire error type as
+// the status, and the credential only where one was chosen (a refusal taken
+// before the cascade answered names none; a mark that could not be written is a
+// credential this call had already spent, and it is named).
+//
+// The count is what makes it a test of the log rather than of the answer: a
+// refusal that left no line would be a call this service answered with a
+// refusal no operator can see, which is the one thing this log exists to make
+// impossible.
+//
+// Mutation (run, restore): answer any one of these refusals with s.refuse
+// instead of refuseCall, and that case is red ("wrote 0 audit lines, want
+// exactly 1") while the others stay green.
+func TestEveryRefusalBeforeACredentialAnswersIsAudited(t *testing.T) {
+	inf := math.Inf(1)
+	cases := []struct {
+		name string
+		// setup wires the state the case is about, before the call is made.
+		setup func(t *testing.T, s *svc)
+		// status, errorType and one of message/messageHas are the refusal the
+		// run reads; credential, tier and upstream are what else the case is
+		// about.
+		status     int
+		errorType  string
+		message    string
+		messageHas string
+		credential string
+		tier       string
+		upstream   int
+	}{
+		{
+			name: "the project's policy could not be read",
+			setup: func(_ *testing.T, s *svc) {
+				s.policy.sharedErr = errors.New("the shared node could not be read")
+			},
+			status: StatusUnavailable, errorType: ErrorStateUnavailable,
+			message: "the project's policy could not be read",
+		},
+		{
+			name: "the project's model prices could not be read",
+			setup: func(_ *testing.T, s *svc) {
+				// A rate the catalogue cannot render — an infinity is not JSON —
+				// so the table this service bounds a call by cannot be built.
+				// That is the service's own state and not the caller's request,
+				// which is why the two are refused differently (request.go).
+				s.policy.shared.Prices = projectpolicy.Prices{
+					testModel: {InputPerM: &inf, OutputPerM: &inf},
+				}
+			},
+			status: StatusUnavailable, errorType: ErrorStateUnavailable,
+			message: "the project's model prices could not be read",
+		},
+		{
+			name: "the bundle could not be read",
+			setup: func(_ *testing.T, s *svc) {
+				s.src.errs = []error{errors.New("secretmanager: permission denied on projects/aurora/secrets/creds-bundle/versions/latest")}
+			},
+			status: StatusUnavailable, errorType: ErrorStateUnavailable,
+			message: ErrBundleUnreadable.Error(),
+		},
+		{
+			name: "the repository's admissions could not be read",
+			setup: func(_ *testing.T, s *svc) {
+				s.policy.admErr = errors.New("the child node could not be read")
+			},
+			status: StatusUnavailable, errorType: ErrorStateUnavailable,
+			message: "the repository's admissions could not be read",
+		},
+		{
+			name: "the cascade's state could not be read",
+			setup: func(_ *testing.T, s *svc) {
+				s.state.err = errors.New("the marks node could not be read")
+			},
+			status: StatusUnavailable, errorType: ErrorStateUnavailable,
+			messageHas: "the marks node could not be read",
+		},
+		{
+			name: "a mark could not be written",
+			setup: func(_ *testing.T, s *svc) {
+				// The credential is spent before its mark can be recorded: the
+				// upstream answers a usage limit, and the write of the state that
+				// limit is made of fails. The refusal names the credential the
+				// call used, because what the failure costs the NEXT call is that
+				// call being sent to this credential again.
+				s.state.updateErr = errors.New("the mark could not be written")
+				s.up.Script = []anthropicfake.Reply{
+					anthropicfake.Error(http.StatusTooManyRequests, "rate_limit_error", "usage limit reached"),
+				}
+			},
+			status: StatusUnavailable, errorType: ErrorStateUnavailable,
+			message: markRefusal,
+			// The candidate the fixture's selection answers with — the account
+			// the fixture's child node admits, whose token is a tier-A one — and
+			// the credential this call spent before its mark could be written.
+			credential: testAccount, tier: TierA, upstream: 1,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, auditLog := auditSvc(t, func(s *svc, _ *Config) { tc.setup(t, s) })
+
+			resp, body := s.call(t, callBody("refused"))
+			if resp.StatusCode != tc.status {
+				t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, tc.status, body)
+			}
+			e := refusal(t, resp.StatusCode, body)
+			if e.Error != tc.errorType {
+				t.Errorf("the refusal is %q, want %q", e.Error, tc.errorType)
+			}
+			switch {
+			case tc.message != "" && e.Message != tc.message:
+				t.Errorf("the refusal's message is %q, want %q", e.Message, tc.message)
+			case tc.messageHas != "" && !strings.Contains(e.Message, tc.messageHas):
+				t.Errorf("the refusal's message is %q, want one carrying %q", e.Message, tc.messageHas)
+			}
+			if n := s.up.Count(); n != tc.upstream {
+				t.Errorf("the upstream saw %d requests, want %d", n, tc.upstream)
+			}
+
+			lines := forwardLines(t, auditLog)
+			if len(lines) != 1 {
+				t.Fatalf("the refused call wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+			}
+			line := lines[0]
+			checkAuditShape(t, line)
+			for field, want := range map[string]any{
+				"run":        s.run,
+				"repository": s.slug,
+				"job":        s.job,
+				"caller":     testJobSA,
+				"credential": tc.credential,
+				"tier":       tc.tier,
+				"purpose":    PurposeForward,
+				"status":     tc.errorType,
+			} {
+				if got := line[field]; got != want {
+					t.Errorf("the refusal's audit line %s = %v, want %q", field, got, want)
+				}
+			}
+			// The line is a name and never a value, whatever the refusal was.
+			for _, v := range fixtureValues(t) {
+				if strings.Contains(auditLog.String(), v) {
+					t.Errorf("the refusal's audit line carries a credential's value: %s", auditLog.String())
+				}
+			}
+		})
+	}
+}
+
+// TestARefusalBelowTheMintBranchCarriesTheRoutesPurpose holds every refusal
+// answered BELOW the mint's branch — the project's policy, the call's own body,
+// the request's check, the bundle, the repository's admissions (server.go) — to
+// the ONE rule a line's purpose comes from, on BOTH routes the branch is reached
+// for: the answer the call asked for is the route's own and not the branch's, so
+// the line is read against routeAct(path) and never against a spelling written
+// here.
+//
+// The rule is what is being pinned, and it is the reason this test is written
+// the hard way (the expectation comes from routeAct, the call is driven on
+// /v1/messages AND /v1/messages/count_tokens): these lines used to carry a
+// hard-coded `forward`, and a literal is a value that can stop being the
+// route's without anything failing — the mint's own branch returns above them
+// today, so today's answer for every route that reaches them happens to be
+// `forward` and a test that compared against that word would agree with a
+// revert as readily as with the rule. What this reading catches is a purpose
+// invented in a branch (the mint's, a probe's, an empty one) and a branch that
+// stops reading the route: the moment the rule's answer for a route differs
+// from a literal in a branch, this is red — which is the drift the rule exists
+// to make impossible.
+//
+// Each case also pins the credential the route's read gives, which for a model
+// call is none: no credential was chosen before the bundle was read, and a line
+// that named one would be a line this service cannot write (audit.go's
+// both-or-neither rule would refuse it, and the call would go unaudited).
+func TestARefusalBelowTheMintBranchCarriesTheRoutesPurpose(t *testing.T) {
+	cases := []struct {
+		name string
+		// path is the one route the case is reached for; empty means both.
+		path string
+		// setup wires the state the refusal is about.
+		setup func(t *testing.T, s *svc)
+		// broken is a body the service cannot read at all, which is answered
+		// through the handler and not over a socket (directCallAt).
+		broken bool
+	}{
+		{
+			name: "the project's policy could not be read",
+			setup: func(_ *testing.T, s *svc) {
+				s.policy.sharedErr = errors.New("the shared node could not be read")
+			},
+		},
+		{
+			name:   "the call's body could not be read",
+			broken: true,
+		},
+		{
+			// The request's own check is asked on the Messages path alone: the
+			// token count's body is not a Messages body (server.go).
+			name: "the request is refused before any credential is read",
+			path: MessagesPath,
+			setup: func(_ *testing.T, s *svc) {
+				s.policy.shared = decodeTestPolicy(t, testPolicyDocNoAllowList())
+			},
+		},
+		{
+			name: "the bundle could not be read",
+			setup: func(_ *testing.T, s *svc) {
+				s.src.errs = []error{errors.New("secretmanager: permission denied on projects/aurora/secrets/creds-bundle/versions/latest")}
+			},
+		},
+		{
+			name: "the repository's admissions could not be read",
+			setup: func(_ *testing.T, s *svc) {
+				s.policy.admErr = errors.New("the child node could not be read")
+			},
+		},
+	}
+	for _, tc := range cases {
+		for _, path := range []string{MessagesPath, CountTokensPath} {
+			if tc.path != "" && tc.path != path {
+				continue
+			}
+			t.Run(tc.name+" — "+path, func(t *testing.T) {
+				s, auditLog := auditSvc(t, func(s *svc, _ *Config) {
+					if tc.setup != nil {
+						tc.setup(t, s)
+					}
+				})
+				var code int
+				var body []byte
+				if tc.broken {
+					rec := s.directCallAt(t, path, brokenBody{})
+					code, body = rec.Code, rec.Body.Bytes()
+				} else {
+					resp, b := s.callPath(t, path, callBody("route-purpose"))
+					code, body = resp.StatusCode, b
+				}
+				if code != StatusUnavailable && code != StatusRequestRefused {
+					t.Fatalf("the answer is %d, want a refusal: %s", code, body)
+				}
+				// The oracle: the rule the line's purpose is read off, and the
+				// credential that comes with it.
+				purpose, credential := routeAct(path)
+				if !ValidPurpose(purpose) {
+					t.Fatalf("routeAct(%q) gives %q, which is not a purpose this service writes: this test's oracle has moved", path, purpose)
+				}
+				lines := auditLines(t, auditLog)
+				if len(lines) != 1 {
+					t.Fatalf("the refused call wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+				}
+				line := lines[0]
+				checkAuditShape(t, line)
+				if got := line["purpose"]; got != purpose {
+					t.Errorf("the refusal's audit line carries purpose %v, want the route's own %q: the line must name the act the call asked for and not the branch it was answered in", got, purpose)
+				}
+				if got := line["credential"]; got != credential {
+					t.Errorf("the refusal's audit line carries credential %v, want the route's own %q", got, credential)
+				}
+				if got := line["tier"]; got != "" {
+					t.Errorf("the refusal's audit line carries tier %v, want none: no credential was chosen", got)
+				}
+			})
+		}
+	}
+}
+
+// brokenBody is a request body the service cannot read at all: the one state
+// readCall refuses for that is not a body over the gateway's size bound.
+type brokenBody struct{}
+
+func (brokenBody) Read([]byte) (int, error) {
+	return 0, errors.New("the body was cut off")
+}
+
+// directCall answers one call through the service's handler without a socket,
+// so a test can hand it a request the transport could not: a body whose own
+// read fails. The call is otherwise the fixture's own — the same job token, the
+// same run identity and the same reported job name — so what it reaches is the
+// path a real call reaches.
+func (s *svc) directCall(t *testing.T, body io.Reader) *httptest.ResponseRecorder {
+	t.Helper()
+	return s.directCallAt(t, MessagesPath, body)
+}
+
+// directCallAt is directCall on either of the service's forward routes, for a
+// test that drives the same refusal on both of them.
+func (s *svc) directCallAt(t *testing.T, path string, body io.Reader) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, path, body)
+	req.Header.Set("Authorization", "Bearer "+s.jobToken())
+	req.Header.Set(HeaderRunIdentity, s.runToken())
+	req.Header.Set(HeaderRunJob, s.job)
+	req.Header.Set("Anthropic-Version", "2023-06-01")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.server.ServeHTTP(rec, req)
+	return rec
+}
+
+// TestAReadCallRefusalIsAudited: the call's own body could not be read, so
+// there is nothing to forward and nothing to check — the refusal is answered
+// before any credential is touched, and it is recorded like every other refusal
+// this service answers once it has an identity in hand: one line, the identity
+// the service verified, the refusal's own class, and no credential, because
+// none was read.
+func TestAReadCallRefusalIsAudited(t *testing.T) {
+	s, auditLog := auditSvc(t, nil)
+
+	rec := s.directCall(t, brokenBody{})
+	if rec.Code != StatusUnavailable {
+		t.Fatalf("the answer is %d, want %d: %s", rec.Code, StatusUnavailable, rec.Body.String())
+	}
+	e := refusal(t, rec.Code, rec.Body.Bytes())
+	if e.Error != ErrorStateUnavailable {
+		t.Errorf("the refusal is %q, want %q", e.Error, ErrorStateUnavailable)
+	}
+	if !strings.Contains(e.Message, "the call's body could not be read") {
+		t.Errorf("the refusal is %q, want this file's own sentence about the body", e.Message)
+	}
+
+	lines := forwardLines(t, auditLog)
+	if len(lines) != 1 {
+		t.Fatalf("the refused call wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+	}
+	line := lines[0]
+	checkAuditShape(t, line)
+	for field, want := range map[string]any{
+		"run":        s.run,
+		"repository": s.slug,
+		"job":        s.job,
+		"caller":     testJobSA,
+		"credential": "",
+		"tier":       "",
+		"purpose":    PurposeForward,
+		"status":     ErrorStateUnavailable,
+	} {
+		if got := line[field]; got != want {
+			t.Errorf("the refusal's audit line %s = %v, want %q", field, got, want)
+		}
+	}
+}
+
+// TestAnAnswerThatCannotCarryTheCredentialIsRefusedAndTheLogSaysWhy is the one
+// refusal of the answer path whose LINE cannot be written, and it pins what
+// happens then rather than leaving it to be discovered.
+//
+// The answer's own headers are built and validated before any of them is
+// written, so an answer that cannot carry the tier and the credential's name is
+// refused instead of sent — and this is the refusal of the pair whose line
+// cannot be written either: the credential is known and its tier is not one
+// this contract spells, and the auditor refuses a line that names one without
+// the other (audit.go's both-or-neither rule, which is the same rule the wire
+// keeps). So the refusal is answered and the log carries the auditor's own
+// refusal of the event — never a line claiming the call was served.
+//
+// The path is unreachable through a real bundle — the loader builds its
+// credentials from the keys the platform defines and every tier it can produce
+// is one wireTier spells — which is why the tier below is built by hand: the
+// test is about the branch, and the branch is the code's answer to a bundle
+// this service does not believe it can be handed (server_test.go's fixture is
+// where a real one comes from).
+//
+// Mutation (run, restore): drop the SetCredentialHeaders check from
+// cascade.go's answer and this test is red — the answer goes out under a tier
+// the contract cannot read back.
+func TestAnAnswerThatCannotCarryTheCredentialIsRefusedAndTheLogSaysWhy(t *testing.T) {
+	s, auditLog := auditSvc(t, nil)
+	id := Identity{Slug: s.slug, Run: s.run, Job: s.job, JobAccount: testJobSA}
+	cl := &call{}
+	ans := &answer{
+		resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{},
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+		},
+		credential: fakeCred(t, "default"),
+	}
+	rec := httptest.NewRecorder()
+	s.server.answer(context.Background(), rec, id, cl, ans,
+		creds.Credential{Name: testAccount, Tier: creds.Tier("Z")}, nil, nil)
+
+	if rec.Code != StatusUnavailable {
+		t.Fatalf("the answer is %d, want %d: %s", rec.Code, StatusUnavailable, rec.Body.String())
+	}
+	e := refusal(t, rec.Code, rec.Body.Bytes())
+	if e.Error != ErrorStateUnavailable {
+		t.Errorf("the refusal is %q, want %q", e.Error, ErrorStateUnavailable)
+	}
+	if !strings.Contains(e.Message, "could not carry the credential") {
+		t.Errorf("the refusal is %q, want the sentence about the credential the answer could not carry", e.Message)
+	}
+	if strings.Contains(rec.Body.String(), ans.credential) {
+		t.Errorf("the refusal carries the credential's value:\n%s", rec.Body.String())
+	}
+
+	lines := auditLines(t, auditLog)
+	if len(lines) != 1 {
+		t.Fatalf("the refused call wrote %d audit records, want exactly 1 (the auditor's refusal of the event): %v", len(lines), lines)
+	}
+	rec0 := lines[0]
+	if got := rec0["msg"]; got != auditRefusedMessage {
+		t.Errorf("the record's message is %v, want the auditor's refusal %q: a line claiming this call was served would be a lie", got, auditRefusedMessage)
+	}
+	if got := rec0["field"]; got != "credential" {
+		t.Errorf("the auditor refused the event's %v, want the credential (the half of the pair that could not be written)", got)
+	}
+	if !strings.Contains(s.logs.String(), "could not be audited") {
+		t.Errorf("the service's log says nothing about the line it could not write: %s", s.logs.String())
+	}
+}
+
+// TestAFailedStreamIsAudited: the issuance's line is written before a byte of
+// the answer (fail closed, D143), so it says the credential answered — which it
+// did — and the outcome of the answer itself is a second line.
+//
+// A stream that does not end is a call that got no whole answer: the upstream's
+// body failed mid-stream, or the client's own connection did. Without the
+// second line the log of such a call reads ok and nothing else, which is the
+// one thing an operator reading the audit trail cannot act on.
+//
+// Mutation (run, restore): drop the outcome line from cascade.go's answer (or
+// ignore Pump's bool, as it was ignored before) and this test is red — the
+// truncated call writes one line, the issuance's, and reads as served.
+func TestAFailedStreamIsAudited(t *testing.T) {
+	s, auditLog := auditSvc(t, nil)
+	// One event, then the connection is dropped: the service's own read of the
+	// upstream's body fails after the answer has begun.
+	s.up.Script = []anthropicfake.Reply{{
+		Status: http.StatusOK,
+		Events: []anthropicfake.Event{
+			anthropicfake.StartEvent(testModel, testUsage),
+			{Name: "content_block_delta", Data: `{"type":"content_block_delta","index":0}`},
+		},
+		CutAfter: 1,
+	}}
+
+	resp := s.post(t, MessagesPath, callBody("truncated-stream"), func(r *http.Request) {
+		r.Header.Set("Accept", "text/event-stream")
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the answer is %d, want 200: the refusal belongs to the headers, not to the stream", resp.StatusCode)
+	}
+	// The client's read may fail where the stream was cut, and that is the
+	// point of the test rather than a failure of it.
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	waitFor(t, "the failed stream's own audit line", func() bool {
+		return len(forwardLines(t, auditLog)) >= 2
+	})
+	lines := forwardLines(t, auditLog)
+	if len(lines) != 2 {
+		t.Fatalf("the truncated call wrote %d audit lines, want two — the issuance's and the failure's: %v", len(lines), lines)
+	}
+	name, tier := resp.Header.Get(HeaderCredential), resp.Header.Get(HeaderTier)
+	if name == "" || tier == "" {
+		t.Fatalf("the answer names no credential (%q) or no tier (%q)", name, tier)
+	}
+	for i, line := range lines {
+		checkAuditShape(t, line)
+		for field, want := range map[string]any{
+			"run":        s.run,
+			"repository": s.slug,
+			"job":        s.job,
+			"caller":     testJobSA,
+			"credential": name,
+			"tier":       tier,
+			"purpose":    PurposeForward,
+		} {
+			if got := line[field]; got != want {
+				t.Errorf("line %d: %s = %v, want %q", i, field, got, want)
+			}
+		}
+	}
+	if got := lines[0]["status"]; got != StatusOK {
+		t.Errorf("the first line's status is %v, want %q: the issuance is written before the answer", got, StatusOK)
+	}
+	if got := lines[1]["status"]; got != ErrorStateUnavailable {
+		t.Errorf("the second line's status is %v, want %q: the call got no whole answer", got, ErrorStateUnavailable)
 	}
 }

@@ -534,28 +534,33 @@ func (r *Repo) countAhead(ctx context.Context, base, until string) (int, error) 
 }
 
 // CommitsAhead counts the commits HEAD has that since does not and, when
-// except is not empty, that except does not have either: the commits of a
+// except holds anything, that none of except does either: the commits of a
 // run's own work, since being the commit the run was cut from and except
-// the base branch, whose own commits — a base the agent merged or rebased
-// into the branch — are the base's and not the run's. Measuring against the
-// base branch alone counts every commit of the ref a run was started from
-// (--ref console with base_branch main), so "the agent made no commits"
-// could never fire there.
+// the bases the run works from, whose own commits — a base the agent merged
+// or rebased into the branch — are theirs and not the run's. There is more
+// than one of those (the run's base of work and the branch its
+// configuration came from), and each is the only one that leaves out its
+// own commits: measuring against one of them alone counts the other's,
+// and measuring against the configuration's base alone counts every commit
+// of the ref a run was started from (--ref console with base_branch main),
+// so "the agent made no commits" could never fire there.
 //
-// Both are a commit or a plain ref name, never a moving ref such as HEAD:
+// Each is a commit or a plain ref name, never a moving ref such as HEAD:
 // the agent controls the checkout while a stage runs (checkpoint.go's C6a).
 // An except the checkout cannot resolve (a base commit the agent never
 // fetched) is left out, which counts more rather than failing. Replace refs
 // are the agent's too, so they are not honoured.
-func (r *Repo) CommitsAhead(ctx context.Context, since, except string) (int, error) {
+func (r *Repo) CommitsAhead(ctx context.Context, since string, except ...string) (int, error) {
 	revs := []string{"--no-replace-objects", "rev-list", "--count", "--end-of-options", since + "..HEAD"}
-	if except != "" {
-		revs = append(revs, "^"+except)
+	for _, e := range except {
+		if e != "" {
+			revs = append(revs, "^"+e)
+		}
 	}
 	out, err := r.git(ctx, revs...)
 	if err != nil {
-		if except != "" {
-			return r.CommitsAhead(ctx, since, "")
+		if len(except) > 0 {
+			return r.CommitsAhead(ctx, since)
 		}
 		return 0, err
 	}

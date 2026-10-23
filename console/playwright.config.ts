@@ -52,8 +52,13 @@ export default defineConfig({
   // and pass, so a golden nobody committed would compare nothing and no run
   // could ever be red for it. Recording is an explicit act, once on each
   // platform the comparison runs on (pixels differ between macOS and Linux):
-  //   npx playwright test live.spec.ts --update-snapshots
-  // The command-line flag overrides this option for that one run.
+  //   cd console && npm run build && npx playwright test live.spec.ts --update-snapshots
+  // (the build is part of it -- the specs read `dist/`, and `npx playwright test`
+  // does not build; on Linux it takes `xvfb-run --auto-servernum`).
+  // The command-line flag overrides this option for that one run, which is what
+  // `test/support/goldens.ts` reads to tell a recording run from a comparison
+  // one: the freshness preflight stands aside for a recording, because the
+  // matcher is what writes the baseline.
   updateSnapshots: 'none',
   // One PNG per theme PER PLATFORM (`live-light-darwin.png`,
   // `live-light-linux.png`): macOS and Linux draw different pixels, and the CI

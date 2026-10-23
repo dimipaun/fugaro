@@ -1843,6 +1843,10 @@ run "credentials_service_off_by_default" {
     condition     = length(google_secret_manager_secret.credentials_bundle) == 0 && length(google_secret_manager_secret_iam_member.credentials_bundle) == 0
     error_message = "the bundle container and its one accessor grant must not exist unless credentials_service is set"
   }
+  assert {
+    condition     = length(google_project_iam_custom_role.credentials_database) == 0 && length(google_project_iam_member.credentials_database) == 0
+    error_message = "the database role and its binding must not exist unless credentials_service is set: without the service's account there is nobody to bind them to"
+  }
 }
 
 # The opt-in (C1.18, and the owner's Q6 ruling of 2026-10-19). This run is the
@@ -1852,7 +1856,17 @@ run "credentials_service_off_by_default" {
 #     service's own account, and the grant carries NO condition: no
 #     secretmanager.googleapis.com/secretId filter and no name-prefix fence,
 #     which is what Q6 replaced. A condition added here fails this run.
-#   * The service's account holds nothing else IN THIS MODULE: not a member of
+#   * The database role and its one binding — the service's second and last
+#     grant in this module (ledger #903). RTDB reads were denied without it;
+#     it holds firebasedatabase.instances.get and .update and nothing else,
+#     and it is bound on the FIREBASE project (var.credentials_service
+#     .firebase_project — aurora-fp in this run), which is where the database
+#     lives and which this run sets apart from the installation project
+#     (proj-1234), so the account holds no project-level grant in the
+#     installation project here. The assertions below pin the permission set
+#     exactly, the binding's literal role path (a custom role's name is not
+#     known at plan time) and the absence of a condition.
+#   * The service's account holds nothing ELSE in this module: not a member of
 #     the project's other secret containers (the run sets two of them, the two
 #     model credentials, so the assertion has something to be false about),
 #     nothing on the runs bucket, and no grant here that would let anyone act
@@ -1954,6 +1968,30 @@ run "credentials_service_on" {
       if g.member == google_service_account.credentials[0].member
     ]) == 0
     error_message = "the service's account must hold nothing on the runs bucket"
+  }
+  # The database role (ledger #903). The service reads the run's outcome, the
+  # stop switches, the policy and its own creds/ state out of the installation's
+  # RTDB, and writes its own creds/ nodes by compare-and-set; without this role
+  # every one of those calls is denied in production. RTDB permissions have no
+  # path scope, so the choice is this pair or a predefined role that can do
+  # more (viewer adds list, admin adds the whole instance lifecycle, including
+  # delete), and get alone would leave every write denied.
+  assert {
+    condition = (length(google_project_iam_custom_role.credentials_database) == 1 &&
+      google_project_iam_custom_role.credentials_database[0].role_id == "fugaroCredentialsDatabase" &&
+      google_project_iam_custom_role.credentials_database[0].project == "aurora-fp" &&
+      google_project_iam_custom_role.credentials_database[0].permissions == toset([
+        "firebasedatabase.instances.get", "firebasedatabase.instances.update",
+    ]))
+    error_message = "the service's database role is this installation's own fugaroCredentialsDatabase, on the Firebase project the variable names, holding exactly firebasedatabase.instances.get and .update: get for every read the service makes, update for its compare-and-set writes under creds/, and no instance lifecycle permission (no list, create, delete, disable, reenable or undelete)"
+  }
+  assert {
+    condition = (length(google_project_iam_member.credentials_database) == 1 &&
+      google_project_iam_member.credentials_database[0].role == "projects/aurora-fp/roles/fugaroCredentialsDatabase" &&
+      google_project_iam_member.credentials_database[0].project == "aurora-fp" &&
+      google_project_iam_member.credentials_database[0].member == google_service_account.credentials[0].member &&
+    length(google_project_iam_member.credentials_database[0].condition) == 0)
+    error_message = "the database role is bound once, to the service's own account, on the Firebase project (not the installation project), with the literal role path a custom role needs at plan time and with no condition (a per-path fence is not expressible: RTDB IAM has no path scope, so the role's permission pair is the whole fence)"
   }
   assert {
     condition = length(concat([

@@ -370,21 +370,29 @@ func TestDocsMultiModelDocumentsTheCascadeSwitch(t *testing.T) {
 		// halts at the gateway (code review of C1.22).
 		"cascadeLaunchRefusal",
 		"reads neither the service nor its bundle",
-		// What a run past the launch gate does, which the section stated the
-		// wrong way round: with no service address the run is refused while
-		// it is still bootstrapping (serviceUpstream,
-		// internal/runner/gateway.go), so it FAILS as an infra_error and
-		// opens no pull request. The section said it "halts at the gateway,
-		// named (budget_unavailable)", which is the wired service's
-		// unreachable path and not this one — and on this release no job has
-		// the address at all (independent review of C1.22, M2).
-		"ships dormant",
-		"no job is ever given its address",
+		// What a run past the launch gate does when its job is not told the
+		// service's address: with no address the run is refused while it is
+		// still bootstrapping (serviceUpstream, internal/runner/gateway.go),
+		// so it FAILS as an infra_error and opens no pull request. The section
+		// said it "halts at the gateway, named (budget_unavailable)", which is
+		// the wired service's unreachable path and not this one (independent
+		// review of C1.22, M2). The section's own second half moved with the
+		// wiring (0.10.1): it used to say "no job is ever given its address"
+		// and "the service ships dormant", which is now false — the launch
+		// sets the variable on a repository job (see the pins below) — and the
+		// refused-while-bootstrapping case is what remains for a job that is
+		// not told (an installation that has not opted in, a shared job).
 		"serviceUpstream",
 		"FUGARO_CREDENTIALS_SERVICE_URL",
 		"failed run, not a halt",
 		"infra_error",
 		"no pull request opened",
+		// The wiring, which is what this section had to be rewritten for.
+		"credentialsServiceLaunchEnv",
+		"the launch is what tells a job where it is",
+		"a repository's own job, and no other",
+		"byte for byte what it was",
+		"the **other `agent.auth` modes'**",
 		// What the opt-in does to the job's mounts. The section said an
 		// `oauth` workflow of the same repository "keeps its own mount
 		// unchanged", which is false once the installation opts in:
@@ -413,9 +421,17 @@ func TestDocsMultiModelDocumentsTheCascadeSwitch(t *testing.T) {
 		// The claim that an `oauth` workflow keeps its model mount: the
 		// opt-in drops it, per-repository and in every auth mode.
 		"keeps its own mount unchanged",
+		// The retired "dormant" half: the launch sets the variable on an
+		// opted-in installation's repository job now, so a section that says
+		// no call reaches the service or that no job carries the address is
+		// telling a reader the opposite of what a run does.
+		"ships dormant",
+		"no job is ever given its address",
+		"no call reaches the service",
+		"Do not opt in before the release that wires the service",
 	} {
 		if strings.Contains(flat, banned) {
-			t.Errorf("%s's cascade section says %q: the launch reads the policy switch, not the service, and the opt-in drops every per-repository job's model mounts", path, banned)
+			t.Errorf("%s's cascade section says %q: the launch reads the policy switch, not the service, and the opt-in drops every per-repository job's model mounts; and as of 0.10.1 the launch does set FUGARO_CREDENTIALS_SERVICE_URL on an opted-in installation's repository job (internal/cli/run.go's credentialsServiceLaunchEnv), so no sentence may say the service ships unwired", path, banned)
 		}
 	}
 }

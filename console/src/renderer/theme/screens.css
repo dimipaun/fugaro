@@ -142,7 +142,10 @@ p.run-agent-message,
 p.run-reported-warning,
 p.run-pin-warning,
 p.run-draft-note,
-p.run-follow-up {
+p.run-follow-up,
+p.live-review-empty,
+p.live-review-note,
+p.live-review-capped {
   margin-block: var(--space-2xs);
   font-size: var(--font-size-base);
 }
@@ -188,6 +191,7 @@ p.run-follow-up {
 
 li.live-repo,
 li.live-run,
+li.live-review-row,
 li.spend-row,
 li.spend-point,
 li.spend-person,
@@ -229,6 +233,7 @@ ol.run-log-list,
 ol.run-log-tail,
 div.spend-accounts,
 div.spend-totals,
+section.live-review,
 section.spend-caps,
 section.spend-people,
 section.projects-panel,
@@ -268,6 +273,10 @@ li.live-run {
  */
 
 span.live-run-id,
+span.live-review-run-id,
+span.live-review-repo,
+span.live-review-number,
+span.live-review-url,
 h1.run-id,
 span.run-repo,
 span.run-workflow,
@@ -488,6 +497,7 @@ span.live-run-models,
 span.live-run-recipe,
 span.live-run-auth,
 span.live-run-requester,
+span.live-run-started-by,
 span.live-run-workflow,
 span.live-run-contradiction {
   color: var(--text-muted);
@@ -526,6 +536,31 @@ span.run-halt-word {
 
 li.live-repo[data-killed='true'] {
   border-left: 3px solid var(--halted);
+}
+
+/* The review inbox (design F26; desktop-console v2 plan Task V2.7.1): the
+ * section the Live screen ends with -- the finished runs that are ready for a
+ * look, as rows of **text**. Its box is the panel group above, so what is here
+ * is the heading and the row's own pieces. The rows carry no link of any kind:
+ * the pull request's number and URL are drawn as text, and `data-href` -- the
+ * one attribute `link.openExternal` acts on -- is written nowhere in this
+ * section (`review.test.ts` walks it and asserts exactly that). */
+/* The heading is **one text run** (`reviewSection`): the CLI's own line,
+ * `Ready for your review (52)`, with its parentheses hugging the number. It is
+ * not laid out as a flex row of pieces -- a `display: flex` here is what spaced
+ * a word, a `(`, a count and a `)` apart into `( 52 )`, text the CLI never
+ * prints and both design docs disagree with (a 0.10.x review) -- so this rule
+ * carries the type and nothing that can space it. */
+h2.live-review-title {
+  font-size: var(--font-size-md);
+  font-weight: var(--weight-semibold);
+}
+
+/* The title is a job's own sentence, so it takes the readable size the run
+ * rows' titles take; the age beside it is the `live-num` hook's, and the
+ * repository, the number, the URL and the run id are the identity group's. */
+span.live-review-run-title {
+  font-size: var(--font-size-base);
 }
 
 /* ---- Spend ---------------------------------------------------------------- */
@@ -785,6 +820,7 @@ span.projects-secret-allowed,
 span.projects-job-status,
 span.projects-job-stage,
 span.projects-job-by,
+span.projects-job-started-by,
 span.projects-cap-repo,
 span.projects-accounts-repo,
 span.projects-only-seen-repo,
@@ -864,6 +900,7 @@ span.run-outcome,
 span.run-stage,
 span.run-branch,
 span.run-requested-by,
+span.run-started-by,
 span.run-flags,
 span.run-settled,
 span.run-stale,
@@ -1353,12 +1390,14 @@ main p {
   span.live-run-recipe,
   span.live-run-auth,
   span.live-run-requester,
+  span.live-run-started-by,
   span.live-run-workflow,
   span.live-run-contradiction,
   span.run-status,
   span.run-outcome,
   span.run-branch,
   span.run-requested-by,
+  span.run-started-by,
   span.run-flags,
   span.run-log-severity,
   span.run-route-name,
@@ -1386,6 +1425,7 @@ main p {
   span.projects-job-status,
   span.projects-job-stage,
   span.projects-job-by,
+  span.projects-job-started-by,
   span.projects-cap-repo,
   span.projects-accounts-repo,
   span.projects-only-seen-repo,
@@ -1418,6 +1458,9 @@ main p {
   p.run-replay-note,
   p.run-replay-scrubbed,
   span.run-halt-detail,
+  p.live-review-empty,
+  p.live-review-note,
+  p.live-review-capped,
   p.degraded-notice,
   p.degraded-warning,
   p.unavailable-reason,

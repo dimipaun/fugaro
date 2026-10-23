@@ -378,7 +378,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.BoolVar(&o.configOnly, "config-only", false, "only write the local config, from the installation's outputs (else the flags)")
 	f.BoolVar(&o.publishConfig, "publish-config", false, "publish the shared config to the runs bucket and stop ("+d.name+" does it after it writes the local config)")
 	f.BoolVar(&o.anchor, "anchor", false, "in a checkout of an onboarded repository, only write the gcp_project line into its fugaro.yaml, after checking that every workflow's job image was submitted by fugaro "+gcpProjectFieldSince+" or later and built FROM a release base image of "+gcpProjectFieldSince+" or later, and that no base image the local config sets is a development or older one (no Terraform, no publish, no image copy; the diff, then --yes writes or a terminal asks)")
-	f.BoolVar(&o.forget, "forget", false, "roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state")
+	f.BoolVar(&o.forget, "forget", false, "roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state. An installation that holds the managed deployer's fence has no rollback and this is refused there: the state removal would leave the seven scoped roles and their seven conditioned bindings live in the project, accounted for by nothing, and taking the project out of managed mode does not remove them (docs/gcp-setup.md, \"Rolling back\")")
 	f.StringArrayVar(&o.allowDelete, "allow-delete", nil, "a resource address the plan may delete or replace (repeatable)")
 	f.BoolVar(&o.provisionBatch, "provision-batch", false, "after the installation's ordinary steps, provision the Batch compute backend into a state of its own (design docs/design/compute-backend.md §8.1 task 6): the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router, and a preloaded boot image rebuilt on a schedule. It is money (a billable build, a NAT's hours) and permanent, so --yes never covers it and it is typed at a real terminal; nothing runs it by default, and no run can use the backend until the enable task. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor)")
 	// D12's answer of 2026-10-20 (docs/setup-wizard/reconciliation.md §5, and
@@ -404,7 +404,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	}
 	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — "+covers+" — and it never covers "+never+": each of those is typed at a real terminal, and no door relaxes them. Under a coding agent's environment variable (CLAUDECODE and the like) "+d.name+" applies nothing, --yes included (except "+d.name+" --anchor, which only edits the checkout's fugaro.yaml and honours --yes there); that is a mitigation, not a barrier: an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint")
 	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes also covers onboarding such a repository, and neither it nor this flag is honoured in a coding agent's session; any other origin takes the typed confirmation)")
-	f.BoolVar(&o.provisionCredentials, "provision-credentials", false, "after the installation's ordinary steps, turn ON the credentials service in the installation root (docs/credentials-service, D146): a Cloud Run service (its own account, one Secret Manager bundle secret) running this release's image pinned by digest through the installation's remote repository. It is the identity the REPOSITORY jobs' model credentials move to: every workflow job of every repository root re-applied after this drops its model credential — in every agent.auth mode, oauth and api-key as much as cascade — and its account's accessor on it, and gets an invoker grant on the service instead. It does NOT reach the shared project jobs, which keep mounting their provider keys and CLAUDE_CODE_OAUTH_TOKEN with their grants (C3.9 moves those). And the part that gives a run a credential from the service instead is not in this release yet, so until it lands no re-applied repository job has a model credential to use: this is the owner's step of a service that is not finished. It needs the installation's Firebase rules (fugaro "+d.name+" --firebase-project) at the credentials generation first. --yes never covers it and it is typed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor), and it does NOT exclude --provision-batch: they are two applies of different roots, each with its own typed confirmation, and naming both means both")
+	f.BoolVar(&o.provisionCredentials, "provision-credentials", false, "after the installation's ordinary steps, turn ON the credentials service in the installation root (docs/credentials-service, D146): a Cloud Run service (its own account, one Secret Manager bundle secret) running this release's image pinned by digest through the installation's remote repository. It is the identity the REPOSITORY jobs' model credentials move to: every workflow job of every repository root re-applied after this drops its model credential — in every agent.auth mode, oauth and api-key as much as cascade — and its account's accessor on it, and gets an invoker grant on the service instead. It does NOT reach the shared project jobs, which keep mounting their provider keys and CLAUDE_CODE_OAUTH_TOKEN with their grants (C3.9 moves those). And it is wired from this run on: the service's address is recorded in the project's config and put on every per-repository launch, so a cascade run takes its model credential from the service and a GitHub run has its installation token minted there rather than in the job. A repository job in another agent.auth mode has no model credential to use and nothing yet to replace it (that half is not in this release), so a project that opts in runs its workflows with agent.auth: cascade; and the bundle has to hold the GitHub App's key (fugaro creds set github-app-key) before any GitHub run of the installation can mint. It needs the installation's Firebase rules (fugaro "+d.name+" --firebase-project) at the credentials generation first. --yes never covers it and it is typed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor), and it does NOT exclude --provision-batch: they are two applies of different roots, each with its own typed confirmation, and naming both means both")
 	f.BoolVar(&o.allowFork, "allow-fork", false, "let the plugin-wiring stage move the ref of a fugaro marketplace in .claude/settings.json that names a repository other than dimipaun/fugaro (a fork you host); never done otherwise")
 	// The flags --non-interactive only stops from prompting, worded for this
 	// door: --forget is fugaro update's, and setup's help must not describe
@@ -668,9 +668,45 @@ func runInit(r *initRun) error {
 		return e.converge(cmd.Context())
 	}
 
+	// Both records of a managed installation are asked HERE, at the door,
+	// before the setup below prepares the workdir — because that preparation is
+	// a deletion: it rebuilds the tree afresh, and the first thing in the tree
+	// it deletes is the installation's tfvars (Workdir.PrevVars is that same
+	// read, taken by PrepareWorkdir itself). A refused run must change nothing
+	// on disk, so the refusal may not be decided from anything the preparation
+	// has already taken.
+	//
+	// The installation's own document is read first, since it is local and free
+	// (installationFenceRecorded). The project's live creation fact needs the
+	// clients and the Resource Manager readiness setup builds, so it is read
+	// through setupCloud — the cloud half of setup, done once, whose work the
+	// later setup reuses — and still before anything touches the workdir. The
+	// fact is the record a document cannot outlive: label and marker are the
+	// project's and the runs bucket's, and any later converge writes the key
+	// back into the document from them.
+	ctx := cmd.Context()
+	if o.forget {
+		recorded, err := installationFenceRecorded(lc)
+		if err != nil {
+			return err
+		}
+		if recorded {
+			return managedForgetRefusal(spec.Project, holdsFenceRecorded, fmt.Sprintf("The installation's own tfvars say so — %s = true, which every rewrite carries forward", infra.ManagedDeployerScopedKey))
+		}
+		if err := e.setupCloud(ctx); err != nil {
+			return err
+		}
+		marked, err := r.managedScope(ctx, e.c)
+		if err != nil {
+			return err
+		}
+		if marked {
+			return managedForgetRefusal(spec.Project, holdsFlaggedManaged, fmt.Sprintf("The project's own creation fact says so — the %s label on %s, with the runs bucket's %s", managed.ProjectLabelKey, spec.Project, managed.MarkerObject))
+		}
+	}
+
 	// 1. The environment, 2. the workdir, the clients and Cloud Resource
 	// Manager.
-	ctx := cmd.Context()
 	if err := e.setup(ctx); err != nil {
 		return err
 	}
@@ -1748,10 +1784,15 @@ func (r *initRun) managedProject(ctx context.Context, c *infra.Clients) (bool, e
 // managedScope is whether the installation uses managed projects, decided from
 // the project's own creation fact: the module's managed_deployer_scoped, which
 // is what creates the managed deployer's seven scoped roles and their seven
-// conditioned bindings. Every path that plans the installation root decides it
-// here — installRoot, which writes the variable into the tfvars the plan is
-// made from, and --forget, whose plan is the installation root's too and would
-// otherwise delete all fourteen.
+// conditioned bindings. installRoot is the path that plans the installation
+// root with it, and it writes the variable into the tfvars the plan is made
+// from. (--forget reads it here too, but only to refuse: it never plans the
+// installation root with the answer any more — an installation that holds the
+// fence is refused whole by the door, before a plan exists and before the
+// workdir is prepared, managedForgetRefusal — and this read, made there and not
+// inside the rollback, is what answers for the fence a project's marks no
+// longer admit to; the door's other read, of the installation's own tfvars, is
+// installationFenceRecorded.)
 //
 // A failure is the run's own and not a refusal: there is no plan to refuse
 // yet, and a run that cannot tell whether the variable belongs on or off plans
@@ -1814,13 +1855,19 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports) (
 	// The other key this spec never carries, and for a sharper reason than the
 	// opt-in above: it is the deployer's scope, which is what creates the seven
 	// scoped roles and their seven conditioned bindings, and a document that
-	// loses it plans all fourteen away. The paths that plan the installation
-	// root decide it from the project's creation fact (installRoot and
-	// --forget, both through managedScope), and there this carry is a no-op
-	// because the spec it was handed already carries the answer; it is the
-	// paths that only re-serialize the root — --config-only, the compute
-	// stage's read of the installation's outputs, adopt — that would otherwise
-	// write a document that reads as an installation without the fence.
+	// loses it plans all fourteen away. installRoot is the path that plans the
+	// installation root with it, deciding it from the project's creation fact
+	// (through managedScope), and there this carry is a no-op because the spec
+	// it was handed already carries the answer; it is the paths that only
+	// re-serialize the root — --config-only, the compute stage's read of the
+	// installation's outputs, adopt — that would otherwise write a document
+	// that reads as an installation without the fence. --forget is not one of
+	// those paths: an installation whose document carries the key never reaches
+	// this carry, because the run's door refuses `update --forget` for it
+	// before the workdir is prepared (installationFenceRecorded,
+	// managedForgetRefusal), and a rollback that does reach here has a document
+	// with no key in it to carry. So what this carry keeps is the fourteen of
+	// every run that rewrites the root's settings and is allowed to run.
 	for _, prev := range documents {
 		if vars, err = infra.CarriedManagedDeployerScoped(vars, prev); err != nil {
 			return nil, userErr("reading the installation's tfvars: %v", err)
@@ -1883,8 +1930,10 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	// the fact and applies nothing. Read here, and not in installOptions,
 	// because the answer is a cloud fact: a plain `fugaro update` of a managed
 	// installation that dropped the variable would plan the destruction of the
-	// fourteen resources the fence is — and --forget, the other path that plans
-	// this root, reads it the same way (managedScope).
+	// fourteen resources the fence is. (--forget used to be the other path that
+	// plans this root and read the fact the same way; it plans nothing here any
+	// more, and reads the fact only to refuse, at the run's door — see
+	// managedScope and managedForgetRefusal.)
 	spec.ManagedDeployerScoped, err = r.managedScope(ctx, c)
 	if err != nil {
 		return outs, false, err
@@ -2246,6 +2295,19 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 		}
 	}
 	next.Build.ServiceAccount = ""
+	// The credentials service, from the installation's own record: the
+	// module's output carries the service's URL once the stage that turns it
+	// on has filled the audience (init_credentials.go), and this is what puts
+	// it in the local config — and so in the published one — for `fugaro run`
+	// to hand to a job. An installation whose outputs carry no service (never
+	// opted in, or opted out) clears the block: the URL it named is not a
+	// service that exists any more, and a launch that carried it would put a
+	// dead address on a job.
+	//
+	// It is set from the OUTPUTS and not from a flag: there is no way for a
+	// person to write this value by hand, because there is no way for them to
+	// know it (Cloud Run's URL carries the project number).
+	next.CredentialsService = credentialsServiceBlock(outs.CredentialsService)
 	if r.mutate != nil {
 		r.mutate(&next)
 	}
@@ -2266,6 +2328,23 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 		r.publishSharedConfig(ctx, &next)
 	}
 	return nil
+}
+
+// credentialsServiceBlock is the local config's credentials_service block for
+// an installation whose outputs carry s: nil when they carry none.
+//
+// The URL is the one field, and the block is nil rather than empty when the
+// installation has no service, because the block's PRESENCE is what `fugaro
+// run` reads as "this installation has one" — an empty block would put an
+// empty variable on a job, which the runner reads as set (the runner's own
+// check is `url == ""`, so an empty value is "no service" there, but the
+// provider gate in internal/gitprov reads presence) and which the config
+// loader refuses in the first place.
+func credentialsServiceBlock(s *infra.CredentialsService) *localcfg.CredentialsService {
+	if s == nil || s.URL == "" {
+		return nil
+	}
+	return &localcfg.CredentialsService{URL: s.URL}
 }
 
 // publishSharedConfig publishes the shared config after the local config is
@@ -2466,9 +2545,111 @@ func splitLines(s string) []string {
 	return strings.Split(s, "\n")
 }
 
+// installationFenceRecorded is whether the installation's own tfvars record the
+// managed deployer's fence: the document the workdir holds as this run finds
+// it, read before anything prepares that workdir. It is the INSTALLATION's
+// record of the fourteen and not the project's mode.
+//
+// That distinction is the whole point of reading it. Removing the two marks
+// that make a project managed (docs/gcp-setup.md, "What makes a project
+// managed") does not touch the fourteen the installation holds, and this
+// document goes on recording them, because prepare's carry never drops the key.
+// A rollback decided from the live creation fact alone would therefore let
+// exactly the owner the refusal is written for walk past it — marks off,
+// `--forget`, and the state removal takes the fence out of Terraform's state
+// while it stays live in the project.
+//
+// The read is of the file on disk, and it is made where it is so that the
+// refusal it decides leaves the file where it is: the preparation that follows
+// deletes every file of the earlier run, and a refusal that deleted this one
+// would leave the next attempt nothing to be refused from. The error it returns
+// is the run's, not a refusal: a document that cannot be read is not a document
+// that does not record the fence.
+func installationFenceRecorded(lc *localcfg.Config) (bool, error) {
+	dir, err := infra.InstallationWorkdir(os.Getenv, lc.GCPProject)
+	if err != nil {
+		return false, userErr("%v", err)
+	}
+	vars, err := infra.ReadWorkdirVars(dir, "installation")
+	if err != nil {
+		return false, userErr("%v", err)
+	}
+	recorded, err := infra.ManagedDeployerScopedRecorded(vars)
+	if err != nil {
+		return false, userErr("%v", err)
+	}
+	return recorded, nil
+}
+
+// The two subjects managedForgetRefusal's sentence opens with, one per record.
+// Each is a format string whose %s is the project, because the sentence names
+// the installation in its own clause ("… and proj-1234's installation holds …").
+const (
+	// holdsFenceRecorded: the installation's own document carries the key.
+	holdsFenceRecorded = "%s's installation holds the managed deployer's fence"
+	// holdsFlaggedManaged: the project's label and marker are what answered.
+	holdsFlaggedManaged = "%s is flagged managed, and the managed deployer's fence belongs to its installation"
+)
+
+// managedForgetRefusal is the sentence `fugaro update --forget` stops with for
+// an installation that holds the managed deployer's fence: the rollback is not
+// that installation's command, and what it names instead is the owner's work.
+//
+// Why it is refused rather than run, and why no flag gets past it: the
+// installation's own resources include the fence — seven scoped roles and their
+// seven conditioned bindings, created by the apply that converges a managed
+// project — and the rollback's second phase is one `terraform state rm
+// module.installation` over every address the installation holds. The fourteen
+// would leave Terraform's state with the rest, live in the project and accounted
+// for by nothing: the whole-project inventory the managed apply reads before it
+// plans compares the live project with what the installation's states hold, so
+// every later run of that project would find the fence unaccounted for, and a
+// converge could not put it back — its plan creates roles that already exist.
+//
+// holds says which of the two records answered, in the sentence's own terms,
+// because the two know different things. The installation's own document with
+// the key in it knows the fence is the installation's (holdsFenceRecorded). The
+// project's marks do not: `fugaro managed flag` writes the label and the marker
+// without converging anything, so what they say is that the project is flagged
+// managed and that its installation is the managed path's — whose apply is the
+// one that converges the fence — and not that the fence is live in the state.
+// The sentence holds either way: the fence leaves Terraform's state with the
+// rest "wherever the installation holds it".
+//
+// why names the record that said so, since only one of them is always there to
+// answer: the installation's own tfvars, read by the door before anything
+// prepares the workdir, or the project's two marks, read by the same door
+// through setupCloud (Task 3.0's half: a project whose marks have come off still
+// holds the fence, and a document that has lost the key still belongs to a
+// project whose marks do not come off by themselves).
+//
+// The next step is deliberately spelled here rather than left to a document,
+// and it is deliberately NOT "take the project out of managed mode": that is the
+// undo of the mode, and it leaves the fence where it is — this refusal does not
+// lift when the marks come off, because what it refuses is the fence's orphaning
+// and not the project's mode. What an installation that holds the fence has is
+// the owner's own work in the project, which is what the guide's rollback
+// section says of everything the rollback leaves.
+func managedForgetRefusal(project, holds, why string) error {
+	return userErr("fugaro update --forget is the rollback of an installation from before managed projects, and %s — seven scoped roles and their seven conditioned bindings — so this run stops here: the rollback's second phase removes every address of the installation from Terraform's state, and the fence would leave it with them wherever the installation holds it — live in the project with nothing accounting for it (the inventory the managed apply reads before it plans would find it unaccounted on every later run) and no way to put it back, because a converge's plan creates roles that already exist. %s. The fence is written by the apply that creates the fourteen and carried forward by every run that rewrites the installation's settings, so it is the installation's and not a mode of the project: taking the project out of managed mode does not remove it, and no command of ours does. Nothing of the installation was read, planned or forgotten: not the state bucket, not its outputs, not a plan and not a state removal. What is left for an installation that holds the fence is the owner's own work in the project (docs/gcp-setup.md, \"Rolling back\")",
+		fmt.Sprintf(holds, project), why)
+}
+
 // forget is the rollback: a guarded apply that turns the log isolation and
 // registry cleanup off, then state rm of everything, each confirmed.
 func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, spec infra.InstallationSpec) error {
+	// No managed installation reaches this function: both of its records are
+	// asked at the run's door, before the workdir this one holds was prepared
+	// at all, and either of them answering "managed" is a refusal
+	// (runInit, installationFenceRecorded, managedScope,
+	// managedForgetRefusal). The reason both are asked up there and not here is
+	// that the preparation this engine is set up through rebuilds the tree, so
+	// anything decided from it here would be decided after the installation's
+	// own tfvars — one of the two records — had already been deleted.
+	//
+	// What is left here is the rollback of an installation that neither record
+	// claims, which is the installation from before managed projects that
+	// --forget is for.
 	exists, err := infra.CheckStateBucket(ctx, c, spec.Project, spec.StateBucket)
 	if err != nil {
 		return initErr(err)
@@ -2484,16 +2665,12 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 		return userErr("the state bucket still holds repository state (%s; only *.tfstate objects count, not locks): run fugaro update --repo --forget for each repository first", strings.Join(repos, ", "))
 	}
 	fs := infra.ForgetSpec(spec)
-	// The rollback plans the installation root, so it decides the deployer's
-	// scope the way installRoot does and not from the spec it was handed —
-	// that spec is built from the options and never carries the key. Without
-	// this the rollback of a managed installation plans the deletion of the
-	// seven scoped roles and their seven conditioned bindings, which the guard
-	// then refuses: the owner's own rollback stops on a fence the run itself
-	// took out of the tfvars.
-	if fs.ManagedDeployerScoped, err = r.managedScope(ctx, c); err != nil {
-		return err
-	}
+	// fs.ManagedDeployerScoped stays the zero value, and nothing is carried
+	// back into it: the refusals at the door are the only answer an
+	// installation that holds the fence gets from this command, so a run that
+	// reaches this line belongs to a project neither record claims, and its
+	// document (the one prepare rewrites) carries no key for the carry in
+	// prepare to keep.
 	backend, err := prepare(wd, fs, infra.Imports{})
 	if err != nil {
 		return err
