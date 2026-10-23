@@ -77,6 +77,8 @@ import {
   privateWorkingDirectory,
   probeVersion,
   resolveBinary,
+  resolveHandshakeBinary,
+  resolveInstalledBinary,
   runToCompletion,
   restartDecision,
   spawnCommandFor,
@@ -91,6 +93,7 @@ import type {
   SpawnedChildLike,
   SpawnOptionsLike,
   Timers,
+  WslRoute,
 } from '../../src/main/spawn'
 import { createSpawnLog, disabledSpawnLog } from '../../src/main/spawnlog'
 import type { SpawnLogWriter } from '../../src/main/spawnlog'
@@ -102,6 +105,8 @@ import { RUN_LOG_CAP, buildRunModel } from '../../src/renderer/screens/run'
 import { SourceRefusal, handlersFor } from '../../src/source/source'
 import { installStub } from './stub'
 import type { Stub } from './stub'
+import { DISTRO_PATH, installWslStub } from './wslstub'
+import type { WslFixture, WslStub } from './wslstub'
 
 const SOURCE_ROOT = fileURLToPath(new URL('../../src', import.meta.url))
 const PROJECT = 'fugaro'
@@ -140,6 +145,15 @@ function freshDirectory(prefix = 'fugaro-console-test-'): string {
   return realpathSync(mkdtempSync(join(tmpdir(), prefix)))
 }
 
+/** only is the one entry a list is expected to hold, so "nothing was recorded"
+ * fails here rather than making every later assertion vacuous. */
+function only<T>(entries: readonly T[]): T {
+  expect(entries).toHaveLength(1)
+  const [entry] = entries
+  if (entry === undefined) throw new Error('nothing was recorded')
+  return entry
+}
+
 const ownedTemporaryDirectories: string[] = []
 
 /** ownTemporaryDirectory points TMPDIR at a fresh directory this file owns, so a
@@ -158,19 +172,23 @@ afterEach(() => {
   for (const directory of ownedTemporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true })
 })
 
-/** safeContext is the main-process state a plan is built from in a test. */
+/** safeContext is the main-process state a plan is built from in a test.
+ * `wsl` is the WSL route (T-C5) and is absent for the host route, which is the
+ * ordinary case. */
 function safeContext(overrides: {
   project?: string
   configPath?: string
   binaryPath?: string
   directory?: string
   appEnv?: Readonly<Record<string, string | undefined>>
+  wsl?: WslRoute
 } = {}): Parameters<typeof planFor>[2] {
   return {
     target: { project: overrides.project ?? PROJECT, ...(overrides.configPath === undefined ? {} : { configPath: overrides.configPath }) },
     binaryPath: overrides.binaryPath ?? '/opt/homebrew/bin/fugaro',
     directory: overrides.directory ?? '/Users/owner/src/fugaro',
     appEnv: overrides.appEnv ?? {},
+    ...(overrides.wsl === undefined ? {} : { wsl: overrides.wsl }),
   }
 }
 
@@ -1565,6 +1583,369 @@ describe('binary resolution', () => {
   })
 })
 
+describe('the WSL resolution path', () => {
+  // T-C5 of docs/console-windows/implementation-plan.md, decisions D1(a) and
+  // D2(a): on Windows the CLI is a Linux program inside a distribution, so the
+  // resolver's answer is a plan whose command is `wsl.exe`, whose wrapper names
+  // the distribution and the directory, and whose program word is `fugaro` --
+  // the name the *distribution* resolves, which is the point of running it
+  // inside. The four refusals are told apart because each one is a different
+  // instruction to the operator.
+  //
+  // Every case here is driven through the fake `wsl.exe` (T-A1), so the claim is
+  // the fake's own report -- what the distribution received -- and never the
+  // console's account of itself.
+  const TWO_DISTROS: WslFixture = {
+    list: 'Ubuntu\r\nDebian\r\n',
+    status: 'Default Distribution: Debian\r\nDefault Version: 2\r\n\r\nWSL version: 2.6.1.0\r\n',
+  }
+
+  /** NO_WSL is a `wsl.exe` that cannot answer at all: WSL is not installed, or
+   * the feature is off. */
+  const NO_WSL: WslFixture = {
+    list: '',
+    status: '',
+    queryFailure: {
+      status: 1,
+      stderr: 'Windows Subsystem for Linux has no installed distributions.\r\n',
+    },
+  }
+
+  /** wslRoot is the arrangement the cases start from: a fake `wsl.exe`, a host
+   * directory to run it in, and a directory inside the distribution to start the
+   * CLI in. The two are deliberately different directories, because they are the
+   * two sides of the boundary: `cwd` is where `wsl.exe` itself is started and
+   * `distroDirectory` is what `--cd` names. */
+  function wslRoot(fixture: WslFixture = TWO_DISTROS, options: { readonly version?: string } = {}): {
+    wsl: WslStub
+    host: string
+    distroDirectory: string
+  } {
+    const root = freshDirectory()
+    const host = join(root, 'windows')
+    mkdirSync(host, { recursive: true })
+    const distroDirectory = join(root, 'home', 'dimi', 'src')
+    mkdirSync(distroDirectory, { recursive: true })
+    const wsl = installWslStub(host, {
+      distros: fixture,
+      scenario: { commands: { version: { stdout: `${options.version ?? '1.4.2'}\n` } } },
+    })
+    return { wsl, host, distroDirectory }
+  }
+
+  /** resolveInside is `resolveInstalledBinary` on the WSL route, with the two
+   * directories this test owns and the fake's `wsl.exe` as the program. */
+  function resolveInside(
+    arrangement: { wsl: WslStub; host: string; distroDirectory: string },
+    overrides: {
+      readonly binaryPath?: string
+      readonly distro?: string
+      readonly wslDirectory?: string | undefined
+    } = {},
+  ): Promise<Awaited<ReturnType<typeof resolveInstalledBinary>>> {
+    return resolveInstalledBinary({
+      binaryPath: overrides.binaryPath ?? '',
+      distro: overrides.distro ?? 'Ubuntu',
+      ...('wslDirectory' in overrides
+        ? overrides.wslDirectory === undefined
+          ? {}
+          : { wslDirectory: overrides.wslDirectory }
+        : { wslDirectory: arrangement.distroDirectory }),
+      wslPath: arrangement.wsl.binary,
+      appEnv: {},
+      directory: arrangement.host,
+      target: { project: PROJECT },
+    })
+  }
+
+  it('builds the wrapper on the plan: `wsl.exe`, the distribution, the directory, the CLI’s own argv', () => {
+    const wsl = installWslStub(freshDirectory(), { distros: TWO_DISTROS })
+    const plan = planFor('budget.show', {}, safeContext({
+      binaryPath: FUGARO_BINARY_NAME,
+      directory: '/Users/owner/AppData/Local/Temp/fugaro-console/cwd',
+      wsl: { distro: 'Ubuntu', directory: '/home/dimi/src/fugaro', executable: wsl.binary },
+    }))
+    // The program the console starts is `wsl.exe` -- here, the fake -- and not
+    // the CLI: on this route there is no host path to the CLI at all.
+    expect(plan.command).toBe(wsl.binary)
+    expect([...plan.prefix]).toEqual(['-d', 'Ubuntu', '--cd', '/home/dimi/src/fugaro', '--'])
+    // `argv[0]` is the bare name, not a path: the distribution's own `PATH`
+    // resolves it, which is the point of running the CLI inside (F5).
+    expect(plan.argv[0]).toBe(FUGARO_BINARY_NAME)
+    expect([...plan.argv]).toEqual([
+      FUGARO_BINARY_NAME,
+      'budget',
+      'show',
+      '--json',
+      '--project',
+      PROJECT,
+    ])
+    // Two directories, and they are on two sides of the boundary: `cwd` is the
+    // **host** directory `wsl.exe` itself is started in, and the CLI's own
+    // directory is the wrapper's `--cd`.
+    expect(plan.cwd).toBe('/Users/owner/AppData/Local/Temp/fugaro-console/cwd')
+    // The whole line, as it will be spawned and as the log records it (O4).
+    expect([...spawnedArgv(plan)]).toEqual([
+      wsl.binary,
+      '-d',
+      'Ubuntu',
+      '--cd',
+      '/home/dimi/src/fugaro',
+      '--',
+      'fugaro',
+      'budget',
+      'show',
+      '--json',
+      '--project',
+      PROJECT,
+    ])
+  })
+
+  it('gives the CLI inside the distribution Linux’s PATH and exactly CHILD_ENV_KEYS', () => {
+    // The credential boundary's near side, on the WSL route: the environment the
+    // CLI receives is built by `childEnvironment` and nothing else, and its PATH
+    // is a Linux one even though the host is Windows (F5, T-C2).
+    const wsl = installWslStub(freshDirectory(), { distros: TWO_DISTROS })
+    const plan = planFor('budget.show', {}, safeContext({
+      binaryPath: FUGARO_BINARY_NAME,
+      appEnv: {
+        PATH: 'C:\\Windows\\System32;C:\\Windows',
+        HOME: '/home/dimi',
+        AWS_SECRET_ACCESS_KEY: 'planted',
+        GITHUB_TOKEN: 'planted',
+      },
+      wsl: { distro: 'Ubuntu', directory: '/home/dimi/src', executable: wsl.binary },
+    }))
+    // Every key is a `CHILD_ENV_KEY` -- the allow-list is the enforcement, and
+    // the app's own environment is read for nothing else.
+    for (const key of Object.keys(plan.env)) expect(CHILD_ENV_KEYS).toContain(key)
+    expect(plan.env['PATH']).toBe(childPath(FUGARO_BINARY_NAME, 'linux'))
+    expect(plan.env['PATH']).not.toContain('C:\\Windows')
+    expect(Object.keys(plan.env)).not.toContain('AWS_SECRET_ACCESS_KEY')
+    expect(Object.keys(plan.env)).not.toContain('GITHUB_TOKEN')
+  })
+
+  it('names the distribution’s directory for `doctor --dir`, and no directory at all when it has none', () => {
+    const wsl = installWslStub(freshDirectory(), { distros: TWO_DISTROS })
+    const inside = planFor('environment.report', {}, safeContext({
+      binaryPath: FUGARO_BINARY_NAME,
+      directory: '/Users/owner/AppData/Local/Temp/fugaro-console/cwd',
+      wsl: { distro: 'Ubuntu', directory: '/home/dimi/src/fugaro', executable: wsl.binary },
+    }))
+    // `--dir` is the CLI's own working directory, so it is the **distribution's**
+    // spelling and not the host's: a `C:\...` path here is the wrong-spelling
+    // bug T-A2's fake refuses by name (T-D3).
+    expect([...inside.argv]).toContain('--dir')
+    expect(inside.argv[inside.argv.indexOf('--dir') + 1]).toBe('/home/dimi/src/fugaro')
+    expect([...inside.argv]).not.toContain('/Users/owner/AppData/Local/Temp/fugaro-console/cwd')
+
+    // With no distribution-side directory -- the state before Part D translates
+    // the host's -- the console names none, in either place: no `--cd` and no
+    // `--dir`, so the distribution starts the CLI where it starts it. Passing
+    // the host's directory instead would be a path the CLI inside cannot resolve.
+    const outside = planFor('environment.report', {}, safeContext({
+      binaryPath: FUGARO_BINARY_NAME,
+      directory: '/Users/owner/AppData/Local/Temp/fugaro-console/cwd',
+      wsl: { distro: 'Ubuntu', executable: wsl.binary },
+    }))
+    expect([...outside.prefix]).toEqual(['-d', 'Ubuntu', '--'])
+    expect([...outside.argv]).not.toContain('--dir')
+    expect([...outside.argv]).not.toContain('/Users/owner/AppData/Local/Temp/fugaro-console/cwd')
+  })
+
+  it('resolves a stored installation inside its distribution, and starts the CLI there', async () => {
+    const arrangement = wslRoot()
+    const resolution = await resolveInside(arrangement)
+    expect(resolution).toEqual({
+      ok: true,
+      path: FUGARO_BINARY_NAME,
+      version: '1.4.2',
+      // There is no walk of well-known locations on this route, so the word is
+      // the installation's own: it named the distribution (and, when it names
+      // one, the path inside it).
+      source: 'configured',
+    })
+    // The fake's own account: one `--list --quiet`, one `--status`, and one
+    // `wsl.exe` that started the CLI. The probe is the only thing asked whether
+    // the CLI is there -- there is no second call (T-C5).
+    const spawn = arrangement.wsl.reports().filter((report) => report.kind === 'spawn')
+    expect(spawn).toHaveLength(1)
+    expect(spawn[0]?.distro).toBe('Ubuntu')
+    expect(spawn[0]?.cd).toBe(arrangement.distroDirectory)
+    expect(spawn[0]?.argv).toEqual([
+      '-d',
+      'Ubuntu',
+      '--cd',
+      arrangement.distroDirectory,
+      '--',
+      FUGARO_BINARY_NAME,
+      'version',
+    ])
+    // The host side: `wsl.exe` was started in the directory the console named.
+    expect(spawn[0]?.cwd).toBe(arrangement.host)
+    // ...and the distribution's side: the CLI's own cwd is the `--cd`.
+    const child = only(arrangement.wsl.children())
+    expect(child.argv).toEqual(['version'])
+    expect(child.cwd).toBe(arrangement.distroDirectory)
+  })
+
+  it('runs the path the installation stored inside the distribution, when it stores one', async () => {
+    // `binaryPath` under a `distro` is a Linux spelling **inside** the
+    // distribution (F15, T-C6): when the record names one, that is the program
+    // word, and the distribution's `PATH` is not consulted. The fake runs the
+    // absolute path it installed, which is this route's stand-in for the CLI the
+    // operator's own record names.
+    const arrangement = wslRoot()
+    const stored = arrangement.wsl.stub.binary
+    const resolution = await resolveInside(arrangement, { binaryPath: stored })
+    expect(resolution.ok && resolution.path).toBe(stored)
+    const spawn = only(arrangement.wsl.reports().filter((report) => report.kind === 'spawn'))
+    expect(spawn.argv.at(-2)).toBe(stored)
+    expect(only(arrangement.wsl.children()).argv).toEqual(['version'])
+  })
+
+  it('refuses with `no-wsl` when wsl.exe cannot answer at all', async () => {
+    const arrangement = wslRoot(NO_WSL)
+    const resolution = await resolveInside(arrangement)
+    expect(resolution.ok).toBe(false)
+    if (resolution.ok) throw new Error('unreachable')
+    expect(resolution.kind).toBe('no-wsl')
+    expect(resolution.path).toBeNull()
+    // The sentence `wsl.exe` printed is carried: "install WSL" and "install a
+    // distribution" are different instructions (T-C4).
+    expect(resolution.reason).toContain('Windows Subsystem for Linux has no installed distributions')
+    // And no CLI was started anywhere: there is no distribution to start it in.
+    expect(arrangement.wsl.childCalls()).toBe(0)
+  })
+
+  it('refuses with `no-distro` when the stored distribution has gone, and never falls back to the default', async () => {
+    // The mutation this case exists for: a fallback that picks the **default**
+    // distribution (here `Debian`) when the stored one is missing. The stored
+    // name is a distribution this machine does not have -- a rename or a removal
+    // -- and the operator must be told which one, not handed another
+    // installation's numbers under the name they chose (F7).
+    const arrangement = wslRoot()
+    const resolution = await resolveInside(arrangement, { distro: 'Ubuntu-22.04' })
+    expect(resolution.ok).toBe(false)
+    if (resolution.ok) throw new Error('unreachable')
+    expect(resolution.kind).toBe('no-distro')
+    expect(resolution.path).toBeNull()
+    expect(resolution.reason).toContain('"Ubuntu-22.04"')
+    // The list `wsl.exe` gave is in the sentence: the operator is the only one
+    // who can say which name is the right one.
+    expect(resolution.reason).toContain('"Ubuntu"')
+    expect(resolution.reason).toContain('"Debian"')
+    // Nothing was started in any distribution.
+    expect(arrangement.wsl.childCalls()).toBe(0)
+    expect(arrangement.wsl.reports().filter((report) => report.kind === 'spawn')).toHaveLength(0)
+  })
+
+  it('refuses with `no-fugaro-in-distro` when the distribution has no CLI in it', async () => {
+    // What a shell says when the command is not there: status 127 and a
+    // sentence. The classification is by the probe (T-C5), so this is the
+    // vector the resolver has to read -- and the instruction it produces is
+    // "install the CLI inside the distribution", which is not what the
+    // no-binary page says.
+    const arrangement = wslRoot(TWO_DISTROS)
+    arrangement.wsl.stub.write({
+      commands: { version: { code: 127, stderr: 'fugaro: command not found\n' } },
+    })
+    const resolution = await resolveInside(arrangement)
+    expect(resolution.ok).toBe(false)
+    if (resolution.ok) throw new Error('unreachable')
+    expect(resolution.kind).toBe('no-fugaro-in-distro')
+    expect(resolution.reason).toContain('command not found')
+    expect(resolution.reason).toContain('"Ubuntu"')
+  })
+
+  it('reports a CLI that is there and broken as the probe’s refusal, not as a missing one', async () => {
+    // The distinction the four kinds exist for: a `fugaro` that is installed and
+    // fails is **not** a `fugaro` that is missing, and a screen that said
+    // "install it" would send the operator to install what they already have.
+    const broken = wslRoot(TWO_DISTROS)
+    broken.wsl.stub.write({ commands: { version: { code: 2, stderr: 'fugaro: the config is unreadable\n' } } })
+    const failed = await resolveInside(broken)
+    expect(failed.ok).toBe(false)
+    if (failed.ok) throw new Error('unreachable')
+    expect(failed.kind).toBe('no-binary')
+    expect(failed.reason).toContain('the config is unreadable')
+
+    // And the status alone is not the rule: 127 with the CLI's own sentence is
+    // still the probe's refusal, because "not found" is a thing a CLI says about
+    // a file it was asked to read.
+    const ambiguous = wslRoot(TWO_DISTROS)
+    ambiguous.wsl.stub.write({ commands: { version: { code: 127, stderr: 'fugaro: no config found\n' } } })
+    const other = await resolveInside(ambiguous)
+    expect(other.ok).toBe(false)
+    if (other.ok) throw new Error('unreachable')
+    expect(other.kind).toBe('no-binary')
+  })
+
+  it('reads the handshake inside the distribution an installation names', async () => {
+    // The startup read is the same route: on Windows there is no host `fugaro`
+    // to find, so an installation that names a distribution is read inside it.
+    const arrangement = wslRoot()
+    const resolution = await resolveHandshakeBinary({
+      installation: {
+        distro: 'Ubuntu',
+        binaryPath: '',
+        checkout: arrangement.distroDirectory,
+        target: { project: PROJECT },
+      },
+      wslPath: arrangement.wsl.binary,
+      appEnv: {},
+      directory: arrangement.host,
+    })
+    expect(resolution).toEqual({
+      ok: true,
+      path: FUGARO_BINARY_NAME,
+      version: '1.4.2',
+      source: 'configured',
+    })
+    const spawn = only(arrangement.wsl.reports().filter((report) => report.kind === 'spawn'))
+    expect(spawn.argv).toEqual([
+      '-d',
+      'Ubuntu',
+      '--cd',
+      arrangement.distroDirectory,
+      '--',
+      FUGARO_BINARY_NAME,
+      'version',
+    ])
+    // The handshake's argv is exactly `version` on this route too: no
+    // `--project`, because `fugaro version` takes no flags at all.
+    expect(only(arrangement.wsl.children()).argv).toEqual(['version'])
+  })
+
+  it('does not walk the host for an installation whose distribution has gone', async () => {
+    // The handshake's ordinary rule is "an installation's binary is an override,
+    // not a pin" -- it falls through to rule 4's walk when a stored path has
+    // gone. On the WSL route there is nothing to fall through *to*: the walk is
+    // a walk of the host, the host has no `fugaro` (T-C2), and answering from
+    // another distribution would be another installation's numbers.
+    const arrangement = wslRoot()
+    const hostStub = installStub(join(arrangement.host, 'bin'), {
+      commands: { version: { stdout: '9.9.9\n' } },
+    })
+    const resolution = await resolveHandshakeBinary({
+      installation: {
+        distro: 'Ubuntu-22.04',
+        binaryPath: '',
+        target: { project: PROJECT },
+      },
+      wslPath: arrangement.wsl.binary,
+      appEnv: {},
+      directory: arrangement.host,
+      prefixes: [dirname(hostStub.binary)],
+    })
+    expect(resolution.ok).toBe(false)
+    if (resolution.ok) throw new Error('unreachable')
+    expect(resolution.kind).toBe('no-distro')
+    // The host's `fugaro` was never asked: `resolveBinary` was not reached.
+    expect(hostStub.calls()).toBe(0)
+  })
+})
+
 describe('the reader', () => {
   it.each([
     ['{"kind":"live","day":"2026-01-01"}', 'document'],
@@ -1856,7 +2237,15 @@ describe('the supervisor', () => {
     await waitFor(() => stub.calls() === 1)
     timers.fire()
     const probe = await pending
-    expect(probe).toEqual({ ok: false, reason: 'the binary did not answer `version` in time' })
+    // The probe's whole answer: the status and the child's own words are `null`
+    // here, because a deadline is the console's own reason and there was no
+    // exit to read (T-C5's `said` is what a shell's miss is classified by).
+    expect(probe).toEqual({
+      ok: false,
+      code: null,
+      said: null,
+      reason: 'the binary did not answer `version` in time',
+    })
     await waitFor(() => stub.kills().length === 1)
     expect(stub.kills()[0]?.signal).toBe('SIGTERM')
     expect(stub.kills()[0]?.argv).toContain('version')
