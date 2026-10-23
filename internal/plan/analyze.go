@@ -133,10 +133,24 @@ type CriticalPath struct {
 // of this graph, or an empty one, is refused rather than ignored: an unknown id
 // reads exactly like a task nobody has done, which is a wrong answer to the
 // question the caller asked.
-func Analyze(doc Document, done []string) (Graph, error) {
-	name := doc.Plan
+//
+// path is the artifact as the caller named it, and it is what every refusal
+// below is prefixed with -- doc.Plan is the plan the artifact came from, a
+// different file. Parse has already refused a document whose schema_version
+// this build does not read, but Analyze is exported, so the guard is stated
+// here too, in Parse's own words, for a caller that never went through Parse.
+func Analyze(path string, doc Document, done []string) (Graph, error) {
+	name := path
 	if strings.TrimSpace(name) == "" {
 		name = "the graph"
+	}
+	switch {
+	case doc.SchemaVersion == SchemaVersion:
+	case doc.SchemaVersion == 0:
+		return Graph{}, refuse(name, "the graph artifact carries no schema_version; this build reads version %d", SchemaVersion)
+	default:
+		return Graph{}, refuse(name, "the graph artifact is schema version %d and this build reads version %d; upgrade fugaro to read it",
+			doc.SchemaVersion, SchemaVersion)
 	}
 	doc, err := Normalize(name, doc)
 	if err != nil {
@@ -241,8 +255,8 @@ func Analyze(doc Document, done []string) (Graph, error) {
 		})
 	}
 
-	path, bottleneck := criticalPath(doc, chain)
-	g.CriticalPath = path
+	crit, bottleneck := criticalPath(doc, chain)
+	g.CriticalPath = crit
 	g.Bottleneck = bottleneck
 	return g, nil
 }
