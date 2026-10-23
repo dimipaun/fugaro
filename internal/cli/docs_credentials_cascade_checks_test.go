@@ -90,8 +90,10 @@ func TestDocsChecklistHasChecks94And95And99(t *testing.T) {
 
 	// One consistent truth about the deployed service, across the three rows: it
 	// is wired end to end in 0.10.1 (the seven names its module sets are what
-	// `fugaro credentials serve` reads, #903) but it ships dormant and refuses
-	// every call. The rows first said "the service does not serve yet" and "the
+	// `fugaro credentials serve` reads, #903, and since #951 its account holds
+	// its own two-permission database role, so a call's database reads are
+	// admitted) but it ships dormant, and no job is given its address, so
+	// nothing reaches it. The rows first said "the service does not serve yet" and "the
 	// installation module puts three names on the container", which stopped being
 	// true the moment serve was configured from its own deployment -- and a
 	// register that says both things about one service tells the owner two
@@ -99,7 +101,7 @@ func TestDocsChecklistHasChecks94And95And99(t *testing.T) {
 	for _, n := range []string{"| 94 |", "| 95 |", "| 99 |"} {
 		row := rows[n]
 		if !strings.Contains(row, "wired end to end in 0.10.1") || !strings.Contains(row, "ships dormant") {
-			t.Errorf("%s's %q row does not state the one consistent truth about the service -- wired end to end in 0.10.1 but dormant: %q", path, strings.Trim(n, "| "), row)
+			t.Errorf("%s's %q row does not state the one consistent truth about the service -- wired end to end in 0.10.1 but dormant, with no job given its address: %q", path, strings.Trim(n, "| "), row)
 		}
 		// The revision's own state is part of the same truth: the deployment
 		// configures the service now, so a revision starts and refuses every
@@ -132,11 +134,12 @@ func TestDocsChecklistHasChecks94And95And99(t *testing.T) {
 		// And the one reading all three sections carried and none of them may
 		// keep: the service is not "refusing to start" for want of configuration.
 		// Its deployment sets the seven names `fugaro credentials serve` reads
-		// (#903); what refuses every call is its missing database role, and what
-		// keeps anything from reaching it is that no job is given its address.
+		// (#903) and its account holds its own database role (#951), so a call's
+		// reads are admitted; what keeps anything from reaching it is that no job
+		// is given its address.
 		for _, notWant := range []string{"refuses to start", "refusing to start", "does not start today", "the service does not serve", "three environment names", "three names on the container", "the four facts a `credsvc.Config` needs"} {
 			if strings.Contains(sec, notWant) {
-				t.Errorf("%s's section at %q still states %q: the wiring landed (#903), and the section's not-observable claims have to rest on what is actually missing — the service's database role and the job's missing address", path, heading, notWant)
+				t.Errorf("%s's section at %q still states %q: the wiring landed (#903, and the database role with #951), and the section's not-observable claims have to rest on what is actually missing — a job with the service's address", path, heading, notWant)
 			}
 		}
 	}
@@ -258,13 +261,15 @@ func TestCheck99KeepsItsPromises(t *testing.T) {
 		"audit.Write",          // the write the issuance line and every refusal from the pairing on go through (C1.13, #902)
 		// And the two readings three reviews found false: the service IS wired
 		// end to end in 0.10.1 (the seven names its module sets are what serve
-		// reads) and the issuance line IS written on the forward path, so the
-		// check must not send a reader looking for either as missing. What is
-		// missing is a served call -- the database role its account has no grant
-		// on -- which is what the section has to name instead.
+		// reads, and since #951 its account holds its own database role, so a
+		// call's database reads are admitted) and the issuance line IS written on
+		// the forward path, so the check must not send a reader looking for
+		// either as missing. What is missing is reach -- no job is given the
+		// service's address -- which is what the section has to name instead.
 		"The service is wired end to end",
 		"**The issuance audit line on the answer path is wired; what is queued is the served call it would describe.**",
-		"is a role on the installation's database",
+		"its own custom database role `fugaroCredentialsDatabase`",
+		"no job is given its address",
 	} {
 		if !strings.Contains(sec, want) {
 			t.Errorf("Check 99's section does not carry %q: the check walks the cascade by hand, clears what it wrote, and says which of its steps the service does not reach yet", want)
@@ -275,6 +280,9 @@ func TestCheck99KeepsItsPromises(t *testing.T) {
 		"**The issuance audit line on the answer path is not wired.**",
 		"the service does not serve",
 		"refuses to start.** The installation module puts three environment names",
+		"is a role on the installation's database",
+		"the database role its account has no grant on",
+		"what is missing is the database role",
 	} {
 		if strings.Contains(sec, notWant) {
 			t.Errorf("Check 99's section still states %q: the wiring landed (#902 for the audit line, #903 for the seven names the service reads), and a section that keeps it sends the owner looking for a defect that is not there", notWant)

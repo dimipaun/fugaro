@@ -11,14 +11,17 @@
 # (C1.11), and there is no per-credential grant and no `condition` over the
 # model secrets — no secretmanager.googleapis.com/secretId filter, no
 # name-prefix fence. TestCredentialsServiceGrantsAreTheOneBundle below is what
-# keeps that true.
+# keeps that true. Its reach in the realtime database is the OTHER thing this
+# file grants, and it is granted the same way — one unconditioned binding, to
+# the service's own account — with the permissions spelled out at the role.
 
 locals {
   # The whole file is gated on the one opt-in: null creates nothing, and a
-  # single boolean keeps the four resources of this file in step (the account,
-  # the bundle container, the accessor grant on it, and the service —
-  # TestCredentialsServiceResourcesAreCounted is what holds this number and the
-  # file's own resources together, in both directions).
+  # single boolean keeps the six resources of this file in step (the account,
+  # the bundle container, the accessor grant on it, the database role and its
+  # binding, and the service — TestCredentialsServiceResourcesAreCounted is
+  # what holds this number and the file's own resources together, in both
+  # directions).
   credentials_service_on = var.credentials_service != null
 
   # The audience for the first apply of an installation whose tfvars carry no
@@ -119,6 +122,103 @@ resource "google_secret_manager_secret_iam_member" "credentials_bundle" {
   secret_id = google_secret_manager_secret.credentials_bundle[0].secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = google_service_account.credentials[0].member
+}
+
+# The service's reach in the realtime database, and why it is a custom role
+# rather than one of the two predefined ones.
+#
+# What the service does there (internal/credsvc, internal/creds,
+# internal/projectpolicy, internal/budget). It READS the kill switches
+# (config/kill/global, config/kill/repos/$slug), the project policy
+# (config/policy/shared, config/policy/repos/$slug), a run's outcome node
+# (outcomes/$day/$slug/$run — how it decides a caller is a real run) and the
+# credential state it did not write itself (creds/, whose marks, current nodes,
+# run leases and probe leases every other revision of the service also reads).
+# It WRITES the credential state it owns — creds/marks/$name,
+# creds/current/$slug/$run, creds/leases/... and creds/probes/$name — by
+# compare-and-set, and deletes the leases it finds lapsed. Nothing else in the
+# installation writes any of those nodes (the repository jobs read their own
+# node through the service, never directly).
+#
+# Why these two permissions are the narrowest expression of that. Realtime
+# Database IAM has NO path-level scope: a binding is per instance and reaches
+# the whole database, so what the role says is which OPERATIONS the account may
+# make, and the two predefined roles are the only other choice:
+#
+#   firebasedatabase.instances.get    — read any node of the instance. The
+#     only read permission there is: get is both the instance read and the
+#     data read (modules/firebase/iam.tf grants roles/firebasedatabase.viewer,
+#     which is exactly get+list, for "read the database").
+#   firebasedatabase.instances.update — write any node of the instance. The
+#     only write permission: RTDB has no separate create/delete of a node —
+#     a write is an update — and update is what roles/firebasedatabase.admin
+#     carries for the budget admins who "write /config over IAM".
+#
+# roles/firebasedatabase.viewer is too narrow: it cannot write creds/ at all,
+# so every run would be refused. roles/firebasedatabase.admin is broader than
+# the service needs in the one direction that matters — it adds
+# instances.list, and the instance LIFECYCLE the service never touches:
+# firebasedatabase.instances.create, delete, disable, reenable and undelete
+# (deploy/terraform/testdata/custom-role-permissions.txt is the whole set
+# Google allows in a custom role, and those five are the difference). So the
+# service would hold the ability to disable or DELETE the installation's
+# database, which is the opposite of what a component that holds every model
+# credential should be able to do to the installation.
+#
+# The role is declared in the FIREBASE project, not in var.project, and the
+# distinction is a two-project installation's whole point: the account is
+# created in the installation's project (the resource above), but the database
+# belongs to the Firebase root's project (D6), which is
+# var.credentials_service.firebase_project. A binding of a role declared in
+# one project to a member of another is what cross-project IAM is, and it is
+# the shape the existing history account's database grant has. The role is a
+# plain role_id with no condition: a custom role carries no scope of its own,
+# and this file's one condition stays the account's precondition.
+#
+# TestCredentialsServiceDatabaseRoleIsTheTwoDataPermissions is what holds every
+# part of this comment together: the exact two permissions and no third, the
+# Firebase project, the account as the only member, and no condition.
+resource "google_project_iam_custom_role" "credentials_database" {
+  count = local.credentials_service_on ? 1 : 0
+
+  project = var.credentials_service.firebase_project
+  role_id = "fugaroCredentialsDatabase"
+  title   = "Fugaro credentials service (database data only)"
+  permissions = [
+    "firebasedatabase.instances.get",   # read: the kill switches, the policy, a run's outcome node, and the credential state another revision wrote
+    "firebasedatabase.instances.update", # write: the service's own creds/ nodes, by compare-and-set
+  ]
+}
+
+# ... and the one binding, on that role, to the service's own account. No
+# condition: RTDB cannot express a path prefix in IAM, so a condition here
+# would be a fence that looks like one and is not — the same reasoning Q6 used
+# to replace the name-prefix fence in Secret Manager. No second member: no
+# operator and no job account reads the database through this role, and in
+# particular nobody is granted actAs on the account (the rule at the account
+# above).
+#
+# The role is spelled LITERALLY, not read from the role resource's own name
+# attribute — the rule deployer.tf's nine bindings state, and here it is not
+# about a condition but about what a plan can be read as. google_project_iam_
+# custom_role's name is computed (the provider fills it during apply), so
+# `google_project_iam_custom_role.credentials_database[0].name` reaches the
+# plan as an UNKNOWN role, and internal/infra/tf's cover then cannot say which
+# role this grant is: it accepts any custom role of the plan that some row
+# admits for this account (checkGrant's unknown-role arm). Writing the path out
+# keeps the role a plain plan-time string, so the confirmation that covers this
+# apply covers exactly firebasedatabase.instances.get+update on the Firebase
+# project, and a widened role is refused rather than invisible.
+# var.credentials_service.firebase_project is known at plan time (the variable's
+# validation), so the literal is.
+resource "google_project_iam_member" "credentials_database" {
+  count = local.credentials_service_on ? 1 : 0
+
+  project = var.credentials_service.firebase_project
+  role    = "projects/${var.credentials_service.firebase_project}/roles/fugaroCredentialsDatabase"
+  member  = google_service_account.credentials[0].member
+
+  depends_on = [google_project_iam_custom_role.credentials_database]
 }
 
 # The service itself. It requires IAM: nothing here grants roles/run.invoker to

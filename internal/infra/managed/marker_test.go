@@ -1639,6 +1639,19 @@ var runAccountGrants = setOf(
 	// installation's own (it is not the runs bucket and not a prefix the
 	// deployer's fence admits).
 	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=google_secret_manager_secret.credentials_bundle[0].secret_id | google_service_account.credentials[0].member | for_each= | perms=`,
+	// Reviewed for 0.10.1: the credentials service's own account, on its own
+	// custom role in the Firebase project the database lives in
+	// (modules/installation/credentials.tf, D6's cross-project grant: the
+	// account is the installation project's, the role is the database's
+	// project's). The role's whole permission list is the database's two data
+	// permissions — get and update, read and write of database *nodes* — with
+	// no instance lifecycle (create/delete/disable/reenable/undelete): no
+	// storage permission at all, nothing that grants itself a role or acts as
+	// another account, and a target that is neither the runs bucket nor the
+	// installation project. It is bound to that one account and to no other,
+	// and the member is the ID this scan already knows from the bundle
+	// container's grant above.
+	`google_project_iam_member | "projects/${var.credentials_service.firebase_project}/roles/fugaroCredentialsDatabase" | project=var.credentials_service.firebase_project | google_service_account.credentials[0].member | for_each= | perms=firebasedatabase.instances.get,firebasedatabase.instances.update`,
 	// Reviewed for C1.18: each job's account may invoke the credentials
 	// service. roles/run.invoker carries no storage permission at all — it is
 	// the right to send a request to a Cloud Run service — and the target is

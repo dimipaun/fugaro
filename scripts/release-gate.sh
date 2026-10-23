@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# The gate every publishing workflow runs first (release.yml and images.yml):
-# the tag is a strict vX.Y.Z, its commit is reachable from origin/main, and
-# every GitHub Actions check in `names` below succeeded on that commit.
+# The gate every publishing workflow runs first (release.yml, images.yml,
+# console-release.yml, mobile-release.yml): the tag is a strict vX.Y.Z -- or
+# the mobile app's strict mobile-vX.Y.Z, the one stream this repository's tags
+# carry a prefix on (docs/release.md, "Mobile releases") -- its commit is
+# reachable from origin/main, and every GitHub Actions check in `names` below
+# succeeded on that commit.
 # Needs: a full-history checkout, GH_TOKEN (checks: read), GITHUB_SHA,
-# GITHUB_REPOSITORY. Usage: scripts/release-gate.sh vX.Y.Z
+# GITHUB_REPOSITORY. Usage: scripts/release-gate.sh vX.Y.Z|mobile-vX.Y.Z
 # Optional: GATE_WAIT_SECONDS=N (default 0: no waiting, as in the workflows)
 # polls every GATE_POLL_SECONDS (default 30) while a check is missing, still
 # running or cancelled, so scripts/release.sh can run it right after a merge,
@@ -13,8 +16,16 @@
 # this applies to the tag workflows too, with the same rules.
 set -eu
 tag=${1:-}
-if ! [[ $tag =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-  echo "::error::tag '$tag' is not a strict vX.Y.Z release tag" >&2
+# The version under the stream's own prefix, and the whole tag when there is
+# none: the mobile app is its own artifact with its own tag (D125), and its
+# `mobile-` prefix is stripped here so that both streams are held to the one
+# shape below. A tag that is not one of the two -- `mobile-1.0.0`, which carries
+# no `v`, or `mobile-v01.0.0`, whose version is not strict -- is refused by the
+# same check as `vtest`, and nothing else about the gate changes: the required
+# checks are the same set, read from the same commit.
+version=${tag#mobile-}
+if ! [[ $version =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+  echo "::error::tag '$tag' is not a strict vX.Y.Z or mobile-vX.Y.Z release tag" >&2
   exit 1
 fi
 git fetch --quiet origin main

@@ -1422,6 +1422,15 @@ func TestStrictSemVerRejectsMultiLine(t *testing.T) {
 		{"bump-plugin-version.sh", []string{"01.0.0"}, 2},
 		{"release-gate.sh", []string{"v1.0.0\nx"}, 1},
 		{"release-gate.sh", []string{"v01.0.0"}, 1},
+		// The mobile app's stream under the same rule: the prefix is stripped
+		// and the version under it is held to the strict shape, so a tag that
+		// carries the prefix without a strict version -- one with no `v`, one
+		// with a leading zero, one with a newline smuggled into it -- is
+		// refused exactly as the CLI's own malformed tags are.
+		{"release-gate.sh", []string{"mobile-1.0.0"}, 1},
+		{"release-gate.sh", []string{"mobile-v01.0.0"}, 1},
+		{"release-gate.sh", []string{"mobile-v1.0.0\nx"}, 1},
+		{"release-gate.sh", []string{"mobile-vtest"}, 1},
 	} {
 		cmd := exec.Command("bash", append([]string{filepath.Join(root, "scripts", c.script)}, c.args...)...)
 		cmd.Dir = root
@@ -1430,6 +1439,73 @@ func TestStrictSemVerRejectsMultiLine(t *testing.T) {
 			t.Errorf("%s %q: want exit %d, got %v\n%s", c.script, c.args, c.code, err, out)
 		}
 	}
+}
+
+// TestReleaseGateAcceptsTheMobileStreamsTag: the mobile app releases on its own
+// tag (`mobile-vX.Y.Z`, docs/release.md's "Mobile releases"), and the gate is
+// the one script every publishing workflow in this repository runs. It strips
+// that single prefix and holds the version under it to the same strict vX.Y.Z
+// shape, so the app's release is gated exactly as the CLI's is -- and the tag it
+// names in the log is the tag the run was started from, not a rewritten one.
+func TestReleaseGateAcceptsTheMobileStreamsTag(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := newGHState(t, r, greenChecks())
+	sha := strings.TrimSpace(testutil.Git(t, r.local, "rev-parse", "HEAD"))
+
+	accepted := runGate(t, r, g, sha, "mobile-v1.0.0")
+	accepted.requireSuccess(t)
+	// The log names the mobile tag: a run that passed under a rewritten `v1.0.0`
+	// would read as a CLI release in the actions log, which is the confusion the
+	// two streams exist to end.
+	if !strings.Contains(accepted.out, "gate passed for mobile-v1.0.0") {
+		t.Errorf("the gate did not report the mobile tag it was given:\n%s", accepted.out)
+	}
+
+	// And the CLI's own tag is untouched by the change: the same commit passes
+	// the same gate under `v1.0.0`, which is what every other release workflow
+	// passes it.
+	runGate(t, r, g, sha, "v1.0.0").requireSuccess(t)
+
+	// Every refused shape is refused by the *shape* check and not later: an
+	// off-shape tag must not reach the fetch, the checks API or a store, and the
+	// message has to name the two shapes the gate accepts. The call count is read
+	// around the loop, so a refusal that got as far as the API is visible.
+	apiCalls := countLog(t, g, "api")
+	for _, tag := range []string{"mobile-1.0.0", "mobile-v01.0.0", "mobile-v1.0", "mobile-v1.0.0-rc1", "mobile-vtest", "mobile-", "console-v1.0.0"} {
+		res := runGate(t, r, g, sha, tag)
+		if res.err == nil {
+			t.Errorf("the gate accepted %q: only a strict vX.Y.Z and the app's strict mobile-vX.Y.Z name a release, and a tag of any other shape has no version to gate", tag)
+			continue
+		}
+		if !strings.Contains(res.out, "not a strict vX.Y.Z or mobile-vX.Y.Z release tag") {
+			t.Errorf("the gate refused %q for the wrong reason -- it must be the shape check, before any API call:\n%s", tag, res.out)
+		}
+	}
+	if after := countLog(t, g, "api"); after != apiCalls {
+		t.Errorf("the refused tags made %d gh api call(s): the shape check comes before the checks API is read, so a tag that is not a release of either stream reaches nothing", after-apiCalls)
+	}
+}
+
+// runGate runs scripts/release-gate.sh from r.local against the commit sha, with
+// the fake gh on PATH and g's checks: the gate reads the tag's check-runs, so
+// its answer depends on the same state a release.sh run would see.
+func runGate(t *testing.T, r *releaseRepo, g *ghState, sha, tag string) runResult {
+	t.Helper()
+	bin := fakeBinDir(t)
+	cmd := exec.Command("bash", filepath.Join(r.local, "scripts", "release-gate.sh"), tag)
+	cmd.Dir = r.local
+	cmd.Env = append(os.Environ(),
+		"PATH="+bin+":"+os.Getenv("PATH"),
+		"GITHUB_SHA="+sha,
+		"GITHUB_REPOSITORY="+repoSlug(r.bare),
+		"GATE_WAIT_SECONDS=0",
+		"GATE_POLL_SECONDS=1",
+	)
+	cmd.Env = append(cmd.Env, g.env...)
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	err := cmd.Run()
+	return runResult{out: out.String(), err: err}
 }
 
 // TestLatestTagIgnoresNonStrictTags: -rc and four-part tags never count as
