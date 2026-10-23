@@ -244,6 +244,9 @@ func TestARunWithBothBoundsStillRefusesItsOwnWorkflowFile(t *testing.T) {
 			t.Fatalf("reason = %q, and it blames the run for %s, which a base branch's own commit added", rec.Reason, other)
 		}
 	}
+	if marker == "" {
+		t.Fatal("the refusing hook was never installed, so no push could have been seen")
+	}
 	if exists(marker) || remoteHasBranch(t, h) {
 		t.Fatal("a push was attempted")
 	}
