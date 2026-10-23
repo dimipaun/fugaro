@@ -40,7 +40,7 @@
 // of its argv, cwd and environment, which is what makes these tests about what a
 // real machine would see rather than about the console's self-consistency.
 
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
@@ -100,6 +100,7 @@ import type {
   SpawnedChildLike,
   SpawnOptionsLike,
   Timers,
+  SidecarEnd,
   WslRoute,
 } from '../../src/main/spawn'
 import { createSpawnLog, disabledSpawnLog } from '../../src/main/spawnlog'
@@ -3496,7 +3497,12 @@ describe('the wrapper into a distribution', () => {
     // applied on one route and not the other, or a `StringDecoder` lost to the
     // wrapper's shell, fails here.
     const lines = ['{"kind":"live","day":"2026-01-01"}\r', 'no budget backend: showing run records only', '{"kind":"live","day":"2026-01-01","note":"héllo ✓"}']
-    const scenario = { commands: { watch: { lines, delayMs: 5, hold: true } } }
+    // The child writes its lines and then **refuses** (status 1): the feed then
+    // settles on the child's own end on both routes, which is a fact about the
+    // child rather than a moment a test picked -- and the sentence it ends with
+    // is compared too, so the wrapper's own marker line is asserted absent
+    // (T-F1) as well as asserted equal.
+    const scenario = { commands: { watch: { lines, delayMs: 5, code: 1 } } }
 
     const hostDirectory = freshDirectory()
     const host = installStub(hostDirectory, scenario)
@@ -3510,24 +3516,27 @@ describe('the wrapper into a distribution', () => {
     const wsl = installWslStub(join(directory, 'windows'), { distros: TWO, scenario })
     const wslPlan = wslPlanIn(wsl, 'live.watch')
 
-    const seen = async (plan: SpawnPlan): Promise<{ frames: unknown[]; notices: string[] }> => {
+    const seen = async (plan: SpawnPlan): Promise<{ frames: unknown[]; notices: string[]; end: SidecarEnd | null }> => {
       const frames: unknown[] = []
       const notices: string[] = []
-      const sidecar = startSidecar(plan, {
+      let end: SidecarEnd | null = null
+      startSidecar(plan, {
         onFrame: (frame) => frames.push(frame),
         onNotice: (notice) => notices.push(notice.text),
         onRestart: () => undefined,
-        onEnded: () => undefined,
+        onEnded: (ended) => {
+          end = ended
+        },
       })
-      await waitFor(() => frames.length >= 2 && notices.length >= 1)
-      await sidecar.stop()
-      return { frames, notices }
+      await waitFor(() => end !== null)
+      return { frames, notices, end }
     }
 
     const fromHost = await seen(hostPlan)
     const fromWsl = await seen(wslPlan)
     expect(fromWsl.frames).toEqual(fromHost.frames)
     expect(fromWsl.notices).toEqual(fromHost.notices)
+    expect(fromWsl.end).toEqual(fromHost.end)
     expect(fromHost.notices).toHaveLength(1)
     // The document carrying the multi-byte character arrived whole on both
     // routes: a decode that lost a byte would have dropped it as a notice.
@@ -3603,6 +3612,76 @@ describe('the wrapper into a distribution', () => {
     // Nothing the word could have done happened: the report is the child's own
     // account of the argv it was handed.
     expect(child.argv[0]).toBe('budget')
+  })
+
+  it('sends the stop as an argv array with shell false, and refuses a pid file it cannot trust', async () => {
+    // The stop is spawned like every other child (rule 1): the distribution is
+    // its own argv word, `--` separates it from the distribution's, and
+    // `shell: false` is what keeps a word from being re-parsed. A pid file that
+    // does not hold digits yields **no** stop -- `sh -c` is handed a command
+    // line, so an unvalidated value there is the injection surface `shellQuote`
+    // closes for the CLI's argv.
+    const directory = freshDirectory()
+    const factory = recordingSpawner()
+    const plan = planFor('cli.version', {}, {
+      target: { project: PROJECT },
+      binaryPath: '',
+      directory,
+      appEnv: {},
+      wsl: { distro: 'Ubuntu', directory, executable: '/usr/bin/wsl.exe' },
+    })
+    const pidFile = plan.wrapper?.pidFile
+    if (pidFile === undefined || pidFile === null) throw new Error('the plan named no pid file')
+
+    const timers = manualTimers()
+    const pending = runToCompletion(plan, { spawner: factory, timers, timeoutMs: 100, shutdownGraceMs: 50 })
+    // Written **after** the call, which is where the wrapper's shell writes it:
+    // the console clears its own file before the spawn, so a stale pid from an
+    // earlier process with the same pid can never be read as this child's.
+    writeFileSync(pidFile, '4321\n')
+    const refusal = pending.then(
+      () => {
+        throw new Error('the read was expected to be refused')
+      },
+      (error: SpawnTimeout) => error,
+    )
+    timers.fire()
+    expect((await refusal).message).not.toContain('may still be running')
+    timers.fire()
+
+    expect(factory.calls).toHaveLength(2)
+    const stop = factory.calls[1]
+    expect(stop?.command).toBe('/usr/bin/wsl.exe')
+    expect(stop?.args).toEqual(['-d', 'Ubuntu', '--', 'sh', '-c', 'kill -TERM 4321'])
+    expect(stop?.options.shell).toBe(false)
+    expect(stop?.options.cwd).toBe(directory)
+    // The console's own file is gone once the read is over.
+    expect(existsSync(pidFile)).toBe(false)
+
+    // A pid file that says something else is not a pid: no stop at all.
+    const other = freshDirectory()
+    const second = recordingSpawner()
+    const badPlan = planFor('cli.version', {}, {
+      target: { project: PROJECT },
+      binaryPath: '',
+      directory: other,
+      appEnv: {},
+      wsl: { distro: 'Ubuntu', directory: other, executable: '/usr/bin/wsl.exe' },
+    })
+    const badFile = badPlan.wrapper?.pidFile ?? ''
+    const secondTimers = manualTimers()
+    const secondPending = runToCompletion(badPlan, { spawner: second, timers: secondTimers, timeoutMs: 100, shutdownGraceMs: 50 })
+    writeFileSync(badFile, '4321; rm -rf /\n')
+    const secondRefusal = secondPending.then(
+      () => {
+        throw new Error('the read was expected to be refused')
+      },
+      (error: SpawnTimeout) => error,
+    )
+    secondTimers.fire()
+    expect((await secondRefusal).message).toContain('may still be running')
+    secondTimers.fire()
+    expect(second.calls).toHaveLength(1)
   })
 
   it('names the stop’s own words for wsl.exe, never for the CLI', () => {

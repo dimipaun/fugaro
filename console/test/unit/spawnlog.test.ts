@@ -488,4 +488,39 @@ describe('the spawn plan the log records', () => {
       PROJECT,
     ])
   })
+
+  it('records the shell that carried the CLI, because that is what ran', () => {
+    // T-F3/T-F4 of docs/console-windows/implementation-plan.md. On the WSL route
+    // the program the OS starts is `wsl.exe` and the program *inside* the
+    // distribution is a `sh -c` script (D6(a)): the log is the operator's record
+    // of what ran (D1), so it says the shell, and the CLI's own words are inside
+    // the script's `exec` line -- quoted, which is how they reach the
+    // distribution. A log that printed the CLI's argv beside the script would
+    // describe a command line that never existed.
+    const wsl = planFor('budget.show', {}, {
+      target: { project: PROJECT },
+      binaryPath: '',
+      directory: '/Users/owner/AppData/Local/Temp/fugaro-console/cwd',
+      appEnv: {},
+      wsl: {
+        distro: 'Ubuntu',
+        directory: '/home/dimi/src/fugaro',
+        executable: 'C:\\Windows\\System32\\wsl.exe',
+      },
+    })
+    const line = [...spawnedArgv(wsl)]
+    expect(line.slice(0, 6)).toEqual([
+      'C:\\Windows\\System32\\wsl.exe',
+      '-d',
+      'Ubuntu',
+      '--cd',
+      '/home/dimi/src/fugaro',
+      '--',
+    ])
+    expect(line.slice(6, 8)).toEqual(['sh', '-c'])
+    expect(line).toHaveLength(9)
+    expect(line[8]).toContain(`exec 'fugaro' 'budget' 'show' '--json' '--project' '${PROJECT}'`)
+    // The CLI's words are not logged beside the script as well: they are in it.
+    expect(line.filter((word) => word === 'budget')).toHaveLength(0)
+  })
 })

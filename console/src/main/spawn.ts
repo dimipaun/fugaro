@@ -2985,7 +2985,10 @@ export function startSidecar(
       child = null
       const decision = restartDecision({ code, signal, stopped, attempt, backoff: plan.backoff })
       if (!decision.restart) {
-        finish({ reason: decision.reason, code, signal, sentence: cliSentence(stderr), spawns })
+        // The wrapper's own line is removed here as it is in `runToCompletion`
+        // (T-F1): it is the console's word about its own wrapper, and the
+        // sentence a screen shows is the CLI's.
+        finish({ reason: decision.reason, code, signal, sentence: cliSentence(withoutWrapperMarker(stderr)), spawns })
         return
       }
       attempt = decision.attempt
