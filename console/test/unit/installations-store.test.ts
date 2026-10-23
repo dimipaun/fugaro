@@ -21,7 +21,7 @@
 //     three of them on every platform the console ships on.
 
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, readdirSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -57,11 +57,21 @@ import type { InstallationFs, StoredInstallation } from '../../src/main/installa
 // that returns the sentence it is asserting.
 import { verifyCandidate } from '../../src/source/cli'
 import { installStub } from './stub'
+import { installWslStub } from './wslstub'
 import { classifyCliVersion } from '../../src/shared/version'
 import { privateWorkingDirectory } from '../../src/main/spawn'
 import { SPAWN_LOG_ENV } from '../../src/main/spawnlog'
 
 const HOME = '/Users/owner'
+
+/** only is the one entry a list is expected to hold, so "the fake recorded
+ * nothing" fails here rather than making every later assertion vacuous. */
+function only<T>(entries: readonly T[]): T {
+  expect(entries).toHaveLength(1)
+  const [entry] = entries
+  if (entry === undefined) throw new Error('the fake recorded nothing')
+  return entry
+}
 
 function freshDirectory(): string {
   return mkdtempSync(join(tmpdir(), 'fugaro-installations-'))
@@ -568,6 +578,83 @@ describe('validation', () => {
       ['version', 'acme', privateDirectory],
       ['version', 'acme', privateDirectory],
     ])
+  })
+
+  it('accepts a CLI that is inside a distribution, and never asks the host about it', async () => {
+    // T-C6 of docs/console-windows/implementation-plan.md, and F4's other half.
+    // Under a `distro` the installation's `binaryPath` and `checkout` are Linux
+    // spellings **inside** the distribution: the host cannot `stat` either of
+    // them, so asking would refuse an installation that is perfectly good. What
+    // answers instead is the distribution, through the same `version` probe
+    // (T-C5) -- and the recording filesystem below proves the host was not asked.
+    const root = freshDirectory()
+    const host = join(root, 'windows')
+    const wsl = installWslStub(host, {
+      distros: { list: 'Ubuntu\r\n', status: 'Default Distribution: Ubuntu\r\n' },
+      scenario: { commands: { version: { stdout: '1.4.2\n' } } },
+    })
+    const linuxBinary = '/home/dimi/.local/bin/fugaro'
+    // A directory that exists, because the *distribution* starts the CLI in it
+    // (the fake models that with a real child). What matters for this case is
+    // that the host never asks about it, not that it is unreachable from here.
+    const linuxCheckout = join(freshDirectory(), 'src')
+    mkdirSync(linuxCheckout, { recursive: true })
+    const fs = recordingFs()
+    const result = await validateInstallation(
+      { project: 'fugaro', distro: 'Ubuntu', binaryPath: linuxBinary, checkout: linuxCheckout },
+      { appEnv: {}, fs, wslPath: wsl.binary, verify },
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // The Linux spellings are carried through as they were given, and the
+    // version came from inside the distribution.
+    expect(result.value.installation.binaryPath).toBe(linuxBinary)
+    expect(result.value.installation.checkout).toBe(linuxCheckout)
+    expect(result.value.compatibility.cliVersion).toBe('1.4.2')
+    // No `stat`, no `lstat`, no read: the host was never asked about a path it
+    // cannot see. This is the assertion the mutation -- one `fs.stat(checkout)`
+    // put back for every route -- fails.
+    expect(fs.calls).toEqual([])
+    // And the CLI really did run inside the distribution, in the directory the
+    // checkout names: `--cd` is the Linux spelling, which the fake refuses to
+    // see spelled the Windows way.
+    const spawn = only(wsl.reports().filter((report) => report.kind === 'spawn'))
+    expect(spawn.distro).toBe('Ubuntu')
+    expect(spawn.cd).toBe(linuxCheckout)
+    expect(spawn.argv).toEqual(['-d', 'Ubuntu', '--cd', linuxCheckout, '--', 'fugaro', 'version'])
+    // `wsl.exe` itself was started in a **host** directory, which the checkout
+    // (a Linux path) is not.
+    expect(spawn.cwd).toBe(privateWorkingDirectory())
+
+    // And a checkout that is *not* there is the distribution's refusal, in
+    // `wsl.exe`'s own words -- never the host's "is not a directory", because
+    // the host never looked.
+    const gone = await validateInstallation(
+      { project: 'fugaro', distro: 'Ubuntu', binaryPath: linuxBinary, checkout: '/home/dimi/src/gone' },
+      { appEnv: {}, fs, wslPath: wsl.binary, verify },
+    )
+    expect(gone.ok).toBe(false)
+    if (!gone.ok) {
+      expect(gone.reason).not.toContain('is not a directory')
+      expect(gone.reason).toContain('could not start the child')
+    }
+    expect(fs.calls).toEqual([])
+  })
+
+  it('still refuses that same path when the installation names no distribution', async () => {
+    // The other half of T-C6's red step, and the half that must keep passing: on
+    // the host route a path that cannot be `stat`ed is not a binary, and rule 4
+    // carries on to the well-known locations. With those emptied -- what a
+    // machine with no `fugaro` looks like -- the refusal names every candidate.
+    const result = await validateInstallation(
+      { project: 'fugaro', binaryPath: '/home/dimi/.local/bin/fugaro' },
+      { verify, prefixes: [] },
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.reason).toContain('/home/dimi/.local/bin/fugaro')
+      expect(result.reason).toContain('no fugaro')
+    }
   })
 
   it('stores a reduced-band CLI and marks it reduced', async () => {
