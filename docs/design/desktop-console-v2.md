@@ -213,6 +213,8 @@ The planning and routing skills under `plugin/skills/` are `parallelism`, `routi
 
 The lint budgets are in `plugin/skills_lint_test.go`: `maxSkillLines` 400 and `maxSkillBytes` 24576 for a `SKILL.md`, `maxReferenceLines` 300 and `maxReferenceBytes` 16384 for any other skill file, plus frontmatter rules (`name`, a `description` with "use when", 40–1024 characters). So a new skill costs a new directory, a new frontmatter, and a second place where fan-out advice lives and drifts. See **D36**.
 
+**Built, 2026-10-23 (V2.8.1).** The `parallelism` skill now carries the graph's output format in its own words: where the artifact sits (`<plan>.graph.json` beside the plan), a node's **Files footprint** (`footprint.paths`, doublestar globs, `prediction` always `true`, `[]` for "touches nothing"), an edge as the **Depends-on** line (`task`, `needs` and the required `reason`), the fields that may be `null` (`run`, `version`), and what `fugaro plan graph --json` prints back and refuses. It went into `SKILL.md` itself, which the lint's own size rule shows is far inside its budget, so **D36's reference file was not needed** — one file, one frontmatter, and no second spelling of the schema.
+
 **F32 — "cut dependencies with small interfaces/contracts" is already how this repo plans, by hand. (Exists)**
 
 The console plan's own "cross-task dependencies" section and the project-centric plan's phase ordering are exactly this technique, performed by a person writing prose. The skill's contribution is to make the *output* machine-readable, not to invent the technique.

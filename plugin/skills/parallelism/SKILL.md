@@ -35,6 +35,35 @@ Keep it in one run when pieces edit the same files, share a new interface, or th
 - Prefer slices that merge in any order. If one must come first, say so and launch it first.
 - Keep each task small enough to review in one sitting.
 
+## Write the plan's graph beside it
+
+A plan you write as a file can carry its tasks as a graph the CLI reads. Write it beside the plan: `docs/plans/foo.md` is described by `docs/plans/foo.graph.json`, and `fugaro plan graph --json` prints that document — a person can read the same file.
+
+```json
+{
+  "schema_version": 1,
+  "plan": "docs/plans/foo.md",
+  "nodes": [
+    {"id": "T1", "title": "the parser", "run": null, "version": null,
+     "footprint": {"prediction": true, "paths": ["internal/parse/**"]}
+    },
+    {"id": "T2", "title": "the read", "run": null, "version": null,
+     "footprint": {"prediction": true, "paths": ["internal/cli/read.go"]}
+    }
+  ],
+  "edges": [
+    {"task": "T2", "needs": "T1", "reason": "the read prints what the parser returns"}
+  ]
+}
+```
+
+- **Depends-on** is an edge: `task` waits for `needs`, and `reason` says why. Both must name a node in the document, and a cycle is refused rather than drawn.
+- **Files footprint** is the node's `footprint.paths`: the paths you expect the task to touch, as doublestar globs (`internal/**`, `docs/*.md`), the same semantics this repository's own checks use. `[]` means the task predicts it touches nothing — not the same as not saying.
+- The footprint is a **prediction** and `prediction` is always `true`: what a run really changed is the run's own record, never this. Two tasks whose paths can match the same file are the conflict to split apart before launching.
+- `run` is the run the task belongs to once one is launched, `null` before that; `version` is the release it ships in, `null` when the plan does not say.
+
+`fugaro plan graph --json` prints the document back, validated; without `--json` it prints a table of ID, TITLE, VERSION, RUN, NEEDS and FOOTPRINT, every footprint labelled `predicted:`. A refused graph — another schema version, an unknown field, a missing reason, a malformed glob, a cycle — exits non-zero and prints nothing.
+
 ## A batch onto one long-lived branch
 
 When the pieces all land on one integration branch whose own `fugaro.yaml` still names main, every run's review pays for that branch's divergence from main, so a batch of fifteen onto a branch far ahead of main reads that distance fifteen times. Merge main into the branch before the batch so it starts from as little divergence as possible, and launch each run with `--ref BRANCH` (the `working` skill's long-lived-branch section; a branch whose file names itself gets its pull requests against the branch, and its reviews read only the change itself).
