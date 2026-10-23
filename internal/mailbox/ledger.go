@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -303,11 +304,37 @@ type LedgerOptions struct {
 	BeforeRename func(tmpPath string) error
 }
 
-// maxLedgerBytes bounds how much of a ledger file OpenLedger reads. A full
-// ledger is at most MaxMaxSeen records of three short fields — well under a
-// megabyte — so anything past this is not a ledger, and reading it all into
-// memory first would be the hostile input's choice rather than this package's.
-const maxLedgerBytes = 4 << 20 // 4 MiB
+// maxLedgerRecordBytes bounds one record **as this package writes it**: the five
+// fields in the widest spelling the ledger can hold — both strings at the
+// schema's bounds, `kind` and `status` at their longest words, `at` as wide as an
+// int64 can be rather than as TimeMax — plus the comma that separates it from the
+// next. A code unit of either string is at most three bytes of JSON: the two
+// validators refuse control characters and U+2028/U+2029, which are the only ones
+// an encoder escapes to six (`\uXXXX`), and the widest unescaped character
+// (U+4E00) is three bytes of UTF-8.
+const maxLedgerRecordBytes = len(`{"sender":"","id":"","at":-9223372036854775808,"kind":"command","status":"accepted"},`) + 3*SenderMax + 3*IDMax
+
+// maxLedgerHeaderBytes bounds the document's own fields, `at` spelled as wide as
+// an int64 can be a second time.
+const maxLedgerHeaderBytes = len(`{"now":-9223372036854775808,"evictedThrough":-9223372036854775808,"seen":[]}`)
+
+// maxLedgerBytes bounds how much of a ledger file OpenLedger reads, and it is
+// **derived from what this package can write** rather than chosen: a ledger at
+// the module's own largest cap (MaxMaxSeen) holding the largest records the
+// schema allows, plus the header.
+//
+// That direction is the whole point. The reader is fail-closed — a file it
+// refuses is a command that will not start, and the operator has to delete the
+// state by hand, which is the dedupe-memory loss this file's header exists to
+// prevent — so a bound smaller than a ledger `commit` can legally produce would
+// make this package write files it then refuses to read. It used to be a chosen
+// 4 MiB, which was smaller than a legal ledger at MaxMaxSeen (100_000 records of
+// a few hundred bytes); TestLedgerAtTheHighestCapRoundTrips is that regression.
+//
+// A hostile file past the bound is still refused from its size without being
+// read, so the bound is also what a file must exceed to get this process to
+// allocate for it.
+const maxLedgerBytes = maxLedgerHeaderBytes + maxLedgerRecordBytes*MaxMaxSeen
 
 // tmpPattern is the temporary file's name inside the destination directory: the
 // rename that makes the write atomic is only atomic within one filesystem, so
@@ -403,9 +430,11 @@ func OpenLedger(o LedgerOptions) (*Ledger, error) {
 
 	l := &Ledger{path: o.Path, opts: o}
 	// The size is read before the file is: a ledger is at most MaxMaxSeen
-	// records of three short fields, so a file past the bound is not a ledger,
-	// and reading one all the way in first would be the hostile input's choice
-	// rather than this package's (`acks.go` bounds its own the same way).
+	// records of at most maxLedgerRecordBytes, so a file past maxLedgerBytes is
+	// not a ledger this package wrote, and reading one all the way in first
+	// would be the hostile input's choice rather than this package's
+	// (`acks.go` bounds its own the same way). See maxLedgerBytes for why the
+	// bound is derived from the writer rather than chosen.
 	info, err := os.Stat(o.Path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
@@ -413,7 +442,7 @@ func OpenLedger(o LedgerOptions) (*Ledger, error) {
 		return l, nil
 	case err != nil:
 		return nil, fmt.Errorf("mailbox: reading the ledger at %s: %w", o.Path, cacheDir(err))
-	case info.Size() > maxLedgerBytes:
+	case info.Size() > int64(maxLedgerBytes):
 		return nil, refuse(CodeInvalidLedger, "file")
 	}
 	data, err := os.ReadFile(o.Path)
@@ -824,26 +853,79 @@ func refusalFor(kind string) Code {
 }
 
 // pairKey is the ledger's key for a delivery: `(sender, id)`, and not the id
-// alone. The length prefix is the module's own spelling, and it is what keeps
-// one pair from colliding with another ("a" + "bc" against "ab" + "c").
+// alone. The length prefix is the module's own spelling — `sender.length`, the
+// code-unit length, not this string's byte length — and what it is for is that
+// one pair cannot collide with another ("a" + "bc" against "ab" + "c").
 func pairKey(sender, id string) string {
-	return fmt.Sprintf("%d:%s%s", len(sender), sender, id)
+	return fmt.Sprintf("%d:%s%s", utf16Len(sender), sender, id)
 }
 
-// entryLess is the module's canonical order: `at`, then `sender`, then `id`,
-// compared by code point (which is byte order, the order `sortedKeys` uses in
-// message.go). `at` first because it is the order the mailbox would have
-// learned the messages in had the network been kind; the other two only to make
-// the order total, so two messages with one `at` cannot leave two different
-// states depending on which arrived first.
+// entryLess is the module's canonical order: `at`, then `sender`, then `id`.
+// `at` first because it is the order the mailbox would have learned the messages
+// in had the network been kind; the other two only to make the order total, so
+// two messages with one `at` cannot leave two different states depending on
+// which arrived first.
+//
+// The two strings are compared by **UTF-16 code unit**, which is what
+// `shared/mailbox`'s `compareEntries` does — JavaScript's `<` on strings — and
+// not by code point, which is what Go's `<` does on a UTF-8 string. They
+// disagree for exactly one pair of characters: an astral character (whose first
+// code unit is a high surrogate, U+D800..U+DBFF) sorts *before* U+E000..U+FFFF
+// by code unit and *after* it by code point. Both halves of that matter and the
+// schema permits both characters in a `sender` and an `id`: a ledger ordered one
+// way and read the other would answer "the oldest accepted record" differently —
+// a different message acted on — and a ledger this package wrote in code-point
+// order is `unsorted-seen` to the module (M9). `utf16Units` is the
+// `message.go`-style walk: a lone surrogate, the three WTF-8 bytes this
+// package's own JSON reader writes for a `\uD800` escape, is the one code unit
+// it is in JavaScript, and a character above U+FFFF is its two.
 func entryLess(left, right LedgerEntry) bool {
 	if left.At != right.At {
 		return left.At < right.At
 	}
 	if left.Sender != right.Sender {
-		return left.Sender < right.Sender
+		return utf16Less(left.Sender, right.Sender)
 	}
-	return left.ID < right.ID
+	return utf16Less(left.ID, right.ID)
+}
+
+// utf16Less reports whether left sorts before right the way JavaScript's `<`
+// compares strings: code unit by code unit, and the shorter of two equal
+// prefixes first.
+func utf16Less(left, right string) bool {
+	l, r := utf16Units(left), utf16Units(right)
+	for i := 0; i < len(l) && i < len(r); i++ {
+		if l[i] != r[i] {
+			return l[i] < r[i]
+		}
+	}
+	return len(l) < len(r)
+}
+
+// utf16Units is a string's UTF-16 code units, in order: what JavaScript indexes
+// and compares. A character above U+FFFF is its surrogate pair, and a lone
+// surrogate — three WTF-8 bytes, which no UTF-8 decoder accepts and which
+// therefore arrives as three invalid bytes rather than one character — is the
+// single unit it is to the module (`utf16Len` counts them the same way).
+func utf16Units(s string) []uint16 {
+	units := make([]uint16, 0, utf16Len(s))
+	for i := 0; i < len(s); {
+		if isWTF8Surrogate(s[i:]) {
+			code := uint32(s[i]&0x0f)<<12 | uint32(s[i+1]&0x3f)<<6 | uint32(s[i+2]&0x3f)
+			units = append(units, uint16(code))
+			i += 3
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r > 0xffff {
+			offset := uint32(r) - 0x10000
+			units = append(units, uint16(0xd800+offset>>10), uint16(0xdc00+offset&0x3ff))
+		} else {
+			units = append(units, uint16(r))
+		}
+		i += size
+	}
+	return units
 }
 
 // insertEntry keeps the ledger in its canonical order, without a sort: a
@@ -913,6 +995,12 @@ func move(state ledgerState, index int, status string, now int64) ledgerState {
 // The mode matters as much as the rename: the ledger lists the ids of the
 // operator's phone messages, and `0o600` is what keeps another account on the
 // machine from reading it (M7).
+//
+// What this writes is readable by the reader above, by construction: the cap is
+// at most MaxMaxSeen and every field is within the schema's bounds, so the
+// document is under maxLedgerBytes and OpenLedger accepts it. A writer that can
+// produce a file its own reader refuses is the fail-closed dead end
+// maxLedgerBytes went out of its way to avoid (see its comment).
 func (l *Ledger) commit(state ledgerState) error {
 	seen := state.seen
 	if seen == nil {

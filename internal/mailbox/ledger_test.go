@@ -33,7 +33,7 @@ import (
 // *outcomes* for a schedule are T8's corpus; this file pins the rules the ledger
 // applies on its own.
 //
-// **Four mutations were run and watched fail**, and they are the guards this
+// **Six mutations were run and watched fail**, and they are the guards this
 // file is security-relevant for:
 //
 //   - Move the commit after the `perform` call in ledger.go (T4's red step, and
@@ -50,6 +50,13 @@ import (
 //     that re-performs a phone's action, so it is the one that matters most.
 //   - Drop the held-pair check from `deliver`: TestLedgerDuplicateIsNotActedOnTwice
 //     fails with the action run twice, and with two records for one pair.
+//   - Put the read bound back to a chosen 4 MiB (the review's finding, and the
+//     fail-closed dead end): TestLedgerAtTheHighestCapRoundTrips fails — the
+//     largest ledger the module's cap allows is 97,500,076 bytes, a ledger at
+//     that cap is 9,000,049, and the bound was 4,194,304.
+//   - Compare `sender` and `id` with Go's `<` instead of by code unit (the
+//     review's second finding): TestLedgerOrdersKeysByUTF16CodeUnit fails with
+//     a ledger in the module's own order refused `unsorted-seen`.
 //
 // Every one restored; see the pull request.
 
@@ -1037,7 +1044,7 @@ func TestLedgerOversizedFileIsRefused(t *testing.T) {
 	}
 	// Truncated rather than written: the file is a hole, and the point is its
 	// size. `os.ReadFile` on it would hand this process 4 MiB of NULs.
-	if err := f.Truncate(maxLedgerBytes + 1); err != nil {
+	if err := f.Truncate(int64(maxLedgerBytes) + 1); err != nil {
 		t.Fatalf("sizing the fixture: %v", err)
 	}
 	if err := f.Close(); err != nil {
@@ -1049,6 +1056,161 @@ func TestLedgerOversizedFileIsRefused(t *testing.T) {
 	}
 	if got := ledgerRefusalCode(t, err); got != CodeInvalidLedger {
 		t.Errorf("refused with %q, and a file past the bound is not a ledger at all", got)
+	}
+}
+
+// TestLedgerAtTheHighestCapRoundTrips pins the defect the review found in the
+// read bound: it was a chosen 4 MiB while the module's own largest cap
+// (`MAX_MAX_SEEN`) holds far more than that, so this package could write a
+// ledger its own reader refused — and because a refused ledger is fail-closed,
+// the command would not start at all and the operator would have to delete the
+// state by hand, which is the dedupe-memory loss `ledger.go`'s header exists to
+// prevent.
+//
+// Both ends of the derivation are held here: one record with every field as
+// large as the schema allows still fits maxLedgerRecordBytes, MaxMaxSeen of them
+// still fit maxLedgerBytes, and a ledger at that cap is written and read back.
+func TestLedgerAtTheHighestCapRoundTrips(t *testing.T) {
+	// The widest record the ledger's own reader takes: both strings at their
+	// bounds, in the widest character a valid message may carry (three bytes of
+	// UTF-8, one code unit each) rather than in an escaped one.
+	worst := LedgerEntry{
+		Sender: strings.Repeat("一", SenderMax),
+		ID:     strings.Repeat("一", IDMax),
+		At:     TimeMax,
+		Kind:   KindCommand,
+		Status: StatusAcked,
+	}
+	if !validEntry(worst) {
+		t.Fatal("the largest record the schema allows is not one this ledger's reader takes")
+	}
+	body, err := json.Marshal(worst)
+	if err != nil {
+		t.Fatalf("marshalling the largest record: %v", err)
+	}
+	if len(body) > maxLedgerRecordBytes {
+		t.Errorf("the largest record is %d bytes of JSON and maxLedgerRecordBytes is %d: the read bound would refuse a ledger this package wrote",
+			len(body), maxLedgerRecordBytes)
+	}
+	// The honest requirement, from the content rather than from the constants:
+	// MaxMaxSeen records of that size, and the header, must fit the read bound.
+	if need := maxLedgerHeaderBytes + (len(body)+1)*MaxMaxSeen; maxLedgerBytes < need {
+		t.Errorf("the largest ledger the module's cap allows is %d bytes and maxLedgerBytes is %d: the read bound must cover what the writer can produce, not a smaller number chosen beside it",
+			need, maxLedgerBytes)
+	}
+
+	// And the cap itself, written and read back. Short ids, so this is the
+	// common case at the largest cap rather than the worst case, which the
+	// arithmetic above covers.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ledger.json")
+	seen := make([]LedgerEntry, 0, MaxMaxSeen)
+	for i := 0; i < MaxMaxSeen; i++ {
+		seen = append(seen, LedgerEntry{
+			Sender: "mb-a",
+			ID:     fmt.Sprintf("m-%06d", i),
+			At:     testNow - 1_000,
+			Kind:   KindCommand,
+			Status: StatusAccepted,
+		})
+	}
+	writeLedgerFile(t, path, ledgerFile{Now: testNow, Seen: seen})
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("the ledger at the largest cap: %v", err)
+	}
+	if info.Size() > int64(maxLedgerBytes) {
+		t.Fatalf("a ledger at MaxMaxSeen is %d bytes and the read bound is %d: this test is not testing what it says", info.Size(), maxLedgerBytes)
+	}
+	opts := ledgerOptions(path)
+	opts.MaxSeen = MaxMaxSeen
+	l, err := OpenLedger(opts)
+	if err != nil {
+		t.Fatalf("a ledger at the module's largest cap was refused: %v", err)
+	}
+	if got := len(l.Entries()); got != MaxMaxSeen {
+		t.Errorf("the ledger read back holds %d records and was written with %d", got, MaxMaxSeen)
+	}
+}
+
+// TestLedgerOrdersKeysByUTF16CodeUnit pins the other finding: `compareEntries`
+// in `shared/mailbox` compares `sender` and `id` with JavaScript's `<`, which is
+// **UTF-16 code unit** order, while Go's `<` on a string is code point order
+// (equivalently, UTF-8 byte order). The two disagree for exactly one pair of
+// characters — an astral character against U+E000..U+FFFF — and both are strings
+// the schema permits in a `sender` and an `id`.
+//
+// It is not cosmetic: with two records sharing an `at`, the order decides which
+// one is "the oldest accepted record", so a ledger ordered one way and read the
+// other acts on a different message than the module does — and a ledger this
+// package wrote in byte order is `unsorted-seen` to the module (M9).
+func TestLedgerOrdersKeysByUTF16CodeUnit(t *testing.T) {
+	const (
+		// One character above U+FFFF: two code units, U+D834 then U+DD1E.
+		astral = "mb-\U0001D11E"
+		// One code unit, U+E000: after the high surrogate and before the low.
+		bmp = "mb-"
+	)
+	if !utf16Less(astral, bmp) {
+		t.Errorf("by code unit %q must sort before %q", astral, bmp)
+	}
+	if !(astral > bmp) {
+		// The premise of this test, pinned: Go's own comparison says the
+		// opposite, so the two orders really do disagree here.
+		t.Fatalf("Go's own comparison no longer puts %q after %q: this test's premise is gone", astral, bmp)
+	}
+	// Both are senders the schema permits: `sender` is a length-bounded string
+	// with no pattern, and neither of these is a character it refuses.
+	for _, sender := range []string{astral, bmp} {
+		record := Record{
+			"id":     "m-1",
+			"sender": sender,
+			"text":   "hi",
+			"at":     testNow - 1_000,
+			"mac":    strings.Repeat("ab", 32),
+		}
+		if _, refusal := ValidateMessage(record); refusal != nil {
+			t.Errorf("%q is not a sender the schema permits, so this test proves nothing: %+v", sender, refusal)
+		}
+	}
+
+	// A file in the module's order loads, and the module's oldest record is the
+	// one acted on.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ledger.json")
+	writeLedgerFile(t, path, ledgerFile{Now: testNow, Seen: []LedgerEntry{
+		{Sender: astral, ID: "m-1", At: testNow - 1_000, Kind: KindCommand, Status: StatusAccepted},
+		{Sender: bmp, ID: "m-2", At: testNow - 1_000, Kind: KindCommand, Status: StatusAccepted},
+	}})
+	l, err := OpenLedger(ledgerOptions(path))
+	if err != nil {
+		t.Fatalf("a ledger in the module's own order was refused: %v", err)
+	}
+	got, err := l.Perform(ledgerMessage("m-3", "mb-a", "hi", testNow-500), KindCommand, testNow, nil)
+	if err != nil {
+		t.Fatalf("delivering: %v", err)
+	}
+	if got.Entry.Sender != astral {
+		t.Errorf("the record acted on is %q, and by code unit %q is the oldest", got.Entry.Sender, astral)
+	}
+	if entries := l.Entries(); entries[0].Sender != astral {
+		t.Errorf("the ledger this package wrote back holds %q first, and the module's order puts %q there", entries[0].Sender, astral)
+	}
+
+	// And the other direction, which is the reason the order is pinned rather
+	// than merely documented: the same two records in code point order — Go's
+	// own — are not a ledger this reader takes, because the module's reader
+	// answers `unsorted-seen` for them.
+	other := t.TempDir()
+	otherPath := filepath.Join(other, "ledger.json")
+	writeLedgerFile(t, otherPath, ledgerFile{Now: testNow, Seen: []LedgerEntry{
+		{Sender: bmp, ID: "m-2", At: testNow - 1_000, Kind: KindCommand, Status: StatusAccepted},
+		{Sender: astral, ID: "m-1", At: testNow - 1_000, Kind: KindCommand, Status: StatusAccepted},
+	}})
+	if _, err := OpenLedger(ledgerOptions(otherPath)); err == nil {
+		t.Error("a ledger in code point order was taken, and the module's own order puts its two records the other way round")
+	} else if code := ledgerRefusalCode(t, err); code != CodeUnsortedSeen {
+		t.Errorf("the ledger in code point order was refused with %q, and out of order is unsorted-seen", code)
 	}
 }
 
