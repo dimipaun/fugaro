@@ -42,6 +42,7 @@ type CRM struct {
 	taken    map[string]bool      // IDs held by projects the caller cannot read
 	creates  []CreatedProject     // creates accepted, in order
 	failNew  *apiError            // answers every create (an organization policy, say)
+	failOp   *crmOpError          // the create's operation completes with this error
 	failGet  map[string]*apiError // answers the plain read of a project with an error of the test's own words
 	hide     map[string]int       // reads still refused per new project
 	ops      map[string]*crmOp    // operations by name
@@ -58,6 +59,13 @@ type CreatedProject struct {
 type crmOp struct {
 	polls int
 	proj  CreatedProject
+}
+
+// crmOpError is an operation's own error: a google.rpc.Code and its message,
+// as the v3 API reports one.
+type crmOpError struct {
+	code int64
+	msg  string
 }
 
 // FirstCreatedProjectNumber is the number the fake gives the first project a
@@ -226,6 +234,21 @@ func (f *CRM) FailCreates(code int, status, msg string) {
 	}
 }
 
+// FailOperation makes every create's operation complete with error code and
+// message, as the API does when the refusal comes back asynchronously (an
+// organization policy, say): the create itself is accepted and the project
+// exists, and the caller only learns the truth by polling. code is a
+// google.rpc.Code — 7 PERMISSION_DENIED, 8 RESOURCE_EXHAUSTED, 9
+// FAILED_PRECONDITION. A code of 0 lifts it.
+func (f *CRM) FailOperation(code int64, msg string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failOp = nil
+	if code != 0 {
+		f.failOp = &crmOpError{code: code, msg: msg}
+	}
+}
+
 // Creates are the projects created so far.
 func (f *CRM) Creates() []CreatedProject {
 	f.mu.Lock()
@@ -304,6 +327,11 @@ func (f *CRM) handleV3(w http.ResponseWriter, r *http.Request, body []byte) bool
 		if op.polls > 0 {
 			op.polls--
 			writeJSON(w, http.StatusOK, map[string]any{"name": name, "done": false})
+			return true
+		}
+		if f.failOp != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"name": name, "done": true,
+				"error": map[string]any{"code": f.failOp.code, "message": f.failOp.msg}})
 			return true
 		}
 		resp := f.v3Project(op.proj.ID)

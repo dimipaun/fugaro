@@ -547,6 +547,47 @@ func TestRefusedProjectCreationIsOneHelpfulLine(t *testing.T) {
 	}
 }
 
+// The same refusal can arrive asynchronously: the create is accepted and the
+// operation completes with an error (an organization policy, say). It is the
+// same case and gets the same line; a quota that comes back this way is not,
+// and keeps its own message and exit code.
+func TestRefusedCreationArrivingOnTheOperation(t *testing.T) {
+	const want = "Fugaro could not create the project " + newProj + ": your Google account is not allowed to create projects in your organization. " +
+		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder, or ask them to create the project and make you its Owner. " +
+		"See docs/gcp-setup.md#not-an-owner."
+
+	t.Run("permission denied", func(t *testing.T) {
+		r := newProjectRig(t)
+		stubSelfCommand(t)
+		r.crm.FailOperation(7, "The caller does not have permission")
+		_, _, err := r.run(t, true, newProj+"\n", "--create-project")
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("exit %d (%v), want 1", ExitCode(err), err)
+		}
+		if !strings.HasPrefix(err.Error(), want+"\n") {
+			t.Errorf("err = %q,\nwant the helpful line %q first", err.Error(), want)
+		}
+		if !strings.Contains(err.Error(), "The caller does not have permission") {
+			t.Errorf("err = %q: the service's own text is gone", err.Error())
+		}
+		if got := stageLine(err.Error()); got != want {
+			t.Errorf("the stage's one line = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("a quota", func(t *testing.T) {
+		r := newProjectRig(t)
+		r.crm.FailOperation(8, "Project quota exceeded")
+		_, _, err := r.run(t, true, newProj+"\n", "--create-project")
+		if err == nil || ExitCode(err) != ExitRemoteError {
+			t.Fatalf("exit %d (%v), want 2: a quota keeps the exit code it had", ExitCode(err), err)
+		}
+		if strings.Contains(err.Error(), "Fugaro could not") {
+			t.Errorf("err = %q: a quota is not a missing role", err.Error())
+		}
+	})
+}
+
 // The billing half: a refused link names the account, the role it is missing
 // and the one gcloud line that links it, and stops with exit 1. The account
 // and the project are both in the line to run, so both are in the message.
