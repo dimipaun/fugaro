@@ -153,6 +153,8 @@ Each check prints the problem and a one-line fix, and applies nothing until it p
 
 You have access to the GCP project, but not `roles/owner`. Fugaro's setup creates service accounts, custom roles and project-level IAM bindings, so someone with Owner (here: Chris, your IT person) must act once.
 
+If you have no project at all, this is the other half of the same problem, and it comes before the roles below: the two calls `fugaro setup --create-project --link-billing <account>` makes are each refused without a role no project Owner has. **Creating a project** needs `roles/resourcemanager.projectCreator` on the organization, or on the folder you pass as `--parent` — and setup then says `your Google account is not allowed to create projects in your organization`. **Linking billing** needs `roles/billing.user` (`billing.resourceAssociations.create`) on the billing account, *and* Owner or Project Billing Manager on the project — and setup then says `your account is missing a role the link needs`. Chris can do either once instead: create the project and make you its Owner, or run `gcloud billing projects link <gcp-project> --billing-account=<account>` himself.
+
 1. **Check your roles.**
 
    ```bash

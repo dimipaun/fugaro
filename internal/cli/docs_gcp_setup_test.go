@@ -43,6 +43,36 @@ const gcpSetupWindowsSection = "## On Windows and in WSL: the two commands you r
 // other — and the `unset` half is the Fix line's own command in each shell the
 // page names, with F6 recorded so the page cannot present the Windows form as
 // what the CLI prints while the printed line is still POSIX.
+// TestDocsGCPSetupNotAnOwnerSaysWhatCreatingAndLinkingNeed: the project stage
+// answers a refused creation with `See docs/gcp-setup.md#not-an-owner.`
+// (refusedCreate, internal/cli/init_project.go), and a refused billing link
+// with the two roles that link needs, so #not-an-owner is where a reader with
+// no project at all lands. The section was written for the reader who has the
+// project and lacks Owner on it: its first instruction is a
+// `gcloud projects get-iam-policy` on a project, which is not a command a
+// reader with no project can run. So the section says what creating a project
+// and linking billing need before it sends anyone to check roles on one, and
+// it names the roles as their administrators name them -- those are the words
+// the reader repeats, and neither role is anywhere else on the page.
+func TestDocsGCPSetupNotAnOwnerSaysWhatCreatingAndLinkingNeed(t *testing.T) {
+	doc := readDoc(t, gcpSetupDoc)
+	sec := docSection(t, gcpSetupDoc, doc, "### If you are not an Owner")
+	for _, want := range []string{
+		"roles/resourcemanager.projectCreator",
+		"roles/billing.user",
+		"billing.resourceAssociations.create",
+		"Owner or Project Billing Manager",
+		"gcloud billing projects link",
+	} {
+		if !strings.Contains(sec, want) {
+			t.Errorf("%s's #not-an-owner section lacks %q: refusedCreate sends a reader with no project here for the roles to ask for", gcpSetupDoc, want)
+		}
+	}
+	if !strings.Contains(doc, `<a id="not-an-owner"></a>`) {
+		t.Errorf("%s has no not-an-owner anchor: refusedCreate names it in the line it prints", gcpSetupDoc)
+	}
+}
+
 func TestDocsGCPSetupNamesTheWindowsForm(t *testing.T) {
 	doc := readDoc(t, gcpSetupDoc)
 

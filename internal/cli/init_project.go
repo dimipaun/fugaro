@@ -589,15 +589,24 @@ func (s *projectStage) refusedCreate() string {
 		"See docs/gcp-setup.md#not-an-owner."
 }
 
-// refusedLink is what a refused billing link says. It names the account, the
-// role it is missing and the one line that links it, and it names the door the
-// reader is at (setup creates a project, update re-converges one): the reader
-// who cannot link billing is exactly the one who has to know what to run once
-// someone has linked it for them.
+// refusedLink is what a refused billing link says. The link needs a role on
+// the billing account *and* one on the project (infra.LinkBilling's hint), and
+// the 403 that comes back names neither, so both are here: naming only the
+// billing one would send a reader who holds it -- the one adopting an existing
+// project they are not an Owner of -- to the billing administrator for a role
+// they already have, and the loop keeps only this first line for the stage
+// (initflow's oneLine), so the hint under it is not a place to put them. The
+// two non-role causes the same 403 can have (a closed account, an account at
+// its limit of linked projects) are here too, or a reader holding both roles
+// would be told to ask for roles they have. The one line that links it, and
+// the door the reader is at (setup creates a project, update re-converges
+// one), are the last of it: whoever acts for them runs the line, and the
+// reader runs the door again.
 func (s *projectStage) refusedLink(account string) string {
-	return "Fugaro could not link billing account " + account + ": your account lacks the Billing Account User role on it. " +
-		"Ask whoever administers billing for that role, or to link billing to " + s.id + " for you (one `gcloud billing projects link " + s.id + " --billing-account=" + account + "` line), " +
-		"then run `" + selfCommand() + " " + s.o().doorName() + "` again."
+	return "Fugaro could not link billing account " + account + " to project " + s.id + ": your account is missing a role the link needs. " +
+		"Ask whoever administers " + account + " for the Billing Account User role on it, and whoever owns " + s.id + " for the Owner or Project Billing Manager role on it; " +
+		"either of them can link it for you instead, with the one line `gcloud billing projects link " + s.id + " --billing-account=" + account + "`. " +
+		"Then run `" + selfCommand() + " " + s.o().doorName() + "` again. If you hold both roles already, the billing account may be closed, or at its limit of linked projects."
 }
 
 // failCreate and failLink are fail for those two calls: a recognised refusal

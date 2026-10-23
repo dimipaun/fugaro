@@ -236,8 +236,10 @@ func (f *CRM) FailCreates(code int, status, msg string) {
 
 // FailOperation makes every create's operation complete with error code and
 // message, as the API does when the refusal comes back asynchronously (an
-// organization policy, say): the create itself is accepted and the project
-// exists, and the caller only learns the truth by polling. code is a
+// organization policy, say): the create itself is accepted and the caller only
+// learns the truth by polling — and, as with the real API, no project exists
+// when the operation ends that way (the record the create made is dropped, so
+// Has and Creates answer no project, which is what a test asserts). code is a
 // google.rpc.Code — 7 PERMISSION_DENIED, 8 RESOURCE_EXHAUSTED, 9
 // FAILED_PRECONDITION. A code of 0 lifts it.
 func (f *CRM) FailOperation(code int64, msg string) {
@@ -262,6 +264,20 @@ func (f *CRM) Has(id string) bool {
 	defer f.mu.Unlock()
 	_, ok := f.projects[id]
 	return ok
+}
+
+// drop forgets everything the fake recorded about a project the caller
+// created and then lost: a create whose operation ends in an error leaves no
+// project behind. The caller holds mu.
+func (f *CRM) drop(id string) {
+	delete(f.projects, id)
+	delete(f.hide, id)
+	for i := len(f.creates) - 1; i >= 0; i-- {
+		if f.creates[i].ID == id {
+			f.creates = append(f.creates[:i], f.creates[i+1:]...)
+			break
+		}
+	}
 }
 
 // visible reports whether a read of id may answer now, counting down the
@@ -330,6 +346,11 @@ func (f *CRM) handleV3(w http.ResponseWriter, r *http.Request, body []byte) bool
 			return true
 		}
 		if f.failOp != nil {
+			// The real API creates no project when the operation ends in an
+			// error: the create was accepted, and the project never existed.
+			// The record the create made is dropped with it, so a test can
+			// assert that nothing was left behind (nothingDone reads Creates).
+			f.drop(op.proj.ID)
 			writeJSON(w, http.StatusOK, map[string]any{"name": name, "done": true,
 				"error": map[string]any{"code": f.failOp.code, "message": f.failOp.msg}})
 			return true

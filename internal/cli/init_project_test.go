@@ -478,7 +478,7 @@ func TestOrgPolicyErrorVerbatim(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "The caller does not have permission to link") || !strings.Contains(err.Error(), "billing.resourceAssociations.create") {
 		t.Errorf("err = %v", err)
 	}
-	if !strings.HasPrefix(err.Error(), "Fugaro could not link billing account "+billingAcc+":") {
+	if !strings.HasPrefix(err.Error(), "Fugaro could not link billing account "+billingAcc+" to project "+newProj+":") {
 		t.Errorf("err = %v: want the helpful line first", err)
 	}
 }
@@ -513,15 +513,27 @@ func TestRefusedProjectCreationIsOneHelpfulLine(t *testing.T) {
 	const want = "Fugaro could not create the project " + newProj + ": your Google account is not allowed to create projects in your organization. " +
 		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder, or ask them to create the project and make you its Owner. " +
 		"See docs/gcp-setup.md#not-an-owner."
-	for name, msg := range map[string]string{
-		"a bare permission refusal":  "The caller does not have permission",
-		"an organization policy":     "Constraint constraints/gcp.resourceLocations violated for the organization",
-		"the role named in the text": "Caller is not a project creator on the organization",
+	// The three shapes the same refusal takes: a 403, a 400 whose own text says
+	// what it is (the only thing that can tell a refusal from the other 400s
+	// these APIs answer with -- infra's refusalWords), and a constraint. Each
+	// has to reach the line; the 400 is the one the word list is for.
+	for name, c := range map[string]struct {
+		code   int
+		status string
+		msg    string
+	}{
+		"a bare permission refusal":  {403, "PERMISSION_DENIED", "The caller does not have permission"},
+		"an organization policy":     {403, "PERMISSION_DENIED", "Constraint constraints/gcp.resourceLocations violated for the organization"},
+		"the role named in the text": {403, "PERMISSION_DENIED", "Caller is not a project creator on the organization"},
+		"a 400 that names a permission": {400, "FAILED_PRECONDITION",
+			"The caller does not have permission to create projects"},
+		"a 400 that names a constraint": {400, "FAILED_PRECONDITION",
+			"Constraint constraints/gcp.resourceLocations violated for the organization"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newProjectRig(t)
 			stubSelfCommand(t)
-			r.crm.FailCreates(403, "PERMISSION_DENIED", msg)
+			r.crm.FailCreates(c.code, c.status, c.msg)
 			_, _, err := r.run(t, true, newProj+"\n", "--create-project")
 			if err == nil {
 				t.Fatal("a refused creation exited 0")
@@ -532,7 +544,7 @@ func TestRefusedProjectCreationIsOneHelpfulLine(t *testing.T) {
 			if !strings.HasPrefix(err.Error(), want+"\n") {
 				t.Errorf("err = %q,\nwant the helpful line %q, then the service's text under it", err.Error(), want)
 			}
-			if strings.Count(err.Error(), "\n") != 1 || !strings.Contains(err.Error(), msg) {
+			if strings.Count(err.Error(), "\n") != 1 || !strings.Contains(err.Error(), c.msg) {
 				t.Errorf("err = %q: want the service's own text as the one line under the helpful one", err.Error())
 			}
 			// The stage's result carries the helpful line alone: the loop keeps
@@ -556,24 +568,41 @@ func TestRefusedCreationArrivingOnTheOperation(t *testing.T) {
 		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder, or ask them to create the project and make you its Owner. " +
 		"See docs/gcp-setup.md#not-an-owner."
 
-	t.Run("permission denied", func(t *testing.T) {
-		r := newProjectRig(t)
-		stubSelfCommand(t)
-		r.crm.FailOperation(7, "The caller does not have permission")
-		_, _, err := r.run(t, true, newProj+"\n", "--create-project")
-		if err == nil || ExitCode(err) != ExitUserError {
-			t.Fatalf("exit %d (%v), want 1", ExitCode(err), err)
-		}
-		if !strings.HasPrefix(err.Error(), want+"\n") {
-			t.Errorf("err = %q,\nwant the helpful line %q first", err.Error(), want)
-		}
-		if !strings.Contains(err.Error(), "The caller does not have permission") {
-			t.Errorf("err = %q: the service's own text is gone", err.Error())
-		}
-		if got := stageLine(err.Error()); got != want {
-			t.Errorf("the stage's one line = %q, want %q", got, want)
-		}
-	})
+	// PERMISSION_DENIED and FAILED_PRECONDITION are the two codes a refusal
+	// arrives under (infra's refusedOperation); the second is how an
+	// organization policy answers, and its message is what says so.
+	for name, c := range map[string]struct {
+		code int64
+		msg  string
+	}{
+		"permission denied": {7, "The caller does not have permission"},
+		"a constraint":      {9, "Constraint constraints/gcp.resourceLocations violated for the organization"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newProjectRig(t)
+			stubSelfCommand(t)
+			r.crm.FailOperation(c.code, c.msg)
+			_, _, err := r.run(t, true, newProj+"\n", "--create-project")
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("exit %d (%v), want 1", ExitCode(err), err)
+			}
+			if !strings.HasPrefix(err.Error(), want+"\n") {
+				t.Errorf("err = %q,\nwant the helpful line %q first", err.Error(), want)
+			}
+			if !strings.Contains(err.Error(), c.msg) {
+				t.Errorf("err = %q: the service's own text is gone", err.Error())
+			}
+			if got := stageLine(err.Error()); got != want {
+				t.Errorf("the stage's one line = %q, want %q", got, want)
+			}
+			// The project the create recorded does not exist: the operation
+			// ended in an error, and the real API leaves nothing behind.
+			if r.crm.Has(newProj) {
+				t.Error("the project exists after an operation that ended in an error")
+			}
+			r.nothingDone(t, "a refused creation")
+		})
+	}
 
 	t.Run("a quota", func(t *testing.T) {
 		r := newProjectRig(t)
@@ -585,16 +614,24 @@ func TestRefusedCreationArrivingOnTheOperation(t *testing.T) {
 		if strings.Contains(err.Error(), "Fugaro could not") {
 			t.Errorf("err = %q: a quota is not a missing role", err.Error())
 		}
+		if r.crm.Has(newProj) {
+			t.Error("the project exists after an operation that ended in an error")
+		}
 	})
 }
 
-// The billing half: a refused link names the account, the role it is missing
-// and the one gcloud line that links it, and stops with exit 1. The account
-// and the project are both in the line to run, so both are in the message.
+// The billing half: a refused link names the account, both roles the link can
+// be missing, the one gcloud line that links it, and stops with exit 1. Both
+// roles are named because the 403 names neither: a reader who holds the
+// billing one -- adopting an existing project they are not an Owner of -- is
+// exactly the reader a billing-only line would send to the wrong person, and
+// the stage keeps only this first line. The account and the project are both
+// in the line to run, so both are in the message.
 func TestRefusedBillingLinkIsOneHelpfulLine(t *testing.T) {
-	want := "Fugaro could not link billing account " + billingAcc + ": your account lacks the Billing Account User role on it. " +
-		"Ask whoever administers billing for that role, or to link billing to " + newProj + " for you (one `gcloud billing projects link " + newProj + " --billing-account=" + billingAcc + "` line), " +
-		"then run `fugaro setup` again."
+	want := "Fugaro could not link billing account " + billingAcc + " to project " + newProj + ": your account is missing a role the link needs. " +
+		"Ask whoever administers " + billingAcc + " for the Billing Account User role on it, and whoever owns " + newProj + " for the Owner or Project Billing Manager role on it; " +
+		"either of them can link it for you instead, with the one line `gcloud billing projects link " + newProj + " --billing-account=" + billingAcc + "`. " +
+		"Then run `fugaro setup` again. If you hold both roles already, the billing account may be closed, or at its limit of linked projects."
 	r := newProjectRig(t)
 	stubSelfCommand(t)
 	r.existing(false)
