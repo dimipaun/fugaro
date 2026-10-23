@@ -1015,10 +1015,11 @@ and a newer *planner* can write a `schema_version` the CLI refuses. The console
 shows the CLI's refusal sentence rather than a graph.
 
 **The computed fields are additive, and `schema_version` stays `1`.** They are
-fields of the *read's* document, not of the artifact: a graph artifact is still
-schema version 1 with the field set above minus the nine computed keys, so a
-planner writing one is written and refused exactly as before, and `--done` is a
-flag on the read rather than a field a planner writes. A console built before
+fields of the *read's* document and not of the artifact: a graph artifact is
+still schema version 1 with the artifact's own field set — the nine computed
+keys above are not among them, and a planner that wrote one would be refused by
+name — so what a planner writes and what an older CLI accepts are unchanged, and
+`--done` is a flag on the read rather than a field a planner writes. A console built before
 these keys existed ignores them and draws the graph it drew before; a console
 built after them must not require them of a CLI that predates them — an older
 CLI's document has no `level`, no `ready` and no `critical_path`, and that
