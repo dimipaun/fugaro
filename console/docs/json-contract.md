@@ -924,8 +924,10 @@ console which case it is in. The install-CLI onboarding screen is drawn only whe
 **Command:** `internal/cli/plan.go` `newPlanGraphCmd`, the only subcommand of
 `fugaro plan`. **Flags:** `--plan <path>` (the plan document the graph sits
 beside; with none, the one graph artifact under `docs/plans` is read, and more
-than one is refused and listed rather than picked), `--json`. **It takes no
-cloud flags**, for the same reason as §6.8: it reads a file in the checkout.
+than one is refused and listed rather than picked), `--done <ids>`
+(comma-separated or repeated: the tasks whose work is done, which is what
+"ready" is computed against — see below), `--json`. **It takes no cloud
+flags**, for the same reason as §6.8: it reads a file in the checkout.
 
 **What it reads:** the plan-side graph artifact (v2 design D25 and F6/F33),
 `<plan>.graph.json` beside `<plan>.md`, parsed and validated by
@@ -940,6 +942,9 @@ The document:
 | `plan` | string | never | never | the plan the artifact came from, as the artifact names it |
 | `nodes` | array | never | never | the tasks; `[]` is a plan with no tasks yet |
 | `edges` | array | never | never | the dependencies; `[]` is a plan with no dependencies yet |
+| `levels` | number | never | never | how many levels the plan has — the longest chain of dependencies plus one; `0` for a plan with no tasks |
+| `critical_path` | object | never | never | the longest chain of tasks in the plan, below |
+| `bottleneck` | string | never | **yes** | the task the critical path runs through; null only when the plan has no tasks |
 
 one entry of `nodes`:
 
@@ -950,6 +955,24 @@ one entry of `nodes`:
 | `run` | string | never | **yes** | the run this task belongs to; null when it belongs to none |
 | `version` | string | never | **yes** | the target version; null when the plan does not say |
 | `footprint` | object | never | never | the expected paths, below |
+| `level` | number | never | never | the longest chain of dependencies *ending* at this task: `0` for a task that waits on nothing, otherwise one more than the deepest task it waits for |
+| `done` | bool | never | never | the task is in the `--done` set the read was given. **A fact the caller stated, not one the CLI derived**: a finished run is not the same claim as a done task (see below) |
+| `ready` | bool | never | never | the task is not done and **every task it needs is done**. This is the field a launch may act on (design F7) |
+| `blocked` | bool | never | never | the task is not done and at least one task it needs is not done |
+| `critical_path_length` | number | never | never | the longest chain of tasks *starting* at this one, counting it: `1` for a task nothing waits on |
+| `downstream` | number | never | never | how many tasks wait on this one, directly or through others; the raw count D26 keeps as the cheap fallback beside the critical path |
+
+**A task is done, ready or blocked — exactly one of the three, always.** The
+three are fields rather than a rule a screen applies, so two screens colour one
+node the same way; `ready` and `blocked` are both false exactly when `done` is
+true.
+
+the `critical_path` object:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `length` | number | never | never | the chain's length **in tasks**; `0` for a plan with no tasks |
+| `tasks` | array | never | never | the tasks along the chain, in the order they can be done; `[]` for a plan with no tasks. Ties are broken by id, so one graph has one critical path |
 
 one entry of `edges`:
 
@@ -974,6 +997,25 @@ is a function of the graph, so a cyclic graph has none to give. A refused graph
 is no document at all: the command exits non-zero and prints nothing to stdout,
 so a renderer never has half a graph to draw.
 
+**What the read computes, and why the done set is passed in.** `level`, `done`,
+`ready`, `blocked`, `critical_path_length`, `downstream`, `levels`,
+`critical_path` and `bottleneck` are **not in the artifact**: the planner cannot
+know them, and a planner that guessed them would be a second answer to a
+question the CLI already answers (design F7). They are computed in Go, beside
+the read, so two consoles reading the same graph and the same facts get the same
+answer — which is the whole point of "ready" being a field rather than a screen's
+rule, since ready is also what a launch is allowed to act on.
+
+The one thing the read cannot compute for itself is **which tasks are done**, so
+`--done` states it. A task is done when its work is done; a *run* finishing is a
+different claim — a run can finish failed, or finish with a pull request nobody
+has reviewed — and this read is local (it takes no cloud flag and opens no
+bucket), so it never sees a run's state in the first place. The definition of
+readiness is the CLI's; the fact is the caller's, and the document echoes it per
+task in `done`, so a renderer never has to remember what it passed. An id that is
+not a task of the graph, or an empty one, is **refused rather than ignored**:
+an unknown id would otherwise read exactly like a task nobody has done.
+
 **The footprint is advisory and it is a prediction; the measured set is a
 different document.** What a task *expected* to touch is this field; what a run
 *did* touch is the run's own record (D27), written after the fact. The console
@@ -984,6 +1026,17 @@ document rather than in the renderer.
 this, and they answer different halves: an older CLI has no `plan graph` at all,
 and a newer *planner* can write a `schema_version` the CLI refuses. The console
 shows the CLI's refusal sentence rather than a graph.
+
+**The computed fields are additive, and `schema_version` stays `1`.** They are
+fields of the *read's* document and not of the artifact: a graph artifact is
+still schema version 1 with the artifact's own field set — the nine computed
+keys above are not among them, and a planner that wrote one would be refused by
+name — so what a planner writes and what an older CLI accepts are unchanged, and
+`--done` is a flag on the read rather than a field a planner writes. A console built before
+these keys existed ignores them and draws the graph it drew before; a console
+built after them must not require them of a CLI that predates them — an older
+CLI's document has no `level`, no `ready` and no `critical_path`, and that
+absence is the signal (the availability rule, §1), not an empty graph.
 
 ### 6.10 `fugaro runs stats --json` (**CLI 0.9.0**)
 
