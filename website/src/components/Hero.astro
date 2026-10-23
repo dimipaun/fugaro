@@ -35,6 +35,11 @@
  *      no document can say for it. It is listed with the page's other new lines in the pull
  *      request for the owner to veto.
  *   7. **The video slot is empty while `site.yaml` says the video does not exist** (D107).
+ *   8. **The latest-release line is the changelog's own data** (the owner's request of
+ *      2026-10-22): the tag is the newest release file the plugin's version says is published,
+ *      read at build time, so the line names no version this file holds and follows the tree
+ *      when a release lands. It is the one line above the pill and above the `h1`, which is
+ *      where the page's lead — the text between the `h1` and the first `h2` — does not reach.
  *
  * **The card is not a command block and prints no `<pre>`.** `website/test/home.mjs` refuses
  * a `<pre>` in the hero: the hero is the promise and its call to action, and the command a
@@ -48,6 +53,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { loadSite, REPO_ROOT } from '../content.ts'
 import { REQUEST, REQUEST_SOURCE } from '../lib/agent-request.mjs'
+import { buildChangelog } from '../lib/changelog.mjs'
 
 const site = loadSite()
 const facts = site.facts
@@ -140,6 +146,32 @@ const videoExists = facts.features.video
 // 2026-10-19, item 6; W3.1).
 const consoleExists = facts.features.consoleDownloads
 
+// The latest release, for the one line this page adds about the site's changelog (the owner's
+// request of 2026-10-22). **The tag is the changelog's own data, read at build time** — the
+// release files for the tags, and the plugin's own version for which of them is published — so
+// no version is typed into this component and the line follows the tree when the next release
+// file lands. The two paths are passed rather than left to the generator's defaults for the
+// reason `src/pages/changelog.astro` states: inside a build the module is bundled under
+// `website/dist/.prerender/`, where its own walk up from itself finds `website/docs/releases/`,
+// which does not exist.
+const releases = buildChangelog({
+  releasesDir: path.join(REPO_ROOT, 'docs', 'releases'),
+  pluginFile: path.join(REPO_ROOT, 'plugin', '.claude-plugin', 'plugin.json'),
+})
+
+/**
+ * The newest release that is published: a release file written ahead of the plugin's version
+ * bump is on `main` without being a release, and this line says what a reader can install today.
+ * A tree where none of the files is published has no latest release to name, and that stops the
+ * build here rather than printing the tag of something that has not shipped.
+ */
+const latestRelease = releases.find((entry) => entry.released)
+if (latestRelease === undefined) {
+  throw new Error(
+    `website/src/components/Hero.astro: none of the ${releases.length} release file(s) under docs/releases/ is at or below the version in plugin/.claude-plugin/plugin.json, and the homepage's latest-release line names the newest published one (the owner's request of 2026-10-22). Either the manifest carries the wrong version or every release file is ahead of it.`,
+  )
+}
+
 /** The pull request the card's rows are drawn with: the same shape the slider's third step
  *  uses, inline and `currentColor`, so the card fetches nothing for its drawing. */
 const PR_GLYPH =
@@ -155,8 +187,21 @@ const ROWS = Array.from({ length: JOBS }, (_, index) => index + 1)
   <div class="hero-glow" aria-hidden="true"></div>
 
   <div class="hero-copy">
-    {/* The board's status pill: the first thing on the page, and the README's own words for
-        what a run is and whose project it runs in. */}
+    {/* The latest release, above the pill: the one line this page adds about the changelog (the
+        owner's request of 2026-10-22). It is a note about the project rather than a promise, so
+        it is the quiet tone at the smallest step, and the tag and its link are the changelog's
+        own data — the line is derived from the release files at build time and carries no
+        `data-source`, because it quotes no document's sentence: the tag is the entry's own. Its
+        home is `/changelog/`, where the entry is rendered (`website/test/home.mjs` holds every
+        internal link of this page to a route the plan's tasks write, which is what keeps the
+        link a page of this site rather than a fragment). */}
+    <p class="hero-release">
+      Latest release:{' '}
+      <a href="/changelog/">{latestRelease.tag}</a>
+    </p>
+
+    {/* The board's status pill: the README's own words for what a run is and whose project it
+        runs in. */}
     <p class="pill hero-pill" data-source="README.md">
       <span class="hero-pill-dot" aria-hidden="true"></span>
       {PILL}
@@ -278,6 +323,19 @@ const ROWS = Array.from({ length: JOBS }, (_, index) => index + 1)
     align-items: flex-start;
     gap: var(--space-md);
     min-width: 0;
+  }
+
+  /* The latest release: one line of text, at the smallest step of the type scale and in the
+     quiet tone, because it is a note about the project rather than the promise under it. The
+     room around it is `.hero-copy`'s own gap — the flex column the hero draws its copy in — so
+     the rule declares no margin of its own. **It sits above the `h1`**, which is what keeps it
+     out of the page's lead: the lead is the text between the `h1` and the first `h2`, and
+     `website/test/fold.mjs` holds that region to the promise, its prompt line and its call to
+     action and to nothing else. */
+  .hero-release {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
   }
 
   .hero-pill {
