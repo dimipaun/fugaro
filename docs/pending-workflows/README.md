@@ -1821,10 +1821,19 @@ flattens the whole document before it reads the set.
 (`internal/cli/docs_dependabot_console_test.go`) pins the staged file's content
 (the two entries, the weekly schedule of each, the directory `/console`, the
 group and its two update types, and that the `github-actions` entry is the one
-that runs today), pins the copy-in command and the section that carries it, and
-pins the staging state in both directions — while the staged copy is here,
+that runs today), pins the copy-in command and the section that carries it —
+including this section's own opening line, which the copy-in rewrites — and
+pins the staging state in both directions: while the staged copy is here,
 `.github/dependabot.yml` must NOT yet carry the console entry; once the copy-in
-has removed it, the file that runs must. **What no test can verify is what
+has removed it, the file that runs must.
+`TestDependabotConsoleStagingStateIsReadableInEveryState`, in the same file, runs
+those rules against **both** states with fixtures, because the state the copy-in
+leaves is one no agent-run tree is ever in, and against five single-rule
+breakages — so the half of the check that the copy-in is the first to exercise
+is exercised here instead. **The steps above were walked in this tree** — the
+`cp` over `.github/dependabot.yml`, the `git rm`, and the three sentences — and
+`internal/cli` and `website/test/readme.mjs` were green with the staged copy
+gone and the console entry in the file that runs. **What no test can verify is what
 Dependabot does with the file**: it is GitHub's service, it is not run from CI,
 and nothing in this repository observes the pull requests it opens or refuses to
 open. The file is pinned as the text the owner applies, and the acceptance is
