@@ -646,15 +646,15 @@ export const HOST_NAMING_TEST = 'internal/cli/docs_website_boundary_test.go'
 
 // The two production files in the tree that name the site's canonical host and are NOT a finding,
 // and the reason the rule above does not reach them: the console's own link to the project's
-// public website, which the owner ruled canonical on 2026-10-17 (`fugaro.dev`;
-// `docs/website/implementation-plan.md` Task W2.2, D92) and which the owner's ruling of 2026-10-20
-// put on the console's onboarding screens.
+// public website, at the host `site.yaml`'s `canonical_url` states and the owner ruled canonical
+// on 2026-10-17 (`docs/website/implementation-plan.md` Task W2.2, D92), which the owner's ruling
+// of 2026-10-20 put on the console's onboarding screens.
 //
 // This rule exists for the page's sentence "They talk to your own Google Cloud project, ... and to
 // nothing the Fugaro project operates. Nothing is reported anywhere": a source that names the
 // host has found a service to *report to*. These two do not report anywhere. `window.ts` carries
-// `fugaro.dev` in the `openExternal` allow-list and `onboarding.ts` carries the getting-started
-// URL (`GETTING_STARTED_URL`), and the console opens that URL by handing it to the *user's own
+// that host in the `openExternal` allow-list and `onboarding.ts` carries the getting-started URL
+// (`GETTING_STARTED_URL`), and the console opens that URL by handing it to the *user's own
 // browser* through the OS — the console itself makes no request, and what the reader then loads is
 // the project's own website, which the page's part one describes rather than a host the software
 // reaches. The sentence's subject is the software's own traffic, and a link the reader chooses to
