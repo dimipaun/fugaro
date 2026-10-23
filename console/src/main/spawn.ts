@@ -1954,8 +1954,8 @@ export function runToCompletion(
           ? pid !== null
             ? null
             : wrapper.pidFile === null
-              ? 'the wrapper named no pid file, so the process inside the distribution could not be stopped'
-              : `the wrapper's pid file could not be read, so the process inside the distribution could not be stopped`
+              ? 'the wrapper named no pid file, so the process inside the distribution could not be stopped; it may still be running'
+              : `the wrapper's pid file could not be read, so the process inside the distribution could not be stopped; it may still be running`
           : null
       if (!exited) {
         child.kill('SIGTERM')

@@ -91,6 +91,7 @@ import {
   WSL_WRAPPER_MARKER,
   shellQuote,
   wslStopArgs,
+  SpawnTimeout,
 } from '../../src/main/spawn'
 import type {
   ChildSpawner,
@@ -112,7 +113,7 @@ import { SourceRefusal, handlersFor } from '../../src/source/source'
 import { installStub } from './stub'
 import type { Stub } from './stub'
 import { DISTRO_PATH, installWslStub } from './wslstub'
-import type { WslFixture, WslStub } from './wslstub'
+import type { WslFixture, WslReport, WslStub } from './wslstub'
 
 const SOURCE_ROOT = fileURLToPath(new URL('../../src', import.meta.url))
 const PROJECT = 'fugaro'
@@ -3299,5 +3300,326 @@ describe('a feed whose last line has no newline', () => {
     expect(notices).toHaveLength(1)
     expect(notices[0]).toMatch(/last line .*without a newline/)
     expect(notices[0]).not.toContain('2026-')
+  })
+})
+
+/**
+ * Part F of docs/console-windows/implementation-plan.md: spawning, streaming,
+ * cancellation and exit codes on the WSL route (T-F1, T-F3, T-F4, T-F5).
+ *
+ * Every case here runs the **fake** `wsl.exe` (T-A1): Windows cannot be reached
+ * from this machine, so the doubles are the whole of the evidence, and the
+ * checks that need a real Windows host are marked not-run in the PR rather than
+ * guessed at here.
+ *
+ * The one arrangement the cancellation cases need: the directory the
+ * distribution starts in (`--cd`) must be the **host** spelling of the same
+ * directory the console starts `wsl.exe` in, because that is the directory the
+ * wrapper's pid file is written into and read from (T-F4, D6(a)). On a real
+ * machine that is T-D4's wiring -- the private working directory, translated --
+ * and here it is one directory named twice.
+ */
+describe('the wrapper into a distribution', () => {
+  const TWO: WslFixture = {
+    list: 'Ubuntu\r\nDebian\r\n',
+    status: 'Default Distribution: Ubuntu\r\nDefault Version: 2\r\n',
+  }
+
+  /** wslPlanIn is a plan whose `--cd` and whose `cwd` are one directory: the
+   * arrangement the pid file's two spellings need. */
+  function wslPlanIn(wsl: WslStub, operation: string, args: ValidatedArguments = {}): SpawnPlan {
+    return planFor(operation as OperationName, args, {
+      target: { project: PROJECT },
+      binaryPath: '',
+      directory: wsl.stub.directory,
+      appEnv: {},
+      wsl: { distro: 'Ubuntu', directory: wsl.stub.directory, executable: wsl.binary },
+    })
+  }
+
+  /** spawnReports is the `wsl.exe` invocations that started something, in
+   * order: the first is the CLI's own, and a second is a stop. */
+  const spawnReports = (wsl: WslStub): readonly WslReport[] =>
+    wsl.reports().filter((report) => report.kind === 'spawn')
+
+  it('carries the CLI’s exit status through the wrapper, and never shows the wrapper', async () => {
+    // T-F1, F26. The wrapper is transparent to a status: what the operator
+    // reads is `fugaro`'s, and the marker the shell prints before it `exec`s
+    // never reaches a screen (`cliSentence` is what a screen shows).
+    const seven = freshDirectory()
+    const failing = installWslStub(join(seven, 'windows'), {
+      distros: TWO,
+      scenario: { commands: { version: { stdout: '1.4.2\n', code: 7 } } },
+    })
+    const result = await runToCompletion(wslPlanIn(failing, 'cli.version'), { timeoutMs: 10_000 })
+    expect(result.code).toBe(7)
+    // A child inside the distribution did start, so the status is the CLI's.
+    expect(result.wrapperStarted).toBe(true)
+    expect(result.stdout).toBe('1.4.2\n')
+    expect(result.stderr).toBe('')
+    expect(result.stderr).not.toContain(WSL_WRAPPER_MARKER)
+
+    const zero = freshDirectory()
+    const answering = installWslStub(join(zero, 'windows'), {
+      distros: TWO,
+      scenario: { commands: { version: { stdout: '1.4.2\n' } } },
+    })
+    const ok = await runToCompletion(wslPlanIn(answering, 'cli.version'), { timeoutMs: 10_000 })
+    expect(ok.code).toBe(0)
+    expect(ok.wrapperStarted).toBe(true)
+    // The child exited on its own, so there is nothing to stop and no second
+    // `wsl.exe` was sent (T-F4).
+    expect(spawnReports(answering)).toHaveLength(1)
+    expect(answering.stub.kills()).toEqual([])
+  })
+
+  it('never reads a wsl.exe failure as a CLI exit code', async () => {
+    // T-F1's other half (F26, U7/U8). A Windows spelling in `--cd` is a
+    // `wsl.exe` that fails **before** it starts anything inside the
+    // distribution: the status and the sentence are `wsl.exe`'s, and a console
+    // that read them as `fugaro`'s would send an operator to debug a CLI that
+    // never ran.
+    const directory = freshDirectory()
+    const wsl = installWslStub(join(directory, 'windows'), { distros: TWO })
+    const plan = planFor('cli.version', {}, {
+      target: { project: PROJECT },
+      binaryPath: '',
+      directory,
+      appEnv: {},
+      wsl: { distro: 'Ubuntu', directory: 'C:\\Users\\dimi\\src', executable: wsl.binary },
+    })
+    const result = await runToCompletion(plan, { timeoutMs: 10_000 })
+    expect(result.code).not.toBe(0)
+    expect(result.wrapperStarted).toBe(false)
+    expect(result.stderr).toContain('wsl.exe (the fake)')
+    // Nothing was started inside the distribution, which is what "before" means.
+    expect(wsl.children()).toEqual([])
+
+    // ...and the probe says whose status it was, and keeps the number out of
+    // the field a classifier reads.
+    const probe = await probeVersion(plan, { timeoutMs: 10_000 })
+    expect(probe.ok).toBe(false)
+    if (probe.ok) return
+    expect(probe.code).toBeNull()
+    expect(probe.wrapperStarted).toBe(false)
+    expect(probe.reason).toContain('wsl.exe exited')
+    expect(probe.reason).not.toContain('the binary exited')
+  })
+
+  it('cancels inside the distribution, naming the pid the wrapper recorded', async () => {
+    // T-F4, F24 and decision D6(a). Killing the Windows-side `wsl.exe` is not
+    // documented to kill the Linux process it started, so the console sends one
+    // more `wsl.exe` that kills the pid the wrapper's shell recorded -- and the
+    // fake here **ignores SIGTERM**, which is what makes this the case a
+    // console that only killed `wsl.exe` fails.
+    const directory = freshDirectory()
+    const wsl = installWslStub(join(directory, 'windows'), {
+      distros: TWO,
+      scenario: { commands: { version: { stdout: '1.4.2\n', hold: true } } },
+      holdsOnTerm: true,
+    })
+    const timers = manualTimers()
+    const pending = runToCompletion(wslPlanIn(wsl, 'cli.version'), { timers, timeoutMs: 100, shutdownGraceMs: 50 })
+    await waitFor(() => wsl.children().length === 1)
+    const refusal: Promise<SpawnTimeout> = pending.then(
+      () => {
+        throw new Error('the read was expected to be refused')
+      },
+      (error: SpawnTimeout) => error,
+    )
+
+    timers.fire()
+    const timeout = await refusal
+    expect(timeout).toBeInstanceOf(SpawnTimeout)
+    // The pid was read before the grace, so the sentence carries no residual:
+    // the console could name the process it stopped.
+    expect(timeout.message).not.toContain('may still be running')
+
+    timers.fire()
+    await waitFor(() => spawnReports(wsl).length === 2)
+    const stop = spawnReports(wsl)[1]
+    // The stop is one `wsl.exe`, into the same distribution, with the shell the
+    // wrapper used: `wsl.exe -d Ubuntu -- sh -c 'kill -TERM <pid>'`.
+    expect(stop?.distro).toBe('Ubuntu')
+    expect(stop?.argv.slice(0, 5)).toEqual(['-d', 'Ubuntu', '--', WSL_SHELL_PROGRAM, WSL_SHELL_FLAG])
+    expect(stop?.argv).toHaveLength(6)
+    const killed = Number(/^kill -TERM ([0-9]+)$/.exec(stop?.argv[5] ?? '')?.[1])
+    expect(Number.isInteger(killed)).toBe(true)
+
+    // The proof that the pid is the **child's** and not the wrapper's: the stub
+    // `fugaro` reports its own pid when it is stopped, and it is the pid the
+    // stop named. A pid that were the shell's would leave this empty -- the
+    // shell is gone, `exec` replaced it with the CLI.
+    await waitFor(() => wsl.stub.kills().length === 1)
+    const killedChild = only(wsl.stub.kills())
+    expect(killedChild.signal).toBe('SIGTERM')
+    expect(killedChild.pid).toBe(killed)
+    expect(killedChild.argv).toEqual(['version'])
+  })
+
+  it('states the residual when it cannot name the process inside the distribution', async () => {
+    // D6(a)'s residual window, said on the screen rather than left implicit: a
+    // plan that names no directory names no pid file either, so the console
+    // cannot say what to kill. The refusal says so.
+    const directory = freshDirectory()
+    const wsl = installWslStub(join(directory, 'windows'), {
+      distros: TWO,
+      scenario: { commands: { version: { stdout: '1.4.2\n', hold: true } } },
+      holdsOnTerm: true,
+    })
+    const plan = planFor('cli.version', {}, {
+      target: { project: PROJECT },
+      binaryPath: '',
+      directory,
+      appEnv: {},
+      wsl: { distro: 'Ubuntu', executable: wsl.binary },
+    })
+    expect(plan.wrapper?.pidFile).toBeNull()
+    const timers = manualTimers()
+    const pending = runToCompletion(plan, { timers, timeoutMs: 100, shutdownGraceMs: 50 })
+    await waitFor(() => wsl.children().length === 1)
+    const refusal: Promise<SpawnTimeout> = pending.then(
+      () => {
+        throw new Error('the read was expected to be refused')
+      },
+      (error: SpawnTimeout) => error,
+    )
+    timers.fire()
+    expect((await refusal).message).toContain('may still be running')
+  })
+
+  it('feeds a watch stream through the wrapper exactly as on the host route', async () => {
+    // T-F3 (F28, F29): the wrapper is not allowed to change the feed. The same
+    // scenario runs on both routes -- one document line with a `\r` before the
+    // `\n`, one notice, and a line carrying a character outside ASCII -- and the
+    // two routes must produce the same frames and the same notices. A decoder
+    // applied on one route and not the other, or a `StringDecoder` lost to the
+    // wrapper's shell, fails here.
+    const lines = ['{"kind":"live","day":"2026-01-01"}\r', 'no budget backend: showing run records only', '{"kind":"live","day":"2026-01-01","note":"héllo ✓"}']
+    const scenario = { commands: { watch: { lines, delayMs: 5, hold: true } } }
+
+    const hostDirectory = freshDirectory()
+    const host = installStub(hostDirectory, scenario)
+    const hostPlan = planFor('live.watch', {}, {
+      target: { project: PROJECT },
+      binaryPath: host.binary,
+      directory: hostDirectory,
+      appEnv: {},
+    })
+    const directory = freshDirectory()
+    const wsl = installWslStub(join(directory, 'windows'), { distros: TWO, scenario })
+    const wslPlan = wslPlanIn(wsl, 'live.watch')
+
+    const seen = async (plan: SpawnPlan): Promise<{ frames: unknown[]; notices: string[] }> => {
+      const frames: unknown[] = []
+      const notices: string[] = []
+      const sidecar = startSidecar(plan, {
+        onFrame: (frame) => frames.push(frame),
+        onNotice: (notice) => notices.push(notice.text),
+        onRestart: () => undefined,
+        onEnded: () => undefined,
+      })
+      await waitFor(() => frames.length >= 2 && notices.length >= 1)
+      await sidecar.stop()
+      return { frames, notices }
+    }
+
+    const fromHost = await seen(hostPlan)
+    const fromWsl = await seen(wslPlan)
+    expect(fromWsl.frames).toEqual(fromHost.frames)
+    expect(fromWsl.notices).toEqual(fromHost.notices)
+    expect(fromHost.notices).toHaveLength(1)
+    // The document carrying the multi-byte character arrived whole on both
+    // routes: a decode that lost a byte would have dropped it as a notice.
+    expect(fromWsl.frames).toHaveLength(2)
+  })
+
+  it('stops a wedged read at the deadline through the wrapper too', async () => {
+    // T-F5 (F25): `READ_TIMEOUT_MS` is the backstop on both routes. The child
+    // inside the distribution holds and never closes its stdout, so nothing
+    // settles the read but the deadline -- and it settles **at** the deadline,
+    // not before: a reader that settled on `exit`, or on the first quiet
+    // moment, would hand back a torn document.
+    const directory = freshDirectory()
+    const wsl = installWslStub(join(directory, 'windows'), {
+      distros: TWO,
+      scenario: { commands: { version: { stdout: '1.4.2\n', hold: true } } },
+    })
+    const timers = manualTimers()
+    const pending = runToCompletion(wslPlanIn(wsl, 'cli.version'), { timers, timeoutMs: 90_000, shutdownGraceMs: 50 })
+    await waitFor(() => wsl.children().length === 1)
+    let settled = false
+    void pending.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      },
+    )
+    // The child has answered and is holding: nothing has settled the read.
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(settled).toBe(false)
+    expect(timers.fired()).toEqual([])
+
+    timers.fire()
+    const error = await pending.catch((thrown: unknown) => thrown as SpawnTimeout)
+    expect(error).toBeInstanceOf(SpawnTimeout)
+    expect(timers.fired()).toEqual([90_000])
+  })
+
+  it('spells every CLI word for the distribution’s shell, so a hostile name is a word', async () => {
+    // The binding carry-over from Part C's review, and the whole injection
+    // surface of the wrapper: the CLI's argv is built from a project name, a
+    // checkout and a config path, and `isSafeInstallationValue` deliberately
+    // admits `$`, a backtick, `;`, `|`, `&`, `(`, `)`, quotes and a space in
+    // them. With `shell: false` and an array argv those are harmless; inside a
+    // `sh -c` script they are a subshell, a word break and a command separator.
+    // The child's own report is the evidence: it must receive them verbatim.
+    const hostile = '/tmp/a b/$(id)/`id`;rm -rf/x|y&z(q)w\'e"r'
+    expect(shellQuote(hostile)).toBe(`'${hostile.replaceAll("'", `'\\''`)}'`)
+    expect(shellQuote('a\nb')).toBe("'a\nb'")
+    expect(() => shellQuote('a\u0000b')).toThrow(/NUL/)
+
+    const directory = freshDirectory()
+    const wsl = installWslStub(join(directory, 'windows'), {
+      distros: TWO,
+      scenario: { commands: { 'budget show': { stdout: '{"ok":true}\n' } } },
+    })
+    const plan = planFor('budget.show', {}, {
+      target: { project: PROJECT, configPath: hostile },
+      binaryPath: '',
+      directory: wsl.stub.directory,
+      appEnv: {},
+      wsl: { distro: 'Ubuntu', directory: wsl.stub.directory, executable: wsl.binary },
+    })
+    const result = await runToCompletion(plan, { timeoutMs: 10_000 })
+    expect(result.code).toBe(0)
+    // The script carries the word inside single quotes, and the child received
+    // it as one argument -- not as a subshell, not split at the space.
+    const child = only(wsl.children())
+    expect(child.argv).toContain(hostile)
+    expect(child.argv.filter((word) => word === hostile)).toHaveLength(1)
+    // Nothing the word could have done happened: the report is the child's own
+    // account of the argv it was handed.
+    expect(child.argv[0]).toBe('budget')
+  })
+
+  it('names the stop’s own words for wsl.exe, never for the CLI', () => {
+    // `wslStopArgs` is the second invocation's whole argv, and the pid is a
+    // **number**: the value comes from a file, and a file that said anything
+    // else would be shell syntax in a `sh -c` command line.
+    expect(wslStopArgs({ distro: 'Ubuntu-22.04', pid: 4321 })).toEqual([
+      '-d',
+      'Ubuntu-22.04',
+      '--',
+      'sh',
+      '-c',
+      'kill -TERM 4321',
+    ])
+    // ...and the CLI's own surface assertion refuses these words by name: they
+    // are `wsl.exe`'s, and a design that put them in the CLI's argv would have
+    // to widen `SPAWN_FLAGS` to admit them.
+    expect(() => assertArgvFlags('cli.version', [...wslStopArgs({ distro: 'Ubuntu', pid: 1 })])).toThrow(/--/)
   })
 })
