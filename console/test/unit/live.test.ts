@@ -500,6 +500,15 @@ describe('the row model', () => {
     // person's name (the request's "fail private").
     const untouched = renderLive(factory, modelOf(frame), 'light')
     expect(all(untouched, 'live-run-started-by')).toHaveLength(0)
+    // A launcher that shortens to nothing a cell can draw is that same empty
+    // cell, and not an empty span: `'  @example.com'` shortens to `'  '`, which
+    // the label class would trim to `''` and draw as a blank element with the
+    // row's `gap` around it (`launcher.ts`'s `blank`).
+    const blank = frame.runs.map((run) =>
+      run.run === QUEUED_RUN ? { ...run, launchedBy: '  @example.com' } : run,
+    )
+    const blanks = renderLive(factory, buildLiveModel({ ...frame, runs: blank }, new BurnHistory()), 'light')
+    expect(all(blanks, 'live-run-started-by')).toHaveLength(0)
   })
 
   it('flags the runs the fixture went silent and then lost', () => {

@@ -1483,6 +1483,27 @@ truncated.
 | `path` | a filesystem path | redacted to `<path>` |
 | `url` | `https`, a non-empty host, no whitespace, no credential in the host, a path segment, the query or the fragment (each read as written and percent-decoded: the token families, a credential-named assignment such as `access_token=…`, and — in the host, the query and the fragment — the high-entropy rule, which there also reads a run that follows a dot), no random-looking host label (the host is read as written and as parsed, whole and label by label, each `xn--` label also punycode-decoded; a run of 20+ letters and digits with both, at 3.5+ bits per character, is refused even case-folded), and not a well-known webhook URL (Slack `hooks.slack.com/services/…`, Discord `…/api/webhooks/…`, Microsoft Teams, Zapier, IFTTT, Telegram); userinfo is dropped | refused — including `http:`, `javascript:` and a URL carrying a credential |
 
+**One key is drawn in a class other than the one `WIRE_TEXT_CLASSES` gives it,
+and it is deliberate.** `launched_by` — who started a run — is classified
+`person`, and the Live and Projects rows draw its **short form** (the CLI's own
+cut, `runview.LauncherShort`: the part before an address's first `@`, the whole
+value for anything else — the cut `fugaro runs ls`'s own `BY` column makes)
+through the **`label`** class. `person` is a validating class: it draws a login
+or a pseudonym and the console's marker for an address, and refuses everything
+else, so `dana.lopez@example.com` — the commonest corporate local part — and
+every display name would be a refused cell reading `n/a`, on nearly every row of
+a column whose whole purpose is to say who started the run. The short form is
+**not an address**: the cut is at the first `@`, and what the `label` class does
+here is what a cell needs — one line, the 200-character bound, the invisible
+characters stripped, a credential shape masked. The **whole** recorded value is
+drawn in the Run screen's header, through `person` as the map says, so an
+address is the console's marker there and **no address is drawn anywhere**.
+`src/shared/launcher.ts` is the module and the reasoning;
+`docs/design/desktop-console.md` §6.2 records the decision. This is not a
+narrowing of **D15**: that decision is about `report --by person`'s cost
+breakdown on the Spend screen, and the console already names people on Live and
+Projects without a switch — a killed repository's row reads `KILLED by <who>`.
+
 **The trade-off in the path, said out loud.** A path segment is not held to the
 high-entropy rule, because a commit link's 40-hex digest is a path segment and
 refusing it would refuse the forge's own URLs. So a secret that lives in a URL's

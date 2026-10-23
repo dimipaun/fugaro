@@ -8,17 +8,23 @@
 //      part before an address's first `@`, the whole value for anything else.
 //      The table below is the Go test's table (`internal/runview/runview_test.go`,
 //      `TestLauncherShort`), value for value, because two renderers that shorten
-//      one recorded string two ways are two answers to "who started this run";
+//      one recorded string two ways are two answers to "who started this run".
+//      The console diverges from the CLI in exactly one place -- a marker is
+//      kept whole, where the CLI cuts `redacted@example.invalid` to `redacted`
+//      -- and the second test below is where that divergence is stated rather
+//      than left to be discovered;
 //   2. **the person string goes through the sanitizer on the text path**, and a
 //      person name is untrusted data: the request names the cases to test --
 //      control characters, a very long name, bidi marks, an empty string, a
 //      missing key. A value the sanitizer refuses is not drawn, and a value it
 //      masks is drawn masked;
 //   3. **it fails private**: a row without `launched_by` draws nothing at all --
-//      never another person's name -- and the drawn cell never carries the
-//      address the record named, because the cut is at the first `@` and no `@`
-//      survives it. The screen tests assert the element is absent
-//      (`live.test.ts`, `projects.test.ts`); this file asserts the string.
+//      never another person's name -- and no drawn cell carries the address the
+//      record named: the cut is at the first `@`, so the local part is all that
+//      survives it, and a marker (the one value the cut does not touch) is the
+//      console's own placeholder rather than an address. The screen tests assert
+//      the element is absent (`live.test.ts`, `projects.test.ts`); this file
+//      asserts the string.
 //
 // **No line of this file contains a credential-shaped string**: the one input
 // that is shaped like a token comes from `test/support/fakeSecrets.ts`, which
@@ -56,11 +62,15 @@ describe('launcherShort', () => {
     }
   })
 
-  it('keeps a marker the CLI already wrote whole, rather than cutting it to a name', () => {
-    // A scrubbed fixture records `redacted@example.invalid` for a launcher.
-    // Cutting it would draw the bare word `redacted`, which reads as a person's
-    // name -- the one thing a redaction must never look like. Every class in
-    // `sanitize.ts` keeps a marker as it is; this one does too.
+  it('keeps a marker the CLI already wrote whole, and this is the one divergence from the Go cut', () => {
+    // The console does **not** shorten a marker, and `runview.LauncherShort`
+    // does: the Go function cuts `redacted@example.invalid` to `redacted`, so
+    // the CLI's `BY` column draws the bare word `redacted`. That reads as a
+    // person's *name* -- the one thing a redaction must never look like -- and
+    // every class in `sanitize.ts` keeps a marker as it is, so the console
+    // keeps it here too. The table above is the Go table value for value and
+    // this is the single value the two renderers disagree about, which is why
+    // it is its own test and not a row of that table.
     expect(launcherShort(ADDRESS_PLACEHOLDER)).toBe(ADDRESS_PLACEHOLDER)
     expect(launcherShort('person-1a2b3c4d')).toBe('person-1a2b3c4d')
   })
@@ -75,6 +85,24 @@ describe('launcherCell', () => {
     for (const raw of [null, undefined, '', '@example.com']) {
       expect(launcherCell(raw), JSON.stringify(raw)).toBeNull()
     }
+  })
+
+  it('draws nothing for a short form the class would draw as an empty string', () => {
+    // A blank short form is the same empty cell as no value at all: the label
+    // class strips the invisible characters and trims (`stripInvisible`,
+    // `oneLine`), so handing it any of these would put an **empty span** on the
+    // row -- a flex `gap`, which is exactly the outcome `launcher.ts`'s header
+    // rules out. The screen tests read `null` as "no element", so a blank has to
+    // be `null` and not `''`. Three shapes, one per pass the class makes: only
+    // whitespace, only an invisible character (a zero-width space -- `.trim()`
+    // alone would keep it, which is why the check is not just a trim), and only
+    // a terminal escape sequence.
+    for (const raw of [' ', '  ', '\t', ' ', '  @example.com', '​@example.com', '\u001b[31m']) {
+      expect(launcherCell(raw), JSON.stringify(raw)).toBeNull()
+    }
+    // Whitespace *around* a name is not blank: the class trims it, so the cell
+    // is still drawn.
+    expect(launcherCell(' dana @example.com')).toBe(' dana ')
   })
 
   it('draws the short form of a recorded launcher', () => {

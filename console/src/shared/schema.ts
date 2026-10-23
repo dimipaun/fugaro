@@ -62,6 +62,19 @@ import type { TextClass } from './sanitize'
  * WIRE_TEXT_CLASSES is the class of every string key the wire carries that is
  * *text*: something a job or an installation wrote, which must be sanitized
  * before it is drawn.
+ *
+ * A screen draws a key in the class this map gives it (`app.ts`'s `putText`),
+ * **with one deliberate exception, and it is `launched_by`**: the Live and
+ * Projects rows draw its *short form* -- the CLI's own cut, the part before an
+ * address's first `@` (`shared/launcher.ts`) -- through the `label` class. The
+ * class below is a validating one and refuses a dotted local part
+ * (`dana.lopez@example.com`, the commonest corporate shape) along with every
+ * display name, so the column the owner asked for on 2026-10-18 would read `n/a`
+ * for most of the people who use it. The **whole** recorded value is drawn in
+ * the Run screen's header, in `person`, exactly as this map says -- so no
+ * address is drawn anywhere. `console/README.md`'s class table and
+ * `docs/design/desktop-console.md` §6.2 record the decision; `launcher.ts` is
+ * the module and carries the reasoning.
  */
 export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.freeze({
   // The document's own fields.
