@@ -130,6 +130,43 @@ const (
 	// CLI release as well, which is the coupling the owner split apart on
 	// 2026-10-22.
 	mobileReleaseTagPattern = "mobile-v[0-9]+.[0-9]+.[0-9]+"
+	// mobileReleaseVersionStepName is the step that holds the tag's version to
+	// the app config's: the app has its own tag stream (`mobile-vX.Y.Z`) and its
+	// own version line (`expo.version` in `mobile/app.json`), EAS reports the
+	// config's version rather than the tag, and a tag that disagrees with it
+	// would be submitted as a version no tag names. The whole rule is the four
+	// constants below, and each is asserted rather than a pattern that could
+	// appear in a comment.
+	mobileReleaseVersionStepName = "The tag's version is the app's version"
+	// mobileReleaseVersionCondition is the whole `if:` on that step. It is a
+	// fact about the **ref** rather than the event: a manual dispatch can name a
+	// tag (`gh workflow run --ref mobile-v0.1.0`), and a dispatched tag reaches
+	// a store exactly as a pushed one does, so the version rule has to cover
+	// both. `github.event_name == 'push'` would leave the dispatched tag the
+	// only way into a store behind a tag nothing compared with the config.
+	mobileReleaseVersionCondition = "github.ref_type == 'tag'"
+	// mobileReleaseVersionShapeCheck is the block that refuses a tag that is not
+	// the app's own strict shape, and mobileReleaseVersionMismatchCheck the one
+	// that refuses a tag whose version is not the config's. Both are read as
+	// blocks (each has to stop the job), because a guard that only prints is a
+	// build that still goes to a store (mobileReleaseGuardStops).
+	mobileReleaseVersionShapeCheck    = `if [[ ! "${TAG}" =~ ^mobile-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then`
+	mobileReleaseVersionMismatchCheck = `if [[ "${app_version}" != "${version}" ]]; then`
+	// mobileReleaseVersionStrip is how the version is taken from the tag: the
+	// one prefix `scripts/release-gate.sh` strips as well, so the number this
+	// step compares is the number the gate is given.
+	mobileReleaseVersionStrip = `version="${TAG#mobile-v}"`
+	// mobileReleaseVersionRead is the whole read of the app's version line, and
+	// its shape is the point: `jq -er` prints a value only when the field is
+	// there, is not null and is a string, and exits non-zero otherwise, and the
+	// steps carry `set -euo pipefail` -- so a config this step cannot read stops
+	// the job rather than comparing the tag with an empty string (which a
+	// missing `expo.version` would otherwise look like). It reads the committed
+	// `mobile/app.json`, never a resolved `app.config.js`.
+	mobileReleaseVersionRead = `jq -er '.expo.version | select(type == "string")' mobile/app.json`
+	// mobileReleaseVersionMismatchError is the word both refusals use, so the
+	// step's failure says what it refused and why rather than exiting silently.
+	mobileReleaseVersionMismatchError = "refusing to build"
 	// mobileReleaseEasCLIVersion is the exact `eas-cli` the job installs. The
 	// pin matters because the job holds a store credential: a global install of
 	// whatever `latest` was at the moment of the run is a dependency nobody
@@ -427,6 +464,10 @@ var mobileReleaseAllowedDotted = []string{
 	"android.buildType",             // the eas.json field that makes the Android build an AAB
 	"artifacts.buildUrl",            // the EAS field the summary deliberately does not read
 	"Info.plist",                    // the iOS binary's metadata file, named in a comment
+	// The app's own version line: the field the version rule compares with the
+	// tag (mobile/app.json). A field name and never a value -- the version it
+	// carries is a number the tag also carries, which is the point of the step.
+	"expo.version",
 }
 
 // mobileReleaseSummaryRE finds the steps that write the run summary. The build's
@@ -673,7 +714,13 @@ type mobileReleaseJobShape struct {
 	// on both events would be a gate with no tag to check, and a job with only
 	// the tag gate is the hole this count exists to close.
 	dispatchGates int
-	installs      int
+	// versionSteps counts the step that holds the tag's version to the app
+	// config's. It is one per job and it is asserted apart from the gates
+	// because it is a *refusal* rather than a lock: it decides nothing about
+	// who may run the release, and it is the only thing that stops a tag whose
+	// version is not the version EAS would report.
+	versionSteps int
+	installs     int
 	masks         int
 	builds        int
 	summaries     int
@@ -724,7 +771,7 @@ func mobileReleaseCheckJob(t *testing.T, path, platform string, job mobileReleas
 		t.Errorf("the %s job binds %v at job level: the Expo token belongs in the `env:` of the steps that talk to EAS, and a job-level binding hands it to every step in the job", platform, job.Env)
 	}
 
-	var gateAt, dispatchGateAt, maskAt, buildAt, summaryAt, submitAt = -1, -1, -1, -1, -1, -1
+	var gateAt, dispatchGateAt, versionAt, maskAt, buildAt, summaryAt, submitAt = -1, -1, -1, -1, -1, -1, -1
 	for i, step := range job.Steps {
 		cmd := workflowRunCommands(step.Run)
 		switch {
@@ -737,6 +784,38 @@ func mobileReleaseCheckJob(t *testing.T, path, platform string, job mobileReleas
 			// cannot answer.
 			if got := fmt.Sprintf("%v", step.With["fetch-depth"]); got != "0" {
 				t.Errorf("the %s job's checkout takes fetch-depth %q, not 0: the release gate below asks whether the tagged commit is reachable from origin/main, and a shallow clone cannot answer that", platform, got)
+			}
+		case step.Name == mobileReleaseVersionStepName:
+			// The version rule: the app's own strict tag shape, the version
+			// taken from the tag, and the comparison with the app config's
+			// `expo.version` -- each half a block that stops the job rather
+			// than printing and carrying on.
+			shape.versionSteps++
+			if versionAt < 0 {
+				versionAt = i
+			}
+			if got := step.If; got != mobileReleaseVersionCondition {
+				t.Errorf("the %s job's version step carries `if: %s`, not exactly `%s`: the rule is a fact about the ref, so it holds a dispatched tag (`gh workflow run --ref mobile-v0.1.0`) to the same comparison a pushed one is held to, and an event-based condition would leave the dispatched tag the one way into a store that nothing compared with the app's config", platform, got, mobileReleaseVersionCondition)
+			}
+			if env := step.Env["TAG"]; env != "${{ github.ref_name }}" {
+				t.Errorf("the %s job's version step sets TAG to %q, not %q: the version comes from the tag, and the tag is the ref this run was started from", platform, env, "${{ github.ref_name }}")
+			}
+			if !strings.Contains(cmd, mobileReleaseVersionStrip) {
+				t.Errorf("the %s job's version step does not take the version out of the tag (`%s`): the prefix is the app's stream's (`%s`), and the version under it is what the gate below is given too", platform, mobileReleaseVersionStrip, mobileReleaseTagPattern)
+			}
+			if !strings.Contains(cmd, mobileReleaseVersionRead) {
+				t.Errorf("the %s job's version step does not read the app's version as %s: the version compared with the tag is `expo.version` in the committed `mobile/app.json`, read so that a missing or non-string field stops the job rather than comparing the tag with an empty string", platform, mobileReleaseVersionRead)
+			}
+			if !strings.Contains(cmd, mobileReleaseVersionMismatchError) {
+				t.Errorf("the %s job's version step does not say %q when it refuses: a step that exits silently leaves a release that did not happen with nothing in the log to say why", platform, mobileReleaseVersionMismatchError)
+			}
+			for _, block := range []struct{ what, open string }{
+				{"the tag's shape", mobileReleaseVersionShapeCheck},
+				{"the two versions", mobileReleaseVersionMismatchCheck},
+			} {
+				if !mobileReleaseGuardStops(cmd, block.open) {
+					t.Errorf("the %s job's version step has no %s block that stops the job (opening on %q and reaching an `exit 1` before its `fi`): a refusal that only prints is a build that still goes to EAS and to a store under a version no tag names", platform, block.what, block.open)
+				}
 			}
 		case strings.Contains(cmd, mobileReleaseGateCommand):
 			// Two gate steps, one per event, each with its own whole condition:
@@ -924,15 +1003,39 @@ func mobileReleaseCheckJob(t *testing.T, path, platform string, job mobileReleas
 	// be in place before the first command that resolves the app's config, the
 	// summary describes the build the step before it made, and the submission
 	// submits that same build.
-	if shape.gates != 2 || shape.dispatchGates != 1 || shape.installs != 1 || shape.masks != 1 || shape.builds != 1 || shape.summaries != 1 || shape.submits != 1 || shape.dryRuns != 1 {
-		t.Errorf("the %s job carries %d release gate step(s) (%d of them the manual-dispatch one), %d install(s), %d mask step(s), %d build(s), %d summary step(s), %d submission(s) and %d dry-run notice(s), not two gates and one of everything else: the job is this platform's whole release, and a store submission can start from a tag push or from a dispatch that would submit", platform, shape.gates, shape.dispatchGates, shape.installs, shape.masks, shape.builds, shape.summaries, shape.submits, shape.dryRuns)
-	} else if !(gateAt < dispatchGateAt && dispatchGateAt < maskAt && maskAt < buildAt && buildAt < summaryAt && summaryAt < submitAt) {
-		t.Errorf("the %s job's steps are out of order (tag gate %d, dispatch gate %d, mask %d, build %d, summary %d, submission %d): both gates have to refuse a commit that is off-main or red before anything is built, the mask has to run before the first `eas` command that resolves mobile/app.config.js, the summary has to describe the build that was made, and the submission has to follow both", platform, gateAt, dispatchGateAt, maskAt, buildAt, summaryAt, submitAt)
+	if shape.gates != 2 || shape.dispatchGates != 1 || shape.versionSteps != 1 || shape.installs != 1 || shape.masks != 1 || shape.builds != 1 || shape.summaries != 1 || shape.submits != 1 || shape.dryRuns != 1 {
+		t.Errorf("the %s job carries %d release gate step(s) (%d of them the manual-dispatch one), %d version step(s), %d install(s), %d mask step(s), %d build(s), %d summary step(s), %d submission(s) and %d dry-run notice(s), not two gates, one version step and one of everything else: the job is this platform's whole release, and a store submission can start from a tag push or from a dispatch that would submit", platform, shape.gates, shape.dispatchGates, shape.versionSteps, shape.installs, shape.masks, shape.builds, shape.summaries, shape.submits, shape.dryRuns)
+	} else if !(versionAt < gateAt && gateAt < dispatchGateAt && dispatchGateAt < maskAt && maskAt < buildAt && buildAt < summaryAt && summaryAt < submitAt) {
+		t.Errorf("the %s job's steps are out of order (version %d, tag gate %d, dispatch gate %d, mask %d, build %d, summary %d, submission %d): the version rule has to refuse a tag the app's config disagrees with before the gate reads anything, both gates have to refuse a commit that is off-main or red before anything is built, the mask has to run before the first `eas` command that resolves mobile/app.config.js, the summary has to describe the build that was made, and the submission has to follow both", platform, versionAt, gateAt, dispatchGateAt, maskAt, buildAt, summaryAt, submitAt)
 	}
 	if len(shape.uses) != 2 {
 		t.Errorf("the %s job uses %d actions (%q); it needs a checkout and a node", platform, len(shape.uses), shape.uses)
 	}
 	return shape
+}
+
+// mobileReleaseGuardStops reports whether the `if` block that opens on `open`
+// in the step's command stops the job: the block's own closing `fi` has a line
+// `exit 1` before it. It is what mobileReleaseBuildIDGuard does for the
+// submission's UUID check, in the small: a refusal this step writes as an
+// `echo` with no `exit` reads as a green assertion against
+// `strings.Contains(cmd, …)`, and it is a job that carries on to build and
+// submit the very tag it just said it refused.
+//
+// The block is found by its opening line and closed at the first `fi` on a line
+// of its own, which is the shape both blocks in that step have (the `if [[ … ]];
+// then` form, one level deep, closed with a bare `fi`).
+func mobileReleaseGuardStops(cmd, open string) bool {
+	at := strings.Index(cmd, open)
+	if at < 0 {
+		return false
+	}
+	rest := cmd[at+len(open):]
+	end := regexp.MustCompile(`(?m)^\s*fi\s*$`).FindStringIndex(rest)
+	if end == nil {
+		return false
+	}
+	return regexp.MustCompile(`(?m)^\s*exit\s+[1-9][0-9]*\s*$`).MatchString(rest[:end[0]])
 }
 
 // mobileReleaseBuildIDGuard reads a submission step's shape check **as a guard**
