@@ -494,7 +494,7 @@ func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 			fmt.Fprintf(r.w, "creating project %s (operation %s): if this run stops before it is readable, wait a few minutes and rerun with the same ID\n", s.id, op)
 		}}
 		if err := infra.CreateProject(ctx, s.pc, spec); err != nil {
-			return initflow.Outcome{}, s.fail(err)
+			return initflow.Outcome{}, s.failCreate(err)
 		}
 		if err := infra.WaitReadable(ctx, s.pc, s.id); err != nil {
 			return initflow.Outcome{}, s.fail(err)
@@ -544,7 +544,7 @@ func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 				fmt.Fprintln(r.w, pe.Error())
 				return initflow.Outcome{}, &initflow.NeedsYouError{Left: initflow.Left{Stage: initflow.Project, Kind: initflow.LeftCommand, Text: s.guided()}}
 			}
-			return initflow.Outcome{}, s.fail(err)
+			return initflow.Outcome{}, s.failLink(err, acct)
 		}
 		if err := infra.VerifyBilling(ctx, s.pc, s.id); err != nil {
 			return initflow.Outcome{}, s.fail(err)
@@ -568,6 +568,53 @@ func (s *projectStage) fail(err error) error {
 		return &initflow.StageError{Err: remote(err), Fix: pe.Fix}
 	}
 	return remote(err)
+}
+
+// The owner's ruling of 2026-10-23: the only supported path is a project this
+// run creates and links, so the two calls that make one -- Cloud Resource
+// Manager's create and Cloud Billing's link -- are the two a person may be
+// refused. Where they are, the API's own answer is not an answer: it names a
+// permission or a constraint and neither what to ask for nor whom to ask.
+// refusedCreate and refusedLink say that; infra.ProjectError.Refused says when
+// a failure is that case and nothing else does. Every other failure -- a
+// quota, an ID someone else holds, an API that is off -- keeps the message it
+// always had (fail), and the message here carries the service's own text under
+// the helpful line, so nothing the API said is hidden.
+
+// refusedCreate is what a refused creation says: what happened, and what to
+// ask the organization for.
+func (s *projectStage) refusedCreate() string {
+	return "Fugaro could not create the project " + s.id + ": your Google account is not allowed to create projects in your organization. " +
+		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder, or ask them to create the project and make you its Owner. " +
+		"See docs/gcp-setup.md#not-an-owner."
+}
+
+// refusedLink is what a refused billing link says. It names the account, the
+// role it is missing and the one line that links it, and it names the door the
+// reader is at (setup creates a project, update re-converges one): the reader
+// who cannot link billing is exactly the one who has to know what to run once
+// someone has linked it for them.
+func (s *projectStage) refusedLink(account string) string {
+	return "Fugaro could not link billing account " + account + ": your account lacks the Billing Account User role on it. " +
+		"Ask whoever administers billing for that role, or to link billing to " + s.id + " for you (one `gcloud billing projects link " + s.id + " --billing-account=" + account + "` line), " +
+		"then run `" + selfCommand() + " " + s.o().doorName() + "` again."
+}
+
+// failCreate and failLink are fail for those two calls: a recognised refusal
+// is a user error (exit 1, the reader's to act on) whose message is the
+// helpful line with the service's own text under it.
+func (s *projectStage) failCreate(err error) error { return s.failRefused(err, s.refusedCreate()) }
+
+func (s *projectStage) failLink(err error, account string) error {
+	return s.failRefused(err, s.refusedLink(account))
+}
+
+func (s *projectStage) failRefused(err error, help string) error {
+	var pe *infra.ProjectError
+	if errors.As(err, &pe) && pe.Refused {
+		return &initflow.StageError{Err: userErr("%s\n%s", help, err), Fix: pe.Fix}
+	}
+	return s.fail(err)
 }
 
 // Verify re-reads the project: Apply verified each step it took; this is
