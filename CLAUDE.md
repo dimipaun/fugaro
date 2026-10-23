@@ -8,6 +8,18 @@ Fugaro runs a coding agent's task (implement, test, review, fix, open a PR) as o
 
 Don't assume, don't hide confusion, surface tradeoffs. State your assumptions; if more than one reading exists, present them instead of picking one silently; if a simpler approach exists, say so and push back; if something is unclear, stop and ask. Keep diffs small and reviewable, follow the surrounding patterns, add no new framework or dependency without asking, and don't reformat code you don't touch. When you ask the user something, use `AskUserQuestion` (structured options) rather than free text.
 
+## Path-scoped rules
+
+Short area rules live under `.claude/rules/` and load automatically when Claude touches matching files:
+
+| Rule | Loads when touching |
+| --- | --- |
+| `.claude/rules/terraform.md` | `deploy/terraform/**`, `internal/infra/**` |
+| `.claude/rules/console.md` | `console/**` |
+| `.claude/rules/mobile.md` | `mobile/**`, `shared/**` |
+| `.claude/rules/website.md` | `website/**` |
+| `.claude/rules/credentials-service.md` | `internal/creds/**`, `internal/credsvc/**`, `SECURITY.md`, `website/content/security.md` |
+
 ## Commands
 
 Go version is pinned in `go.mod`; Terraform 1.9+ for the `terraform` tag.
@@ -46,4 +58,7 @@ CI runs on pushes to `main` only, not on PRs (`.github/workflows/ci.yml`; see CO
 - **No secret-shaped literals** in tests, docs, logs or fixtures.
 - **Never merge `main` into a branch with a cloud follow-up run** if `main` changed `.github/workflows/`: the run's push is refused and its work is lost. Merge locally first.
 - **Steps that must run after a deploy** (a backfill, a config or secret change, a rollout order) go in the release notes' `### For operators` section in the same PR (`docs/releases/README.md`); without an entry the release ships and nobody runs the step.
+- **Comments explain why, never what.** No TODO comments, no section-header comments, and no comment that restates a name.
+- **Search before you write a helper.** After parallel runs create several files, do a final pass to remove duplicates.
+- **A fix round for review findings adds no functionality.** It makes only changes that keep the existing behavior. A finding that needs a new behavior or a product decision is reported, not fixed.
 - **Releases** go through `scripts/release.sh X.Y.Z` from a clean clone ([docs/release.md](docs/release.md)): the notes are `docs/releases/vX.Y.Z.md` plus a line in `website/data/release-summaries.yaml` (no backticks). The CLI, console and mobile app release independently (tags `vX.Y.Z`, `console-vX.Y.Z`, `mobile-vX.Y.Z`).
