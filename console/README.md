@@ -1045,7 +1045,7 @@ two files and no recording at all, and each is labelled for what it is:
 
 ```
 {"fugaro_fixture":{"version":1,"redactor":"fugaro-console-redact/2","case":"synthetic",
- "project":"<project>","synthetic":true,"records":6,"sha256":"24cdc5f829ce2bea6efb4336622c38d85066be5ea522af10ef51079d26415a0e",
+ "project":"<project>","synthetic":true,"records":6,"sha256":"ee29b66642fb538e2ff17d37a9dfaf1be9ec635706fe11c8d9b7368beb528669",
  "note":"synthetic: invented documents put through the same redaction path as a recording; never recorded from any installation or cloud"}}
 ```
 
