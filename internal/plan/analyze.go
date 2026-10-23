@@ -274,10 +274,15 @@ func downstreamCount(id string, dependents map[string]map[string]bool) int {
 // one critical path rather than whichever one a map iteration happened to
 // yield.
 //
-// The bottleneck is the head of that chain, except that the raw count decides a
-// tie on length (D26): two tasks that start chains of the same length are not
-// equally the plan's bottleneck if six tasks wait on one and one waits on the
-// other, and the count is the figure that says so.
+// The bottleneck is the head of that chain, and it is picked by the same
+// tie-break rather than by the raw downstream count: the count answers a
+// different question -- how many tasks wait on this one, not how long the work
+// in front of it is -- and it is a per-task figure the document carries beside
+// every task (D26's "cheap fallback"), not the ranking's own rule. Letting it
+// decide a tie on length would name a task that is not on the chain at all,
+// which is the one thing "the task the critical path runs through" cannot mean:
+// Bottleneck is always CriticalPath.Tasks[0], so the two answers cannot drift
+// apart.
 func criticalPath(doc Document, chain map[string]int) (CriticalPath, *string) {
 	path := CriticalPath{Tasks: []string{}}
 	if len(doc.Nodes) == 0 {

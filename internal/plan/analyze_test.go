@@ -291,6 +291,12 @@ func TestPlanLevelsAndCriticalPath(t *testing.T) {
 	tieNodes := []string{node("aa1"), node("aa2"), node("bb1"), node("bb2")}
 	tieEdges := []string{edge("aa2", "aa1"), edge("bb2", "bb1")}
 
+	// Two heads whose chains are the same length and whose raw counts are not,
+	// so the two candidate tie-breaks name different tasks: "a" is the smaller
+	// id, "p" has the most tasks waiting on it. The id decides.
+	countNodes := []string{node("a"), node("b"), node("p"), node("q1"), node("q2"), node("q3")}
+	countEdges := []string{edge("b", "a"), edge("q1", "p"), edge("q2", "p"), edge("q3", "p")}
+
 	for _, tc := range []struct {
 		name       string
 		graph      string
@@ -362,6 +368,22 @@ func TestPlanLevelsAndCriticalPath(t *testing.T) {
 			bottleneck: "aa1",
 		},
 		{
+			name:       "a tie on length is broken by id, not by the raw count",
+			graph:      graph(countNodes, countEdges),
+			levels:     2,
+			level:      map[string]int{"a": 0, "b": 1, "p": 0, "q1": 1, "q2": 1, "q3": 1},
+			critical:   map[string]int{"a": 2, "b": 1, "p": 2, "q1": 1, "q2": 1, "q3": 1},
+			downstream: map[string]int{"a": 1, "b": 0, "p": 3, "q1": 0, "q2": 0, "q3": 0},
+			pathLength: 2,
+			pathTasks:  "a b",
+			// a and p start chains of two tasks each, and the raw counts differ
+			// (1 against 3): a count-based tie-break would name p, the read
+			// names a, and the two rules disagree -- which is the whole point of
+			// the case. The count is a figure beside each task (D26), not the
+			// ranking's rule.
+			bottleneck: "a",
+		},
+		{
 			name:       "a duplicated edge is one dependency, not two",
 			graph:      graph([]string{node("a"), node("b")}, []string{edge("b", "a"), edge("b", "a")}),
 			levels:     2,
@@ -426,6 +448,15 @@ func TestPlanLevelsAndCriticalPath(t *testing.T) {
 			case tc.bottleneck != "" && *g.Bottleneck != tc.bottleneck:
 				t.Errorf("bottleneck = %q, want %q", *g.Bottleneck, tc.bottleneck)
 			}
+			// And the bottleneck is a task on the chain the read named -- its
+			// head, which is what "the task the critical path runs through"
+			// means. A ranking that could name a task off the chain would be a
+			// second answer to the question `bottleneck` and `critical_path`
+			// both answer, and a renderer highlighting one while drawing the
+			// other would be showing two plans.
+			if g.Bottleneck != nil && len(g.CriticalPath.Tasks) > 0 && *g.Bottleneck != g.CriticalPath.Tasks[0] {
+				t.Errorf("bottleneck = %q and the critical path starts at %q, want the same task", *g.Bottleneck, g.CriticalPath.Tasks[0])
+			}
 			// The path named is a path: each task in it waits on the one
 			// before, and it is as long as the length says.
 			if got := pathIsReal(t, g); got != "" {
@@ -438,6 +469,31 @@ func TestPlanLevelsAndCriticalPath(t *testing.T) {
 				t.Errorf("two reads of one graph disagree:\n%+v\n%+v", g, again)
 			}
 		})
+	}
+}
+
+// TestPlanTheEmptyGraphsDocumentIsStillADocument: a plan with no tasks is a
+// document, and the contract says what its empty parts are -- `nodes`, `edges`
+// and `critical_path.tasks` are arrays, `[]` and never null, and `bottleneck` is
+// null because there is no task for it to name (the availability rule the
+// console's contract states: an empty array is a fact, "this plan has no tasks",
+// and a null is not).
+//
+// The assertion is on the JSON rather than on the fields one by one, because
+// fields one by one cannot see the difference: a nil slice and an empty one are
+// the same thing to len and to strings.Join, so every other test in this file
+// passes on a read that emits "tasks": null. That is what a renderer reads, so
+// that is what this pins.
+func TestPlanTheEmptyGraphsDocumentIsStillADocument(t *testing.T) {
+	g := analyze(t, `{"schema_version": 1, "plan": "p.md", "nodes": [], "edges": []}`)
+	got, err := json.Marshal(g)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	want := `{"schema_version":1,"plan":"p.md","nodes":[],"edges":[],"levels":0,` +
+		`"critical_path":{"length":0,"tasks":[]},"bottleneck":null}`
+	if string(got) != want {
+		t.Errorf("the empty graph's document is\n%s\nwant\n%s", got, want)
 	}
 }
 
