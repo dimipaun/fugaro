@@ -300,8 +300,11 @@ describe('the query is a spawn like any other', () => {
     // that is not the console's own word.
     const { wsl, cwd } = install(TWO_DISTROS)
     await wslDistributions({ appEnv: APP_ENV, cwd, wslPath: wsl.binary })
+    // macOS adds __CF_USER_TEXT_ENCODING to every process it starts (as in
+    // spawn.test.ts and wslstub.test.ts): the platform's own key, not a leak.
+    const platformKeys = process.platform === 'darwin' ? ['__CF_USER_TEXT_ENCODING'] : []
     for (const report of wsl.reports()) {
-      for (const key of report.envKeys) {
+      for (const key of report.envKeys.filter((k) => !platformKeys.includes(k))) {
         expect(CHILD_ENV_KEYS, `${key} is not a key the child may receive`).toContain(key)
       }
       for (const planted of Object.keys(SENTINELS)) {
