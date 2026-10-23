@@ -168,6 +168,9 @@ func TestDependabotConsoleStagingIsPinned(t *testing.T) {
 	// happened would leave a staged file claiming a change that is in), and once
 	// it is gone the file that runs must carry it.
 	appliedText, applied, appliedUpdates := readDependabotYAML(t, appliedDependabotPath)
+	if len(appliedUpdates) == 0 {
+		t.Fatalf("%s carries no update entry at all: the `github-actions` entry is what runs today, and this test reads the file that runs to tell a staged change from an applied one", appliedDependabotPath)
+	}
 	appliedConsole := appliedUpdates[len(appliedUpdates)-1]
 	if staged {
 		if len(applied.Updates) != 1 {
