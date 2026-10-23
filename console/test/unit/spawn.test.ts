@@ -901,6 +901,32 @@ describe('the wrapper’s own words', () => {
     expect(() => assertWslPrefix(inside(`/home/${'a'.repeat(1000)}/src`))).not.toThrow()
   })
 
+  it('leaves no shell metacharacter in the words the CLI’s own flags and name may use', () => {
+    // The argv guard's own rule (`leaves no shell metacharacter in any argv it
+    // builds`), extended to the prefix: every word that is a flag or the
+    // distribution's name carries nothing a shell could re-parse. The directory
+    // is left out **by name** and not by accident -- it is the word the alphabet
+    // exemption above admits, and a path may hold a space -- and it is asserted
+    // through `isSafeInstallationValue` instead.
+    const plan = planFor(
+      'budget.show',
+      {},
+      safeContext({
+        binaryPath: '',
+        wsl: { distro: 'Ubuntu', directory: '/home/Ann Lee/src', executable: 'C:\\Windows\\System32\\wsl.exe' },
+      }),
+    )
+    const [distroFlag, distro, ...rest] = [...plan.prefix]
+    expect(distroFlag).toBe('-d')
+    expect(distro).toBe('Ubuntu')
+    for (const word of [distroFlag, distro, ...rest.filter((word) => !word.startsWith('/'))]) {
+      expect(word, word).not.toMatch(/[\s;&|`$(){}<>"'\\]/)
+      expect(word).not.toContain('..')
+      if (word.startsWith('-')) expect([...WSL_PREFIX_FLAGS]).toContain(word)
+    }
+    expect(rest).toEqual(['--cd', '/home/Ann Lee/src', '--'])
+  })
+
   it('checks the prefix on the way to `wsl.exe`, and not only when asked', () => {
     // The enforcement is inside `wslWrapper`, the only producer of a prefix, for
     // the same reason `assertArgvFlags` is inside `argvFor`: a check in the
