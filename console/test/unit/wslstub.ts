@@ -2,8 +2,8 @@
 // received (docs/console-windows/implementation-plan.md Part A, decision D11).
 //
 // **The claim that matters is the second hop's, and only an out-of-band channel
-// can state it.** On Windows the console runs `wsl.exe -d <distro> --cd <dir> --
-// fugaro …`, so every question about the WSL route -- which distribution, which
+// can state it.** On Windows the console runs `wsl.exe -d <distro> --cd <dir> -e
+// sh -c '… exec fugaro …'`, so every question about the WSL route -- which distribution, which
 // directory, which environment, which exit status -- is a question about what
 // the *distribution* got rather than about what the console thinks it passed.
 // `installWslStub` therefore installs a real executable named `wsl.exe` (the
@@ -322,11 +322,13 @@ function shellQuote(value: string): string {
 
 /**
  * parseWslArgv reads the fake's own argv: the distribution, the `--cd`, and the
- * child's argv after the `--`. It answers a refusal sentence instead of a
+ * child's argv after the `-e` (`--exec`). It answers a refusal sentence instead of a
  * partial parse, so an invocation the double does not model is loud rather than
  * quietly reinterpreted -- `-d` is required because the console always names the
  * distribution it resolved (D2(a)), and a shape it does not know is refused
- * rather than skipped.
+ * rather than skipped. `--` is one of those: on a real `wsl.exe` it hands the
+ * rest of the line to the distribution's **login shell**, which would re-read
+ * every word, so a console that sent it is refused here by name (T-F4).
  *
  * It is exported, and its own source is what the generated child runs (see
  * `wslScript`), so the parser a test can hold and the parser the double runs are
@@ -343,8 +345,14 @@ export function parseWslArgv(argv: readonly string[]):
   let distro: string | null = null
   let cd: string | null = null
   let index = 0
-  while (index < argv.length && argv[index] !== '--') {
+  while (index < argv.length && argv[index] !== '-e' && argv[index] !== '--exec') {
     const flag = argv[index]
+    if (flag === '--') {
+      return {
+        ok: false,
+        reason: '`--` hands the command to the distribution’s login shell: the console runs its program with `-e`',
+      }
+    }
     if (flag === '-d' || flag === '--distribution') {
       const value = argv[index + 1]
       if (value === undefined || value === '') {
@@ -365,18 +373,18 @@ export function parseWslArgv(argv: readonly string[]):
     }
     return {
       ok: false,
-      reason: `this double knows \`-d\`, \`--cd\` and \`--\`, and was asked for ${JSON.stringify(flag)}`,
+      reason: `this double knows \`-d\`, \`--cd\` and \`-e\`, and was asked for ${JSON.stringify(flag)}`,
     }
   }
   if (index >= argv.length) {
-    return { ok: false, reason: 'there is no `--`: the double starts a child only after the separator' }
+    return { ok: false, reason: 'there is no `-e`: the double starts a child only after it' }
   }
   if (distro === null) {
     return { ok: false, reason: 'no `-d`: the console always names the distribution it resolved' }
   }
   const child = argv.slice(index + 1)
   if (child.length === 0) {
-    return { ok: false, reason: 'nothing follows the `--`: there is no child to start' }
+    return { ok: false, reason: 'nothing follows the `-e`: there is no child to start' }
   }
   return { ok: true, distro, cd, child }
 }

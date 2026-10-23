@@ -159,8 +159,9 @@ executable named `wsl.exe` too — the name is data, not a platform fact) that:
    translating a path is a process the console calls rather than a mapping it computes (T-D2, D4(b)):
    the table is the test's own, and a path it does not carry is refused with the path in the sentence
    rather than guessed at;
-7. runs the `sh -c` wrapper the CLI goes inside (`sh -c 'echo $$ > <file>; exec fugaro …'`) as the
-   distribution's own shell would, which is what makes T-F4's pid capturable — the wrapper's `PATH`
+7. runs the `sh -c` wrapper the CLI goes inside (`wsl.exe … -e sh -c '<script>'`, where the script
+   prints `<marker> $$` on stderr and then `exec`s `fugaro …`, T-F4) as the distribution's own shell
+   would, which is what makes T-F4's pid capturable — the wrapper's `PATH`
    is the distribution's with the directory the stub was installed in in front of it, the double's
    stand-in for the `/usr/local/bin` a real distribution has the CLI in.
 
@@ -186,8 +187,9 @@ Red step: a case asserting that the fake **fails** when a test asks it to run so
 three children the plan writes — the stub `fugaro`, the `wslpath` query (T-A1 step 6) and the `sh -c`
 wrapper (step 7) — the double must not become a general-purpose shell, because a fake that runs
 anything makes every assertion about *what was run* meaningless. A `bash -c`, a `sh -x`, a `sh -c`
-with no script, `/bin/echo`, `--terminate`, a missing `--` and a missing `-d` are each refused with a
-sentence and a non-zero status.
+with no script, `/bin/echo`, `--terminate`, a missing `-e`, a `--` (which on a real `wsl.exe` hands the
+command to the distribution's login shell) and a missing `-d` are each refused with a sentence and a
+non-zero status.
 Verification: `[unit]`. Tier A. Depends on: T-A1.
 Commit (A1–A3): `console/test: a fake wsl.exe that reports what the Linux side received`
 
@@ -432,6 +434,7 @@ only where Windows itself opens the path.** The Linux one is the one the operato
 terminal inside the distribution, which is what makes it the right one to show (F16).
 Verification: `[unit]`, `[types]`. Tier A. Depends on: T-D2.
 Commit: `console: the Linux spelling for what we say and pass, the UNC spelling for what Windows opens`
+**KNOWN LIMIT:** a WSL distribution whose name has a space, quote or other shell metacharacter (outside `^[A-Za-z0-9][A-Za-z0-9._-]*$`, 200 characters or fewer) is refused on the WSL route (fail closed, because the CLI runs through the distribution's shell); register it under a plain name (`wsl --export` then `wsl --import`) to drive it.
 
 **T-D4 — the private working directory on a Windows host (F12).**
 Files: `console/src/main/spawn.ts`, `console/test/unit/spawn.test.ts`.
@@ -577,6 +580,11 @@ before the grace runs out, and a stop that waited for it to still be alive would
 one platform this route exists for. The only thing the console reads as "the CLI is gone too" is a
 `wsl.exe` that had already exited **before** the stop began, because `wsl.exe` relays the
 distribution's command and one that exited by itself exited because that command had finished.
+Every `wsl.exe` this part writes — the CLI's plan, the stop and the `wslpath` question — ends its own
+words with `-e` rather than `--`: `--` hands the rest of the line to the distribution's login shell,
+which would re-read the script under whatever shell the operator's account has, while `-e` runs the
+console's own `sh -c` directly, so the quoting in the script is the only quoting that applies. The
+stop's `-d` passes the same `isDistroName` and `assertWslPrefix` checks as the plan's.
 A design that cannot capture the pid is D6(c) with its residual **stated on the screen** rather than in
 a comment. U5 and U6 are the two facts this task cannot establish from Linux, and the plan's answer is
 to make the *fallback* honest rather than to assume the primary works.

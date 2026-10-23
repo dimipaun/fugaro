@@ -470,7 +470,7 @@ describe('the spawn plan the log records', () => {
     const wsl = {
       ...host,
       command: 'C:\\Windows\\System32\\wsl.exe',
-      prefix: ['-d', 'Ubuntu', '--cd', '/home/dimi', '--'],
+      prefix: ['-d', 'Ubuntu', '--cd', '/home/dimi', '-e'],
       argv: ['fugaro', 'budget', 'show', '--json', '--project', PROJECT],
     }
     expect([...spawnedArgv(wsl)]).toEqual([
@@ -479,7 +479,7 @@ describe('the spawn plan the log records', () => {
       'Ubuntu',
       '--cd',
       '/home/dimi',
-      '--',
+      '-e',
       'fugaro',
       'budget',
       'show',
@@ -515,7 +515,7 @@ describe('the spawn plan the log records', () => {
       'Ubuntu',
       '--cd',
       '/home/dimi/src/fugaro',
-      '--',
+      '-e',
     ])
     expect(line.slice(6, 8)).toEqual(['sh', '-c'])
     expect(line).toHaveLength(9)

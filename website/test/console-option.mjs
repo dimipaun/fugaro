@@ -347,58 +347,58 @@ test("the homepage's call to action offers the console only while the flag is on
     `${SITE_YAML} does not have features.console_downloads true, and this case reads the flag-on half off the build \`npm run check\` makes`,
   )
 
-  /** The hero's row of links, as [label, href] pairs, plus the row's own text. */
-  const actions = (dist) => {
+  // **Since the owner's rulings of 2026-10-23 (the redesign's Step 3)** the hero has one action,
+  // Get started (lever 2), and the console is surfaced in the homepage's content instead (lever 8:
+  // in the content, not in the navigation): the "what you get" section's row of links under the
+  // console's screenshots. That row is what the flag decides now; the hero's action is the same
+  // in both states.
+  const classes = (el) => (el.attrs.get('class') ?? '').split(/\s+/)
+  /** A row of links on the homepage, as [label, href] pairs, plus the row's own text. */
+  const row = (dist, sectionClass, rowClass) => {
     const page = readFileSync(path.join(dist, 'index.html'), 'utf8')
-    const hero = [...walk(parse(page))].find(
-      (el) => el.name === 'section' && (el.attrs.get('class') ?? '').split(/\s+/).includes('hero'),
-    )
-    assert.ok(hero, 'the homepage carries no hero section, and the call to action is in the hero (W1.4)')
-    const row = [...walk(hero)].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-actions'))
-    assert.ok(row, 'the hero carries no action row, and the call to action is what a reader does next (W1.4)')
-    return { links: linksOf([...walk(row)]).map((el) => [textOf(el).trim(), el.attrs.get('href')]), text: textOf(row) }
+    const section = [...walk(parse(page))].find((el) => el.name === 'section' && classes(el).includes(sectionClass))
+    assert.ok(section, `the homepage carries no section.${sectionClass}`)
+    const found = [...walk(section)].find((el) => classes(el).includes(rowClass))
+    assert.ok(found, `the homepage's section.${sectionClass} carries no .${rowClass}`)
+    return { links: linksOf([...walk(found)]).map((el) => [textOf(el).trim(), el.attrs.get('href')]), text: textOf(found) }
   }
+  const actions = (dist) => row(dist, 'hero', 'hero-actions')
+  const more = (dist) => row(dist, 'home-get', 'home-get-more')
 
-  const released = actions(DIST)
+  assert.deepEqual(actions(DIST).links, [['Get started', '/getting-started/']], "the hero's call to action is not the one action the owner's rulings of 2026-10-23 give it")
+  const released = more(DIST)
   assert.deepEqual(
     released.links,
     [
-      ['Get started', '/getting-started/'],
-      ['How it works', '/how-it-works/'],
-      // The console's own name, as Getting Started's option calls it, and the page that says
-      // what the console is — not a download URL: the URL a reader downloads from is derived
-      // from the release in `src/lib/console-downloads.mjs`, and the hero names the way there
+      // The console's own page, which says what the console is, not a download URL: the URL a
+      // reader downloads from is derived from the release in `src/lib/console-downloads.mjs`
       // (Global Constraint 9).
-      ['Desktop console', '/console/'],
+      ['The desktop console', '/console/'],
+      ['The phone app, in progress', '/mobile/'],
     ],
-    "the homepage's call to action does not offer the console with features.console_downloads true: item 6 of the owner's brief of 2026-10-19 asks that the console be findable from it, and the flag is what renders the link",
+    "the homepage does not offer the console with features.console_downloads true: item 6 of the owner's brief of 2026-10-19 asks that the console be findable from the home page, and the flag is what renders the link",
   )
 
   const built = unreleasedBuild(t)
   assert.equal(built.status, 0, `the build of the unreleased site failed:\n${built.output}`)
-  const unreleased = actions(built.dist)
+  assert.deepEqual(actions(built.dist).links, [['Get started', '/getting-started/']], "the hero's call to action changed with the console's flag, and the flag moves nothing but the console's own link")
+  const unreleased = more(built.dist)
 
-  // The flag-off row is the two links and nothing else: no console link, no console sentence,
-  // no placeholder where the link would go. The unreleased state is structural.
+  // The flag-off row has no console link, no console sentence and no placeholder where the link
+  // would go. The unreleased state is structural.
   assert.deepEqual(
     unreleased.links,
-    [
-      ['Get started', '/getting-started/'],
-      ['How it works', '/how-it-works/'],
-    ],
-    "the hero's call to action is not exactly the two links it carries while features.console_downloads is false: the console's link arrives with the flag, and until then the row says nothing about the console (the owner's brief of 2026-10-19, item 6)",
+    [['The phone app, in progress', '/mobile/']],
+    "the homepage's row of links is not exactly the phone app's while features.console_downloads is false: the console's link arrives with the flag (the owner's brief of 2026-10-19, item 6)",
   )
   assert.ok(
     !/console/i.test(unreleased.text),
-    "the hero's call to action mentions the console while features.console_downloads is false, and the unreleased state is structural: nothing about the console renders before its release (item 6)",
+    "the homepage's row of links mentions the console while features.console_downloads is false, and the unreleased state is structural: nothing about the console renders before its release (item 6)",
   )
-
-  // And the flip moves nothing else about the row: the two links a reader met before the
-  // console shipped are the two links they meet after it, in the same order.
   assert.deepEqual(
-    released.links.slice(0, 2),
+    released.links.slice(1),
     unreleased.links,
-    "the homepage's existing call to action changed when the console was released: the owner's change is the flag and a version bump, and it may not move what was already there",
+    "the homepage's other links changed when the console was released: the owner's change is the flag and a version bump, and it may not move what was already there",
   )
 })
 

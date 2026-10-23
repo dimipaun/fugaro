@@ -139,15 +139,31 @@ function serveBundle(): void {
  * checkout, never the CLI's config -- `resolveHandshakeBinary` runs Task 3.3's
  * project-less read against rule 4's resolution, the dashboard answers
  * `NO_ACTIVE_INSTALLATION`, and the picker opens once.
+ *
+ * **Two fields are not the store's answer to "which binary", and they are handed
+ * on anyway** (T-D1, T-D3): `distro` and `checkout`. The first is the
+ * installation's **identity** on Windows rather than an override --
+ * `resolveHandshakeBinary` sends a `distro` read *inside* that distribution,
+ * because there is no host walk to fall through to (T-C2) and a distribution
+ * that has gone is a stated refusal rather than a silent switch to another one
+ * (F7) -- and the second is the directory the CLI starts in there, which travels
+ * as the wrapper's `--cd` (`wslDirectory`, D3(a)). Omitting either would leave a
+ * stored WSL installation read as a host one: the walk finds no `fugaro` on
+ * Windows (T-C2) and the console reports a missing binary for the installation
+ * the operator chose, in a distribution it never entered.
  */
 function handshakeInstallation(): {
   readonly binaryPath?: string | undefined
+  readonly distro?: string | undefined
+  readonly checkout?: string | undefined
   readonly target: SpawnTarget
 } | null {
   const chosen = picker?.installation()
   if (chosen === undefined || !chosen.chosen) return null
   return {
     ...(chosen.binary === undefined ? {} : { binaryPath: chosen.binary }),
+    ...(chosen.distro === undefined ? {} : { distro: chosen.distro }),
+    ...(chosen.checkout === undefined ? {} : { checkout: chosen.checkout }),
     target: Object.freeze({
       project: chosen.project,
       ...(chosen.config === undefined ? {} : { configPath: chosen.config }),
@@ -390,7 +406,9 @@ async function openExternalFromShell(raw: unknown): Promise<void> {
 
 /**
  * gated is the whole surface, and it is the join the two modules describe:
- * `handlersFor` answers the twelve operations that read the CLI (over
+ * `handlersFor` answers the twelve operations that read the CLI -- eleven
+ * before console L5b added `runs.stats` (`src/source/source.ts`'s
+ * `FugaroSource` lists them) -- over
  * `boundSource`, so each of them reaches the active installation's own binary
  * and nothing else), and `startup.compatibility` is joined in here because it is
  * the one operation whose answer is the console's own state rather than a read

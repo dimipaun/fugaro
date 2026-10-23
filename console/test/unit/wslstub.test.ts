@@ -157,7 +157,7 @@ describe('the fake wsl.exe', () => {
     // the second one written by the stub `fugaro` itself, so a test that reads
     // it is reading the Linux side rather than the console's plan object.
     const { wsl, linux } = install(freshDirectory())
-    const argv = ['-d', 'Ubuntu', '--cd', linux, '--', FUGARO_BINARY_NAME, 'version']
+    const argv = ['-d', 'Ubuntu', '--cd', linux, '-e', FUGARO_BINARY_NAME, 'version']
     const result = run(wsl, argv)
     expect(result.status).toBe(0)
 
@@ -182,7 +182,7 @@ describe('the fake wsl.exe', () => {
     // rather than merely recorded (T-A1 step 4). The mutation this catches: drop
     // the `cwd` from the spawn, and the child reports the fake's own directory.
     const { wsl, linux } = install(freshDirectory())
-    const result = run(wsl, ['-d', 'Ubuntu', '--cd', linux, '--', FUGARO_BINARY_NAME, 'version'])
+    const result = run(wsl, ['-d', 'Ubuntu', '--cd', linux, '-e', FUGARO_BINARY_NAME, 'version'])
     expect(result.status).toBe(0)
 
     const hop = only(wsl.reports())
@@ -200,7 +200,7 @@ describe('the fake wsl.exe', () => {
     // directory that does not exist -- an ENOENT that says nothing about which
     // side spelled the path wrong.
     const { wsl } = install(freshDirectory())
-    const result = run(wsl, ['-d', 'Ubuntu', '--cd', WINDOWS_SRC, '--', FUGARO_BINARY_NAME, 'version'])
+    const result = run(wsl, ['-d', 'Ubuntu', '--cd', WINDOWS_SRC, '-e', FUGARO_BINARY_NAME, 'version'])
     expect(result.status).not.toBe(0)
     expect(result.stdout).toBe('')
     expect(result.stderr).toContain(WINDOWS_SRC)
@@ -214,7 +214,7 @@ describe('the fake wsl.exe', () => {
     // on the WSL leg the child is a Linux process. The mutation this catches is
     // the obvious one: forward our own `PATH`.
     const { wsl, linux } = install(freshDirectory())
-    const result = run(wsl, ['-d', 'Ubuntu', '--cd', linux, '--', FUGARO_BINARY_NAME, 'version'])
+    const result = run(wsl, ['-d', 'Ubuntu', '--cd', linux, '-e', FUGARO_BINARY_NAME, 'version'])
     expect(result.status).toBe(0)
 
     const hop = only(wsl.reports())
@@ -235,7 +235,7 @@ describe('the fake wsl.exe', () => {
     // every later assertion about the credential boundary a claim about a fake
     // that leaks.
     const { wsl, linux } = install(freshDirectory())
-    run(wsl, ['-d', 'Ubuntu', '--cd', linux, '--', FUGARO_BINARY_NAME, 'version'])
+    run(wsl, ['-d', 'Ubuntu', '--cd', linux, '-e', FUGARO_BINARY_NAME, 'version'])
 
     const hop = only(wsl.reports())
     expect(hop.envKeys).toContain('NOT_A_CHILD_KEY')
@@ -251,6 +251,37 @@ describe('the fake wsl.exe', () => {
     for (const key of childKeys) expect([...CHILD_ENV_KEYS]).toContain(key)
   })
 
+  it('consumes the share list rather than handing it to the child', () => {
+    // T-E1 and T-E2. `WSLENV` is `wsl.exe`'s own share list -- the thing that
+    // says which *Windows* variables the distribution receives -- and not a
+    // variable of the distribution's, so the double takes it off the environment
+    // it builds for the child: the console writes the key (empty, T-E2) and the
+    // child never sees it at all. The mutation this catches is forwarding the
+    // hop's environment wholesale, which puts `WSLENV` in the child and, with a
+    // share list that named anything, would put the host's own variables there
+    // with it.
+    const { wsl, linux } = install(freshDirectory())
+    run(wsl, ['-d', 'Ubuntu', '--cd', linux, '-e', FUGARO_BINARY_NAME, 'version'], {
+      env: { ...HOST_ENV, WSLENV: '' },
+    })
+    const hop = only(wsl.reports())
+    expect(hop.envKeys).toContain('WSLENV')
+    expect(Object.keys(hop.childEnv)).not.toContain('WSLENV')
+    expect(only(wsl.children()).envKeys).not.toContain('WSLENV')
+
+    // And with a share list that *does* name a variable, the safe direction is
+    // asserted rather than assumed: this fake passes the eleven keys and nothing
+    // else whatever the list says, so a listed host variable stays on the host's
+    // side of the boundary. The console writes the list empty for exactly this
+    // reason, and this case says what the fake would do if it did not.
+    const second = install(freshDirectory())
+    run(second.wsl, ['-d', 'Ubuntu', '--cd', second.linux, '-e', FUGARO_BINARY_NAME, 'version'], {
+      env: { ...HOST_ENV, WSLENV: 'NOT_A_CHILD_KEY', NOT_A_CHILD_KEY: 'planted-on-the-host' },
+    })
+    expect(only(second.wsl.reports()).envKeys).toContain('NOT_A_CHILD_KEY')
+    expect(only(second.wsl.children()).envKeys).not.toContain('NOT_A_CHILD_KEY')
+  })
+
   it('refuses to be a general-purpose shell', () => {
     // T-A3. The children are the stub `fugaro`, the `wslpath` query and the
     // `sh -c` wrapper the plan writes -- and nothing else, because a double that
@@ -259,7 +290,7 @@ describe('the fake wsl.exe', () => {
     // command's own output appears and the status goes to zero.
     const { wsl } = install(freshDirectory())
 
-    const other = run(wsl, ['-d', 'Ubuntu', '--', '/bin/echo', 'this-is-not-the-stub'])
+    const other = run(wsl, ['-d', 'Ubuntu', '-e', '/bin/echo', 'this-is-not-the-stub'])
     expect(other.status).not.toBe(0)
     expect(other.stdout).toBe('')
     expect(other.stderr).toContain('/bin/echo')
@@ -269,19 +300,24 @@ describe('the fake wsl.exe', () => {
     // A shell that is not the wrapper's own shape, and a wrapper with no script,
     // are refused for the same reason: `sh -c <script>` is the one shape the plan
     // writes (T-F4), and anything else is a console this double does not model.
-    expect(run(wsl, ['-d', 'Ubuntu', '--', 'bash', '-c', 'echo hi']).status).not.toBe(0)
-    expect(run(wsl, ['-d', 'Ubuntu', '--', 'sh', '-x', 'echo hi']).status).not.toBe(0)
-    expect(run(wsl, ['-d', 'Ubuntu', '--', 'sh', '-c']).status).not.toBe(0)
+    expect(run(wsl, ['-d', 'Ubuntu', '-e', 'bash', '-c', 'echo hi']).status).not.toBe(0)
+    expect(run(wsl, ['-d', 'Ubuntu', '-e', 'sh', '-x', 'echo hi']).status).not.toBe(0)
+    expect(run(wsl, ['-d', 'Ubuntu', '-e', 'sh', '-c']).status).not.toBe(0)
 
     // The flags it does not model, and the shapes it does not model, are refused
     // for the same reason: `--terminate` is refused outright by the design
-    // (D6(b)), and a missing `--` or a missing `-d` is a console that did not say
+    // (D6(b)), and a missing `-e` or a missing `-d` is a console that did not say
     // what it wanted.
     expect(run(wsl, ['--terminate', 'Ubuntu']).status).not.toBe(0)
     expect(run(wsl, ['-d', 'Ubuntu', FUGARO_BINARY_NAME]).status).not.toBe(0)
-    expect(run(wsl, ['--', FUGARO_BINARY_NAME]).status).not.toBe(0)
+    expect(run(wsl, ['-e', FUGARO_BINARY_NAME]).status).not.toBe(0)
+    // `--` is refused by name: a real `wsl.exe` hands what follows it to the
+    // distribution's login shell, which would re-read every word (T-F4).
+    const viaLoginShell = run(wsl, ['-d', 'Ubuntu', '--', FUGARO_BINARY_NAME, 'version'])
+    expect(viaLoginShell.status).not.toBe(0)
+    expect(viaLoginShell.stderr).toContain('login shell')
     expect(wsl.children()).toHaveLength(0)
-    expect(wsl.reports()).toHaveLength(7)
+    expect(wsl.reports()).toHaveLength(8)
   })
 
   it('answers --list --quiet and --status from the fixture, and starts no child', () => {
@@ -329,11 +365,11 @@ describe('the fake wsl.exe', () => {
     // `/mnt/c/...` prefix -- the round trip and the refusal both go wrong.
     const { wsl } = install(freshDirectory())
 
-    const toLinux = run(wsl, ['-d', 'Ubuntu', '--', 'wslpath', '-a', '-u', WINDOWS_SRC])
+    const toLinux = run(wsl, ['-d', 'Ubuntu', '-e', 'wslpath', '-a', '-u', WINDOWS_SRC])
     expect(toLinux.status).toBe(0)
     expect(toLinux.stdout).toBe(`${LINUX_SRC}\n`)
 
-    const toWindows = run(wsl, ['-d', 'Ubuntu', '--', 'wslpath', '-a', '-w', '/home/dimi/src'])
+    const toWindows = run(wsl, ['-d', 'Ubuntu', '-e', 'wslpath', '-a', '-w', '/home/dimi/src'])
     expect(toWindows.status).toBe(0)
     expect(toWindows.stdout).toBe(`${UNC_SRC}\n`)
 
@@ -343,13 +379,13 @@ describe('the fake wsl.exe', () => {
     expect(wsl.childCalls()).toBe(0)
     const [first, second] = wsl.reports()
     expect(first?.kind).toBe('translate')
-    expect(first?.argv).toEqual(['-d', 'Ubuntu', '--', 'wslpath', '-a', '-u', WINDOWS_SRC])
+    expect(first?.argv).toEqual(['-d', 'Ubuntu', '-e', 'wslpath', '-a', '-u', WINDOWS_SRC])
     expect(first?.wslpath).toEqual({ direction: 'toLinux', path: WINDOWS_SRC, answer: LINUX_SRC })
     expect(second?.wslpath).toEqual({ direction: 'toWindows', path: '/home/dimi/src', answer: UNC_SRC })
 
     // A path the table does not carry is refused, with the path named: the
     // console has to state the miss rather than invent a mapping.
-    const miss = run(wsl, ['-d', 'Ubuntu', '--', 'wslpath', '-a', '-u', 'D:\\elsewhere'])
+    const miss = run(wsl, ['-d', 'Ubuntu', '-e', 'wslpath', '-a', '-u', 'D:\\elsewhere'])
     expect(miss.status).not.toBe(0)
     expect(miss.stdout).toBe('')
     expect(miss.stderr).toContain('D:\\elsewhere')
@@ -357,14 +393,14 @@ describe('the fake wsl.exe', () => {
 
     // And the shapes it does not model are refused rather than guessed at: a
     // translation whose direction it cannot tell is one it must not answer.
-    expect(run(wsl, ['-d', 'Ubuntu', '--', 'wslpath', '-a', '/home/dimi/src']).status).not.toBe(0)
-    expect(run(wsl, ['-d', 'Ubuntu', '--', 'wslpath', '-a', '-u', '-w', '/home/dimi/src']).status).not.toBe(0)
-    expect(run(wsl, ['-d', 'Ubuntu', '--', 'wslpath', '-a', '-u']).status).not.toBe(0)
-    expect(run(wsl, ['-d', 'Ubuntu', '--', 'wslpath', '-z', '-u', '/home/dimi/src']).status).not.toBe(0)
+    expect(run(wsl, ['-d', 'Ubuntu', '-e', 'wslpath', '-a', '/home/dimi/src']).status).not.toBe(0)
+    expect(run(wsl, ['-d', 'Ubuntu', '-e', 'wslpath', '-a', '-u', '-w', '/home/dimi/src']).status).not.toBe(0)
+    expect(run(wsl, ['-d', 'Ubuntu', '-e', 'wslpath', '-a', '-u']).status).not.toBe(0)
+    expect(run(wsl, ['-d', 'Ubuntu', '-e', 'wslpath', '-z', '-u', '/home/dimi/src']).status).not.toBe(0)
   })
 
   it('runs the sh -c wrapper the way the distribution would, pid and all', async () => {
-    // T-F4: the CLI runs inside `wsl.exe -d <d> -- sh -c '<script>'`, where the
+    // T-F4: the CLI runs inside `wsl.exe -d <d> -e sh -c '<script>'`, where the
     // script reports its own pid on stderr and then `exec`s the CLI -- which is
     // how the pid inside the distribution is captured at all (D6(a)). The
     // double's job is that the wrapper really runs, that its stderr reaches the
@@ -374,7 +410,7 @@ describe('the fake wsl.exe', () => {
     const root = freshDirectory()
     const { wsl, linux } = install(root, { scenario: { commands: { version: { hold: true } } } })
     const script = `printf '%s %s\\n' '${WSL_WRAPPER_MARKER}' "$$" >&2; exec ${FUGARO_BINARY_NAME} version`
-    const child = spawn(wsl.binary, ['-d', 'Ubuntu', '--cd', linux, '--', 'sh', '-c', script], {
+    const child = spawn(wsl.binary, ['-d', 'Ubuntu', '--cd', linux, '-e', 'sh', '-c', script], {
       cwd: wsl.directory,
       env: HOST_ENV,
       stdio: ['ignore', 'ignore', 'pipe'],
@@ -431,7 +467,7 @@ describe('the fake wsl.exe', () => {
     // `wsl.exe` hop too would be the one place the separation this file is built
     // around does not hold. The mutation this catches: hand back the raw stub.
     const { wsl, linux } = install(freshDirectory())
-    run(wsl, ['-d', 'Ubuntu', '--cd', linux, '--', FUGARO_BINARY_NAME, 'version'])
+    run(wsl, ['-d', 'Ubuntu', '--cd', linux, '-e', FUGARO_BINARY_NAME, 'version'])
     run(wsl, ['--list', '--quiet'])
 
     expect(wsl.reports()).toHaveLength(2)

@@ -46,11 +46,13 @@ import {
   WSL_SYSTEM_ROOT,
   parseDefaultDistribution,
   parseDistributionList,
+  createWslPathCache,
   wslDistributions,
   wslExecutable,
+  wslpath,
 } from '../../src/main/wsl'
 import { installWslStub } from './wslstub'
-import type { WslFixture, WslStub, WslStubOptions } from './wslstub'
+import type { WslFixture, WslPathPair, WslStub, WslStubOptions } from './wslstub'
 
 /** SENTINELS are the variables a hostile environment would carry into the
  * distribution if the boundary were one line thinner. Each is a name the cloud
@@ -510,5 +512,250 @@ describe('the answer’s encoding (T-F2)', () => {
     const decoded = decodeWslAnswer(bare)
     expect(decoded).not.toBeNull()
     expect(parseDistributionList(decoded ?? '')).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// wslpath: the translation, both directions (Part D, T-D2, decision D4(a))
+// ---------------------------------------------------------------------------
+
+describe('translating a path with wslpath', () => {
+  /** PATHS is the test's own table, and the double derives nothing: a mapping
+   * computed in the console is right for `C:\Users\X` and wrong for every custom
+   * mount (D4(b)), so the console asks and this is the only source of answers. */
+  const PATHS: readonly WslPathPair[] = Object.freeze([
+    { windows: 'C:\\Users\\dimi\\src', linux: '/mnt/c/Users/dimi/src' },
+    { windows: '\\\\wsl.localhost\\Ubuntu\\home\\dimi\\src', linux: '/home/dimi/src' },
+  ])
+  const WINDOWS_PATH = 'C:\\Users\\dimi\\src'
+  const LINUX_PATH = '/home/dimi/src'
+
+  function arrangement(paths: readonly WslPathPair[] = PATHS): { wsl: WslStub; cwd: string } {
+    return install(TWO_DISTROS, { paths })
+  }
+
+  it('reads a Windows spelling and answers the distribution’s, in one call inside it', async () => {
+    // D4(a): one `wsl.exe -d <distro> -e wslpath -a -u <path>` per distinct
+    // path, through the ordinary spawn path. The fake's report is the account of
+    // what the distribution was asked -- the console's own plan object would
+    // only be its self-consistency.
+    const { wsl, cwd } = arrangement()
+    const answer = await wslpath({
+      direction: 'toLinux',
+      path: WINDOWS_PATH,
+      distro: 'Ubuntu',
+      appEnv: APP_ENV,
+      cwd,
+      wslPath: wsl.binary,
+    })
+    expect(answer).toEqual({ ok: true, path: '/mnt/c/Users/dimi/src' })
+    const report = only(wsl.reports())
+    expect(report.kind).toBe('translate')
+    expect(report.distro).toBe('Ubuntu')
+    // the distribution is named, `-e` ends `wsl.exe`'s own words (no shell), and the far
+    // side's argv is `wslpath` and nothing else.
+    expect([...report.argv.slice(0, 3)]).toEqual(['-d', 'Ubuntu', '-e'])
+    expect([...report.argv.slice(3)]).toEqual(['wslpath', '-a', '-u', WINDOWS_PATH])
+    expect(report.cwd).toBe(cwd)
+    // ...and the translation is recorded as a translation, with the answer the
+    // table gave, so a test can read both what was asked and what came back.
+    expect(report.wslpath).toEqual({ direction: 'toLinux', path: WINDOWS_PATH, answer: '/mnt/c/Users/dimi/src' })
+    // No `--cd`: a translation of a path cannot be run *in* a path the console
+    // has not translated yet.
+    expect(report.cd).toBeNull()
+    expect(wsl.childCalls()).toBe(0)
+  })
+
+  it('carries the same allow-list as any other child, on the translation’s own invocation', async () => {
+    // SECURITY-SENSITIVE: the credential boundary's near side, on the third
+    // shape of query this module makes. A translation is a new invocation of
+    // `wsl.exe`, and a new invocation is a new place for the boundary to be one
+    // line thinner: the fake's report carries the keys the console passed, so a
+    // leak is visible without anything having to be printed.
+    const { wsl, cwd } = arrangement()
+    await wslpath({
+      direction: 'toLinux',
+      path: WINDOWS_PATH,
+      distro: 'Ubuntu',
+      appEnv: APP_ENV,
+      cwd,
+      wslPath: wsl.binary,
+    })
+    const report = only(wsl.reports())
+    const platformKeys = process.platform === 'darwin' ? ['__CF_USER_TEXT_ENCODING'] : []
+    // `WSL_UTF8` is the one word the console adds to a `wsl.exe` *question* of
+    // its own (T-F2): a constant written by this module, never read from the
+    // app's environment, so it is named here with its value rather than
+    // admitted as a class.
+    expect(report.env[WSL_UTF8_VAR]).toBe(WSL_UTF8_VALUE)
+    for (const key of report.envKeys.filter((k) => !platformKeys.includes(k) && k !== WSL_UTF8_VAR)) {
+      expect(CHILD_ENV_KEYS, `${key} is not a key the child may receive`).toContain(key)
+    }
+    for (const planted of Object.keys(SENTINELS)) {
+      expect(report.envKeys, `${planted} crossed into wsl.exe`).not.toContain(planted)
+      expect(report.env[planted], `${planted} crossed into wsl.exe`).toBeUndefined()
+    }
+    expect(report.env['HOME']).toBe('/home/dimi')
+  })
+
+  it('reads the distribution’s spelling and answers Windows’ own, in the other direction', async () => {
+    const { wsl, cwd } = arrangement()
+    const answer = await wslpath({
+      direction: 'toWindows',
+      path: LINUX_PATH,
+      distro: 'Ubuntu',
+      appEnv: APP_ENV,
+      cwd,
+      wslPath: wsl.binary,
+    })
+    // The UNC spelling, because that is the one Windows opens for a path inside
+    // a distribution -- and it is the *distribution's* answer rather than one
+    // this console composed (`wslUncPath` exists for the plan, not for this).
+    expect(answer).toEqual({ ok: true, path: '\\\\wsl.localhost\\Ubuntu\\home\\dimi\\src' })
+    const report = only(wsl.reports())
+    expect([...report.argv.slice(3)]).toEqual(['wslpath', '-a', '-w', LINUX_PATH])
+    expect(report.wslpath?.direction).toBe('toWindows')
+  })
+
+  it('refuses a path the distribution cannot translate, and says which path', async () => {
+    // The half that makes the rest honest: a mapping computed from `C:` would
+    // answer here, and answer wrongly. The distribution's own refusal is the
+    // answer, and it names the path so the operator can see which one failed.
+    const { wsl, cwd } = arrangement()
+    const answer = await wslpath({
+      direction: 'toLinux',
+      path: 'C:\\Users\\dimi\\elsewhere',
+      distro: 'Ubuntu',
+      appEnv: APP_ENV,
+      cwd,
+      wslPath: wsl.binary,
+    })
+    expect(answer.ok).toBe(false)
+    if (answer.ok) return
+    expect(answer.reason).toContain('C:\\Users\\dimi\\elsewhere')
+    expect(answer.reason).toContain('wslpath')
+    // The refusal is recorded with no answer: what was asked is a fact, what
+    // came back is nothing.
+    const report = only(wsl.reports())
+    expect(report.kind).toBe('translate')
+    expect(report.wslpath).toEqual({ direction: 'toLinux', path: 'C:\\Users\\dimi\\elsewhere', answer: null })
+    expect(wsl.childCalls()).toBe(0)
+  })
+
+  it('refuses an answer that is not an absolute path rather than passing it on', async () => {
+    // The fake's table is the test's, so it can carry a nonsense answer -- and
+    // a value that is not a path must not reach a child as a working directory.
+    const { wsl, cwd } = arrangement([{ windows: 'C:\\Users\\dimi\\odd', linux: 'nonsense' }])
+    const answer = await wslpath({
+      direction: 'toLinux',
+      path: 'C:\\Users\\dimi\\odd',
+      distro: 'Ubuntu',
+      appEnv: APP_ENV,
+      cwd,
+      wslPath: wsl.binary,
+    })
+    expect(answer.ok).toBe(false)
+    if (!answer.ok) expect(answer.reason).toContain('not an absolute path')
+  })
+
+  it('refuses an answer Windows would not open, in the direction where it matters most', async () => {
+    // The `-w` direction's whole purpose is the spelling **Windows opens**
+    // (D3(a)): it is what a reveal-in-Explorer or a file dialog is handed. An
+    // answer that is not an absolute Windows path -- a relative one, a bare
+    // name, a distribution's own spelling coming back -- must be refused rather
+    // than passed on, exactly as the `-u` direction refuses a non-POSIX answer.
+    const { wsl, cwd } = arrangement([{ windows: 'odd', linux: 'odd' }])
+    const answer = await wslpath({
+      direction: 'toWindows',
+      path: 'odd',
+      distro: 'Ubuntu',
+      appEnv: APP_ENV,
+      cwd,
+      wslPath: wsl.binary,
+    })
+    expect(answer.ok).toBe(false)
+    if (!answer.ok) {
+      expect(answer.reason).toContain('not a path Windows would open')
+      expect(answer.reason).toContain('odd')
+    }
+    // ...and the two forms Windows accepts are accepted, so the check is a check
+    // and not a wall: a drive path and a UNC path.
+    const drive = arrangement([{ windows: 'C:\\Users\\dimi\\src', linux: 'src' }])
+    const unc = arrangement([{ windows: '\\\\wsl.localhost\\Ubuntu\\home\\dimi\\src', linux: 'src' }])
+    for (const one of [drive, unc]) {
+      const taken = await wslpath({
+        direction: 'toWindows',
+        path: 'src',
+        distro: 'Ubuntu',
+        appEnv: APP_ENV,
+        cwd: one.cwd,
+        wslPath: one.wsl.binary,
+      })
+      expect(taken.ok).toBe(true)
+    }
+  })
+
+  it('asks no one for a distribution or a path Part D refuses', async () => {
+    // The `-d` here is held to the same alphabet as every other `-d` this
+    // console writes, and the path to the rule every other path is: a leading
+    // `-` would be `wslpath`'s own flag, and a control character is not a path.
+    // Both are refused before `wsl.exe` is started at all.
+    const { wsl, cwd } = arrangement()
+    for (const distro of ['-sneaky', 'My Linux', 'Ubuntu;id', '$(id)']) {
+      const answer = await wslpath({ direction: 'toLinux', path: WINDOWS_PATH, distro, appEnv: APP_ENV, cwd, wslPath: wsl.binary })
+      expect(answer.ok, distro).toBe(false)
+      if (!answer.ok) expect(answer.reason).toContain('not a WSL distribution name')
+    }
+    for (const path of ['-w', 'C:\\Users\\dimi\nsrc', '']) {
+      const answer = await wslpath({ direction: 'toLinux', path, distro: 'Ubuntu', appEnv: APP_ENV, cwd, wslPath: wsl.binary })
+      expect(answer.ok, JSON.stringify(path)).toBe(false)
+    }
+    expect(wsl.calls()).toBe(0)
+  })
+
+  it('asks no one when no distribution was named', async () => {
+    // A translation is always *into* a distribution (F7: the installation's own,
+    // never a default), so a call with none starts nothing at all.
+    const { wsl, cwd } = arrangement()
+    const answer = await wslpath({
+      direction: 'toLinux',
+      path: WINDOWS_PATH,
+      distro: '',
+      appEnv: APP_ENV,
+      cwd,
+      wslPath: wsl.binary,
+    })
+    expect(answer.ok).toBe(false)
+    expect(wsl.calls()).toBe(0)
+  })
+
+  it('asks once per path for the life of the window, and asks again after a refusal', async () => {
+    // D4(a)'s cache: the same path in the same direction is one process, not one
+    // process per call -- and a refusal is not kept, because the answer depends
+    // on a running distribution and a mount that may have arrived.
+    const { wsl, cwd } = arrangement()
+    const cache = createWslPathCache({
+      distro: 'Ubuntu',
+      appEnv: APP_ENV,
+      cwd,
+      wslPath: wsl.binary,
+    })
+    const [first, second] = await Promise.all([cache.toLinux(WINDOWS_PATH), cache.toLinux(WINDOWS_PATH)])
+    expect(first.ok && first.path).toBe('/mnt/c/Users/dimi/src')
+    expect(second).toEqual(first)
+    expect(wsl.calls()).toBe(1)
+    expect(cache.size()).toBe(1)
+    // The other direction is a different question about the same path, and it is
+    // asked: the key is the pair, not the path.
+    await cache.toWindows(LINUX_PATH)
+    expect(wsl.calls()).toBe(2)
+    expect(cache.size()).toBe(2)
+    // A refusal is forgotten when it is handed out...
+    const refused = await cache.toLinux('C:\\Users\\dimi\\elsewhere')
+    expect(refused.ok).toBe(false)
+    expect(cache.size()).toBe(2)
+    // ...so the next ask is a new process rather than the sentence again.
+    await cache.toLinux('C:\\Users\\dimi\\elsewhere')
+    expect(wsl.calls()).toBe(4)
   })
 })

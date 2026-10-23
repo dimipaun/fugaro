@@ -108,6 +108,12 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
   },
   'spend.ts': {
     'entry.dimension': 'the switch is `SPEND_DIMENSIONS.map(...)`: the seven words are the console\'s table, and an unknown document dimension is drawn as "an unknown breakdown"',
+    'people.viewName': '`peopleViewOf` maps the document\'s `view` through `PEOPLE_VIEW_NAMES` and draws `UNKNOWN_PEOPLE_VIEW` for a word it does not know, so the document\'s own word is never drawn',
+    'people.reason ?? NO_PEOPLE_READ': 'the console\'s own sentence for a by-person panel with no document: `peopleOf`\'s or `readSpend`\'s reason, each a console constant or the window sentence, or the CLI\'s refusal **through `sanitizeRefusal`** (`refusalSentence`), the treatment `degraded.ts` gives a refusal',
+    sentence: {
+      within: 'peoplePanel',
+      reason: '`people.sentences` holds only sentences `peopleOf` composed from this file\'s own constants plus counts it read; the document\'s own `notes` take the `putText` branch instead',
+    },
     'series.title': '`ACCOUNT_TITLES[account]`, the console\'s headings',
     'scope.name': '`scopeOf` maps the wire word through `SCOPES` and draws `UNKNOWN_SCOPE_NAME` for a word it does not know',
     note: 'model.notes holds only the console\'s own sentences (`buildSpendModel`), the one interpolation being a count the console computed',
@@ -353,6 +359,8 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     "formatReading(none, 'percent')": '`formatReading` of a Reading: the console\'s own number formatting or its unavailable mark',
     'drawnKey(name)': 'read back from a cell `putText` wrote, so it is the sanitized text',
     "scope.known ? scope.source : 'unknown'": 'a known scope\'s word is on the console\'s `SCOPES` table; an unknown one is drawn as `unknown`',
+    'people.view': '`PeopleView`, the closed three words `peopleViewOf` resolves (`all`, `own`, and `unknown` for a word this build does not know)',
+    'drawnKey(currency)': 'read back from a cell `putText` wrote, so it is the sanitized text',
     theme: { within: 'renderSpend', reason: 'a `SpendTheme`, the closed theme tuple' },
   },
 })

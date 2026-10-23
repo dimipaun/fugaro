@@ -1,8 +1,8 @@
 # GCP setup with `fugaro setup`
 
-`fugaro setup` sets up one Fugaro project's installation in a Google Cloud project with Terraform. Two names appear throughout: the **Fugaro project's name** (`<project>`, such as `aurora`: a short permanent name that every repository of the project carries in its `fugaro.yaml`) and the **GCP project ID** (`<gcp-project>`, such as `my-fugaro-dev`). It plans, shows you the plan, and applies exactly that plan once you confirm. This runbook takes a fresh project from nothing to a repository's first run, one confirmed step at a time. It also covers adopting what M4's bootstrap made, rolling back, offboarding a repository, retiring `fugaro-build`, and pushing a base image.
+`fugaro setup` stands up one Fugaro project's installation in one Google Cloud project, with Terraform. It shows each plan and applies it only after you confirm.
 
-Design §8 says how `fugaro setup` works and why (the state layout, the guard, the environment allowlist); §6.1 has the IAM it creates. This page says what to run.
+Two names: the **project name** (`<project>`, such as `aurora`; permanent, and every repository's `fugaro.yaml` carries it) and the **GCP project ID** (`<gcp-project>`). Why it works this way: design §8; the IAM it creates: §6.1.
 
 **What you end up with:**
 
@@ -42,7 +42,7 @@ fugaro update                          # asks, hidden, for the secrets the repos
 fugaro secrets set anthropic-api-key  # or one secret by hand: from stdin or a hidden prompt; only needed when a call goes direct to Anthropic (below)
 ```
 
-For a GitHub repository pass `--github-app-id <id>` the first time; the App and its four permissions are precondition 10. Step 4 ("A repository") is the full sequence, the first billable build included.
+For a GitHub repository pass `--github-app-id <id>` the first time; the App and its four permissions are under "Before you onboard a repository". Step 4 ("A repository") is the full sequence, the first billable build included.
 
 ### Run, watch, diagnose
 
@@ -92,33 +92,120 @@ fugaro report --by week        # spend history: by day, week, month, year, repo,
 
 ## Preconditions
 
-These are read-only checks, and yours to run and fix.
+### Install
 
-0. **The project's name.** Choose it once: 1 to 40 of `a-z`, `0-9` and `-`, starting and ending with a letter or digit. **It is permanent.** `fugaro setup --name` stamps it on the runs bucket (the label `fugaro_project`) and in the marker object `fugaro/project.json`, and every job carries it as `FUGARO_PROJECT`; a later `fugaro setup` with another name is refused, and a bucket labelled for another project is never adopted. Every repository of the project then names it as `project:` at the top of its `fugaro.yaml` (`fugaro config example` prints the template, with it filled in once the project is selected).
-1. **Your account.** `gcloud auth list` shows it, and `gcloud auth application-default login` has been done: `fugaro` and Terraform both use Application Default Credentials.
-2. **ADC's quota project** (a GCP project). `gcloud auth application-default set-quota-project <gcp-project>`. The generated provider sets `user_project_override`, so this is the project that is billed for API calls. **The Cloud Billing API must be enabled on that quota project** (a quota project that doesn't have it makes the billing reads fail with a message that looks like missing permissions): `gcloud services enable cloudbilling.googleapis.com --project <quota-project>`. `fugaro doctor` and `fugaro setup`'s preflight name the API and the project and print that line. When `fugaro setup` creates the project (`--create-project`), the quota project is an existing project of yours, not the new one: the billing reads and links of `fugaro setup` and `doctor` use the credentials' own quota project (never the project being set up, where the API cannot be enabled yet), and when the API is off there the message names the project to enable it in.
-3. **No overriding environment.** `GOOGLE_IMPERSONATE_SERVICE_ACCOUNT` is unset (`fugaro setup` refuses to run with it, rather than apply as someone else), and `GOOGLE_PROJECT`, `GOOGLE_CLOUD_PROJECT` and `CLOUDSDK_CORE_PROJECT` are unset or name `<gcp-project>`. `GODEBUG` doesn't contain `http2debug`.
-4. **Billing** is linked: `gcloud billing projects describe <gcp-project>` shows `billingEnabled: true`. Terraform doesn't link billing.
-5. **`serviceusage.googleapis.com`** is enabled: `gcloud services list --enabled --project <gcp-project>`. Terraform needs it to enable the other APIs, and can't enable it itself.
-6. **Terraform** 1.9 or newer (before 2.0) is on `PATH`: `terraform version`.
-7. **Your role.** For the installation step you must be an Owner. The three IAM administration roles (`roles/resourcemanager.projectIamAdmin`, `roles/iam.serviceAccountAdmin` and `roles/iam.roleAdmin`) are needed on top of the rights to create buckets, registries, secrets, jobs, log buckets and Scheduler jobs and to enable APIs (for example Editor, plus the Run, Secret Manager and Artifact Registry admin roles for their IAM), and are not enough alone. `fugaro setup --repo` creates service accounts and project-level bindings as well, so run it as an Owner too. The operator role that the installation step grants (design §6.1) lets people work with what exists (store secrets, act as the accounts, push base images); it doesn't let them create it.
-8. **Who else needs access.** On the first run of a **new** project config (no config file yet), both lists default to you, the person running `fugaro setup`, as `user:<your Google account's email>` (read from your Application Default Credentials; the review screen and the output say so: `launchers: user:x (you); operators: user:x (you); change with --launcher/--operator`), and are written to the config's `terraform.launchers` and `terraform.operators`: without them nobody holds the launcher or token-minter role and the first `fugaro run` fails with "not allowed to sign as the token signer". Passing `--launcher` or `--operator` replaces that default entirely (it adds nothing for you); an existing config, and a config adopted from an installation, are never changed implicitly; and with a service account's credentials, or none, there is no default and `fugaro setup` stops with the one line naming `--launcher` and `--operator`. Decide whether anyone besides you launches runs (`--launcher user:you@example.com --launcher user:a@example.com`) or onboards repositories (`--operator …`): the flags replace the whole list, so name yourself and every current member too. Members are `user:`, `group:`, `serviceAccount:` or `domain:` IAM members.
-9. **The project's default build identity.** A build request that names no service account runs as it, and a leaked build token could submit one (design §6.1). Read it, and what it holds, before you onboard anything:
+- **Terraform 1.9 or newer, before 2.0.** `terraform version`. `fugaro setup` applies every plan through it.
+- **gcloud.** `gcloud version`. You need it for the login below and the checks on this page.
+
+### Log in
+
+```bash
+gcloud auth application-default login
+gcloud auth application-default set-quota-project <gcp-project>
+gcloud services enable cloudbilling.googleapis.com --project <gcp-project>
+```
+
+- Fugaro and Terraform use these Application Default Credentials (ADC). `gcloud auth login` is only for typing `gcloud` commands yourself.
+- The quota project is billed for API calls. It needs the Cloud Billing API, or billing reads fail with what looks like a permission error.
+- With `--create-project`, the quota project is an existing project of yours, not the new one.
+
+### Have ready
+
+- **A GCP project with billing linked.** `gcloud billing projects describe <gcp-project>` shows `billingEnabled: true`. Or let `fugaro setup --create-project --link-billing <account>` create and link it.
+- **`serviceusage.googleapis.com` enabled.** `gcloud services list --enabled --project <gcp-project>`. Terraform enables every other API through it.
+- **You are an Owner of that project.** Not an Owner? See [If you are not an Owner](#not-an-owner).
+- **A project name.** 1 to 40 of `a-z`, `0-9` and `-`, starting and ending with a letter or digit. **It is permanent**: it is stamped on the runs bucket and every job, and each repository's `fugaro.yaml` names it as `project:`.
+
+### Setup checks these for you
+
+Each check prints the problem and a one-line fix, and applies nothing until it passes.
+
+| Check | What you see | Fix |
+|---|---|---|
+| Environment | refuses while `GOOGLE_IMPERSONATE_SERVICE_ACCOUNT` is set, while `GOOGLE_PROJECT`, `GOOGLE_CLOUD_PROJECT` or `CLOUDSDK_CORE_PROJECT` names another project, or while `GODEBUG` holds `http2debug` | unset it (Windows forms: below) |
+| Terraform | refuses when it is missing or outside 1.9 to 2.0 | install a supported version |
+| Billing (`--create-project`) | lists your open billing accounts to pick, or prints `gcloud billing projects link` | pick one, or run the line |
+| Cloud Billing API off on the quota project (billing picker) | offers to enable it when it is this project; otherwise prints the line for the other project's owner | type the confirmation, or ask |
+| Cloud Resource Manager API off | offers to enable it, behind a confirmation | type the confirmation |
+| Project name | refuses a bad name, or a name other than the installation's | use the installation's name |
+| Launchers and operators | a new config makes you both; with a service account's credentials it stops | pass `--launcher` and `--operator` |
+| GitHub App, before the first billable build | names each missing permission; nothing is billed | add it, then accept it on the installation |
+| Default service accounts (Firebase in the same project) | lists any that hold `roles/editor` | run the printed `remove-iam-policy-binding` line |
+
+`fugaro doctor` repeats the environment, Terraform and billing checks, and also checks that you can read the project's IAM policy.
+
+### Before you onboard a repository
+
+- **Repository credentials.** On GitHub, a GitHub App named `<yourname>-fugaro` (the bare `Fugaro` is taken; the name is the author of every pull request). Exactly four repository permissions: Contents Read & write, Pull requests Read & write, Issues Read, Metadata Read. Never Workflows. Install it on the repository, and accept any later permission change on the installation. On Bitbucket, a repository access token per repository ([git-providers.md](git-providers.md)).
+- **The default build identity.** A leaked build token can submit builds as it. Read it:
+
+  ```bash
+  gcloud builds get-default-service-account --project <gcp-project>
+  gcloud projects get-iam-policy <gcp-project> --flatten='bindings[].members' --filter='bindings.members:<that account>' --format='table(bindings.role)'
+  ```
+
+  If it is `<number>@cloudbuild.gserviceaccount.com` or holds `roles/editor`, think twice before onboarding code you don't trust.
+- **Who may launch and onboard.** `--launcher` and `--operator` (`user:`, `group:`, `serviceAccount:` or `domain:` members). Each flag replaces its whole list: name yourself and everyone current too.
+- <a id="token-signers"></a>**Who can sign run tokens.** With a budget backend, `fugaro doctor`'s `token-signers` check lists everyone who can sign as a service account of the Firebase project, and so act as any run against the budget database. Designed signers, Google's service agents and project Owners are info lines. Everyone else is a warning that fails `doctor --strict`, with a `review before running:` removal line. It does not read folder- or organization-inherited bindings or deny policies. Detail: [design/m9-budget-and-dashboard.md](design/m9-budget-and-dashboard.md) §6.
+
+<a id="not-an-owner"></a>
+### If you are not an Owner
+
+You have access to the GCP project, but not `roles/owner`. Fugaro's setup creates service accounts, custom roles and project-level IAM bindings, so someone with Owner (here: Chris, your IT person) must act once.
+
+1. **Check your roles.**
 
    ```bash
-   gcloud builds get-default-service-account --project <gcp-project>
-   gcloud projects get-iam-policy <gcp-project> --flatten='bindings[].members' --filter='bindings.members:<that account>' --format='table(bindings.role)'
+   gcloud projects get-iam-policy <gcp-project> --flatten='bindings[].members' --filter='bindings.members:<you@example.com>' --format='value(bindings.role)'
    ```
 
-   If it is the legacy `<number>@cloudbuild.gserviceaccount.com` or holds `roles/editor`, that path is real in your project: weigh that before you onboard a repository whose code you don't trust. In the **same-project layout** (Firebase in the installation's own project) the same applies to the default Compute Engine, Cloud Build and App Engine accounts, which Google may create holding `roles/editor` on a project that has Compute enabled: `fugaro doctor` and `fugaro setup` list the ones that hold a primitive role (check `default-service-accounts`) with the line that removes it, `gcloud projects remove-iam-policy-binding <gcp-project> --member=serviceAccount:<account> --role=roles/editor`. Fugaro never runs it for a project it did not create. A project that `fugaro setup --create-project` made has no default Compute account yet, and fugaro setup does not enable Compute.
+   An error here means you cannot even read the policy: you need Chris.
+2. **Pick a path with Chris.** A is smallest and safest.
+   - **A. Chris runs setup once, and adds you.** On his machine (with the Install and Log in steps above), outside any checkout:
 
-   <a id="token-signers"></a>**Who can sign run tokens: `fugaro doctor`'s `token-signers` check.** Firebase accepts a custom sign-in token signed by **any** service account of the Firebase project, not only by `fugaro-token-signer` (live Check 26 saw it accept one signed by `fugaro-scheduler`). So the real boundary of the budget database's identity is **who can sign as a service account of that project**, and the signer's minter role is only the designed, narrow path. With a budget backend (`budget.firebase_project` in the local config), `doctor` reads, read-only, the Firebase project's IAM policy and the policy of each of its service accounts, **resolves every role in them through the IAM API** (predefined, primitive and custom alike, so nothing rests on a list of role names), and lists every principal whose role includes a permission that signs as an account (`iam.serviceAccounts.signJwt`, `signBlob`, `getAccessToken`, `implicitDelegation`, `iam.serviceAccountKeys.create`) or lets it grant itself that (`iam.serviceAccounts.setIamPolicy`, `resourcemanager.projects.setIamPolicy`), at project level or on a single account. It prints the resolved fact (which permissions of the role matched) and claims nothing more about a role than the API returns. Three kinds of principal are shown as **info** and never fail `doctor --strict`, and none is ever given a remove command. (1) **Designed**: the Firebase Admin SDK account (`firebase-adminsdk-<4 to 6 letters>@<project>.iam.gserviceaccount.com`, for signing only) and `fugaroTokenMinter` on the signer account alone, for users, groups and service accounts only (never `allUsers` or a domain), while that role is still `signJwt` and nothing else; both are part of the summary line. (2) **Google-operated service agents of this project** (`token-signers-google-agents`, one line listing each with its roles): the IAM API resolves roles such as `roles/cloudbuild.serviceAgent`, `roles/cloudscheduler.serviceAgent`, `roles/firebase.managementServiceAgent` and `roles/run.serviceAgent` to include `getAccessToken`, `signBlob` or `setIamPolicy`, which is true, but Google operates these accounts and Cloud Build, Scheduler, Run and Firebase break without them, so the trust is the same as trusting Google and there is no action. A principal counts as one only if it is a service account whose email is **exactly** `service-<this project's number>@<agent domain>` (`gcp-sa-<service>.iam.gserviceaccount.com`, `serverless-robot-prod`, `containerregistry`, `compute-system`, `container-engine-robot`, `gcf-admin-robot`, `firebase-rules`, `dataflow-service-producer-prod` and a few other pinned Google domains) or `<this project's number>@cloudservices.gserviceaccount.com` / `@cloudbuild.gserviceaccount.com`, bound at project level, and the number equals the project number doctor reads from the project. Another project's agent, a look-alike domain, a `user:` or `group:` member with such an email, an account of the project named like an agent, and the default Compute account (`<number>-compute@developer.gserviceaccount.com`, a plain account people grant roles to) do not qualify. If the project number cannot be read, nothing is recognised as a service agent (they are warnings, and the summary says why). (3) **Project owners** (`token-signers-owners`): users, groups and service accounts holding `roles/owner` on the project can create service-account keys and so sign tokens; they are the trust root, so this is one line counting and naming them ("keep this list short"), with no remove command (it would remove the owner's own ownership). `roles/editor` is **not** in this class: the primitive editor role resolves to key creation too, and that is unexpected power. **Every other principal is a warning** (`token-signers-N`; it fails `doctor --strict`, not plain `doctor`) that names the principal, the role, where it is held and the consequence ("can sign sign-in tokens with any claims, i.e. act as any run against the budget database"), with the one-line command that removes the binding, prefixed `review before running:` because removing a binding can break whatever relied on it, for example `gcloud projects remove-iam-policy-binding <project> --member=user:<who> --role=roles/iam.serviceAccountTokenCreator` (or `gcloud iam service-accounts remove-iam-policy-binding <account> --project <project> --member=... --role=...` for a binding on one account). **The result is partial, and the check says so even when it finds nothing:** it did not read folder- or organization-inherited bindings or deny policies. A role or policy it cannot read is a warning (unknown, never safe), and a Firebase project it cannot read at all is a warning too, so `doctor --strict` does not go green when nothing could be read. In the same-project layout this is the installation's own project.
-10. **Provider credentials.** Each repository's Bitbucket repository access token, or GitHub App (its ID and a private key file), exists. The App has exactly four repository permissions, Contents Read & write, Pull requests Read & write, Issues Read and Metadata Read, never Workflows, is installed on the repository, and any later permission change is accepted on the installation. Name it when you create it: the name is shown as the author of the pull requests and comments Fugaro creates, and is not something to change later. **A GitHub App's name is unique across GitHub, so the bare `Fugaro` is taken: use `<yourname>-fugaro`** (git-providers.md). `fugaro setup` and `fugaro doctor` check the installation against this and name each missing permission.
-11. **On an installation that ran the M4 bootstrap:** `fugaro runs ls --since 1d` shows no active run, and you have a snapshot to roll back to (see "Adopting an M4 installation").
+     ```bash
+     fugaro setup --name <project> --gcp-project <gcp-project> --region <region> --launcher user:chris@example.com --launcher user:you@example.com --operator user:chris@example.com --operator user:you@example.com
+     ```
+
+     Then you, on your machine: `fugaro setup --gcp-project <gcp-project>`. It writes your local config from the installation and changes nothing in the cloud. Run `/fugaro:setup` in the repository and merge its `fugaro.yaml`. Each new repository's first `fugaro setup --repo` also creates service accounts and bindings, so Chris runs it in a fresh clone of that repository. You store the secrets yourself with `fugaro secrets set` (the operator role allows it).
+   - **B. Chris grants you the roles setup needs.** Then you run everything. The set ([design/v1.md](design/v1.md) §6.1):
+     - `roles/resourcemanager.projectIamAdmin`: the project-level bindings.
+     - `roles/iam.serviceAccountAdmin`: the service accounts and the bindings on them.
+     - `roles/iam.roleAdmin`: the custom roles.
+     - `roles/editor`: buckets, registries, secrets, jobs, log buckets, Scheduler jobs, and enabling APIs.
+     - `roles/run.admin`, `roles/secretmanager.admin`, `roles/artifactregistry.admin`: the IAM on jobs, secrets and registries.
+
+     This set has not been tested live; Owner is the tested path. A 403 in a plan names the missing permission. Onboarding each repository needs the same roles, so keep them while you onboard. Afterwards Chris can remove them: the launcher and operator roles setup granted you are what daily work needs. A budget (`--budget`) also needs rights on the billing account: check with whoever administers it.
+   - **C. Don't ask for:** Owner on the organization or a folder, a billing account role (unless you create the project), a service account key, impersonation (setup refuses `GOOGLE_IMPERSONATE_SERVICE_ACCOUNT`), or Workflows on the GitHub App.
+3. **Send Chris this,** with the placeholders filled in:
+
+   ```text
+   Hi Chris. I'd like to set up Fugaro (https://fugaro.dev) in GCP project <gcp-project>.
+   Fugaro runs coding agents in short-lived cloud jobs; each run ends in a pull request.
+   It creates, in that one project only: a few storage buckets, container registries,
+   Cloud Run jobs, service accounts, custom roles and a log bucket (with the optional
+   shared budget, also a Firebase database). It touches no other project.
+   Cost: storage cents a month, about $0.21 per image build, and Cloud Run while a run works.
+
+   It needs an Owner once. Could you either:
+   A) run setup yourself once and add me (commands below), or
+   B) grant me these roles on <gcp-project> while I set it up:
+      projectIamAdmin, iam.serviceAccountAdmin, iam.roleAdmin, editor,
+      run.admin, secretmanager.admin, artifactregistry.admin
+
+   Checklist:
+   1. gcloud billing projects describe <gcp-project>   -> billingEnabled: true
+   2. gcloud services enable serviceusage.googleapis.com --project <gcp-project>
+   3. A: brew install dimipaun/tap/fugaro, then
+         gcloud auth application-default login
+         fugaro setup --name <project> --gcp-project <gcp-project> --region <region> --launcher user:chris@example.com --launcher user:<me> --operator user:chris@example.com --operator user:<me>
+      B: for r in resourcemanager.projectIamAdmin iam.serviceAccountAdmin iam.roleAdmin editor run.admin secretmanager.admin artifactregistry.admin; do gcloud projects add-iam-policy-binding <gcp-project> --member=user:<me> --role=roles/$r; done
+   Thanks!
+   ```
 
 ## On Windows and in WSL: the two commands you run yourself
 
-The preconditions above are mostly commands you run in a shell — `gcloud` in 1, 2, 4, 5 and 9, `terraform` in 6, and the variable state of 3 — and the shell is the one thing this page cannot choose for you. Precondition 11 is `fugaro` itself, the same program in every terminal, and 0, 7, 8 and 10 are decisions rather than commands. Two of the shell commands need something said about them on Windows: the ADC login, because which `gcloud` runs it decides which file the credentials land in, and the `Fix` line `fugaro setup` and `fugaro doctor` print, because its form is POSIX today.
+The `gcloud` lines under Install, Log in, Have ready and Before you onboard a repository, and `terraform version` under Install, run in your own shell. On Windows two of them need a note: the ADC login (which `gcloud` runs it decides where the credentials land) and the `Fix` line `fugaro setup` and `fugaro doctor` print (it is POSIX today).
 
 **Run the ADC login in the environment that will run `fugaro`.** `gcloud auth application-default login` writes to the config directory of the `gcloud` that ran it. A Windows `gcloud` writes `%APPDATA%\gcloud\application_default_credentials.json`; a `gcloud` installed inside WSL writes `~/.config/gcloud/application_default_credentials.json` **inside the distribution**. Those are two different files, so signing in on Windows does not sign you in inside WSL and signing in inside WSL does not sign you in on Windows. The command is the same line in all three terminals —
 
@@ -126,9 +213,9 @@ The preconditions above are mostly commands you run in a shell — `gcloud` in 1
 gcloud auth application-default login
 ```
 
-— and what differs is which `gcloud` runs it. Precondition 2's `gcloud auth application-default set-quota-project <gcp-project>` is the same: run it where you ran the login. Which route works on Windows today, and what does not, is [windows-cli/wsl.md](windows-cli/wsl.md)'s subject.
+— and what differs is which `gcloud` runs it. The `set-quota-project` line under Log in is the same: run it where you ran the login. Which route works on Windows today, and what does not, is [windows-cli/wsl.md](windows-cli/wsl.md)'s subject.
 
-**The `Fix` line is written for a POSIX shell today.** When a variable of precondition 3 is set, `fugaro setup` and `fugaro doctor` print the line to run, and it says `unset` (**F6** and **F27** in [windows-cli/reconciliation.md](windows-cli/reconciliation.md)). Only the project-variable check prints a name to substitute — `unset GOOGLE_PROJECT (or set it to <gcp-project>) and rerun`, for whichever of `GOOGLE_PROJECT`, `GOOGLE_CLOUD_PROJECT` and `CLOUDSDK_CORE_PROJECT` is set; the impersonation and `GODEBUG` checks say `unset it and rerun` and `unset it (or drop http2debug) and rerun`, and the variable they mean is named on the `Problem` line above them (`GOOGLE_IMPERSONATE_SERVICE_ACCOUNT is set`, and the `GODEBUG` line). Each, in each shell:
+**The `Fix` line is written for a POSIX shell today.** When the environment check fails, `fugaro setup` and `fugaro doctor` print the line to run, and it says `unset` (**F6** and **F27** in [windows-cli/reconciliation.md](windows-cli/reconciliation.md)). Only the project-variable check prints a name to substitute — `unset GOOGLE_PROJECT (or set it to <gcp-project>) and rerun`, for whichever of `GOOGLE_PROJECT`, `GOOGLE_CLOUD_PROJECT` and `CLOUDSDK_CORE_PROJECT` is set; the impersonation and `GODEBUG` checks say `unset it and rerun` and `unset it (or drop http2debug) and rerun`, and the variable they mean is named on the `Problem` line above them (`GOOGLE_IMPERSONATE_SERVICE_ACCOUNT is set`, and the `GODEBUG` line). Each, in each shell:
 
 | The check | The line it prints | bash, zsh, WSL | PowerShell | cmd.exe |
 |---|---|---|---|---|
@@ -148,7 +235,7 @@ fugaro setup --name <project> --gcp-project <gcp-project> --region <region> --pl
 
 Add `--launcher`, `--operator`, `--alert-email`, `--budget`, `--budget-currency` and `--billing-account` as you need them (see "Optional pieces").
 
-- **It enables the Cloud Resource Manager API, after its own confirmation,** when it is disabled (as on a fresh project): `fugaro setup` reads the project's number through it before Terraform's apply could enable it. It enables it through Service Usage (precondition 5), then waits up to a few minutes for the enable to propagate. It is free, and Terraform later manages it with the other APIs without ever disabling it. Under `--plan-only` it does this only on the project's name typed at a terminal, never on `--yes`. Without a terminal and without `--yes` (or with `--plan-only`), `fugaro setup` enables nothing and exits 1 with the command to run yourself: `gcloud services enable cloudresourcemanager.googleapis.com --project <gcp-project>`. Any other API that is still disabled (Cloud Scheduler, Cloud Logging, and so on) holds nothing yet, so the plan simply creates its resources; a 403 for a missing permission still stops `fugaro setup`, and so does a disabled Cloud Storage API, which the Terraform state bucket needs.
+- **It enables the Cloud Resource Manager API, after its own confirmation,** when it is disabled (as on a fresh project): `fugaro setup` reads the project's number through it before Terraform's apply could enable it. It enables it through Service Usage ("Have ready"), then waits up to a few minutes for the enable to propagate. It is free, and Terraform later manages it with the other APIs without ever disabling it. Under `--plan-only` it does this only on the project's name typed at a terminal, never on `--yes`. Without a terminal and without `--yes` (or with `--plan-only`), `fugaro setup` enables nothing and exits 1 with the command to run yourself: `gcloud services enable cloudresourcemanager.googleapis.com --project <gcp-project>`. Any other API that is still disabled (Cloud Scheduler, Cloud Logging, and so on) holds nothing yet, so the plan simply creates its resources; a 403 for a missing permission still stops `fugaro setup`, and so does a disabled Cloud Storage API, which the Terraform state bucket needs.
 - **It creates, after its own confirmation:** the Terraform state bucket `gs://fugaro-tfstate-<gcp-project>` (`--state-bucket` overrides the name), in `<region>`, with versioning, uniform bucket-level access, public access prevention, the label `fugaro=tfstate`, and no project-Viewer read access.
 - **It offers to remove project Viewers' read access to the runs bucket,** if that bucket already exists (on a fresh project it does this after the apply, step 2), after another confirmation. Declining is allowed and leaves a warning; `--plan-only` never removes it.
 - **Cost:** the state bucket is cents a month.
@@ -255,7 +342,7 @@ The repository step copies the installation's setting (its `registry_cleanup_dry
 
 - **A budget:** `--budget 100 --budget-currency USD --billing-account <id>` creates one with 50%, 90% and 100% alerts. It needs billing-account permissions. **Pass the same three flags on every later `fugaro setup`**: the budget isn't stored, and a plan without them would delete it (the guard refuses that and names the flags). A budget made by hand stays unmanaged.
 - **An alert:** `--alert-email <address>` emails a failed image check or rebuild (and stores the address in the local config). It is one notification channel, "Fugaro alerts", and two alert policies, since Cloud Monitoring allows a log-match condition only alone in its policy: "Fugaro image check failed" (the check logged a failed check or rebuild) and "Fugaro image check job failed" (a check job execution failed before it could log: an ERROR in the audit log's system events, such as a failure at container start on an unreadable secret, or in the Cloud Run system log). Without it, failures still show in `fugaro runs ls`, `fugaro image status` and the check job's `ERROR` log line.
-- **Launchers and operators:** `--launcher` and `--operator`, repeatable, stored in the local config (a new config starts with you in both, see precondition 8); rerun `fugaro setup` and `fugaro update --repo` to change who has what. Passing either flag replaces that whole list, so repeat it for every current member, yourself included. The installation step grants project-level and bucket-level roles, and each repository step the per-repository ones. Since 0.7.0 launchers and operators no longer get the same bucket-level role (see "The runs bucket" below).
+- **Launchers and operators:** `--launcher` and `--operator`, repeatable, stored in the local config (a new config starts with you in both); rerun `fugaro setup` and `fugaro update --repo` to change who has what. Passing either flag replaces that whole list, so repeat it for every current member, yourself included. The installation step grants project-level and bucket-level roles, and each repository step the per-repository ones. Since 0.7.0 launchers and operators no longer get the same bucket-level role (see "The runs bucket" below).
 - **The Scheduler region:** Cloud Scheduler isn't offered in every Cloud Run region, so the daily check's Scheduler job may run elsewhere (`us-east5` uses `us-east4`). `--scheduler-region` overrides it; the check job stays in `<region>`.
 - **Log isolation off:** `--no-log-isolation` leaves job logs in `_Default`.
 - **Named Claude accounts on a shared job (0.9.0):** a profile serves the Claude accounts its `claude_accounts:` list names, one Cloud Run job per (profile, provider, account), each holding that account's token. It needs the tokens stored project-wide, the accounts declared in the project's local config and the policy published from 0.9.0. See [project-claude-accounts.md](project-claude-accounts.md), and "Claude accounts a project job serves (0.9.0)" below for the rollout.
@@ -590,14 +677,7 @@ The next build then moves `latest` and removes its `candidate-` tag. A new IAM g
 
 ## Adopting an M4 installation
 
-`fugaro setup` adopts what M4's bootstrap script (`deploy/bootstrap/gcp-m4.sh`, removed from the tree after commit `0828eaa`) made, under the same names, and changes nothing you didn't ask for. Do it in this order, each its own plan and confirmation, with **zero deletes** in every plan: the installation, then a sandbox repository, then the others.
-
-1. **Snapshot for rollback**, into a directory only you can read (mode 700): `gcloud run jobs describe <job> --region <region> --format=export` for each job; `gcloud storage buckets get-iam-policy` and `describe` for the runs bucket; `gcloud secrets get-iam-policy` for each secret; `gcloud artifacts repositories get-iam-policy fugaro`; the project's IAM policy filtered to `fugaro`; and a copy of `~/.config/fugaro/config.yaml`.
-2. **The installation:** steps 1 and 2 above. The plan should import the runs bucket and the legacy `fugaro` registry, create the rest, and update in place only labels. The three lifecycle rules equal the bootstrap's, so the bucket's `lifecycle_rule` shouldn't change, and the legacy registry gets no cleanup policy.
-3. **The base image:** step 3. The M4 dev tag in `fugaro` stays for a rollback.
-4. **The sandbox, then each repository:** step 4. Discovery imports the job, the job account and the secrets, after checking that each carries our mark and that the live bucket and secret bindings equal the spec's byte for byte. The summary says `IAM: n bindings match the live ones (adopted), m new`. Acceptable in-place updates on an adopted job are the env's order, the CPU's form (`"1"` against `"1000m"`), client annotations and template labels, and `deletion_protection`, which lives only in state. The job keeps its **M4 image path and its legacy service account display name** (`Fugaro M4 job …`, so the account is never renamed and M4's tooling still recognizes it in a rollback), and the highlighted section must show no `image` or `service_account` change until the new registry has an image. If it shows a delete, stop.
-5. **The first build, then the switch:** as in step 4.5 and 4.6. An adopted image has no record, so its schedule stays paused until the first build writes one; an unpaused first check would start a billable build that moves a live `:latest`.
-6. **Retire `fugaro-build`** once the new build accounts have built successfully, below.
+Obsolete: no M4 installation is left. If you meet one, take a snapshot into a directory only you can read (mode 700): `gcloud run jobs describe <job> --region <region> --format=export` per job, `gcloud storage buckets get-iam-policy` and `describe` for the runs bucket, `gcloud secrets get-iam-policy` per secret, `gcloud artifacts repositories get-iam-policy fugaro`, the project's IAM policy filtered to `fugaro`, and `~/.config/fugaro/config.yaml`. Then re-run `fugaro setup` and `fugaro setup --repo`: they adopt the bootstrap's resources under the same names. Stop at any plan that deletes.
 
 ## Rolling back
 

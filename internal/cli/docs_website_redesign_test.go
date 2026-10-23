@@ -177,16 +177,17 @@ func TestWebsiteChecklistHasCheck70bSection(t *testing.T) {
 		// The homepage's own blocks, in the order the page renders them, the slider's tabs and
 		// panels, and the command the page's first `pre` belongs to.
 		"website/src/pages/index.astro",
-		"HomeSlider.astro",
+		"HomeWhatYouGet.astro",
 		"HomeInstall.astro",
 		"HOME_PATH",
 		"home-install-command",
-		"home-panel-",
+		"data-live-run",
 		"watch-block",
 		"watch-command",
-		// The banner that is over the first screen on a first visit.
+		// The banner on a first visit, in the page's flow since the owner's rulings of
+		// 2026-10-23 (the redesign's Step 3).
 		"ConsentBanner.astro",
-		"position: fixed",
+		"data-consent-ask",
 		// The blocks every entry in the register ends with.
 		"FACT:",
 		"Passes when:",
@@ -502,12 +503,13 @@ func TestWebsiteChecklistCheck70bNamesWhatTheTreeHas(t *testing.T) {
 	for _, m := range []struct{ name, file string }{
 		{"HOME_PATH", "website/src/components/HomeInstall.astro"},
 		{"home-install-command", "website/src/components/HomeInstall.astro"},
-		{"watch-block", "website/src/components/HomeSlider.astro"},
-		{"watch-command", "website/src/components/HomeSlider.astro"},
-		{"watch-shot", "website/src/components/HomeSlider.astro"},
-		{"home-panel-", "website/src/components/HomeSlider.astro"},
+		{"watch-block", "website/src/components/HomeWhatYouGet.astro"},
+		{"watch-command", "website/src/components/HomeWhatYouGet.astro"},
+		{"watch-shot", "website/src/components/HomeWhatYouGet.astro"},
+		{"data-live-run", "website/src/components/Hero.astro"},
 		{"HomeInstall", "website/src/pages/index.astro"},
-		{"HomeSlider", "website/src/pages/index.astro"},
+		{"HomeWhatYouGet", "website/src/pages/index.astro"},
+		{"data-consent-ask", "website/src/components/ConsentBanner.astro"},
 		{"DOCUMENT_PAGES", "website/test/lib/exempt.mjs"},
 		{"flex-direction: row-reverse", "website/src/styles/base.css"},
 	} {
@@ -764,7 +766,7 @@ func TestWebsiteChecklistCheck70bMethodReadsExist(t *testing.T) {
 		"website/test/lib/exempt.mjs",
 		"website/test/meta.mjs",
 		"website/src/pages/index.astro",
-		"website/src/components/HomeSlider.astro",
+		"website/src/components/HomeWhatYouGet.astro",
 		"website/src/components/HomeInstall.astro",
 		"website/src/components/Hero.astro",
 		"website/src/components/ConsentBanner.astro",

@@ -915,7 +915,7 @@ test('an entry is read in one hierarchy: the tag, the summary, then the notes', 
     `the release summary is not set a step up the type scale (${summary}): the summary is what a release gives a reader, and it is the line of the card that is read first`,
   )
 
-  // The notes are a control: the accent's hairline, the accent's legible tone, and a target
+  // The notes are a control: a filled tone step, the accent's legible tone, and a target
   // the owner's brief of 2026-10-19 measures every control against. The `<details>` is still
   // the mechanism (no script), so what is pinned here is that a reader can see it and reach it.
   const control = declarationsFor(css, 'the notes’ control', '.release-notes[', 'summary')
@@ -924,10 +924,12 @@ test('an entry is read in one hierarchy: the tag, the summary, then the notes', 
     /min-height:\s*44px/,
     `the notes’ control is not a 44 px target (${control}): the owner’s brief of 2026-10-19 measures every control of the site against it`,
   )
+  // Since the owner's polish round of 2026-10-23 a control is marked by a filled tone step (the
+  // panel) rather than by the accent's hairline: no 1 px outlined boxes. The accent stays its label.
   assert.match(
     control,
-    /border:\s*var\(--border-width\) solid var\(--accent\)/,
-    `the notes’ control does not carry the accent’s hairline (${control}): the accent is what marks a control the reader can operate, and a label in the muted tone is a line of prose`,
+    /background:\s*var\(--panel\)/,
+    `the notes’ control is not drawn on the panel's tone step (${control}): a control the reader can operate is a filled shape, not a line of prose`,
   )
   assert.match(
     control,
