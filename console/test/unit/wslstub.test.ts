@@ -22,7 +22,7 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { CHILD_ENV_KEYS, FUGARO_BINARY_NAME } from '../../src/main/spawn'
+import { CHILD_ENV_KEYS, FUGARO_BINARY_NAME, WSL_WRAPPER_MARKER, wrapperPidIn } from '../../src/main/spawn'
 import { DISTRO_DIRECTORY, DISTRO_PATH, installWslStub } from './wslstub'
 import type { WslFixture, WslPathPair, WslStub, WslStubOptions } from './wslstub'
 
@@ -136,16 +136,15 @@ async function waitFor(what: string, check: () => boolean): Promise<void> {
   throw new Error(`waited 3s and ${what} never happened`)
 }
 
-/** waitForNumber waits for a file to hold a number: the wrapper writes the pid
- * it captured as its first act, and the test reads it while the CLI it `exec`ed
- * is still alive. */
-async function waitForNumber(path: string): Promise<number> {
+/** waitForPidOnStderr waits for the wrapper's own line to arrive on stderr and
+ * reads the pid off it: the shell reports it as its first act, and the test
+ * reads it while the CLI it `exec`ed is still alive. */
+async function waitForPidOnStderr(said: () => string): Promise<number> {
   let found = 0
-  await waitFor(`${path} to hold a pid`, () => {
-    if (!existsSync(path)) return false
-    const value = Number.parseInt(readFileSync(path, 'utf8').trim(), 10)
-    if (!Number.isInteger(value) || value <= 0) return false
-    found = value
+  await waitFor('the wrapper to report its pid', () => {
+    const pid = wrapperPidIn(said())
+    if (pid === null) return false
+    found = pid
     return true
   })
   return found
@@ -365,26 +364,30 @@ describe('the fake wsl.exe', () => {
   })
 
   it('runs the sh -c wrapper the way the distribution would, pid and all', async () => {
-    // T-F4: the CLI runs inside `wsl.exe -d <d> -- sh -c 'echo $$ > <file>; exec
-    // fugaro …'`, which is how the pid inside the distribution is captured at
-    // all (D6(a)). The double's job is that the wrapper really runs and that the
-    // CLI inside it is the stub: the pid's *identity* is `exec`'s property, and
-    // whether a killed `wsl.exe` kills the Linux child is U5's, which no test on
-    // this machine settles.
+    // T-F4: the CLI runs inside `wsl.exe -d <d> -- sh -c '<script>'`, where the
+    // script reports its own pid on stderr and then `exec`s the CLI -- which is
+    // how the pid inside the distribution is captured at all (D6(a)). The
+    // double's job is that the wrapper really runs, that its stderr reaches the
+    // console's pipe in order, and that the CLI inside it is the stub: the pid's
+    // *identity* is `exec`'s property, and whether a killed `wsl.exe` kills the
+    // Linux child is U5's, which no test on this machine settles.
     const root = freshDirectory()
-    const pidFile = join(root, 'wrapper.pid')
     const { wsl, linux } = install(root, { scenario: { commands: { version: { hold: true } } } })
-    const script = `echo $$ > ${pidFile}; exec ${FUGARO_BINARY_NAME} version`
+    const script = `printf '%s %s\\n' '${WSL_WRAPPER_MARKER}' "$$" >&2; exec ${FUGARO_BINARY_NAME} version`
     const child = spawn(wsl.binary, ['-d', 'Ubuntu', '--cd', linux, '--', 'sh', '-c', script], {
       cwd: wsl.directory,
       env: HOST_ENV,
-      stdio: 'ignore',
+      stdio: ['ignore', 'ignore', 'pipe'],
+    })
+    let said = ''
+    child.stderr?.on('data', (chunk: Buffer) => {
+      said += chunk.toString('utf8')
     })
 
-    const pid = await waitForNumber(pidFile)
+    const pid = await waitForPidOnStderr(() => said)
     await waitFor('the CLI inside the wrapper to start', () => wsl.children().length === 1)
-    // The pid the wrapper wrote is a *live* process -- the one that `exec`ed the
-    // CLI -- which is what makes it the pid the console has to kill.
+    // The pid the wrapper reported is a *live* process -- the one that `exec`ed
+    // the CLI -- which is what makes it the pid the console has to kill.
     expect(() => process.kill(pid, 0)).not.toThrow()
 
     process.kill(pid, 'SIGKILL')

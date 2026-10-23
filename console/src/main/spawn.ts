@@ -108,7 +108,7 @@ import { spawn } from 'node:child_process'
 import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, statSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { StringDecoder } from 'node:string_decoder'
-import { basename, dirname, isAbsolute, join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 
 import { CONSOLE_OPERATIONS, isNeverReachable } from './ipc'
 import type { ArgumentKind, OperationName, ValidatedArgument, ValidatedArguments } from './ipc'
@@ -123,11 +123,6 @@ import type { SpawnLogWriter } from './spawnlog'
 // copy of `wslExecutable` here, or a resolver in `wsl.ts` -- would be two
 // answers to one question.
 import { wslDistributions, wslExecutable } from './wsl'
-// The wrapper's pid file, and the one module in `src/` that reads one (T-F4,
-// D6(a)): `spawn.ts` names the file and hands it back, and this is where the
-// reading lives, so the config guard that holds this file to "no reader" stays
-// true and precise rather than blurred.
-import { pidFileFor, readWrapperPid, removeFile } from './pidfile'
 
 /** JSONObject is a JSON object as it arrived: the CLI's document, undecoded.
  * Decoding it into the console's own shape is Task 2.0's `shared/schema.ts`;
@@ -405,6 +400,15 @@ export const SHUTDOWN_GRACE_MS = 2000
  * is kept only to show the CLI's own sentence verbatim (design section 6.3), so
  * a bound here is a bound on a message, never on a document. */
 export const MAX_STDERR_BYTES = 4096
+
+/** STDERR_HEAD_LIMIT bounds the **prefix** of an stderr stream the console keeps
+ * for the wrapper's own line (T-F1, T-F4). It is a few times `MAX_STDERR_BYTES`
+ * because the line is not necessarily the first thing on the pipe: `wsl.exe`
+ * prints its own relay warnings before the distribution's command runs, and the
+ * head has to hold those and then the line. Past that, a child that prints
+ * without end keeps the head as it is -- the wrapper's line, if a child ever
+ * started, arrived before anything the child itself printed. */
+export const STDERR_HEAD_LIMIT = 16 * 1024
 
 /** READ_TIMEOUT_MS is the deadline of every one-shot read (`runToCompletion`).
  * The CLI's slowest read is `doctor`, which runs a handful of local checks; a
@@ -1411,25 +1415,27 @@ export interface SpawnPlan {
 
 /**
  * WslWrapper is the `sh -c` script that runs the CLI inside a distribution, and
- * the two facts the console needs to stop it (T-F4, D6(a)).
+ * the one fact the console needs to stop it (T-F4, D6(a)).
  *
  * **Why a shell at all.** `wsl.exe -d <d> -- fugaro …` starts the CLI directly,
  * and killing the Windows-side `wsl.exe` is not documented to kill the Linux
- * process it started (F24, U5). So the CLI is started under a shell that records
+ * process it started (F24, U5). So the CLI is started under a shell that reports
  * its own pid first and `exec`s the CLI **in place** -- after `exec` the pid the
- * file holds *is* the CLI's pid, which is the difference between killing the CLI
- * and killing the wrapper that started it.
+ * console read *is* the CLI's pid, which is the difference between killing the
+ * CLI and killing the wrapper that started it.
  *
- * **`pidFile` is a host path and the script names it relative to the directory
- * the distribution starts in.** The console reads it after the grace period and
- * sends one `kill` inside the distribution naming what it read. The two are the
- * same file because the directory the CLI starts in (`--cd`) is the
- * distribution's spelling of the host directory `wsl.exe` itself is started in
- * (T-D4's wiring: the private working directory, created on the host and
- * translated for `--cd`). `null` when the plan names no directory at all: the
- * console cannot say where the file would land, so it does not ask for one, and
- * the cancellation falls back with its residual stated rather than a pid
- * guessed.
+ * **The pid is reported on stderr, not in a file, and that is deliberate.** The
+ * plan's D6(a) sketched a file the shell writes and the console reads "through
+ * the same `wsl.exe`", but the file has no spelling that works: the shell's
+ * working directory inside the distribution is the installation's checkout
+ * (`--cd`), while the console's own working directory is a **host** path, so a
+ * file named from one is not a file found at the other; reading it back would
+ * cost a second `wsl.exe` on every cancellation, and a file written into the
+ * operator's checkout is litter in their repository. The shell's own stderr is
+ * the channel the console already reads, it needs no path translated in either
+ * direction, and the pid arrives on the same line as the marker T-F1 needs
+ * (`WSL_WRAPPER_MARKER`). The stop itself is unchanged: one `kill` inside the
+ * distribution, naming the pid the wrapper reported (D6(a), `wslStopArgs`).
  */
 export interface WslWrapper {
   /** `words` is what follows `prefix`: `['sh', '-c', <script>]`. */
@@ -1438,11 +1444,6 @@ export interface WslWrapper {
    * invocation: the stop is a second `wsl.exe -d <distro> -- …`, and the
    * distribution it names must be the one the CLI is running in. */
   readonly distro: string
-  /** `pidFile` is the **host** path the wrapper's shell writes the CLI's pid
-   * into, and therefore what the console reads. The script writes it by its
-   * **base name**, relative to the directory the shell starts in -- see the
-   * interface's own note. `null` when there is no such file. */
-  readonly pidFile: string | null
 }
 
 /**
@@ -1493,7 +1494,8 @@ export const WSL_SHELL_PROGRAM = 'sh'
 export const WSL_SHELL_FLAG = '-c'
 
 /** WSL_WRAPPER_MARKER is the sentence the wrapper's shell prints on stderr
- * before it `exec`s the CLI (T-F1).
+ * before it `exec`s the CLI (T-F1), with the pid it is about to become after it
+ * (T-F4).
  *
  * **Why a marker rather than a guess.** The console has to tell "the CLI exited
  * non-zero" from "`wsl.exe` never got as far as starting the CLI": the first is
@@ -1504,7 +1506,15 @@ export const WSL_SHELL_FLAG = '-c'
  * whatever `wsl.exe` does with statuses. It goes to stderr -- the channel the
  * CLI's own sentence already uses, which the screens read through
  * `cliSentence` -- and the console removes it there, so nothing an operator
- * reads carries it. */
+ * reads carries it.
+ *
+ * **The pid travels on the same line** (`<marker> <pid>`, see `wslWrapperFor`),
+ * which is the whole of D6(a)'s capture: the line is printed before `exec`, so
+ * after `exec` the number *is* the CLI's pid, and the console kills it inside
+ * the distribution. It is not the first thing on stderr: `wsl.exe` prints its
+ * own relay warnings before the distribution's command runs, so both the reader
+ * (`wrapperLine`) and the remover (`withoutWrapperMarker`) look for the line
+ * **anywhere** in the bounded head rather than at offset zero. */
 export const WSL_WRAPPER_MARKER = 'fugaro-console: the WSL wrapper started'
 
 /** shellQuote spells one word for the distribution's own `sh` (T-F4).
@@ -1530,36 +1540,38 @@ export function shellQuote(value: string): string {
 
 /**
  * wslWrapperFor builds the `sh -c` script for one WSL plan: it marks that a
- * child started, records its pid, and `exec`s the CLI with the CLI's own argv
- * (T-F4, decision D6(a)).
+ * child started **and names the pid it is about to become**, then `exec`s the
+ * CLI with the CLI's own argv (T-F1, T-F4, decision D6(a)).
  *
- * The script is three statements and each one is load-bearing:
+ * The script is two statements and each one is load-bearing:
  *
- *   1. `echo <marker> >&2` -- the classification T-F1 needs, on stderr;
- *   2. `echo $$ > <pid file>` -- the pid the console kills inside the
- *      distribution. `$$` and not `$!`, and `exec` rather than a second
- *      process, because the pid that must be killed is the CLI's: after `exec`
- *      the shell *is* the CLI. The file is named relative to the directory the
- *      shell starts in, so the console reads it at the same directory's host
- *      spelling -- see `WslWrapper`. It is omitted when the plan names no
- *      directory: a file the console cannot find is a pid guessed at, and the
- *      litter would be in the operator's own home.
- *   3. `exec <the CLI's argv, each word quoted>` -- the CLI itself.
+ *   1. `printf '%s %s\n' <marker> "$$" >&2` -- the classification T-F1 needs
+ *      and the pid T-F4 needs, on the one channel the console already reads
+ *      (`WSL_WRAPPER_MARKER`). `$$` and not `$!`, and `exec` rather than a
+ *      second process, because the pid that must be killed is the CLI's: after
+ *      `exec` the shell *is* the CLI. `printf` rather than `echo` so the
+ *      separator and the newline are the script's own and not the shell's
+ *      echo-related quirk.
+ *   2. `exec <the CLI's argv, each word quoted>` -- the CLI itself.
+ *
+ * Nothing here writes a file. The plan's D6(a) sketched a pid file, but no
+ * spelling of one works across the two sides -- the shell's directory inside the
+ * distribution is the checkout and the console's is a host path -- and the
+ * arithmetic of reading it back is a second `wsl.exe` per cancellation. See
+ * `WslWrapper`.
+ *
+ * The script carries **no absolute path and no secret**: the words are the
+ * CLI's own argv, quoted, and quoting is `shellQuote`'s whole job.
  */
 function wslWrapperFor(options: {
   readonly distro: string
-  readonly pidFile: string | null
   readonly cliWords: readonly string[]
 }): WslWrapper {
-  const statements = [`echo ${shellQuote(WSL_WRAPPER_MARKER)} >&2`]
-  if (options.pidFile !== null) {
-    statements.push(`echo $$ > ${shellQuote(basename(options.pidFile))}`)
-  }
+  const statements = [`printf '%s %s\\n' ${shellQuote(WSL_WRAPPER_MARKER)} "$$" >&2`]
   statements.push(`exec ${options.cliWords.map(shellQuote).join(' ')}`)
   return Object.freeze({
     words: Object.freeze([WSL_SHELL_PROGRAM, WSL_SHELL_FLAG, statements.join('; ')]),
     distro: options.distro,
-    pidFile: options.pidFile,
   })
 }
 
@@ -1575,12 +1587,13 @@ export const WSL_STOP_SIGNAL = 'TERM'
  * distribution's, and the distribution's own `sh` runs one `kill`.
  *
  * **`pid` is a number, and that is the safety of this function.** The value
- * comes from a file the wrapper's shell wrote, and the console re-reads it as
- * digits before it becomes a `number` -- a file that says anything else yields
- * no stop at all rather than a word that would be shell syntax (`sh -c` is
- * given a command line, so an unvalidated value there would be an injection
- * surface, exactly the one `shellQuote` closes for the CLI's argv). Because it
- * is a `number` here, no caller can pass a string that needs quoting. */
+ * comes from the wrapper's own stderr line, and the console re-reads it as
+ * digits before it becomes a `number` (`wrapperPidIn`) -- a line that says
+ * anything else yields no stop at all rather than a word that would be shell
+ * syntax (`sh -c` is given a command line, so an unvalidated value there would
+ * be an injection surface, exactly the one `shellQuote` closes for the CLI's
+ * argv). Because it is a `number` here, no caller can pass a string that needs
+ * quoting. */
 export function wslStopArgs(options: { readonly distro: string; readonly pid: number }): readonly string[] {
   return Object.freeze([
     '-d',
@@ -1642,26 +1655,63 @@ function stopInsideDistribution(options: {
   }
 }
 
-/** withoutWrapperMarker removes the wrapper's own line from the stderr the rest
- * of the console reads (T-F1): the CLI's sentence is what a screen shows, and
- * the marker is the console's own word about its own wrapper. Only a marker at
- * the very start is removed -- the wrapper prints it before `exec`, so that is
- * where it is -- and stderr that does not start with it is returned untouched,
- * which keeps a CLI that happened to print the same sentence's text the CLI's
- * own. */
-export function withoutWrapperMarker(stderr: string): string {
-  const line = `${WSL_WRAPPER_MARKER}\n`
-  if (stderr.startsWith(line)) return stderr.slice(line.length)
-  if (stderr === WSL_WRAPPER_MARKER) return ''
-  return stderr
+/** wrapperLine finds the wrapper's own line in a bounded head of a child's
+ * stderr, or `null` when the head holds none.
+ *
+ * **Anywhere in the head, not at offset zero.** `wsl.exe` prints its own
+ * warnings -- a relay notice, a proxy warning -- on stderr before the
+ * distribution's command runs, so the wrapper's line is regularly not the first
+ * thing on the pipe. A reader that insisted on the first bytes would call a
+ * shell that did start a shell that did not (T-F1), and would leave the
+ * console's own sentence on an operator's screen. The line is matched by its
+ * start, so a CLI that printed the marker's text in the middle of a line of its
+ * own is the CLI's own text and not the wrapper's. */
+function wrapperLine(head: string): string | null {
+  for (const line of head.split('\n')) {
+    if (line.startsWith(WSL_WRAPPER_MARKER)) return line
+  }
+  return null
 }
 
-/** wrapperMarkerSeen answers whether the first characters of a child's stderr
- * are the wrapper's marker. It reads a bounded head rather than the whole (and
- * bounded) stderr, because that is where the marker is and because a long
- * stderr keeps only its tail. */
+/** wrapperMarkerSeen answers whether a child's stderr head holds the wrapper's
+ * own line: `true` means a child inside the distribution started, and `false`
+ * that `wsl.exe` failed before starting one (T-F1). */
 function wrapperMarkerSeen(head: string): boolean {
-  return head.startsWith(WSL_WRAPPER_MARKER)
+  return wrapperLine(head) !== null
+}
+
+/** wrapperPidIn reads the pid the wrapper reported, out of the same bounded head
+ * (`<marker> <pid>`), or `null` when the head holds no such line or the number
+ * on it is not a plain positive integer.
+ *
+ * The digits-only test is also what makes the value safe to hand to a shell:
+ * `wslStopArgs` puts it in a `sh -c` command line, and a line that said
+ * anything else would be shell syntax. Refusing here is the one guard, in the
+ * one place, rather than a quoting rule every caller must remember. */
+export function wrapperPidIn(head: string): number | null {
+  const line = wrapperLine(head)
+  if (line === null) return null
+  const digits = line.slice(WSL_WRAPPER_MARKER.length).trim()
+  if (!/^[0-9]{1,10}$/.test(digits)) return null
+  const pid = Number(digits)
+  return pid > 0 ? pid : null
+}
+
+/** withoutWrapperMarker removes the wrapper's own line from the stderr the rest
+ * of the console reads (T-F1): the CLI's sentence is what a screen shows, and
+ * the marker -- with the pid on it -- is the console's own word about its own
+ * wrapper.
+ *
+ * The line is removed **wherever it is**, because `wsl.exe`'s own preamble comes
+ * before it (see `wrapperLine`), and a line that ends in `\r` (a CRLF from a
+ * relay that translated them) is the same line. Only a line that *starts* with
+ * the marker is removed: a CLI that happened to print the same sentence's text
+ * inside a line of its own keeps its own text. stderr with no such line is
+ * returned untouched. */
+export function withoutWrapperMarker(stderr: string): string {
+  const lines = stderr.split('\n')
+  const kept = lines.filter((line) => !line.startsWith(WSL_WRAPPER_MARKER))
+  return kept.length === lines.length ? stderr : kept.join('\n')
 }
 
 /** wrapperArgs is the words handed to `command` beyond the program itself: the
@@ -1732,16 +1782,11 @@ export function planFor(
       command: wsl.executable ?? wslExecutable(context.appEnv),
       prefix: wslWrapper(wsl),
       argv: cli,
-      // The CLI is carried by a shell so that its pid inside the distribution
-      // can be recorded and killed (T-F4, D6(a)) -- see `WslWrapper`. The pid
-      // file is named only when the plan names a directory: without one the
-      // console cannot say where the file would land, and a file it cannot read
-      // is a pid guessed at.
-      wrapper: wslWrapperFor({
-        distro: wsl.distro,
-        pidFile: wsl.directory === undefined ? null : pidFileFor(context.directory),
-        cliWords: cli,
-      }),
+      // The CLI is carried by a shell so that the pid inside the distribution
+      // can be named and killed (T-F4, D6(a)) -- see `WslWrapper`. The pid is
+      // not in the plan: it is the shell's own, and it arrives on the wrapper's
+      // stderr line once the distribution has started it.
+      wrapper: wslWrapperFor({ distro: wsl.distro, cliWords: cli }),
       // `cwd` is the host directory the console starts `wsl.exe` in. It is not
       // the CLI's directory: that one is inside the distribution and is the
       // wrapper's `--cd`.
@@ -1877,14 +1922,6 @@ export function runToCompletion(
   const what = plan.argv.slice(1).filter((word) => !word.startsWith('-')).slice(0, 2).join(' ')
   const wrapper = plan.wrapper
 
-  // The wrapper's pid file is named before the spawn and removed before it:
-  // a leftover file from an earlier process with the same pid would be read as
-  // *this* child's pid, and the cancellation would then signal a stranger. The
-  // console removes its own file again once the read is over (below), so the
-  // operator's private working directory is left as it was found.
-  const pidFile = wrapper?.pidFile ?? null
-  if (pidFile !== null) removeFile(pidFile)
-
   return new Promise<RunResult>((resolve, reject) => {
     let child: SpawnedChildLike
     try {
@@ -1910,10 +1947,14 @@ export function runToCompletion(
     })
     let stdout = ''
     let stderr = ''
-    /** `stderrHead` is the first characters of stderr, kept unbounded in length
-     * only up to the marker's own (`wrapperMarkerSeen`): `stderr` itself is
-     * bounded *from the end* and a long CLI answer would push the wrapper's
-     * line out of it. */
+    /** `stderrHead` is a bounded **prefix** of stderr (`STDERR_HEAD_LIMIT`).
+     * It is not `stderr` itself: that one is bounded *from the end*, so a CLI
+     * with a long answer of its own would push the wrapper's line -- which
+     * arrived first -- out of it, and the console needs the wrapper's line for
+     * both of its facts: whether a child started (T-F1) and the pid to kill
+     * (T-F4). A prefix rather than a suffix because the wrapper prints before
+     * `exec`, and bounded because a child that prints without end must not
+     * grow it. */
     let stderrHead = ''
     let settled = false
     let exited = false
@@ -1928,29 +1969,25 @@ export function runToCompletion(
     /** stopInsideDistribution is T-F4's second half (D6(a)): killing the
      * Windows-side `wsl.exe` is not documented to kill the Linux process it
      * started (F24, U5), so after the grace the console sends **one** more
-     * `wsl.exe` -- into the same distribution -- that kills the pid the
-     * wrapper's shell recorded. The pid is read from the file the shell wrote,
-     * and a pid that cannot be read is not guessed at: the caller is told, in
-     * `residual`, that the process may still be running. */
+     * `wsl.exe` -- into the same distribution -- that kills the pid the wrapper
+     * reported. The pid is read from the wrapper's own stderr line, and a pid
+     * that cannot be read is not guessed at: the caller is told, in `residual`,
+     * that the process may still be running. */
     // Stopping first, rejecting second: the caller's rejection must mean "the
     // child has been told to go", not "the child is still out there".
     const abandon = (error: Error): void => {
       if (settled) return
       settled = true
       clearDeadline()
-      // The pid is read **now**, before the grace runs out: the shell writes it
+      // The pid is read **now**, before the grace runs out: the shell prints it
       // before it `exec`s the CLI, so it is there as soon as the child is
       // running, and reading it here means the residual -- the one case where
       // the console *cannot* name the pid -- is known before the sentence is
       // built rather than after it has been sent.
-      const pid = !exited && wrapper !== null && wrapper.pidFile !== null ? readWrapperPid(wrapper.pidFile) : null
+      const pid = !exited && wrapper !== null ? wrapperPidIn(stderrHead) : null
       const missed =
-        !exited && wrapper !== null
-          ? pid !== null
-            ? null
-            : wrapper.pidFile === null
-              ? 'the wrapper named no pid file, so the process inside the distribution could not be stopped; it may still be running'
-              : `the wrapper's pid file could not be read, so the process inside the distribution could not be stopped; it may still be running`
+        !exited && wrapper !== null && pid === null
+          ? 'the wrapper reported no pid, so the process inside the distribution could not be stopped; it may still be running'
           : null
       if (!exited) {
         child.kill('SIGTERM')
@@ -1958,13 +1995,12 @@ export function runToCompletion(
           if (!exited) {
             // `wsl.exe` is still there after the grace, so it is not going to
             // carry the signal: one `wsl.exe` more, inside the distribution,
-            // naming the pid the wrapper recorded (T-F4, D6(a)).
+            // naming the pid the wrapper reported (T-F4, D6(a)).
             child.kill('SIGKILL')
             if (pid !== null) stopInsideDistribution({ plan, spawner, log: deps.log, pid })
           }
         }, grace)
       }
-      if (pidFile !== null) removeFile(pidFile)
       // The residual is stated where the operator reads it: appended to the
       // sentence the read is refused with (D6(a): "a residual window that must
       // be written down").
@@ -1989,14 +2025,15 @@ export function runToCompletion(
       deps.stdoutEncoding ?? 'utf8',
     )
     readText(child.stderr, (text) => {
-      if (stderrHead.length <= WSL_WRAPPER_MARKER.length) stderrHead += text
+      if (stderrHead.length < STDERR_HEAD_LIMIT) {
+        stderrHead = (stderrHead + text).slice(0, STDERR_HEAD_LIMIT)
+      }
       stderr = boundAppend(stderr, text, limit)
     })
     child.on('error', (error) => {
       if (settled) return
       settled = true
       clearDeadline()
-      if (pidFile !== null) removeFile(pidFile)
       reject(error)
     })
     // `exit` is recorded but does not settle the read. Node fires it when the
@@ -2019,7 +2056,6 @@ export function runToCompletion(
       if (settled) return
       settled = true
       clearDeadline()
-      if (pidFile !== null) removeFile(pidFile)
       resolve({
         code,
         signal,
@@ -2824,6 +2860,13 @@ export function startSidecar(
    * everything up to its newline is thrown away, and reading resumes after. */
   let discarding = false
   let stderr = ''
+  /** `stderrHead` is the bounded prefix of the current child's stderr, the same
+   * fact `runToCompletion` keeps and for the same two reasons (T-F1, T-F4): the
+   * wrapper's line says whether a child inside the distribution started, and it
+   * carries the pid the stop inside the distribution names. It is reset with
+   * `stderr` on every spawn, because a restarted feed has a new child and a new
+   * pid. */
+  let stderrHead = ''
   let ended = false
   let settle: ((end: SidecarEnd) => void) | null = null
 
@@ -2944,10 +2987,14 @@ export function startSidecar(
     })
     child = started
     stderr = ''
+    stderrHead = ''
     buffer = ''
     discarding = false
     readText(started.stdout, consume)
     readText(started.stderr, (text) => {
+      if (stderrHead.length < STDERR_HEAD_LIMIT) {
+        stderrHead = (stderrHead + text).slice(0, STDERR_HEAD_LIMIT)
+      }
       stderr = boundAppend(stderr, text, MAX_STDERR_BYTES)
     })
     started.on('error', (error) => {
@@ -3036,13 +3083,12 @@ export function startSidecar(
       // The same second half as `runToCompletion`'s stop (T-F4, D6(a)): a
       // `wsl.exe` that is still there after the grace is not going to carry the
       // signal into the distribution, so the console names the pid the wrapper
-      // recorded and kills it there. A pid it cannot read is a residual stated
+      // reported and kills it there. A pid it cannot read is a residual stated
       // to the operator -- `onNotice`, the channel a running feed already has
       // for what it could not do -- rather than a stop that silently did not
       // happen.
       const wrapper = plan.wrapper
-      const pid =
-        wrapper !== null && wrapper.pidFile !== null && child !== null ? readWrapperPid(wrapper.pidFile) : null
+      const pid = wrapper !== null && child !== null ? wrapperPidIn(stderrHead) : null
       timers.setTimeout(() => {
         if (child === null) return
         child.kill('SIGKILL')
@@ -3050,9 +3096,7 @@ export function startSidecar(
         if (pid === null) {
           events.onNotice({
             text:
-              wrapper.pidFile === null
-                ? 'the feed was stopped, but the wrapper named no pid file: the process inside the distribution may still be running'
-                : 'the feed was stopped, but the wrapper’s pid file could not be read: the process inside the distribution may still be running',
+              'the feed was stopped, but the wrapper reported no pid: the process inside the distribution may still be running',
             receivedAt: stamp(),
           })
           return
