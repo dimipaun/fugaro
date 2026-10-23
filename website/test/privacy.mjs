@@ -60,8 +60,12 @@
 //      software source that names it is a source that has found a service to report to, and the
 //      page's "and to nothing the Fugaro project operates" is what fails (`reachFailures`).
 //      Tests are not scanned — a Go test that spells the host in a fixture is testing a rule
-//      rather than reaching anywhere — and the one file in the tree that names it today is
-//      recorded below, so that the exception is written down rather than inferred. The selector
+//      rather than reaching anywhere — and the files in the tree that name it today are recorded
+//      below, one by one, so that every exception is written down rather than inferred: the Go
+//      test, and the console's two files, which hold the project's own link and not a service the
+//      software reports to (the note below `HOST_NAMING_CONSOLE` gives the reason and the ruling,
+//      and the case that plants a third file proves the rule still holds for every other source).
+//      The selector
 //      carries `.go`, because the CLI and the server are mostly Go: a scan that reads the tree's
 //      scripts and manifests but not its Go source reads everything except the software this
 //      page is about, and it reads enough files to look busy while doing it. The case below goes
@@ -640,6 +644,28 @@ export function updateCheckFailures({ page, updatecheckSource, updatewarnSource,
 // mistaken for it.
 export const HOST_NAMING_TEST = 'internal/cli/docs_website_boundary_test.go'
 
+// The two production files in the tree that name the site's canonical host and are NOT a finding,
+// and the reason the rule above does not reach them: the console's own link to the project's
+// public website, which the owner ruled canonical on 2026-10-17 (`fugaro.dev`;
+// `docs/website/implementation-plan.md` Task W2.2, D92) and which the owner's ruling of 2026-10-20
+// put on the console's onboarding screens.
+//
+// This rule exists for the page's sentence "They talk to your own Google Cloud project, ... and to
+// nothing the Fugaro project operates. Nothing is reported anywhere": a source that names the
+// host has found a service to *report to*. These two do not report anywhere. `window.ts` carries
+// `fugaro.dev` in the `openExternal` allow-list and `onboarding.ts` carries the getting-started
+// URL (`GETTING_STARTED_URL`), and the console opens that URL by handing it to the *user's own
+// browser* through the OS — the console itself makes no request, and what the reader then loads is
+// the project's own website, which the page's part one describes rather than a host the software
+// reaches. The sentence's subject is the software's own traffic, and a link the reader chooses to
+// follow is not that; a console that could not link to its own site would be a page the onboarding
+// ruling could not be written about.
+//
+// They are named one by one, with their full paths, so the exemption is exactly these two files
+// and nothing else: the rule stays in force for every other source, and the case below plants a
+// third file under the same directory and watches it refused.
+export const HOST_NAMING_CONSOLE = Object.freeze(['console/src/main/onboarding.ts', 'console/src/main/window.ts'])
+
 /** The roots of the production sources the reach scan reads, as the repository's own directories. */
 export const SOFTWARE_ROOTS = Object.freeze(['cmd', 'internal', 'console/src', 'mobile/src', 'shared'].map((dir) => path.join(REPO, dir)))
 
@@ -652,6 +678,7 @@ export function softwareSources(roots = SOFTWARE_ROOTS, base = REPO) {
   return roots
     .flatMap((dir) => sourcesUnder(dir, REACH_BEARING, base))
     .filter((file) => !/(?:_test\.go|\.test\.(?:js|ts|jsx|tsx|mjs))$/.test(file.rel))
+    .filter((file) => !HOST_NAMING_CONSOLE.includes(file.rel))
 }
 
 /** Every production source that names `host`, or []. */
@@ -983,6 +1010,14 @@ test('no production source names the host this project operates', () => {
     `${HOST_NAMING_TEST} is a test file and was scanned as a production source: the recorded exception is that a Go test may spell the host in a fixture, so the filter must skip it`,
   )
   assert.ok(existsSync(path.join(REPO, HOST_NAMING_TEST)), `the recorded exception ${HOST_NAMING_TEST} is gone: delete the constant and its note in website/test/privacy.mjs`)
+  for (const rel of HOST_NAMING_CONSOLE) {
+    assert.ok(existsSync(path.join(REPO, rel)), `the recorded exception ${rel} is gone: delete it from HOST_NAMING_CONSOLE and its note in website/test/privacy.mjs, so the allow-list names only files that exist`)
+    assert.ok(repoFile(rel).includes(FACTS.canonicalHost), `${rel} no longer names ${FACTS.canonicalHost}: it is on the allow-list for the console's own link to the project's website, and a file that has stopped naming the host is an entry that hides nothing`)
+    assert.ok(
+      files.every((file) => file.rel !== rel),
+      `${rel} is one of the two recorded exceptions and was scanned as an ordinary production source: the console's link to the project's own website is not a host the software reports to, so the scan must skip it`,
+    )
+  }
   const failures = reachFailures(files, FACTS.canonicalHost)
   assert.deepEqual(failures, [], `a source of the software names the host the project operates:\n  ${failures.join('\n  ')}`)
 })
@@ -1344,6 +1379,47 @@ test('a production source that names the host the project operates is refused, a
   assert.ok(
     files.every((file) => file.rel !== HOST_NAMING_TEST),
     `${HOST_NAMING_TEST} is a test file and the scan above read it as a production source`,
+  )
+})
+
+test('the console’s two recorded exceptions are exactly that, and a third file that names the host is still refused', () => {
+  const host = FACTS.canonicalHost
+
+  // The allow-list is two full paths and not a directory, a pattern or a suffix: a new file that
+  // names the host, even one beside a recorded exception under `console/src/main/`, is selected
+  // and refused. This is the case that keeps HOST_NAMING_CONSOLE from becoming a hole.
+  const tree = mkdtempSync(path.join(tmpdir(), 'privacy-reach-console-'))
+  try {
+    const root = path.join(tree, 'console', 'src', 'main')
+    mkdirSync(root, { recursive: true })
+    writeFileSync(path.join(root, 'telemetry.ts'), `export const REPORT_URL = 'https://${host}/v1/report'\n`)
+    const scanned = softwareSources([root], tree).map((file) => file.rel)
+    assert.deepEqual(
+      scanned,
+      ['console/src/main/telemetry.ts'],
+      `the reach scan selected ${JSON.stringify(scanned)}: a console file that is not one of the two recorded exceptions must be selected, so that naming the host there is a finding`,
+    )
+    const planted = reachFailures(softwareSources([root], tree), host)
+    assert.equal(planted.length, 1, planted.join('\n'))
+    assert.match(planted[0], /^console\/src\/main\/telemetry\.ts names /)
+    assert.match(planted[0], /nothing the Fugaro project operates/)
+  } finally {
+    rmSync(tree, { recursive: true, force: true })
+  }
+
+  // And the two recorded exceptions are skipped in the real tree while their neighbours are not,
+  // so the exemption is those two files rather than the console.
+  for (const rel of HOST_NAMING_CONSOLE) {
+    assert.ok(repoFile(rel).includes(host), `${rel} no longer names ${host}, so it is no longer a recorded exception`)
+    assert.ok(
+      softwareSources().every((file) => file.rel !== rel),
+      `${rel} is a recorded exception and the scan read it as an ordinary production source`,
+    )
+  }
+  const consoleSources = softwareSources().filter((file) => file.rel.startsWith('console/src/'))
+  assert.ok(
+    consoleSources.length > 5,
+    `only ${consoleSources.length} console sources were scanned: skipping the two exceptions must not skip the console`,
   )
 })
 
