@@ -147,3 +147,15 @@ setting this folder picks.
   (F31, §6 of the reconciliation).
 - [docs/coordinator/README.md](../coordinator/) — the two registers this folder
   reads: the D-blocks and the check numbers.
+
+## The 2026-10-22 addendum: Rigor Levels
+
+On 2026-10-22 the owner gave a second spec for the same dial, written as **five personas** (`poc`, `startup`, `pro`, `critical`, `hotfix`) with a new way to scope them (areas of interest that need not be one repository), a **promote** task, **review matching** and a **debt artefact** per level. It **layers on** the approved work above and changes none of its answers except where it says so. The documents:
+
+| Document | What it is |
+| --- | --- |
+| [levels-spec.md](levels-spec.md) | the owner's second spec, **verbatim**, in its own commit |
+| [levels-reconciliation.md](levels-reconciliation.md) | what the tree says back: **LF1–LF14**, the owner's answers **D261–D271** (2026-10-22), three open tensions and the UNVERIFIED list |
+| [levels-implementation-plan.md](levels-implementation-plan.md) | the overlay plan: seven slices (LV1–LV7), parallel levels, critical path; **nothing is approved to build** |
+
+The numbers this addendum holds: decisions **D261–D271**, findings **LF1–LF14**, no new check number (Slice 8's Check 119 gains one step per level). The word is **level** from here on (D262); the 2026-10-20 documents keep saying *mode* until LV1.1 renames the code and LV1.2 restates their sentences.
