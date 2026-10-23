@@ -466,6 +466,13 @@ func TestCommitsAheadCountsOnlyTheRunsOwnCommits(t *testing.T) {
 	if n, err := repo.CommitsAhead(ctx, start, "1111111111111111111111111111111111111111"); err != nil || n != 2 {
 		t.Fatalf("CommitsAhead with a base the checkout lacks = %d, %v; want 2", n, err)
 	}
+	// Beside the base it can read, though, it must take nothing with it: a
+	// run that rebases onto its base and adds nothing is still a run that
+	// made no commits, which a bound dropped all together would report as
+	// the base's own commit being the run's.
+	if n, err := repo.CommitsAhead(ctx, start, "1111111111111111111111111111111111111111", "origin/main"); err != nil || n != 1 {
+		t.Fatalf("CommitsAhead with an unreadable base beside a readable one = %d, %v; want the run's 1", n, err)
+	}
 }
 
 func TestBundleHoldsOnlyTheRunsCommits(t *testing.T) {
