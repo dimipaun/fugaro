@@ -150,17 +150,17 @@ Each check prints the problem and a one-line fix, and applies nothing until it p
 **Creating a project** needs `roles/resourcemanager.projectCreator` on the organization, or on the folder you pass as `--parent`. **Linking billing** needs `roles/billing.user` (`billing.resourceAssociations.create`) on the billing account, *and* Owner or Project Billing Manager on the project; whoever holds both can link it for you with `gcloud billing projects link <id> --billing-account=<account>`.
 
 1. **Run `fugaro setup`.** It creates `fugaro-<name>` after you type its ID. Its billing picker lists your billing accounts and links the one whose ID you type. Without one it prints `gcloud billing projects link <id> --billing-account=BILLING_ACCOUNT_ID` and stops.
-2. **If it refuses at project creation or at the billing link,** your organization restricts one of the two. Ask IT for exactly one of:
+2. **If it refuses at project creation or at the billing link,** your organization restricts one of the two. Fugaro only starts fresh: it creates the project itself and never uses one created for you, so ask IT for:
    - **Project Creator** (`roles/resourcemanager.projectCreator`) on the organization or folder, plus **Billing Account User** (`roles/billing.user`) on the company's billing account. You then rerun `fugaro setup` (with `--parent folders/<n>` or `organizations/<n>` if they name one).
-   - **IT creates the project, links billing and makes you its Owner.** Then run `fugaro setup --gcp-project <id>` against it.
+   - If only the billing link is refused, IT can instead link billing to the project `fugaro setup` created (the `gcloud billing projects link` line it printed); you then rerun `fugaro setup` with the same ID, and it resumes.
 3. **Send IT this:**
 
    ```text
    Hi. I'd like to set up Fugaro (https://fugaro.dev): it runs coding agents in short-lived
    Google Cloud jobs, and each run ends in a pull request. It creates ONE new GCP project
-   (with Firebase in it) and touches nothing else. Could you either:
-   1) give me Project Creator on <our org or folder> and Billing Account User on <billing account>, or
-   2) create a project for me, link it to <billing account>, and make me its Owner?
+   (with Firebase in it) and touches nothing else. Could you give me Project Creator on
+   <our org or folder> and Billing Account User on <billing account>? (Or, if I can create
+   the project but not link it, link the project it creates to <billing account>.)
    Cost: a few dollars a month, plus about $0.21 per image build and Cloud Run while a run works.
    ```
 

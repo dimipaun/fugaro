@@ -597,14 +597,14 @@ func (s *projectStage) fail(err error) error {
 // ask the organization for.
 func (s *projectStage) refusedCreate() string {
 	return "Fugaro could not create the project " + s.id + ": your Google account is not allowed to create projects in your organization. " +
-		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder, or ask them to create the project and make you its Owner. " +
+		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder: Fugaro only starts fresh, so it creates the project itself. " +
 		"See docs/gcp-setup.md#not-an-owner."
 }
 
 // refusedLink is what a refused billing link says. The link needs a role on
 // the billing account *and* one on the project (infra.LinkBilling's hint), and
 // the 403 that comes back names neither, so both are here: naming only the
-// billing one would send a reader who holds it -- the one adopting an existing
+// billing one would send a reader who holds it -- one linking billing to a
 // project they are not an Owner of -- to the billing administrator for a role
 // they already have, and the loop keeps only this first line for the stage
 // (initflow's oneLine), so the hint under it is not a place to put them. The

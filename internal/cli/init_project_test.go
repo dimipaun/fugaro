@@ -572,7 +572,7 @@ func stageLine(s string) string {
 // the fix (a role, or someone else creating the project) is the same one.
 func TestRefusedProjectCreationIsOneHelpfulLine(t *testing.T) {
 	const want = "Fugaro could not create the project " + newProj + ": your Google account is not allowed to create projects in your organization. " +
-		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder, or ask them to create the project and make you its Owner. " +
+		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder: Fugaro only starts fresh, so it creates the project itself. " +
 		"See docs/gcp-setup.md#not-an-owner."
 	// The three shapes the same refusal takes: a 403, a 400 whose own text says
 	// what it is (the only thing that can tell a refusal from the other 400s
@@ -626,7 +626,7 @@ func TestRefusedProjectCreationIsOneHelpfulLine(t *testing.T) {
 // and keeps its own message and exit code.
 func TestRefusedCreationArrivingOnTheOperation(t *testing.T) {
 	const want = "Fugaro could not create the project " + newProj + ": your Google account is not allowed to create projects in your organization. " +
-		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder, or ask them to create the project and make you its Owner. " +
+		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder: Fugaro only starts fresh, so it creates the project itself. " +
 		"See docs/gcp-setup.md#not-an-owner."
 
 	// PERMISSION_DENIED and FAILED_PRECONDITION are the two codes a refusal
