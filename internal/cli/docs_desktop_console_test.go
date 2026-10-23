@@ -525,6 +525,10 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(configListCheckout{}),
 		reflect.TypeOf(plan.Document{}), reflect.TypeOf(plan.Node{}),
 		reflect.TypeOf(plan.Edge{}), reflect.TypeOf(plan.Footprint{}),
+		// The read's own document (V2.2.3): the artifact's shape plus what is
+		// computed where the graph is read.
+		reflect.TypeOf(plan.Graph{}), reflect.TypeOf(plan.NodeState{}),
+		reflect.TypeOf(plan.CriticalPath{}),
 		reflect.TypeOf(runstore.ChangedFiles{}),
 		// §6.10, the same three shapes as the test above (CLI 0.9.0).
 		reflect.TypeOf(userStatsDoc{}),
