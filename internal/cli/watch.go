@@ -188,8 +188,11 @@ func newWatchCmd() *cobra.Command {
 			"does, for the last 24 hours) and says so; fugaro runs ls --watch stays for the\n" +
 			"question \"did my runs finish\".\n\n" +
 			"A finished run leaves the list three minutes after it finishes, on its own\n" +
-			"(succeeded, failed and cancelled alike; --keep changes the window, --keep-count\n" +
-			"the number of rows, whichever is stricter). In the interactive screen x\n" +
+			"(succeeded, failed and cancelled alike). --keep changes the window for every\n" +
+			"finished run whatever its status — a failure is never kept for a shorter time\n" +
+			"than a success, so raising it shows more failures, not fewer — and\n" +
+			"--keep-count the number of rows, whichever is stricter; a failed row counts\n" +
+			"against --keep-count like any other. In the interactive screen x\n" +
 			"dismisses the selected finished run at once, and a toggles showing every\n" +
 			"finished run again, the ones the window or a dismissal hid included; --all\n" +
 			"starts that way. --json is always unfiltered: it carries every finished run\n" +
@@ -215,8 +218,8 @@ func newWatchCmd() *cobra.Command {
 	f.BoolVar(&o.ascii, "ascii", false, "use ASCII instead of ⚠ ▓░ ▸")
 	f.BoolVar(&o.noClr, "no-color", false, "no colour (NO_COLOR and TERM=dumb do the same)")
 	f.BoolVar(&o.all, "all", false, "show every finished run, not just the ones that finished within --keep")
-	f.DurationVar(&o.keep, "keep", watch.FinishedKeep, "how long a finished run stays shown after it finishes (with --keep-count, whichever is stricter)")
-	f.IntVar(&o.keepCount, "keep-count", 15, "how many finished runs stay shown (with --keep, whichever is stricter)")
+	f.DurationVar(&o.keep, "keep", watch.FinishedKeep, "how long a finished run stays shown after it finishes, failed runs included and never for less (with --keep-count, whichever is stricter)")
+	f.IntVar(&o.keepCount, "keep-count", 15, "how many finished runs stay shown, failed runs included (with --keep, whichever is stricter)")
 	f.BoolVar(&o.noPRState, "no-pr-state", false, "do not ask gh about the ready PRs: list every one of them, run nothing")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd

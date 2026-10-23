@@ -775,6 +775,123 @@ func TestEveryRefusalBeforeACredentialAnswersIsAudited(t *testing.T) {
 	}
 }
 
+// TestARefusalBelowTheMintBranchCarriesTheRoutesPurpose holds every refusal
+// answered BELOW the mint's branch — the project's policy, the call's own body,
+// the request's check, the bundle, the repository's admissions (server.go) — to
+// the ONE rule a line's purpose comes from, on BOTH routes the branch is reached
+// for: the answer the call asked for is the route's own and not the branch's, so
+// the line is read against routeAct(path) and never against a spelling written
+// here.
+//
+// The rule is what is being pinned, and it is the reason this test is written
+// the hard way (the expectation comes from routeAct, the call is driven on
+// /v1/messages AND /v1/messages/count_tokens): these lines used to carry a
+// hard-coded `forward`, and a literal is a value that can stop being the
+// route's without anything failing — the mint's own branch returns above them
+// today, so today's answer for every route that reaches them happens to be
+// `forward` and a test that compared against that word would agree with a
+// revert as readily as with the rule. What this reading catches is a purpose
+// invented in a branch (the mint's, a probe's, an empty one) and a branch that
+// stops reading the route: the moment the rule's answer for a route differs
+// from a literal in a branch, this is red — which is the drift the rule exists
+// to make impossible.
+//
+// Each case also pins the credential the route's read gives, which for a model
+// call is none: no credential was chosen before the bundle was read, and a line
+// that named one would be a line this service cannot write (audit.go's
+// both-or-neither rule would refuse it, and the call would go unaudited).
+func TestARefusalBelowTheMintBranchCarriesTheRoutesPurpose(t *testing.T) {
+	cases := []struct {
+		name string
+		// path is the one route the case is reached for; empty means both.
+		path string
+		// setup wires the state the refusal is about.
+		setup func(t *testing.T, s *svc)
+		// broken is a body the service cannot read at all, which is answered
+		// through the handler and not over a socket (directCallAt).
+		broken bool
+	}{
+		{
+			name: "the project's policy could not be read",
+			setup: func(_ *testing.T, s *svc) {
+				s.policy.sharedErr = errors.New("the shared node could not be read")
+			},
+		},
+		{
+			name:   "the call's body could not be read",
+			broken: true,
+		},
+		{
+			// The request's own check is asked on the Messages path alone: the
+			// token count's body is not a Messages body (server.go).
+			name: "the request is refused before any credential is read",
+			path: MessagesPath,
+			setup: func(_ *testing.T, s *svc) {
+				s.policy.shared = decodeTestPolicy(t, testPolicyDocNoAllowList())
+			},
+		},
+		{
+			name: "the bundle could not be read",
+			setup: func(_ *testing.T, s *svc) {
+				s.src.errs = []error{errors.New("secretmanager: permission denied on projects/aurora/secrets/creds-bundle/versions/latest")}
+			},
+		},
+		{
+			name: "the repository's admissions could not be read",
+			setup: func(_ *testing.T, s *svc) {
+				s.policy.admErr = errors.New("the child node could not be read")
+			},
+		},
+	}
+	for _, tc := range cases {
+		for _, path := range []string{MessagesPath, CountTokensPath} {
+			if tc.path != "" && tc.path != path {
+				continue
+			}
+			t.Run(tc.name+" — "+path, func(t *testing.T) {
+				s, auditLog := auditSvc(t, func(s *svc, _ *Config) {
+					if tc.setup != nil {
+						tc.setup(t, s)
+					}
+				})
+				var code int
+				var body []byte
+				if tc.broken {
+					rec := s.directCallAt(t, path, brokenBody{})
+					code, body = rec.Code, rec.Body.Bytes()
+				} else {
+					resp, b := s.callPath(t, path, callBody("route-purpose"))
+					code, body = resp.StatusCode, b
+				}
+				if code != StatusUnavailable && code != StatusRequestRefused {
+					t.Fatalf("the answer is %d, want a refusal: %s", code, body)
+				}
+				// The oracle: the rule the line's purpose is read off, and the
+				// credential that comes with it.
+				purpose, credential := routeAct(path)
+				if !ValidPurpose(purpose) {
+					t.Fatalf("routeAct(%q) gives %q, which is not a purpose this service writes: this test's oracle has moved", path, purpose)
+				}
+				lines := auditLines(t, auditLog)
+				if len(lines) != 1 {
+					t.Fatalf("the refused call wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+				}
+				line := lines[0]
+				checkAuditShape(t, line)
+				if got := line["purpose"]; got != purpose {
+					t.Errorf("the refusal's audit line carries purpose %v, want the route's own %q: the line must name the act the call asked for and not the branch it was answered in", got, purpose)
+				}
+				if got := line["credential"]; got != credential {
+					t.Errorf("the refusal's audit line carries credential %v, want the route's own %q", got, credential)
+				}
+				if got := line["tier"]; got != "" {
+					t.Errorf("the refusal's audit line carries tier %v, want none: no credential was chosen", got)
+				}
+			})
+		}
+	}
+}
+
 // brokenBody is a request body the service cannot read at all: the one state
 // readCall refuses for that is not a body over the gateway's size bound.
 type brokenBody struct{}
@@ -790,7 +907,14 @@ func (brokenBody) Read([]byte) (int, error) {
 // path a real call reaches.
 func (s *svc) directCall(t *testing.T, body io.Reader) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, MessagesPath, body)
+	return s.directCallAt(t, MessagesPath, body)
+}
+
+// directCallAt is directCall on either of the service's forward routes, for a
+// test that drives the same refusal on both of them.
+func (s *svc) directCallAt(t *testing.T, path string, body io.Reader) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, path, body)
 	req.Header.Set("Authorization", "Bearer "+s.jobToken())
 	req.Header.Set(HeaderRunIdentity, s.runToken())
 	req.Header.Set(HeaderRunJob, s.job)

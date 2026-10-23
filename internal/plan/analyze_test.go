@@ -30,7 +30,7 @@ func analyze(t *testing.T, body string, done ...string) Graph {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	g, err := Analyze(doc, done)
+	g, err := Analyze("graph.json", doc, done)
 	if err != nil {
 		t.Fatalf("Analyze(done=%v): %v", done, err)
 	}
@@ -45,7 +45,7 @@ func analyzeFixture(t *testing.T, name string, done ...string) Graph {
 	if err != nil {
 		t.Fatalf("ReadFile(%s): %v", name, err)
 	}
-	g, err := Analyze(doc, done)
+	g, err := Analyze(filepath.Join("testdata", name), doc, done)
 	if err != nil {
 		t.Fatalf("Analyze(%s, done=%v): %v", name, done, err)
 	}
@@ -568,7 +568,7 @@ func TestPlanAnalysisRefusesWhatItCannotAnswer(t *testing.T) {
 	if err := json.Unmarshal(raw, &cyclic); err != nil {
 		t.Fatal(err)
 	}
-	if g, err := Analyze(cyclic, nil); err == nil {
+	if g, err := Analyze("graph.json", cyclic, nil); err == nil {
 		t.Errorf("Analyze answered a cyclic graph: %+v", g)
 	} else if !strings.Contains(err.Error(), "a -> b -> c -> a") {
 		t.Errorf("Analyze refused the cycle as %q, want it named", err)
@@ -592,7 +592,7 @@ func TestPlanAnalysisRefusesWhatItCannotAnswer(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if g, err := Analyze(doc, tc.done); err == nil {
+			if g, err := Analyze("graph.json", doc, tc.done); err == nil {
 				t.Fatalf("Analyze accepted %s: %+v", tc.name, g)
 			} else if !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("refusal = %q, want it to say %q", err, tc.want)
@@ -602,11 +602,12 @@ func TestPlanAnalysisRefusesWhatItCannotAnswer(t *testing.T) {
 
 	// The shortest cycle there is, through Analyze's own guard.
 	self := Document{
-		Plan:  "p.md",
-		Nodes: []Node{{ID: "a", Title: "itself", Footprint: NewFootprint(nil)}},
-		Edges: []Edge{{Task: "a", Needs: "a", Reason: "itself"}},
+		SchemaVersion: SchemaVersion,
+		Plan:          "p.md",
+		Nodes:         []Node{{ID: "a", Title: "itself", Footprint: NewFootprint(nil)}},
+		Edges:         []Edge{{Task: "a", Needs: "a", Reason: "itself"}},
 	}
-	if _, err := Analyze(self, nil); err == nil || !strings.Contains(err.Error(), "a -> a") {
+	if _, err := Analyze("graph.json", self, nil); err == nil || !strings.Contains(err.Error(), "a -> a") {
 		t.Errorf("Analyze on a self-edge gave %v, want the cycle a -> a", err)
 	}
 
@@ -620,19 +621,19 @@ func TestPlanAnalysisRefusesWhatItCannotAnswer(t *testing.T) {
 		doc  Document
 		want string
 	}{
-		{"an edge from a node that is not there", Document{Plan: "p.md", Nodes: []Node{node},
+		{"an edge from a node that is not there", Document{SchemaVersion: SchemaVersion, Plan: "p.md", Nodes: []Node{node},
 			Edges: []Edge{{Task: "ghost", Needs: "a", Reason: "why"}}}, `starts at "ghost"`},
-		{"an edge to a node that is not there", Document{Plan: "p.md", Nodes: []Node{node},
+		{"an edge to a node that is not there", Document{SchemaVersion: SchemaVersion, Plan: "p.md", Nodes: []Node{node},
 			Edges: []Edge{{Task: "a", Needs: "ghost", Reason: "why"}}}, `needs "ghost", which is not a node of this graph`},
-		{"two nodes with one id", Document{Plan: "p.md", Nodes: []Node{node, node}, Edges: []Edge{}}, `two nodes carry the id "a"`},
-		{"a node with no title", Document{Plan: "p.md",
+		{"two nodes with one id", Document{SchemaVersion: SchemaVersion, Plan: "p.md", Nodes: []Node{node, node}, Edges: []Edge{}}, `two nodes carry the id "a"`},
+		{"a node with no title", Document{SchemaVersion: SchemaVersion, Plan: "p.md",
 			Nodes: []Node{{ID: "a", Footprint: NewFootprint(nil)}}, Edges: []Edge{}}, `node "a" has no title`},
-		{"a footprint that is not labelled a prediction", Document{Plan: "p.md",
+		{"a footprint that is not labelled a prediction", Document{SchemaVersion: SchemaVersion, Plan: "p.md",
 			Nodes: []Node{{ID: "a", Title: "x", Footprint: Footprint{Paths: []string{}}}}, Edges: []Edge{}},
 			"not labelled a prediction"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			g, err := Analyze(tc.doc, nil)
+			g, err := Analyze("graph.json", tc.doc, nil)
 			if err == nil {
 				t.Fatalf("Analyze answered a document with %s: %+v", tc.name, g)
 			}
@@ -640,6 +641,44 @@ func TestPlanAnalysisRefusesWhatItCannotAnswer(t *testing.T) {
 				t.Errorf("refusal = %q, want it to say %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestPlanAnalysisRefusesAForeignSchemaVersion: Analyze is exported, so a
+// caller can hand it a document that never went through Parse -- and Parse is
+// where the version guard lives, in Normalize's caller rather than in
+// Normalize. The guard is stated here too, in Parse's own words, so a
+// document this build does not read is refused rather than answered over.
+func TestPlanAnalysisRefusesAForeignSchemaVersion(t *testing.T) {
+	nodes := []Node{{ID: "a", Title: "first", Footprint: NewFootprint(nil)}}
+	if g, err := Analyze("graph.json", Document{SchemaVersion: 9, Plan: "p.md", Nodes: nodes, Edges: []Edge{}}, nil); err == nil {
+		t.Fatalf("Analyze answered a schema version 9 document: %+v", g)
+	} else if want := "the graph artifact is schema version 9 and this build reads version 1; upgrade fugaro to read it"; !strings.Contains(err.Error(), want) {
+		t.Errorf("refusal = %q, want it to say %q", err, want)
+	}
+	// The zero value is a document that names no version at all, which is the
+	// thing Parse refuses as "carries no schema_version".
+	if g, err := Analyze("graph.json", Document{Plan: "p.md", Nodes: nodes, Edges: []Edge{}}, nil); err == nil {
+		t.Fatalf("Analyze answered a document with no schema version: %+v", g)
+	} else if want := "the graph artifact carries no schema_version; this build reads version 1"; !strings.Contains(err.Error(), want) {
+		t.Errorf("refusal = %q, want it to say %q", err, want)
+	}
+}
+
+// TestPlanAnalysisNamesTheCallersPathInItsRefusals: Analyze's own refusals
+// name the artifact the caller named, not doc.Plan -- the path an artifact
+// writes inside itself is the *plan* it came from, a different file -- the way
+// the cycle refusal a caller sees from the read names the artifact.
+func TestPlanAnalysisNamesTheCallersPathInItsRefusals(t *testing.T) {
+	doc, err := Parse("graph.json", []byte(`{"schema_version": 1, "plan": "p.md", "nodes": [
+		{"id": "a", "title": "first", "footprint": {"prediction": true, "paths": []}}], "edges": []}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Analyze("docs/plans/foo.graph.json", doc, []string{"ghost"}); err == nil {
+		t.Fatal("Analyze accepted a done set naming a task that is not there")
+	} else if !strings.HasPrefix(err.Error(), "docs/plans/foo.graph.json: ") {
+		t.Errorf("refusal = %q, want it prefixed with the caller's artifact path", err)
 	}
 }
 

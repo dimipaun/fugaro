@@ -114,8 +114,12 @@ function theSyntheticFrame(): JSONDoc {
 /** aFrame is one document the schema accepted: the synthetic frame with the
  * review list (and anything else a case moves) in it. It goes **through
  * `decodeSnapshot`** rather than around it, so what the screen is handed is the
- * same value a live feed would produce -- a row whose number is a string, or a
- * key the wire does not carry, is refused here rather than drawn. */
+ * same value a live feed would produce -- and the two doors differ by field: a
+ * key the wire does not carry is refused here (`schema.ts` closes a finished row
+ * with `closed(item, FINISHED_KEYS, …)`), while a `pr_number` that is a string
+ * is **not** refused -- `optionalInt` answers `null` for anything that is not a
+ * finite number, which is the same answer it gives a key that is absent, so the
+ * row draws with no number rather than stopping the screen. */
 function aFrame(ready: readonly JSONDoc[], overrides: JSONDoc = {}): LiveDocument {
   const decoded = decodeSnapshot(
     { ...theSyntheticFrame(), ready: [...ready], ...overrides },
@@ -125,13 +129,20 @@ function aFrame(ready: readonly JSONDoc[], overrides: JSONDoc = {}): LiveDocumen
   return decoded.value
 }
 
-/** aModel is the screen's model for a list of ready rows. */
-function aModel(ready: readonly JSONDoc[]): LiveModel {
-  return buildLiveModel(aFrame(ready), new BurnHistory())
+/** aModel is the screen's model for a list of ready rows, with anything else a
+ * case moves in the frame beside them. */
+function aModel(ready: readonly JSONDoc[], overrides: JSONDoc = {}): LiveModel {
+  return buildLiveModel(aFrame(ready, overrides), new BurnHistory())
 }
 
-/** readyRows is `count` rows, each with its own run id, in the order the CLI
- * would have written them (newest first). */
+/** readyRows is `count` rows, each with its own run id, minted from the index:
+ * `…101500…`, `…101501…` and so on, so the ids **ascend** and the list is
+ * oldest-first -- which is deliberately *not* the order `ReadyForReview` writes
+ * (`sort.SliceStable` on `StartedAt`, descending). The console must keep
+ * whatever order the document carried rather than impose one, and a fixture
+ * already in the CLI's order could not tell "kept it" apart from "sorted it
+ * back". The pull request number and URL move with the id, so the first row of
+ * the document is `#412`. */
 function readyRows(count: number): readonly JSONDoc[] {
   const out: JSONDoc[] = []
   for (let index = 0; index < count; index += 1) {
@@ -251,8 +262,10 @@ function drawnText(node: ScreenElement): string {
 
 describe('the review inbox’s model', () => {
   it('is the frame’s ready[], in the frame’s order, and re-derives neither', () => {
-    // Three ready runs, written newest first -- which is `ReadyForReview`'s own
-    // order (`sort.SliceStable` on `StartedAt`, descending). The console sorts
+    // Three ready runs, in the order `readyRows` minted them -- ascending ids,
+    // so oldest first, which is the opposite of `ReadyForReview`'s own order
+    // (`sort.SliceStable` on `StartedAt`, descending) precisely so that this
+    // case can see the order being kept rather than restored. The console sorts
     // nothing and filters nothing: a console that re-sorted would be a second
     // opinion about a list the CLI already decided, and the two would disagree
     // the day the CLI changed its mind.
@@ -275,14 +288,31 @@ describe('the review inbox’s model', () => {
     expect(formatReading(model.review[0]?.age ?? measured(0), 'seconds')).toBe('6,400 s')
   })
 
-  it('is ready[] and not finished[]', () => {
+  it('is ready[] and not finished[], over a frame where the two disagree', () => {
     // The plan's list is the one waiting on a human. A finished run whose
     // outcome is `draft` or `none` is waiting on nobody, and `finished[]`
     // carries every finished run there is: a screen that drew the whole of it
     // would be a history, and `watch`'s own text view draws only the ready ones.
-    const model = aModel([aReadyRow()])
-    expect(model.review).toHaveLength(1)
-    expect(model.review.map((row) => row.run)).not.toContain('20261015-090000-aa01')
+    //
+    // **The frame disagrees with itself on purpose**, which is the headline
+    // claim of this file made checkable: `ready[]` is `ReadyForReview`'s
+    // selection out of `finished[]`, so a frame the CLI writes has the two in
+    // step, and a case built from one of those cannot tell which list a screen
+    // read. So both directions are here -- a finished run whose outcome is
+    // `ready` that `ready[]` does not carry (a screen deriving the inbox from
+    // `finished[]` would draw it) and a `ready[]` row no `finished[]` entry
+    // mentions (a screen intersecting the two would lose it).
+    const model = aModel([aReadyRow({ run: '20261015-101500-aa02' })], {
+      finished: [
+        aReadyRow({ run: '20261015-090000-aa01' }),
+        aReadyRow({ run: '20261015-080000-aa00', status: 'draft', outcome: 'draft' }),
+      ],
+    })
+    expect(model.review.map((row) => row.run)).toEqual(['20261015-101500-aa02'])
+    expect(model.reviewCount).toBe(1)
+    // The model carries no finished row at all: `finished[]` reaches this screen
+    // nowhere, which is why the disagreement cannot be resolved anywhere else.
+    expect(Object.keys(model)).not.toContain('finished')
   })
 
   it('bounds the list at LIVE_REVIEW_CAP and keeps the CLI’s own count beside it', () => {
@@ -294,7 +324,12 @@ describe('the review inbox’s model', () => {
     const model = aModel(readyRows(LIVE_REVIEW_CAP + 5))
     expect(model.review).toHaveLength(LIVE_REVIEW_CAP)
     expect(model.reviewCount).toBe(LIVE_REVIEW_CAP + 5)
-    // The oldest go undrawn, which is the last of the list: the newest stay.
+    // What the cap drops is the **tail** of the list the document carried, and
+    // the document here ascends by id -- so in this fixture the newest go
+    // undrawn, which is the reverse of the CLI's own newest-first order and
+    // exactly why the assertion below is written as "the first `CAP` rows of the
+    // document" rather than as "the newest": the cap is a bound on the list, not
+    // a rule about time.
     expect(model.review.map((row) => row.run)).toEqual(
       readyRows(LIVE_REVIEW_CAP).map((row) => row['run']),
     )
@@ -324,6 +359,30 @@ describe('the review inbox’s model', () => {
     expect(model.review[0]?.prNumber).toBeNull()
     expect(model.review[0]?.prUrl).toBeNull()
   })
+
+  it('carries a number the frame has and no URL beside it', () => {
+    // `omitempty` is per key, so the two halves of "there is a pull request" can
+    // arrive apart: `pr_number` without `pr_url` is a run whose URL the CLI did
+    // not write (or the recorder redacted away), and the number is still this
+    // row's own fact. Held on its own because every other case in this file
+    // moves the two together, and a model that read `prNumber` only when
+    // `pr_url` was there would pass all of them.
+    const model = aModel([withoutKeys(aReadyRow({ run: '20261015-101500-aa02' }), 'pr_url')])
+    expect(model.review[0]?.prNumber).toBe(412)
+    expect(model.review[0]?.prUrl).toBeNull()
+  })
+
+  it('carries a URL the frame has and no number beside it', () => {
+    // The other half, and the one the CLI's own `pr_number: 0` case looks like
+    // on the wire: a finished run that opened a pull request the CLI recorded a
+    // URL for and no number. The URL is drawn as text like any other, and the
+    // number cell is simply not there -- which is not the same as a `#n/a`.
+    const model = aModel([withoutKeys(aReadyRow({ run: '20261015-101500-aa02' }), 'pr_number')])
+    expect(model.review[0]?.prNumber).toBeNull()
+    expect(model.review[0]?.prUrl).toBe(
+      'https://github.com/fixture-owner/fixture-repo/pull/412',
+    )
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -333,17 +392,17 @@ describe('the review inbox’s model', () => {
 describe('the review inbox’s drawing', () => {
   it('draws the CLI’s heading, the CLI’s count and one row per ready run', () => {
     const section = drawnSection(aModel(readyRows(2)))
-    expect(one(section, 'live-review-word').textContent).toBe(LIVE_REVIEW_TITLE)
-    expect(one(section, 'live-review-count').textContent).toBe('2')
-    // The heading is the CLI's own line, `Ready for your review (%d)`, with the
-    // count as a reading rather than glued into the string: the number cannot be
-    // drawn without its state.
-    expect(one(section, 'live-review-title').nodes.map((node) => node.textContent)).toEqual([
-      LIVE_REVIEW_TITLE,
-      '(',
-      '2',
-      ')',
-    ])
+    // **The heading is the CLI's own line and it is one text run** (review of
+    // 0.10.1). A heading drawn as four elements -- the word, `(`, the count and
+    // `)` -- is four flex items, and the heading's `gap` then spaces them out to
+    // `Ready for your review ( 2 )`: text neither the CLI (`internal/watch/
+    // render.go`'s `readyForReview`) nor either design doc prints. The two
+    // assertions are the pair the drawing has to keep: the run is single, so
+    // there is nothing for a stylesheet to space, and the words are the CLI's,
+    // so the parentheses hug the number.
+    const heading = one(section, 'live-review-title')
+    expect(heading.nodes, 'the heading is drawn as more than one run').toEqual([])
+    expect(heading.textContent).toBe(`${LIVE_REVIEW_TITLE} (2)`)
     expect(texts(section, 'live-review-number')).toEqual(['#412', '#413'])
     expect(texts(section, 'live-review-url')).toEqual([
       'https://github.com/fixture-owner/fixture-repo/pull/412',
@@ -364,8 +423,15 @@ describe('the review inbox’s drawing', () => {
 
   it('draws the section, and says so, when nothing is ready', () => {
     const section = drawnSection(aModel([]))
-    expect(one(section, 'live-review-word').textContent).toBe(LIVE_REVIEW_TITLE)
-    expect(one(section, 'live-review-count').textContent).toBe('0')
+    // The heading carries a zero, and **that zero is this console's own
+    // decision, not the CLI's**: both renderers omit the whole section when
+    // nothing is ready (`if len(ready) > 0`, `internal/watch/plain.go:89`;
+    // `if !o.Help && len(o.Ready) > 0`, `internal/watch/render.go:302`), so
+    // `Ready for your review (0)` is a line the CLI never prints. The section
+    // stays -- "nothing is waiting for you" is an answer, and the sentence below
+    // is what gives it -- and the count in the heading is drawn the way every
+    // other count is, which is what the assertion is for.
+    expect(one(section, 'live-review-title').textContent).toBe(`${LIVE_REVIEW_TITLE} (0)`)
     expect(one(section, 'live-review-empty').textContent).toBe(LIVE_REVIEW_EMPTY)
     expect(all(section, 'live-review-row')).toEqual([])
     // With no row there is no link to explain, so the reason is not drawn --
@@ -398,6 +464,31 @@ describe('the review inbox’s drawing', () => {
     expect(texts(section, 'live-review-url')).toEqual([
       'https://github.com/fixture-owner/fixture-repo/pull/412',
     ])
+  })
+
+  it('draws each half of a pull request the frame carries on its own', () => {
+    // `pr_url` and `pr_number` are two `omitempty` keys, so a row can carry one
+    // without the other, and each cell is drawn from the key that is there: the
+    // number as text, the URL through `putText`. What must **not** happen is a
+    // placeholder for the missing half -- an `n/a` under a number, or a `#n/a`
+    // where the number would be -- because the cell is left out entirely and the
+    // row reads as a row that names one fact about its pull request.
+    const numbered = drawnSection(
+      aModel([withoutKeys(aReadyRow({ run: '20261015-101500-aa02' }), 'pr_url')]),
+    )
+    expect(texts(numbered, 'live-review-number')).toEqual(['#412'])
+    expect(texts(numbered, 'live-review-url')).toEqual([])
+
+    const linked = drawnSection(
+      aModel([withoutKeys(aReadyRow({ run: '20261015-101500-aa02' }), 'pr_number')]),
+    )
+    expect(texts(linked, 'live-review-number')).toEqual([])
+    expect(texts(linked, 'live-review-url')).toEqual([
+      'https://github.com/fixture-owner/fixture-repo/pull/412',
+    ])
+    // Neither drawing smuggled an unavailable mark in for the absent half.
+    expect(drawnText(numbered)).not.toContain(UNAVAILABLE_MARK)
+    expect(drawnText(linked)).not.toContain(UNAVAILABLE_MARK)
   })
 
   it('draws the CLI’s own reason that no link is built, in run.ts’s words', () => {
@@ -490,7 +581,9 @@ describe('the review inbox’s drawing', () => {
     expect(note.textContent).toBe('rows not drawn:')
     expect(note.nodes.map((node) => node.textContent)).toEqual(['2', 'of', '52'])
     expect(one(section, 'live-review-dropped').textContent).toBe('2')
-    expect(one(section, 'live-review-count').textContent).toBe('52')
+    // The heading above carries the document's whole count -- 52, not the 50
+    // rows that fit -- which is the other half of the same note.
+    expect(one(section, 'live-review-title').textContent).toBe(`${LIVE_REVIEW_TITLE} (52)`)
     // And the note is absent when every row was drawn.
     expect(all(drawnSection(aModel(readyRows(1))), 'live-review-capped')).toEqual([])
   })
