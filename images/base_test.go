@@ -295,6 +295,58 @@ func TestBaseFetchScriptsRetryDownloads(t *testing.T) {
 	}
 }
 
+// The static guard above says the flags are spelled; this says they arrive:
+// fetch.sh's second (HTTP/1.1) attempt is the one that runs when the first
+// curl fails, and the sha256 check applies to whatever that attempt left
+// behind. A download that only succeeded on the fallback is a build that
+// passes, and one that failed both attempts still fails closed.
+func TestFetchFallsBackAndVerifiesTheRetriedBytes(t *testing.T) {
+	bin := t.TempDir()
+	// The fake curl exits 92 -- "HTTP/2 stream was not closed cleanly", the
+	// failure this change exists for -- on its first call, writes "hello" on
+	// every call after it, and appends each call's arguments to argv, so the
+	// test can see both attempts and which flags each one got.
+	argv := filepath.Join(t.TempDir(), "argv")
+	seen := filepath.Join(t.TempDir(), "seen")
+	fake := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> " + argv + "\n" +
+		"n=$(cat " + seen + " 2>/dev/null || echo 0)\n" +
+		"echo $((n+1)) > " + seen + "\n" +
+		"[ \"$n\" -eq 0 ] && exit 92\n" +
+		"while [ $# -gt 0 ]; do if [ \"$1\" = -o ]; then printf hello > \"$2\"; fi; shift; done\n"
+	if err := os.WriteFile(filepath.Join(bin, "curl"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const helloSum = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+	out := filepath.Join(t.TempDir(), "f")
+	cmd := exec.Command("sh", "base/fetch.sh", "https://example.com/x", helloSum, out)
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fetch.sh failed after a first curl that exits 92: %v\n%s", err, b)
+	}
+	if data, err := os.ReadFile(out); err != nil || string(data) != "hello" {
+		t.Errorf("the fallback download was not kept: %q, %v", data, err)
+	}
+	calls, err := os.ReadFile(argv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempts := strings.Split(strings.TrimSpace(string(calls)), "\n")
+	if len(attempts) != 2 {
+		t.Fatalf("curl ran %d times, want the retried attempt and one HTTP/1.1 fallback:\n%s", len(attempts), calls)
+	}
+	for i, attempt := range attempts {
+		for _, flag := range []string{"--retry 5", "--retry-all-errors", "--retry-delay 2"} {
+			if !strings.Contains(attempt, flag) {
+				t.Errorf("attempt %d lacks %s: %s", i+1, flag, attempt)
+			}
+		}
+	}
+	if strings.Contains(attempts[0], "--http1.1") || !strings.Contains(attempts[1], "--http1.1") {
+		t.Errorf("the HTTP/1.1 attempt is not the second one:\n%s", calls)
+	}
+}
+
 // aptPackages returns the names in the base Dockerfile's
 // "apt-get install -y --no-install-recommends" list.
 func aptPackages(t *testing.T, df string) map[string]bool {
