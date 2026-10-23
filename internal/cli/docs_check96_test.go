@@ -59,8 +59,9 @@ var pipeIntoPythonHeredocRE = regexp.MustCompile(`\|\s*python3?\s[^\n]*<<`)
 //     now — the seven names credentials.tf sets are what C1.14's builder reads,
 //     so a revision starts and serves — and its account holds exactly one grant,
 //     the bundle's accessor (Q6), and no role on the installation's database, so
-//     the first read a call makes (the operator's stop switches) is denied and
-//     the call is answered `state_unavailable` rather than served. The check has
+//     the first read a call makes (the identity check's read of the run's
+//     write-once outcome, which ServeHTTP runs before the stop flags) is denied
+//     and the call is answered `state_unavailable` rather than served. The check has
 //     to say so, and it has to keep saying so for exactly as long as
 //     credentials.tf grants that account no `firebasedatabase` role.
 //
@@ -252,9 +253,10 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	// credentials.tf sets are exactly what C1.14's builder reads, and
 	// TestCredentialsServiceEnvIsTheDeploymentsOwn is what holds that pair — and
 	// what still stops it serving is that its account holds no role on the
-	// installation's database. The first read a call makes is the operator's stop
-	// switches, so the call is refused `state_unavailable` rather than served, and
-	// the check has to say that instead of the refusal that was lifted.
+	// installation's database. The first read a call makes is the run's
+	// write-once outcome — the identity check's, before the stop switches — so
+	// the call is refused `state_unavailable` rather than served, and the check
+	// has to say that instead of the refusal that was lifted.
 	//
 	// The claim is read against the module's own role lines, so the day the
 	// credentials account is granted a database role the sentence is the one that
@@ -270,17 +272,18 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	// left behind by a change to the other side.
 	const refusedEveryCall = "**The service is configured from its own deployment now, and refuses every call.**"
 	const readsTheDatabase = "**The service is configured from its own deployment now, and reads the installation's database.**"
-	hasRole := credentialsDatabaseRoleRE.MatchString(readDoc(t, "deploy/terraform/gcp/modules/installation/credentials.tf"))
+	hasRole := credentialsDatabaseRoleRE.MatchString(
+		stripLineComments(readDoc(t, "deploy/terraform/gcp/modules/installation/credentials.tf")))
 	if hasRole {
 		if strings.Contains(check, refusedEveryCall) {
 			t.Errorf("deploy/terraform/gcp/modules/installation/credentials.tf grants the credentials service's account a database role (%s) — the service reads the database and can serve — and Check 96 still says every call is refused: the gap was closed and this check did not notice", tf.CredentialsDatabaseRole)
 		}
 		if !strings.Contains(check, readsTheDatabase) {
-			t.Errorf("deploy/terraform/gcp/modules/installation/credentials.tf grants the credentials service's account its database role (%s, the two data permissions) now, so a call's reads — the operator's stop switches first among them — are allowed and step 3's mint can be made, and Check 96 does not say so", tf.CredentialsDatabaseRole)
+			t.Errorf("deploy/terraform/gcp/modules/installation/credentials.tf grants the credentials service's account its database role (%s, the two data permissions) now, so every database read a call makes — the run's outcome first among them — is allowed and step 3's mint can be made, and Check 96 does not say so", tf.CredentialsDatabaseRole)
 		}
 	} else {
 		if !strings.Contains(check, refusedEveryCall) {
-			t.Errorf("deploy/terraform/gcp/modules/installation/credentials.tf grants the credentials service's account no role on the installation's database, so the first read a call makes — the operator's stop switches — is denied and the call is refused `state_unavailable` rather than served, and Check 96 does not say so: that is what decides whether the mint of step 3 can be made at all")
+			t.Errorf("deploy/terraform/gcp/modules/installation/credentials.tf grants the credentials service's account no role on the installation's database, so the first read a call makes — the run's write-once outcome — is denied and the call is refused `state_unavailable` rather than served, and Check 96 does not say so: that is what decides whether the mint of step 3 can be made at all")
 		}
 		if strings.Contains(check, readsTheDatabase) {
 			t.Errorf("deploy/terraform/gcp/modules/installation/credentials.tf grants the credentials service's account no database role and Check 96 says it reads the installation's database: a reader would take step 3's mint as one this tree can make")
@@ -312,6 +315,18 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 // database role added to the account from another shape "would not be seen by
 // this line, and that is a review question". 0.10.1 answered it: the custom
 // role is what the tree writes now, so the guard reads it.
+//
+// The match is made on the file with its comments stripped
+// (stripLineComments, this package's own), and not on the raw text: every
+// spelling this regexp knows is one the file's own prose discusses at length —
+// the header names `fugaroCredentialsDatabase` and the long comment above the
+// role names both predefined RTDB roles and why they were refused — so a match
+// over the raw bytes would flip this guard to "the service reads the database"
+// with no grant in the file at all. That is the vacuous pass the stripped read
+// removes, and the same shape the other guards in this package avoid.
+// Mutation (run, restore): delete the two resources from credentials.tf and
+// leave their comments, and this guard fails on the missing grant rather than
+// passing on the prose.
 var credentialsDatabaseRoleRE = regexp.MustCompile(`role_id\s*=\s*"` + regexp.QuoteMeta(tf.CredentialsDatabaseRole) + `"|role\s+= "roles/firebasedatabase`)
 
 // check96FuncBody returns one function's body out of a source file the test
