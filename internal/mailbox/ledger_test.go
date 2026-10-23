@@ -367,6 +367,21 @@ func TestLedgerDuplicateIsNotActedOnTwice(t *testing.T) {
 	if entries := l.Entries(); len(entries) != 1 || entries[0].Status != StatusActed {
 		t.Errorf("the ledger holds %+v: a duplicate must leave it exactly as it was", entries)
 	}
+
+	// The ledger's *floor* moves with the duplicate's `now` even though no
+	// record and no file does, which is the module's own answer (`answered`
+	// carries the event's `now` for every outcome). It matters because the floor
+	// is what every later event is judged against: an event whose `now` is
+	// earlier than one this ledger has already seen is refused, whether or not
+	// that event changed anything.
+	back, err := l.Perform(ledgerMessage("m-2", "mb-a", "hi", testNow+998), KindCommand, testNow+999, func(LedgerEntry) { performed++ })
+	if err != nil {
+		t.Fatalf("an event earlier than the duplicate's now: %v", err)
+	}
+	if back.Refusal == nil || back.Refusal.Code != CodeNowWentBackwards {
+		t.Errorf("an event at now=%d after a duplicate at now=%d answered %+v, and the floor is the duplicate's own",
+			testNow+999, testNow+1_000, back)
+	}
 }
 
 // TestLedgerIDConflictIsRefused: the pair is the message's identity, so the same

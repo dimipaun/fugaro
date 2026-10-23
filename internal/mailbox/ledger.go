@@ -601,6 +601,15 @@ func (l *Ledger) Perform(msg *Message, kind string, now int64, perform func(Ledg
 		return PerformResult{Refusal: result.Refusal}, nil
 	}
 	if result.Outcome == OutcomeDuplicate {
+		// A duplicate changes no record, and nothing is written — a redelivery
+		// must not re-arm a delivery that was already acted on, and a loop of
+		// them must not rewrite the file. The **floor** does move, and that is
+		// the module's own answer: `answered` carries the event's `now` for a
+		// duplicate as for any other outcome, so the events after it are judged
+		// against this `now` — which is what makes this ledger's answers a
+		// schedule's the same as the module's (M9), and is the stricter
+		// direction for `now-went-backwards`.
+		l.state.now = now
 		return PerformResult{Outcome: OutcomeDuplicate, Entry: result.Entry}, nil
 	}
 	acted, actResult := l.act(state, now)
@@ -727,7 +736,10 @@ func (l *Ledger) deliver(state ledgerState, msg *Message, kind string, now int64
 func (l *Ledger) act(state ledgerState, now int64) (ledgerState, PerformResult) {
 	index := statusIndex(state.seen, StatusAccepted)
 	if index < 0 {
-		return state, PerformResult{Outcome: OutcomeNothingToAct}
+		// Nothing to act on. The module's answer carries the event's `now` all
+		// the same (`answered`), so the floor moves even when no record does —
+		// this is a state this caller persists either way.
+		return ledgerState{now: now, evictedThrough: state.evictedThrough, seen: state.seen}, PerformResult{Outcome: OutcomeNothingToAct}
 	}
 	target := state.seen[index]
 	outcome := OutcomeActed
@@ -741,7 +753,9 @@ func (l *Ledger) act(state ledgerState, now int64) (ledgerState, PerformResult) 
 func (l *Ledger) ack(state ledgerState, now int64) (ledgerState, PerformResult) {
 	index := statusIndex(state.seen, StatusActed)
 	if index < 0 {
-		return state, PerformResult{Outcome: OutcomeNothingToAck}
+		// Nothing to ack, and the floor moves as it does for act: the module's
+		// `answered` carries the event's `now` whatever the outcome.
+		return ledgerState{now: now, evictedThrough: state.evictedThrough, seen: state.seen}, PerformResult{Outcome: OutcomeNothingToAck}
 	}
 	target := state.seen[index]
 	return move(state, index, StatusAcked, now), PerformResult{Outcome: OutcomeAcked, Entry: target}
