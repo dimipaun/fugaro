@@ -39,7 +39,8 @@
 #   - **The trigger: a push of a `console-vX.Y.Z` tag, and nothing else.** The
 #     CLI's `vX.Y.Z` tag no longer starts a console build, and a console tag no
 #     longer starts a CLI release (release.yml and images.yml still trigger on
-#     `v*` alone). That is the whole point of the three streams: a CLI release
+#     their own strict `v[0-9]+.[0-9]+.[0-9]+` pattern, and on nothing else).
+#     That is the whole point of the three streams: a CLI release
 #     and a console release are now separate events, and neither one implies the
 #     other. Nothing else in the `on:` block moves: no pull request, no
 #     `workflow_run`, no `workflow_dispatch`, no branch list, no `paths:`. The
@@ -139,11 +140,13 @@
 #     the .dmg, the .zip, the verification record and the SHA-256 sums -- and
 #     publishes it in the same step, so the release is complete before it
 #     becomes immutable. A re-run never clobbers: if `console-vX.Y.Z` already
-#     exists, published or as a draft from an earlier attempt, or its tag
-#     exists, the job fails with a message saying what to do; and an answer
-#     about the tag that is not a clean "exists" or a 404 fails the job too,
-#     rather than being read as "absent". The Homebrew cask for the console,
-#     when there is one (a later task), points at this release.
+#     exists, published or as a draft from an earlier attempt, the job fails
+#     with a message saying what to do. **The tag is the owner's, not this
+#     job's**: the `console-vX.Y.Z` push is what starts the run, so `publish`
+#     never creates, moves or reuses it -- it only checks that the tag still
+#     resolves to the commit this run built, and refuses if it has moved. The
+#     Homebrew cask for the console, when there is one (a later task), points at
+#     this release.
 #   - **The version is the tag's, and it is console/package.json's.** Every pack
 #     is stamped with `-c.extraMetadata.version=X.Y.Z` from the tag (through
 #     `env:`), after a step that refuses any tag that is not a strict
@@ -1188,7 +1191,10 @@ jobs:
       # every asset on it and then published, so it is complete before it is
       # immutable. `--latest=false` keeps the CLI's release the repository's
       # latest. A re-run never clobbers: an existing console release (published,
-      # or a draft from an earlier attempt) or tag stops the job with a message.
+      # or a draft from an earlier attempt) stops the job with a message. The TAG
+      # itself is the owner's -- the `console-vX.Y.Z` push that started this run --
+      # so it is never created, moved or reused here: the step only checks that it
+      # still resolves to this run's commit.
       - name: Publish the console's own release
         working-directory: ${{ runner.temp }}/console-release
         env:
@@ -1225,20 +1231,26 @@ jobs:
               exit 1
               ;;
           esac
-          # Only a 404 means the tag is absent: any other failure (a 5xx, a
-          # rate limit, a network error) stops the job instead of being read
-          # as "no such tag".
-          if answer="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$CONSOLE_TAG" 2>&1)"; then
-            echo "::error::the tag $CONSOLE_TAG already exists with no release: refusing to move or reuse it"
+          # The tag is NOT created here, and it cannot be absent: it is the tag
+          # this run was triggered by ($GITHUB_REF_NAME), so the owner has
+          # already pushed it and the push is what started this job. What is
+          # checked is that it resolves to **this run's commit**, and that is the
+          # whole of it: a release published under a tag that has moved would
+          # carry assets built from a different commit than the tag now names.
+          # The ref is resolved through the commits endpoint rather than read off
+          # `git/ref/tags/`, because that endpoint returns the tag *object* for an
+          # annotated tag and the commit for a lightweight one; the commits
+          # endpoint peels both. Any failure to resolve it stops the job: this
+          # tag exists, so an unreadable one is not "no such tag".
+          if ! tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$CONSOLE_TAG" --jq .sha)"; then
+            echo "::error::could not resolve the tag $CONSOLE_TAG to a commit: this run was triggered by that tag, so it exists, and refusing to publish a release whose tag cannot be read"
             exit 1
           fi
-          case "$answer" in
-            *"(HTTP 404)"*) ;;
-            *)
-              echo "::error::could not tell whether the tag $CONSOLE_TAG exists (the answer was not a 404): refusing to publish on a guess"
-              exit 1
-              ;;
-          esac
+          if [ "$tag_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::the tag $CONSOLE_TAG resolves to $tag_sha, not to this run's commit $GITHUB_SHA: refusing to publish a release under a tag that has moved"
+            exit 1
+          fi
+          echo "$CONSOLE_TAG is $GITHUB_SHA, the commit this run built"
           # The body: the standing statement about what is and is not signed,
           # then the console's OWN notes for this version -- the file the release
           # job refused to build without. `publish` has no checkout (it runs no
@@ -1259,8 +1271,11 @@ jobs:
             printf '%s\n\n' "The Fugaro desktop console built from the console's own $TAG tag (the console's release stream, the same release gate, the same pinned packer and the same Electron fuses on both platforms). The macOS build is signed with a Developer ID certificate, notarised and stapled; console-verification.txt records the checks run on those exact files. **The Linux build is unsigned**: an AppImage is not code-signed and this project has no Linux signing key, so the AppImage and the .deb for x64 carry no signature of their own -- their integrity claim is the SHA-256 in console-sha256sums.txt, which covers every file here and is itself signed keyless with Sigstore (console-sha256sums.txt.sigstore.json, verify with cosign verify-blob). console-linux-verification.txt records the commands run on those exact files, including a read-back of the Electron fuse wire from the executable inside each artifact."
             cat "$NOTES"
           } > "$BODY"
+          # No `--target`: the tag already exists (it is this run's own
+          # `$GITHUB_REF_NAME`, checked against $GITHUB_SHA above), and `--target`
+          # is only read when gh creates the tag itself. Passing it would suggest
+          # this step creates or moves a tag, which it must never do.
           gh release create "$CONSOLE_TAG" --repo "$GITHUB_REPOSITORY" --draft --latest=false \
-            --target "$GITHUB_SHA" \
             --title "Fugaro Console $VERSION" \
             --notes-file "$BODY" \
             "$DMG" "$APP_ZIP" "$APPIMAGE" "$DEB" "$RECORD" "$LINUX_RECORD" "$SUMS" "$BUNDLE"

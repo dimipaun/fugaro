@@ -3323,7 +3323,6 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		`CONSOLE_TAG="console-v$VERSION"`,
 		`VERSION="${TAG#console-v}"`,
 		`gh release create "$CONSOLE_TAG" --repo "$GITHUB_REPOSITORY" --draft --latest=false \`,
-		`--target "$GITHUB_SHA" \`,
 		// The release's body is the console's OWN notes for this version -- the
 		// file the release job refused to build without -- read from the tagged
 		// tree, because `publish` has no checkout. A release body built from a
@@ -3335,6 +3334,21 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		if !slices.Contains(plines, want) {
 			t.Errorf("%s's publish step does not run %q", consoleReleaseWorkflowPath, want)
 		}
+	}
+	// The tag is the owner's, not this job's: the `console-vX.Y.Z` push is what
+	// started this run, so the job never creates, moves or reuses it, and no
+	// `--target` (the CLI era's way of making the tag itself at $GITHUB_SHA)
+	// belongs here. What the job does is resolve the tag to a commit and refuse
+	// when that commit is not the one this run built -- publishing under a tag
+	// that has moved would put artifacts from one commit under a tag naming
+	// another. Reading it through `commits/` rather than `git/ref/tags/`, which
+	// returns the tag *object* for an annotated tag.
+	if !strings.Contains(publish.Run, `gh api "repos/$GITHUB_REPOSITORY/commits/$CONSOLE_TAG" --jq .sha`) ||
+		!strings.Contains(publish.Run, `if [ "$tag_sha" != "$GITHUB_SHA" ]`) {
+		t.Errorf("%s's publish step does not resolve the tag it publishes under to this run's commit: %v", consoleReleaseWorkflowPath, plines)
+	}
+	if strings.Contains(publish.Run, `--target "$GITHUB_SHA"`) {
+		t.Errorf("%s's publish step passes --target to `gh release create`: the tag already exists (it is this run's own tag), so the job creates nothing -- the flag is a leftover from when this workflow ran on the CLI's tag", consoleReleaseWorkflowPath)
 	}
 	// The notes are the console's own file, and they are read at the tagged
 	// commit: read at whatever the default branch holds now, a release could
@@ -3377,14 +3391,12 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 			t.Errorf("%s's publish step touches the CLI's release (%q)", consoleReleaseWorkflowPath, line)
 		}
 	}
-	// The never-clobber shape: in each `case`, the only branch that lets the
-	// job go on is the "absent" one ("" for the release list, a 404 for the
-	// tag), and the default branch `*)` errors and exits 1. The behaviour is
-	// pinned again, against a faked gh, in
-	// TestDocsConsoleReleasePublishRefusesToClobber.
+	// The never-clobber shape: in the `case` over the release list, the only
+	// branch that lets the job go on is the "absent" one (""), and the default
+	// branch `*)` errors and exits 1. The behaviour is pinned again, against a
+	// faked gh, in TestDocsConsoleReleasePublishRefusesToClobber.
 	for _, c := range []struct{ subject, pass string }{
 		{`case "$existing" in`, `"") ;;`},
-		{`case "$answer" in`, `*"(HTTP 404)"*) ;;`},
 	} {
 		i := consoleLineIndex(plines, c.subject, false)
 		if i < 0 || i+1 >= len(plines) || plines[i+1] != c.pass {
@@ -3397,8 +3409,12 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 			t.Errorf("%s's publish step: %q's default branch does not refuse", consoleReleaseWorkflowPath, c.subject)
 		}
 	}
-	if i := consoleLineIndex(plines, `if answer="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$CONSOLE_TAG" 2>&1)"; then`, false); i < 0 || plines[i+2] != "exit 1" {
-		t.Errorf("%s's publish step does not refuse an existing console tag", consoleReleaseWorkflowPath)
+	// And the tag probe is not the CLI era's: `git/ref/tags/` (which reads the
+	// tag as "does it exist", the question the job asked when *it* created the
+	// tag) is replaced by "which commit does it name", because under a
+	// tag-push trigger the tag exists on every run by construction.
+	if i := consoleLineIndex(plines, `tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$CONSOLE_TAG" --jq .sha)"`, true); i < 0 || i+2 >= len(plines) || !strings.HasPrefix(plines[i+1], `echo "::error::`) || plines[i+2] != "exit 1" {
+		t.Errorf("%s's publish step does not resolve the console tag to a commit and stop when the lookup fails", consoleReleaseWorkflowPath)
 	}
 
 	// The Node version is console/package.json's engines.node, and no cache:
@@ -3532,10 +3548,17 @@ func consoleRunScript(t *testing.T, script string, env []string) (bool, string, 
 echo "gh $*" >> "$FAKE_LOG"
 case "$*" in
   *"/releases --jq"*) printf '%s' "$FAKE_RELEASES"; exit "${FAKE_RELEASES_EXIT:-0}" ;;
-  *"git/ref/tags/"*)
+  # The tag this run was triggered by, resolved to a commit (the step asks for
+  # the sha field). The job does not create that tag -- the owner pushes it, and that
+  # push is what started this run -- so the only question here is whether it
+  # still names the commit this run built. FAKE_TAG=at-sha answers with
+  # $GITHUB_SHA (the tag has not moved), FAKE_TAG=moved with another commit, and
+  # anything else is the lookup failing: which is NOT "no such tag", because the
+  # tag exists by construction, and it must stop the job too.
+  *"/commits/"*)
     case "$FAKE_TAG" in
-      exists) echo '{"ref":"refs/tags/x"}'; exit 0 ;;
-      404) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+      at-sha) printf '%s' "$GITHUB_SHA"; exit 0 ;;
+      moved) printf '%s' "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"; exit 0 ;;
       *) echo "gh: Server Error (HTTP 502)" >&2; exit 1 ;;
     esac ;;
   # The console's own notes, read from the tagged tree: FAKE_NOTES_EXIT=1 is a
@@ -3597,10 +3620,20 @@ exit 3
 }
 
 // TestDocsConsoleReleasePublishRefusesToClobber runs the staged publish step
-// against a faked gh. It publishes only when no console release exists and the
-// tag lookup is a clean 404; a published release, a leftover draft, an existing
-// tag, a tag lookup that failed any other way (a 5xx must not read as "absent")
-// and a failed release listing all stop it before `gh release create`.
+// against a faked gh, in the world the new trigger actually produces: the
+// console tag exists and is the tag whose push started the run ($GITHUB_REF_NAME
+// / $TAG), so the tag lookup answers "present at the commit this run built".
+//
+// The `publishes` case is that world, and it is what keeps the step honest: an
+// earlier version of this step probed the tag with `git/ref/tags/` and refused
+// when it existed, which under a tag-push trigger means refusing *every* console
+// release after the full build -- a suite that only modelled "tag absent:
+// publishes" stayed green over it. So the tag-lookup cases are the two states
+// that can really happen (present at this commit, or moved off it), plus a
+// lookup that fails, which is not "no such tag" and must stop the job as well.
+//
+// A published release, a leftover draft and a failed release listing all stop it
+// before `gh release create`.
 func TestDocsConsoleReleasePublishRefusesToClobber(t *testing.T) {
 	_, wf, _, _ := readConsoleReleaseWorkflow(t)
 	_, step := consoleStepNamed(t, wf.Jobs["publish"], "publish", consoleReleasePublishStep)
@@ -3613,18 +3646,21 @@ func TestDocsConsoleReleasePublishRefusesToClobber(t *testing.T) {
 		notes       string
 		publishes   bool
 	}{
-		{"nothing there: publishes", "", "0", "404", "0", "ok", true},
-		{"published release", "published", "0", "404", "0", "ok", false},
-		{"draft left by an earlier attempt", "draft", "0", "404", "0", "ok", false},
-		{"tag exists without a release", "", "0", "exists", "0", "ok", false},
-		{"tag lookup fails with a 5xx", "", "0", "502", "0", "ok", false},
-		{"release listing fails", "", "1", "404", "0", "ok", false},
+		{"tag present at the tagged commit: publishes", "", "0", "at-sha", "0", "ok", true},
+		{"published release", "published", "0", "at-sha", "0", "ok", false},
+		{"draft left by an earlier attempt", "draft", "0", "at-sha", "0", "ok", false},
+		// The tag is the owner's and cannot be absent here, but it can have been
+		// moved (a force-push, a re-tag) after this run started: publishing then
+		// would put assets built from one commit under a tag naming another.
+		{"the tag has moved off this run's commit", "", "0", "moved", "0", "ok", false},
+		{"tag lookup fails", "", "0", "502", "0", "ok", false},
+		{"release listing fails", "", "1", "at-sha", "0", "ok", false},
 		// The console's notes are the release body: a version whose notes file
 		// is not on the tagged commit, or is there and empty, is not a release
 		// this job may publish -- an empty body is what the console had while it
 		// rode the CLI's tag, and the file is what replaced it.
-		{"notes missing on the tagged commit", "", "0", "404", "1", "ok", false},
-		{"notes empty on the tagged commit", "", "0", "404", "0", "empty", false},
+		{"notes missing on the tagged commit", "", "0", "at-sha", "1", "ok", false},
+		{"notes empty on the tagged commit", "", "0", "at-sha", "0", "empty", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			notesB64 := "eA=="
@@ -3640,6 +3676,9 @@ func TestDocsConsoleReleasePublishRefusesToClobber(t *testing.T) {
 			published := strings.Contains(calls, "gh release edit console-v1.2.3 --repo dimipaun/fugaro --draft=false --latest=false")
 			if c.publishes && (!ok || !created || !published) {
 				t.Errorf("the publish step did not create and publish console-v1.2.3 (ok=%v); gh saw:\n%s", ok, calls)
+			}
+			if c.publishes && !strings.Contains(calls, "gh api repos/dimipaun/fugaro/commits/console-v1.2.3") {
+				t.Errorf("the publish step published without resolving the tag it is publishing under to a commit; gh saw:\n%s", calls)
 			}
 			if !c.publishes && (ok || created || published) {
 				t.Errorf("the publish step went on (ok=%v, created=%v) when it must refuse; gh saw:\n%s", ok, created, calls)
