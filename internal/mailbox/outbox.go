@@ -99,12 +99,30 @@ type OutboxStore interface {
 	PutIfMatch(ctx context.Context, path, etag string, v any) error
 }
 
-// ReplySigner signs one outbound value and answers its tag (M4b). `Signer.Tag`
-// is one — the shipped implementation, with the key read once at startup (M5) —
-// and a test injects one that fails, because M4's third row is unreachable in a
-// shipped build: no key that loads refuses one value while accepting another
+// ReplySigner signs one outbound value for the **outbox** node (M4b): the tag
+// it answers, and the node it signs for. `*Signer` is the shipped
+// implementation — `NewOutboxSigner`'s, with the key read once at startup (M5)
+// — and a test injects one that fails, because M4's third row is unreachable in
+// a shipped build: no key that loads refuses one value while accepting another
 // (§8.2.4).
-type ReplySigner func(value Record) (string, error)
+//
+// **The direction is part of the interface, not of the value.** The two
+// outbound families are signed in two directions (§8.2.3), so a signer built
+// for the heartbeat satisfies a bare `func(Record) (string, error)` and would
+// put a tag in the outbox that no phone can verify — and since the node is
+// create-only (M10, C0), no later write could correct it: the retry would find
+// the id present and leave the unverifiable value in place forever. The
+// heartbeat path makes the same mistake impossible by construction, because
+// only `Signer.Heartbeat` — which checks its own direction — matches
+// `LeaseSigner`; this is the outbox's half of that guarantee, and WriteReply
+// refuses a signer that signs for any other node.
+type ReplySigner interface {
+	// Direction is the node this signer signs for. The outbox takes nothing
+	// but directionOutbox.
+	Direction() string
+	// Tag is the value's tag over exactly the fields it carries (§8.2.1).
+	Tag(value Record) (string, error)
+}
 
 // ReplyVerdict is what one reply write answered, in the words the command
 // reports it in.
@@ -142,9 +160,12 @@ type ReplyRun struct {
 //
 //  1. **Build** the value (`Reply.Value`).
 //  2. **Sign** it, over exactly those fields, with the pairing's key in the
-//     `outbox` direction. A signer that errors means **nothing is written** and
-//     the answer is a per-write refusal (M4b) — the reply is owed again next
-//     pass, because nothing here records it.
+//     `outbox` direction — a signer that signs for another node is refused
+//     before it is called, because the value it produced would be one no phone
+//     can verify and, create-only, one no later write could correct. A signer
+//     that errors means **nothing is written** and the answer is a per-write
+//     refusal (M4b) — the reply is owed again next pass, because nothing here
+//     records it.
 //  3. **Add `mac` last**, so what the tag covers is exactly what lands.
 //  4. **Validate** the signed value against the merged schema (M10). A value the
 //     schema refuses is not written either, and the refusal carries the schema's
@@ -163,14 +184,16 @@ func WriteReply(ctx context.Context, store OutboxStore, sign ReplySigner, reply 
 	if err != nil {
 		return ReplyRun{}, err
 	}
-	// A reply with no signer at all is the same refusal as one whose signer
-	// failed: unsigned is unsigned, and a caller that reached here with no signer
-	// has a bug worth the same answer rather than an unsigned write.
-	if sign == nil {
+	// A reply with no signer at all, or with one built for another node, is the
+	// same refusal as one whose signer failed: unsigned is unsigned, a tag made
+	// in the `heartbeat` direction is a tag no outbox reader accepts, and a
+	// caller that reached here with either has a bug worth the same answer
+	// rather than a write that can never be verified or corrected (M10, C0).
+	if sign == nil || sign.Direction() != directionOutbox {
 		return ReplyRun{Verdict: ReplyRefused, Refusal: refuse(CodeBadMAC, "mac")}, nil
 	}
 	value := reply.Value()
-	tag, err := sign(value)
+	tag, err := sign.Tag(value)
 	if err != nil {
 		// M4's third row, and the code is the schema's own for a tag that is not
 		// a tag: the value has no `mac` it could carry, which is `bad-mac`'s

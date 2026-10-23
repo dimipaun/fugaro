@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 
@@ -41,41 +42,90 @@ import (
 // keychain (the vectors' placeholder, never a real one): no live cloud, no clock,
 // no key.
 
-// signerIn is the signer a value written to one node is signed with. It fails
-// loudly for a direction the consumer never writes, so the set of directions this
-// package can sign for is stated here rather than assumed: the phone signs the
-// inbox (P3.6), and the consumer signs the outbox and the heartbeat and nothing
-// else (M4b).
-func signerIn(t *testing.T, key []byte, direction string) *Signer {
-	t.Helper()
+// signerForDirection is the signer this package can build for one node's
+// direction, or nil for a direction it does not sign for. This switch is the
+// whole set: the phone signs the inbox (P3.6), and the consumer signs the outbox
+// and the heartbeat and nothing else (M4b).
+func signerForDirection(key []byte, direction string) *Signer {
 	switch direction {
 	case directionOutbox:
 		return NewOutboxSigner(keychain.NewKey(key))
 	case directionHeartbeat:
 		return NewHeartbeatSigner(keychain.NewKey(key))
 	}
-	t.Fatalf("no signer signs for the %s direction: the consumer writes the outbox and the heartbeat and nothing else", direction)
 	return nil
+}
+
+// outboxSignerFunc is a signer a test injects into a reply write: a tag function
+// and the node it claims to sign for. It exists because M4's third row is
+// unreachable in a shipped build — no key that loads refuses one value while
+// accepting another — and because the direction is part of what a reply write
+// checks, so a test can hand it a signer built for another node and watch the
+// refusal.
+type outboxSignerFunc struct {
+	direction string
+	tag       func(Record) (string, error)
+}
+
+func (s outboxSignerFunc) Direction() string { return s.direction }
+
+func (s outboxSignerFunc) Tag(value Record) (string, error) { return s.tag(value) }
+
+// failingOutboxSigner is an outbox signer whose tag function always errors: the
+// key is loaded and it is this value it cannot sign (M4's third row).
+func failingOutboxSigner(err error) outboxSignerFunc {
+	return outboxSignerFunc{
+		direction: directionOutbox,
+		tag:       func(Record) (string, error) { return "", err },
+	}
+}
+
+// signerIn is signerForDirection for a direction a test is entitled to: it fails
+// loudly rather than answering nil, so a test that names a direction the consumer
+// cannot sign for hears about it there.
+func signerIn(t *testing.T, key []byte, direction string) *Signer {
+	t.Helper()
+	s := signerForDirection(key, direction)
+	if s == nil {
+		t.Fatalf("no signer signs for the %s direction: the consumer writes the outbox and the heartbeat and nothing else", direction)
+	}
+	return s
 }
 
 // TestEveryOutboundDirectionHasASigner pins the pair of families §8.2.3 names,
 // and the absence of the third: a signer exists for each of the two directions
-// the consumer writes, it reports that direction, and there is no signer for the
-// inbox — a tag the consumer made for the inbox would be a tag it could pass off
-// as the phone's.
+// the consumer writes, it reports that direction, and there is **no** signer for
+// the inbox — a tag the consumer made for the inbox would be a tag it could pass
+// off as the phone's.
+//
+// The loop is driven by the schema's own direction list and the answer is read
+// back out of the package, so both halves are facts about what it can build
+// rather than about a literal in the test: the inbox is asked for like every
+// other direction, and the set of directions that answered must be exactly the
+// two §8.2.3 names.
 func TestEveryOutboundDirectionHasASigner(t *testing.T) {
 	key := []byte(vectorKey(t))
-	signable := map[string]bool{directionOutbox: true, directionHeartbeat: true}
+	signed := map[string]bool{}
 	for _, direction := range Directions {
-		if !signable[direction] {
+		s := signerForDirection(key, direction)
+		if s == nil {
 			continue
 		}
-		if got := signerIn(t, key, direction).Direction(); got != direction {
-			t.Errorf("the signer for %s reports %s", direction, got)
+		signed[direction] = true
+		if got := s.Direction(); got != direction {
+			t.Errorf("the signer built for the %s direction reports %s", direction, got)
+		}
+		if direction == directionInbox {
+			t.Errorf("this package built a signer for the %s direction: the phone signs the inbox (P3.6), and a tag the consumer made for it is a tag it could pass off as the phone's", direction)
 		}
 	}
-	if len(signable) != 2 {
-		t.Fatalf("the consumer signs %d families; §8.2.3 names two — the outbox reply and the heartbeat", len(signable))
+	got := make([]string, 0, len(signed))
+	for direction := range signed {
+		got = append(got, direction)
+	}
+	sort.Strings(got)
+	if want := directionHeartbeat + "," + directionOutbox; strings.Join(got, ",") != want {
+		t.Fatalf("the consumer can sign for %v; §8.2.3 names exactly two families — %s", got, want)
 	}
 }
 
@@ -234,7 +284,7 @@ func TestOutboundIsSigned(t *testing.T) {
 	store := leaseClient(t, f)
 	reply := testReply(t, "r-m-0001", "m-0001")
 
-	run, err := WriteReply(context.Background(), store, NewOutboxSigner(keychain.NewKey(key)).Tag, reply)
+	run, err := WriteReply(context.Background(), store, NewOutboxSigner(keychain.NewKey(key)), reply)
 	if err != nil {
 		t.Fatalf("writing the reply: %v", err)
 	}
@@ -360,6 +410,86 @@ func TestDirectionsAreNotInterchangeable(t *testing.T) {
 	}
 }
 
+// TestAHeartbeatSignerCannotSignAReply is the outbox's half of what red step (d)
+// covers for the heartbeat: the two outbound families are signed in two
+// directions (§8.2.3), so a signer built for the heartbeat must not be able to
+// put a tag in the outbox. Nothing about the tag it would make is malformed —
+// `name-a-value` accepts any 64 lowercase hex characters — so nothing downstream
+// would catch it: the phone would read a reply it cannot verify, and because the
+// node is create-only (M10, C0) no later write could replace it. The write is
+// refused instead, and the reply is owed again.
+func TestAHeartbeatSignerCannotSignAReply(t *testing.T) {
+	key := []byte(vectorKey(t))
+	ctx := context.Background()
+	f := gcpfake.NewRTDB(t)
+	store := &replyRecorder{inner: leaseClient(t, f)}
+	reply := testReply(t, "r-m-0004", "m-0004")
+	path, err := OutboxPath(reply.Sender, reply.ID)
+	if err != nil {
+		t.Fatalf("building the outbox path: %v", err)
+	}
+
+	// The wrong signer: a real key, a real tag, the wrong node.
+	wrong := NewHeartbeatSigner(keychain.NewKey(key))
+	run, err := WriteReply(ctx, store, wrong, reply)
+	if err != nil {
+		t.Fatalf("a reply signed with the heartbeat's signer ended as an error (%v): a signer for another node is a per-write refusal, like a signer that errored", err)
+	}
+	if run.Verdict != ReplyRefused || run.Refusal == nil || run.Refusal.Code != CodeBadMAC {
+		t.Fatalf("a reply signed in the %s direction answered %s, %v", wrong.Direction(), run.Verdict, run.Refusal)
+	}
+	if run.Value != nil || store.writes != 0 || f.Value(path) != nil {
+		t.Errorf("a reply signed in the %s direction was written (%v) after %d writes", wrong.Direction(), f.Value(path), store.writes)
+	}
+
+	// The right signer, the same reply: it is owed, and it lands. So the
+	// refusal above was about the node and not about the reply.
+	run, err = WriteReply(ctx, store, NewOutboxSigner(keychain.NewKey(key)), reply)
+	if err != nil || run.Verdict != ReplyWritten {
+		t.Fatalf("the same reply written with the outbox's own signer answered %s, %v, %v", run.Verdict, run.Refusal, err)
+	}
+	stored := storedRecord(t, f, path)
+	if ok, err := VerifyMAC(stored, key, directionOutbox); err != nil || !ok {
+		t.Errorf("the reply in the outbox does not carry its own tag in the outbox direction: %v, %v", ok, err)
+	}
+}
+
+// TestAHeartbeatAdvertisingAgentsIsRefused pins the one thing the heartbeat
+// signer will not do quietly. The merged heartbeat is `{at, boot, agents?, mac}`
+// and `agents` is in the covered set when it is present, but the list is P6.7's
+// and P4.1 writes the heartbeat without it (§13's ownership table) — so a tag
+// computed over a list would be a tag over bytes the stored heartbeat does not
+// carry: a value that verifies nowhere, with no error, and no lease either
+// because the heartbeat write IS the lease (M1). This is the mutation that
+// produces that silently.
+func TestAHeartbeatAdvertisingAgentsIsRefused(t *testing.T) {
+	key := []byte(vectorKey(t))
+	signer := NewHeartbeatSigner(keychain.NewKey(key))
+	hb := Heartbeat{At: leaseAt, Boot: leaseHolder, Agents: []Agent{{ID: "a-0001", Name: "the first agent"}}}
+
+	tag, err := signer.Heartbeat(hb)
+	if err == nil {
+		t.Fatalf("a heartbeat advertising %d agents was signed (%s): the tag would cover bytes the stored heartbeat does not carry", len(hb.Agents), tag)
+	}
+	if !errors.Is(err, ErrUnsignable) {
+		t.Errorf("the refusal is %v, which is not ErrUnsignable: nothing is written for it and it is a per-write refusal, not a startup exit", err)
+	}
+	if strings.Contains(err.Error(), hb.Agents[0].Name) {
+		t.Errorf("the refusal quotes the advertised name: %v", err)
+	}
+	// The same heartbeat without the list is the one P4.1 writes, and it signs
+	// and verifies in its own direction.
+	hb.Agents = nil
+	tag, err = signer.Heartbeat(hb)
+	if err != nil {
+		t.Fatalf("the heartbeat P4.1 writes could not be signed: %v", err)
+	}
+	value := Record{"at": hb.At, "boot": hb.Boot, "mac": tag}
+	if ok, err := VerifyMAC(value, key, directionHeartbeat); err != nil || !ok {
+		t.Errorf("the heartbeat just signed does not verify in the heartbeat direction: %v, %v", ok, err)
+	}
+}
+
 // TestUnsignedHeartbeatIsNotWritten is the plan's red step (c), on M1's node: a
 // heartbeat this consumer cannot sign is not written — and since the heartbeat
 // write **is** the lease, no lease is taken either, and the pass that could not
@@ -417,7 +547,7 @@ func TestSigningFailureIsAPerWriteRefusal(t *testing.T) {
 	f := gcpfake.NewRTDB(t)
 	store := &replyRecorder{inner: leaseClient(t, f)}
 	reply := testReply(t, "r-m-0002", "m-0002")
-	failing := func(Record) (string, error) { return "", errors.New("this value cannot be signed") }
+	failing := failingOutboxSigner(errors.New("this value cannot be signed"))
 	run, err := WriteReply(ctx, store, failing, reply)
 	if err != nil {
 		t.Fatalf("an unsignable reply ended as an error (%v): a value that cannot be signed is a per-write refusal, an outcome of a completed pass", err)
@@ -473,14 +603,14 @@ func TestARefusedReplyIsOwedAgain(t *testing.T) {
 	ctx := context.Background()
 	f := gcpfake.NewRTDB(t)
 	store := &replyRecorder{inner: leaseClient(t, f)}
-	signer := NewOutboxSigner(keychain.NewKey(key)).Tag
+	signer := NewOutboxSigner(keychain.NewKey(key))
 	reply := testReply(t, "r-m-0003", "m-0003")
 	path, err := OutboxPath(reply.Sender, reply.ID)
 	if err != nil {
 		t.Fatalf("building the outbox path: %v", err)
 	}
 
-	if run, err := WriteReply(ctx, store, func(Record) (string, error) { return "", errors.New("no") }, reply); err != nil || run.Verdict != ReplyRefused {
+	if run, err := WriteReply(ctx, store, failingOutboxSigner(errors.New("no")), reply); err != nil || run.Verdict != ReplyRefused {
 		t.Fatalf("the unsignable reply answered %s, %v, %v", run.Verdict, run.Refusal, err)
 	}
 	if f.Value(path) != nil {
@@ -590,7 +720,7 @@ func TestOutboundWritesAreSignedAcrossSeededSchedules(t *testing.T) {
 				switch state % 3 {
 				case 0:
 					// The pairing's key: the write must land and must verify.
-					run, err := WriteReply(ctx, store, NewOutboxSigner(keychain.NewKey(key)).Tag, reply)
+					run, err := WriteReply(ctx, store, NewOutboxSigner(keychain.NewKey(key)), reply)
 					if err != nil {
 						t.Fatalf("seed %d frame %d: writing the reply: %v", seed, frame, err)
 					}
@@ -604,9 +734,9 @@ func TestOutboundWritesAreSignedAcrossSeededSchedules(t *testing.T) {
 				default:
 					// No signature at all, and a signature the schema refuses:
 					// neither may reach the store, and neither is an error.
-					sign := func(Record) (string, error) { return "", errors.New("this value cannot be signed") }
+					sign := failingOutboxSigner(errors.New("this value cannot be signed"))
 					if state%3 == 2 {
-						sign = func(Record) (string, error) { return "not-a-tag", nil }
+						sign = outboxSignerFunc{direction: directionOutbox, tag: func(Record) (string, error) { return "not-a-tag", nil }}
 					}
 					run, err := WriteReply(ctx, store, sign, reply)
 					if err != nil {
