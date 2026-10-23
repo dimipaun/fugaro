@@ -2424,6 +2424,22 @@ Two honest limits of this diff, both deliberate:
 
 Copied in on 2026-10-17 (#504): `.github/workflows/ci.yml`'s `terraform` job now loops over `installation firebase repo compute`. The staged copy is removed, so `images/cloudbuild_test.go` reads the real file on its own: `TestCIWorkflowTestsEveryTerraformRoot` requires it to name every root under `deploy/terraform/gcp/roots/`, and `TestStagedCIWorkflowIsTheRealOnePlusTheComputeRoot` skips while the staged copy is absent. A future change to `ci.yml` that a run needs is staged here again, as the real file plus the change.
 
+**The change outstanding now: the `internal/runner` package's test timeout (2026-10-23, 0.10.2).** CI's `test` job has one test step, `- run: go test -race -timeout 20m ./...`, which gives every package the same 20 minutes. `internal/runner`'s own suite takes about 25 minutes under `GOFLAGS=-p=2`, and a package that overruns `-timeout` is killed and reported as a panic, not as a failing test, so that package can time out in CI as it does for a contributor running the documented `go test -race ./...` (whose `-timeout` is go's 10-minute default).
+
+**What the owner changes**, in the `test` job, in place of that one step and nothing else:
+
+    - run: go test -race -timeout 20m $(go list ./... | grep -v /internal/runner)
+    - run: go test -race -timeout 40m ./internal/runner/...
+
+The job's own `timeout-minutes: 30` is above the longest step either way, so nothing else in the job changes.
+
+**Why that is written here instead of staged as a copy of the file, which is what this directory is for.** Two guards pin the staged path itself to the compute-root state, and neither is a run's to move:
+
+- `internal/cli/docs_compute_backend_test.go`'s `TestDocsComputeBackendCIReachMatchesTheTree` fails while `docs/pending-workflows/ci.yml` exists at all, because `docs/plans/2026-10-19-compute-backend.md`'s Global Constraint 3 says the staged request it recorded was applied to the workflow instead and nothing was re-staged.
+- `images/cloudbuild_test.go`'s `TestStagedCIWorkflowIsTheRealOnePlusTheComputeRoot` holds a staged copy to exactly one differing line — the Terraform root loop — so a copy staged for this change would fail it too.
+
+Re-staging `ci.yml` therefore means rewriting both guards (and the plan text the first one quotes) in a change about a test timeout, which is the owner's call, not a run's. The owner can apply the two lines above by hand, or stage the file properly when they next copy a workflow file in and rewrite those two guards in the same change. `CONTRIBUTING.md` and `docs/dogfooding.md` name the same bound for the local case, so the package is run with it either way.
+
 ## Before you copy: check the action pins
 
 Dependabot does not watch this directory, and `next` can lag `main`'s Dependabot bumps of the workflow files, so a staged file's pins can differ from the ones `main` has moved to. `TestActionPinsAreFullSHAs` requires every `uses:` **here** to be a full commit SHA; once a staged file is copied in and gone from here, the same test also requires its pins to agree with the other workflows' — `images.yml` is that test's subject, so that comparison is live for it. `TestSharedTestsWorkflowIsStagedAndPinned` requires the same of the pending `shared-tests.yml` (full SHAs, each with its `# vX.Y.Z` beside it). Before copying, compare `grep -h 'uses:' .github/workflows/*.yml docs/pending-workflows/*.yml | sort -u` and keep the NEWER SHA for each action (verify it against the upstream tag with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`), so the copy never downgrades a pin.

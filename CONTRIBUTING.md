@@ -32,6 +32,14 @@ Terraform changes: `terraform fmt -check -recursive deploy/terraform`, and `terr
 - `terraform`: fmt, validate and `terraform test` of every root under `deploy/terraform/gcp/roots/` (the job's `for r in ...` loop — `compute` is added by the staged `docs/pending-workflows/ci.yml`, so until that file is copied in the new root is validated locally only), tflint, a Trivy scan, and the `terraform`-tagged tests
 - `rules`: the database rules against the emulator, which fails (not skips) if the emulator is missing
 
+One package needs a bound of its own. `go test` kills any package still running after `-timeout`, and that timeout is 10 minutes per package unless you say otherwise; `internal/runner`'s own suite takes about 25 minutes, so a plain `go test -race ./...` reports it as a panic rather than as a failing test. Run it on its own with a longer bound:
+
+```sh
+go test -race -timeout 40m ./internal/runner/...
+```
+
+CI's `test` job has to give that package the same bound. `.github/workflows/ci.yml` is a file no run may push, so the exact change the owner has to make is written out in `docs/pending-workflows/README.md`, `## ci.yml`.
+
 ## Skills
 
 The plugin's skills are in `plugin/skills` (`setup`, `working`, `routing`, `parallelism`). Try a change with `claude --plugin-dir plugin`. A CLI change that touches a documented command changes the skill that names it in the same PR: the tests in `plugin/` check every command and flag a skill gives against the CLI.
