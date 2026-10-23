@@ -342,9 +342,13 @@ func TestPlainLauncherCellCutsAtTheBoundary(t *testing.T) {
 }
 
 // tuiRowCell is the value under the header's col column on the frame line
-// whose RUN cell is shortID, for the interactive screen's fixed-width table
-// (columns are space padded, so the header's own offsets are the row's). next
-// is the column the wanted one is followed by, which is where its cell ends.
+// whose RUN cell is shortID, for the interactive screen's fixed-width table:
+// columns are space padded, so the header's own offsets are the row's. next is
+// the column the wanted one is followed by, which is where its cell ends.
+//
+// The offsets are counted in runes, not bytes: a row's title is clipped with
+// an ellipsis, which is three bytes wide, and a byte offset taken from the
+// header would land two columns into the wrong cell.
 func tuiRowCell(t *testing.T, frame, shortID, col, next string) string {
 	t.Helper()
 	var hdr string
@@ -357,7 +361,8 @@ func tuiRowCell(t *testing.T, frame, shortID, col, next string) string {
 	if hdr == "" {
 		t.Fatalf("the frame has no run-table header with a %q column:\n%s", col, frame)
 	}
-	start, end := strings.Index(hdr, col), strings.Index(hdr, next)
+	hr := []rune(hdr)
+	start, end := runeIndex(hr, col), runeIndex(hr, next)
 	if start < 0 || end <= start {
 		t.Fatalf("the header %q has no %q column before %q", hdr, col, next)
 	}
@@ -366,13 +371,23 @@ func tuiRowCell(t *testing.T, frame, shortID, col, next string) string {
 		if len(f) < 2 || (f[0] != shortID && !(f[0] == "▸" && f[1] == shortID)) {
 			continue
 		}
-		if len(l) < end {
-			return ""
+		if r := []rune(l); len(r) >= end {
+			return strings.TrimSpace(string(r[start:end]))
 		}
-		return strings.TrimSpace(l[start:end])
+		return ""
 	}
 	t.Fatalf("no run row %q in the frame:\n%s", shortID, frame)
 	return ""
+}
+
+// runeIndex is strings.Index in runes: the first rune offset of sub in r, or
+// -1.
+func runeIndex(r []rune, sub string) int {
+	i := strings.Index(string(r), sub)
+	if i < 0 {
+		return -1
+	}
+	return len([]rune(string(r)[:i]))
 }
 
 // TestWideTableShowsTheLauncherColumn: the interactive screen's run table

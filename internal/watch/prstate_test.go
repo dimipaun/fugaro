@@ -596,8 +596,11 @@ func TestTUIPRStateDropsMergedReadyRow(t *testing.T) {
 		t.Fatalf("want only the open PR listed:\n%s", section)
 	}
 	// The row is gone from the ready list only: its finished row is untouched.
-	// (The run table names a run by the last four characters of its id, item 1.)
-	if !strings.Contains(s, shortRun("r-merged")) {
+	// A finished row is a one-liner, not a row of the run table, so it names
+	// the run by its whole id — the four-character form of item 1 is the RUN
+	// column's (shortRun), and looking for that form here would find it in the
+	// middle of the id and prove nothing.
+	if !strings.Contains(s, "r-merged Already merged") {
 		t.Fatalf("the finished row itself must stay:\n%s", s)
 	}
 }

@@ -3,15 +3,15 @@ live
 TOTAL  82% of $50.00 · burn $0.12/min ⚠ FAST · $40.00 + $3.…
        4 runs · 0.8 run-hours
 ▸ acme/app  75% of $40.00 · burn $0.09/min ⚠ FAST · $29.00 …
-  aa11  Fix the flaky login test
+  aa11 Fix the flaky login test
     coding r2 12m03s SILENT $1.25
-  bb22  Add pagination to the list endpoint
+  bb22 Add pagination to the list endpoint
     review r1 12m03s NOTIONAL, ⚠ near $1.25
   acme/lib  110% of $10.00 · burn … · $11.00
   ⚠ KILLED by dimi@x.io at 2026-10-03 11:55Z "runaway loop"
-  cc33  Refactor the parser
+  cc33 Refactor the parser
     verify r1 12m03s LOST, OVER, halted: killed $1.25
   acme/docs  $0.00, no cap · burn $0.00/min · $0.00
-  dd44  Typos
+  dd44 Typos
     coding r1 - -
 showing active + recent · a: all · ↑↓ select · ? help · q q…

@@ -96,6 +96,44 @@ func TestFrameWide(t *testing.T) {
 }
 
 func TestFrameMedium(t *testing.T) { golden(t, "medium_80", frame(fixture(), 80, 0)) }
+
+// The width tier 2 is entered at (tierOf): the narrowest screen that draws
+// the run table as columns, where its fixed cells and the title's floor have
+// to add up on their own, since there is no elastic slack left to give.
+func TestFrameMediumEntryWidth(t *testing.T) { golden(t, "medium_70", frame(fixture(), 70, 0)) }
+
+// The run table's row is complete at the width its cells add up to, and the
+// BY column (owner spec 2026-10-22, item 2) is bought out of those cells, not
+// out of the screen: a row that does not fit is cut off at the screen's edge
+// by rend.line, which takes the flags — and, at tier 3, the models — with it.
+// So at the widths the table is drawn whole at, every run row must end before
+// the edge: 70 columns and up for tier 2, 120 and up for tier 3 (the width
+// the widest golden draws). colsOf does the arithmetic; this pins it.
+func TestRunRowsFitAtEachTiersEntryWidth(t *testing.T) {
+	v := fixture()
+	ids := []string{"aa11", "bb22", "cc33", "dd44"}
+	for _, w := range []int{70, 80, 120, 140} {
+		got := frame(v, w, 0)
+		rows := 0
+		for _, l := range strings.Split(got, "\n") {
+			row := false
+			for _, id := range ids {
+				row = row || strings.Contains(l, id)
+			}
+			if !row {
+				continue
+			}
+			rows++
+			if n := dw(stripSGR(l)); n >= w {
+				t.Fatalf("width %d: a run row is %d columns, so the edge cut it off:\n%s", w, n, got)
+			}
+		}
+		if rows != len(ids) {
+			t.Fatalf("width %d: %d run rows, want %d:\n%s", w, rows, len(ids), got)
+		}
+	}
+}
+
 func TestFrameNarrow(t *testing.T) { golden(t, "narrow_50", frame(fixture(), 50, 0)) }
 
 // At tier 1 (width < 70) a selected run is marked on its own two-line row,
