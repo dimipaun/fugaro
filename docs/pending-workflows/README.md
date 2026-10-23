@@ -2426,19 +2426,20 @@ Copied in on 2026-10-17 (#504): `.github/workflows/ci.yml`'s `terraform` job now
 
 **The change outstanding now: the `internal/runner` package's test timeout (2026-10-23, 0.10.2).** CI's `test` job has one test step, `- run: go test -race -timeout 20m ./...`, which gives every package the same 20 minutes. `internal/runner`'s own suite takes about 25 minutes under `GOFLAGS=-p=2`, and a package that overruns `-timeout` is killed and reported as a panic, not as a failing test, so that package can time out in CI as it does for a contributor running the documented `go test -race ./...` (whose `-timeout` is go's 10-minute default).
 
-**What the owner changes**, in the `test` job, in place of that one step and nothing else:
+**What the owner changes**, in the `test` job: that one step becomes the two below, and the job's own cap rises with them.
 
     - run: go test -race -timeout 20m $(go list ./... | grep -v /internal/runner)
     - run: go test -race -timeout 40m ./internal/runner/...
+    timeout-minutes: 60   # the job line, which reads 30 today
 
-The job's own `timeout-minutes: 30` is above the longest step either way, so nothing else in the job changes.
+**The cap has to rise, or the bound can never fire — the first writing of this section said otherwise and was wrong.** `timeout-minutes: 30` bounds the whole job, all of its steps together, so a second test step carrying `-timeout 40m` sits under a 30-minute ceiling: the job is killed first and the package's own bound never has a chance to speak. The two steps also run one after the other, where the single `go test ./...` ran the packages in parallel, so the runner step begins with 30 minutes minus everything before it — gofmt, the six `go vet` runs and the other packages' step — which is about the 20 minutes it has today, the state this change exists to leave. 60 leaves the earlier steps, the other-packages step and the runner package's own 40 minutes room. (Giving every package the longer bound instead, `- run: go test -race -timeout 40m ./...`, is one line rather than two, but it needs the same raised cap and makes a hung package take 40 minutes to be killed rather than 20.)
 
 **Why that is written here instead of staged as a copy of the file, which is what this directory is for.** Two guards pin the staged path itself to the compute-root state, and neither is a run's to move:
 
 - `internal/cli/docs_compute_backend_test.go`'s `TestDocsComputeBackendCIReachMatchesTheTree` fails while `docs/pending-workflows/ci.yml` exists at all, because `docs/plans/2026-10-19-compute-backend.md`'s Global Constraint 3 says the staged request it recorded was applied to the workflow instead and nothing was re-staged.
 - `images/cloudbuild_test.go`'s `TestStagedCIWorkflowIsTheRealOnePlusTheComputeRoot` holds a staged copy to exactly one differing line — the Terraform root loop — so a copy staged for this change would fail it too.
 
-Re-staging `ci.yml` therefore means rewriting both guards (and the plan text the first one quotes) in a change about a test timeout, which is the owner's call, not a run's. The owner can apply the two lines above by hand, or stage the file properly when they next copy a workflow file in and rewrite those two guards in the same change. `CONTRIBUTING.md` and `docs/dogfooding.md` name the same bound for the local case, so the package is run with it either way.
+Re-staging `ci.yml` therefore means rewriting both guards (and the plan text the first one quotes) in a change about a test timeout, which is the owner's call, not a run's. The owner can apply the change above by hand, or stage the file properly when they next copy a workflow file in and rewrite those two guards in the same change. `CONTRIBUTING.md` and `docs/dogfooding.md` name the same bound for the local case, so the package is run with it either way. **`internal/cli/docs_runner_timeout_test.go` holds this section, those two sentences and `.github/workflows/ci.yml` to one another in both directions**: it reads whether CI gives `internal/runner` a bound of its own out of the workflow, and fails whichever way the two disagree — the documents still calling the change outstanding once CI carries it, or claiming CI carries it while the workflow does not — so applying the change without these three documents is what goes red, and so is editing them without applying it. It also checks, while CI carries the bound, that the job's cap is above it, which is the way this change goes wrong silently: the step's `-timeout` under a job that dies first.
 
 ## Before you copy: check the action pins
 
