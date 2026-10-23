@@ -86,8 +86,8 @@
 // under `own` they are the caller's own alone, and the two states where the CLI
 // publishes no row publish **no total either** (`userstats.Aggregate` builds
 // `totals` out of `rows`). A total is never computed here: it is the CLI's own
-// sum of the rows it published, and the panel says which read it is the sum of. The
-// console cannot ask for `--all-users`: that flag is not on the operation's
+// sum of the rows it published, and the panel says which read it is the sum of.
+// The console cannot ask for `--all-users`: that flag is not on the operation's
 // schema (`src/main/ipc.ts`), so "who may see whose rows" is the CLI's decision
 // and never this window's. What the panel *withheld* is a sentence and a count
 // on screen -- a reader is owed the difference between "nobody spent anything"
