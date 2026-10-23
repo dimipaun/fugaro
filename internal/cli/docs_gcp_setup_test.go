@@ -96,12 +96,13 @@ func TestDocsGCPSetupNamesTheWindowsForm(t *testing.T) {
 	for _, want := range []string{
 		"in the environment that will run `fugaro`",
 		"different files",
-		// Which preconditions are shell commands at all. The page claimed
-		// preconditions 1 and 3 and then said everything else was `fugaro`,
-		// which is false of 2, 4, 5, 6 and 9 — gcloud and terraform commands
-		// the reader runs — and the next paragraph already treats 2 as one.
-		"`gcloud` in 1, 2, 4, 5 and 9",
-		"`terraform` in 6",
+		// Which preconditions are shell commands at all. An earlier page
+		// claimed only the login and the environment, and said everything
+		// else was `fugaro`, which is false of the quota project, billing,
+		// serviceusage, Terraform and the build identity — gcloud and
+		// terraform commands the reader runs in every subsection.
+		"The `gcloud` lines under Install, Log in, Have ready and Before you onboard a repository",
+		"`terraform version` under Install",
 	} {
 		if !strings.Contains(flat, want) {
 			t.Errorf("%s does not say %q (whitespace flattened): the environment rule, the two-files fact and which preconditions are shell commands at all are what the section exists to say", gcpSetupDoc, want)
