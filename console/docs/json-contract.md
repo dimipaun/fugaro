@@ -991,10 +991,14 @@ shows the CLI's refusal sentence rather than a graph.
 **Document:** `userStatsDoc`, indented (`writeUserStats`), both in
 `internal/cli/runs_stats.go` — cited by symbol, not by line: an indented
 document is written by one function and a line number here rots at the next
-insertion above it. This is the one command in this document the console
-**does not spawn yet**: it is the data behind the Spend screen's by-person
-view (CLI 0.9.0), and the section is here so the screen that follows has a
-shape read off the code rather than assumed from a design. It is read-only —
+insertion above it. **The console spawns it** — design §5.1 rule 6's
+`runs stats --json` row, the console's `runs.stats` operation — as the data
+behind the Spend screen's by-person view, and the console passes `--since`
+and nothing else. **`--all-users` is not on the spawn list**, which is what
+keeps the view the CLI resolved out of a screen's hands: an operator of the
+installation sees every user's rows, a plain launcher sees their own row
+alone, and an identity the installation's own lists do not place stays
+private. It is read-only —
 the figures come from the run records (`launch.json`'s `launched_by`, and
 `result.json`'s outcome and settled cost), never from the budget database, so
 there is no write path behind it and no counter a screen has to reconcile.

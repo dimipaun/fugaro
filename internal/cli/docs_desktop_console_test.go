@@ -722,6 +722,10 @@ func TestDocsDesktopConsoleContractNamesTheFlagInventory(t *testing.T) {
 		"budget show": newBudgetShowCmd,
 		"report":      newReportCmd,
 		"runs ls":     newLsCmd,
+		// The Spend screen's by-person view (console L5b, design §5.1 rule 6):
+		// the console spawns it with --since, so it carries --project and
+		// --config like every other dashboard read.
+		"runs stats":  newRunsStatsCmd,
 		"diagnose":    newDiagnoseCmd,
 		"logs":        newLogsCmd,
 		"secrets ls":  newSecretsLsCmd,
@@ -756,11 +760,11 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	"budget show": newBudgetShowCmd,
 	"report":      newReportCmd,
 	"runs ls":     newLsCmd,
-	// §6.10 documents the by-person aggregate (CLI 0.9.0). It is not on the
-	// design's spawn allow-list yet -- the Spend screen's by-person view is
-	// the task that follows -- but the document describes its flags, so the
-	// flags written there are checked against this constructor like any
-	// other's.
+	// §6.10 documents the by-person aggregate (CLI 0.9.0), and it is now on
+	// the design's spawn allow-list too (console L5b, §5.1 rule 6): the Spend
+	// screen's by-person view spawns it with --since. The document describes
+	// its flags either way, so the flags written there are checked against
+	// this constructor like any other's.
 	"runs stats":  newRunsStatsCmd,
 	"diagnose":    newDiagnoseCmd,
 	"logs":        newLogsCmd,
@@ -1048,6 +1052,10 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		"budget show --json",
 		"report --json",
 		"runs ls --json",
+		// The Spend screen's by-person view (console L5b): the one read whose
+		// rows the CLI scopes to the caller, and the one argv here the console
+		// may not widen with --all-users.
+		"runs stats --json",
 		"diagnose RUN --json",
 		"logs RUN --json",
 		"logs RUN --url",
@@ -1146,10 +1154,10 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Eleven commands: the ten dashboard reads (logs has two argvs) and the
+	// Twelve commands: the eleven dashboard reads (logs has two argvs) and the
 	// picker's `config list --json` (D13's amendment of 2026-10-20).
-	if len(allowed) != 11 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 11 (logs has two argvs)", path, argvs, len(allowed))
+	if len(allowed) != 12 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 12 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the one read the design names for the console and §5.1 has not
