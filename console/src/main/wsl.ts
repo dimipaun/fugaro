@@ -41,7 +41,7 @@
 // operator never made and cannot see.
 
 import { DEFAULT_BACKOFF, FUGARO_BINARY_NAME, childEnvironment, runToCompletion } from './spawn'
-import type { ChildSpawner, SpawnPlan, Timers } from './spawn'
+import type { ChildSpawner, SpawnPlan, Timers, WslQueryName } from './spawn'
 import type { SpawnLogWriter } from './spawnlog'
 
 /** WSL_EXE_NAME is the program's name on Windows. It is data rather than a
@@ -178,7 +178,7 @@ export async function wslDistributions(options: {
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
   }
 
-  const list = await runWslQuery({ ...shared, args: ['--list', '--quiet'] })
+  const list = await runWslQuery({ ...shared, operation: 'wsl.distributions', prefix: [], argv: ['--list', '--quiet'] })
   if (!list.ok) return { kind: 'absent', reason: list.reason }
   const names = parseDistributionList(list.stdout)
   if (names === null) {
@@ -194,7 +194,7 @@ export async function wslDistributions(options: {
     }
   }
 
-  const status = await runWslQuery({ ...shared, args: ['--status'] })
+  const status = await runWslQuery({ ...shared, operation: 'wsl.distributions', prefix: [], argv: ['--status'] })
   const preferred = status.ok ? parseDefaultDistribution(status.stdout) : null
   return {
     kind: 'listed',
@@ -224,10 +224,20 @@ type WslQueryResult =
  * its `operation` is a `WslQueryName` rather than a CLI operation, because a
  * query drives no command of the CLI's (`assertSpawnSurface`'s table is about
  * those, and it must not grow a row for `--list`).
+ *
+ * `prefix` is the difference between the two kinds of question this module asks.
+ * The questions *about the machine* (`--list`, `--status`) run `wsl.exe` on the
+ * host and have no wrapper at all; the questions asked **inside a distribution**
+ * (`wslpath`, T-D2) name it with `-d <distro> --`, and the program word after
+ * the `--` is the distribution's own program rather than the CLI.
  */
 async function runWslQuery(options: {
+  readonly operation: WslQueryName
   readonly program: string
-  readonly args: readonly string[]
+  readonly prefix: readonly string[]
+  /** `argv` is the far side's argv, program word first: `['--list','--quiet']`
+   * for a host question, `['wslpath','-a','-u',<path>]` for a translation. */
+  readonly argv: readonly string[]
   readonly appEnv: Readonly<Record<string, string | undefined>>
   readonly cwd: string
   readonly project: string
@@ -237,10 +247,10 @@ async function runWslQuery(options: {
   readonly timeoutMs?: number
 }): Promise<WslQueryResult> {
   const plan: SpawnPlan = Object.freeze({
-    operation: 'wsl.distributions' as const,
+    operation: options.operation,
     command: options.program,
-    prefix: Object.freeze([]) as readonly string[],
-    argv: Object.freeze([options.program, ...options.args]),
+    prefix: Object.freeze([...options.prefix]) as readonly string[],
+    argv: Object.freeze([...options.argv]),
     cwd: options.cwd,
     // The same environment rule as any other spawn, with the **win32** row's
     // child `PATH` -- which is Linux's (`WIN32_LOCATIONS`, T-C2), because the
@@ -269,7 +279,7 @@ async function runWslQuery(options: {
   } catch (error) {
     return {
       ok: false,
-      reason: `wsl.exe did not answer \`${options.args.join(' ')}\`: ${describe(error)}`,
+      reason: `wsl.exe did not answer \`${options.argv.join(' ')}\`: ${describe(error)}`,
     }
   }
   if (result.code !== 0) {
@@ -277,11 +287,178 @@ async function runWslQuery(options: {
     return {
       ok: false,
       reason:
-        `wsl.exe exited ${String(result.code)} for \`${options.args.join(' ')}\`` +
+        `wsl.exe exited ${String(result.code)} for \`${options.argv.join(' ')}\`` +
         (said === '' ? ' and said nothing' : `: ${said}`),
     }
   }
   return { ok: true, stdout: result.stdout }
+}
+
+// ---------------------------------------------------------------------------
+// wslpath: the translation, both directions (T-D2, D4(a))
+// ---------------------------------------------------------------------------
+
+/** WSLPATH_PROGRAM is the distribution's own path-translation tool. It is asked
+ * rather than reimplemented: see `WslPathTranslation`. */
+export const WSLPATH_PROGRAM = 'wslpath'
+
+/** WSLPATH_FLAG_ABSOLUTE asks for an absolute answer -- `wslpath -a`. The
+ * console passes it so the answer can be handed to a child as a working
+ * directory whatever the distribution's own cwd was. */
+export const WSLPATH_FLAG_ABSOLUTE = '-a'
+
+/** WSLPATH_FLAG_TO_LINUX (`-u`) reads a Windows spelling and answers the
+ * distribution's; WSLPATH_FLAG_TO_WINDOWS (`-w`) is the other way. */
+export const WSLPATH_FLAG_TO_LINUX = '-u'
+export const WSLPATH_FLAG_TO_WINDOWS = '-w'
+
+/** WslPathDirection is which way a translation goes. */
+export type WslPathDirection = 'toLinux' | 'toWindows'
+
+/**
+ * WslPathTranslation is one translation's answer: the other side's spelling, or
+ * **a stated refusal**.
+ *
+ * **Why this is a process and not a function.** `C:\Users\X` -> `/mnt/c/Users/X`
+ * is the common case, and a mapping computed in the console is right for it and
+ * wrong for every mount the operator configured, every `--cd` outside `/mnt`,
+ * and every distribution with its own `/etc/wsl.conf` (D4(b)). A console that
+ * computed it would hand a child a directory that does not exist while believing
+ * it had answered -- which is why the distribution is asked, and why a path it
+ * cannot translate is a sentence rather than a guess.
+ */
+export type WslPathTranslation =
+  | { readonly ok: true; readonly path: string }
+  | { readonly ok: false; readonly reason: string }
+
+/** WslPathQueryOptions is one translation's inputs. Everything the query needs is
+ * handed in, exactly as `wslDistributions` takes it: the app's environment, a
+ * host `cwd`, and -- for a test -- the program. */
+export interface WslPathQueryOptions {
+  readonly direction: WslPathDirection
+  readonly path: string
+  /** `distro` is the distribution whose `wslpath` answers. It is the
+   * installation's own distribution and never a default: a stored installation's
+   * distro is the only one tried (F7). */
+  readonly distro: string
+  readonly appEnv: Readonly<Record<string, string | undefined>>
+  /** `cwd` is the **host** directory `wsl.exe` itself runs in. The translation
+   * runs inside the distribution, but `wsl.exe` is a host process like any
+   * other, and this module will not start one in whatever directory the app
+   * happens to be in. */
+  readonly cwd: string
+  /** `project` is what the spawn log records for this child. */
+  readonly project?: string | undefined
+  /** `wslPath` replaces the program `wslExecutable` computes: how a test points
+   * the console at the fake (T-A1). */
+  readonly wslPath?: string | undefined
+  readonly spawner?: ChildSpawner
+  readonly log?: SpawnLogWriter
+  readonly timers?: Timers
+  readonly timeoutMs?: number
+}
+
+/**
+ * wslpath asks the distribution to translate one path, in one direction, with
+ * **one** `wsl.exe -d <distro> -- wslpath -a -u|-w <path>` call, through the same
+ * spawner and the same deadline as every other child this console starts (D4(a)).
+ *
+ * The answer is trimmed and checked rather than trusted: an empty answer, one
+ * carrying a NUL or a newline, or one that is not an absolute path in the
+ * direction asked for is a refusal, because every consumer of this value hands
+ * it to a child as a directory or compares it with one, and a value that is none
+ * of those things is not a path this console may pass on.
+ */
+export async function wslpath(options: WslPathQueryOptions): Promise<WslPathTranslation> {
+  const direction = options.direction
+  if (options.distro === '') {
+    return { ok: false, reason: 'no distribution was named, so no path can be translated inside one' }
+  }
+  const program = options.wslPath ?? wslExecutable(options.appEnv)
+  const answer = await runWslQuery({
+    operation: 'wsl.path',
+    program,
+    // The one wrapper this module writes: the question is asked *inside* the
+    // distribution, so the distribution is named and `--` ends `wsl.exe`'s own
+    // words. `--cd` is deliberately absent: the translation is about a path, and
+    // naming a directory to run it in would be a translation of a path the
+    // console has not translated yet.
+    prefix: ['-d', options.distro, '--'],
+    argv: [
+      WSLPATH_PROGRAM,
+      WSLPATH_FLAG_ABSOLUTE,
+      direction === 'toLinux' ? WSLPATH_FLAG_TO_LINUX : WSLPATH_FLAG_TO_WINDOWS,
+      options.path,
+    ],
+    appEnv: options.appEnv,
+    cwd: options.cwd,
+    project: options.project ?? '',
+    ...(options.spawner === undefined ? {} : { spawner: options.spawner }),
+    ...(options.log === undefined ? {} : { log: options.log }),
+    ...(options.timers === undefined ? {} : { timers: options.timers }),
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+  })
+  if (!answer.ok) return { ok: false, reason: answer.reason }
+  const path = answer.stdout.trim()
+  if (path === '' || path.includes('\u0000') || path.includes('\n')) {
+    return {
+      ok: false,
+      reason:
+        `the distribution answered \`wslpath\` with something that is not a path for ${options.path}: ` +
+        'the console will not pass an answer it cannot read on (T-D2)',
+    }
+  }
+  if (direction === 'toLinux' && !path.startsWith('/')) {
+    return {
+      ok: false,
+      reason: `the distribution answered ${JSON.stringify(path)} for ${options.path}, which is not an absolute path inside it`,
+    }
+  }
+  return { ok: true, path }
+}
+
+/**
+ * WslPathCache is `wslpath` for one window's lifetime: the same path in the same
+ * direction is asked **once** and the answer is kept, exactly as D4(a) decides
+ * ("cached for the life of the window", one process per distinct path).
+ *
+ * The cache holds the promise rather than the answer, so two callers that ask
+ * for the same path at the same moment share one `wsl.exe` rather than racing
+ * to start two. A refusal is **not** kept: a path the distribution could not
+ * translate this second is asked again next time, because the answer depends on
+ * a running distribution and a mount that may have arrived.
+ */
+export interface WslPathCache {
+  toLinux(path: string): Promise<WslPathTranslation>
+  toWindows(path: string): Promise<WslPathTranslation>
+  /** size is how many translations are held, so a test can show that the second
+   * ask did not start a second process. */
+  size(): number
+}
+
+/** createWslPathCache returns the per-window cache. Everything but the direction
+ * and the path is decided once, here. */
+export function createWslPathCache(options: Omit<WslPathQueryOptions, 'direction' | 'path'>): WslPathCache {
+  const held = new Map<string, Promise<WslPathTranslation>>()
+  const ask = (direction: WslPathDirection, path: string): Promise<WslPathTranslation> => {
+    const key = `${direction}\u0000${path}`
+    const known = held.get(key)
+    if (known !== undefined) return known
+    const pending = wslpath({ ...options, direction, path }).then((answer) => {
+      // A refusal is forgotten as soon as it is handed out -- see the interface
+      // -- so a distribution that comes back up is asked again rather than
+      // answered from a sentence that is no longer true.
+      if (!answer.ok) held.delete(key)
+      return answer
+    })
+    held.set(key, pending)
+    return pending
+  }
+  return {
+    toLinux: (path) => ask('toLinux', path),
+    toWindows: (path) => ask('toWindows', path),
+    size: () => held.size,
+  }
 }
 
 /**
