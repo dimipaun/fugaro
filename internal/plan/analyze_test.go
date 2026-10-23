@@ -292,15 +292,15 @@ func TestPlanLevelsAndCriticalPath(t *testing.T) {
 	tieEdges := []string{edge("aa2", "aa1"), edge("bb2", "bb1")}
 
 	for _, tc := range []struct {
-		name         string
-		graph        string
-		levels       int
-		level        map[string]int
-		critical     map[string]int // critical_path_length
-		downstream   map[string]int
-		pathLength   int
-		pathTasks    string
-		bottleneck   string // "" means null
+		name       string
+		graph      string
+		levels     int
+		level      map[string]int
+		critical   map[string]int // critical_path_length
+		downstream map[string]int
+		pathLength int
+		pathTasks  string
+		bottleneck string // "" means null
 	}{
 		{
 			name:       "the empty graph answers with nothing rather than refusing",
