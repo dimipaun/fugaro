@@ -89,6 +89,10 @@ func TestPlanGraphPrintsTheArtifact(t *testing.T) {
 	if k := keysOf(t, edge); !reflect.DeepEqual(k, goldenKeys(t, "plan_graph_edge_keys.golden")) {
 		t.Errorf("plan graph --json edges[] keys = %v", k)
 	}
+	criticalPath, _ := top["critical_path"].(map[string]any)
+	if k := keysOf(t, criticalPath); !reflect.DeepEqual(k, goldenKeys(t, "plan_graph_critical_path_keys.golden")) {
+		t.Errorf("plan graph --json critical_path keys = %v", k)
+	}
 
 	// The three statements a renderer has to keep apart, spelled out in the
 	// document: a node with no run (null), a node with a run, and a footprint
@@ -235,5 +239,134 @@ func TestPlanGraphTextIsTerminalSafe(t *testing.T) {
 		if strings.Contains(l, "evil") && strings.Contains(l, "\t") {
 			t.Errorf("a title's tab reached the table: %q", l)
 		}
+	}
+}
+
+// planDiamondDoc is the fixture the readiness tests read: two arms off one base,
+// joined at the end. It is the same shape as internal/plan's testdata fixture,
+// written here as the command's own document so the CLI tests exercise the read
+// rather than the package.
+const planDiamondDoc = `{
+  "schema_version": 1,
+  "plan": "docs/plans/diamond.md",
+  "nodes": [
+    {"id": "a", "title": "the base", "run": null, "version": "0.9.0",
+     "footprint": {"prediction": true, "paths": ["internal/plan/**"]}},
+    {"id": "b", "title": "the left arm", "run": null, "version": "0.9.0",
+     "footprint": {"prediction": true, "paths": []}},
+    {"id": "c", "title": "the right arm", "run": null, "version": null,
+     "footprint": {"prediction": true, "paths": []}},
+    {"id": "d", "title": "the join", "run": null, "version": null,
+     "footprint": {"prediction": true, "paths": []}}
+  ],
+  "edges": [
+    {"task": "b", "needs": "a", "reason": "b builds on a"},
+    {"task": "c", "needs": "a", "reason": "c builds on a"},
+    {"task": "d", "needs": "b", "reason": "d needs the left arm"},
+    {"task": "d", "needs": "c", "reason": "d needs the right arm"}
+  ]
+}`
+
+// TestPlanGraphPrintsReadiness: the read computes readiness where the graph is
+// read (design F7) and prints it in the same document -- a task is ready when
+// every task it needs is done, and the done set is what the caller says it is
+// (--done), because "this run finished" is not the same claim as "this task is
+// done". Levels and the critical path are the same read's answers (D26).
+func TestPlanGraphPrintsReadiness(t *testing.T) {
+	_, planPath := planGraphFixture(t, planDiamondDoc)
+	out, _, err := execute(t, "plan", "graph", "--plan", planPath, "--json", "--done", "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var g plan.Graph
+	if err := json.Unmarshal([]byte(out), &g); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	states := map[string]string{}
+	for _, n := range g.Nodes {
+		switch {
+		case n.Done:
+			states[n.ID] = "done"
+		case n.Ready:
+			states[n.ID] = "ready"
+		case n.Blocked:
+			states[n.ID] = "blocked"
+		default:
+			states[n.ID] = "none"
+		}
+	}
+	want := map[string]string{"a": "done", "b": "ready", "c": "ready", "d": "blocked"}
+	if !reflect.DeepEqual(states, want) {
+		t.Errorf("with --done a the states are %v, want %v", states, want)
+	}
+	if g.Levels != 3 || g.CriticalPath.Length != 3 || strings.Join(g.CriticalPath.Tasks, " ") != "a b d" {
+		t.Errorf("levels = %d, critical path = %+v, want 3 levels and the path a b d", g.Levels, g.CriticalPath)
+	}
+	if g.Bottleneck == nil || *g.Bottleneck != "a" {
+		t.Errorf("bottleneck = %v, want a", g.Bottleneck)
+	}
+
+	// With no --done, nothing is done: the base is ready and the rest blocked.
+	out, _, err = execute(t, "plan", "graph", "--plan", planPath, "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(out), &g); err != nil {
+		t.Fatal(err)
+	}
+	states = map[string]string{}
+	for _, n := range g.Nodes {
+		switch {
+		case n.Done:
+			states[n.ID] = "done"
+		case n.Ready:
+			states[n.ID] = "ready"
+		case n.Blocked:
+			states[n.ID] = "blocked"
+		default:
+			states[n.ID] = "none"
+		}
+	}
+	if !reflect.DeepEqual(states, map[string]string{"a": "ready", "b": "blocked", "c": "blocked", "d": "blocked"}) {
+		t.Errorf("with no --done the states are %v, want only a ready", states)
+	}
+
+	// The human form names the same answers, so the terminal shows what the
+	// document carries.
+	text, _, err := execute(t, "plan", "graph", "--plan", planPath, "--done", "a,b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"LEVEL", "STATE", "ready", "blocked", "done", "critical path", "a -> b -> d", "bottleneck: a"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the text graph does not carry %q:\n%s", want, text)
+		}
+	}
+}
+
+// TestPlanGraphRefusesADoneSetItCannotPlace: a --done id that is not a task of
+// the graph is refused rather than ignored -- an ignored one reads exactly like
+// a task nobody has done, which is a wrong answer to the question the flag is
+// asked.
+func TestPlanGraphRefusesADoneSetItCannotPlace(t *testing.T) {
+	_, planPath := planGraphFixture(t, planDiamondDoc)
+	for _, tc := range []struct {
+		name string
+		done []string
+		want string
+	}{
+		{"a task that is not there", []string{"ghost"}, `"ghost"`},
+		{"an empty id", []string{"a,"}, "empty task id"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"plan", "graph", "--plan", planPath, "--json"}, "--done", strings.Join(tc.done, ","))
+			out, _, err := execute(t, args...)
+			if err == nil {
+				t.Fatalf("plan graph accepted %s:\n%s", tc.name, out)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("refusal = %q, want it to say %q", err, tc.want)
+			}
+		})
 	}
 }

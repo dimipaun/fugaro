@@ -55,11 +55,17 @@
 // its frame is the same pixels on every run.
 //
 // They are compared, never written by a run: `playwright.config.ts` sets
-// `updateSnapshots: 'none'`, so a missing baseline FAILS. They are recorded by
-// an owner, on the platform the comparison runs on (macOS and Linux pixels
-// differ), with
+// `updateSnapshots: 'none'`, so a missing baseline FAILS a comparison run. They
+// are recorded by an owner, on the platform the comparison runs on (macOS and
+// Linux pixels differ), with
 //
-//   npx playwright test projects.spec.ts --update-snapshots
+//   cd console && npm run build && npx playwright test projects.spec.ts --update-snapshots
+//
+// — the build is in the line because the specs read `dist/` and
+// `npx playwright test` does not build, and on Linux it takes
+// `xvfb-run --auto-servernum` (Electron needs a display);
+// `test/support/goldens.ts`'s `recordCommand` is that line, per spec and per
+// platform, and it is what a failed golden's message prints
 //
 // (owner-run, on the comparison's platform; commit `__screenshots__/projects/`
 // afterwards) and until they are committed the golden tests fail on purpose. The
@@ -77,6 +83,7 @@ import type { JSONDoc } from '../../src/source/source'
 import { PROJECT_PANEL_KEYS, PROJECTS_THEMES } from '../../src/renderer/screens/projects'
 import { inRangeCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
+import { expectGolden, expectGrounded } from '../support/goldens'
 import { launchConsole } from '../support/launch'
 
 // The console's own directory, from this file's location: `test/e2e/x.spec.ts`
@@ -99,6 +106,10 @@ const THE_MOUNT = '#projects-mount'
  * recorded: `FUGARO_CONSOLE_GOLDENS=skip`. Anything else, including unset, means
  * the golden tests run and a missing baseline fails them. */
 const SKIP_GOLDENS = process.env['FUGARO_CONSOLE_GOLDENS'] === 'skip'
+
+/** SPEC is this file's own name: what a re-record command has to name, and what
+ * every golden failure here quotes back to the reader. */
+const SPEC = 'projects.spec.ts'
 
 /** The compiled modules the screen is made of, in dependency order: the screen
  * and the writers in `renderer/app.js`, and the shared modules those writers
@@ -611,18 +622,36 @@ test.describe('the Projects screen', () => {
     expect(drawn.hrefs).toBe(0)
   })
 
-  test('draws the projects screen', async () => {
-    test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
-    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
-    await expect(page.locator(THE_MOUNT)).toHaveScreenshot(GOLDEN_NAMES.light)
+  test('is painted from the design tokens, not from the browser defaults', async () => {
+    // Design section 6.2's computed-ground assertion, and the one case in this
+    // file that is red when the stylesheet stops being linked: the theme travels
+    // as a `data-theme` attribute the renderer stamps, so every read above passes
+    // on a tree nothing paints. `test/support/goldens.ts` holds the app's ground
+    // and the screen's text colour to the shipped palette, once per theme.
+    //
+    // NOT a golden test, deliberately: `FUGARO_CONSOLE_GOLDENS=skip` does not skip
+    // it. Nothing here reads a PNG, so an unstyled tree is red on its own account
+    // rather than recorded as a fresh baseline nobody compared.
+    await expectGrounded(page, (theme) => mount(BUDGET, RUNS, ACCOUNTS, SECRETS, theme), {
+      themes: PROJECTS_THEMES,
+      mount: THE_MOUNT,
+      text: 'h1.projects-project',
+      screen: 'the Projects screen',
+    })
   })
 
-  test('draws the projects screen in the dark theme', async () => {
+  test('draws the projects screen', async ({}, testInfo) => {
+    test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
+    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
+    await expectGolden(page.locator(THE_MOUNT), GOLDEN_NAMES.light, { spec: SPEC, consoleDir, testInfo })
+  })
+
+  test('draws the projects screen in the dark theme', async ({}, testInfo) => {
     await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'dark')
     const drawn = await screen(page)
     expect(drawn.theme).toBe('dark')
     test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
-    await expect(page.locator(THE_MOUNT)).toHaveScreenshot(GOLDEN_NAMES.dark)
+    await expectGolden(page.locator(THE_MOUNT), GOLDEN_NAMES.dark, { spec: SPEC, consoleDir, testInfo })
   })
 
   test('resolves the golden names under the projects directory', ({}, testInfo) => {

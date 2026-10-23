@@ -37,6 +37,7 @@ func newPlanCmd() *cobra.Command {
 func newPlanGraphCmd() *cobra.Command {
 	var planPath string
 	var asJSON bool
+	var done []string
 	cmd := &cobra.Command{
 		Use:   "graph",
 		Short: "Print a plan's graph: its tasks, their dependencies and their footprints",
@@ -46,7 +47,12 @@ func newPlanGraphCmd() *cobra.Command {
 			"docs/plans/ is read; more than one is refused rather than guessed at.\n\n" +
 			"A graph this build does not understand is refused rather than rendered: a\n" +
 			"future schema version, a malformed document, an edge to a node that is not\n" +
-			"there, or a cycle. This is a local read and it writes nothing.",
+			"there, or a cycle.\n\n" +
+			"The read also answers what the planner cannot: each task's level, whether it\n" +
+			"is ready or blocked, and the plan's critical path. A task is ready when every\n" +
+			"task it needs is done, so --done names the tasks that are — an id the graph\n" +
+			"does not carry is refused rather than ignored. This is a local read and it\n" +
+			"writes nothing.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			artifact, err := resolveGraphArtifact(planPath)
@@ -57,10 +63,15 @@ func newPlanGraphCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printPlanGraph(cmd.OutOrStdout(), doc, asJSON)
+			graph, err := plan.Analyze(doc, done)
+			if err != nil {
+				return err
+			}
+			return printPlanGraph(cmd.OutOrStdout(), graph, asJSON)
 		},
 	}
 	cmd.Flags().StringVar(&planPath, "plan", "", "the plan document the graph sits beside (default: the one graph artifact under docs/plans)")
+	cmd.Flags().StringSliceVar(&done, "done", nil, "the tasks whose work is done, by id (comma-separated or repeated); a task is ready when every task it needs is done")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
 	return cmd
 }
@@ -91,24 +102,25 @@ func resolveGraphArtifact(planPath string) (string, error) {
 	}
 }
 
-func printPlanGraph(w io.Writer, doc plan.Document, asJSON bool) error {
+func printPlanGraph(w io.Writer, graph plan.Graph, asJSON bool) error {
 	if asJSON {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		return enc.Encode(doc)
+		return enc.Encode(graph)
 	}
-	fmt.Fprintf(w, "plan %s (schema version %d)\n", pluginwire.Printable(doc.Plan), doc.SchemaVersion)
-	if len(doc.Nodes) == 0 {
+	fmt.Fprintf(w, "plan %s (schema version %d, %d %s)\n",
+		pluginwire.Printable(graph.Plan), graph.SchemaVersion, graph.Levels, planWord(graph.Levels, "level", "levels"))
+	if len(graph.Nodes) == 0 {
 		fmt.Fprintln(w, "this graph carries no tasks")
 		return nil
 	}
-	needs := make(map[string][]string, len(doc.Nodes))
-	for _, e := range doc.Edges {
+	needs := make(map[string][]string, len(graph.Nodes))
+	for _, e := range graph.Edges {
 		needs[e.Task] = append(needs[e.Task], e.Needs)
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tTITLE\tVERSION\tRUN\tNEEDS\tFOOTPRINT")
-	for _, n := range doc.Nodes {
+	fmt.Fprintln(tw, "ID\tTITLE\tLEVEL\tSTATE\tVERSION\tRUN\tNEEDS\tFOOTPRINT")
+	for _, n := range graph.Nodes {
 		version, run := "-", "-"
 		if n.Version != nil {
 			version = *n.Version
@@ -127,11 +139,49 @@ func printPlanGraph(w io.Writer, doc plan.Document, asJSON bool) error {
 		if len(n.Footprint.Paths) == 0 {
 			fp = "predicted: none"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			planCell(n.ID), planCell(n.Title), planCell(version), planCell(run),
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
+			planCell(n.ID), planCell(n.Title), n.Level, planState(n), planCell(version), planCell(run),
 			planCell(deps), planCell(fp))
 	}
-	return tw.Flush()
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	// The read's own answers, in the same words the document uses, so a
+	// terminal shows what a console would draw.
+	path := make([]string, 0, len(graph.CriticalPath.Tasks))
+	for _, id := range graph.CriticalPath.Tasks {
+		path = append(path, planCell(id))
+	}
+	fmt.Fprintf(w, "critical path (%d %s): %s\n",
+		graph.CriticalPath.Length, planWord(graph.CriticalPath.Length, "task", "tasks"), strings.Join(path, " -> "))
+	if graph.Bottleneck != nil {
+		fmt.Fprintf(w, "bottleneck: %s\n", planCell(*graph.Bottleneck))
+	}
+	return nil
+}
+
+// planState is a task's one word: done, ready or blocked. The three fields are
+// the document's (V2.2.3, design F7) and this reads them in the order that
+// makes the word unique -- a task is done, ready or blocked, never two.
+func planState(n plan.NodeState) string {
+	switch {
+	case n.Done:
+		return "done"
+	case n.Ready:
+		return "ready"
+	case n.Blocked:
+		return "blocked"
+	}
+	return "-"
+}
+
+// planWord is singular or plural for a count, so the terminal does not say
+// "1 tasks".
+func planWord(n int, singular, plural string) string {
+	if n == 1 {
+		return singular
+	}
+	return plural
 }
 
 // planCell is one cell of the human table: Printable's escaping and length
