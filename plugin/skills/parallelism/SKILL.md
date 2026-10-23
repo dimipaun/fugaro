@@ -37,7 +37,7 @@ Keep it in one run when pieces edit the same files, share a new interface, or th
 
 ## Write the plan's graph beside it
 
-A plan you write as a file can carry its tasks as a graph the CLI reads. Write it beside the plan: `docs/plans/foo.md` is described by `docs/plans/foo.graph.json`, and `fugaro plan graph --json` prints that document — a person can read the same file.
+A plan you write as a file can carry its tasks as a graph the CLI reads. Write it beside the plan: `docs/plans/foo.md` is described by `docs/plans/foo.graph.json`, and `fugaro plan graph --plan docs/plans/foo.md --json` prints that document — a person can read the same file.
 
 ```json
 {
@@ -62,7 +62,7 @@ A plan you write as a file can carry its tasks as a graph the CLI reads. Write i
 - The footprint is a **prediction** and `prediction` is always `true`: what a run really changed is the run's own record, never this. Two tasks whose paths can match the same file are the conflict to split apart before launching.
 - `run` is the run the task belongs to once one is launched, `null` before that; `version` is the release it ships in, `null` when the plan does not say.
 
-`fugaro plan graph --json` prints the document back, validated; without `--json` it prints a table of ID, TITLE, VERSION, RUN, NEEDS and FOOTPRINT, every footprint labelled `predicted:`. A refused graph — another schema version, an unknown field, a missing reason, a malformed glob, a cycle — exits non-zero and prints nothing.
+`fugaro plan graph --json` prints the document back, validated; without `--json` it prints a table of ID, TITLE, VERSION, RUN, NEEDS and FOOTPRINT, every footprint labelled `predicted:`. Name the plan with `--plan` wherever `docs/plans/` holds more than one graph: with none the read takes the one artifact it finds there, and several are a refusal rather than a pick. A refused graph — another schema version, an unknown field, a missing reason, a malformed glob, a cycle — exits non-zero and prints nothing.
 
 ## A batch onto one long-lived branch
 
