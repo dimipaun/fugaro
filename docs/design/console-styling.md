@@ -329,8 +329,9 @@ Time constants the stylesheet's threshold rules must agree with:
 ### 2.4 Spend — `console/src/renderer/screens/spend.ts`
 
 Regions in tree order: header → range picker → breakdown switch → person knob →
-`div.spend-accounts` (three charts) → `ol.spend-rows` → totals → notes → warnings → the
-caps panel.
+`div.spend-accounts` (three charts) → `ol.spend-rows` → totals → `section.spend-people`
+(the by-person panel, console L5b, drawn only while the person knob is on) → notes →
+warnings → the caps panel.
 
 | Group | Class hooks |
 |---|---|
@@ -341,6 +342,7 @@ caps panel.
 | Totals | `spend-totals`, `spend-totals-word`, `spend-total-model`, `spend-total-notional`, `spend-total-compute`, `spend-total-runs`, `spend-total-run-hours` |
 | Caps | `spend-caps`, `spend-caps-project`, `spend-caps-day`, `spend-caps-mode`, `spend-scope`, `spend-cap-limit`, `spend-cap-word`, `spend-cap-reserve`, `spend-cap-global`, `spend-cap-counted`, `spend-cap-daily`, `spend-cap-per-run`, `spend-cap-notional`, `spend-cap-headroom`, `spend-cap-defaults`, `spend-cap-repos`, `spend-cap-repo`, `spend-cap-repo-name`, `spend-cap-spent`, `spend-kill`, `spend-kill-word`, `spend-kill-by`, `spend-kill-at`, `spend-kill-reason` |
 | Notes | `spend-note`, `spend-warning` |
+| By person | `spend-people`, `spend-people-title`, `spend-people-view`, `spend-people-you`, `spend-people-operator`, `spend-people-since`, `spend-people-until`, `spend-people-bound`, `spend-people-max-runs`, `spend-people-reason`, `spend-people-note`, `spend-people-rows`, `spend-people-totals`, `spend-person`, `spend-person-user`, `spend-person-total`, `spend-person-currency`, `spend-person-runs`, `spend-person-succeeded`, `spend-person-failed`, `spend-person-halted`, `spend-person-infra`, `spend-person-other`, `spend-person-no-record`, `spend-person-counted`, `spend-person-notional`, `spend-person-counted-runs`, `spend-person-average`, `spend-person-note` |
 
 `data-*`: `data-theme`; `data-current`, `data-enabled`, `data-known` (on the
 `ol.spend-switch` itself, beside the seven words), `data-dimension`
@@ -353,7 +355,12 @@ accounts** — an `li.spend-row` carries **none of those five**, so a `[data-sta
 on **both** the points and the rows (`data-partial` also on `div.spend-totals`, `data-key`
 also on the caps panel's `li.spend-cap-repo`); `data-degraded` (`true`) on
 `span.spend-degraded`; `data-available`, `data-scope-known`, `data-daily-scope`,
-`data-per-run-scope` (a document word, or `unknown`) on the caps panel, `data-limit`
+`data-per-run-scope` (a document word, or `unknown`) on the caps panel, `data-available` also
+on **`section.spend-people`**, where `data-view` (`all|own|unknown`), `data-operator`
+(`true|false`) and `data-truncated` (`true|false`) record what the CLI's own read resolved —
+the view it scoped the rows to, whether the caller is an operator of the installation, and
+whether the read stopped at `max_runs` — so a rule about a private or a truncated panel
+selects the panel, `data-limit`
 (`max_reserve`) on **`div.spend-cap-limit`** — the reserve line, drawn above the global
 block; and `data-killed` (`true`) on the **kill banner `div.spend-kill`** — never on
 `section.spend-caps` itself, but **inside it**: the banner is appended into
@@ -373,7 +380,12 @@ knob is on);
 unknown breakdown (`li.spend-dim-unknown` with `data-dimension="unknown"`, under an
 `ol.spend-switch` whose own `data-known="false"` is what says the document used a word this
 console does not know);
-unknown cap scope (`data-scope-known="false"`, "a scope this console does not know").
+unknown cap scope (`data-scope-known="false"`, "a scope this console does not know");
+by-person read refused or never made (`section.spend-people` with `data-available="false"`,
+the whole panel muted, the sentence drawn as the **text** of `p.spend-people-reason` — the
+CLI's own refusal, or the console's reason for having made no read); by-person panel private
+or unattributed (`data-view="own"` or `"unknown"`, or `data-view="all"` with no identity the
+read was resolved for, drawing the document's totals and **no row at all**).
 **There is no loading state, no stale state and no halted state on this screen**, and no
 "cap reached" marker (as on Live).
 

@@ -45,6 +45,7 @@ import {
   NOTIONAL_MARK,
   UNAVAILABLE_MARK,
   estimated,
+  formatReading,
   gap,
   measured,
   notional,
@@ -69,6 +70,7 @@ import {
 import type {
   SpendAccount,
   SpendModel,
+  SpendPeople,
   SpendRow,
   ScreenElement,
   ScreenFactory,
@@ -244,6 +246,108 @@ const MODEL_REPORT: JSONDoc = {
     calls: 27,
   },
   warnings: [],
+}
+
+/**
+ * STATS_ROWS is `runs stats --json`'s own row shape (console/docs/json-contract.md
+ * section 6.10, `internal/userstats.Row`): the counts that add up to `runs`, the
+ * two money accounts, and the average with the sample it is over. The first row
+ * is a launcher the recorder knew (an address, because that is what a
+ * `launch.json` records), the second another one, and the third the CLI's own
+ * unattributed key (`userstats.UnknownUser`) -- a group of runs and not a person.
+ */
+const STATS_ROWS = [
+  {
+    user: 'ada@example.com',
+    currency: 'USD',
+    runs: 3,
+    succeeded: 2,
+    failed: 1,
+    halted: 0,
+    infra_error: 0,
+    other: 0,
+    no_record: 0,
+    counted_usd: 1.5,
+    notional_usd: 0.4,
+    counted_runs: 3,
+    avg_counted_usd: 0.5,
+  },
+  {
+    user: 'bob@example.com',
+    currency: 'USD',
+    runs: 1,
+    succeeded: 1,
+    failed: 0,
+    halted: 0,
+    infra_error: 0,
+    other: 0,
+    no_record: 0,
+    counted_usd: 0.25,
+    notional_usd: 0,
+    counted_runs: 1,
+    avg_counted_usd: 0.25,
+  },
+  {
+    user: 'unknown',
+    currency: 'USD',
+    runs: 1,
+    succeeded: 0,
+    failed: 0,
+    halted: 0,
+    infra_error: 0,
+    other: 0,
+    no_record: 1,
+    counted_usd: 0,
+    notional_usd: 0,
+    // No run of this group settled a real-dollar cost: the CLI writes 0 with a
+    // counted-runs of 0, and the average is **unavailable** rather than $0.00.
+    counted_runs: 0,
+    avg_counted_usd: 0,
+  },
+] as const
+
+/** STATS_TOTALS is the same document's total line: one per currency, with the
+ * CLI's own empty `user` (`internal/userstats.Aggregate`). */
+const STATS_TOTALS = [
+  {
+    user: '',
+    currency: 'USD',
+    runs: 5,
+    succeeded: 3,
+    failed: 1,
+    halted: 0,
+    infra_error: 0,
+    other: 0,
+    no_record: 1,
+    counted_usd: 1.75,
+    notional_usd: 0.4,
+    counted_runs: 4,
+    avg_counted_usd: 0.4375,
+  },
+] as const
+
+/** STATS_DOCUMENT is the by-person aggregate those rows came out of, in the
+ * shape `internal/cli/runs_stats.go`'s `userStatsDoc` writes: the view the CLI
+ * resolved, the identity it resolved it for, whether the installation's own
+ * lists place that identity as an operator, the window, the read's own bound and
+ * the runs of the window that never started. */
+function statsDocument(over: JSONDoc = {}): JSONDoc {
+  return {
+    project: 'fugaro-demo',
+    by: 'user',
+    view: 'all',
+    you: 'ada@example.com',
+    operator: true,
+    since: '2026-10-12',
+    until: '2026-10-15',
+    max_runs: 5000,
+    truncated: false,
+    rows: STATS_ROWS,
+    totals: STATS_TOTALS,
+    unlaunched: 2,
+    notes: ['these are every launcher of this project in the window'],
+    ...over,
+  }
 }
 
 /**
@@ -845,6 +949,272 @@ describe('the person breakdown', () => {
     expect(text).not.toContain('ada@example.com')
     expect(text).not.toContain('ada')
     expect(keyClass('person', 'ada@example.com')).toBe('person')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The by-person view (console L5b).
+// ---------------------------------------------------------------------------
+
+/** peopleOf is one model's by-person view, asserted to be there: the panel
+ * exists exactly when the operator's knob is on (design D15). */
+function peopleOf(model: SpendModel): SpendPeople {
+  const people = model.people
+  if (people === null) throw new Error('this model carries no by-person view')
+  return people
+}
+
+describe('the by-person view', () => {
+  it('is absent, with no read behind it, while the person view is off', () => {
+    // The mutation this is written against: a panel that is always built, and a
+    // by-person read that happens whatever the knob says. With the knob off
+    // there is no panel at all -- not an empty one -- because there was no read
+    // to draw from and nothing the operator asked to see.
+    const off = buildSpendModel(PERSON_REPORT, BUDGET)
+    expect(off.people).toBeNull()
+    expect(all(renderSpend(factory, off, 'light'), 'spend-people')).toEqual([])
+    // The document being handed in does not change that: the knob decides.
+    const handed = buildSpendModel(PERSON_REPORT, BUDGET, { people: statsDocument() })
+    expect(handed.people).toBeNull()
+  })
+
+  it('draws the view the CLI resolved: every row, the identity, the operator line and the window', () => {
+    const model = buildSpendModel(PERSON_REPORT, BUDGET, { persons: true, people: statsDocument() })
+    const people = peopleOf(model)
+    expect(people.available).toBe(true)
+    expect(people.view).toBe('all')
+    expect(people.viewSource).toBe('all')
+    expect(people.viewName).toBe('everyone in this project')
+    expect(people.failPrivate).toBe(false)
+    expect(people.operator).toBe(true)
+    expect(people.you).toBe('ada@example.com')
+    expect(people.withheld).toBe(0)
+    expect(people.rows.map((row) => row.user)).toEqual([
+      'ada@example.com',
+      'bob@example.com',
+      'unknown',
+    ])
+    // The document's own totals are read as their own rows, and never summed
+    // here: the total is the CLI's sum of the rows this screen also drew.
+    expect(people.totals).toHaveLength(1)
+    expect(people.totals[0]?.counted.value).toBe(1.75)
+    expect(people.totals[0]?.counted.state).toBe('measured')
+    expect(people.since).toBe('2026-10-12')
+    expect(people.until).toBe('2026-10-15')
+    expect(people.maxRuns.value).toBe(5000)
+
+    const tree = renderSpend(factory, model, 'light')
+    const panel = one(tree, 'spend-people')
+    expect(panel.getAttribute('data-available')).toBe('true')
+    expect(panel.getAttribute('data-view')).toBe('all')
+    expect(panel.getAttribute('data-operator')).toBe('true')
+    expect(texts(tree, 'spend-people-view')).toEqual(['everyone in this project'])
+    expect(texts(tree, 'spend-people-you')).toEqual(['redacted@example.invalid'])
+    expect(texts(tree, 'spend-people-operator')[0]).toContain('place you as an operator')
+    expect(texts(tree, 'spend-people-max-runs')).toEqual([formatReading(people.maxRuns, 'count')])
+    // Three rows and the total line. The total is the console's own word,
+    // because the document's own total carries an empty user.
+    expect(all(tree, 'spend-person')).toHaveLength(4)
+    expect(one(tree, 'spend-person-total').getAttribute('data-user')).toBeNull()
+    expect(texts(tree, 'spend-person-user')).toEqual([
+      'redacted@example.invalid',
+      'redacted@example.invalid',
+      'unknown',
+      'total',
+    ])
+    expect(all(tree, 'spend-person-total')).toHaveLength(1)
+    // The document's own note is drawn, and it is the *document's*: it reaches
+    // the screen through `putText` and not as a literal.
+    expect(texts(tree, 'spend-person-note')).toEqual([
+      'these are every launcher of this project in the window',
+    ])
+  })
+
+  it('draws a person key through the person class, and the attribute carries what was drawn', () => {
+    // An identity is untrusted display text -- it is whatever a `launch.json`
+    // recorded -- so an address is the console's own marker, in the cell and in
+    // the attribute alike: `data-user` is read back off the drawn cell, so a
+    // hostile key cannot reach the screen through the attribute.
+    const model = buildSpendModel(PERSON_REPORT, BUDGET, { persons: true, people: statsDocument() })
+    const tree = renderSpend(factory, model, 'light')
+    const [first] = all(tree, 'spend-person')
+    expect(first?.getAttribute('data-user')).toBe('redacted@example.invalid')
+    expect(first?.getAttribute('data-currency')).toBe('USD')
+    expect(drawn(tree)).toContain('redacted@example.invalid')
+    expect(drawn(tree)).not.toContain('ada@example.com')
+    expect(drawn(tree)).not.toContain('bob@example.com')
+    // The identity the view was resolved for is that same untrusted text, and
+    // it is drawn the same way -- through the same class, and nowhere raw.
+    expect(drawn(tree)).not.toContain('ada')
+  })
+
+  it('draws one row for a private view, and says out loud how many it did not draw', () => {
+    const model = buildSpendModel(PERSON_REPORT, BUDGET, {
+      persons: true,
+      people: statsDocument({ view: 'own', you: 'bob@example.com', operator: false }),
+    })
+    const people = peopleOf(model)
+    expect(people.view).toBe('own')
+    expect(people.viewName).toBe('you alone')
+    expect(people.operator).toBe(false)
+    expect(people.rows.map((row) => row.user)).toEqual(['bob@example.com'])
+    // Two rows of the document are withheld, and the panel says how many: a
+    // reader who cannot see them is owed the fact that they exist.
+    expect(people.withheld).toBe(2)
+    expect(people.sentences.join(' ')).toContain('your own runs alone')
+    expect(people.sentences.join(' ')).toContain('2 row(s) of this document are not drawn')
+
+    const tree = renderSpend(factory, model, 'light')
+    // One row and the total.
+    expect(all(tree, 'spend-person')).toHaveLength(2)
+    expect(texts(tree, 'spend-person-user')).toEqual(['redacted@example.invalid', 'total'])
+    expect(texts(tree, 'spend-people-operator')[0]).toContain('do not place you as an operator')
+    expect(drawn(tree)).not.toContain('ada@example.com')
+  })
+
+  it('fails private: with no identity to key the view by, it draws the totals and no row at all', () => {
+    for (const [you, sentence] of [
+      ['', 'did not say who this read was resolved for'],
+      ['unknown', 'unattributed key itself'],
+    ] as const) {
+      const model = buildSpendModel(PERSON_REPORT, BUDGET, {
+        persons: true,
+        people: statsDocument({ view: 'own', you, operator: false }),
+      })
+      const people = peopleOf(model)
+      expect(people.rows, you).toEqual([])
+      expect(people.failPrivate, you).toBe(true)
+      expect(people.withheld, you).toBe(STATS_ROWS.length)
+      // The totals are the window's and not a person's, so they are drawn in
+      // every state -- and they are drawn *as the document published them*.
+      expect(people.totals, you).toHaveLength(1)
+      expect(people.sentences.join(' '), you).toContain(sentence)
+      expect(people.sentences.join(' '), you).toContain('3 row(s) of this document are not drawn')
+
+      const tree = renderSpend(factory, model, 'light')
+      // The total line, and not one person row.
+      expect(all(tree, 'spend-person'), you).toHaveLength(1)
+      expect(all(tree, 'spend-person-total'), you).toHaveLength(1)
+      expect(one(tree, 'spend-people-rows').childNodes(), you).toEqual([])
+      // The identity cell says why it is not an identity, in the console's own
+      // words: an empty cell would read as anonymous.
+      // `''` is drawn as the console's sentence for an identity the CLI could
+      // not resolve; the unattributed key is drawn as itself, because it is a
+      // key the CLI published and not a person -- which is exactly why it draws
+      // no row.
+      expect(texts(tree, 'spend-people-you'), you).toEqual([
+        you === '' ? 'the CLI could not say who this read was resolved for' : 'unknown',
+      ])
+      // No identity of the by-person document is drawn. (`unknown` is not
+      // asserted on: it is the *report*'s own key for its unattributed row,
+      // which this document legitimately draws when the person breakdown is
+      // on -- the by-person panel's rows are the ones asserted empty above.)
+      for (const row of STATS_ROWS.filter((one) => one.user.includes('@'))) {
+        expect(drawn(tree), row.user).not.toContain(row.user)
+      }
+    }
+  })
+
+  it('draws no row for a view or a breakdown this build does not know, and echoes neither word', () => {
+    // The value is never drawn -- not in a cell, not in an attribute: the
+    // panel's own closed words stand in for it, the rule the switch's eighth
+    // breakdown and the Live screen's unknown flags follow.
+    const unknownView = buildSpendModel(PERSON_REPORT, BUDGET, {
+      persons: true,
+      people: statsDocument({ view: 'the-whole-company' }),
+    })
+    const view = peopleOf(unknownView)
+    expect(view.view).toBe('unknown')
+    expect(view.viewName).toBe('a view this console does not know')
+    expect(view.rows).toEqual([])
+    expect(view.failPrivate).toBe(true)
+    expect(view.totals).toHaveLength(1)
+    expect(view.sentences.join(' ')).toContain('a view this console does not know')
+    const drawnView = renderSpend(factory, unknownView, 'light')
+    expect(one(drawnView, 'spend-people').getAttribute('data-view')).toBe('unknown')
+    expect(all(drawnView, 'spend-person')).toHaveLength(1)
+    expect(drawn(drawnView)).not.toContain('the-whole-company')
+
+    const unknownBy = buildSpendModel(PERSON_REPORT, BUDGET, {
+      persons: true,
+      people: statsDocument({ by: 'team' }),
+    })
+    const by = peopleOf(unknownBy)
+    expect(by.rows).toEqual([])
+    expect(by.withheld).toBe(STATS_ROWS.length)
+    const drawnBy = renderSpend(factory, unknownBy, 'light')
+    expect(drawn(drawnBy)).not.toContain('team')
+    expect(drawn(drawnBy)).toContain('the totals')
+  })
+
+  it('says the read was bounded, and draws no average where the document has no sample', () => {
+    const model = buildSpendModel(PERSON_REPORT, BUDGET, {
+      persons: true,
+      people: statsDocument({ truncated: true }),
+    })
+    const people = peopleOf(model)
+    expect(people.truncated).toBe(true)
+    expect(people.sentences.join(' ')).toContain('more runs than the CLI read')
+    // `unlaunched: 2`: runs that never started are the window's count and are in
+    // no row, and the panel says so rather than letting them look like a gap in
+    // the arithmetic.
+    expect(people.unlaunched.value).toBe(2)
+    expect(people.sentences.join(' ')).toContain('never started')
+
+    // The third row settled no real-dollar cost: `counted_runs` is 0, so the
+    // average is *unavailable* and never `$0.00` -- which would be a figure
+    // somebody could act on.
+    const noSample = people.rows[2]
+    expect(noSample?.countedRuns.value).toBe(0)
+    expect(noSample?.average.state).toBe('unavailable')
+    expect(noSample?.average.value).toBeNull()
+    const tree = renderSpend(factory, model, 'light')
+    const averages = texts(tree, 'spend-person-average')
+    expect(averages[2]).toBe(UNAVAILABLE_MARK)
+    expect(one(tree, 'spend-people').getAttribute('data-truncated')).toBe('true')
+  })
+
+  it('says why it has no document at all, rather than drawing an empty panel', () => {
+    const none = buildSpendModel(PERSON_REPORT, BUDGET, { persons: true })
+    const people = peopleOf(none)
+    expect(people.available).toBe(false)
+    expect(people.rows).toEqual([])
+    expect(people.totals).toEqual([])
+    expect(people.reason).toContain('made no by-person read')
+    const tree = renderSpend(factory, none, 'light')
+    expect(one(tree, 'spend-people').getAttribute('data-available')).toBe('false')
+    expect(one(tree, 'spend-people-reason').textContent).toContain('made no by-person read')
+    expect(all(tree, 'spend-person')).toEqual([])
+    expect(all(tree, 'spend-people-rows')).toEqual([])
+
+    // A refusal's sentence is drawn as the reason, sanitized by the caller
+    // (`readSpend`'s `refusalSentence`): the panel draws what it is handed, and
+    // the model never invents one.
+    const refused = buildSpendModel(PERSON_REPORT, BUDGET, {
+      persons: true,
+      peopleReason: 'the CLI refused this read',
+    })
+    expect(one(renderSpend(factory, refused, 'light'), 'spend-people-reason').textContent).toBe(
+      'the CLI refused this read',
+    )
+  })
+
+  it('keeps the three accounts apart in a person row, and the sample with its average', () => {
+    // The same rule the report's rows follow: `counted_usd` and `notional_usd`
+    // are two accounts and a row draws both, marked, and never their sum.
+    const model = buildSpendModel(PERSON_REPORT, BUDGET, { persons: true, people: statsDocument() })
+    const row = peopleOf(model).rows[0]
+    expect(row?.counted.value).toBe(1.5)
+    expect(row?.notional.value).toBe(0.4)
+    expect(row?.notional.state).toBe('notional')
+    expect(row?.counted.value).not.toBe(1.5 + 0.4)
+    expect(row?.countedRuns.value).toBe(3)
+    expect(row?.average.value).toBe(0.5)
+    // The counts add up to the runs, which is what makes the row readable.
+    expect((row?.succeeded.value ?? 0) + (row?.failed.value ?? 0)).toBe(row?.runs.value)
+    const tree = renderSpend(factory, model, 'light')
+    expect(texts(tree, 'spend-person-notional')[0]).toContain(NOTIONAL_MARK)
+    expect(texts(tree, 'spend-person-counted')[0]).not.toContain(NOTIONAL_MARK)
   })
 })
 

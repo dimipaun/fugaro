@@ -211,23 +211,43 @@ return { mounted: true, accounts: model.series.map(function (series) { return se
  * allow-listed operation -- with the source replaced by an object in this file,
  * so what the window proves is the screen's half: the arguments it builds, the
  * one read it makes, and what it draws from what came back.
+ *
+ * `people` is the by-person document (console L5b), and it is optional: a case
+ * that passes none gets the **no reader** state `readSpend` is written for --
+ * the panel says this console made no by-person read -- rather than a rejection
+ * dressed up as a CLI refusal.
  */
-function drawWired(controls: SpendControls, documents: Record<string, JSONDoc>, theme: string): string {
+function drawWired(
+  controls: SpendControls,
+  documents: Record<string, JSONDoc>,
+  theme: string,
+  people: JSONDoc | null = null,
+): string {
   return `(function () {
 ${LOADER}${MODULES.map(moduleSource).join('\n')}${FACTORY}
 var spend = load('/renderer/screens/spend.js');
 var factory = domFactory();
 var documents = ${JSON.stringify(documents)};
 var controls = ${JSON.stringify(controls)};
+var peopleDocument = ${JSON.stringify(people)};
 var asked = [];
+var askedPeople = [];
 var read = function (args) {
   asked.push(args);
   var document = documents[args.since];
   if (!document) return Promise.reject(new Error('no document for ' + args.since));
   return Promise.resolve(document);
 };
-return spend.readSpend(read, controls, ${JSON.stringify(BUDGET)}).then(function (outcome) {
-  if (!outcome.ok) return { ok: false, reason: outcome.reason, asked: asked };
+// A fixture with a "refusal" key is the CLI turning the read down: the
+// reader rejects the way the app's own does, with the child's sentence, which
+// is the panel's reason and never the screen's.
+var readPeople = peopleDocument === null ? null : function (args) {
+  askedPeople.push(args);
+  if (peopleDocument.refusal) return Promise.reject({ sentence: peopleDocument.refusal });
+  return Promise.resolve(peopleDocument);
+};
+return spend.readSpend(read, controls, ${JSON.stringify(BUDGET)}, readPeople).then(function (outcome) {
+  if (!outcome.ok) return { ok: false, reason: outcome.reason, asked: asked, askedPeople: askedPeople };
   var tree = spend.renderSpend(factory, outcome.model, ${JSON.stringify(theme)}, controls);
   var previous = document.getElementById('spend-mount');
   if (previous) previous.remove();
@@ -235,7 +255,13 @@ return spend.readSpend(read, controls, ${JSON.stringify(BUDGET)}).then(function 
   host.id = 'spend-mount';
   host.appendChild(tree.node);
   document.body.appendChild(host);
-  return { ok: true, asked: asked, args: outcome.args, rows: outcome.model.rows.length };
+  return {
+    ok: true,
+    asked: asked,
+    askedPeople: askedPeople,
+    args: outcome.args,
+    rows: outcome.model.rows.length,
+  };
 });
 })()`
 }
@@ -261,6 +287,15 @@ interface Screen {
   readonly currentWindows: readonly string[]
   readonly personsEnabled: string | null
   readonly personState: string | null
+  /** the by-person panel (console L5b): whether it is there, the view the CLI
+   * resolved, the rows it drew and the total it always draws */
+  readonly peoplePanel: number
+  readonly peopleAvailable: string | null
+  readonly peopleView: string | null
+  readonly peopleRows: number
+  readonly peopleTotals: number
+  readonly peopleReason: string | null
+  readonly peopleYou: string | null
   readonly points: number
   readonly seriesValues: readonly string[]
   readonly text: string
@@ -311,6 +346,13 @@ function screen(page: Page): Promise<Screen> {
         .map((window) => window.textContent ?? ''),
       personsEnabled: scope.querySelector('.spend-persons')?.getAttribute('data-enabled') ?? null,
       personState: scope.querySelector('.spend-persons-state')?.textContent ?? null,
+      peoplePanel: all('.spend-people').length,
+      peopleAvailable: scope.querySelector('.spend-people')?.getAttribute('data-available') ?? null,
+      peopleView: scope.querySelector('.spend-people')?.getAttribute('data-view') ?? null,
+      peopleRows: all('.spend-people-rows .spend-person').length,
+      peopleTotals: all('.spend-people-totals .spend-person').length,
+      peopleReason: scope.querySelector('.spend-people-reason')?.textContent ?? null,
+      peopleYou: scope.querySelector('.spend-people-you')?.textContent ?? null,
       points: all('.spend-account')
         .find((block) => block.getAttribute('data-account') === 'model')
         ?.querySelectorAll('.spend-point').length ?? 0,
@@ -482,6 +524,91 @@ const BUDGET: JSONDoc = {
 }
 
 /**
+ * The by-person document: what `runs stats --json` answers (contract section
+ * 6.10, console L5b). Two launchers and the CLI's own unattributed bucket, plus
+ * the read's own account of itself -- the view it resolved, who it resolved it
+ * for, and the bound it stopped at. The console adds no figure of its own to
+ * this, so a number on the panel that is not here is a bug.
+ */
+const STATS_DOCUMENT: JSONDoc = {
+  project: '<project>',
+  by: 'user',
+  view: 'all',
+  you: 'ada@example.com',
+  operator: true,
+  since: '2026-10-12',
+  until: '2026-10-15',
+  max_runs: 5000,
+  truncated: false,
+  unlaunched: 2,
+  rows: [
+    {
+      user: 'ada@example.com',
+      currency: 'USD',
+      runs: 3,
+      succeeded: 2,
+      failed: 1,
+      halted: 0,
+      infra_error: 0,
+      other: 0,
+      no_record: 0,
+      counted_usd: '1.500000',
+      notional_usd: '0.400000',
+      counted_runs: 3,
+      avg_counted_usd: '0.500000',
+    },
+    {
+      user: 'bob@example.com',
+      currency: 'USD',
+      runs: 1,
+      succeeded: 1,
+      failed: 0,
+      halted: 0,
+      infra_error: 0,
+      other: 0,
+      no_record: 0,
+      counted_usd: '0.650000',
+      notional_usd: null,
+      counted_runs: 1,
+      avg_counted_usd: '0.650000',
+    },
+    {
+      user: 'unknown',
+      currency: 'USD',
+      runs: 1,
+      succeeded: 0,
+      failed: 0,
+      halted: 0,
+      infra_error: 0,
+      other: 0,
+      no_record: 1,
+      counted_usd: '0.000000',
+      notional_usd: null,
+      counted_runs: 0,
+      avg_counted_usd: null,
+    },
+  ],
+  totals: [
+    {
+      user: '',
+      currency: 'USD',
+      runs: 5,
+      succeeded: 3,
+      failed: 1,
+      halted: 0,
+      infra_error: 0,
+      other: 0,
+      no_record: 1,
+      counted_usd: '2.150000',
+      notional_usd: '0.400000',
+      counted_runs: 4,
+      avg_counted_usd: '0.537500',
+    },
+  ],
+  notes: ['these are every launcher of this project in the window'],
+}
+
+/**
  * The person report: two requesters, one an address and one the CLI's own
  * `unknown` bucket (`budget.UnknownPerson`) for the runs with no requester.
  * Nothing in this document is drawn until the view is asked for.
@@ -578,23 +705,31 @@ test.describe('the Spend screen', () => {
     controls: SpendControls,
     documents: Record<string, JSONDoc>,
     theme = 'light',
-  ): Promise<{ readonly asked: readonly Record<string, string>[] }> {
+    people: JSONDoc | null = null,
+  ): Promise<{
+    readonly asked: readonly Record<string, string>[]
+    readonly askedPeople: readonly Record<string, string>[]
+  }> {
     const result = (await app.evaluate(async ({ BrowserWindow }, source) => {
       const window = BrowserWindow.getAllWindows()[0]
-      if (window === undefined) return { ok: false, reason: 'the console has no window', asked: [] }
+      if (window === undefined) {
+        return { ok: false, reason: 'the console has no window', asked: [], askedPeople: [] }
+      }
       return (await window.webContents.executeJavaScript(source, true)) as {
         ok: boolean
         reason?: string
         asked: readonly Record<string, string>[]
+        askedPeople: readonly Record<string, string>[]
       }
-    }, drawWired(controls, documents, theme))) as {
+    }, drawWired(controls, documents, theme, people))) as {
       readonly ok: boolean
       readonly reason?: string
       readonly asked: readonly Record<string, string>[]
+      readonly askedPeople: readonly Record<string, string>[]
     }
     expect(result.reason).toBeUndefined()
     expect(result.ok).toBe(true)
-    return { asked: result.asked }
+    return { asked: result.asked, askedPeople: result.askedPeople }
   }
 
   test('renders the three accounts as three separate series', async () => {
@@ -747,6 +882,67 @@ test.describe('the Spend screen', () => {
     expect(shown.text).toContain('redacted@example.invalid')
     expect(shown.text).toContain('unknown')
     expect(shown.text).not.toContain('ada')
+  })
+
+  // -------------------------------------------------------------------------
+  // The by-person view (console L5b).
+  // -------------------------------------------------------------------------
+
+  test('draws the by-person panel from its own read, and keeps the addresses out of it', async () => {
+    // The knob on is a *second* read, through a second allow-listed operation
+    // (`runs stats --json`), with the window translated from the picker's own
+    // (`spend.ts`'s `PERSON_WINDOW_DAYS`: `30d` is `30d` in both grammars, and
+    // the week form is the one that is not).
+    const wired = await mountWired(
+      personView(SPEND_DEFAULT_CONTROLS, true),
+      { '30d': REPORT },
+      'light',
+      STATS_DOCUMENT,
+    )
+    const drawn = await screen(page)
+
+    expect(wired.asked).toEqual([{ by: 'person', since: '30d' }])
+    expect(wired.askedPeople).toEqual([{ since: '30d' }])
+    expect(drawn.peoplePanel).toBe(1)
+    expect(drawn.peopleAvailable).toBe('true')
+    expect(drawn.peopleView).toBe('all')
+    expect(drawn.peopleRows).toBe(3)
+    expect(drawn.peopleTotals).toBe(1)
+    expect(drawn.peopleReason).toBeNull()
+    // The identity the read was resolved for, through the `person` class: the
+    // console's marker, never the address, and the login nowhere on the mount.
+    expect(drawn.peopleYou).toBe('redacted@example.invalid')
+    expect(drawn.text).toContain('these are every launcher of this project in the window')
+    expect(drawn.text).not.toContain('ada')
+
+    // The knob off is one read and no panel at all -- not an empty one.
+    const off = await mountWired(SPEND_DEFAULT_CONTROLS, { '30d': REPORT }, 'light', STATS_DOCUMENT)
+    const hidden = await screen(page)
+
+    expect(off.askedPeople).toEqual([])
+    expect(hidden.peoplePanel).toBe(0)
+    expect(hidden.text).not.toContain('ada')
+  })
+
+  test('draws the by-person read’s refusal beside the report, and not as the screen’s', async () => {
+    // A second read that fails is a panel with the CLI's sentence in it, and
+    // the report -- a different read, which answered -- is still drawn from
+    // its own document. The refusal is the child's text, so it reaches the
+    // screen through `sanitizeRefusal` like every other refusal.
+    const refused = await mountWired(
+      personView(SPEND_DEFAULT_CONTROLS, true),
+      { '30d': REPORT },
+      'light',
+      { refusal: 'runs stats: you are not an operator of this project' },
+    )
+    const drawn = await screen(page)
+
+    expect(refused.asked).toEqual([{ by: 'person', since: '30d' }])
+    expect(drawn.peoplePanel).toBe(1)
+    expect(drawn.peopleAvailable).toBe('false')
+    expect(drawn.peopleReason).toBe('runs stats: you are not an operator of this project')
+    expect(drawn.peopleRows).toBe(0)
+    expect(drawn.points).toBeGreaterThan(0)
   })
 
   test('draws the spend screen', async () => {

@@ -91,6 +91,7 @@ h1.unavailable-headline {
 /* A panel's title is the medium step, a table's header the small one
  * (design section 3.7). */
 h2.spend-account-title,
+h2.spend-people-title,
 h2.projects-title,
 h2.run-panel-title {
   font-size: var(--font-size-md);
@@ -114,6 +115,9 @@ p.live-note,
 p.spend-note,
 p.spend-warning,
 p.spend-persons-note,
+p.spend-people-reason,
+p.spend-people-note,
+p.spend-person-note,
 p.spend-notice,
 p.projects-because,
 p.projects-note,
@@ -186,6 +190,7 @@ li.live-repo,
 li.live-run,
 li.spend-row,
 li.spend-point,
+li.spend-person,
 li.spend-cap-repo,
 li.projects-cap,
 li.projects-job,
@@ -225,6 +230,7 @@ ol.run-log-tail,
 div.spend-accounts,
 div.spend-totals,
 section.spend-caps,
+section.spend-people,
 section.projects-panel,
 section.run-ledger,
 section.run-stages,
@@ -290,6 +296,7 @@ span.run-replay-at,
 span.spend-point-key,
 span.spend-key,
 span.spend-model,
+span.spend-person-user,
 span.spend-cap-repo-name,
 span.degraded-run-id,
 span.degraded-run-repo,
@@ -601,6 +608,58 @@ div.spend-persons[data-enabled='false'] {
 span.spend-persons-state {
   color: var(--text-muted);
   font-size: var(--font-size-xs);
+}
+
+/* The by-person panel (console L5b, design section 2.4): one line per launcher
+ * the read resolved, and the total of the window under them.
+ *
+ * The panel is a wrapping flex row because its own header -- the view, the
+ * identity the read was resolved for, whether the caller is an operator, the
+ * window and the bound -- is a run of loose spans, and a run of loose spans
+ * with no gap between them is one word. Every child that is not one of those
+ * spans takes the whole width (`flex-basis` below), so the panel still reads
+ * top to bottom; the lines are the shared row shape above (`li.spend-person`),
+ * and the figures are `spend-num`s, so they are mono and tabular without a rule
+ * of their own. */
+section.spend-people {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+}
+
+h2.spend-people-title,
+p.spend-people-reason,
+p.spend-people-note,
+p.spend-person-note,
+ol.spend-people-rows,
+ol.spend-people-totals {
+  flex-basis: 100%;
+}
+
+/* A panel with nothing to draw -- the read refused, or the console making
+ * none -- is muted as a whole, the way the withheld person knob is: the rows
+ * are not the only thing missing, the block is. */
+section.spend-people[data-available='false'] {
+  color: var(--text-muted);
+}
+
+/* The window the read covered, beside the window the picker asked for: the
+ * same shape as the header's own range words. */
+span.spend-people-view,
+span.spend-people-you,
+span.spend-people-operator,
+span.spend-people-since,
+span.spend-people-until,
+span.spend-people-bound {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* The total is the document's own line for the whole window and it is drawn in
+ * every state, so it carries the weight the rows do not. */
+li.spend-person-total {
+  font-weight: var(--weight-medium);
 }
 
 /* Degraded: the word `degraded` beside the tone (design section 3.5). */
@@ -1340,6 +1399,9 @@ main p {
   p.spend-note,
   p.spend-warning,
   p.spend-persons-note,
+  p.spend-people-reason,
+  p.spend-people-note,
+  p.spend-person-note,
   p.spend-notice,
   p.projects-because,
   p.projects-note,
@@ -1389,6 +1451,7 @@ main p {
    * once the author's colours are gone. */
   section.projects-panel,
   section.spend-caps,
+  section.spend-people,
   div.live-total,
   ol.live-repos,
   ol.live-runs,
@@ -1410,6 +1473,7 @@ main p {
   li.live-run,
   li.spend-row,
   li.spend-point,
+  li.spend-person,
   li.projects-cap,
   li.projects-job,
   li.projects-secret,
