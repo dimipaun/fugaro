@@ -41,7 +41,19 @@ func TestSessionGitNeverSeesModelCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the fsmonitor hook never ran: %v", err)
 	}
-	if strings.Contains(string(b), "ANTHROPIC_") || strings.Contains(string(b), "CLAUDE_CODE_OAUTH_TOKEN") || strings.Contains(string(b), "real") {
-		t.Fatalf("the hook saw a model credential:\n%s", b)
+	// The names only: this dump is the environment the hook ran with, and a
+	// failure is exactly the case where it holds something that must not
+	// leave the process, so the message never prints a value (a container
+	// whose environment carries one would put it in the test log).
+	var leaked []string
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.Contains(line, "ANTHROPIC_") || strings.Contains(line, "CLAUDE_CODE_OAUTH_TOKEN") || strings.Contains(line, "real") {
+			if name, _, ok := strings.Cut(line, "="); ok {
+				leaked = append(leaked, name)
+			}
+		}
+	}
+	if len(leaked) > 0 {
+		t.Fatalf("the hook saw a model credential in %d of the command's environment variables: %s", len(leaked), strings.Join(leaked, ", "))
 	}
 }
