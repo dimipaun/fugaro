@@ -1062,34 +1062,41 @@
     var model = list.firstElementChild ? list.firstElementChild.cloneNode(true) : null
     if (!model || !model.querySelector('.hero-shot-job-name') || !model.querySelector('.hero-shot-stage')) return
     var quiet = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null
-    var timers = []
+    // The rows on the card, in order, each with its own timers, and the "and N more" line when
+    // there is one. A pause in typing updates these in place rather than drawing the list again
+    // (the owner-approved motion review of 2026-10-23): a row already on the card keeps its stage
+    // and its clock, only a row that is new arrives, and a row no longer asked for leaves.
+    var rows = []
+    var rest = null
+    var drawn = false
     var waiting = 0
 
-    function stop() {
-      for (var t = 0; t < timers.length; t++) window.clearTimeout(timers[t])
-      timers = []
+    function stop(entry) {
+      for (var t = 0; t < entry.timers.length; t++) window.clearTimeout(entry.timers[t])
+      entry.timers = []
     }
 
-    function row(at, of) {
+    function row() {
       var item = model.cloneNode(true)
-      item.querySelector('.hero-shot-job-name').textContent = 'Pull request ' + at + ' of ' + of
+      item.removeAttribute('data-arrive')
       var stage = item.querySelector('.hero-shot-stage')
-      return { item: item, stage: stage }
+      return { item: item, name: item.querySelector('.hero-shot-job-name'), stage: stage, timers: [] }
     }
 
+    // A step every 400 to 700 ms: quick enough to read as work moving, with a little spread so
+    // the rows do not tick in lockstep.
     function advance(entry, step, delay) {
-      timers.push(window.setTimeout(function () {
+      entry.timers.push(window.setTimeout(function () {
         entry.stage.textContent = LIVE_STAGES[step]
         if (step === LIVE_STAGES.length - 1) entry.item.removeAttribute('data-stage')
         else {
           entry.item.setAttribute('data-stage', 'working')
-          advance(entry, step + 1, 700 + Math.floor(Math.random() * 900))
+          advance(entry, step + 1, 400 + Math.floor(Math.random() * 300))
         }
       }, delay))
     }
 
     function draw() {
-      stop()
       var asked = jobsIn(field.value)
       var count = Math.min(asked, max)
       if (count === 0) status.textContent = 'Type a task to launch a job'
@@ -1097,27 +1104,49 @@
         status.textContent =
           'Fugaro: launching ' + count + (count === 1 ? ' job' : ' jobs') +
           (asked > max ? ' (max_parallel is ' + max + ' by default)' : '')
-      while (list.firstChild) list.removeChild(list.firstChild)
       // A long fan-out draws its first rows and one line for the rest, so the card stays the size
       // of a card.
       var shown = count > LIVE_ROWS ? LIVE_ROWS - 1 : count
+      // The page's own first row is the static card's (the no-script picture); the first draw
+      // replaces it, and every draw after that reuses what it drew.
+      if (!drawn) while (list.firstChild) list.removeChild(list.firstChild)
+      drawn = true
+      while (rows.length > shown) {
+        var gone = rows.pop()
+        stop(gone)
+        list.removeChild(gone.item)
+      }
+      var kept = rows.length
       for (var n = 1; n <= shown; n++) {
-        var entry = row(n, count)
-        entry.item.setAttribute('data-arrive', '')
-        list.appendChild(entry.item)
-        if (quiet && quiet.matches) entry.stage.textContent = LIVE_STAGES[LIVE_STAGES.length - 1]
-        else {
-          entry.item.setAttribute('data-stage', 'working')
-          entry.stage.textContent = 'queued'
-          advance(entry, 0, 300 + n * 180)
+        var entry = rows[n - 1]
+        if (!entry) {
+          entry = row()
+          entry.item.setAttribute('data-arrive', '')
+          if (quiet && quiet.matches) {
+            entry.item.removeAttribute('data-stage')
+            entry.stage.textContent = LIVE_STAGES[LIVE_STAGES.length - 1]
+          } else {
+            entry.item.setAttribute('data-stage', 'working')
+            entry.stage.textContent = 'queued'
+            advance(entry, 0, 300 + (n - kept) * 180)
+          }
+          rows.push(entry)
+          list.insertBefore(entry.item, rest ? rest.item : null)
         }
+        entry.name.textContent = 'Pull request ' + n + ' of ' + count
       }
       if (shown < count) {
-        var rest = row(shown + 1, count)
-        rest.item.querySelector('.hero-shot-job-name').textContent = 'and ' + (count - shown) + ' more pull requests'
-        rest.stage.textContent = ''
-        rest.item.setAttribute('data-arrive', '')
-        list.appendChild(rest.item)
+        if (!rest) {
+          rest = row()
+          rest.item.removeAttribute('data-stage')
+          rest.stage.textContent = ''
+          rest.item.setAttribute('data-arrive', '')
+          list.appendChild(rest.item)
+        }
+        rest.name.textContent = 'and ' + (count - shown) + ' more pull requests'
+      } else if (rest) {
+        list.removeChild(rest.item)
+        rest = null
       }
     }
 
@@ -1148,16 +1177,41 @@
         seen.unobserve(entries[e].target)
       }
     }, { rootMargin: '0px 0px -12% 0px' })
-    var fold = window.innerHeight || 0
+    // The trigger line is the observer's: the window's bottom less its 12% margin. Anything
+    // already above it when the script runs is in view and is never held back.
+    var fold = (window.innerHeight || 0) * 0.88
+    var held = []
     for (var b = 0; b < blocks.length; b++) {
       var parts = blocks[b].querySelectorAll('h2, h3, p, li, figure, pre')
       for (var p = 0; p < parts.length; p++) {
         if (parts[p].getBoundingClientRect().top < fold) continue
         parts[p].setAttribute('data-reveal', '')
-        parts[p].style.transitionDelay = Math.min(p, 6) * 70 + 'ms'
+        // The stagger stops at the fourth part, so the last part of a block starts 210 ms after
+        // the first (the owner-approved motion review of 2026-10-23).
+        parts[p].style.transitionDelay = Math.min(p, 3) * 70 + 'ms'
         seen.observe(parts[p])
+        held.push(parts[p])
       }
     }
+    // The failsafe: an observer that never fires (a fast scroll past, a stalled observer, a
+    // print, a screenshot tool) must not leave a part invisible. About two seconds after the
+    // page loads, anything still held back that is above the window's bottom is shown, and so is
+    // everything at once when the page is printed.
+    function release(all) {
+      var bottom = window.innerHeight || 0
+      for (var h = 0; h < held.length; h++) {
+        if (held[h].hasAttribute('data-revealed')) continue
+        if (!all && held[h].getBoundingClientRect().top >= bottom) continue
+        held[h].setAttribute('data-revealed', '')
+        seen.unobserve(held[h])
+      }
+    }
+    function later() {
+      window.setTimeout(function () { release(false) }, 2000)
+    }
+    if (document.readyState === 'complete') later()
+    else window.addEventListener('load', later)
+    window.addEventListener('beforeprint', function () { release(true) })
   }
 
 

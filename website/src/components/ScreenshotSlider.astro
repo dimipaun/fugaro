@@ -329,9 +329,11 @@ const slideId = (index: number) => `${idPrefix}-${index + 1}`
     transform: rotate(-45deg);
   }
 
-  .screen-arrow:hover {
-    background: var(--border);
-    color: var(--accent-on-dark);
+  @media (hover: hover) and (pointer: fine) {
+    .screen-arrow:hover {
+      background: var(--border);
+      color: var(--accent-on-dark);
+    }
   }
 
   .screen-arrow:active {
@@ -396,8 +398,10 @@ const slideId = (index: number) => `${idPrefix}-${index + 1}`
     background: var(--border);
   }
 
-  .screen-dot:hover::before {
-    background: var(--text-muted);
+  @media (hover: hover) and (pointer: fine) {
+    .screen-dot:hover::before {
+      background: var(--text-muted);
+    }
   }
 
   /* The slide the reader is on: the script writes `aria-current="true"` on its own dot, and
