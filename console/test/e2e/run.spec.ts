@@ -76,6 +76,7 @@ import { RUN_LOG_CAP, RUN_THEMES } from '../../src/renderer/screens/run'
 import { githubToken } from '../support/fakeSecrets'
 import { inRangeCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
+import { expectGolden, expectGrounded } from '../support/goldens'
 import { launchConsole } from '../support/launch'
 
 // The console's own directory, from this file's location: `test/e2e/x.spec.ts`
@@ -98,6 +99,10 @@ const THE_MOUNT = '#run-mount'
  * recorded: `FUGARO_CONSOLE_GOLDENS=skip`. Anything else, including unset, means
  * the golden tests run and a missing baseline fails them. */
 const SKIP_GOLDENS = process.env['FUGARO_CONSOLE_GOLDENS'] === 'skip'
+
+/** SPEC is this file's own name: what a re-record command has to name, and what
+ * every golden failure here quotes back to the reader. */
+const SPEC = 'run.spec.ts'
 
 /** The compiled modules the screen is made of, in dependency order: the screen,
  * the writers in `renderer/app.js`, and the shared modules they use -- including
@@ -625,18 +630,36 @@ test.describe('the Run detail screen', () => {
     expect(drawn.replayNote).toContain('15 minutes')
   })
 
-  test('draws the run screen', async () => {
-    test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
-    await mount(DIAGNOSIS, logLines(3), LOG_LINK, ARRIVALS, '2026-10-15T12:05:00Z', 'light')
-    await expect(page.locator(THE_MOUNT)).toHaveScreenshot(GOLDEN_NAMES.light)
+  test('is painted from the design tokens, not from the browser defaults', async () => {
+    // Design section 6.2's computed-ground assertion, and the one case in this
+    // file that is red when the stylesheet stops being linked: the theme travels
+    // as a `data-theme` attribute the renderer stamps, so every read above passes
+    // on a tree nothing paints. `test/support/goldens.ts` holds the app's ground
+    // and the screen's text colour to the shipped palette, once per theme.
+    //
+    // NOT a golden test, deliberately: `FUGARO_CONSOLE_GOLDENS=skip` does not skip
+    // it. Nothing here reads a PNG, so an unstyled tree is red on its own account
+    // rather than recorded as a fresh baseline nobody compared.
+    await expectGrounded(page, (theme) => mount(DIAGNOSIS, logLines(3), LOG_LINK, ARRIVALS, null, theme), {
+      themes: RUN_THEMES,
+      mount: THE_MOUNT,
+      text: 'h1.run-id',
+      screen: 'the Run detail screen',
+    })
   })
 
-  test('draws the run screen in the dark theme', async () => {
+  test('draws the run screen', async ({}, testInfo) => {
+    test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
+    await mount(DIAGNOSIS, logLines(3), LOG_LINK, ARRIVALS, '2026-10-15T12:05:00Z', 'light')
+    await expectGolden(page.locator(THE_MOUNT), GOLDEN_NAMES.light, { spec: SPEC, consoleDir, testInfo })
+  })
+
+  test('draws the run screen in the dark theme', async ({}, testInfo) => {
     await mount(DIAGNOSIS, logLines(3), LOG_LINK, ARRIVALS, null, 'dark')
     const drawn = await screen(page)
     expect(drawn.theme).toBe('dark')
     test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
-    await expect(page.locator(THE_MOUNT)).toHaveScreenshot(GOLDEN_NAMES.dark)
+    await expectGolden(page.locator(THE_MOUNT), GOLDEN_NAMES.dark, { spec: SPEC, consoleDir, testInfo })
   })
 
   test('resolves the golden names under the run directory', ({}, testInfo) => {
