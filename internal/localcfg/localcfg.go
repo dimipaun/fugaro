@@ -159,6 +159,35 @@ type Config struct {
 	// secret and may be printed (M5, D113b — "the settings hold the item's
 	// name only").
 	Mailbox *Mailbox `yaml:"mailbox,omitempty"`
+	// CredentialsService is the installation's credentials service
+	// (docs/credentials-service, D146/D147), or nil while the installation has
+	// not opted into one — which is every installation until an owner runs
+	// `fugaro init --provision-credentials`. It is what `fugaro run` reads to
+	// put the service's URL on the job's environment, which is the one fact the
+	// runner's cascade upstream and the keyless GitHub path are built on
+	// (internal/runner/gateway.go's credentialsServiceURLEnv,
+	// internal/gitprov/providers). An installation without the block launches
+	// byte for byte the job it launched before this field existed.
+	//
+	// It is written from the INSTALLATION's own record — the installation
+	// root's outputs, which the credentials stage fills and the module's
+	// output carries — and never hand-set: the URL is Cloud Run's own, carries
+	// the project NUMBER, and cannot be derived offline. The init run that
+	// turns the service on writes it (init_credentials.go's stage, through
+	// initRun.writeConfig), and so does every installation run after it
+	// (writeConfig reads outs.CredentialsService), so an installation that
+	// opted in on an older Fugaro gets the block the next time `fugaro update`
+	// converges it.
+	//
+	// It is PUBLISHED (Shared keeps it, MergeShared keeps the published one
+	// when a machine's own config has none), for the reason batch: is: it is
+	// the installation's fact and not one machine's, and the machine that runs
+	// a launch is often not the machine that opted in. A local-only key would
+	// be the ledger item of PR #903: a teammate's config, written by `fugaro
+	// setup` or carried by `init --repo`, never learns it, and their launches
+	// would go out without the variable while the installation has the service
+	// on.
+	CredentialsService *CredentialsService `yaml:"credentials_service,omitempty"`
 	// UpdateCheck turns off the daily check for a newer fugaro release and
 	// its one-line stderr nag (FUGARO_NO_UPDATE_CHECK=1 does the same;
 	// `fugaro doctor`'s own cli-version check ignores both); nil or true
@@ -189,6 +218,58 @@ type Mailbox struct {
 	// validate refuses a name that package refuses, with that package's
 	// sentence.
 	KeychainItem string `yaml:"keychain_item,omitempty"`
+}
+
+// CredentialsService is the credentials service block: the installation's own
+// Cloud Run service, as the launcher needs it (docs/credentials-service,
+// D146/D147). One field, and one is all a launcher reads.
+//
+// The block's PRESENCE is the opt-in — `fugaro run` puts the URL on a job only
+// when it is there — so an absent block and a block with an empty url are the
+// same thing to every reader and the loader refuses the second rather than
+// reading it as "off".
+type CredentialsService struct {
+	// URL is the service's own URL, which is also the audience its callers'
+	// Google ID tokens are minted for (C1.14): the runner uses one value for
+	// both, the endpoint and the audience, because they are the same string
+	// (internal/runner/gateway.go's serviceUpstream). It is the installation
+	// root's fact: credentials.tf's output reads the service resource's own
+	// uri, and the init stage writes it into the tfvars on the apply after the
+	// one that created the service (Cloud Run assigns the URL and nothing
+	// inside the resource may read its own uri).
+	//
+	// Held to the same shape as the service's own audience check
+	// (internal/cli's credentialsServiceAudience, whose rule this mirrors):
+	// an https URL with a host, no path, no query, no fragment and no user
+	// info. Nothing weaker is admitted, because a value that is not exactly
+	// that is a caller whose ID token is minted for an audience no revision
+	// answers to.
+	URL string `yaml:"url"`
+}
+
+// validCredentialsServiceURL holds credentials_service.url to the shape the
+// credentials service's own configuration holds its audience to
+// (internal/cli's credentialsServiceAudience): https, a host, and nothing
+// else. The rule is stated twice on purpose — the service refuses to serve
+// with an audience that is not its own URL, and the launcher refuses to put
+// anything else on a job — and the two must agree, because the value travels
+// from one to the other: a URL the launcher admits and the service does not is
+// a run whose every call is answered 401, and one the service admits and the
+// launcher does not is a service nothing can call.
+//
+// It is deliberately not the whole audience check: that one also refuses a
+// value that is not this revision's own URL, which only the deployment knows.
+// Nothing here can check the host, and nothing pretends to: the URL carries
+// Cloud Run's own project NUMBER, which no configuration in this tree holds.
+func validCredentialsServiceURL(raw string) error {
+	if raw == "" {
+		return errors.New("the credentials service block carries no url: remove the block for an installation without the service, or write the service's own https URL")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.Scheme != "https" || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+		return errors.New("it must be the https URL Cloud Run serves the service on, with no path, query or fragment (a caller's Google ID token is minted for exactly that audience, so anything else is refused by IAM)")
+	}
+	return nil
 }
 
 // Watch is the watch block: how fugaro watch flags a fast burn.
@@ -1114,6 +1195,21 @@ func (c *Config) validate() error {
 	if m := c.Mailbox; m != nil {
 		if _, err := keychain.ParseItem(m.KeychainItem, c.Name); err != nil {
 			bad("mailbox.keychain_item: %v", err)
+		}
+	}
+	// The credentials service block is the installation's own URL, and its
+	// shape is the rule the service itself holds its audience to
+	// (internal/cli's credentialsServiceAudience): the launcher hands this
+	// value to the job, the runner mints the job's Google ID token for it and
+	// calls it, so a value that is not exactly the URL Cloud Run serves the
+	// revision on is a run whose every call is refused by IAM — or, worse,
+	// admitted by something else. An empty url with the block present is
+	// refused rather than read as "the service is off": the block's presence
+	// IS the opt-in (see CredentialsService), and an empty one would put the
+	// variable on the job empty, which the runner reads as "set" for nothing.
+	if cs := c.CredentialsService; cs != nil {
+		if err := validCredentialsServiceURL(cs.URL); err != nil {
+			bad("credentials_service.url: %v", err)
 		}
 	}
 	for _, region := range slices.Sorted(maps.Keys(c.ComputePrices)) {

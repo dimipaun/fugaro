@@ -236,6 +236,9 @@ func (s *credentialsStage) Apply(ctx context.Context, _ initflow.Env) (out initf
 		if err != nil {
 			return initflow.Outcome{}, err
 		}
+		if err := s.recordURL(ctx); err != nil {
+			return initflow.Outcome{}, err
+		}
 		if filled {
 			return initflow.Outcome{Changed: true, Detail: "applied: " + s.changes.String() + " (the credentials service's audience)"}, nil
 		}
@@ -278,6 +281,9 @@ func (s *credentialsStage) Apply(ctx context.Context, _ initflow.Env) (out initf
 	}
 	// The audience, which the apply above could not set: see fillAudience.
 	if _, err := s.fillAudience(ctx); err != nil {
+		return initflow.Outcome{}, err
+	}
+	if err := s.recordURL(ctx); err != nil {
 		return initflow.Outcome{}, err
 	}
 	fmt.Fprintf(r.w, "the credentials service is on: %s runs in %s with %s; every repository root re-applied after this drops its jobs' model-secret accessors and grants them an invoker on it\n",
@@ -524,6 +530,52 @@ func (s *credentialsStage) fillAudience(ctx context.Context) (bool, error) {
 	}
 	fmt.Fprintf(r.w, "the credentials service's audience is its own URL: %s\n", url)
 	return true, nil
+}
+
+// recordURL writes the service's URL into the project config, and so into the
+// published shared config, from the installation's own record.
+//
+// It runs after the audience is filled, in both of Apply's branches, and it is
+// what makes the opt-in reach a run at all: `fugaro run` puts the URL on a
+// job's environment from the selected config's credentials_service block
+// (localcfg.Config.CredentialsService, internal/cli/run.go), and until this
+// stage writes it the block is absent — the installation stage's writeConfig
+// ran before the service existed, and a later ordinary init is the next thing
+// that would have recorded it. Leaving it to that later run would be a
+// one-run window in which the service is on, the repository jobs have lost
+// their model credentials, and every launch still goes out without the
+// variable: the run the owner launches right after this one, which is the
+// whole point of the stage.
+//
+// The confirmation is not asked again: the owner has typed the project's name
+// for the apply that created this service (or, in the empty-plan branch, the
+// service is already in the state they consented to), and the local config's
+// change is one line of it. The diff is still printed (writeLocalConfig).
+//
+// A failure here is an error and not a warning: the apply succeeded, so the
+// installation HAS the service, and a run whose config does not say so is a
+// launch that carries no URL — silently, and only for the installations that
+// opted in.
+func (s *credentialsStage) recordURL(ctx context.Context) error {
+	e, r := s.e, s.e.r
+	raw, err := e.t.Output(ctx)
+	if err != nil {
+		return remote(err)
+	}
+	outs, err := infra.DecodeOutputs(raw)
+	if err != nil {
+		return remote(err)
+	}
+	if outs.CredentialsService == nil || outs.CredentialsService.URL == "" {
+		// fillAudience has just refused this shape; this is the same fact
+		// read once more so that the writer cannot record nothing.
+		return userErr("the installation's outputs carry no credentials service URL after the apply, so the project config records none: the launch would put no address on a job of an installation whose service is on")
+	}
+	if err := r.writeConfig(ctx, e.lc, e.spec, outs, e.path, e.old, true); err != nil {
+		return err
+	}
+	fmt.Fprintf(r.w, "the project config records the credentials service at %s, and a launch of this project hands it to the job (a run of an installation without the service is unchanged)\n", outs.CredentialsService.URL)
+	return nil
 }
 
 // putBack is Apply's deferred return: the tfvars go back as the stage found

@@ -28,7 +28,12 @@ const SharedMaxBytes = 64 << 10
 // machine's choice to silence the nag is its own operator's, not something
 // a launcher writing the shared file should be able to flip for everyone),
 // and each repo's base_branch, which the checkout's reviewed fugaro.yaml
-// names. **batch: is published**, for the opposite reason: it is the
+// names. **credentials_service: is published too**, for the reason batch: and
+// mailbox: are: the installation's one Cloud Run service, and therefore the
+// URL `fugaro run` puts on a job's environment, is the installation's fact and
+// not one machine's — the machine that launches is often not the machine that
+// opted in, and a local-only copy of it is exactly what goes missing (the
+// ledger item of PR #903). **batch: is published**, for the opposite reason: it is the
 // installation's own facts (design docs/design/compute-backend.md §4.4, plan
 // 2026-10-19-compute-backend.md Task 8 step 2) — the image a run's job runs,
 // the machine type, the network and subnetwork its VMs are placed in, the
@@ -149,6 +154,27 @@ func MergeShared(published, local *Config) *Config {
 		// NOT is the key: the key never leaves the OS keychain it was generated
 		// into (M5), so nothing published here is a secret.
 		out.Mailbox = published.Mailbox
+	}
+	if out.CredentialsService == nil {
+		// The credentials service block is published for the same reason, and
+		// it is the one the launcher reads: the URL is the installation's own
+		// Cloud Run service, and the machine that runs a launch is often not
+		// the machine that opted in. A publisher whose own config has no block
+		// is a machine that never ran the opt-in — a teammate who onboarded a
+		// repository with `fugaro init --repo`, a CI box whose config came
+		// from the published file — and taking its nil over the published one
+		// would erase the installation's one record of its service, silently,
+		// so that every later launch of the project went out without the
+		// variable while the installation has the service on (the ledger item
+		// of PR #903).
+		//
+		// The cost of that rule is the opt-out's: an installation whose service
+		// is removed keeps the published block until an operator clears it, and
+		// a launch that reads it puts a dead URL on the job. That is the
+		// direction this file takes everywhere (a stale fact is recoverable; an
+		// erased one is not), and the runbook's opt-out section says what to
+		// remove.
+		out.CredentialsService = published.CredentialsService
 	}
 	if out.MaxParallel == 0 {
 		out.MaxParallel = published.MaxParallel

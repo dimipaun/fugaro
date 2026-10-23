@@ -2246,6 +2246,19 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 		}
 	}
 	next.Build.ServiceAccount = ""
+	// The credentials service, from the installation's own record: the
+	// module's output carries the service's URL once the stage that turns it
+	// on has filled the audience (init_credentials.go), and this is what puts
+	// it in the local config — and so in the published one — for `fugaro run`
+	// to hand to a job. An installation whose outputs carry no service (never
+	// opted in, or opted out) clears the block: the URL it named is not a
+	// service that exists any more, and a launch that carried it would put a
+	// dead address on a job.
+	//
+	// It is set from the OUTPUTS and not from a flag: there is no way for a
+	// person to write this value by hand, because there is no way for them to
+	// know it (Cloud Run's URL carries the project number).
+	next.CredentialsService = credentialsServiceBlock(outs.CredentialsService)
 	if r.mutate != nil {
 		r.mutate(&next)
 	}
@@ -2266,6 +2279,23 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 		r.publishSharedConfig(ctx, &next)
 	}
 	return nil
+}
+
+// credentialsServiceBlock is the local config's credentials_service block for
+// an installation whose outputs carry s: nil when they carry none.
+//
+// The URL is the one field, and the block is nil rather than empty when the
+// installation has no service, because the block's PRESENCE is what `fugaro
+// run` reads as "this installation has one" — an empty block would put an
+// empty variable on a job, which the runner reads as set (the runner's own
+// check is `url == ""`, so an empty value is "no service" there, but the
+// provider gate in internal/gitprov reads presence) and which the config
+// loader refuses in the first place.
+func credentialsServiceBlock(s *infra.CredentialsService) *localcfg.CredentialsService {
+	if s == nil || s.URL == "" {
+		return nil
+	}
+	return &localcfg.CredentialsService{URL: s.URL}
 }
 
 // publishSharedConfig publishes the shared config after the local config is
