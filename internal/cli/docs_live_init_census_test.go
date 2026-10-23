@@ -518,9 +518,11 @@ func censusOutput(rel string) bool {
 
 // censusVendoredRoots are the root-level trees of vendored third-party agent
 // skills, which the census walks do not open: samber/cc-skills-golang, added
-// 2026-10-23 (skills-lock.json pins each skill's source and hash), in the two
-// install locations the skills tooling writes -- `.agents/` and `agent/`. They
-// are not Fugaro's text: their prose names other tools' `init --<flag>` (swag's,
+// 2026-10-23 (skills-lock.json pins each skill's source and hash), in the
+// canonical install location the skills tooling writes, `.agents/`; the skills
+// Claude Code loads are symlinks into it under `.claude/skills/`. A second copy
+// the tooling wrote for another agent layout (`agent/`) was dropped the same
+// day. They are not Fugaro's text: their prose names other tools' `init --<flag>` (swag's,
 // in golang-swagger), and one ships a sample .gitignore for a generic Go
 // project. Neither is a rename Fugaro owes nor an output a Fugaro build writes;
 // the remedy for a mention there is re-vendoring, not editing.
@@ -528,7 +530,7 @@ func censusOutput(rel string) bool {
 // The match is ROOT-LEVEL and exact: internal/agent is a Fugaro package and
 // stays walked, and so does any sibling such as `agents/` or `agentx/`.
 // TestCensusVendoredIsRootLevelAndExact pins that.
-var censusVendoredRoots = []string{".agents", "agent"}
+var censusVendoredRoots = []string{".agents"}
 
 // censusVendored reports whether a repository-relative path is one of
 // censusVendoredRoots or under one of them.
@@ -541,8 +543,8 @@ func censusVendored(rel string) bool {
 	return false
 }
 
-// TestCensusVendoredIsRootLevelAndExact holds the vendored skip to the two
-// root-level trees it names, so it cannot widen into Fugaro's own code.
+// TestCensusVendoredIsRootLevelAndExact holds the vendored skip to the one
+// root-level tree it names, so it cannot widen into Fugaro's own code.
 //
 // Mutation (run, restore): match with strings.Contains -- the internal/agent
 // cases fail; drop the "/" boundary -- the agentx case fails.
@@ -554,8 +556,9 @@ func TestCensusVendoredIsRootLevelAndExact(t *testing.T) {
 		{".agents", true},
 		{".agents/x", true},
 		{".agents/skills/golang-swagger/references/swag-cli.md", true},
-		{"agent", true},
-		{"agent/skills/golang-project-layout/assets/.gitignore", true},
+		// The second install location was dropped: a root `agent/` is walked.
+		{"agent", false},
+		{"agent/skills/golang-project-layout/assets/.gitignore", false},
 		// Fugaro's own package of that name, and a file in it the census
 		// exemptions name, stay walked.
 		{"internal/agent", false},
@@ -665,6 +668,11 @@ func liveInitCensus(t *testing.T, root string) []string {
 		err = filepath.WalkDir(p, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
+			}
+			// A symlink is not text of its own: `.claude/skills/<name>` points into the
+			// vendored `.agents/skills/<name>`, which is where its target is judged.
+			if d.Type()&fs.ModeSymlink != 0 {
+				return nil
 			}
 			rel, err := filepath.Rel(root, path)
 			if err != nil {
@@ -1050,6 +1058,11 @@ func TestCensusOutputCoversEveryIgnoredPathTheWalksReach(t *testing.T) {
 		if err != nil {
 			return err
 		}
+		// A symlink is not text of its own: `.claude/skills/<name>` points into the
+		// vendored `.agents/skills/<name>`, which is where its target is judged.
+		if d.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
 		rel, err := filepath.Rel(censusRoot, path)
 		if err != nil {
 			return err
@@ -1248,6 +1261,11 @@ func TestLiveInitCensusRootsAreTheOnlyOnesThatNameIt(t *testing.T) {
 		err := filepath.WalkDir(p, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
+			}
+			// A symlink is not text of its own: `.claude/skills/<name>` points into the
+			// vendored `.agents/skills/<name>`, which is where its target is judged.
+			if d.Type()&fs.ModeSymlink != 0 {
+				return nil
 			}
 			rel, err := filepath.Rel(censusRoot, path)
 			if err != nil {
