@@ -241,6 +241,10 @@ async function runWslQuery(options: {
     command: options.program,
     prefix: Object.freeze([]) as readonly string[],
     argv: Object.freeze([options.program, ...options.args]),
+    // A `wsl.exe` question is not the CLI being carried into a distribution:
+    // there is no shell and no pid to record, so there is no wrapper (T-F4's
+    // `sh -c` is for the CLI's own plans only).
+    wrapper: null,
     cwd: options.cwd,
     // The same environment rule as any other spawn, with the **win32** row's
     // child `PATH` -- which is Linux's (`WIN32_LOCATIONS`, T-C2), because the

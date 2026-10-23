@@ -86,6 +86,11 @@ import {
   spawnedArgv,
   startSidecar,
   DEFAULT_BACKOFF,
+  WSL_SHELL_FLAG,
+  WSL_SHELL_PROGRAM,
+  WSL_WRAPPER_MARKER,
+  shellQuote,
+  wslStopArgs,
 } from '../../src/main/spawn'
 import type {
   ChildSpawner,
@@ -718,6 +723,7 @@ describe('the wrapper on the spawn plan', () => {
       command: WSL,
       prefix: Object.freeze(['-d', 'Ubuntu', '--cd', '/home/dimi', '--']),
       argv: Object.freeze([FUGARO_BINARY_NAME, ...argv]),
+      wrapper: null,
       cwd: '/home/dimi',
       env: Object.freeze({}),
       project: PROJECT,
@@ -1769,20 +1775,23 @@ describe('the WSL resolution path', () => {
     // directory is the wrapper's `--cd`.
     expect(plan.cwd).toBe('/Users/owner/AppData/Local/Temp/fugaro-console/cwd')
     // The whole line, as it will be spawned and as the log records it (O4).
-    expect([...spawnedArgv(plan)]).toEqual([
-      wsl.binary,
-      '-d',
-      'Ubuntu',
-      '--cd',
-      '/home/dimi/src/fugaro',
-      '--',
-      'fugaro',
-      'budget',
-      'show',
-      '--json',
-      '--project',
-      PROJECT,
-    ])
+    // The CLI's argv is **inside** the wrapper's script rather than beside it
+    // (T-F4, D6(a)): the shell is what records the pid inside the distribution,
+    // and `exec` makes that pid the CLI's own.
+    const line = [...spawnedArgv(plan)]
+    expect(line.slice(0, 6)).toEqual([wsl.binary, '-d', 'Ubuntu', '--cd', '/home/dimi/src/fugaro', '--'])
+    expect(line.slice(6, 8)).toEqual([WSL_SHELL_PROGRAM, WSL_SHELL_FLAG])
+    expect(line).toHaveLength(9)
+    const script = line[8] ?? ''
+    // The marker T-F1 classifies by, the pid the cancellation names, and the
+    // CLI's argv -- each word quoted, so a project named `$(id)` is a word.
+    expect(script).toContain(WSL_WRAPPER_MARKER)
+    expect(script).toMatch(/echo \$\$ > 'fugaro\.pid\.\d+\.\d+'/)
+    expect(script).toContain(`exec 'fugaro' 'budget' 'show' '--json' '--project' '${PROJECT}'`)
+    // The pid file is the plan's own, and it is a host path beside the
+    // directory `wsl.exe` itself is started in.
+    expect(plan.wrapper?.pidFile).toBe(join(plan.cwd, basename(plan.wrapper?.pidFile ?? '')))
+    expect(plan.wrapper?.distro).toBe('Ubuntu')
   })
 
   it('gives the CLI inside the distribution Linux’s PATH and exactly CHILD_ENV_KEYS', () => {
@@ -1856,15 +1865,14 @@ describe('the WSL resolution path', () => {
     expect(spawn).toHaveLength(1)
     expect(spawn[0]?.distro).toBe('Ubuntu')
     expect(spawn[0]?.cd).toBe(arrangement.distroDirectory)
-    expect(spawn[0]?.argv).toEqual([
-      '-d',
-      'Ubuntu',
-      '--cd',
-      arrangement.distroDirectory,
-      '--',
-      FUGARO_BINARY_NAME,
-      'version',
-    ])
+    // `wsl.exe`'s own words, then the shell that carries the CLI (T-F4): the
+    // CLI's argv is inside the script, which is what lets the console record the
+    // pid it must kill. What the CLI received is the next assertion, from the
+    // child's own account rather than from the console's intent.
+    expect(spawn[0]?.argv.slice(0, 5)).toEqual(['-d', 'Ubuntu', '--cd', arrangement.distroDirectory, '--'])
+    expect(spawn[0]?.argv.slice(5, 7)).toEqual([WSL_SHELL_PROGRAM, WSL_SHELL_FLAG])
+    expect(spawn[0]?.argv).toHaveLength(8)
+    expect(spawn[0]?.wrapper).toContain(`exec '${FUGARO_BINARY_NAME}' 'version'`)
     // The host side: `wsl.exe` was started in the directory the console named.
     expect(spawn[0]?.cwd).toBe(arrangement.host)
     // ...and the distribution's side: the CLI's own cwd is the `--cd`.
@@ -1884,8 +1892,11 @@ describe('the WSL resolution path', () => {
     const resolution = await resolveInside(arrangement, { binaryPath: stored })
     expect(resolution.ok && resolution.path).toBe(stored)
     const spawn = only(arrangement.wsl.reports().filter((report) => report.kind === 'spawn'))
-    expect(spawn.argv.at(-2)).toBe(FUGARO_BINARY_NAME)
-    expect(spawn.argv.at(-1)).toBe('version')
+    // The program word is the bare name and it is **inside the script** (T-F4):
+    // the distribution resolves it, and the record's path is what the console
+    // states rather than what it runs.
+    expect(spawn.wrapper).toContain(`exec '${FUGARO_BINARY_NAME}' 'version'`)
+    expect(spawn.wrapper).not.toContain(stored)
     expect(only(arrangement.wsl.children()).argv).toEqual(['version'])
 
     // And the plan says the same thing: the name runs, the record's directory is
@@ -1998,17 +2009,13 @@ describe('the WSL resolution path', () => {
       source: 'configured',
     })
     const spawn = only(arrangement.wsl.reports().filter((report) => report.kind === 'spawn'))
-    expect(spawn.argv).toEqual([
-      '-d',
-      'Ubuntu',
-      '--cd',
-      arrangement.distroDirectory,
-      '--',
-      FUGARO_BINARY_NAME,
-      'version',
-    ])
+    expect(spawn.argv.slice(0, 5)).toEqual(['-d', 'Ubuntu', '--cd', arrangement.distroDirectory, '--'])
+    expect(spawn.argv.slice(5, 7)).toEqual([WSL_SHELL_PROGRAM, WSL_SHELL_FLAG])
     // The handshake's argv is exactly `version` on this route too: no
-    // `--project`, because `fugaro version` takes no flags at all.
+    // `--project`, because `fugaro version` takes no flags at all -- and it is
+    // inside the wrapper's script, which is what the child's own account below
+    // confirms (T-F4).
+    expect(spawn.wrapper).toContain(`exec '${FUGARO_BINARY_NAME}' 'version'`)
     expect(only(arrangement.wsl.children()).argv).toEqual(['version'])
   })
 
@@ -2340,6 +2347,9 @@ describe('the supervisor', () => {
       code: null,
       said: null,
       reason: 'the binary did not answer `version` in time',
+      // The host route: there is no wrapper, so there is no
+      // "did a child inside the distribution start" question to answer (T-F1).
+      wrapperStarted: null,
     })
     await waitFor(() => stub.kills().length === 1)
     expect(stub.kills()[0]?.signal).toBe('SIGTERM')
