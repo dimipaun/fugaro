@@ -52,6 +52,7 @@ import {
   CHILD_ENV_KEYS,
   COMMANDS_WITHOUT_PROJECT,
   DARWIN_LOCATIONS,
+  FUGARO_BINARY_NAME,
   INSTALLATION_LIST_COMMAND,
   LINUX_LOCATIONS,
   PICKER_COMMANDS,
@@ -59,6 +60,7 @@ import {
   PLATFORM_LOCATIONS,
   SPAWN_COMMANDS,
   argvFor,
+  assertArgvFlags,
   assertSpawnSurface,
   binDirectories,
   childEnvironment,
@@ -77,6 +79,7 @@ import {
   runToCompletion,
   restartDecision,
   spawnCommandFor,
+  spawnedArgv,
   startSidecar,
   DEFAULT_BACKOFF,
 } from '../../src/main/spawn'
@@ -680,6 +683,111 @@ describe('the spawn table and the argv it builds', () => {
     expect(call?.args).toEqual(['budget', 'show', '--json', '--repo', 'acme/widgets', '--project', PROJECT])
     expect(call?.options.shell).toBe(false)
     expect(call?.options.cwd).toBe('/Users/owner/src/fugaro')
+  })
+})
+
+describe('the wrapper on the spawn plan', () => {
+  // T-C1 of docs/console-windows/implementation-plan.md, decision D1(a): the
+  // plan names the program it starts (`command`) and the wrapper's own words
+  // (`prefix`) apart from the CLI's argv, because on Windows the console starts
+  // `wsl.exe` and `wsl.exe` starts the CLI inside a distribution.
+  const WSL = 'C:\\Windows\\System32\\wsl.exe'
+  const wslPlan = (argv: readonly string[]): SpawnPlan =>
+    Object.freeze({
+      operation: 'cli.version' as const,
+      command: WSL,
+      prefix: Object.freeze(['-d', 'Ubuntu', '--cd', '/home/dimi', '--']),
+      argv: Object.freeze([FUGARO_BINARY_NAME, ...argv]),
+      cwd: '/home/dimi',
+      env: Object.freeze({}),
+      project: PROJECT,
+      backoff: DEFAULT_BACKOFF,
+    })
+
+  it('keeps the program, the wrapper’s words and the CLI’s argv apart', () => {
+    // The host route: the command *is* the CLI's program word, so `argv[0]` and
+    // `command` are the same string and the spawned line is unchanged.
+    const host = planFor('budget.show', {}, safeContext({ binaryPath: '/opt/homebrew/bin/fugaro' }))
+    expect(host.command).toBe('/opt/homebrew/bin/fugaro')
+    expect([...host.prefix]).toEqual([])
+    expect(host.argv[0]).toBe('/opt/homebrew/bin/fugaro')
+    expect([...spawnedArgv(host)]).toEqual(['/opt/homebrew/bin/fugaro', 'budget', 'show', '--json', '--project', PROJECT])
+    expect([...spawnedArgv(host)]).toEqual([...host.argv].slice(0, 1).concat(host.argv.slice(1)))
+
+    // The WSL route: the command is `wsl.exe`, the wrapper's words are its own
+    // flags, and `argv[0]` is `fugaro` -- the bare name the *distribution*
+    // resolves, which is the whole point of running the CLI inside it.
+    const wsl = wslPlan(['version'])
+    expect(wsl.argv[0]).toBe(FUGARO_BINARY_NAME)
+    expect([...spawnedArgv(wsl)]).toEqual([WSL, '-d', 'Ubuntu', '--cd', '/home/dimi', '--', 'fugaro', 'version'])
+  })
+
+  it('holds the wrapper’s flags to `wsl.exe` and the CLI’s argv to `SPAWN_FLAGS`', () => {
+    // The two halves are asserted against two different rules, and that is why
+    // they are two fields. `-d` and `--cd` are `wsl.exe`'s; `--cd` is not a flag
+    // this console may emit to the CLI, and neither is `--distribution`, so a
+    // wrapper flag that leaked into the CLI's argv is refused by name.
+    const wsl = wslPlan(['version'])
+    expect(() => assertArgvFlags('cli.version', wsl.argv)).not.toThrow()
+    expect(() => assertArgvFlags('cli.version', [FUGARO_BINARY_NAME, 'version', '--cd', '/home/dimi'])).toThrow(
+      /--cd, which is not a flag this console may spawn/,
+    )
+    expect(() =>
+      assertArgvFlags('cli.version', [FUGARO_BINARY_NAME, 'version', '--distribution', 'Ubuntu']),
+    ).toThrow(/--distribution/)
+    // ...and the prefix is *not* an argv the CLI's assertion is ever asked
+    // about, which is the whole reason it is a separate field: handed to this
+    // same assertion it would be refused, because `--cd` is not a flag this
+    // console may emit to the CLI. A design that put the wrapper in `argv` would
+    // therefore have to widen `SPAWN_FLAGS` with `wsl.exe`'s own flags.
+    expect(() => assertArgvFlags('cli.version', [...wsl.prefix])).toThrow(/--cd/)
+  })
+
+  it('starts `command` with the wrapper’s words, and reports `command` and not `argv[0]`', async () => {
+    const spawner = recordingSpawner()
+    const plan = wslPlan(['version'])
+    void runToCompletion(plan, { spawner })
+    expect(spawner.calls).toHaveLength(1)
+    const call = spawner.calls[0]
+    // The reported program is the plan's `command`. Reading `argv[0]` again --
+    // the mutation this case exists for -- would report `fugaro`, a file that
+    // does not exist on the machine the console is running on.
+    expect(call?.command).toBe(WSL)
+    expect(call?.command).not.toBe(plan.argv[0])
+    expect(call?.args).toEqual(['-d', 'Ubuntu', '--cd', '/home/dimi', '--', 'fugaro', 'version'])
+    expect(call?.options.shell).toBe(false)
+  })
+
+  it('records the whole command line in the spawn log, wrapper and all', async () => {
+    const spawner = recordingSpawner()
+    const seen: { argv: readonly string[] }[] = []
+    const log: SpawnLogWriter = {
+      enabled: true,
+      path: '/tmp/unused.jsonl',
+      records: 0,
+      error: null,
+      record: (spawn) => {
+        seen.push({ argv: spawn.argv })
+      },
+      close: () => undefined,
+    }
+    void runToCompletion(wslPlan(['version']), { spawner, log })
+    expect(seen).toHaveLength(1)
+    expect(seen[0]?.argv).toEqual([WSL, '-d', 'Ubuntu', '--cd', '/home/dimi', '--', 'fugaro', 'version'])
+  })
+
+  it('supervises a stream through the same wrapper', () => {
+    const spawner = recordingSpawner()
+    const sidecar = startSidecar(wslPlan(['watch', '--json']), {
+      onFrame: () => undefined,
+      onNotice: () => undefined,
+      onRestart: () => undefined,
+      onEnded: () => undefined,
+    }, { spawner })
+    expect(spawner.calls).toHaveLength(1)
+    expect(spawner.calls[0]?.command).toBe(WSL)
+    expect(spawner.calls[0]?.args).toEqual(['-d', 'Ubuntu', '--cd', '/home/dimi', '--', 'fugaro', 'watch', '--json'])
+    void sidecar.stop()
   })
 })
 

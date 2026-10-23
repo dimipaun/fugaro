@@ -1173,12 +1173,45 @@ export const nodeSpawner: ChildSpawner = (command, args, options) =>
   }) as unknown as SpawnedChildLike
 
 /**
- * SpawnPlan is one spawn, fully decided: the argv (binary first), the working
- * directory, the built environment, the installation's project for the spawn
- * log, and the restart schedule. Nothing in it is read from a document.
+ * SpawnPlan is one spawn, fully decided: **the program the OS starts
+ * (`command`), the wrapper's own words (`prefix`), the CLI's argument vector
+ * (`argv`, program word first)**, the working directory, the built environment,
+ * the installation's project for the spawn log, and the restart schedule.
+ * Nothing in it is read from a document.
+ *
+ * **Why the program and its argv are two fields rather than one array.** On
+ * Windows the console does not start the CLI at all: it starts `wsl.exe`, which
+ * starts the CLI *inside a distribution* (docs/console-windows/
+ * implementation-plan.md, decision D1(a)). The words that run are then
+ * `wsl.exe -d <distro> --cd <dir> -- fugaro …`, and three different things are
+ * in that line: the program (`wsl.exe`), the wrapper's own flags (`-d … --`),
+ * and the CLI's argv (`fugaro …`). Keeping them in one array would mean the
+ * flag assertion could not tell a `wsl.exe` flag from a `fugaro` flag -- `--cd`
+ * is not a flag this console may emit to the CLI, and `--` is not one at all --
+ * and `runToCompletion` would read the binary out of a slot that, on this route,
+ * holds the word `fugaro`.
+ *
+ * **`argv` is what the CLI receives, program word first**, so the plan says the
+ * same thing on both routes: the host route's `argv[0]` is the resolved binary's
+ * path, the WSL route's is the bare name `fugaro` (resolved by the
+ * distribution's own `PATH`, which is the point of running it inside). The
+ * spawn log's `argv` line is the *whole* command line -- see `spawnedArgv` --
+ * and is therefore unchanged on the host route, where the wrapper is empty.
  */
 export interface SpawnPlan {
   readonly operation: SpawnOperationName
+  /** `command` is the program handed to the spawner: the resolved binary on the
+   * host route, `wsl.exe` on the WSL route. It is what `runToCompletion` and
+   * `startSidecar` start, and what the spawn log's first word is. */
+  readonly command: string
+  /** `prefix` is the wrapper's own words, between the command and the CLI's
+   * argv, and it is empty on the host route. On the WSL route it is
+   * `['-d', <distro>, '--cd', <dir>, '--']` -- the distribution to run in, the
+   * directory to start in (in the **distribution's** spelling: the console
+   * translates before it builds the plan), and the separator after which the
+   * CLI's own argv begins. It is deliberately not part of `argv`: these words
+   * belong to `wsl.exe` and are asserted as `wsl.exe`'s, not as the CLI's. */
+  readonly prefix: readonly string[]
   readonly argv: readonly string[]
   readonly cwd: string
   readonly env: Readonly<Record<string, string>>
@@ -1187,7 +1220,11 @@ export interface SpawnPlan {
 }
 
 /** planFor assembles a plan from an operation, its validated arguments and
- * main-process state. It is the only producer of a `SpawnPlan`. */
+ * main-process state. It is the only producer of a `SpawnPlan`, and it builds
+ * the **host** route: the command is the resolved binary and there is no
+ * wrapper. The WSL route is `resolveInstalledBinary`'s, which assembles the same
+ * plan with `wsl.exe` as the command and the distribution's own words as the
+ * prefix (T-C5). */
 export function planFor(
   operation: SpawnOperationName,
   args: ValidatedArguments,
@@ -1202,6 +1239,8 @@ export function planFor(
   const argv = argvFor(operation, args, { target: context.target, directory: context.directory })
   return Object.freeze({
     operation,
+    command: context.binaryPath,
+    prefix: Object.freeze([]) as readonly string[],
     argv: Object.freeze([context.binaryPath, ...argv]),
     cwd: context.directory,
     env: childEnvironment({
@@ -1212,6 +1251,36 @@ export function planFor(
     project: context.target.project,
     backoff: context.backoff ?? DEFAULT_BACKOFF,
   })
+}
+
+/**
+ * wrapperArgs is the words handed to `command` beyond the program itself: the
+ * wrapper's prefix, then the CLI's argv.
+ *
+ * The CLI's program word is dropped **exactly when the command already is that
+ * program** -- the host route, where `argv[0]` is the resolved binary's path and
+ * the OS would otherwise be handed it twice. On the WSL route the command is
+ * `wsl.exe` and the program word is `fugaro`, a word the distribution resolves,
+ * so it is kept. The rule is stated as the equality rather than as a route flag
+ * because the equality is the thing that matters: the program word is not
+ * repeated when the command *is* it.
+ */
+function wrapperArgs(plan: SpawnPlan): readonly string[] {
+  const cli = plan.argv[0] === plan.command ? plan.argv.slice(1) : plan.argv
+  return [...plan.prefix, ...cli]
+}
+
+/**
+ * spawnedArgv is the **whole command line as it is spawned**: the command, the
+ * wrapper's words, then the CLI's argv. It is what the spawn log records, so the
+ * log's `argv` line stays the operator's record of what ran (D1) on both routes
+ * -- unchanged on the host route, where there is no wrapper, and
+ * `['C:\\…\\wsl.exe', '-d', 'Ubuntu', '--cd', '/home/dimi', '--', 'fugaro', 'version']`
+ * on the WSL one. It is the first element of this array that is the program, and
+ * that is why the log's line is still "the binary's absolute path first".
+ */
+export function spawnedArgv(plan: SpawnPlan): readonly string[] {
+  return [plan.command, ...wrapperArgs(plan)]
 }
 
 /** RunResult is a child that was allowed to finish. */
@@ -1265,14 +1334,14 @@ export function runToCompletion(
   const timeoutMs = deps.timeoutMs ?? READ_TIMEOUT_MS
   const timers = deps.timers ?? NODE_TIMERS
   const grace = deps.shutdownGraceMs ?? SHUTDOWN_GRACE_MS
-  const binary = plan.argv[0]
-  if (binary === undefined) refused('a spawn plan with no binary is not a plan')
+  const binary = plan.command
+  if (binary === '') refused('a spawn plan with no binary is not a plan')
   const what = plan.argv.slice(1).filter((word) => !word.startsWith('-')).slice(0, 2).join(' ')
 
   return new Promise<RunResult>((resolve, reject) => {
     let child: SpawnedChildLike
     try {
-      child = spawner(binary, plan.argv.slice(1), {
+      child = spawner(binary, wrapperArgs(plan), {
         cwd: plan.cwd,
         env: plan.env,
         shell: false,
@@ -1290,7 +1359,7 @@ export function runToCompletion(
     // never ran (review). A spawner that throws, above, is the other half of
     // the same rule and records nothing either.
     child.on('spawn', () => {
-      deps.log?.record({ argv: plan.argv, cwd: plan.cwd, project: plan.project })
+      deps.log?.record({ argv: spawnedArgv(plan), cwd: plan.cwd, project: plan.project })
     })
     let stdout = ''
     let stderr = ''
@@ -1922,15 +1991,15 @@ export function startSidecar(
   }
 
   const spawnOnce = (): void => {
-    const binary = plan.argv[0]
-    if (binary === undefined) {
+    const binary = plan.command
+    if (binary === '') {
       finish({ reason: 'unstartable', code: null, signal: null, sentence: 'the spawn plan has no binary', spawns })
       return
     }
     spawns += 1
     let started: SpawnedChildLike
     try {
-      started = spawner(binary, plan.argv.slice(1), {
+      started = spawner(binary, wrapperArgs(plan), {
         cwd: plan.cwd,
         env: plan.env,
         shell: false,
@@ -1947,7 +2016,7 @@ export function startSidecar(
       return
     }
     started.on('spawn', () => {
-      deps.log?.record({ argv: plan.argv, cwd: plan.cwd, project: plan.project })
+      deps.log?.record({ argv: spawnedArgv(plan), cwd: plan.cwd, project: plan.project })
     })
     child = started
     stderr = ''
