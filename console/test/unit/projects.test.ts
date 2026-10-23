@@ -763,6 +763,29 @@ describe('renderProjects', () => {
     // The notional account is marked as notional wherever it is drawn.
     expect(drawn(rows[1] as FakeScreen)).toContain('NOTIONAL~')
   })
+
+  it('draws who started a job, and no cell for a job the record does not name', () => {
+    // Owner request 2026-10-18: the Started-by column. `launched_by` is a
+    // different fact from the `requested_by` beside it -- who started the run,
+    // and who asked for it -- and it is drawn in the short form the CLI's own
+    // column uses (`runview.LauncherShort`), as a `label`: `shared/launcher.ts`
+    // says why that class is not `person`.
+    const runs = {
+      ...RUNS,
+      runs: [{ ...RUNS.runs[0], launched_by: 'dana.person+fugaro@example.test' }, RUNS.runs[1]],
+    }
+    const tree = renderProjects(factory, buildProjectsModel(inputs({ runs })), 'light')
+    expect(all(tree, 'projects-job-started-by').map((node) => node.textContent)).toEqual(['dana.person+fugaro'])
+    // The address the record named is in no cell of the screen: the cut is the
+    // column's, so no `@` -- and no domain -- reaches one.
+    expect(drawn(tree)).not.toContain('dana.person+fugaro@example.test')
+    // The second job's record names nobody, and a row without a launcher draws
+    // no cell at all -- not an empty span, which would add a flex gap -- and
+    // never another person's name (the request's "fail private").
+    expect(all(tree, 'projects-job-started-by')).toHaveLength(1)
+    const untouched = renderProjects(factory, buildProjectsModel(inputs()), 'light')
+    expect(all(untouched, 'projects-job-started-by')).toHaveLength(0)
+  })
 })
 
 /** drawnText is the text of one subtree, in document order. */
@@ -1201,6 +1224,25 @@ describe('renderRun', () => {
       expect(one(tree, 'run-requested-by').textContent?.toLowerCase()).not.toContain('lopez')
       expect(drawnText(tree).toLowerCase()).not.toContain('lopez')
     }
+  })
+
+  it('draws the whole recorded launcher in the run view, in the person class', () => {
+    // The run view is where the owner's spec puts the **full identity** ("the
+    // full identity only in the expanded or run view and in JSON"): the Live and
+    // Projects columns draw the short form. It goes through the `person` class,
+    // the class the wire key carries, so an address is the console's marker here
+    // as it is in the requester cell beside it, and a login is itself.
+    const named = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, launched_by: 'dana@example.test' } }
+    const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis: named })), 'light')
+    expect(one(tree, 'run-started-by').textContent).toBe(ADDRESS_PLACEHOLDER)
+    expect(drawnText(tree)).not.toContain('dana@example.test')
+
+    const login = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, launched_by: 'ci-runner' } }
+    const other = renderRun(factory, buildRunModel(runInputs({ diagnosis: login })), 'light')
+    expect(one(other, 'run-started-by').textContent).toBe('ci-runner')
+
+    // A record whose `launch.json` recorded no launcher draws no cell at all.
+    expect(all(renderRun(factory, buildRunModel(runInputs()), 'light'), 'run-started-by')).toHaveLength(0)
   })
 
   it('puts the run record\'s status through the sanitizer too', () => {
